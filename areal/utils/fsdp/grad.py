@@ -227,6 +227,7 @@ def fsdp2_clip_grad_norm(
     max_norm: float,
     fsdp_group: ProcessGroup,
     tp_group: ProcessGroup | None = None,
+    pp_group: ProcessGroup | None = None,
     norm_type: float = 2.0,
     offload_params: bool = False,
 ) -> float:
@@ -246,6 +247,20 @@ def fsdp2_clip_grad_norm(
         norm_type=norm_type,
         offload_params=offload_params,
     )
+
+    # Reduce gradient norm across PP stages
+    if pp_group is not None:
+        device = current_platform.current_device()
+        grad_norm_tensor = torch.tensor(grad_norm, dtype=torch.float, device=device)
+        if norm_type == float("inf"):
+            # For inf norm, use MAX reduction
+            dist.all_reduce(grad_norm_tensor, op=dist.ReduceOp.MAX, group=pp_group)
+        else:
+            # For L-p norm: sum the p-th powers, then take p-th root
+            grad_norm_tensor **= norm_type
+            dist.all_reduce(grad_norm_tensor, op=dist.ReduceOp.SUM, group=pp_group)
+            grad_norm_tensor **= 1.0 / norm_type
+        grad_norm = float(grad_norm_tensor.item())
 
     if parameters:
         clip_grad_by_total_norm_fp32(parameters, max_norm, grad_norm, offload_params)

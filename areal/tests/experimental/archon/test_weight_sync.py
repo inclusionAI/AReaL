@@ -18,9 +18,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from areal.experimental.models.archon.qwen3.model.state_dict_adapter import (
-    Qwen3StateDictAdapter,
-)
+from areal.experimental.models.archon.qwen3 import Qwen3StateDictAdapter
 
 # =============================================================================
 # Mock Configs for Iterative Conversion Tests
@@ -51,7 +49,7 @@ class MockMoEConfig:
 @pytest.fixture
 def small_dense_model_args():
     """Create small dense model args for CPU testing."""
-    from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
+    from areal.experimental.models.archon.qwen3 import Qwen3ModelArgs
 
     return Qwen3ModelArgs(
         dim=64,
@@ -71,7 +69,7 @@ def small_dense_model_args():
 def small_moe_model_args():
     """Create small MoE model args for CPU testing."""
     from areal.experimental.models.archon.moe import MoEArgs
-    from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
+    from areal.experimental.models.archon.qwen3 import Qwen3ModelArgs
 
     return Qwen3ModelArgs(
         dim=64,
@@ -93,7 +91,7 @@ def small_moe_model_args():
 @pytest.fixture
 def small_dense_model(small_dense_model_args):
     """Create and initialize small dense model on CPU."""
-    from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+    from areal.experimental.models.archon.qwen3 import Qwen3Model
 
     model = Qwen3Model(small_dense_model_args)
     model.init_weights()
@@ -104,7 +102,7 @@ def small_dense_model(small_dense_model_args):
 @pytest.fixture
 def small_moe_model(small_moe_model_args):
     """Create and initialize small MoE model on CPU."""
-    from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+    from areal.experimental.models.archon.qwen3 import Qwen3Model
 
     model = Qwen3Model(small_moe_model_args)
     model.init_weights()

@@ -5,8 +5,7 @@ import torch.distributed as dist
 from torch.distributed.tensor import DTensor
 
 from areal.experimental.models.archon.moe import MoEArgs
-from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
-from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+from areal.experimental.models.archon.qwen3 import Qwen3Model, Qwen3ModelArgs
 
 
 def write_result(out: str, succ: bool) -> None:

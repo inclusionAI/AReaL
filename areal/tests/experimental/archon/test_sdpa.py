@@ -2,8 +2,7 @@
 
 These tests verify:
 1. create_block_causal_mask_2d generates correct mask patterns
-2. Mask caching works correctly
-3. Edge cases (single sequence, empty sequences)
+2. Edge cases (single sequence, empty sequences)
 
 Run tests:
     pytest areal/tests/experimental/archon/test_sdpa.py -v
@@ -149,34 +148,6 @@ class TestSDPAWrapper:
         output = wrapper(q, k, v, cu_seqlens=cu_seqlens, max_seqlen=32)
 
         assert output.shape == q.shape
-
-    def test_mask_caching(self, wrapper):
-        """Test that mask is properly cached and reused."""
-        batch, heads, seq_len, head_dim = 1, 4, 16, 32
-        q = torch.randn(
-            batch, heads, seq_len, head_dim, device="cuda", dtype=torch.float32
-        )
-        k = torch.randn(
-            batch, heads, seq_len, head_dim, device="cuda", dtype=torch.float32
-        )
-        v = torch.randn(
-            batch, heads, seq_len, head_dim, device="cuda", dtype=torch.float32
-        )
-        cu_seqlens = torch.tensor([0, 8, 16], dtype=torch.int32, device="cuda")
-
-        # First call - creates mask
-        _ = wrapper(q, k, v, cu_seqlens=cu_seqlens, max_seqlen=8)
-        assert wrapper._cached_mask is not None
-        cached_mask_id = id(wrapper._cached_mask)
-
-        # Second call with same cu_seqlens - should reuse
-        _ = wrapper(q, k, v, cu_seqlens=cu_seqlens, max_seqlen=8)
-        assert id(wrapper._cached_mask) == cached_mask_id
-
-        # Third call with different cu_seqlens - should create new
-        new_cu_seqlens = torch.tensor([0, 4, 12, 16], dtype=torch.int32, device="cuda")
-        _ = wrapper(q, k, v, cu_seqlens=new_cu_seqlens, max_seqlen=8)
-        assert id(wrapper._cached_mask) != cached_mask_id
 
     def test_single_sequence_matches_causal(self, wrapper):
         """Test single sequence produces same result as is_causal=True."""

@@ -30,10 +30,10 @@ import torch
 import torch.distributed as dist
 
 from areal.experimental.models.archon import ArchonParallelDims
-from areal.experimental.models.archon.qwen3.infra.parallelize import parallelize_qwen3
-from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
-from areal.experimental.models.archon.qwen3.model.state_dict_adapter import (
+from areal.experimental.models.archon.qwen3 import (
+    Qwen3Model,
     Qwen3StateDictAdapter,
+    parallelize_qwen3,
 )
 from areal.experimental.models.archon.ulysses import (
     ulysses_gather_output,

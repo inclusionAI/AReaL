@@ -1,11 +1,13 @@
 # Adapted from torchtitan: torchtitan/distributed/activation_checkpoint.py
 
+import functools
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 
 import torch
 import torch._functorch.config
+import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper as ptd_checkpoint_wrapper,
@@ -18,7 +20,13 @@ from torch.utils.checkpoint import (
 from areal.experimental.models.archon import varlen_attention as _  # noqa: F401
 from areal.utils import logging
 
-logger = logging.getLogger("ArchonActivationCheckpoint")
+
+@functools.cache
+def _get_logger() -> logging.Logger:
+    """Get rank-aware logger for this module."""
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    return logging.getLogger(f"[Archon ActivationCheckpoint Rank {rank}]")
+
 
 # Global counter for layer-level selective AC
 _layer_sac_count = 0
@@ -140,7 +148,7 @@ def _apply_op_sac(
             out_f, in_f = submod.weight.shape
             mm_recompute_shapes.add((in_f, out_f))
         if mm_recompute_shapes:
-            logger.debug(
+            _get_logger().debug(
                 f"Selective op AC force recomputing mms with rhs shapes {mm_recompute_shapes}"
             )
 
@@ -268,11 +276,11 @@ def apply_ac(
             torch._functorch.config.visualize_memory_budget_pareto = True
 
         torch._functorch.config.activation_memory_budget = ac_config.memory_budget
-        logger.info(f"Selected {ac_config.memory_budget} budget option")
+        _get_logger().info(f"Selected {ac_config.memory_budget} budget option")
         return
 
     if ac_config.mode == "none":
-        logger.debug("Activation checkpointing is disabled")
+        _get_logger().debug("Activation checkpointing is disabled")
         return
 
     if not hasattr(model, "layers"):
@@ -293,7 +301,9 @@ def apply_ac(
         )
         model.layers.register_module(layer_id, transformer_block)
 
-    logger.info(f"Applied {ac_config.mode} activation checkpointing to the model")
+    _get_logger().info(
+        f"Applied {ac_config.mode} activation checkpointing to the model"
+    )
 
 
 __all__ = [

@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 
 if TYPE_CHECKING:
+    from torch.distributed.pipelining import PipelineStage
+
     from areal.experimental.models.archon import ArchonParallelDims
     from areal.experimental.models.archon.activation_checkpoint import (
         ActivationCheckpointConfig,
@@ -47,6 +49,37 @@ class ParallelizeFn(Protocol):
     ) -> nn.Module: ...
 
 
+class PipeliningFn(Protocol):
+    """Protocol for pipeline parallelism functions.
+
+    This protocol defines the signature for functions that apply pipeline
+    parallelism to models, splitting them across pipeline stages.
+
+    The function should:
+    1. Generate module FQNs for each stage
+    2. Split the model into pipeline stages
+    3. Apply parallelization (TP, FSDP) to each model part
+
+    Returns:
+        Tuple of:
+        - stages: List of PipelineStage (1 for 1F1B)
+        - model_parts: List of model parts (1 for 1F1B)
+        - has_first_stage: Whether this rank has the first stage
+        - has_last_stage: Whether this rank has the last stage
+    """
+
+    def __call__(
+        self,
+        model: nn.Module,
+        parallel_dims: ArchonParallelDims,
+        device: torch.device,
+        parallelize_fn: ParallelizeFn,
+        input_weight: int = 1,
+        output_weight: int = 1,
+        **parallelize_kwargs,
+    ) -> tuple[list[PipelineStage], list[nn.Module], bool, bool]: ...
+
+
 @dataclass
 class ModelSpec:
     """Specification for a Archon-compatible model."""
@@ -57,6 +90,7 @@ class ModelSpec:
     state_dict_adapter_class: type[BaseStateDictAdapter]
     parallelize_fn: ParallelizeFn
     supported_model_types: frozenset[str]
+    pipelining_fn: PipeliningFn | None = None
 
 
 _MODEL_SPECS: dict[str, ModelSpec] = {}

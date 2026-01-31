@@ -1,5 +1,6 @@
 # Adapted from torchtitan: torchtitan/distributed/parallel_dims.py
 
+import functools
 from dataclasses import dataclass, field
 
 import torch.distributed as dist
@@ -7,7 +8,13 @@ from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 from areal.utils import logging
 
-logger = logging.getLogger("ArchonParallelDims")
+
+@functools.cache
+def _get_logger() -> logging.Logger:
+    """Get rank-aware logger for this module."""
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    return logging.getLogger(f"[Archon ParallelDims Rank {rank}]")
+
 
 __all__ = [
     "ArchonParallelDims",
@@ -18,7 +25,7 @@ __all__ = [
 class ArchonParallelDims:
     """Parallel dimensions for Archon engine.
 
-    Archon Engine uses PyTorch-native distributed APIs (FSDP2, TP, CP, EP) inspired by torchtitan.
+    Archon Engine uses PyTorch-native distributed APIs inspired by torchtitan.
 
     Note: dp_replicate is always 1 - no HSDP support yet.
 
@@ -26,13 +33,14 @@ class ArchonParallelDims:
         dp_shard: FSDP shard dimension (data parallel). -1 means auto-compute.
         tp: Tensor Parallel size.
         cp: Context Parallel size (implemented as Ulysses SP, not Ring Attention).
+        pp: Pipeline Parallel size.
         ep: Expert Parallel size.
         etp: Expert Tensor Parallel size (must be 1 or equal to tp).
         world_size: Total number of processes.
         device_type: Device type for mesh creation (e.g., "cuda", "npu").
 
     Mesh semantics:
-        - total_gpu = dp_shard × cp × tp
+        - total_gpu = pp × dp_shard × cp × tp
         - fsdp_size = dp_shard × cp  (CP ranks participate in weight sharding)
 
     Expert Parallelism Strategy Selection:
@@ -54,6 +62,7 @@ class ArchonParallelDims:
           dp_shard × cp only.
 
     Available mesh dimensions (when EP disabled):
+        - pp: Pipeline Parallel
         - dp: dp_shard (for data loading)
         - dp_shard_cp: dp_shard * cp (for FSDP sharding)
         - dp_cp: dp_shard * cp (for loss all-reduce)
@@ -61,6 +70,7 @@ class ArchonParallelDims:
         - tp: Tensor Parallel
 
     Available mesh dimensions (when EP enabled):
+        - pp: Pipeline Parallel
         - dp: dp_shard (for data loading)
         - dp_shard_cp: dp_shard * cp (for FSDP sharding of dense params)
         - dp_cp: dp_shard * cp (for loss all-reduce)
@@ -70,21 +80,25 @@ class ArchonParallelDims:
         - ep_tp: 2D mesh [ep, tp] for ExpertTensorParallel (only when etp=tp)
         - dp_shard_mod_ep: dp_shard_cp * tp / ep (for FSDP sharding of MoE experts)
 
-    Example (dp_shard=2, cp=2, tp=2, ep=1, etp=1, 8 GPUs):
+    Example (pp=1, dp_shard=2, cp=2, tp=2, ep=1, etp=1, 8 GPUs):
         - fsdp_size = dp_shard × cp = 2 × 2 = 4
-        - Mesh dims: (dp_shard=2, cp=2, tp=2)
+        - Mesh dims: (pp=1, dp_shard=2, cp=2, tp=2)
 
-    Example (dp_shard=2, cp=1, tp=2, ep=2, etp=1, 4 GPUs):
+    Example (pp=2, dp_shard=2, cp=1, tp=2, ep=1, etp=1, 8 GPUs):
+        - fsdp_size = dp_shard × cp = 2 × 1 = 2
+        - Mesh dims: (pp=2, dp_shard=2, cp=1, tp=2)
+
+    Example (pp=1, dp_shard=2, cp=1, tp=2, ep=2, etp=1, 4 GPUs):
         - ep borrows from dp_shard_in_ep * cp * tp (since etp=1)
         - dp_shard_mod_ep = dp_shard * cp * tp / ep = 2 * 1 * 2 / 2 = 2
         - dp_shard_in_ep = ep / (cp * tp) = 2 / (1 * 2) = 1
-        - Mesh dims: (dp_shard_mod_ep=2, dp_shard_in_ep=1, cp=1, tp=2)
+        - Mesh dims: (pp=1, dp_shard_mod_ep=2, dp_shard_in_ep=1, cp=1, tp=2)
 
-    Example (dp_shard=2, cp=1, tp=2, ep=2, etp=2, 4 GPUs):
+    Example (pp=1, dp_shard=2, cp=1, tp=2, ep=2, etp=2, 4 GPUs):
         - ep borrows from dp_shard_in_ep * cp only (since etp=tp)
         - dp_shard_mod_ep = dp_shard * cp / ep = 2 * 1 / 2 = 1
         - dp_shard_in_ep = ep / cp = 2 / 1 = 2
-        - Mesh dims: (dp_shard_mod_ep=1, dp_shard_in_ep=2, cp=1, tp=2)
+        - Mesh dims: (pp=1, dp_shard_mod_ep=1, dp_shard_in_ep=2, cp=1, tp=2)
         - ep_tp mesh: 2D mesh [ep=2, tp=2] for 2D expert weight sharding
     """
 
@@ -104,13 +118,13 @@ class ArchonParallelDims:
 
     def __post_init__(self):
         if self.dp_shard < 0:
-            self.dp_shard = self.world_size // (self.tp * self.cp)
+            self.dp_shard = self.world_size // (self.tp * self.cp * self.pp)
 
-        expected_world_size = self.dp_shard * self.tp * self.cp
+        expected_world_size = self.dp_shard * self.tp * self.cp * self.pp
         if expected_world_size != self.world_size:
             raise ValueError(
-                f"dp_shard * tp * cp must equal world_size, "
-                f"got {self.dp_shard} * {self.tp} * {self.cp} = {expected_world_size}, "
+                f"dp_shard * tp * cp * pp must equal world_size, "
+                f"got {self.dp_shard} * {self.tp} * {self.cp} * {self.pp} = {expected_world_size}, "
                 f"world_size={self.world_size}"
             )
 
@@ -162,14 +176,15 @@ class ArchonParallelDims:
         """Build mesh when EP is disabled."""
         # Always include all dimensions, even if size=1
         # This ensures submeshes like mp (cp × tp) can always be created
-        dims = [self.dp_shard, self.cp, self.tp]
-        names = ["dp_shard", "cp", "tp"]
+        dims = [self.pp, self.dp_shard, self.cp, self.tp]
+        names = ["pp", "dp_shard", "cp", "tp"]
 
-        logger.info(f"Building 3-D device mesh with {names}, {dims}")
+        _get_logger().info(f"Building 4-D device mesh with {names}, {dims}")
         mesh = init_device_mesh(
             self.device_type, tuple(dims), mesh_dim_names=tuple(names)
         )
 
+        self._meshes["pp"] = mesh["pp"]
         self._meshes["dp_shard"] = mesh["dp_shard"]
         self._meshes["cp"] = mesh["cp"]
         self._meshes["tp"] = mesh["tp"]
@@ -208,15 +223,18 @@ class ArchonParallelDims:
             dp_shard_mod_ep = self.dp_shard * self.cp * self.tp // self.ep
             dp_shard_in_ep = self.ep // (self.cp * self.tp)
 
-        dims = [dp_shard_mod_ep, dp_shard_in_ep, self.cp, self.tp]
-        names = ["dp_shard_mod_ep", "dp_shard_in_ep", "cp", "tp"]
+        dims = [self.pp, dp_shard_mod_ep, dp_shard_in_ep, self.cp, self.tp]
+        names = ["pp", "dp_shard_mod_ep", "dp_shard_in_ep", "cp", "tp"]
 
-        logger.info(f"Building 4-D device mesh (etp={self.etp}) with {names}, {dims}")
+        _get_logger().info(
+            f"Building 5-D device mesh (etp={self.etp}) with {names}, {dims}"
+        )
         mesh = init_device_mesh(
             self.device_type, tuple(dims), mesh_dim_names=tuple(names)
         )
 
         # Store base meshes
+        self._meshes["pp"] = mesh["pp"]
         self._meshes["dp_shard_mod_ep"] = mesh["dp_shard_mod_ep"]
         self._meshes["dp_shard_in_ep"] = mesh["dp_shard_in_ep"]
         self._meshes["cp"] = mesh["cp"]
@@ -346,6 +364,11 @@ class ArchonParallelDims:
         """Minimum divisor for sequence length (for TP and CP compatibility)."""
         return self.tp * self.cp * 2
 
+    @property
+    def context_and_model_parallel_size(self) -> int:
+        """Context and model parallel size (cp * tp * pp)."""
+        return self.cp * self.tp * self.pp
+
     def get_mesh(self, name: str) -> DeviceMesh | None:
         """Get submesh by name, return None if not available.
 
@@ -354,8 +377,8 @@ class ArchonParallelDims:
 
         Args:
             name: Mesh dimension name. Available names depend on EP status:
-                - Without EP: 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'cp_tp'
-                - With EP: 'dp', 'dp_shard_cp', 'dp_cp', 'ep', 'dp_shard_mod_ep',
+                - Without EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'cp_tp'
+                - With EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'ep', 'dp_shard_mod_ep',
                           'dp_shard_in_ep', 'cp', 'tp', 'cp_tp'
 
         Returns:
@@ -368,14 +391,18 @@ class ArchonParallelDims:
     def get_group(self, name: str) -> dist.ProcessGroup | None:
         """Get process group by name, return None if not available.
 
+        This method always returns a group if the mesh exists, even if size=1.
+        Use explicit checks like `if self.tp_enabled` before calling this method
+        if you want to skip operations when parallelism is not needed.
+
         Args:
             name: Mesh dimension name. Available names depend on EP status:
-                - Without EP: 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'cp_tp'
-                - With EP: 'dp', 'dp_shard_cp', 'dp_cp', 'ep', 'dp_shard_mod_ep',
+                - Without EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'cp_tp'
+                - With EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'ep', 'dp_shard_mod_ep',
                           'dp_shard_in_ep', 'cp', 'tp', 'cp_tp'
 
         Returns:
-            ProcessGroup for the requested dimension, or None if not available.
+            ProcessGroup for the requested dimension, or None if mesh not available.
         """
         submesh = self.get_mesh(name)
         if submesh is None:

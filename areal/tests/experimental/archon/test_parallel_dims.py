@@ -17,6 +17,86 @@ from areal.platforms import current_platform
 from areal.utils.network import find_free_ports
 
 
+class TestPPValidation:
+    """Test PP (Pipeline Parallelism) constraint validation in ArchonParallelDims."""
+
+    def test_dp_shard_auto_calculation_with_pp(self):
+        """Test that dp_shard auto-calculation includes pp."""
+        # world_size=8, pp=2, tp=2, cp=1 -> dp_shard = 8 / (2*2*1) = 2
+        dims = ArchonParallelDims(pp=2, tp=2, cp=1, world_size=8)
+        assert dims.dp_shard == 2
+
+        # world_size=8, pp=1, tp=2, cp=1 -> dp_shard = 8 / (1*2*1) = 4
+        dims = ArchonParallelDims(pp=1, tp=2, cp=1, world_size=8)
+        assert dims.dp_shard == 4
+
+        # world_size=8, pp=2, tp=2, cp=2 -> dp_shard = 8 / (2*2*2) = 1
+        dims = ArchonParallelDims(pp=2, tp=2, cp=2, world_size=8)
+        assert dims.dp_shard == 1
+
+    def test_world_size_validation_with_pp(self):
+        """Test that world_size validation includes pp."""
+        # Valid: dp_shard * tp * cp * pp = 2 * 2 * 1 * 2 = 8
+        dims = ArchonParallelDims(pp=2, dp_shard=2, tp=2, cp=1, world_size=8)
+        assert dims.world_size == 8
+
+        # Invalid: dp_shard * tp * cp * pp = 2 * 2 * 1 * 2 = 8 != 4
+        with pytest.raises(
+            ValueError, match="dp_shard .* tp .* cp .* pp must equal world_size"
+        ):
+            ArchonParallelDims(pp=2, dp_shard=2, tp=2, cp=1, world_size=4)
+
+    def test_pp_enabled_flag(self):
+        """Test pp_enabled property."""
+        # pp=1 -> not enabled
+        dims = ArchonParallelDims(pp=1, dp_shard=2, tp=2, cp=1, world_size=4)
+        assert not dims.pp_enabled
+
+        # pp=2 -> enabled
+        dims = ArchonParallelDims(pp=2, dp_shard=2, tp=2, cp=1, world_size=8)
+        assert dims.pp_enabled
+
+    def test_context_and_model_parallel_size(self):
+        """Test context_and_model_parallel_size property (cp * tp * pp)."""
+        # cp=1, tp=2, pp=2 -> 1 * 2 * 2 = 4
+        dims = ArchonParallelDims(pp=2, dp_shard=2, tp=2, cp=1, world_size=8)
+        assert dims.context_and_model_parallel_size == 4
+
+        # cp=2, tp=2, pp=1 -> 2 * 2 * 1 = 4
+        dims = ArchonParallelDims(pp=1, dp_shard=2, tp=2, cp=2, world_size=8)
+        assert dims.context_and_model_parallel_size == 4
+
+        # cp=1, tp=1, pp=1 -> 1 * 1 * 1 = 1
+        dims = ArchonParallelDims(pp=1, dp_shard=2, tp=1, cp=1, world_size=2)
+        assert dims.context_and_model_parallel_size == 1
+
+
+class TestPPWithEP:
+    """Test PP combined with EP configurations."""
+
+    def test_pp_with_ep_etp_disabled(self):
+        """Test PP with EP when etp=1."""
+        # pp=2, dp_shard=2, tp=2, cp=1, ep=4, etp=1, world_size=8
+        # EP borrows from dp_shard * cp * tp = 2 * 1 * 2 = 4
+        dims = ArchonParallelDims(
+            pp=2, dp_shard=2, tp=2, cp=1, ep=4, etp=1, world_size=8
+        )
+        assert dims.pp_enabled
+        assert dims.ep_enabled
+        assert not dims.etp_enabled
+
+    def test_pp_with_ep_etp_enabled(self):
+        """Test PP with EP when etp=tp."""
+        # pp=2, dp_shard=4, tp=2, cp=1, ep=4, etp=2, world_size=16
+        # EP borrows from dp_shard * cp = 4 * 1 = 4
+        dims = ArchonParallelDims(
+            pp=2, dp_shard=4, tp=2, cp=1, ep=4, etp=2, world_size=16
+        )
+        assert dims.pp_enabled
+        assert dims.ep_enabled
+        assert dims.etp_enabled
+
+
 class TestETPValidation:
     """Test ETP constraint validation in ArchonParallelDims."""
 
@@ -236,6 +316,16 @@ class TestETPMeshDimensions:
             pytest.skip("This test requires 4 GPUs")
         output = tmp_path_factory.mktemp("test_output") / "etp_mesh.out"
         self._run_parallel_dims_test(4, "etp_mesh", str(output))
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.multi_gpu
+    @pytest.mark.slow
+    def test_pp_mesh_4gpu(self, tmp_path_factory):
+        """Test that PP mesh dimension is correctly included (4 GPU)."""
+        if current_platform.device_count() < 4:
+            pytest.skip("This test requires 4 GPUs")
+        output = tmp_path_factory.mktemp("test_output") / "pp_mesh.out"
+        self._run_parallel_dims_test(4, "pp_mesh", str(output))
 
 
 if __name__ == "__main__":

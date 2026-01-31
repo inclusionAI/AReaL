@@ -2,15 +2,23 @@
 """Engine checkpoint integration tests.
 
 Tests for ArchonEngine save/load methods with HF format using DCP infrastructure.
+Also includes PP (Pipeline Parallelism) checkpoint tests using DCP format.
 
 Run with:
     torchrun --nproc_per_node=2 areal/tests/experimental/archon/torchrun/run_checkpoint_tests.py \
         --test_type=save_hf_dense --model_path=/path/to/model --output=/tmp/result.out
 
+    torchrun --nproc_per_node=2 areal/tests/experimental/archon/torchrun/run_checkpoint_tests.py \
+        --test_type=pp_dcp_checkpoint --pp_size=2 --output=/tmp/result.out
+
 Supported test types:
     - save_hf_dense: Test save() with weight_format="hf" on dense model
     - save_load_forward_match: Test save -> load -> forward output matches
+    - save_load_forward_match_with_compile_ac: Test with torch.compile + activation checkpointing
     - moe_checkpoint: Test MoE model checkpoint with EP
+    - pp_dcp_checkpoint: Test PP checkpoint save/load using DCP format
+    - pp_dcp_with_optim: Test PP checkpoint with optimizer state
+    - pp_forward_match: Test forward output matches after PP checkpoint save/load
 """
 
 from __future__ import annotations
@@ -22,12 +30,20 @@ import tempfile
 
 import torch
 import torch.distributed as dist
+import torch.nn as nn
+from torch.distributed.tensor import DTensor
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
+from areal.experimental.engine.archon_checkpoint import DCPState
 from areal.experimental.engine.archon_engine import ArchonLMEngine
+from areal.experimental.models.archon import ArchonParallelDims
+from areal.experimental.models.archon.pipeline_parallel import pipeline_llm
+from areal.experimental.models.archon.qwen3 import Qwen3Model, parallelize_qwen3
 from areal.tests.experimental.archon.torchrun.dist_utils import (
+    create_dense_model_args,
+    create_test_input,
     print_rank0,
     write_result,
 )
@@ -584,6 +600,620 @@ def test_moe_checkpoint(model_path: str, output: str | None = None) -> bool:
 
 
 # =============================================================================
+# PP Checkpoint Tests (migrated from run_pp_checkpoint.py)
+# =============================================================================
+
+
+def _to_local(tensor: torch.Tensor) -> torch.Tensor:
+    """Convert DTensor to local tensor if needed."""
+    if isinstance(tensor, DTensor):
+        return tensor.to_local()
+    return tensor
+
+
+def test_pp_dcp_checkpoint(pp_size: int, out_file: str | None = None) -> bool:
+    """Test PP checkpoint save/load using DCP format.
+
+    Steps:
+    1. Create PP model with pipeline_llm
+    2. Save checkpoint using DCPState
+    3. Modify weights to verify load actually changes them
+    4. Load checkpoint
+    5. Verify weights match original
+
+    Args:
+        pp_size: Pipeline parallel degree (must equal world_size)
+        out_file: Optional file to write result ("Passed"/"Failed")
+
+    Returns:
+        True if test passed, False otherwise
+    """
+    import torch.distributed.checkpoint as dcp
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    device = torch.device(f"cuda:{rank}")
+    torch.cuda.set_device(device)
+
+    print_rank0(f"\n{'=' * 60}")
+    print_rank0(f"PP DCP Checkpoint Test: pp_size={pp_size}, world_size={world_size}")
+    print_rank0("=" * 60)
+
+    assert world_size == pp_size, (
+        f"This test requires world_size == pp_size. "
+        f"Got world_size={world_size}, pp_size={pp_size}"
+    )
+
+    # Create temp directory for checkpoint
+    if rank == 0:
+        output_dir = tempfile.mkdtemp(prefix="pp_dcp_checkpoint_")
+    else:
+        output_dir = None
+
+    output_dir_list = [output_dir]
+    dist.broadcast_object_list(output_dir_list, src=0)
+    output_dir = output_dir_list[0]
+
+    success = True
+
+    try:
+        # 1. Create model args
+        n_layers = pp_size * 2
+        model_args = create_dense_model_args(
+            n_layers=n_layers,
+            dim=64,
+            hidden_dim=128,
+            n_heads=4,
+            n_kv_heads=2,
+            head_dim=16,
+            vocab_size=1000,
+        )
+
+        # 2. Create PP parallel dims
+        parallel_dims = ArchonParallelDims(
+            pp=pp_size,
+            dp_shard=1,
+            tp=1,
+            cp=1,
+            world_size=world_size,
+            device_type="cuda",
+        )
+
+        # 3. Create model on meta device for efficient pipeline splitting
+        with torch.device("meta"):
+            model = Qwen3Model(model_args)
+
+        # NOTE: Schedule is created dynamically by ArchonEngine, not returned here
+        pp_stages, model_parts, has_first, has_last = pipeline_llm(
+            model=model,
+            parallel_dims=parallel_dims,
+            device=device,
+            parallelize_fn=parallelize_qwen3,
+            enable_compile=False,  # Disable compile to speed up test
+        )
+
+        # Materialize weights from meta device
+        for part in model_parts:
+            part.to_empty(device=device)
+            with torch.no_grad():
+                part.init_weights()
+            part.init_buffers(buffer_device=device)
+
+        print_rank0(f"  Rank {rank}: has_first={has_first}, has_last={has_last}")
+        print_rank0(f"  Rank {rank}: {len(model_parts)} model parts")
+
+        # 4. Save original parameter values (convert DTensor to local)
+        original_params = {}
+        for part_idx, part in enumerate(model_parts):
+            for name, param in part.named_parameters():
+                key = f"part{part_idx}.{name}"
+                original_params[key] = _to_local(param.data).clone()
+
+        print_rank0(f"  Saved {len(original_params)} parameter tensors")
+
+        # 5. Save checkpoint using DCPState
+        dcp_state = DCPState(model_parts, optimizer=None)
+        dcp.save({"dcp": dcp_state}, checkpoint_id=output_dir)
+
+        print_rank0(f"  Checkpoint saved to {output_dir}")
+
+        dist.barrier()
+
+        # 6. Modify weights (to verify load actually works)
+        with torch.no_grad():
+            for part in model_parts:
+                for param in part.parameters():
+                    param.data.fill_(999.0)
+
+        # Verify weights changed
+        modified_check_passed = True
+        for part_idx, part in enumerate(model_parts):
+            for name, param in part.named_parameters():
+                local_data = _to_local(param.data)
+                if not torch.allclose(local_data, torch.tensor(999.0, device=device)):
+                    modified_check_passed = False
+                    break
+
+        if not modified_check_passed:
+            print_rank0("  ERROR: Failed to modify weights")
+            success = False
+
+        # 7. Load checkpoint
+        dcp_state_load = DCPState(model_parts, optimizer=None)
+        dcp.load({"dcp": dcp_state_load}, checkpoint_id=output_dir)
+
+        print_rank0("  Checkpoint loaded")
+
+        # 8. Verify weights match original
+        mismatch_count = 0
+        max_diff = 0.0
+        for part_idx, part in enumerate(model_parts):
+            for name, param in part.named_parameters():
+                key = f"part{part_idx}.{name}"
+                if key in original_params:
+                    local_data = _to_local(param.data)
+                    diff = (local_data - original_params[key]).abs().max().item()
+                    max_diff = max(max_diff, diff)
+                    if diff > 1e-6:
+                        mismatch_count += 1
+                        if mismatch_count <= 3:
+                            print_rank0(f"  Mismatch: {key}, diff={diff:.6e}")
+
+        if mismatch_count > 0:
+            print_rank0(f"  ERROR: {mismatch_count} parameters don't match")
+            success = False
+        else:
+            print_rank0(
+                f"  All {len(original_params)} parameters match (max_diff={max_diff:.6e})"
+            )
+
+    except Exception as e:
+        print_rank0(f"ERROR: {e}")
+        import traceback
+
+        traceback.print_exc()
+        success = False
+
+    finally:
+        dist.barrier()
+        if rank == 0 and output_dir and os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+
+    # Gather results from all ranks
+    all_results = [None] * world_size
+    dist.all_gather_object(all_results, success)
+    final_success = all(all_results)
+
+    if final_success:
+        print_rank0(f"\n{'=' * 60}")
+        print_rank0("PP DCP Checkpoint Test: PASSED")
+        print_rank0("=" * 60)
+    else:
+        print_rank0(f"\n{'=' * 60}")
+        print_rank0("PP DCP Checkpoint Test: FAILED")
+        print_rank0("=" * 60)
+
+    if rank == 0 and out_file:
+        write_result(out_file, final_success)
+
+    return final_success
+
+
+def test_pp_dcp_with_optim(pp_size: int, out_file: str | None = None) -> bool:
+    """Test PP checkpoint save/load with optimizer state using DCP format.
+
+    Steps:
+    1. Create PP model and optimizer
+    2. Run one forward/backward to populate optimizer state
+    3. Save checkpoint with optimizer using DCPState
+    4. Modify optimizer state
+    5. Load checkpoint
+    6. Verify optimizer state matches
+
+    Args:
+        pp_size: Pipeline parallel degree (must equal world_size)
+        out_file: Optional file to write result ("Passed"/"Failed")
+
+    Returns:
+        True if test passed, False otherwise
+    """
+    import torch.distributed.checkpoint as dcp
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    device = torch.device(f"cuda:{rank}")
+    torch.cuda.set_device(device)
+
+    print_rank0(f"\n{'=' * 60}")
+    print_rank0(f"PP DCP Checkpoint with Optimizer Test: pp_size={pp_size}")
+    print_rank0("=" * 60)
+
+    assert world_size == pp_size
+
+    # Create temp directory
+    if rank == 0:
+        output_dir = tempfile.mkdtemp(prefix="pp_dcp_optim_checkpoint_")
+    else:
+        output_dir = None
+
+    output_dir_list = [output_dir]
+    dist.broadcast_object_list(output_dir_list, src=0)
+    output_dir = output_dir_list[0]
+
+    success = True
+
+    try:
+        # 1. Create model
+        n_layers = pp_size * 2
+        model_args = create_dense_model_args(
+            n_layers=n_layers,
+            dim=64,
+            hidden_dim=128,
+            n_heads=4,
+            n_kv_heads=2,
+            head_dim=16,
+            vocab_size=1000,
+        )
+
+        parallel_dims = ArchonParallelDims(
+            pp=pp_size,
+            dp_shard=1,
+            tp=1,
+            cp=1,
+            world_size=world_size,
+            device_type="cuda",
+        )
+
+        # Create model on meta device for efficient pipeline splitting
+        with torch.device("meta"):
+            model = Qwen3Model(model_args)
+
+        def cross_entropy_loss_fn(output, target):
+            output_flat = output.view(-1, output.size(-1))
+            target_flat = target.view(-1)
+            return nn.functional.cross_entropy(output_flat, target_flat)
+
+        # NOTE: Schedule is created dynamically by ArchonEngine, not returned here
+        pp_stages, model_parts, has_first, has_last = pipeline_llm(
+            model=model,
+            parallel_dims=parallel_dims,
+            device=device,
+            parallelize_fn=parallelize_qwen3,
+            enable_compile=False,  # Disable compile to speed up test
+        )
+
+        # Materialize weights from meta device
+        for part in model_parts:
+            part.to_empty(device=device)
+            with torch.no_grad():
+                part.init_weights()
+            part.init_buffers(buffer_device=device)
+
+        # 2. Create optimizer (single optimizer for all model parts, as in archon_engine)
+        all_params = [p for m in model_parts for p in m.parameters() if p.requires_grad]
+        optimizer = torch.optim.AdamW(all_params, lr=1e-4)
+
+        print_rank0(f"  Created optimizer with {len(all_params)} parameters")
+
+        # 3. Run a forward/backward to populate optimizer state
+        tokens, positions, cu_seqlens, max_seqlen = create_test_input(
+            num_seqs=2,
+            seq_len_per_seq=8,
+            vocab_size=model_args.vocab_size,
+            device=device,
+            seed=123,
+        )
+        labels = tokens.clone()
+
+        # Simple forward-backward for first stage (just to populate optimizer state)
+        if has_first:
+            for part in model_parts:
+                part.train()
+            optimizer.zero_grad()
+            h = model_parts[0](tokens, positions, cu_seqlens, max_seqlen)
+            if has_last:
+                loss = cross_entropy_loss_fn(h, labels)
+                loss.backward()
+                optimizer.step()
+                print_rank0(f"  Ran forward/backward, loss={loss.item():.4f}")
+            else:
+                # For non-last stages, just do a dummy backward
+                h.sum().backward()
+                optimizer.step()
+                print_rank0("  Ran forward/backward (non-last stage)")
+        else:
+            # For non-first stages, just step to populate state
+            optimizer.step()
+            print_rank0("  Stepped optimizer (non-first stage)")
+
+        # 4. Save optimizer state values (convert DTensor to local)
+        original_state = {}
+        for i, p in enumerate(all_params):
+            if p in optimizer.state:
+                state = optimizer.state[p]
+                if "exp_avg" in state:
+                    original_state[f"param_{i}_exp_avg"] = _to_local(
+                        state["exp_avg"]
+                    ).clone()
+                if "exp_avg_sq" in state:
+                    original_state[f"param_{i}_exp_avg_sq"] = _to_local(
+                        state["exp_avg_sq"]
+                    ).clone()
+
+        print_rank0(f"  Saved {len(original_state)} optimizer state tensors")
+
+        # 5. Save checkpoint
+        dcp_state = DCPState(model_parts, optimizer=optimizer)
+        dcp.save({"dcp": dcp_state}, checkpoint_id=output_dir)
+
+        print_rank0(f"  Checkpoint saved to {output_dir}")
+
+        dist.barrier()
+
+        # 6. Modify optimizer state
+        for p in all_params:
+            if p in optimizer.state:
+                for key in optimizer.state[p]:
+                    if isinstance(optimizer.state[p][key], torch.Tensor):
+                        optimizer.state[p][key].fill_(999.0)
+
+        # 7. Load checkpoint
+        dcp_state_load = DCPState(model_parts, optimizer=optimizer)
+        dcp.load({"dcp": dcp_state_load}, checkpoint_id=output_dir)
+
+        print_rank0("  Checkpoint loaded")
+
+        # 8. Verify optimizer state
+        mismatch_count = 0
+        for i, p in enumerate(all_params):
+            if p in optimizer.state:
+                state = optimizer.state[p]
+                if "exp_avg" in state and f"param_{i}_exp_avg" in original_state:
+                    local_exp_avg = _to_local(state["exp_avg"])
+                    diff = (
+                        (local_exp_avg - original_state[f"param_{i}_exp_avg"])
+                        .abs()
+                        .max()
+                        .item()
+                    )
+                    if diff > 1e-6:
+                        mismatch_count += 1
+                if "exp_avg_sq" in state and f"param_{i}_exp_avg_sq" in original_state:
+                    local_exp_avg_sq = _to_local(state["exp_avg_sq"])
+                    diff = (
+                        (local_exp_avg_sq - original_state[f"param_{i}_exp_avg_sq"])
+                        .abs()
+                        .max()
+                        .item()
+                    )
+                    if diff > 1e-6:
+                        mismatch_count += 1
+
+        if mismatch_count > 0:
+            print_rank0(f"  ERROR: {mismatch_count} optimizer states don't match")
+            success = False
+        else:
+            print_rank0("  All optimizer states match")
+
+    except Exception as e:
+        print_rank0(f"ERROR: {e}")
+        import traceback
+
+        traceback.print_exc()
+        success = False
+
+    finally:
+        dist.barrier()
+        if rank == 0 and output_dir and os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+
+    # Gather results
+    all_results = [None] * world_size
+    dist.all_gather_object(all_results, success)
+    final_success = all(all_results)
+
+    if final_success:
+        print_rank0(f"\n{'=' * 60}")
+        print_rank0("PP DCP Checkpoint with Optimizer Test: PASSED")
+        print_rank0("=" * 60)
+    else:
+        print_rank0(f"\n{'=' * 60}")
+        print_rank0("PP DCP Checkpoint with Optimizer Test: FAILED")
+        print_rank0("=" * 60)
+
+    if rank == 0 and out_file:
+        write_result(out_file, final_success)
+
+    return final_success
+
+
+def test_pp_forward_match(pp_size: int, out_file: str | None = None) -> bool:
+    """Test forward output matches after PP checkpoint save/load.
+
+    This verifies the checkpoint preserves model behavior:
+    1. Create PP model
+    2. Run forward pass and record output
+    3. Save checkpoint
+    4. Modify weights
+    5. Load checkpoint
+    6. Run forward again
+    7. Verify outputs match
+
+    Args:
+        pp_size: Pipeline parallel degree
+        out_file: Optional file to write result
+
+    Returns:
+        True if test passed, False otherwise
+    """
+    import torch.distributed.checkpoint as dcp
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    device = torch.device(f"cuda:{rank}")
+    torch.cuda.set_device(device)
+
+    print_rank0(f"\n{'=' * 60}")
+    print_rank0(f"PP Forward Match Test: pp_size={pp_size}")
+    print_rank0("=" * 60)
+
+    assert world_size == pp_size
+
+    if rank == 0:
+        output_dir = tempfile.mkdtemp(prefix="pp_forward_match_")
+    else:
+        output_dir = None
+
+    output_dir_list = [output_dir]
+    dist.broadcast_object_list(output_dir_list, src=0)
+    output_dir = output_dir_list[0]
+
+    success = True
+
+    try:
+        # Create model
+        n_layers = pp_size * 2
+        model_args = create_dense_model_args(
+            n_layers=n_layers,
+            dim=64,
+            hidden_dim=128,
+            n_heads=4,
+            n_kv_heads=2,
+            head_dim=16,
+            vocab_size=1000,
+        )
+
+        parallel_dims = ArchonParallelDims(
+            pp=pp_size,
+            dp_shard=1,
+            tp=1,
+            cp=1,
+            world_size=world_size,
+            device_type="cuda",
+        )
+
+        # Create model on meta device for efficient pipeline splitting
+        with torch.device("meta"):
+            model = Qwen3Model(model_args)
+
+        # NOTE: Schedule is created dynamically by ArchonEngine, not returned here
+        pp_stages, model_parts, has_first, has_last = pipeline_llm(
+            model=model,
+            parallel_dims=parallel_dims,
+            device=device,
+            parallelize_fn=parallelize_qwen3,
+            enable_compile=False,  # Disable compile to speed up test
+        )
+
+        # Materialize weights from meta device
+        for part in model_parts:
+            part.to_empty(device=device)
+            with torch.no_grad():
+                part.init_weights()
+            part.init_buffers(buffer_device=device)
+
+        for part in model_parts:
+            part.eval()
+
+        # Create test input
+        tokens, positions, cu_seqlens, max_seqlen = create_test_input(
+            num_seqs=2,
+            seq_len_per_seq=8,
+            vocab_size=model_args.vocab_size,
+            device=device,
+            seed=123,
+        )
+
+        # Run forward (only first stage does this, others receive via PP)
+        output_before = None
+        if has_first:
+            with torch.no_grad():
+                h = model_parts[0](tokens, positions, cu_seqlens, max_seqlen)
+                if has_last:
+                    output_before = h.clone()
+                else:
+                    # For non-last stages in first position, send and wait
+                    # For this simple test, just capture the intermediate
+                    output_before = h.clone()
+
+        # Save checkpoint
+        dcp_state = DCPState(model_parts, optimizer=None)
+        dcp.save({"dcp": dcp_state}, checkpoint_id=output_dir)
+
+        dist.barrier()
+
+        # Modify weights
+        with torch.no_grad():
+            for part in model_parts:
+                for param in part.parameters():
+                    param.data.fill_(0.0)
+
+        # Load checkpoint
+        dcp_state_load = DCPState(model_parts, optimizer=None)
+        dcp.load({"dcp": dcp_state_load}, checkpoint_id=output_dir)
+
+        # Run forward again
+        output_after = None
+        if has_first:
+            with torch.no_grad():
+                h = model_parts[0](tokens, positions, cu_seqlens, max_seqlen)
+                if has_last:
+                    output_after = h.clone()
+                else:
+                    output_after = h.clone()
+
+        # Compare outputs
+        if output_before is not None and output_after is not None:
+            output_before_local = _to_local(output_before)
+            output_after_local = _to_local(output_after)
+            max_diff = (output_before_local - output_after_local).abs().max().item()
+            mean_diff = (output_before_local - output_after_local).abs().mean().item()
+            allclose = torch.allclose(
+                output_before_local, output_after_local, rtol=1e-4, atol=1e-4
+            )
+
+            print_rank0(f"  Max diff: {max_diff:.6e}")
+            print_rank0(f"  Mean diff: {mean_diff:.6e}")
+            print_rank0(f"  Allclose: {allclose}")
+
+            if not allclose and max_diff > 1e-3:
+                print_rank0("  ERROR: Forward outputs don't match!")
+                success = False
+            else:
+                print_rank0("  Forward outputs match!")
+
+    except Exception as e:
+        print_rank0(f"ERROR: {e}")
+        import traceback
+
+        traceback.print_exc()
+        success = False
+
+    finally:
+        dist.barrier()
+        if rank == 0 and output_dir and os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+
+    all_results = [None] * world_size
+    dist.all_gather_object(all_results, success)
+    final_success = all(all_results)
+
+    if final_success:
+        print_rank0(f"\n{'=' * 60}")
+        print_rank0("PP Forward Match Test: PASSED")
+        print_rank0("=" * 60)
+    else:
+        print_rank0(f"\n{'=' * 60}")
+        print_rank0("PP Forward Match Test: FAILED")
+        print_rank0("=" * 60)
+
+    if rank == 0 and out_file:
+        write_result(out_file, final_success)
+
+    return final_success
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -592,7 +1222,14 @@ TEST_REGISTRY = {
     "save_load_forward_match": test_save_load_forward_match,
     "save_load_forward_match_with_compile_ac": test_save_load_forward_match_with_compile_ac,
     "moe_checkpoint": test_moe_checkpoint,
+    # PP checkpoint tests (migrated from run_pp_checkpoint.py)
+    "pp_dcp_checkpoint": test_pp_dcp_checkpoint,
+    "pp_dcp_with_optim": test_pp_dcp_with_optim,
+    "pp_forward_match": test_pp_forward_match,
 }
+
+# PP tests that require pp_size argument
+PP_TESTS = {"pp_dcp_checkpoint", "pp_dcp_with_optim", "pp_forward_match"}
 
 
 def main():
@@ -607,8 +1244,14 @@ def main():
     parser.add_argument(
         "--model_path",
         type=str,
-        required=True,
-        help="Path to HF model checkpoint",
+        default=None,
+        help="Path to HF model checkpoint (required for non-PP tests)",
+    )
+    parser.add_argument(
+        "--pp_size",
+        type=int,
+        default=2,
+        help="Pipeline parallel size (for PP checkpoint tests)",
     )
     parser.add_argument(
         "--output",
@@ -628,7 +1271,17 @@ def main():
 
     try:
         test_fn = TEST_REGISTRY[args.test_type]
-        success = test_fn(args.model_path, args.output)
+
+        # PP tests use pp_size argument, non-PP tests use model_path
+        if args.test_type in PP_TESTS:
+            success = test_fn(args.pp_size, args.output)
+        else:
+            if args.model_path is None:
+                print_rank0(f"ERROR: --model_path is required for {args.test_type}")
+                if rank == 0 and args.output:
+                    write_result(args.output, False)
+                return
+            success = test_fn(args.model_path, args.output)
 
         dist.barrier()
 

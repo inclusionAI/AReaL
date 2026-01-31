@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -31,7 +32,12 @@ if TYPE_CHECKING:
         ActivationCheckpointConfig,
     )
 
-logger = logging.getLogger("ArchonQwen2Parallelize")
+
+@functools.cache
+def _get_logger() -> logging.Logger:
+    """Get rank-aware logger for this module."""
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    return logging.getLogger(f"[Archon Qwen2Parallelize Rank {rank}]")
 
 
 def _get_op_sac_save_list() -> set[torch._ops.OpOverload]:
@@ -171,13 +177,16 @@ def apply_tp(
     """
     validate_tp_constraints(model.model_args, tp_mesh.size())
 
-    root_plan = {
-        "tok_embeddings": RowwiseParallel(
+    root_plan = {}
+
+    if model.tok_embeddings is not None:
+        root_plan["tok_embeddings"] = RowwiseParallel(
             input_layouts=Replicate(),
             output_layouts=Shard(1),
-        ),
-        "norm": SequenceParallel(),
-    }
+        )
+
+    if model.norm is not None:
+        root_plan["norm"] = SequenceParallel()
 
     if model.output is not None:
         # use_local_output=True for vocab_parallel loss
@@ -193,7 +202,8 @@ def apply_tp(
             desired_input_layouts=(Replicate(),),
         )
 
-    parallelize_module(model, tp_mesh, root_plan)
+    if root_plan:
+        parallelize_module(model, tp_mesh, root_plan)
 
     for transformer_block in model.layers.values():
         layer_plan = {
@@ -229,7 +239,7 @@ def apply_tp(
             parallelize_plan=layer_plan,
         )
 
-    logger.info("Applied Tensor Parallelism to the model")
+    _get_logger().info("Applied Tensor Parallelism to the model")
 
 
 def apply_fsdp(
@@ -312,9 +322,9 @@ def apply_fsdp(
 
     fully_shard(model, **fsdp_config)
 
-    logger.info("Applied FSDP to the model")
+    _get_logger().info("Applied FSDP to the model")
     if cpu_offload:
-        logger.info("Applied CPU Offloading to the model")
+        _get_logger().info("Applied CPU Offloading to the model")
 
 
 def apply_cp(
@@ -341,7 +351,7 @@ def apply_cp(
     for transformer_block in model.layers.values():
         transformer_block.attention.set_cp_group(cp_group)
 
-    logger.info(
+    _get_logger().info(
         f"Applied Context Parallelism (Ulysses SP) to the model, cp_size={cp_size}"
     )
 

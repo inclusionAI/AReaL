@@ -8,9 +8,8 @@ import pytest
 import torch
 
 from areal.experimental.models.archon.moe import MoEArgs
-from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
+from areal.experimental.models.archon.qwen3 import Qwen3Model, Qwen3ModelArgs
 from areal.experimental.models.archon.qwen3.model.model import (
-    Qwen3Model,
     TransformerBlock,
     _is_moe_layer,
 )

@@ -15,9 +15,7 @@ Note: For weight completeness and shape matching tests, see test_weight_sync.py
 import pytest
 import torch
 
-from areal.experimental.models.archon.qwen3.model.state_dict_adapter import (
-    Qwen3StateDictAdapter,
-)
+from areal.experimental.models.archon.qwen3 import Qwen3StateDictAdapter
 
 # =============================================================================
 # Mock Configs
@@ -407,7 +405,7 @@ class TestMoEWeightLoadingRoundtrip:
     def moe_model_args(self):
         """Create model args for MoE model."""
         from areal.experimental.models.archon.moe import MoEArgs
-        from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
+        from areal.experimental.models.archon.qwen3 import Qwen3ModelArgs
 
         return Qwen3ModelArgs(
             dim=64,
@@ -443,7 +441,7 @@ class TestMoEWeightLoadingRoundtrip:
         self, moe_model_args, moe_adapter_config
     ):
         """Test that model forward output matches after save/load roundtrip."""
-        from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+        from areal.experimental.models.archon.qwen3 import Qwen3Model
 
         device = torch.device("cuda")
 
@@ -492,7 +490,7 @@ class TestMoEWeightLoadingRoundtrip:
 
     def test_moe_weight_keys_preserved(self, moe_model_args, moe_adapter_config):
         """Test that all weight keys are preserved in roundtrip."""
-        from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+        from areal.experimental.models.archon.qwen3 import Qwen3Model
 
         model = Qwen3Model(moe_model_args)
         model.init_weights()
@@ -519,7 +517,7 @@ class TestMoEWeightLoadingRoundtrip:
 
     def test_moe_weight_values_preserved(self, moe_model_args, moe_adapter_config):
         """Test that all weight values are preserved in roundtrip."""
-        from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+        from areal.experimental.models.archon.qwen3 import Qwen3Model
 
         model = Qwen3Model(moe_model_args)
         model.init_weights()
@@ -549,7 +547,7 @@ class TestMoEWeightLoadingRoundtrip:
 
     def test_mixed_moe_dense_layers_preserved(self, moe_model_args, moe_adapter_config):
         """Test roundtrip with mixed MoE and dense layers."""
-        from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+        from areal.experimental.models.archon.qwen3 import Qwen3Model
 
         # decoder_sparse_step=2 means:
         # - layer 0: dense (FFN)
@@ -887,9 +885,7 @@ class TestHFAssetsPathSupport:
 
     def test_qwen2_adapter_with_hf_assets_path(self, mock_safetensors_index):
         """Test that Qwen2StateDictAdapter also supports hf_assets_path."""
-        from areal.experimental.models.archon.qwen2.model.state_dict_adapter import (
-            Qwen2StateDictAdapter,
-        )
+        from areal.experimental.models.archon.qwen2 import Qwen2StateDictAdapter
 
         adapter = Qwen2StateDictAdapter(
             MockQwen3Config(), hf_assets_path=str(mock_safetensors_index)
@@ -1042,9 +1038,7 @@ class TestQwen2StateDictAdapterDense:
 
     @pytest.fixture
     def adapter(self):
-        from areal.experimental.models.archon.qwen2.model.state_dict_adapter import (
-            Qwen2StateDictAdapter,
-        )
+        from areal.experimental.models.archon.qwen2 import Qwen2StateDictAdapter
 
         class MockQwen2Config:
             model_type = "qwen2"
@@ -1121,9 +1115,7 @@ class TestQwen2StateDictAdapterDense:
 
     def test_qwen2_adapter_with_weight_tying(self):
         """Test Qwen2StateDictAdapter handles weight tying correctly."""
-        from areal.experimental.models.archon.qwen2.model.state_dict_adapter import (
-            Qwen2StateDictAdapter,
-        )
+        from areal.experimental.models.archon.qwen2 import Qwen2StateDictAdapter
 
         class MockQwen2ConfigTied:
             model_type = "qwen2"
