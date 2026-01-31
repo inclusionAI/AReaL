@@ -405,7 +405,7 @@ class SlurmScheduler(Scheduler):
             sch.env_vars["AREAL_RECOVER_RUN"] = os.getenv("AREAL_RECOVER_RUN", str(0))
             if self.enable_tms_offload:
                 sch.env_vars.update(get_tms_env_vars())
-            sch.env_vars.update(get_env_vars(self.cluster_name))
+            sch.env_vars.update(get_env_vars())
             thread_env = get_thread_env_vars(
                 cpus_per_task=sch.cpu,
                 existing_env_vars=sch.env_vars,
