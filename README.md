@@ -172,6 +172,7 @@ For comprehensive setup instructions, see
 - [Agentic RL](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html)
 - [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
 - [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
+- [OceanBase Integration](https://inclusionai.github.io/AReaL/tutorial/oceanbase_quickstart.html)
 
 ### Code Walkthrough
 
