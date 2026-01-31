@@ -1,12 +1,16 @@
 """Tau2 agent workflow for RL training.
 
-This module implements an AgentWorkflow for the tau2-bench benchmark,
-compatible with AReaL's OpenAI proxy server mode.
+This module implements a RolloutWorkflow for the tau2-bench benchmark,
+compatible with AReaL's SPMD mode using ArealOpenAI client.
 """
 
-import asyncio
+import os
+import sys
 import time
 from typing import Any
+
+# Add current directory to path for local imports when running as script
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from litellm import acompletion, register_model
 from tau2.agent.llm_agent import LLMAgent, LLMAgentState, LLMSoloAgent, LocalAgent
@@ -19,10 +23,13 @@ from tau2.registry import registry
 from tau2.user.user_simulator import BaseUser, DummyUser, UserSimulator
 
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.workflow_api import AgentWorkflow
-from areal.utils import logging
+from areal.api.engine_api import InferenceEngine
+from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
+from areal.experimental.openai import ArealOpenAI
+from areal.utils import logging, stats_tracker
 
-from .tau2_utils import Tau2EnvConfig, Tau2RunInfo
+from tau2_utils import Tau2EnvConfig, Tau2RunInfo
 
 logger = logging.getLogger("Tau2Agent")
 
@@ -58,9 +65,15 @@ def think(thoughts: str):
 class Tau2Runner:
     """Runner for tau2-bench tasks."""
 
-    def __init__(self, econfig: Tau2EnvConfig, gconfig: GenerationHyperparameters):
+    def __init__(
+        self,
+        econfig: Tau2EnvConfig,
+        gconfig: GenerationHyperparameters,
+        client: ArealOpenAI,
+    ):
         self.econfig = econfig
         self.gconfig = gconfig
+        self.client = client
         self.domain = econfig.domain
         self.solo_mode = econfig.solo_mode
         self.gen_args = gconfig.to_openai_args_dict(api_format="completions")
@@ -79,6 +92,7 @@ class Tau2Runner:
         if self.econfig.add_thinking_tool:
             tools.append(Tool(think))
 
+        # Use ArealOpenAI client for agent completions
         async def _acompletion(*args, **kwargs):
             start_time = time.perf_counter()
             kwargs.update(
@@ -86,7 +100,13 @@ class Tau2Runner:
                 thinking=False,
             )
             try:
-                return await acompletion(*args, **kwargs)
+                # Use the ArealOpenAI client
+                return await acompletion(
+                    *args,
+                    api_key="dummy",
+                    base_url=self.client.base_url,
+                    **kwargs,
+                )
             finally:
                 run_info.agent_time.append(time.perf_counter() - start_time)
 
@@ -207,97 +227,68 @@ class Tau2Runner:
         return run_info
 
 
-class Tau2AgentWorkflow(AgentWorkflow):
-    """AgentWorkflow implementation for tau2-bench.
+class Tau2RolloutWorkflow(RolloutWorkflow):
+    """RolloutWorkflow implementation for tau2-bench.
 
-    This workflow runs the tau2 agent using the OpenAI-compatible API
-    provided by AReaL's proxy server.
+    This workflow runs the tau2 agent using ArealOpenAI client,
+    which is compatible with SPMD mode (archon backend).
     """
 
-    async def run(
-        self, data: dict[str, Any], **extra_kwargs: Any
-    ) -> dict[str, float] | float:
-        """Run the tau2 agent and return the reward.
+    def __init__(
+        self,
+        gconfig: GenerationHyperparameters,
+        tokenizer,
+        econfig: dict[str, Any],
+        turn_discount: float = 1.0,
+    ):
+        from areal.utils.hf_utils import load_hf_tokenizer
+
+        if isinstance(tokenizer, str):
+            tokenizer = load_hf_tokenizer(tokenizer)
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
+        self.tokenizer = tokenizer
+        self.econfig = Tau2EnvConfig(**econfig)
+        self.turn_discount = turn_discount
+
+    async def arun_episode(
+        self, engine: InferenceEngine, data: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Run a single episode of the tau2 workflow.
 
         Parameters
         ----------
+        engine : InferenceEngine
+            The inference engine to use for generating responses
         data : dict[str, Any]
-            Input data containing:
-            - econfig: Tau2EnvConfig parameters
-            - gconfig: GenerationHyperparameters parameters
-            - task_id: Task ID to run
-            - split: Dataset split
-        **extra_kwargs : Any
-            Extra arguments from AReaL including base_url and http_client
+            Input data containing task_id and split
 
         Returns
         -------
-        float
-            The final reward from the tau2 evaluation
+        dict[str, Any] | None
+            The trajectory result with interactions
         """
-        econfig = Tau2EnvConfig(**data.get("econfig", {}))
-        gconfig = GenerationHyperparameters(**data.get("gconfig", {}))
+        # Create ArealOpenAI client from engine
+        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
 
-        domain = econfig.domain
+        domain = self.econfig.domain
         split = data["split"]
         task_id = data["task_id"]
         task = _get_task(domain=domain, task_id=task_id, split=split)
 
-        tau2_runner = Tau2Runner(econfig, gconfig)
+        # Create runner with the client
+        tau2_runner = Tau2Runner(self.econfig, self.gconfig, client)
         run_info = await tau2_runner.run(task)
 
-        # Store run_info in data for potential logging by the caller
-        data["_run_info"] = run_info
+        # Track reward in stats
+        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=run_info.reward)
 
-        return run_info.reward
+        # Set reward on client and export interactions
+        client.set_last_reward(run_info.reward)
+        client.apply_reward_discount(turn_discount=self.turn_discount)
+        interactions = client.export_interactions(style="individual")
 
-
-# For backward compatibility with subproc mode
-async def run_agent_return_reward(data: dict) -> tuple[float, Tau2RunInfo]:
-    """Run the agent and return (reward, run_info) tuple."""
-    econfig = Tau2EnvConfig(**data.get("econfig", {}))
-    gconfig = GenerationHyperparameters(**data.get("gconfig", {}))
-
-    domain = econfig.domain
-    split = data["split"]
-    task_id = data["task_id"]
-    task = _get_task(domain=domain, task_id=task_id, split=split)
-
-    tau2_runner = Tau2Runner(econfig, gconfig)
-    run_info = await tau2_runner.run(task)
-    return run_info.reward, run_info
+        return interactions
 
 
-async def run_and_submit(data: dict):
-    """Run agent and submit rewards to proxy server.
-
-    This function is used when running in subprocess mode where
-    the agent process communicates with the proxy server via HTTP.
-    """
-    import os
-
-    import aiohttp
-
-    from areal.experimental.openai.proxy.client_session import (
-        set_last_interaction_reward,
-    )
-    from areal.experimental.openai.proxy.server import RL_SET_REWARD_PATHNAME
-
-    base_url = os.environ.get("OPENAI_BASE_URL", "")
-    if not base_url.endswith("/"):
-        base_url += "/"
-
-    async with aiohttp.ClientSession() as session:
-        reward, run_info = await run_agent_return_reward(data)
-        await set_last_interaction_reward(
-            session, reward=reward, url=f"{base_url}{RL_SET_REWARD_PATHNAME}"
-        )
-        return run_info
-
-
-if __name__ == "__main__":
-    import json
-    import sys
-
-    data = json.loads(sys.stdin.readline())
-    asyncio.run(run_and_submit(data))
+# Alias for backward compatibility
+Tau2AgentWorkflow = Tau2RolloutWorkflow

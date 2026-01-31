@@ -1,7 +1,7 @@
-"""Tau2 training script for RL training with proxy server mode.
+"""Tau2 training script for RL training with SPMD mode.
 
 This script demonstrates how to train an agent on tau2-bench using
-AReaL's proxy server mode with the archon backend.
+AReaL's SPMD mode with the archon backend and ArealOpenAI client.
 """
 
 import os
@@ -17,8 +17,10 @@ from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils import logging
 from areal.utils.stats_logger import StatsLogger
 
-from .tau2_agent import Tau2AgentWorkflow
-from .tau2_utils import Tau2EnvConfig
+# Add examples/tau2 to path for local imports when running as script
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tau2_agent import Tau2RolloutWorkflow
+from tau2_utils import Tau2EnvConfig
 
 logger = logging.getLogger("Tau2Train")
 
@@ -92,40 +94,37 @@ def main(args):
             split=config.valid_dataset.path.split("/")[-1],
         )
 
-    # Create workflow with tau2-specific data preparation
-    workflow = Tau2AgentWorkflow()
-
-    # Prepare workflow kwargs with tau2-specific config
-    workflow_kwargs = {
-        "econfig": {
-            "domain": config.econfig.domain,
-            "max_steps": config.econfig.max_steps,
-            "add_thinking_tool": config.econfig.add_thinking_tool,
-            "solo_mode": config.econfig.solo_mode,
-            "user_llm_base_url": config.econfig.user_llm_base_url,
-            "user_llm": config.econfig.user_llm,
-            "user_llm_args": config.econfig.user_llm_args,
-            "turn_discount": config.econfig.turn_discount,
-            "invalid_format_penalty": config.econfig.invalid_format_penalty,
-        },
-        "gconfig": {
-            "n_samples": config.gconfig.n_samples,
-            "max_new_tokens": config.gconfig.max_new_tokens,
-            "min_new_tokens": config.gconfig.min_new_tokens,
-            "max_tokens": config.gconfig.max_tokens,
-            "greedy": config.gconfig.greedy,
-            "top_p": config.gconfig.top_p,
-            "top_k": config.gconfig.top_k,
-            "temperature": config.gconfig.temperature,
-        },
+    # Prepare econfig dict for workflow
+    econfig_dict = {
+        "domain": config.econfig.domain,
+        "max_steps": config.econfig.max_steps,
+        "add_thinking_tool": config.econfig.add_thinking_tool,
+        "solo_mode": config.econfig.solo_mode,
+        "user_llm_base_url": config.econfig.user_llm_base_url,
+        "user_llm": config.econfig.user_llm,
+        "user_llm_args": config.econfig.user_llm_args,
+        "turn_discount": config.econfig.turn_discount,
+        "invalid_format_penalty": config.econfig.invalid_format_penalty,
     }
 
-    # Prepare eval workflow kwargs (same as train but different temperature)
-    eval_workflow_kwargs = None
+    # Create workflow - RolloutWorkflow takes parameters in constructor
+    workflow = Tau2RolloutWorkflow(
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        econfig=econfig_dict,
+        turn_discount=config.econfig.turn_discount,
+    )
+
+    # Create eval workflow if needed
+    eval_workflow = None
     if config.do_eval:
-        eval_workflow_kwargs = workflow_kwargs.copy()
-        eval_workflow_kwargs["gconfig"] = workflow_kwargs["gconfig"].copy()
-        eval_workflow_kwargs["gconfig"]["temperature"] = 0.6  # Lower temp for eval
+        eval_gconfig = config.gconfig.new(temperature=0.6)
+        eval_workflow = Tau2RolloutWorkflow(
+            gconfig=eval_gconfig,
+            tokenizer=config.tokenizer_path,
+            econfig=econfig_dict,
+            turn_discount=config.econfig.turn_discount,
+        )
 
     with PPOTrainer(
         config,
@@ -134,9 +133,7 @@ def main(args):
     ) as trainer:
         trainer.train(
             workflow=workflow,
-            eval_workflow=workflow if config.do_eval else None,
-            workflow_kwargs=workflow_kwargs,
-            eval_workflow_kwargs=eval_workflow_kwargs,
+            eval_workflow=eval_workflow,
         )
 
 

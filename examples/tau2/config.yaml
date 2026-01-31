@@ -68,9 +68,8 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  group_size: ${gconfig.n_samples}
   eps_clip: 0.4
-  temperature: ${gconfig.temperature}
+  temperature: ${gconfig.temperature}  # Must match gconfig.temperature for consistent logprob computation
   reward_scaling: 10.0
   reward_bias: -0.5
   kl_ctl: 0.0
@@ -78,7 +77,6 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  dynamic_sampling: false
   weight_update_mode: xccl
   reward_norm:
     mean_level: group
@@ -93,7 +91,7 @@ actor:
       port_count: 2
       gpu: 1
       cpu: 15
-      mem: 32768
+      mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
       env_vars:
         NCCL_SOCKET_IFNAME: "bond0"
@@ -110,6 +108,13 @@ actor:
         NCCL_SET_THREAD_NAME: "1"
         NCCL_DEBUG: "WARN"
         HF_ENDPOINT: "https://hf-mirror.com"
+      additional_bash_cmds:
+        - pip install tenacity
+        - pip install torch_memory_saver
+        - pip install /storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench
+        - pip install litellm==1.75
+        - pip install "transformers==4.57.1"
+        - export TAU2_DATA_DIR=/storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench/data
 
 ref:
   experiment_name: ${experiment_name}
@@ -209,6 +214,8 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: online
+    wandb_base_url: http://8.150.1.98:8080
+    wandb_api_key: local-b12dd3e0df637c92fc312ad1a797986f8b8a012f
 
 perf_tracer:
   experiment_name: ${experiment_name}
@@ -217,22 +224,3 @@ perf_tracer:
   enabled: false
   session_tracer:
     enabled: false
-
-launcher:
-  inference_server_cpus_per_gpu: 15
-  inference_server_mem_per_gpu: 32768
-  inference_server_env_vars: "NCCL_SOCKET_IFNAME=bond0,NCCL_IB_DISABLE=0,NCCL_NET=IB,NCCL_NET_PLUGIN=,NCCL_IB_GID_INDEX=3,NCCL_IB_TIMEOUT=22,NCCL_IB_RETRY_CNT=7,NCCL_IB_SL=5,NCCL_IB_TC=136,NCCL_IB_HCA=mlx5_bond,NCCL_IB_QPS_PER_CONNECTION=8,NCCL_SET_THREAD_NAME=1,NCCL_DEBUG=WARN,HF_ENDPOINT=https://hf-mirror.com"
-  trainer_cpus_per_gpu: 15
-  trainer_mem_per_gpu: 32768
-  trainer_env_vars: "NCCL_SOCKET_IFNAME=bond0,NCCL_IB_DISABLE=0,NCCL_NET=IB,NCCL_NET_PLUGIN=,NCCL_IB_GID_INDEX=3,NCCL_IB_TIMEOUT=22,NCCL_IB_RETRY_CNT=7,NCCL_IB_SL=5,NCCL_IB_TC=136,NCCL_IB_HCA=mlx5_bond,NCCL_IB_QPS_PER_CONNECTION=8,NCCL_SET_THREAD_NAME=1,NCCL_DEBUG=WARN,HF_ENDPOINT=https://hf-mirror.com,WANDB_BASE_URL=http://8.150.1.98:8080,WANDB_API_KEY=local-e94a768686930cfc13051e562b807fc2d56bc4dd"
-  slurm:
-    mount: /storage:/storage
-    trainer_image: /storage/openpsi/images/areal-latest.sif
-    inference_server_image: /storage/openpsi/images/areal-latest.sif
-    additional_bash_cmds:
-      - pip install tenacity
-      - pip install torch_memory_saver
-      - pip install /storage/openpsi/users/xushusheng.xss/projects/Tau@DHH/tau2-bench
-      - pip install litellm==1.75
-      - pip install "transformers==4.57.1"
-      - export TAU2_DATA_DIR=/storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench/data

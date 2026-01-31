@@ -3,7 +3,7 @@
 
 current_time=$(date +"%y%m%d-%H%M%S") && echo tau2_$current_time.log
 
-# Prerequisites:
+# Prerequisites (run in container or install beforehand):
 # pip install tenacity torch_memory_saver /storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench transformers==4.57.1
 # export TAU2_DATA_DIR=/storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench/data
 
