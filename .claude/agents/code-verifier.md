@@ -34,10 +34,10 @@ git diff --name-only HEAD
 
 Categorize changes:
 
-- Python files (`.py`) → Run Ruff, tests
-- Markdown files (`.md`) → Run mdformat
-- Config files (`.yaml`, `.json`, `.toml`) → Validate syntax
-- API changes (`areal/api/`) → Regenerate CLI docs
+- Python files (`.py`) -> Run Ruff, tests
+- Markdown files (`.md`) -> Run mdformat
+- Config files (`.yaml`, `.json`, `.toml`) -> Validate syntax
+- API changes (`areal/api/`) -> Regenerate CLI docs
 
 ### Phase 2: Run Formatting & Linting
 
@@ -110,17 +110,17 @@ Output a clear summary:
 
 | Check | Status | Details |
 |-------|--------|---------|
-| Ruff (lint) | ✅ Pass | No issues |
-| Ruff (format) | ✅ Pass | Auto-fixed 2 files |
-| mdformat | ⏭️ Skipped | No .md changes |
-| Unit tests | ✅ Pass | 12 passed |
-| GPU tests | ⏭️ Skipped | No GPU available |
+| Ruff (lint) | [PASS] | No issues |
+| Ruff (format) | [PASS] | Auto-fixed 2 files |
+| mdformat | [SKIP] | No .md changes |
+| Unit tests | [PASS] | 12 passed |
+| GPU tests | [SKIP] | No GPU available |
 
 ### Issues Found
 None
 
 ### Ready to Commit
-✅ Yes - All checks passed
+[YES] - All checks passed
 ```
 
 ## Auto-Fix Behavior

@@ -82,7 +82,7 @@ pip install openai-agents
 
 ## Training with CAMEL
 
-CAMEL‑AI is an open‑source, modular framework for building intelligent multi‑agent
+CAMEL-AI is an open-source, modular framework for building intelligent multi-agent
 systems. It provides a flexible agent architecture that can handle complex dialogue
 flows, tool calling, and multi-agent interactions.
 

@@ -26,20 +26,20 @@ check_expert_update() {
     # Archon Engine / MoE related
     if [[ "$file" == *"areal/experimental/models/archon/"* ]] || \
        [[ "$file" == *"areal/experimental/engine/archon"* ]]; then
-        reminder_file="archon-expert.md"
+        reminder_file="archon-engine-expert.md"
         reminder_desc="Archon/MoE"
     fi
 
     # FSDP Engine related
     if [[ "$file" == *"areal/engine/fsdp_engine"* ]] || \
        [[ "$file" == *"areal/utils/fsdp/"* ]]; then
-        reminder_file="fsdp-expert.md"
+        reminder_file="fsdp-engine-expert.md"
         reminder_desc="FSDP"
     fi
 
     # Megatron Engine related
     if [[ "$file" == *"areal/engine/megatron"* ]]; then
-        reminder_file="megatron-expert.md"
+        reminder_file="megatron-engine-expert.md"
         reminder_desc="Megatron/PP"
     fi
 

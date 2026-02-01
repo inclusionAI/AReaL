@@ -18,10 +18,9 @@ Your role is to create detailed implementation plans before any code is written.
 
 Use this agent PROACTIVELY when:
 
-- Task involves 3+ files
-- Adding new features (workflow, dataset, reward, engine)
-- Modifying distributed/parallel code (FSDP, TP, EP, CP)
-- Architectural decisions needed
+- **Planning multi-file changes** (3+ files affected)
+- **Designing new features** (workflow, dataset, reward, engine)
+- **Architectural decisions needed**
 - User asks "how should I..." or "what's the best way to..."
 
 ## Planning Process

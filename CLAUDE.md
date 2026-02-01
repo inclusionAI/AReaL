@@ -99,10 +99,44 @@ uv run python docs/generate_cli_docs.py
 
 ## Extended Configuration
 
-See `.claude/agents/`, `.claude/commands/`, and `.claude/skills/` for specialized
+See `.claude/agents/`, `.claude/skills/`, and `.claude/commands/` for specialized
 instructions.
 
-**Commands** (invoke with `/command`):
+### Agents
+
+| Agent                       | Purpose                                   | Activation Trigger                                                  |
+| --------------------------- | ----------------------------------------- | ------------------------------------------------------------------- |
+| `planner`                   | Implementation planning                   | Before multi-file changes, new features, or architectural decisions |
+| `simple-code-reviewer`      | Quick code quality checks                 | After code changes, before committing                               |
+| `code-verifier`             | Formatting/linting/tests                  | After code changes, before committing                               |
+| `fsdp-engine-expert`        | FSDPEngine implementation                 | FSDPEngine code changes or questions                                |
+| `archon-engine-expert`      | ArchonEngine implementation               | ArchonEngine code changes or questions                              |
+| `megatron-engine-expert`    | MegatronEngine implementation             | MegatronEngine code changes or questions                            |
+| `algorithm-expert`          | RL algorithms                             | GRPO/PPO/DAPO questions                                             |
+| `launcher-scheduler-expert` | Cluster launching and resource scheduling | Launcher/scheduler code changes or configuration questions          |
+
+**Stage-by-Stage Agent Guidance**:
+
+1. **Planning Stage** (Before coding): Use `planner` for architecture design and
+   implementation planning
+1. **Code Formatting & Linting** (After coding): Use `code-verifier` to automatically
+   run formatting, linting, and tests, catching syntax errors and style issues quickly
+1. **Code Quality Check** (After formatting): Use `simple-code-reviewer` for quick code
+   quality checks, focusing on logic issues and code smells
+
+### Skills (Guided Development Workflows)
+
+Skills provide step-by-step guides for common development tasks:
+
+- `/add-dataset` - Dataset loader creation guide
+- `/add-workflow` - Workflow implementation guide
+- `/add-reward` - Reward function guide
+- `/debug-distributed` - Distributed debugging guide
+- `/add-unit-tests` - Test development guide (NEW)
+
+### Commands (User-invoked Actions)
+
+Commands perform specific actions when invoked:
 
 - `/pr-review` - Intelligent PR code review with dynamic agent allocation
-- `/gen-commit-msg` - Generate commit message from staged changes
+- `/gen-commit-msg` - Generate commit messages from staged changes
