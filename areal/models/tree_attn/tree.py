@@ -8,7 +8,7 @@ prefix computation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
@@ -19,6 +19,9 @@ from areal.models.tree_attn.module_fsdp import create_block_mask_from_dense
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
+
+if TYPE_CHECKING:
+    from torch.nn.attention.flex_attention import BlockMask
 
 logger = logging.getLogger(__name__)
 
@@ -370,12 +373,6 @@ def build_packed_tree_batch(
                 mask_template.device,
             )
 
-        # Create block mask from dense mask
-        with trace_scope("tree_attn.create_block_mask"):
-            block_mask = create_block_mask_from_dense(
-                attention_mask, padded_size, mask_template.device
-            )
-
         # Compute position_ids (needs dense attention_mask)
         with trace_scope("tree_attn.get_position_ids"):
             position_ids = get_packed_tree_position_ids(
@@ -384,6 +381,7 @@ def build_packed_tree_batch(
             )
 
         # Release dense attention mask memory after position_ids are computed
+        # Block mask will be lazily created in forward_backward_batch
         del attention_mask
 
         # Pack extra data
@@ -396,10 +394,9 @@ def build_packed_tree_batch(
                 non_packable_keys,
             )
 
-        # Build micro-batch dict with block_mask
+        # Build micro-batch dict without block_mask (will be created lazily in forward)
         mb = {
             "input_ids": input_ids,
-            "block_mask": block_mask,
             "position_ids": position_ids,
             "trie_node": trie,
             **extra_data,
@@ -611,3 +608,49 @@ def get_packed_tree_position_ids(
         position_ids = torch.clamp_min(ancestor_counts - 1, 0)
 
     return position_ids.unsqueeze(0)
+
+
+@trace_perf("tree_attn.build_block_mask_from_trie")
+def build_block_mask_from_trie(
+    trie: TrieNode,
+    padded_size: int,
+    device: torch.device,
+) -> BlockMask:
+    """Lazily build a block mask from a trie node.
+
+    This function builds the dense attention mask from the trie structure and
+    converts it to a block mask for use with flex attention. It should be called
+    just before the forward pass to minimize memory usage.
+
+    Parameters
+    ----------
+    trie : TrieNode
+        The root trie node containing the tree structure.
+    padded_size : int
+        The padded sequence length.
+    device : torch.device
+        Device to create the block mask on.
+
+    Returns
+    -------
+    BlockMask
+        The created block mask for use with flex_attention.
+    """
+    # Handle dummy trie (empty tree for DP synchronization)
+    if not trie.all_sequence_ids:
+        # Create a minimal valid block mask for empty trees
+        dummy_mask = torch.zeros(
+            (padded_size, padded_size), dtype=torch.bool, device=device
+        )
+        return create_block_mask_from_dense(dummy_mask, padded_size, device)
+
+    with trace_scope("tree_attn.build_attention_mask"):
+        attention_mask = _build_attention_mask(trie, padded_size, device)
+
+    with trace_scope("tree_attn.create_block_mask"):
+        block_mask = create_block_mask_from_dense(attention_mask, padded_size, device)
+
+    # Release dense attention mask memory
+    del attention_mask
+
+    return block_mask
