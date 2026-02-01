@@ -171,7 +171,7 @@ Activation: When RL algorithm topics detected
 
 ## Design Philosophy
 
-- **Scope Division**: fsdp-expert (FSDP engine), archon-expert (Archon/MoE), algorithm-expert (RL algorithms/workflows/rewards)
+- **Scope Division**: fsdp-engine-expert (FSDP engine), archon-engine-expert (Archon/MoE), algorithm-expert (RL algorithms/workflows/rewards)
 - **Model**: Opus (algorithm reasoning and debugging)
 
 ## How to Update
