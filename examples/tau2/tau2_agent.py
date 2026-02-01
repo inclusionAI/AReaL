@@ -320,15 +320,9 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
         stats_tracker.get(workflow_context.stat_scope()).scalar(reward=run_info.reward)
 
         # Set reward on client and export interactions
-        # Check if there are any interactions in the cache before setting reward
-        # (cache may be empty if simulation failed before any LLM calls)
-        # Also filter out incomplete interactions (where completion is None)
+        # Filter out incomplete interactions (where completion is None)
         cache = client._cache
         if not cache:
-            logger.warning(
-                f"No interactions recorded for task {task_id}, "
-                f"simulation may have failed early. Returning None."
-            )
             return None
 
         # Remove incomplete interactions (where completion is None)
@@ -337,13 +331,9 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
             if interaction.completion is None and interaction.response is None
         ]
         for id in incomplete_ids:
-            logger.warning(f"Removing incomplete interaction {id} from cache")
             del cache[id]
 
         if not cache:
-            logger.warning(
-                f"All interactions were incomplete for task {task_id}. Returning None."
-            )
             return None
 
         client.set_last_reward(run_info.reward)
