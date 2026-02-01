@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import litellm
 from litellm import acompletion, register_model
+from openai import AsyncOpenAI
 
 # Disable litellm success/failure callbacks and verbose output
 litellm.suppress_debug_info = True
@@ -104,9 +105,10 @@ class Tau2Runner:
         # Use ArealOpenAI client for agent completions
         async def _acompletion(*args, **kwargs):
             start_time = time.perf_counter()
-            # Remove litellm-specific parameters that ArealOpenAI doesn't support
+            # Remove parameters that ArealOpenAI doesn't support
             kwargs.pop("api_key", None)
             kwargs.pop("base_url", None)
+            kwargs.pop("n", None)  # n > 1 not supported, GRPO handles multiple samples at workflow level
             # Add chat template kwargs to disable thinking
             kwargs.setdefault("extra_body", {})
             kwargs["extra_body"]["chat_template_kwargs"] = {"enable_thinking": False}
@@ -116,12 +118,39 @@ class Tau2Runner:
             finally:
                 run_info.agent_time.append(time.perf_counter() - start_time)
 
+        # Create a dedicated AsyncOpenAI client for user LLM
+        user_openai_client = AsyncOpenAI(
+            base_url=self.econfig.user_llm_base_url,
+            api_key="EMPTY",
+            timeout=60.0,
+        )
+
         async def _acompletion_with_base_url(*args, **kwargs):
             start_time = time.perf_counter()
+            # Extract model name without provider prefix (e.g., "openai/qwen" -> "qwen")
+            model = kwargs.get("model", self.econfig.user_llm)
+            if "/" in model:
+                model = model.split("/", 1)[1]
+
+            logger.info(
+                f"User LLM call: base_url={self.econfig.user_llm_base_url}, "
+                f"model={model}, kwargs_keys={kwargs.keys()}"
+            )
             try:
-                return await acompletion(
-                    *args, base_url=self.econfig.user_llm_base_url, **kwargs
+                # Use openai client directly instead of litellm
+                result = await user_openai_client.chat.completions.create(
+                    model=model,
+                    messages=kwargs.get("messages", []),
+                    tools=kwargs.get("tools"),
+                    tool_choice=kwargs.get("tool_choice"),
+                    temperature=kwargs.get("temperature", 0.0),
+                    max_completion_tokens=kwargs.get("max_completion_tokens", 2048),
                 )
+                logger.info(f"User LLM call succeeded")
+                return result
+            except Exception as e:
+                logger.error(f"User LLM call failed: {e}")
+                raise
             finally:
                 run_info.user_time.append(time.perf_counter() - start_time)
 

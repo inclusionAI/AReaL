@@ -134,14 +134,14 @@ ref:
 # Tau2 environment config
 econfig:
   domain: airline
-  max_steps: 50
-  solo_mode: false
+  max_steps: 200
+  solo_mode: true  # Use solo mode to avoid needing external User LLM
   add_thinking_tool: true
-  user_llm_base_url: http://33.180.160.235:36663/v1/
-  user_llm: qwen
+  user_llm_base_url: http://33.180.172.15:33292/v1
+  user_llm: openai/qwen
   user_llm_args:
     temperature: 0.0
-    max_completion_tokens: 512
+    max_completion_tokens: 2048
   turn_discount: 1.0
   invalid_format_penalty: 0.1
 
