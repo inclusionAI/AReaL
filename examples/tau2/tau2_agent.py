@@ -95,18 +95,15 @@ class Tau2Runner:
         # Use ArealOpenAI client for agent completions
         async def _acompletion(*args, **kwargs):
             start_time = time.perf_counter()
-            kwargs.update(
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-                thinking=False,
-            )
+            # Remove litellm-specific parameters that ArealOpenAI doesn't support
+            kwargs.pop("api_key", None)
+            kwargs.pop("base_url", None)
+            # Add chat template kwargs to disable thinking
+            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"]["chat_template_kwargs"] = {"enable_thinking": False}
             try:
-                # Use the ArealOpenAI client
-                return await acompletion(
-                    *args,
-                    api_key="dummy",
-                    base_url=self.client.base_url,
-                    **kwargs,
-                )
+                # Use ArealOpenAI client directly (not via HTTP)
+                return await self.client.chat.completions.create(**kwargs)
             finally:
                 run_info.agent_time.append(time.perf_counter() - start_time)
 
