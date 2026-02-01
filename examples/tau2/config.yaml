@@ -137,8 +137,8 @@ econfig:
   max_steps: 50
   solo_mode: false
   add_thinking_tool: true
-  user_llm_base_url: http://33.180.164.146:30000/v1/
-  user_llm: openai/Qwen2.5-72B
+  user_llm_base_url: http://33.180.160.235:36663/v1/
+  user_llm: qwen
   user_llm_args:
     temperature: 0.0
     max_completion_tokens: 512

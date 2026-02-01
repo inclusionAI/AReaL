@@ -9,10 +9,19 @@ import sys
 import time
 from typing import Any
 
+# Suppress litellm verbose logging
+os.environ["LITELLM_LOG"] = "ERROR"
+
 # Add current directory to path for local imports when running as script
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import litellm
 from litellm import acompletion, register_model
+
+# Disable litellm success/failure callbacks and verbose output
+litellm.suppress_debug_info = True
+litellm.set_verbose = False
+
 from tau2.agent.llm_agent import LLMAgent, LLMAgentState, LLMSoloAgent, LocalAgent
 from tau2.data_model.tasks import Task
 from tau2.environment.environment import Environment
@@ -280,8 +289,19 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
         stats_tracker.get(workflow_context.stat_scope()).scalar(reward=run_info.reward)
 
         # Set reward on client and export interactions
+        # Check if there are any interactions in the cache before setting reward
+        # (cache may be empty if simulation failed before any LLM calls)
+        interactions = client.export_interactions(style="individual")
+        if not interactions:
+            logger.warning(
+                f"No interactions recorded for task {task_id}, "
+                f"simulation may have failed early. Returning None."
+            )
+            return None
+
         client.set_last_reward(run_info.reward)
         client.apply_reward_discount(turn_discount=self.turn_discount)
+        # Re-export after reward is set
         interactions = client.export_interactions(style="individual")
 
         return interactions
