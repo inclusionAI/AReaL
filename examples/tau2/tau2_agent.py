@@ -122,7 +122,8 @@ class Tau2Runner:
         user_openai_client = AsyncOpenAI(
             base_url=self.econfig.user_llm_base_url,
             api_key="EMPTY",
-            timeout=60.0,
+            timeout=120.0,  # Increased timeout for high load scenarios
+            max_retries=3,  # Retry on transient failures
         )
 
         async def _acompletion_with_base_url(*args, **kwargs):
@@ -132,10 +133,6 @@ class Tau2Runner:
             if "/" in model:
                 model = model.split("/", 1)[1]
 
-            logger.info(
-                f"User LLM call: base_url={self.econfig.user_llm_base_url}, "
-                f"model={model}, kwargs_keys={kwargs.keys()}"
-            )
             try:
                 # Use openai client directly instead of litellm
                 result = await user_openai_client.chat.completions.create(
@@ -146,7 +143,6 @@ class Tau2Runner:
                     temperature=kwargs.get("temperature", 0.0),
                     max_completion_tokens=kwargs.get("max_completion_tokens", 2048),
                 )
-                logger.info(f"User LLM call succeeded")
                 return result
             except Exception as e:
                 logger.error(f"User LLM call failed: {e}")
