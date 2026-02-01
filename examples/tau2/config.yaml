@@ -135,7 +135,7 @@ ref:
 econfig:
   domain: airline
   max_steps: 200
-  solo_mode: true  # Use solo mode to avoid needing external User LLM
+  solo_mode: false
   add_thinking_tool: true
   user_llm_base_url: http://33.180.172.15:33292/v1
   user_llm: openai/qwen

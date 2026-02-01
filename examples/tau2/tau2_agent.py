@@ -196,6 +196,7 @@ class Tau2Runner:
             environment=env,
             task=task,
             max_steps=self.econfig.max_steps,
+            solo_mode=self.solo_mode,
         )
 
     async def run(self, task: Task) -> Tau2RunInfo:
