@@ -548,11 +548,14 @@ class FSDPEngine(TrainEngine):
             # Lazily create block mask for tree training just before forward
             if self.enable_tree_training and ctx.trie_node is not None:
                 padded_size = mb_item.padded_to_length
-                if padded_size is not None:
-                    block_mask = build_block_mask_from_trie(
-                        ctx.trie_node, padded_size, self.device
+                if padded_size is None:
+                    raise ValueError(
+                        "padded_size must be set for tree training with FSDP."
                     )
-                    inputs["block_mask"] = block_mask
+                block_mask = build_block_mask_from_trie(
+                    ctx.trie_node, padded_size, self.device
+                )
+                inputs["block_mask"] = block_mask
 
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
