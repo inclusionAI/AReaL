@@ -48,6 +48,38 @@ class MyAgentWorkflow(AgentWorkflow):
 
 See `areal/workflow/openai/` for concrete examples.
 
+## Available Agent Workflows
+
+### LangChain
+
+```bash
+# Simple single-turn agent
+workflow=areal.workflow.langchain.math_agent.MathAgent
+
+# Agent with calculator tools
+workflow=areal.workflow.langchain.math_agent.MathToolAgent
+```
+
+### OpenAI SDK
+
+```bash
+workflow=areal.workflow.openai.math_agent.MathAgent
+workflow=areal.workflow.openai.math_agent.MathToolAgent
+```
+
+### Anthropic SDK
+
+```bash
+workflow=areal.workflow.anthropic.math_agent.MathAgent
+```
+
+### OpenHands SDK
+
+```bash
+workflow=areal.workflow.openhands.math_agent.MathAgent
+workflow=areal.workflow.openhands.math_agent.MathToolAgent
+```
+
 ## Implementation Notes
 
 1. Ensure that your agent workflow uses async functions and `await` to maximize
