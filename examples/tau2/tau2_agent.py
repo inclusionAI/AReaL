@@ -304,7 +304,12 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
             The trajectory result with interactions
         """
         # Create ArealOpenAI client from engine
-        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+        client = ArealOpenAI(
+            engine=engine,
+            tokenizer=self.tokenizer,
+            tool_call_parser="qwen",   # Use qwen format for tool calls
+            reasoning_parser="qwen3",  # Use qwen3 format for reasoning
+        )
 
         domain = self.econfig.domain
         split = data["split"]
@@ -321,17 +326,32 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
         # Set reward on client and export interactions
         # Check if there are any interactions in the cache before setting reward
         # (cache may be empty if simulation failed before any LLM calls)
-        interactions = client.export_interactions(style="individual")
-        if not interactions:
+        # Also filter out incomplete interactions (where completion is None)
+        cache = client._cache
+        if not cache:
             logger.warning(
                 f"No interactions recorded for task {task_id}, "
                 f"simulation may have failed early. Returning None."
             )
             return None
 
+        # Remove incomplete interactions (where completion is None)
+        incomplete_ids = [
+            id for id, interaction in cache.items()
+            if interaction.completion is None and interaction.response is None
+        ]
+        for id in incomplete_ids:
+            logger.warning(f"Removing incomplete interaction {id} from cache")
+            del cache[id]
+
+        if not cache:
+            logger.warning(
+                f"All interactions were incomplete for task {task_id}. Returning None."
+            )
+            return None
+
         client.set_last_reward(run_info.reward)
         client.apply_reward_discount(turn_discount=self.turn_discount)
-        # Re-export after reward is set
         interactions = client.export_interactions(style="individual")
 
         return interactions

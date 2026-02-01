@@ -27,7 +27,7 @@ rollout:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
-  max_concurrent_rollouts: 512
+  max_concurrent_rollouts: 64  # Reduced from 512 to avoid SGLang OOM
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
@@ -137,7 +137,7 @@ econfig:
   max_steps: 200
   solo_mode: false
   add_thinking_tool: true
-  user_llm_base_url: http://33.180.172.15:33292/v1
+  user_llm_base_url: http://33.180.172.15:35862/v1
   user_llm: openai/qwen
   user_llm_args:
     temperature: 0.0
