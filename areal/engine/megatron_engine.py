@@ -57,7 +57,11 @@ from areal.models.tree_attn.functional import (
     gather_packed_tree_logprobs_entropy,
     merge_packed_tree_results,
 )
-from areal.models.tree_attn.module import BLOCK_SIZE, patch_bridge_for_tree_training
+from areal.models.tree_attn.module import (
+    BLOCK_SIZE,
+    build_block_mask_from_trie,
+    patch_bridge_for_tree_training,
+)
 from areal.models.tree_attn.tree import build_packed_tree_batch
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
@@ -565,7 +569,22 @@ class MegatronEngine(TrainEngine):
             mb_input: MicroBatchItem = next(batch_iter)
 
             cu_seqlens = mb_input.padded_mb.get("cu_seqlens", None)
+
+            # Lazily create block mask for tree training just before forward
+            if self.enable_tree_training:
+                trie_node = mb_input.padded_mb.get("trie_node", None)
+                padded_size = mb_input.padded_to_length
+                if trie_node is not None and padded_size is not None:
+                    block_mask = build_block_mask_from_trie(
+                        trie_node, padded_size, self.device
+                    )
+                    mb_input.padded_mb["block_mask"] = block_mask
+
             output = packed_context_parallel_forward(model, mb_input.padded_mb)
+
+            # Release block mask memory after forward pass
+            if self.enable_tree_training and "block_mask" in mb_input.padded_mb:
+                del mb_input.padded_mb["block_mask"]
 
             def _process_output(input_, output_):
                 loss = process_output_fn(output_, input_)

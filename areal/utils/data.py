@@ -372,12 +372,14 @@ class MicroBatchItem(NamedTuple):
         padded_mb: Padded micro-batch dict (for model forward)
         padding_length: Batch-level padding added to this micro-batch
         old_cu_seqlens: Original cu_seqlens before sequence alignment (or None)
+        padded_to_length: The padded sequence length for this micro-batch (or None)
     """
 
     orig_mb: dict[str, Any]
     padded_mb: dict[str, Any]
     padding_length: int
     old_cu_seqlens: torch.Tensor | None
+    padded_to_length: int | None = None
 
 
 @dataclass
@@ -421,6 +423,7 @@ class MicroBatchList:
                 - padded_mb: Padded micro-batch dict (for model forward)
                 - padding_length: Batch-level padding added to this micro-batch
                 - old_cu_seqlens: Original cu_seqlens before sequence alignment (or None)
+                - padded_to_length: The padded sequence length for this micro-batch (or None)
         """
         if self.padded_mbs is None:
             raise ValueError("padded_mbs is None. Call pad_mb_list first.")
@@ -428,11 +431,15 @@ class MicroBatchList:
             old_cu_seqlens = (
                 self.old_cu_seqlens_list[i] if self.old_cu_seqlens_list else None
             )
+            padded_to_length = (
+                self.padded_to_lengths[i] if self.padded_to_lengths else None
+            )
             yield MicroBatchItem(
                 orig_mb=self.mbs[i],
                 padded_mb=self.padded_mbs[i],
                 padding_length=self.padding_lengths[i],
                 old_cu_seqlens=old_cu_seqlens,
+                padded_to_length=padded_to_length,
             )
 
     def to(self, *args, **kwargs):

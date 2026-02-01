@@ -4,6 +4,7 @@ from areal.models.tree_attn.module_fsdp import (
     patch_fsdp_for_tree_training,
     restore_patch_fsdp_for_tree_training,
 )
+from areal.models.tree_attn.tree import build_block_mask_from_trie
 
 # Conditionally import Megatron functionality
 try:
@@ -22,6 +23,7 @@ __all__ = [
     "create_block_mask_from_dense",
     "patch_fsdp_for_tree_training",
     "restore_patch_fsdp_for_tree_training",
+    "build_block_mask_from_trie",
     # Megatron exports (may be None if Megatron not installed)
     "PytorchFlexAttention",
     "patch_bridge_for_tree_training",
