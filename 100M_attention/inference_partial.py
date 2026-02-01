@@ -15,7 +15,8 @@ model and validates the positional-encoding swap:
 
 	python Inference.py --self-test
 """
-
+Period = 128000  # Periodicity for rotary positional encoding
+ALPHA = 0.8  # Proportion of dimensions to retain in rotary embeddings
 from __future__ import annotations
 
 import argparse
@@ -168,7 +169,7 @@ class CustomRotaryPositionalEncoding(nn.Module):
 		attention_scaling: float = 1.0,
 		dropout: float = 0.0,
 		learned_scaling: bool = True,
-		period: int = 128000,
+		period: int = Period,
 	) -> None:
 		super().__init__()
 		if inv_freq.ndim != 1:
@@ -224,7 +225,7 @@ class CustomRotaryPositionalEncoding(nn.Module):
 			n = n - 1
 		
 		# Calculate m as approximately 0.8 * n, ensuring it's even
-		m = int(0.8 * n)
+		m = int(ALPHA * n)
 		if m % 2 != 0:
 			m = m - 1
 		
