@@ -75,20 +75,50 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
         from areal.experimental.openai import InteractionWithTokenLogpReward
 
         results = await asyncio.gather(
-            *[self.workflow.arun_episode(engine, data) for _ in range(self.group_size)]
+            *[self.workflow.arun_episode(engine, data) for _ in range(self.group_size)],
+            return_exceptions=True,
         )
 
-        valid_results = [r for r in results if r is not None]
+        # Separate exceptions from results
+        exceptions = [r for r in results if isinstance(r, Exception)]
+        non_exception_results = [r for r in results if not isinstance(r, Exception)]
 
-        # All results None -> return None
+        # Log exceptions
+        if exceptions:
+            self.logger.warning(
+                f"GroupedRolloutWorkflow: {len(exceptions)}/{len(results)} "
+                f"trajectories raised exceptions: {[type(e).__name__ for e in exceptions]}"
+            )
+            for i, exc in enumerate(exceptions):
+                self.logger.debug(f"  Exception {i}: {exc}")
+
+        valid_results = [r for r in non_exception_results if r is not None]
+
+        # Log empty dict results
+        empty_dict_count = sum(
+            1 for r in valid_results if isinstance(r, dict) and len(r) == 0
+        )
+        if empty_dict_count > 0:
+            self.logger.warning(
+                f"GroupedRolloutWorkflow: {empty_dict_count}/{len(valid_results)} "
+                "results are empty dicts (no interactions recorded)"
+            )
+
+        # All results None or exception -> return None
         if not valid_results:
+            self.logger.warning(
+                f"GroupedRolloutWorkflow: All {len(results)} trajectories failed "
+                f"(exceptions={len(exceptions)}, None={len(non_exception_results) - len(valid_results)})"
+            )
             return None
 
         # Some results None -> warn and continue with valid ones
-        if len(valid_results) < len(results):
+        none_count = len(non_exception_results) - len(valid_results)
+        if none_count > 0 or exceptions:
             self.logger.warning(
-                f"GroupedRolloutWorkflow: {len(results) - len(valid_results)}/{len(results)} "
-                "trajectories returned None, using remaining results"
+                f"GroupedRolloutWorkflow: {none_count + len(exceptions)}/{len(results)} "
+                f"trajectories returned None (None={none_count}, exceptions={len(exceptions)}), "
+                "using remaining results"
             )
 
         # Check if results are InteractionWithTokenLogpReward dicts
@@ -104,6 +134,10 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
             merged: dict[str, InteractionWithTokenLogpReward] = {}
             for result in valid_results:
                 merged.update(result)
+            if not merged:
+                self.logger.warning(
+                    "GroupedRolloutWorkflow: Merged result is empty, returning None"
+                )
             return merged if merged else None
 
         # Otherwise, tensor dicts - concatenate

@@ -323,6 +323,11 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
         # Filter out incomplete interactions (where completion is None)
         cache = client._cache
         if not cache:
+            logger.warning(
+                f"[Task {task_id}] No interactions in cache. "
+                f"Reward: {run_info.reward}, Error: {run_info.error}, "
+                f"Messages count: {len(run_info.messages)}"
+            )
             return None
 
         # Remove incomplete interactions (where completion is None)
@@ -330,16 +335,29 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
             id for id, interaction in cache.items()
             if interaction.completion is None and interaction.response is None
         ]
+        if incomplete_ids:
+            logger.warning(
+                f"[Task {task_id}] Removing {len(incomplete_ids)} incomplete interactions "
+                f"out of {len(cache)} total"
+            )
         for id in incomplete_ids:
             del cache[id]
 
         if not cache:
+            logger.warning(
+                f"[Task {task_id}] All interactions were incomplete. "
+                f"Reward: {run_info.reward}, Error: {run_info.error}"
+            )
             return None
 
         client.set_last_reward(run_info.reward)
         client.apply_reward_discount(turn_discount=self.turn_discount)
         interactions = client.export_interactions(style="individual")
 
+        logger.info(
+            f"[Task {task_id}] Completed with {len(interactions)} interactions, "
+            f"reward: {run_info.reward}"
+        )
         return interactions
 
 

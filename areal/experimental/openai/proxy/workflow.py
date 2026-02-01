@@ -128,7 +128,11 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         # by the rollout controller and staleness manager. If the code runs
         # to this point, it means that we are within the allowed staleness window,
         # so we can grant capacity to let the agent session proceed.
-        await self._grant_capacity(http_session)
+        try:
+            await self._grant_capacity(http_session)
+        except Exception as e:
+            logger.error(f"[Task {task_id}] Failed to grant capacity: {e}")
+            raise
 
         proxy_client: OpenAIProxyClient | None = None
 
@@ -140,28 +144,55 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             base_url=self.proxy_addr,
             task_id=str(task_id),
         )
-        async with proxy_client:
-            # Run the user code.
-            try:
-                rewards = await self._run_agent(proxy_client.session_url, data)
-            except Exception:
-                logger.warning("Agent task failed. This trajectory will be rejected.")
-                raise
+        try:
+            async with proxy_client:
+                # Run the user code.
+                try:
+                    rewards = await self._run_agent(proxy_client.session_url, data)
+                    logger.debug(
+                        f"[Task {task_id}] Agent returned reward: {rewards}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[Task {task_id}] Agent task failed with exception: {e}. "
+                        "This trajectory will be rejected."
+                    )
+                    raise
 
-            # Assign rewards back according to user code output
-            if isinstance(rewards, dict):
-                for completion_id, reward in rewards.items():
-                    await proxy_client.set_reward(completion_id, reward)
-            elif isinstance(rewards, float):
-                await proxy_client.set_last_reward(rewards)
-            else:
-                raise ValueError(f"Invalid reward type: {type(rewards)}")
+                # Assign rewards back according to user code output
+                if isinstance(rewards, dict):
+                    for completion_id, reward in rewards.items():
+                        await proxy_client.set_reward(completion_id, reward)
+                elif isinstance(rewards, float):
+                    await proxy_client.set_last_reward(rewards)
+                else:
+                    raise ValueError(f"Invalid reward type: {type(rewards)}")
+        except Exception as e:
+            logger.error(
+                f"[Task {task_id}] Exception during proxy session: {e}",
+                exc_info=True,
+            )
+            raise
 
         # Apply turn-level discount and export interactions
-        interactions = await proxy_client.export_interactions(
-            discount=self.discount,
-            style=self.export_style,
-        )
+        try:
+            interactions = await proxy_client.export_interactions(
+                discount=self.discount,
+                style=self.export_style,
+            )
+        except Exception as e:
+            logger.error(
+                f"[Task {task_id}] Failed to export interactions: {e}",
+                exc_info=True,
+            )
+            raise
+
+        # Check for empty interactions
+        if not interactions:
+            logger.warning(
+                f"[Task {task_id}] No interactions exported. "
+                f"Session ID: {proxy_client.session_id}, reward: {rewards}"
+            )
 
         # Record stats
         last_id = list(interactions.keys())[-1] if interactions else None
@@ -169,4 +200,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             last_reward = interactions[last_id].reward
             stats_tracker.get(workflow_context.stat_scope()).scalar(reward=last_reward)
 
+        logger.info(
+            f"[Task {task_id}] Completed with {len(interactions)} interactions"
+        )
         return interactions
