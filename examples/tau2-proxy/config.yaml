@@ -93,6 +93,7 @@ actor:
       gpu: 1
       cpu: 15
       mem: 32
+      image: /storage/openpsi/images/areal-dev.sif
       cmd: python3 -m areal.scheduler.rpc.rpc_server
       env_vars:
         NCCL_SOCKET_IFNAME: "bond0"
@@ -113,7 +114,6 @@ actor:
         - pip install tenacity
         - pip install torch_memory_saver
         - pip install /storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench
-        - pip install litellm==1.75
         - pip install "transformers==4.57.1"
         - export TAU2_DATA_DIR=/storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench/data
 
