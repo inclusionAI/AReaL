@@ -72,19 +72,26 @@ class Tau2RunInfo(BaseModel):
                 action.model_dump() for action in self.task.evaluation_criteria.actions
             ]
 
+        # Convert messages, handling different message types
+        # (ToolMessage and SystemMessage don't have tool_calls attribute)
+        messages_list = []
+        for m in self.messages:
+            msg_dict = {
+                "turn_idx": m.turn_idx,
+                "role": m.role,
+                "content": m.content,
+            }
+            # Only AssistantMessage and UserMessage have tool_calls
+            tool_calls = getattr(m, "tool_calls", None)
+            if tool_calls:
+                msg_dict["tool_calls"] = [tc.model_dump() for tc in tool_calls]
+            messages_list.append(msg_dict)
+
         return {
             "task": task_dict,
             "reward": self.reward,
             "reward_info": self.reward_info.model_dump() if self.reward_info else None,
-            "messages": [
-                {
-                    "turn_idx": m.turn_idx,
-                    "role": m.role,
-                    "content": m.content,
-                    "tool_calls": [tc.model_dump() for tc in m.tool_calls] if m.tool_calls else None,
-                }
-                for m in self.messages
-            ],
+            "messages": messages_list,
             "agent_time": self.agent_time,
             "user_time": self.user_time,
             "error": self.error,
