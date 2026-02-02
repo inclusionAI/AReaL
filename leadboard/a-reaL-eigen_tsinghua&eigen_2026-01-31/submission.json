@@ -1,0 +1,55 @@
+{
+  "model_name": "A-ReaL-Eigen",
+  "model_organization": "Tsinghua & Eigen",
+  "submitting_organization": "Tsinghua & Eigen",
+  "submission_date": "2026-01-31",
+  "submission_type": "standard",
+  "contact_info": {
+    "email": "samjia2000@gmail.com",
+    "name": "Jiaxuan Gao",
+    "github": "samjia2000"
+  },
+  "is_new": true,
+  "trajectories_available": true,
+  "references": [
+    {
+      "title": "From Self-Evolving Synthetic Data to Verifiable-Reward RL: Post-Training Multi-turn Interactive Tool-Using Agents",
+      "url": "https://arxiv.org/abs/2601.22607",
+      "type": "paper"
+    }
+  ],
+  "results": {
+    "airline": {
+      "pass_1": 71.0,
+      "pass_2": 68.0,
+      "pass_3": 66.5,
+      "pass_4": 66.0,
+      "cost": null
+    },
+    "retail": {
+      "pass_1": 84.21,
+      "pass_2": 75.15,
+      "pass_3": 69.08,
+      "pass_4": 64.91,
+      "cost": null
+    },
+    "telecom": {
+      "pass_1": 94.08,
+      "pass_2": 89.33,
+      "pass_3": 85.53,
+      "pass_4": 82.46,
+      "cost": null
+    }
+  },
+  "methodology": {
+    "evaluation_date": "2026-01-31",
+    "tau2_bench_version": "v0.2.1.dev0",
+    "user_simulator": "gpt-4.1-2025-04-14",
+    "notes": "Evaluation conducted using standard tau2-bench protocol.",
+    "verification": {
+      "modified_prompts": false,
+      "omitted_questions": false,
+      "details": "Verified evaluation with full trajectory data available."
+    }
+  }
+}
