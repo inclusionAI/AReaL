@@ -70,7 +70,11 @@ from areal.models.tree_attn.functional import (
     gather_packed_tree_logprobs_entropy,
     merge_packed_tree_results,
 )
-from areal.models.tree_attn.module import BLOCK_SIZE, patch_fsdp_for_tree_training
+from areal.models.tree_attn.module import (
+    BLOCK_SIZE,
+    build_block_mask_from_trie,
+    patch_fsdp_for_tree_training,
+)
 from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
 from areal.platforms import current_platform
 from areal.utils import (
@@ -541,9 +545,25 @@ class FSDPEngine(TrainEngine):
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
+            # Lazily create block mask for tree training just before forward
+            if self.enable_tree_training and ctx.trie_node is not None:
+                padded_size = mb_item.padded_to_length
+                if padded_size is None:
+                    raise ValueError(
+                        "padded_size must be set for tree training with FSDP."
+                    )
+                block_mask = build_block_mask_from_trie(
+                    ctx.trie_node, padded_size, self.device
+                )
+                inputs["block_mask"] = block_mask
+
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
+
+            # Release block mask memory after forward pass
+            if self.enable_tree_training and "block_mask" in inputs:
+                del inputs["block_mask"]
 
             ctx_dict = ctx.to_dict()
             loss = process_output_fn(logits, ctx_dict)
