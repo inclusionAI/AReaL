@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import transformers
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 
 _SEED = None
 _BASE_SEED = None

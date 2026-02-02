@@ -8,7 +8,7 @@ from torch.testing import assert_close
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.engine.fsdp_engine import FSDPEngine
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils.data import concat_padded_tensors, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer

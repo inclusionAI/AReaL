@@ -99,8 +99,8 @@ uv run python docs/generate_cli_docs.py
 
 ## Extended Configuration
 
-See `.claude/agents/`, `.claude/skills/`, and `.claude/commands/` for specialized
-instructions.
+See `.claude/agents/`, `.claude/skills/`, `.claude/commands/`, and `.claude/rules/` for
+specialized instructions.
 
 ### Agents
 
@@ -138,5 +138,15 @@ Skills provide step-by-step guides for common development tasks:
 
 Commands perform specific actions when invoked:
 
-- `/pr-review` - Intelligent PR code review with dynamic agent allocation
+- `/create-pr` - Rebase, squash commits, and create/update PR with intelligent messages
 - `/gen-commit-msg` - Generate commit messages from staged changes
+- `/pr-review` - Intelligent PR code review with dynamic agent allocation
+
+### Rules (Code Quality Standards)
+
+Project-wide standards enforced across all code changes:
+
+- `api-config.md` - Configuration dataclass design patterns
+- `code-style.md` - Coding conventions beyond pre-commit hooks
+- `distributed.md` - Distributed training patterns and constraints
+- `testing.md` - Testing strategy and coverage requirements

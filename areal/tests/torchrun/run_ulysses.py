@@ -8,9 +8,9 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2RotaryEmbedding,
 )
 
+from areal.infra.platforms import current_platform
 from areal.models.fsdp.ulysses import set_ulysses_sequence_parallel_group
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
-from areal.platforms import current_platform
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 
 

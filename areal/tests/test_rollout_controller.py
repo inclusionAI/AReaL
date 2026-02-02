@@ -14,8 +14,8 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Worker
-from areal.controller import RolloutController
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.infra import RolloutController
 from areal.scheduler.local import LocalScheduler
 from areal.tests.utils import get_model_path
 from areal.utils.hf_utils import load_hf_tokenizer

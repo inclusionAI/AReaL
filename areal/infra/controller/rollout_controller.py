@@ -29,8 +29,6 @@ from areal.api.io_struct import (
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow, WorkflowLike
-from areal.core.staleness_manager import StalenessManager
-from areal.core.workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 from areal.scheduler.rpc.serialization import deserialize_value
 from areal.utils import logging, perf_tracer
 from areal.utils.concurrent import run_async_task
@@ -38,6 +36,9 @@ from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
+
+from ..staleness_manager import StalenessManager
+from ..workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 
 logger = logging.getLogger("RolloutController")
 

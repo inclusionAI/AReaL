@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from areal.api.cli_args import PerfTracerConfig, SessionTracerConfig
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import perf_tracer
 from areal.utils.network import find_free_ports
 from areal.utils.perf_tracer import Category, SessionTraceEvent

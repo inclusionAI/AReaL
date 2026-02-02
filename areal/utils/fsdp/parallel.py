@@ -18,8 +18,8 @@ from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import FSDPParallelStrategy
 from areal.api.cli_args import FSDPWrapPolicy, TrainEngineConfig
+from areal.infra.platforms import current_platform
 from areal.models.parallel_styles import ReplicateParallel
-from areal.platforms import current_platform
 from areal.utils.fsdp import apply_fsdp2
 from areal.utils.model import (
     is_gemma3_model,

@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from areal.experimental.models.archon import ArchonParallelDims
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils.network import find_free_ports
 
 

@@ -20,7 +20,7 @@ from werkzeug.serving import make_server
 
 from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.scheduler.rpc import rtensor
 from areal.scheduler.rpc.rtensor import RTensor
 from areal.scheduler.rpc.serialization import (

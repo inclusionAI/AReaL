@@ -52,12 +52,13 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import WorkflowLike
-from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_total_loss_weight,
     reorder_and_pad_outputs,
 )
+from areal.infra.dist_rollout import DistRolloutCoordinator
+from areal.infra.platforms import current_platform
 from areal.models.fsdp.ulysses import (
     set_ulysses_sequence_parallel_group,
     ulysses_pad,
@@ -76,7 +77,6 @@ from areal.models.tree_attn.module import (
     patch_fsdp_for_tree_training,
 )
 from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
-from areal.platforms import current_platform
 from areal.utils import (
     logging,
     name_resolve,

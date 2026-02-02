@@ -3,8 +3,8 @@ from typing import Any
 import torch
 
 from areal.api.engine_api import TrainEngine
-from areal.controller.train_controller import TrainController
-from areal.platforms import current_platform
+from areal.infra import TrainController
+from areal.infra.platforms import current_platform
 from areal.utils import logging, stats_tracker
 from areal.utils.perf_tracer import trace_perf
 

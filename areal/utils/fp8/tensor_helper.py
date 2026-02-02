@@ -3,7 +3,7 @@ import math
 import torch
 from megatron.core.fp8_utils import is_float8tensor
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 
 
 class FP8BlockwiseTensorHelper(torch.Tensor):

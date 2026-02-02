@@ -5,7 +5,7 @@ import torch
 
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
-from areal.controller.train_controller import TrainController
+from areal.infra import TrainController
 from areal.utils import logging, stats_tracker
 from areal.utils.constants import (
     PROX_APPROX_METHOD_LINEAR,

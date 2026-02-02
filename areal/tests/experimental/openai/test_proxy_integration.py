@@ -15,8 +15,8 @@ from areal.api.cli_args import (
     SGLangConfig,
 )
 from areal.api.io_struct import LocalInfServerInfo
-from areal.controller.rollout_controller import RolloutController
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.infra import RolloutController
 from areal.scheduler.local import LocalScheduler
 from areal.scheduler.rpc.rtensor import RTensor
 from areal.tests.utils import get_model_path

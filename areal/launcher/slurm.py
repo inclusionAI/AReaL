@@ -16,7 +16,7 @@ from areal.api.cli_args import (
     to_structured_cfg,
     vLLMConfig,
 )
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import name_resolve, names
 from areal.utils.exp_metadata import save_experiment_metadata
 from areal.utils.launcher import (

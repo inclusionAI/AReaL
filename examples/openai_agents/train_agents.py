@@ -5,10 +5,10 @@ from agents import ModelSettings, OpenAIProvider, RunConfig
 from agents import Runner as OpenAIRunner
 from transformers import PreTrainedTokenizerFast
 
+from areal import workflow_context
 from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.core import workflow_context
 from areal.dataset import get_custom_dataset
 from areal.experimental.openai import ArealOpenAI
 from areal.experimental.trainer import PPOTrainer

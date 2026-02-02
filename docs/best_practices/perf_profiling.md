@@ -136,7 +136,7 @@ does a single prompt take from submission to reward calculation?).
 **Example** (from `areal/workflow/rlvr.py`):
 
 ```python
-from areal.core import workflow_context
+from areal import workflow_context
 from areal.utils.perf_tracer import (
     atrace_session_phase,
     session_context,
@@ -283,7 +283,7 @@ snapshot").
 - Creates a point-in-time marker (not a duration)
 - Useful for events that don't have a meaningful duration
 
-**Example** (from `areal/core/workflow_executor.py`):
+**Example** (from `areal/infra/workflow_executor.py`):
 
 ```python
 perf_tracer.instant(
@@ -316,7 +316,7 @@ consumption).
 - Parameters: Use `session_id=` to target a specific session, or `task_id=` to target
   all sessions in a task
 
-**Example** (from `areal/core/workflow_executor.py`):
+**Example** (from `areal/infra/workflow_executor.py`):
 
 ```python
 from areal.utils.perf_tracer import trace_session_event

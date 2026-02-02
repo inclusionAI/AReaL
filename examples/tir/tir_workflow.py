@@ -7,6 +7,7 @@ from typing import Any
 import torch
 from transformers import PreTrainedTokenizerFast
 
+from areal import workflow_context
 from areal.api.cli_args import (
     GenerationHyperparameters,
     GRPOConfig,
@@ -17,7 +18,6 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
 
 from prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT  # isort: skip

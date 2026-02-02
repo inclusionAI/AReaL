@@ -17,7 +17,7 @@ from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPLMEngine
 from areal.experimental.engine.archon_engine import ArchonLMEngine
 from areal.experimental.models.archon import get_model_spec, is_supported_model
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.utils import get_dataset_path, get_model_path
 from areal.utils.data import pad_sequences_to_tensors
 from areal.utils.hf_utils import load_hf_tokenizer

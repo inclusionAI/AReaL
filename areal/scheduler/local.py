@@ -19,7 +19,7 @@ from areal.api.cli_args import (
     SchedulingStrategyType,
 )
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.scheduler.exceptions import (
     EngineCallError,
     EngineCreationError,

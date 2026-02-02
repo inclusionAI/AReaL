@@ -34,8 +34,8 @@ from areal.api.io_struct import (
     WeightUpdateRequests,
 )
 from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow, WorkflowLike
-from areal.core import workflow_context
-from areal.platforms import current_platform
+from areal.infra import workflow_context
+from areal.infra.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.concurrent import get_executor
 from areal.utils.data import concat_padded_tensors

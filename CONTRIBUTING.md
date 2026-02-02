@@ -244,7 +244,7 @@ failures. For example:
 
 ```python
 import pytest
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 
 # ordinary tests are supposed to run fast, and will run in CI
 def test_fast_operation():
