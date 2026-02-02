@@ -42,7 +42,7 @@ AReaL supports multiple PPO-like algorithms, differing in normalization and clip
 
 ### 2. Core Configuration
 
-Location: `areal/api/cli_args.py` → `PPOActorConfig`, `NormConfig`
+Location: `areal/api/cli_args.py` -> `PPOActorConfig`, `NormConfig`
 
 **Key parameters:**
 
@@ -50,8 +50,8 @@ Location: `areal/api/cli_args.py` → `PPOActorConfig`, `NormConfig`
 # PPOActorConfig
 eps_clip: float = 0.2          # PPO clipping parameter
 kl_ctl: float = 0.0            # KL penalty (0 for critic-free)
-discount: float = 1.0          # γ for future rewards
-gae_lambda: float = 1.0        # GAE λ parameter
+discount: float = 1.0          # gamma for future rewards
+gae_lambda: float = 1.0        # GAE lambda parameter
 
 # NormConfig (for reward_norm and adv_norm)
 mean_level: str = "global"     # global, group, sample, null
@@ -108,12 +108,12 @@ Location: `areal/engine/ppo/actor.py`
 **PPO Loss:**
 
 ```
-L = -min(r(θ) * A, clip(r(θ), 1-ε, 1+ε) * A)
+L = -min(r(theta) * A, clip(r(theta), 1-epsilon, 1+epsilon) * A)
 
 where:
-- r(θ) = π_new / π_old (importance ratio)
+- r(theta) = pi_new / pi_old (importance ratio)
 - A = advantage (normalized per config)
-- ε = eps_clip
+- epsilon = eps_clip
 ```
 
 **Advantage Normalization Levels:**
@@ -171,7 +171,7 @@ Activation: When RL algorithm topics detected
 
 ## Design Philosophy
 
-- **Scope Division**: fsdp-expert (FSDP engine), archon-expert (Archon/MoE), algorithm-expert (RL algorithms/workflows/rewards)
+- **Scope Division**: fsdp-engine-expert (FSDP engine), archon-engine-expert (Archon/MoE), algorithm-expert (RL algorithms/workflows/rewards)
 - **Model**: Opus (algorithm reasoning and debugging)
 
 ## How to Update

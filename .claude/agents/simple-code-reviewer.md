@@ -71,7 +71,7 @@ for quick, lightweight checks.
 1. **[Suggestion Title]** - `file.py:456`
    - [description]
 
-### Looks Good ✓
+### Looks Good [OK]
 
 - [positive observations]
 ```
