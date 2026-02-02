@@ -15,9 +15,9 @@ cluster:
     nfs_record_root: /storage/openpsi/experiments/name_resolve
     etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-su18-01.hn01.su18-hn.local:2379
 
-# Use archon backend for training
-# Format: sglang[rollout]:d{data_parallel}t{tensor_parallel}+archon[actor]:d{dp}p{pp}t{tp}
-allocation_mode: sglang:d4t2+archon:d4p2t1
+# Use archon backend for training with proxy server for rollout
+# Format for proxy mode: proxy+archon[actor]:d{dp}p{pp}t{tp}
+allocation_mode: proxy+archon:d4p2t1
 
 scheduler:
   type: slurm
@@ -34,7 +34,7 @@ rollout:
   enable_rollout_tracing: false
   scheduling_spec: ${actor.scheduling_spec}
   openai:
-    mode: inline
+    mode: proxy
     tool_call_parser: qwen25
     reasoning_parser: qwen3
     export_style: individual

@@ -5,6 +5,7 @@ compatible with AReaL's single-controller mode using proxy server.
 Use this when running with `python3 tau2_train.py scheduler.type=slurm`.
 """
 
+import json
 import os
 import sys
 import time
@@ -140,12 +141,31 @@ class Tau2ProxyAgentWorkflow(AgentWorkflow):
         try:
             simulation = await orchestrator.arun()
             run_info.messages = simulation.messages
+            # Log simulation details for debugging
+            completion_calls = getattr(run_info, '_completion_call_count', [0])[0]
+            logger.debug(
+                f"[Task {task.id}] Simulation completed. "
+                f"Messages: {len(simulation.messages)}, "
+                f"Agent completions called: {completion_calls}, "
+                f"Agent time entries: {len(run_info.agent_time)}"
+            )
+            # Log message roles for debugging when few messages
+            if len(simulation.messages) <= 5:
+                roles = [m.role for m in simulation.messages]
+                logger.warning(
+                    f"[Task {task.id}] Short simulation with only {len(simulation.messages)} messages. "
+                    f"Roles: {roles}, Agent calls: {completion_calls}"
+                )
         except Exception as e:
             logger.error(
                 f"ERROR RUNNING SIMULATION: Domain: {domain}, Task: {task.id}, "
                 f"Error: {e}. Setting reward to 0.0"
             )
+            run_info.messages = orchestrator.get_trajectory()
             run_info.error = str(e)
+            # Save trajectory even on error if enabled
+            if self.econfig.save_trajectories:
+                self._save_trajectory(task_id, run_info, extra_kwargs.get("step", 0))
             return 0.0
 
         try:
@@ -156,13 +176,54 @@ class Tau2ProxyAgentWorkflow(AgentWorkflow):
                 evaluation_type=EvaluationType.ALL,
                 solo_mode=self.econfig.solo_mode,
             )
+            run_info.reward_info = reward_info
             run_info.reward = reward_info.reward
         except Exception as e:
             logger.error(f"ERROR EVALUATING SIMULATION: {e}. Setting reward to 0.0")
+            run_info.error = str(e)
+            # Save trajectory even on error if enabled
+            if self.econfig.save_trajectories:
+                self._save_trajectory(task_id, run_info, extra_kwargs.get("step", 0))
             return 0.0
 
         logger.info(f"FINISHED SIMULATION: Task: {task.id}, Reward: {run_info.reward}")
+
+        # Save trajectory if enabled
+        if self.econfig.save_trajectories:
+            self._save_trajectory(task_id, run_info, extra_kwargs.get("step", 0))
+
         return run_info.reward
+
+    def _save_trajectory(
+        self,
+        task_id: str,
+        run_info: Tau2RunInfo,
+        step: int = 0,
+    ):
+        """Save trajectory to JSONL file.
+
+        File is saved to: {trajectory_save_dir}/{step}/{task_id}.jsonl
+        """
+        try:
+            # Build save path: {step}/{task_id}.jsonl
+            base_dir = self.econfig.trajectory_save_dir or os.getcwd()
+            save_dir = os.path.join(base_dir, str(step))
+            os.makedirs(save_dir, exist_ok=True)
+
+            # Sanitize task_id for filename (replace special chars)
+            safe_task_id = task_id.replace("/", "_").replace("\\", "_").replace(":", "_")
+            filepath = os.path.join(save_dir, f"{safe_task_id}.jsonl")
+
+            # Build record
+            record = run_info.to_dict()
+            record["step"] = step
+
+            # Append to file (multiple samples for same task go to same file)
+            with open(filepath, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        except Exception as e:
+            logger.warning(f"Failed to save trajectory for task {task_id}: {e}")
 
     def _get_environment(self) -> Environment:
         environment_constructor = registry.get_env_constructor(self.econfig.domain)
@@ -184,18 +245,35 @@ class Tau2ProxyAgentWorkflow(AgentWorkflow):
         if self.econfig.add_thinking_tool:
             tools.append(Tool(think))
 
+        # Track completion call count for debugging
+        completion_call_count = [0]
+
         # Use proxy server for agent completions
         async def _acompletion(*args, **kwargs):
+            completion_call_count[0] += 1
+            call_num = completion_call_count[0]
+            logger.debug(f"[Task {task.id}] Agent completion call #{call_num}")
             start_time = time.perf_counter()
             kwargs.pop("api_key", None)
             kwargs.pop("base_url", None)
             kwargs.pop("n", None)  # n > 1 not supported
             # Set model to "default" for proxy server
             kwargs["model"] = "default"
+            # Add chat template kwargs to disable thinking
+            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"]["chat_template_kwargs"] = {"enable_thinking": False}
             try:
-                return await agent_client.chat.completions.create(**kwargs)
+                result = await agent_client.chat.completions.create(**kwargs)
+                logger.debug(f"[Task {task.id}] Agent completion #{call_num} succeeded")
+                return result
+            except Exception as e:
+                logger.error(f"[Task {task.id}] Agent completion #{call_num} failed: {e}")
+                raise
             finally:
                 run_info.agent_time.append(time.perf_counter() - start_time)
+
+        # Store completion_call_count in run_info for later logging
+        run_info._completion_call_count = completion_call_count
 
         # Create a dedicated client for user LLM
         user_openai_client = AsyncOpenAI(
@@ -218,6 +296,7 @@ class Tau2ProxyAgentWorkflow(AgentWorkflow):
                     tool_choice=kwargs.get("tool_choice"),
                     temperature=kwargs.get("temperature", 0.0),
                     max_completion_tokens=kwargs.get("max_completion_tokens", 2048),
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 )
             except Exception as e:
                 logger.error(f"User LLM call failed: {e}")

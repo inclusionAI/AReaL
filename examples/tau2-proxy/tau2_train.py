@@ -103,6 +103,13 @@ def main(args):
         )
 
     # Prepare econfig dict for workflow
+    # Use experiment log path as default trajectory save directory
+    trajectory_save_dir = config.econfig.trajectory_save_dir
+    if trajectory_save_dir is None:
+        trajectory_save_dir = os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "trajectories"
+        )
+
     econfig_dict = {
         "domain": config.econfig.domain,
         "max_steps": config.econfig.max_steps,
@@ -113,6 +120,8 @@ def main(args):
         "user_llm_args": config.econfig.user_llm_args,
         "turn_discount": config.econfig.turn_discount,
         "invalid_format_penalty": config.econfig.invalid_format_penalty,
+        "save_trajectories": config.econfig.save_trajectories,
+        "trajectory_save_dir": trajectory_save_dir,
     }
 
     # Create AgentWorkflow for proxy server mode
