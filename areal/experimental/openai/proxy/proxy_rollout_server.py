@@ -79,7 +79,6 @@ _server_port: int = 8000
 
 # Port allocation tracking
 _allocated_ports: set[int] = set()
-_port_alloc_lock = asyncio.Lock()
 
 # Server config (needed for name_resolve registration)
 _experiment_name: str | None = None
@@ -152,8 +151,7 @@ async def alloc_ports(raw_request: Request):
                 status_code=400, detail="'count' must be a positive integer"
             )
 
-        async with _port_alloc_lock:
-            ports = find_free_ports(count, exclude_ports=_allocated_ports)
+        ports = find_free_ports(count, exclude_ports=_allocated_ports)
         _allocated_ports.update(ports)
 
         return {"status": "success", "ports": ports, "host": _server_host}

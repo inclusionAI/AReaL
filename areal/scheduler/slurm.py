@@ -800,7 +800,9 @@ class SlurmScheduler(Scheduler):
         bash_cmds = (spec.additional_bash_cmds or []).copy()
         bash_cmds.append(rpc_cmd)
         bash_cmds_str = ";\n".join(bash_cmds)
-        cmd = f"bash -c {shlex.quote(bash_cmds_str)}"
+        # handle double quotes in bash commands
+        bash_cmds_str = bash_cmds_str.replace('"', '\\"')
+        cmd = f'bash -c "{bash_cmds_str}"'
 
         # Build final command and export string
         if self.container_type == "apptainer":
