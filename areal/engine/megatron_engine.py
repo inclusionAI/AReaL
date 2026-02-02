@@ -60,7 +60,10 @@ from areal.models.tree_attn.functional import (
 )
 from areal.models.tree_attn.module import (
     BLOCK_SIZE,
+    TRITON_AVAILABLE,
+    USE_TRITON_TREE_ATTN,
     build_block_mask_from_trie,
+    build_triton_attn_data_from_trie,
     patch_bridge_for_tree_training,
 )
 from areal.models.tree_attn.tree import build_packed_tree_batch
@@ -570,21 +573,32 @@ class MegatronEngine(TrainEngine):
 
             cu_seqlens = mb_input.padded_mb.get("cu_seqlens", None)
 
-            # Lazily create block mask for tree training just before forward
+            # Lazily create tree attention metadata just before forward
             if self.enable_tree_training:
                 trie_node = mb_input.padded_mb.get("trie_node", None)
                 padded_size = mb_input.padded_to_length
                 if trie_node is not None and padded_size is not None:
-                    block_mask = build_block_mask_from_trie(
-                        trie_node, padded_size, self.device
-                    )
-                    mb_input.padded_mb["block_mask"] = block_mask
+                    if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
+                        triton_attn_data = build_triton_attn_data_from_trie(
+                            trie_node, padded_size
+                        )
+                        mb_input.padded_mb["triton_attn_data"] = triton_attn_data
+                    else:
+                        block_mask = build_block_mask_from_trie(
+                            trie_node,
+                            padded_size,
+                            mb_input.padded_mb["input_ids"].device,
+                        )
+                        mb_input.padded_mb["block_mask"] = block_mask
 
             output = packed_context_parallel_forward(model, mb_input.padded_mb)
 
-            # Release block mask memory after forward pass
-            if self.enable_tree_training and "block_mask" in mb_input.padded_mb:
-                del mb_input.padded_mb["block_mask"]
+            # Release tree attention metadata after forward pass
+            if self.enable_tree_training:
+                if "block_mask" in mb_input.padded_mb:
+                    del mb_input.padded_mb["block_mask"]
+                if "triton_attn_data" in mb_input.padded_mb:
+                    del mb_input.padded_mb["triton_attn_data"]
 
             def _process_output(input_, output_):
                 loss = process_output_fn(output_, input_)

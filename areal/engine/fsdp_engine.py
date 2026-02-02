@@ -73,7 +73,10 @@ from areal.models.tree_attn.functional import (
 )
 from areal.models.tree_attn.module import (
     BLOCK_SIZE,
+    TRITON_AVAILABLE,
+    USE_TRITON_TREE_ATTN,
     build_block_mask_from_trie,
+    build_triton_attn_data_from_trie,
     patch_fsdp_for_tree_training,
 )
 from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
@@ -545,25 +548,34 @@ class FSDPEngine(TrainEngine):
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
-            # Lazily create block mask for tree training just before forward
+            # Lazily create tree attention metadata just before forward
             if self.enable_tree_training and ctx.trie_node is not None:
                 padded_size = mb_item.padded_to_length
                 if padded_size is None:
                     raise ValueError(
                         "padded_size must be set for tree training with FSDP."
                     )
-                block_mask = build_block_mask_from_trie(
-                    ctx.trie_node, padded_size, self.device
-                )
-                inputs["block_mask"] = block_mask
+                if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
+                    triton_attn_data = build_triton_attn_data_from_trie(
+                        ctx.trie_node, padded_size
+                    )
+                    inputs["triton_attn_data"] = triton_attn_data
+                else:
+                    block_mask = build_block_mask_from_trie(
+                        ctx.trie_node, padded_size, self.device
+                    )
+                    inputs["block_mask"] = block_mask
 
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
 
-            # Release block mask memory after forward pass
-            if self.enable_tree_training and "block_mask" in inputs:
-                del inputs["block_mask"]
+            # Release tree attention metadata after forward pass
+            if self.enable_tree_training:
+                if "block_mask" in inputs:
+                    del inputs["block_mask"]
+                if "triton_attn_data" in inputs:
+                    del inputs["triton_attn_data"]
 
             ctx_dict = ctx.to_dict()
             loss = process_output_fn(logits, ctx_dict)
