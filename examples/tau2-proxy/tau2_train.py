@@ -14,21 +14,22 @@ The key differences from the SPMD mode (tau2/tau2_train.py):
 
 import os
 import sys
-from dataclasses import dataclass, field
 
 from datasets import Dataset
 from loguru import logger as loguru_logger
 from tau2.registry import registry
 
-from areal.api.cli_args import PPOConfig, load_expr_config
+from areal.api.cli_args import load_expr_config
 from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils import logging
 from areal.utils.stats_logger import StatsLogger
 
 # Add examples/tau2-proxy to path for local imports when running as script
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import config types from separate module (minimal dependencies for worker deserialization)
+from config_types import Tau2EnvConfig, Tau2PPOConfig
 from tau2_agent import Tau2ProxyAgentWorkflow
-from tau2_utils import Tau2EnvConfig
 
 logger = logging.getLogger("Tau2Train")
 
@@ -64,17 +65,6 @@ def get_tau2_dataset(
     dataset_items = [{"task_id": task_id, "split": split} for task_id in task_ids]
     dataset = Dataset.from_list(dataset_items)
     return dataset
-
-
-@dataclass
-class Tau2PPOConfig(PPOConfig):
-    """PPO config extended with tau2-specific settings."""
-
-    econfig: Tau2EnvConfig = field(default_factory=Tau2EnvConfig)
-    do_eval: bool = field(
-        default=False,
-        metadata={"help": "Whether to do evaluation."},
-    )
 
 
 def main(args):

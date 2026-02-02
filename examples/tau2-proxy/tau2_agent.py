@@ -37,7 +37,9 @@ from areal.api.cli_args import GenerationHyperparameters
 from areal.api.workflow_api import AgentWorkflow
 from areal.utils import logging
 
-from tau2_utils import Tau2EnvConfig, Tau2RunInfo
+# Import config types from separate module (minimal dependencies for worker deserialization)
+from config_types import Tau2EnvConfig
+from tau2_utils import Tau2RunInfo
 
 logger = logging.getLogger("Tau2ProxyAgent")
 
