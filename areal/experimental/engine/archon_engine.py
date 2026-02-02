@@ -84,6 +84,7 @@ from areal.utils.fsdp import get_cosine_schedule_with_warmup
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.lock import DistributedLock
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import torch_memory_saver
 from areal.utils.perf_tracer import trace_perf
@@ -203,7 +204,8 @@ class ArchonEngine(TrainEngine):
         )
 
         self._world_mesh = self.parallel_dims.world_mesh
-        self._cp_tp_group = self.parallel_dims.get_group("cp_tp")
+        # pp_cp_tp group: context and model parallel group
+        self._pp_cp_tp_group = self.parallel_dims.get_group("pp_cp_tp")
 
         # Compute dp_rank: the rank within the dp dimension (for data loading)
         dp_mesh = self.parallel_dims.get_mesh("dp")
@@ -212,17 +214,32 @@ class ArchonEngine(TrainEngine):
         else:
             self._dp_rank = 0
 
-        # Compute dp_head: the rank that holds the batch for this cp_tp group
-        self._dp_head = dist.get_process_group_ranks(self._cp_tp_group)[0]
+        # Compute dp_head: the rank that holds the batch for this pp_cp_tp group
+        self._dp_head = dist.get_process_group_ranks(self._pp_cp_tp_group)[0]
 
         # Compute pp_last_stage_rank: global rank of the last PP stage
         if self.parallel_dims.pp_enabled:
             pp_group = self.parallel_dims.get_group("pp")
             self._pp_last_stage_rank = dist.get_process_group_ranks(pp_group)[-1]
+            self._pp_rank = self.parallel_dims.get_mesh("pp").get_local_rank()
         else:
             self._pp_last_stage_rank = None
+            self._pp_rank = 0
 
-        self.weight_update_group_name = "update_weight_group"
+        cp_rank_is_zero = (
+            not self.parallel_dims.cp_enabled
+            or self.parallel_dims.get_mesh("cp").get_local_rank() == 0
+        )
+        tp_rank_is_zero = (
+            not self.parallel_dims.tp_enabled
+            or self.parallel_dims.get_mesh("tp").get_local_rank() == 0
+        )
+        self._is_pipeline_parallel_head = (
+            self._dp_rank == 0 and cp_rank_is_zero and tp_rank_is_zero
+        )
+
+        self.weight_update_group_name = f"update_weight_group_{self._pp_rank}"
+        self.engine_lock = DistributedLock("train_engine_lock")
 
         self.logger.info(
             f"Initialized Archon engine with parallel dims: "
@@ -267,6 +284,20 @@ class ArchonEngine(TrainEngine):
 
         if self.enable_tree_training:
             self.logger.warning("Tree training is not supported for Archon engine yet.")
+
+        if self.parallel_dims.pp_enabled:
+            tie_word_embeddings = getattr(
+                self.model_config, "tie_word_embeddings", False
+            )
+            if tie_word_embeddings:
+                raise ValueError(
+                    f"Pipeline Parallelism (PP={self.parallel_dims.pp}) is not supported "
+                    f"with weight tying (tie_word_embeddings=True). "
+                    f"When PP > 1, tok_embeddings and output layers are on different GPUs "
+                    f"and cannot share the same weight tensor. "
+                    f"Please either disable PP (set pipeline_parallel_size=1) or use a model "
+                    f"without weight tying."
+                )
 
         tik = time.perf_counter()
 
@@ -356,8 +387,15 @@ class ArchonEngine(TrainEngine):
         return self.rank == self._dp_head
 
     @property
+    def pipeline_parallel_rank(self) -> int:
+        return self._pp_rank
+
+    def is_pipeline_parallel_head(self) -> bool:
+        return self._is_pipeline_parallel_head
+
+    @property
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
-        return self._cp_tp_group
+        return self._pp_cp_tp_group
 
     @property
     def cpu_group(self) -> dist.ProcessGroup:
@@ -838,12 +876,6 @@ class ArchonEngine(TrainEngine):
         """Update weights to inference engine."""
         self._check_rollout_engine_connected()
         if meta.type == "xccl":
-            # TODO: support PP weight sync via XCCL
-            if self.parallel_dims.pp_enabled:
-                raise NotImplementedError(
-                    "PP weight synchronization via XCCL not yet supported. "
-                    "Use disk-based weight sync (meta.type='disk') instead."
-                )
             assert self.weight_update_group_initialized
             tms_context = (
                 torch_memory_saver.disable()
@@ -986,14 +1018,16 @@ class ArchonEngine(TrainEngine):
         # Processes launched with torchrun set TORCHELASTIC_USE_AGENT_STORE=True,
         # which blocks creating another TCP store for weight update.
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
-        if dist.get_rank() == 0:
+        if self.is_pipeline_parallel_head():
             assert meta.alloc_mode is not None
+
+            self.engine_lock.acquire()
 
             fut = self.rollout_engine.init_weights_update_group(meta)
 
             self.logger.info(
-                f"Initializing weight update group: type={meta.type} "
-                f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port} "
+                f"Initializing weight update group: type={meta.type}, "
+                f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port}, "
                 f"group={meta.nccl_group_name}"
             )
             self.weight_update_group = init_custom_process_group(
@@ -1007,9 +1041,11 @@ class ArchonEngine(TrainEngine):
 
             fut.result()
 
+            self.engine_lock.release()
+
     @trace_perf("archon_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
-        """Broadcast parameters from rank 0, converting to HF format if needed."""
+        """Broadcast parameters from PP heads via per-stage groups."""
         meta.nccl_master_address = self.weight_update_master_addr
         meta.nccl_master_port = self.weight_update_master_port
         meta.nccl_group_name = self.weight_update_group_name
@@ -1020,17 +1056,14 @@ class ArchonEngine(TrainEngine):
         dist.barrier(group=self.cpu_group)
 
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
-        main_rank = dist.get_rank() == 0
 
         buffer_size = 0
         named_tensors: list[tuple[str, torch.Tensor]] = []
 
-        param_iterator = self._get_model_name_parameters()
-
-        for name, param in param_iterator:
+        for name, param in self._get_model_name_parameters():
             tensor = self._get_full_tensor(param)
 
-            if not main_rank:
+            if not self.is_pipeline_parallel_head():
                 continue
 
             if self.state_dict_adapter is not None:
@@ -1068,6 +1101,8 @@ class ArchonEngine(TrainEngine):
         if not named_tensors:
             return
 
+        self.engine_lock.acquire()
+
         param_specs = [
             ParamSpec(
                 name=name,
@@ -1092,6 +1127,8 @@ class ArchonEngine(TrainEngine):
         fut.result()
 
         named_tensors.clear()
+
+        self.engine_lock.release()
 
     @trace_perf("archon_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
