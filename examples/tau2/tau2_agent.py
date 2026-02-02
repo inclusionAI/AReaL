@@ -156,6 +156,7 @@ class Tau2Runner:
                     tool_choice=kwargs.get("tool_choice"),
                     temperature=kwargs.get("temperature", 0.0),
                     max_completion_tokens=kwargs.get("max_completion_tokens", 2048),
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 )
                 return result
             except Exception as e:
@@ -408,7 +409,7 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
     ):
         """Save trajectory to JSONL file.
 
-        File is saved to: {trajectory_save_dir}/generated/{step}/{task_id}.jsonl
+        File is saved to: {trajectory_save_dir}/{step}/{task_id}.jsonl
         """
         import json
         import os
@@ -417,9 +418,9 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
             # Get current step from engine version
             step = engine.get_version()
 
-            # Build save path: generated/{step}/{task_id}.jsonl
+            # Build save path: {step}/{task_id}.jsonl
             base_dir = self.econfig.trajectory_save_dir or os.getcwd()
-            save_dir = os.path.join(base_dir, "generated", str(step))
+            save_dir = os.path.join(base_dir, str(step))
             os.makedirs(save_dir, exist_ok=True)
 
             # Sanitize task_id for filename (replace special chars)
@@ -590,6 +591,7 @@ class Tau2ProxyAgentWorkflow(AgentWorkflow):
                     tool_choice=kwargs.get("tool_choice"),
                     temperature=kwargs.get("temperature", 0.0),
                     max_completion_tokens=kwargs.get("max_completion_tokens", 2048),
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 )
             except Exception as e:
                 logger.error(f"User LLM call failed: {e}")
