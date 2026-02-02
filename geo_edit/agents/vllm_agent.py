@@ -37,13 +37,22 @@ class VLLMBasedAgent(BaseAgent):
         if response.usage is not None:
             usage = response.usage
             if isinstance(usage, dict):
-                tokens_used = usage.get("completion_tokens") or usage.get("total_tokens")
+                tokens_input = usage.get("prompt_tokens")
+                tokens_output = usage.get("completion_tokens")
+                tokens_total = usage.get("total_tokens")
             else:
-                tokens_used = getattr(
-                    usage, "completion_tokens", None
-                ) or getattr(usage, "total_tokens", None)
-            if tokens_used is not None:
-                extra_info["tokens_used"] = tokens_used
+                tokens_input = getattr(usage, "prompt_tokens", None)
+                tokens_output = getattr(usage, "completion_tokens", None)
+                tokens_total = getattr(usage, "total_tokens", None)
+
+            if tokens_input is not None:
+                extra_info["tokens_input"] = tokens_input
+            if tokens_output is not None:
+                extra_info["tokens_output"] = tokens_output
+            if tokens_total is not None:
+                extra_info["tokens_used"] = tokens_total
+            elif tokens_input is not None and tokens_output is not None:
+                extra_info["tokens_used"] = tokens_input + tokens_output
         return response, extra_info
 
     def _validate_response(self, response: Any) -> None:

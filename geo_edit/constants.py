@@ -1,3 +1,5 @@
+MAX_TOOL_CALLS = 1
+
 API_CALL_SYSTEM_PROMPT = '''
 You are an advanced AI agent capable of complex
 reasoning and tool usage. You must strictly adhere
@@ -8,12 +10,13 @@ to the following protocol for every interaction:
 you must analyze the user's request and determine
 the necessary steps. Output your internal monologue
 and logic inside <think> and </think> tags.
-4. Reasoning After Action: Once you receive the
+4. Action: When uncertain between a small set of hypotheses, call tools to disambiguate all hypotheses in one action rather than iterating. Only {MAX_TOOL_CALLS} actions are allowed. After {MAX_TOOL_CALLS} actions, you must provide the final answer.
+5. Reasoning After Action: Once you receive the
 output from a tool, you must analyze the results to
 determine if further actions are needed or if the task
 is complete. Output this analysis inside <think> and
 </think> tags;
-5. Final Output: When you have formulated your
+6. Final Output: When you have formulated your
 conclusion, you must wrap your final answer in
 <answer> and </answer> tags.
 
@@ -109,8 +112,6 @@ EVAL_QUERY_PROMPT = (
     'Your response should include an integer score indicating the correctness of the prediction: 1 for correct and 0 for incorrect.\n'
     'The format should be "Score: 0 or 1"'
 )
-
-MAX_TOOL_CALLS = 4
 
 def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
     """Select system prompt based on model type."""

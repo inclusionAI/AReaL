@@ -63,6 +63,70 @@ def get_final_prediction(predict_str_list: List[str], extract_mode: Optional[str
     return extracted if extracted is not None else last
 
 
+def get_output_tokens_total(item: Dict) -> Optional[float]:
+    tokens_output_total = item.get("tokens_output_total")
+    if isinstance(tokens_output_total, (int, float)):
+        return float(tokens_output_total)
+    per_step = item.get("tokens_used_per_step")
+    if isinstance(per_step, list):
+        values = [v for v in per_step if isinstance(v, (int, float))]
+        if values:
+            return float(sum(values))
+    return None
+
+
+def get_input_tokens_total(item: Dict) -> Optional[float]:
+    input_total = item.get("tokens_input_total")
+    if isinstance(input_total, (int, float)):
+        return float(input_total)
+    tokens_used_total = item.get("tokens_used_total")
+    output_total = get_output_tokens_total(item)
+    if isinstance(tokens_used_total, (int, float)) and isinstance(output_total, (int, float)):
+        value = float(tokens_used_total) - float(output_total)
+        if value < 0:
+            value = 0.0
+        return value
+    per_step = item.get("tokens_input_per_step")
+    if isinstance(per_step, list):
+        last_idx = None
+        last_input = None
+        for idx in range(len(per_step) - 1, -1, -1):
+            value = per_step[idx]
+            if isinstance(value, (int, float)):
+                last_idx = idx
+                last_input = float(value)
+                break
+        if last_input is None:
+            return None
+        outputs = item.get("tokens_used_per_step")
+        if isinstance(outputs, list) and last_idx is not None:
+            output_before = sum(
+                v for v in outputs[:last_idx] if isinstance(v, (int, float))
+            )
+            input_total = last_input - float(output_before)
+            if input_total < 0:
+                input_total = 0.0
+            return float(input_total)
+        return float(last_input)
+    return None
+
+
+def get_total_tokens(item: Dict) -> Optional[float]:
+    tokens_used_total = item.get("tokens_used_total")
+    if isinstance(tokens_used_total, (int, float)):
+        return float(tokens_used_total)
+    per_step = item.get("tokens_total_per_step")
+    if isinstance(per_step, list):
+        values = [v for v in per_step if isinstance(v, (int, float))]
+        if values:
+            return float(sum(values))
+    output_total = get_output_tokens_total(item)
+    input_total = get_input_tokens_total(item)
+    if output_total is not None and input_total is not None:
+        return float(output_total + input_total)
+    return None
+
+
 class InternalOpenAIJudge:
     """Judge using Internal Matrix LLM API (OpenAI compatible format)."""
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o", base_url: str = "https://matrixllm.alipay.com/v1"):
@@ -94,7 +158,16 @@ def compute_tool_combination_statistics(eval_results: List[Dict]) -> str:
     Compute accuracy statistics grouped by tool combination.
     Returns formatted summary text.
     """
-    stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "correct": 0})
+    stats: Dict[str, Dict[str, float]] = defaultdict(
+        lambda: {
+            "total": 0,
+            "correct": 0,
+            "token_total_sum": 0.0,
+            "token_total_count": 0,
+            "token_correct_sum": 0.0,
+            "token_correct_count": 0,
+        }
+    )
 
     for item in eval_results:
         result = item.get("result")
@@ -103,15 +176,33 @@ def compute_tool_combination_statistics(eval_results: List[Dict]) -> str:
         func_counts = item.get("function_call_each_count", {})
         used = sorted([t for t, c in func_counts.items() if c > 0])
         category = "+".join(used) if used else "no_tool"
-        stats[category]["total"] += 1
+        s = stats[category]
+        s["total"] += 1
+        output_total = get_output_tokens_total(item)
+        if isinstance(output_total, (int, float)):
+            s["token_total_sum"] += float(output_total)
+            s["token_total_count"] += 1
         if result == 1.0:
-            stats[category]["correct"] += 1
+            s["correct"] += 1
+            if isinstance(output_total, (int, float)):
+                s["token_correct_sum"] += float(output_total)
+                s["token_correct_count"] += 1
 
     lines = ["\n" + "=" * 60, "Tool Combination Statistics", "=" * 60]
     for cat in sorted(stats.keys(), key=lambda x: (x != "no_tool", x)):
         s = stats[cat]
         acc = s["correct"] / s["total"] if s["total"] > 0 else 0.0
-        lines.append(f"  {cat}: total={s['total']}, correct={s['correct']}, accuracy={acc:.4f}")
+        avg_tokens = (
+            s["token_total_sum"] / s["token_total_count"] if s["token_total_count"] > 0 else 0.0
+        )
+        avg_tokens_correct = (
+            s["token_correct_sum"] / s["token_correct_count"] if s["token_correct_count"] > 0 else 0.0
+        )
+        lines.append(
+            "  "
+            + f"{cat}: total={s['total']}, correct={s['correct']}, accuracy={acc:.4f}, "
+            + f"avg_tokens={avg_tokens:.2f}, avg_tokens_correct={avg_tokens_correct:.2f}"
+        )
     lines.append("=" * 60)
     return "\n".join(lines)
 
@@ -178,6 +269,10 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
         "function_call_per_step":record["function_call_per_step"],
         "tokens_used_total":record["tokens_used_total"],
         "tokens_used_per_step":record["tokens_used_per_step"],
+        "tokens_output_total": record.get("tokens_output_total"),
+        "tokens_input_total": record.get("tokens_input_total"),
+        "tokens_input_per_step": record.get("tokens_input_per_step"),
+        "tokens_total_per_step": record.get("tokens_total_per_step"),
         "output_text": output_text,
         "ground_truth": ground_truth,
         "prediction": get_final_prediction(predict_str_list, cfg.extract_answer_tags),
@@ -236,6 +331,12 @@ def main() -> None:
     correct = 0
     filtered = 0
     eval_results = []
+    output_tokens_sum = 0.0
+    input_tokens_sum = 0.0
+    total_tokens_sum = 0.0
+    output_tokens_count = 0
+    input_tokens_count = 0
+    total_tokens_count = 0
 
     max_workers = 32
     futures = []
@@ -262,6 +363,21 @@ def main() -> None:
                     correct += 1
             out_f.write(json.dumps(eval_item, ensure_ascii=False) + "\n")
 
+            output_total = get_output_tokens_total(eval_item)
+            if output_total is not None:
+                output_tokens_sum += output_total
+                output_tokens_count += 1
+
+            input_total = get_input_tokens_total(eval_item)
+            if input_total is not None:
+                input_tokens_sum += input_total
+                input_tokens_count += 1
+
+            total_total = get_total_tokens(eval_item)
+            if total_total is not None:
+                total_tokens_sum += float(total_total)
+                total_tokens_count += 1
+
     # Compute tool combination statistics
     tool_stats_text = compute_tool_combination_statistics(eval_results)
 
@@ -271,6 +387,15 @@ def main() -> None:
         f.write(f"correct={correct}\n")
         f.write(f"filtered={filtered}\n")
         f.write(f"accuracy={accuracy:.6f}\n")
+        avg_output = output_tokens_sum / output_tokens_count if output_tokens_count else 0.0
+        avg_input = input_tokens_sum / input_tokens_count if input_tokens_count else 0.0
+        avg_total = total_tokens_sum / total_tokens_count if total_tokens_count else 0.0
+        f.write(f"total_output_tokens={output_tokens_sum:.0f}\n")
+        f.write(f"total_input_tokens={input_tokens_sum:.0f}\n")
+        f.write(f"total_tokens={total_tokens_sum:.0f}\n")
+        f.write(f"avg_output_tokens={avg_output:.2f}\n")
+        f.write(f"avg_input_tokens={avg_input:.2f}\n")
+        f.write(f"avg_total_tokens={avg_total:.2f}\n")
         f.write(tool_stats_text)
 
 

@@ -71,9 +71,8 @@ def _init_worker(
         agent_configs = build_openai_agent_configs(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            system_prompt=system_prompt,
             tool_mode=use_tools,
-            reasoning_level="low",
+            reasoning_level="minimal",
         )
         _WORKER_TASK_CLASS = OpenAIVisionQATask
     else:
@@ -142,7 +141,7 @@ def _run_one_task(task_payload: dict):
     )
 
     _WORKER_AGENT.reset()
-
+    original_generate_config = _WORKER_AGENT.config.generate_config.copy()
     try:
         for i in range(_WORKER_MAX_TOOL_CALLS):
             action, extra_info = _WORKER_AGENT.act(task.contents)
@@ -157,7 +156,6 @@ def _run_one_task(task_payload: dict):
                 logger.info(f"[{task_id}] reached max tool calls {_WORKER_MAX_TOOL_CALLS}, forcing final answer.")
                 force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
                 task.append_prompt(force_prompt)
-                original_generate_config = _WORKER_AGENT.config.generate_config
                 _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_final_generate_config
                 action, extra_info = _WORKER_AGENT.act(task.contents)
                 _WORKER_AGENT.config.generate_config = original_generate_config

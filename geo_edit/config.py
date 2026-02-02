@@ -81,7 +81,7 @@ def build_google_agent_configs(
 
         
     force_final_kwargs = dict(
-        thinking_config=thinking_config,
+        thinking_config = thinking_config,
         tool_config=types.ToolConfig(
             function_calling_config=types.FunctionCallingConfig(mode="NONE")
         ),

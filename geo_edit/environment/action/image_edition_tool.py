@@ -33,7 +33,7 @@ image_label_function_declaration = {
     Calling an image labeling tool with existing image index (e.g. 0 from 'Observation 0', 1 from 'Observation 1'), text and position (x,y) to label the image. All (x,y) should be larger than or equal to 0 and smaller than or equal to 1000 as a unified image size (1000x1000).
     Returns the labeled image.
     If you call this functions multiple times in one action, all labels will be added to the select image and only the final labeled image will be returned.
-    For example, to label a specific area in the image Observation 0 with the text "Tree" at position (100,150), you can provide the image index 0, text "Tree", and position "(100,150)".
+    For example, to label a specific area in the image Observation 0 with the text "Tree" at position (100,150), you can provide the image index 0, text "Tree", and position "(100,150)". You can use this to annotate features such as buildings or landmarks in the image.
     ''',
     "parameters":{
         "type":"object",
@@ -60,7 +60,7 @@ draw_line_function_declaration = {
     Calling an image drawing tool with existing image index (e.g. 0 from 'Observation 0', 1 from 'Observation 1') to draw a line on the image as per the given start and end coordinates. Returns the modified image.
     The coordinates should be in the format "\\boxed{x1,y1,x2,y2}" where (x1, y1) is the start point and (x2, y2) is the end point of the line. All (x,y) should be larger than or equal to 0 and smaller than or equal to 1000 as a unified image size (1000x1000). Only two points are allowed; if you want to draw multiple lines, please call this function multiple times.
     If you call this functions multiple times in one action, all lines will be added to the select image and only the final modified image will be returned.
-    For example, to draw a line from point (50,50) to point (200,200) on the image Observation 0, you can provide the coordinates "\\boxed{50,50,200,200}" along with the image index 0.
+    For example, to draw a line from point (50,50) to point (200,200) on the image Observation 0, you can provide the coordinates "\\boxed{50,50,200,200}" along with the image index 0. You can use this to highlight features such as roads or crossings in the image.
     ''',
     "parameters":{
         "type":"object",
@@ -100,6 +100,30 @@ bounding_box_function_declaration = {
         },
         "required":["image_index", "bounding_box"]
     },
+}
+
+image_highlight_function_declaration = {
+    "name":"image_highlight",
+    "description":'''
+    Calling an image highlighting tool with existing image index (e.g. 0 from 'Observation 0', 1 from 'Observation 1') to highlight a specific area on the image as per the given bounding box coordinates. Returns the highlighted image whose highlighted areas are yellow marked.
+    The bounding box should be provided in the format "\\boxed{x1,y1,x2,y2}" where (x1, y1) is the top-left corner and (x2, y2) is the bottom-right corner of the box. All (x,y) should be larger than or equal to 0 and smaller than or equal to 1000 as a unified image size (1000x1000). 
+    If you call this functions multiple times in one action, all highlighted areas will be added to the select image and only the final highlighted image will be returned.
+    For example, to highlight a specific area from the image Observation 0, you can provide the bounding box coordinates like "\\boxed{300,400,500,600}" along with the image index 0.
+    ''',
+    "parameters":{
+        "type":"object",
+        "properties":{
+            "image_index":{
+                "type":"integer",
+                "description":"The index of the image to be highlighted. Each image is assigned an index when uploaded.Like 'Observation 0', 'Observation 1', etc."
+            },
+            "bounding_box":{
+                "type":"string",
+                "description":"Relative bounding box coordinates to highlight the area on the image."
+            }
+        },
+        "required":["image_index", "bounding_box"]
+    }
 }
 
 def image_crop_function(image_list, image_index: int, bounding_box: str) -> str | Image.Image:
@@ -151,3 +175,16 @@ def bounding_box_function(image_list, image_index: int, bounding_box: str) -> st
     x1, y1, x2, y2 = [int(int(c) * width / 1000) if i % 2 == 0 else int(int(c) * height / 1000) for i, c in enumerate(coords)]
     draw.rectangle((x1, y1, x2, y2), outline="green", width=3)
     return image_to_box
+
+def image_highlight_function(image_list, image_index: int, bounding_box: str) -> str | Image.Image:
+    if image_index < 0 or image_index >= len(image_list):
+        return "Error: Invalid image index."
+    image_to_highlight = image_list[image_index].convert("RGBA")
+    overlay = Image.new('RGBA', image_to_highlight.size, (255,255,255,0))
+    draw = ImageDraw.Draw(overlay)
+    coords= bounding_box.strip("\\boxed{}").split(",")
+    width, height = image_to_highlight.size
+    x1, y1, x2, y2 = [int(int(c) * width / 1000) if i % 2 == 0 else int(int(c) * height / 1000) for i, c in enumerate(coords)]
+    draw.rectangle((x1, y1, x2, y2), fill=(255, 255, 0, 100))  
+    highlighted_image = Image.alpha_composite(image_to_highlight, overlay).convert("RGB")
+    return highlighted_image

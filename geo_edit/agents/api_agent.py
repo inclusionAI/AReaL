@@ -47,7 +47,11 @@ class APIBasedAgent(BaseAgent):
             )
             extra_info["original_response"] = str(response)
             if response.usage_metadata is not None:
-                extra_info["tokens_used"] = response.usage_metadata.total_token_count
+                usage = response.usage_metadata
+                extra_info["tokens_used"] = usage.total_token_count
+                extra_info["tokens_input"] = usage.prompt_token_count
+                extra_info["tokens_output"] = usage.candidates_token_count
+                extra_info["tokens_thoughts"] = getattr(usage, "thoughts_token_count", None)
             content = response.candidates[0].content
             return content, extra_info
 
@@ -62,7 +66,16 @@ class APIBasedAgent(BaseAgent):
             )
             extra_info["original_response"] = str(response)
             extra_info["response_id"] = response.id
-            extra_info["tokens_used"] = response.usage.total_tokens
+            if response.usage is not None:
+                extra_info["tokens_used"] = response.usage.total_tokens
+                extra_info["tokens_input"] = response.usage.input_tokens
+                extra_info["tokens_output"] = response.usage.output_tokens
+                output_details = getattr(response.usage, "output_tokens_details", None)
+                if output_details is not None:
+                    if isinstance(output_details, dict):
+                        extra_info["tokens_thoughts"] = output_details.get("reasoning_tokens")
+                    else:
+                        extra_info["tokens_thoughts"] = getattr(output_details, "reasoning_tokens", None)
             return response, extra_info
 
         raise NotImplementedError(f"Model type {self.config.model_type} not supported yet.")

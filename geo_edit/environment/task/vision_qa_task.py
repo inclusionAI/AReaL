@@ -276,8 +276,10 @@ class VisionQATask(AbstractVLMTask):
         function_call_total_count = 0
         function_call_each_count = {}
         function_call_per_step = []
-        tokens_used_total = 0
-        tokens_used_per_step = []
+        tokens_total_per_step = []
+        tokens_input_per_step = []
+        tokens_output_per_step = []
+        tokens_output_total = 0
 
         for record in self.conversation_history:
             function_call = record["function_call"]
@@ -293,12 +295,43 @@ class VisionQATask(AbstractVLMTask):
                 function_call_per_step.append(function_names)
             else:
                 function_call_per_step.append(None)
-            if "tokens_used" in record["extra_info"]:
-                tokens_used = record["extra_info"]["tokens_used"]
+            extra_info = record["extra_info"]
+            tokens_used = extra_info.get("tokens_used")
+            tokens_input = extra_info.get("tokens_input")
+            tokens_output = extra_info.get("tokens_output")
+            tokens_thoughts = extra_info.get("tokens_thoughts")
+
+            if isinstance(tokens_used, (int, float)):
+                tokens_total_per_step.append(tokens_used)
             else:
-                tokens_used = 0
-            tokens_used_total += tokens_used
-            tokens_used_per_step.append(tokens_used)
+                tokens_total_per_step.append(None)
+
+            if isinstance(tokens_input, (int, float)):
+                tokens_input_per_step.append(tokens_input)
+            else:
+                tokens_input_per_step.append(None)
+
+            if isinstance(tokens_output, (int, float)) and isinstance(tokens_thoughts, (int, float)):
+                tokens_output_per_step.append(tokens_output + tokens_thoughts)
+                tokens_output_total += tokens_output + tokens_thoughts
+            elif isinstance(tokens_output, (int, float)):
+                tokens_output_per_step.append(tokens_output)
+                tokens_output_total += tokens_output
+            else:
+                tokens_output_per_step.append(None)
+
+        last_total = tokens_total_per_step[-1]
+        if last_total is not None:
+            tokens_used_total = last_total
+        else:
+            logger.warning("Cannot get total tokens used from the last step.")
+            tokens_used_total = None
+
+        tokens_input_total = None
+        if isinstance(tokens_used_total, (int, float)) and isinstance(tokens_output_total, (int, float)):
+            tokens_input_total = float(tokens_used_total) - float(tokens_output_total)
+            if tokens_input_total < 0:
+                tokens_input_total = 0.0
 
         meta_info = {
             "id": self.task_id,
@@ -311,7 +344,11 @@ class VisionQATask(AbstractVLMTask):
             "function_call_each_count": function_call_each_count,
             "function_call_per_step": function_call_per_step,
             "tokens_used_total": tokens_used_total,
-            "tokens_used_per_step": tokens_used_per_step,
+            "tokens_used_per_step": tokens_output_per_step,
+            "tokens_output_total": tokens_output_total,
+            "tokens_input_total": tokens_input_total,
+            "tokens_input_per_step": tokens_input_per_step,
+            "tokens_total_per_step": tokens_total_per_step,
             "output_text": self.conversation_history[-1]["output_text"]
         }
 
