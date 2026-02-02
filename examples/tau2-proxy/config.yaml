@@ -33,13 +33,13 @@ rollout:
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
   scheduling_spec: ${actor.scheduling_spec}
-  engine_max_tokens: ${gconfig.max_tokens}
   openai:
     mode: inline
     tool_call_parser: qwen25
     reasoning_parser: qwen3
     export_style: individual
     turn_discount: ${econfig.turn_discount}
+    engine_max_tokens: ${gconfig.max_tokens}
 
 gconfig:
   n_samples: 16
@@ -145,6 +145,8 @@ econfig:
     max_completion_tokens: 2048
   turn_discount: 1.0
   invalid_format_penalty: 0.1
+  save_trajectories: true                                              
+  trajectory_save_dir: null
 
 # SGLang config
 sglang:

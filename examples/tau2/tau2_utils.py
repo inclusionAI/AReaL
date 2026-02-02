@@ -53,14 +53,27 @@ class Tau2RunInfo(BaseModel):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a JSON-serializable dictionary."""
+        # Safely extract task attributes based on tau2-bench Task model
+        task_dict = {
+            "id": self.task.id,
+        }
+
+        # Add description if available
+        if self.task.description:
+            task_dict["description"] = self.task.description.model_dump()
+
+        # Add user_scenario (always present in Task)
+        if self.task.user_scenario:
+            task_dict["user_scenario"] = str(self.task.user_scenario)
+
+        # Add evaluation_criteria.actions if available
+        if self.task.evaluation_criteria and self.task.evaluation_criteria.actions:
+            task_dict["expected_actions"] = [
+                action.model_dump() for action in self.task.evaluation_criteria.actions
+            ]
+
         return {
-            "task": {
-                "id": self.task.id,
-                "domain": getattr(self.task, "domain", None),
-                "user_scenario": str(self.task.user_scenario) if self.task.user_scenario else None,
-                "expected_actions": [a.model_dump() if hasattr(a, "model_dump") else str(a)
-                                    for a in (self.task.expected_actions or [])],
-            },
+            "task": task_dict,
             "reward": self.reward,
             "reward_info": self.reward_info.model_dump() if self.reward_info else None,
             "messages": [
