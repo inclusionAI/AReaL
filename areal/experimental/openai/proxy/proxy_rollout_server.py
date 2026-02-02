@@ -74,6 +74,9 @@ _session_timeout_seconds: int = 3600  # Default timeout (overridden by config)
 _server_host: str = "0.0.0.0"
 _server_port: int = 8000
 
+# Port allocation tracking
+_allocated_ports: set[int] = set()
+
 # Server config (needed for name_resolve registration)
 _experiment_name: str | None = None
 _trial_name: str | None = None
@@ -115,6 +118,46 @@ app = FastAPI()
 @app.get("/health")
 def health():
     return {"status": "ok", "initialized": _engine is not None}
+
+
+@app.post("/alloc_ports")
+async def alloc_ports(raw_request: Request):
+    """Allocate multiple free ports.
+
+    Expected JSON payload:
+    {
+        "count": 5  # Number of ports to allocate
+    }
+
+    This endpoint is required for compatibility with SlurmScheduler's
+    fork_workers mechanism, which may request additional ports after
+    forking a new worker process.
+    """
+    global _allocated_ports
+
+    try:
+        data = await raw_request.json()
+        count = data.get("count")
+        if count is None:
+            raise HTTPException(
+                status_code=400, detail="Missing 'count' field in request"
+            )
+
+        if not isinstance(count, int) or count <= 0:
+            raise HTTPException(
+                status_code=400, detail="'count' must be a positive integer"
+            )
+
+        ports = find_free_ports(count, exclude_ports=_allocated_ports)
+        _allocated_ports.update(ports)
+
+        return {"status": "success", "ports": ports, "host": _server_host}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in alloc_ports: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 def _setup_openai_client():
@@ -616,6 +659,7 @@ def main():
 
     # Determine port
     _server_port = args.port if args.port != 0 else find_free_ports(1)[0]
+    _allocated_ports.add(_server_port)
 
     # Configure name_resolve and register this server
     name_resolve.reconfigure(
