@@ -8,10 +8,11 @@ prefix computation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 import torch.distributed as dist
+from torch.nn.attention.flex_attention import BlockMask
 
 from areal.api.cli_args import MicroBatchSpec
 from areal.models.tree_attn.constants import BLOCK_SIZE
@@ -19,9 +20,6 @@ from areal.models.tree_attn.module_fsdp import create_block_mask_from_dense
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
-
-if TYPE_CHECKING:
-    from torch.nn.attention.flex_attention import BlockMask
 
 logger = logging.getLogger(__name__)
 
