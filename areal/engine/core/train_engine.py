@@ -10,7 +10,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils.data import (
     MicroBatchList,
     pad_and_stack_tensors_along_first_dim,

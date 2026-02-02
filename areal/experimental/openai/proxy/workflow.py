@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow
-from areal.core import workflow_context
+from areal.infra import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.perf_tracer import session_context, trace_session
 

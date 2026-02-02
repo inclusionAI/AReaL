@@ -11,7 +11,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import RecoverConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
-from areal.controller.train_controller import TrainController
+from areal.infra import TrainController
 from areal.utils import logging, timeutil
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver

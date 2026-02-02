@@ -18,7 +18,7 @@ import torch
 import torch.distributed as dist
 from transformers import AutoConfig
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.experimental.archon.utils import (
     MODEL_PATHS,
     compare_logprobs,

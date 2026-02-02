@@ -32,7 +32,7 @@ import tempfile
 import pytest
 import torch
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils.network import find_free_ports
 
 pytestmark = pytest.mark.skipif(

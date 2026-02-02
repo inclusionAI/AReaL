@@ -15,7 +15,7 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.utils import get_model_path
 
 MODEL_PATH = get_model_path(

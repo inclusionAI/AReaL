@@ -20,7 +20,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Worker
-from areal.controller.train_controller import TrainController
+from areal.infra import TrainController
 
 
 class MockTrainEngine(TrainEngine):

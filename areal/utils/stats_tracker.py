@@ -7,7 +7,7 @@ from threading import Lock
 import torch
 import torch.distributed as dist
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import logging
 from areal.utils.datapack import flat2d
 

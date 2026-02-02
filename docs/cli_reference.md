@@ -601,7 +601,7 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 | `no_enable_chunked_prefill`    | boolean         | `False`                                                             | -           |
 | `no_enable_prefix_caching`     | boolean         | `True`                                                              | -           |
 | `gpu_memory_utilization`       | float           | `0.9`                                                               | -           |
-| `worker_extension_cls`         | string          | `"areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"` | -           |
+| `worker_extension_cls`         | string          | `"areal.engine.vllm_ext.vllm_worker_extension.VLLMWorkerExtension"` | -           |
 | `enable_sleep_mode`            | boolean         | `False`                                                             | -           |
 | `uvicorn_log_level`            | string          | `"warning"`                                                         | -           |
 | `enable_lora`                  | boolean         | `False`                                                             | -           |

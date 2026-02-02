@@ -12,8 +12,8 @@ from areal.api.cli_args import (
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
+from areal.infra.platforms import current_platform
 from areal.models.tree_attn.module import restore_patch_fsdp_for_tree_training
-from areal.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils import logging
 

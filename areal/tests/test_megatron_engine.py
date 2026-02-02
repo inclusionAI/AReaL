@@ -16,7 +16,7 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.engine.megatron_engine import MegatronEngine
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils import logging
 

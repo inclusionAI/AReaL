@@ -5,7 +5,7 @@ import torch
 
 from areal.api.cli_args import MicroBatchSpec, PPOCriticConfig
 from areal.api.engine_api import TrainEngine
-from areal.controller.train_controller import TrainController
+from areal.infra import TrainController
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import ppo_critic_loss_fn

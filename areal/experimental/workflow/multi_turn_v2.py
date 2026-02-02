@@ -3,11 +3,11 @@ from typing import Any
 
 from transformers import PreTrainedTokenizerFast
 
+from areal import workflow_context
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.core import workflow_context
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import logging, stats_tracker
 

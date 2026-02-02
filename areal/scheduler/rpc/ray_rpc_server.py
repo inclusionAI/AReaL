@@ -39,7 +39,7 @@ class RayRPCServer:
 
     def _get_device(self):
         # lazy resolve the device inside worker process
-        from areal.platforms import current_platform
+        from areal.infra.platforms import current_platform
 
         return current_platform.current_device()
 

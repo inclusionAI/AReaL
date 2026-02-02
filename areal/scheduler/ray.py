@@ -41,7 +41,7 @@ def ray_resource_type():
     if torch.cuda.is_available():
         return "GPU"
 
-    from areal.platforms import is_npu_available
+    from areal.infra.platforms import is_npu_available
 
     if is_npu_available:
         return "NPU"

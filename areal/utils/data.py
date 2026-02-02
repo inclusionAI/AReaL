@@ -14,7 +14,7 @@ from torch.utils.data import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import MicroBatchSpec, NormConfig
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import datapack, logging
 from areal.utils.math import align
 

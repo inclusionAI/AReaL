@@ -2,7 +2,7 @@
 
 import torch
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 
 
 def local_multi_tensor_applier(op, noop_flag_buffer, tensor_lists, *args):

@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from areal.engine.ppo.actor import grpo_loss_fn
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.experimental.archon.utils import (
     ComparisonMetrics,
     DualEngineFixture,

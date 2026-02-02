@@ -1,5 +1,8 @@
 """Core components for AREAL."""
 
+from . import workflow_context
+from .controller import RolloutController, TrainController
+from .platforms import Platform, current_platform, is_npu_available
 from .remote_inf_engine import (
     RemoteInfBackendProtocol,
     RemoteInfEngine,
@@ -16,4 +19,10 @@ __all__ = [
     "StalenessManager",
     "WorkflowExecutor",
     "check_trajectory_format",
+    "RolloutController",
+    "TrainController",
+    "workflow_context",
+    "Platform",
+    "current_platform",
+    "is_npu_available",
 ]

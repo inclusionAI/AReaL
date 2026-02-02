@@ -7,7 +7,7 @@ from torch.distributed import ProcessGroup
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 
 __all__ = [
     "fsdp2_clip_grad_norm",

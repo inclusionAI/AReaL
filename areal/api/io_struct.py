@@ -12,7 +12,7 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import logging
 
 if TYPE_CHECKING:

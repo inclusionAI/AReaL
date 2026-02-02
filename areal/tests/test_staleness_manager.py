@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from areal.core.staleness_manager import StalenessManager
+from areal.infra.staleness_manager import StalenessManager
 
 
 class MockVersionProvider:

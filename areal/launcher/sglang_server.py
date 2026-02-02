@@ -17,7 +17,7 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
     TRITON_CACHE_PATH,

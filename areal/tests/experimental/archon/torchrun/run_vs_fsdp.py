@@ -19,7 +19,7 @@ from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfi
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPLMEngine
 from areal.experimental.engine.archon_engine import ArchonLMEngine
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.experimental.archon.torchrun.dist_utils import write_result
 from areal.tests.utils import get_dataset_path, get_model_path
 from areal.utils.data import pad_sequences_to_tensors

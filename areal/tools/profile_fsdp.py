@@ -39,7 +39,7 @@ import torch
 from torch.profiler import ProfilerActivity
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from areal.platforms import current_platform
+from areal.infra import current_platform
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

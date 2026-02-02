@@ -37,7 +37,6 @@ from areal.api.io_struct import (
 )
 from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import WorkflowLike
-from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.core.train_engine import (
     aggregate_eval_losses,
     compute_total_loss_weight,
@@ -66,7 +65,8 @@ from areal.experimental.models.archon.ulysses import (
     ulysses_gather_output,
     ulysses_slice_inputs,
 )
-from areal.platforms import current_platform
+from areal.infra.dist_rollout import DistRolloutCoordinator
+from areal.infra.platforms import current_platform
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
 from areal.utils.constants import DEFAULT_PAGE_SIZE_BYTES, DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (

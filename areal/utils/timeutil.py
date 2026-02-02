@@ -7,7 +7,7 @@ from datetime import datetime
 import torch
 import torch.distributed as dist
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 
 INFINITE_DURATION = 60 * 60 * 24 * 365 * 1000
 

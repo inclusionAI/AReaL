@@ -14,7 +14,7 @@ from areal.api.cli_args import MegatronEngineConfig, OptimizerConfig, TrainEngin
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils.network import find_free_ports
 from areal.utils.offload import get_tms_env_vars

@@ -22,10 +22,8 @@ from areal.api.io_struct import (
 )
 from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import WorkflowLike
-from areal.controller import RolloutController
-from areal.core import RemoteInfEngine
-from areal.core.workflow_executor import WorkflowExecutor
-from areal.platforms import current_platform
+from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
+from areal.infra.platforms import current_platform
 from areal.utils import perf_tracer, stats_tracker
 from areal.utils.launcher import TRITON_CACHE_PATH
 

@@ -6,8 +6,8 @@ import random
 import torch
 import torch.distributed as dist
 
-from areal.core.dist_rollout import redistribute_trajectories
-from areal.platforms import current_platform
+from areal.infra.dist_rollout import redistribute_trajectories
+from areal.infra.platforms import current_platform
 from areal.utils.data import tensor_container_to
 
 

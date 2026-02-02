@@ -18,7 +18,7 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.api.io_struct import AllocationMode
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH, get_scheduling_spec
 from areal.utils.network import find_free_ports, gethostip

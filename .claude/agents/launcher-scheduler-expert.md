@@ -95,8 +95,8 @@ Critical utilities in `areal/utils/launcher.py`:
 ## Best Practices & Common Pitfalls
 
 - Use `areal.utils.logging.getLogger("LauncherName")` for logging -> not `print()`
-- Query `areal.platforms.current_platform` for device information -> not hard-coded GPU
-  indices or direct `torch.cuda` calls
+- Query `areal.infra.platforms.current_platform` for device information -> not
+  hard-coded GPU indices or direct `torch.cuda` calls
 - Use `areal.utils.name_resolve` for multi-node service discovery -> not direct
   IP/hostname assumptions
 - Raise specific exceptions from `areal.scheduler.exceptions` -> not generic exception

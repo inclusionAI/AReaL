@@ -12,11 +12,11 @@ import os
 import torch
 import torch.distributed as dist
 
+from areal.infra.platforms import current_platform
 from areal.models.fsdp.ulysses import (
     all_to_all_tensor,
     set_ulysses_sequence_parallel_group,
 )
-from areal.platforms import current_platform
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 
 

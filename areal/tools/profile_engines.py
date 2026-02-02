@@ -31,7 +31,7 @@ from pathlib import Path
 import torch
 from torch.profiler import ProfilerActivity
 
-from areal.platforms import current_platform
+from areal.infra import current_platform
 
 
 @dataclass

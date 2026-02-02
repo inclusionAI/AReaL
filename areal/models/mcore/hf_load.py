@@ -12,8 +12,8 @@ from megatron.core import parallel_state as mpu
 from megatron.core.fp8_utils import is_float8tensor
 from safetensors import safe_open
 
+from areal.infra.platforms import current_platform
 from areal.models.mcore.registry import unwrap_to_gpt_model
-from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.fp8 import (
     FP8BlockwiseTensorHelper,

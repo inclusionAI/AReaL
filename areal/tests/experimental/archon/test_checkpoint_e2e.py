@@ -24,7 +24,7 @@ import subprocess
 import pytest
 import torch
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.experimental.archon.utils import (
     DENSE_MODEL_PATHS,
     MOE_MODEL_PATHS,

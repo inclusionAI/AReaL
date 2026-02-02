@@ -23,7 +23,7 @@ from areal.api.io_struct import (
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import WorkflowLike
-    from areal.core.workflow_executor import WorkflowExecutor
+    from areal.infra import WorkflowExecutor
     from areal.utils.data import MicroBatchList
 
 

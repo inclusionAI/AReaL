@@ -1097,7 +1097,7 @@ class vLLMConfig:
     no_enable_prefix_caching: bool = True
     gpu_memory_utilization: float = 0.9
     worker_extension_cls: str = (
-        "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
+        "areal.engine.vllm_ext.vllm_worker_extension.VLLMWorkerExtension"
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
@@ -1143,7 +1143,7 @@ class vLLMConfig:
 
     @staticmethod
     def build_cmd_from_args(args: dict[str, Any]):
-        return get_py_cmd("areal.thirdparty.vllm.areal_vllm_server", args)
+        return get_py_cmd("areal.engine.vllm_ext.areal_vllm_server", args)
 
     @staticmethod
     def build_cmd(

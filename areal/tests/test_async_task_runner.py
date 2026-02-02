@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from areal.core.async_task_runner import AsyncTaskRunner
+from areal.infra.async_task_runner import AsyncTaskRunner
 
 
 class TestAsyncTaskRunnerBasic:
