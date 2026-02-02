@@ -1,12 +1,4 @@
-# Tau2 training config with proxy server and archon backend
-# This config is for single-controller mode (scheduler.type=slurm)
-#
-# Key differences from SPMD mode (tau2/config.yaml):
-# 1. Uses AgentWorkflow which receives base_url from proxy server
-# 2. No need for rollout.openai config (proxy handles OpenAI API translation)
-# 3. archon backend still works because training and inference are independent
-
-experiment_name: tau2-proxy-grpo
+experiment_name: tau2-grpo
 trial_name: trial0
 
 seed: 1
@@ -23,13 +15,10 @@ cluster:
     nfs_record_root: /storage/openpsi/experiments/name_resolve
     etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-su18-01.hn01.su18-hn.local:2379
 
-# Use archon backend for training with sglang for inference
-# Note: PP (pipeline parallelism) in archon may have issues with Schedule1F1B.eval()
-# If you encounter "Schedule1F1B object has no attribute 'eval'" error,
-# use p1 (no pipeline parallelism) instead: archon:d8p1t1
-allocation_mode: sglang:d4t2+archon:d4p1t2
+# Use archon backend for training
+# Format: sglang[rollout]:d{data_parallel}t{tensor_parallel}+archon[actor]:d{dp}p{pp}t{tp}
+allocation_mode: sglang:d4t2+archon:d4p2t1
 
-# Single-controller mode with slurm scheduler
 scheduler:
   type: slurm
 
@@ -38,12 +27,19 @@ rollout:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
-  max_concurrent_rollouts: 64
+  max_concurrent_rollouts: 64  # Reduced from 512 to avoid SGLang OOM
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
   scheduling_spec: ${actor.scheduling_spec}
+  engine_max_tokens: ${gconfig.max_tokens}
+  openai:
+    mode: inline
+    tool_call_parser: qwen25
+    reasoning_parser: qwen3
+    export_style: individual
+    turn_discount: ${econfig.turn_discount}
 
 gconfig:
   n_samples: 16
@@ -74,7 +70,7 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   eps_clip: 0.4
-  temperature: ${gconfig.temperature}
+  temperature: ${gconfig.temperature}  # Must match gconfig.temperature for consistent logprob computation
   reward_scaling: 10.0
   reward_bias: -0.5
   kl_ctl: 0.0
@@ -150,7 +146,7 @@ econfig:
   turn_discount: 1.0
   invalid_format_penalty: 0.1
 
-# SGLang config for inference server
+# SGLang config
 sglang:
   model_path: ${actor.path}
   random_seed: ${seed}

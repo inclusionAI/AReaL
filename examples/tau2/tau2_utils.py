@@ -1,4 +1,8 @@
 from dataclasses import dataclass, field
+import json
+import os
+from datetime import datetime
+from typing import Any
 
 import yaml
 from pydantic import BaseModel
@@ -47,6 +51,153 @@ class Tau2RunInfo(BaseModel):
             s += f"[ERROR]: {self.error}\n"
         return s
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a JSON-serializable dictionary."""
+        return {
+            "task": {
+                "id": self.task.id,
+                "domain": getattr(self.task, "domain", None),
+                "user_scenario": str(self.task.user_scenario) if self.task.user_scenario else None,
+                "expected_actions": [a.model_dump() if hasattr(a, "model_dump") else str(a)
+                                    for a in (self.task.expected_actions or [])],
+            },
+            "reward": self.reward,
+            "reward_info": self.reward_info.model_dump() if self.reward_info else None,
+            "messages": [
+                {
+                    "turn_idx": m.turn_idx,
+                    "role": m.role,
+                    "content": m.content,
+                    "tool_calls": [tc.model_dump() for tc in m.tool_calls] if m.tool_calls else None,
+                }
+                for m in self.messages
+            ],
+            "agent_time": self.agent_time,
+            "user_time": self.user_time,
+            "error": self.error,
+        }
+
+
+class TrajectoryLogger:
+    """Logger for saving tau2 trajectories to JSONL files."""
+
+    def __init__(self, save_dir: str | None = None, enabled: bool = True):
+        """Initialize the trajectory logger.
+
+        Args:
+            save_dir: Directory to save trajectories. If None, uses current directory.
+            enabled: Whether logging is enabled.
+        """
+        self.enabled = enabled
+        if not enabled:
+            return
+
+        if save_dir is None:
+            save_dir = os.getcwd()
+        self.save_dir = save_dir
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Create a unique filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.filepath = os.path.join(save_dir, f"trajectories_{timestamp}.jsonl")
+        self._file = None
+        self._count = 0
+
+    def log(self, run_info: "Tau2RunInfo", extra_info: dict[str, Any] | None = None):
+        """Log a single trajectory.
+
+        Args:
+            run_info: The Tau2RunInfo object containing trajectory data.
+            extra_info: Optional extra information to include.
+        """
+        if not self.enabled:
+            return
+
+        record = {
+            "timestamp": datetime.now().isoformat(),
+            "trajectory_id": self._count,
+            **run_info.to_dict(),
+        }
+        if extra_info:
+            record.update(extra_info)
+
+        # Append to file
+        with open(self.filepath, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        self._count += 1
+
+    def get_count(self) -> int:
+        """Get the number of trajectories logged."""
+        return self._count
+
+    def get_filepath(self) -> str | None:
+        """Get the filepath of the log file."""
+        return self.filepath if self.enabled else None
+
+
+def truncate_messages_by_chars(
+    messages: list[dict[str, Any]],
+    max_chars: int,
+    keep_system: bool = True,
+) -> list[dict[str, Any]]:
+    """Truncate messages to fit within max_chars limit.
+
+    Strategy:
+    1. Always keep the system message (if keep_system=True)
+    2. Always keep the last message (most recent context)
+    3. Remove middle messages from oldest to newest until under limit
+
+    Args:
+        messages: List of message dicts with 'role' and 'content'
+        max_chars: Maximum total characters allowed
+        keep_system: Whether to always keep system messages
+
+    Returns:
+        Truncated list of messages
+    """
+    if not messages:
+        return messages
+
+    def get_message_chars(msg: dict) -> int:
+        """Estimate character count for a message."""
+        chars = len(str(msg.get("content", "")))
+        # Add some overhead for role, tool_calls, etc.
+        if msg.get("tool_calls"):
+            chars += len(str(msg["tool_calls"]))
+        return chars
+
+    total_chars = sum(get_message_chars(m) for m in messages)
+    if total_chars <= max_chars:
+        return messages
+
+    # Separate system messages and others
+    system_msgs = []
+    other_msgs = []
+    for msg in messages:
+        if keep_system and msg.get("role") == "system":
+            system_msgs.append(msg)
+        else:
+            other_msgs.append(msg)
+
+    # Calculate chars used by system messages
+    system_chars = sum(get_message_chars(m) for m in system_msgs)
+    remaining_chars = max_chars - system_chars
+
+    if remaining_chars <= 0:
+        # Even system messages are too long, just return last message
+        return [messages[-1]]
+
+    # Keep removing oldest non-system messages until under limit
+    while other_msgs and sum(get_message_chars(m) for m in other_msgs) > remaining_chars:
+        if len(other_msgs) <= 1:
+            # Only one message left, truncate its content
+            break
+        # Remove the oldest message (but keep the last one)
+        other_msgs.pop(0)
+
+    return system_msgs + other_msgs
+
 
 # ================================ config ================================
 # Customized config for tau2, add env config
@@ -83,4 +234,23 @@ class Tau2EnvConfig:
     )
     invalid_format_penalty: float = field(
         default=0.1, metadata={"help": "Penalty for invalid format in completions."}
+    )
+    user_llm_max_input_chars: int = field(
+        default=100000,
+        metadata={
+            "help": "Maximum input characters for user LLM. "
+            "Messages will be truncated if exceeded. "
+            "Set to 0 to disable truncation."
+        },
+    )
+    save_trajectories: bool = field(
+        default=True,
+        metadata={"help": "Whether to save trajectories to JSONL files."},
+    )
+    trajectory_save_dir: str | None = field(
+        default=None,
+        metadata={
+            "help": "Directory to save trajectories. "
+            "If None, saves to the experiment log directory."
+        },
     )

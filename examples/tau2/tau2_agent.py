@@ -102,8 +102,14 @@ class Tau2Runner:
         if self.econfig.add_thinking_tool:
             tools.append(Tool(think))
 
+        # Track completion call count for debugging
+        completion_call_count = [0]
+
         # Use ArealOpenAI client for agent completions
         async def _acompletion(*args, **kwargs):
+            completion_call_count[0] += 1
+            call_num = completion_call_count[0]
+            logger.debug(f"[Task {task.id}] Agent completion call #{call_num}")
             start_time = time.perf_counter()
             # Remove parameters that ArealOpenAI doesn't support
             kwargs.pop("api_key", None)
@@ -114,9 +120,17 @@ class Tau2Runner:
             kwargs["extra_body"]["chat_template_kwargs"] = {"enable_thinking": False}
             try:
                 # Use ArealOpenAI client directly (not via HTTP)
-                return await self.client.chat.completions.create(**kwargs)
+                result = await self.client.chat.completions.create(**kwargs)
+                logger.debug(f"[Task {task.id}] Agent completion #{call_num} succeeded")
+                return result
+            except Exception as e:
+                logger.error(f"[Task {task.id}] Agent completion #{call_num} failed: {e}")
+                raise
             finally:
                 run_info.agent_time.append(time.perf_counter() - start_time)
+
+        # Store completion_call_count in run_info for later logging
+        run_info._completion_call_count = completion_call_count
 
         # Create a dedicated AsyncOpenAI client for user LLM
         user_openai_client = AsyncOpenAI(
@@ -221,6 +235,21 @@ class Tau2Runner:
         try:
             simulation = await orchestrator.arun()
             run_info.messages = simulation.messages
+            # Log simulation details for debugging
+            completion_calls = getattr(run_info, '_completion_call_count', [0])[0]
+            logger.debug(
+                f"[Task {task.id}] Simulation completed. "
+                f"Messages: {len(simulation.messages)}, "
+                f"Agent completions called: {completion_calls}, "
+                f"Agent time entries: {len(run_info.agent_time)}"
+            )
+            # Log message roles for debugging when few messages
+            if len(simulation.messages) <= 5:
+                roles = [m.role for m in simulation.messages]
+                logger.warning(
+                    f"[Task {task.id}] Short simulation with only {len(simulation.messages)} messages. "
+                    f"Roles: {roles}, Agent calls: {completion_calls}"
+                )
         except Exception as e:
             logger.error(
                 f"ERROR RUNNING SIMULATION: Domain: {domain}, Task: {task.id}, "
@@ -322,11 +351,17 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
         # Set reward on client and export interactions
         # Filter out incomplete interactions (where completion is None)
         cache = client._cache
+
+        # Get completion call count from run_info if available
+        completion_calls = getattr(run_info, '_completion_call_count', [0])[0]
+
         if not cache:
             logger.warning(
                 f"[Task {task_id}] No interactions in cache. "
                 f"Reward: {run_info.reward}, Error: {run_info.error}, "
-                f"Messages count: {len(run_info.messages)}"
+                f"Messages count: {len(run_info.messages)}, "
+                f"Agent completion calls: {completion_calls}, "
+                f"Agent time calls: {len(run_info.agent_time)}"
             )
             return None
 
@@ -358,7 +393,49 @@ class Tau2RolloutWorkflow(RolloutWorkflow):
             f"[Task {task_id}] Completed with {len(interactions)} interactions, "
             f"reward: {run_info.reward}"
         )
+
+        # Save trajectory if enabled
+        if self.econfig.save_trajectories:
+            self._save_trajectory(engine, task_id, run_info)
+
         return interactions
+
+    def _save_trajectory(
+        self,
+        engine: InferenceEngine,
+        task_id: str,
+        run_info: Tau2RunInfo,
+    ):
+        """Save trajectory to JSONL file.
+
+        File is saved to: {trajectory_save_dir}/generated/{step}/{task_id}.jsonl
+        """
+        import json
+        import os
+
+        try:
+            # Get current step from engine version
+            step = engine.get_version()
+
+            # Build save path: generated/{step}/{task_id}.jsonl
+            base_dir = self.econfig.trajectory_save_dir or os.getcwd()
+            save_dir = os.path.join(base_dir, "generated", str(step))
+            os.makedirs(save_dir, exist_ok=True)
+
+            # Sanitize task_id for filename (replace special chars)
+            safe_task_id = task_id.replace("/", "_").replace("\\", "_").replace(":", "_")
+            filepath = os.path.join(save_dir, f"{safe_task_id}.jsonl")
+
+            # Build record
+            record = run_info.to_dict()
+            record["step"] = step
+
+            # Append to file (multiple samples for same task go to same file)
+            with open(filepath, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        except Exception as e:
+            logger.warning(f"Failed to save trajectory for task {task_id}: {e}")
 
 
 # Alias for backward compatibility
