@@ -128,10 +128,11 @@ def packed_context_parallel_forward(
     position_ids = input_["position_ids"]
     cu_seqlens = input_.get("cu_seqlens", None)
     block_mask = input_.get("block_mask", None)
+    triton_attn_data = input_.get("triton_attn_data", None)
     packed_seq_params = None
 
     if cu_seqlens is not None:
-        if block_mask is not None:
+        if block_mask is not None or triton_attn_data is not None:
             raise ValueError(
                 "Attention mask should be None when using packed sequences."
             )
@@ -140,10 +141,13 @@ def packed_context_parallel_forward(
         )
         input_ids = input_ids.contiguous()
 
+    # Pass triton_attn_data as attention_mask if present (for Triton tree attention)
+    attention_mask = triton_attn_data if triton_attn_data is not None else block_mask
+
     try:
         output = model(
             input_ids=input_ids,
-            attention_mask=block_mask,
+            attention_mask=attention_mask,
             position_ids=position_ids,
             packed_seq_params=packed_seq_params,
         )
