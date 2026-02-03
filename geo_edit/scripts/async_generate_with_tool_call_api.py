@@ -124,7 +124,11 @@ def _run_one_task(task_payload: dict):
             meta_info = json.loads(f.readline().strip())
         return True, meta_info
 
-    task_kwargs = {}
+    # Map model_type to lowercase for VisionQATask
+    model_type_map = {"Google": "google", "OpenAI": "openai", "vLLM": "vllm"}
+    model_type = model_type_map.get(_WORKER_MODEL_TYPE, "openai")
+
+    task_kwargs = {"model_type": model_type}
     if text_only:
         logger.info(f"[{task_id}] running text-only task.")
         task_kwargs["text_only"] = True

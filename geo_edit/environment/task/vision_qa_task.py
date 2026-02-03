@@ -5,9 +5,11 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from pyexpat import model
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from PIL import Image
+from sympy import N
 
 from geo_edit.environment.task.base import AbstractVLMTask
 from geo_edit.constants import TOOL_EXECUTION_FAILURE_PROMPT, TOOL_EXECUTION_SUCCESS_PROMPT
@@ -33,6 +35,7 @@ class VisionQATask(AbstractVLMTask):
         task_answer: str,
         task_image_path: str | None,
         save_dir: Path | str,
+        model_type: Literal["google", "openai", "vllm"] = "openai",
         tool_functions: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
@@ -40,6 +43,7 @@ class VisionQATask(AbstractVLMTask):
         self.task_prompt = task_prompt
         self.task_answer = task_answer
         self.task_image_path = task_image_path
+        self.model_type = model_type
         self.tool_functions = tool_functions or {}
         self.state = True
         self.single_message_mode= kwargs.get("single_message_mode", False) # single message mode: only maintain one message, convert each action and new observation into original message.
@@ -299,7 +303,7 @@ class VisionQATask(AbstractVLMTask):
             tokens_used = extra_info.get("tokens_used")
             tokens_input = extra_info.get("tokens_input")
             tokens_output = extra_info.get("tokens_output")
-            tokens_thoughts = extra_info.get("tokens_thoughts")
+            tokens_thoughts = extra_info.get("tokens_thoughts",None)
                 
             tokens_total_per_step.append(tokens_used)
 
@@ -307,25 +311,27 @@ class VisionQATask(AbstractVLMTask):
 
             if isinstance(tokens_output, (int, float)) and isinstance(tokens_thoughts, (int, float)):
                 tokens_output_per_step.append(tokens_output + tokens_thoughts)
-                tokens_output_total += tokens_output + tokens_thoughts
             elif isinstance(tokens_output, (int, float)):
                 tokens_output_per_step.append(tokens_output)
-                tokens_output_tota.l += tokens_output
             else:
                 tokens_output_per_step.append(None)
 
-        last_total = tokens_total_per_step[-1]
-        if last_total is not None:
-            tokens_used_total = last_total
+        tokens_used_total =  tokens_total_per_step[-1]
+    
+        if self.model_type == "vllm" or self.model_type == "openai":
+            tokens_output_total=tokens_output_per_step[-1]
+            tokens_input_total=tokens_input_per_step[-1]
+        elif self.model_type == "google":
+            tokens_output_total = sum(
+                t for t in tokens_output_per_step if isinstance(t, (int, float))
+            )
+            tokens_input_total = None
+            if isinstance(tokens_used_total, (int, float)) and isinstance(tokens_output_total, (int, float)):
+                tokens_input_total = float(tokens_used_total) - float(tokens_output_total)
+                if tokens_input_total < 0:
+                    raise ValueError("Calculated tokens_input_total is negative.")
         else:
-            logger.warning("Cannot get total tokens used from the last step.")
-            tokens_used_total = None
-
-        tokens_input_total = None
-        if isinstance(tokens_used_total, (int, float)) and isinstance(tokens_output_total, (int, float)):
-            tokens_input_total = float(tokens_used_total) - float(tokens_output_total)
-            # if tokens_input_total < 0:
-            #     raise ValueError("Calculated tokens_input_total is negative.")
+            raise ValueError(f"Unknown model type: {self.model_type}")
 
         meta_info = {
             "id": self.task_id,
