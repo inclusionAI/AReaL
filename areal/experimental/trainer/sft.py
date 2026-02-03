@@ -16,8 +16,8 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.api.scheduler_api import Scheduler
-from areal.platforms import current_platform
-from areal.scheduler import LocalScheduler, SlurmScheduler
+from areal.infra.platforms import current_platform
+from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from areal.engine.fsdp_engine import FSDPLMEngine
     from areal.engine.megatron_engine import MegatronLMEngine
     from areal.engine.sft.lm_engine import LMController
+    from areal.experimental.engine.archon_engine import ArchonLMEngine
 
 logger = logging.getLogger("SFTTrainer")
 
@@ -254,6 +255,8 @@ class SFTTrainer:
         cfg = self.config.scheduler
         if cfg.type == "local":
             return LocalScheduler(exp_config=self.config)
+        elif cfg.type == "ray":
+            return RayScheduler(exp_config=self.config)
         elif cfg.type == "slurm":
             return SlurmScheduler(exp_config=self.config)
         raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
@@ -275,7 +278,7 @@ class SFTTrainer:
 
     def _create_actor(
         self, actor_config: TrainEngineConfig
-    ) -> FSDPLMEngine | MegatronLMEngine | LMController:
+    ) -> FSDPLMEngine | MegatronLMEngine | ArchonLMEngine | LMController:
         if self.allocation_mode.train_backend == "fsdp":
             from areal.engine.fsdp_engine import FSDPLMEngine
 
@@ -284,9 +287,14 @@ class SFTTrainer:
             from areal.engine.megatron_engine import MegatronLMEngine
 
             actor_cls = MegatronLMEngine
+        elif self.allocation_mode.train_backend == "archon":
+            from areal.experimental.engine.archon_engine import ArchonLMEngine
+
+            actor_cls = ArchonLMEngine
         else:
             raise ValueError(
-                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
+                f"Invalid backend: {self.allocation_mode.train_backend}, "
+                f"expected fsdp, megatron, or archon"
             )
         if is_single_controller():
             actor = actor_cls.as_controller(actor_config, self.scheduler)
@@ -326,7 +334,7 @@ class SFTTrainer:
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
         # Save recoverable checkpoints
-        to_save = dict(default=self.actor)
+        to_save: dict = dict(default=self.actor)
         step_info = StepInfo(
             global_step=global_step,
             epoch=epoch,

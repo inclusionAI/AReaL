@@ -20,7 +20,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Worker
-from areal.controller.train_controller import TrainController
+from areal.infra import TrainController
 
 
 class MockTrainEngine(TrainEngine):
@@ -624,6 +624,7 @@ class TestTrainControllerRolloutIntegration:
             workflow_kwargs={"key": "value"},
             should_accept_fn=None,
             dynamic_bs=False,
+            group_size=1,
         )
 
     def test_rollout_batch_delegates_to_rollout(
@@ -653,6 +654,7 @@ class TestTrainControllerRolloutIntegration:
             workflow="test.workflow",
             workflow_kwargs={"key": "value"},
             should_accept_fn=None,
+            group_size=1,
         )
 
 
@@ -701,28 +703,6 @@ class TestTrainControllerExportStats:
         result = train_controller.export_stats()
         for k in expected_stats:
             assert result[k] == expected_stats[k]
-
-
-class TestTrainControllerAsyncMethods:
-    """Tests for async method handling."""
-
-    def test_run_async_task(self, train_controller):
-        """Test _run_async_task correctly runs async tasks."""
-
-        async def async_task():
-            return 42
-
-        result = train_controller._run_async_task(async_task())
-        assert result == 42
-
-    def test_run_async_task_with_exception(self, train_controller):
-        """Test _run_async_task propagates exceptions."""
-
-        async def failing_task():
-            raise ValueError("Test error")
-
-        with pytest.raises(ValueError, match="Test error"):
-            train_controller._run_async_task(failing_task())
 
 
 class TestTrainControllerDispatchInputs:

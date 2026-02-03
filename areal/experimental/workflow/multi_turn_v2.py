@@ -1,15 +1,13 @@
-import asyncio
-import uuid
 from copy import deepcopy
 from typing import Any
 
 from transformers import PreTrainedTokenizerFast
 
+from areal import workflow_context
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.core import workflow_context
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import logging, stats_tracker
 
@@ -26,7 +24,10 @@ class MultiTurnWorkflow(RolloutWorkflow):
         turn_discount: float,
     ):
         self.reward_fn = reward_fn
-        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
+        # Enforce n_samples=1; grouping is handled by GroupedRolloutWorkflow
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer).new(
+            n_samples=1
+        )
         self.tokenizer = tokenizer
         self.max_turns = max_turns
         self.turn_discount = turn_discount
@@ -40,8 +41,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
             }
         ]
 
-    async def _run_one_episode(
-        self, engine: InferenceEngine, data: dict, rid: str
+    async def arun_episode(
+        self, engine: InferenceEngine, data: dict
     ) -> tuple[dict, Any]:
         client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
         messages = deepcopy(data["messages"])
@@ -61,7 +62,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
             )
             # _comp is an openai ChatCompletion object
             # but we also need to fetch the saved token IDs
-            comp = client.get_completions(_comp.id)
+            comp = client.get_interaction(_comp.id)
             reward = await self.async_reward_fn(
                 self.tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
@@ -92,17 +93,4 @@ class MultiTurnWorkflow(RolloutWorkflow):
         )
 
         client.set_reward(_comp.id, reward)
-        return client.export_interactions(), comp
-
-    async def arun_episode(self, engine: InferenceEngine, data: dict[str, Any]) -> dict:
-        rid = uuid.uuid4().hex
-        tasks = [
-            self._run_one_episode(engine, data, rid)
-            for _ in range(self.gconfig.n_samples)
-        ]
-        results = await asyncio.gather(*tasks)
-
-        merged: dict = {}
-        for rollout_data, _ in results:
-            merged.update(rollout_data)
-        return merged
+        return client.export_interactions()

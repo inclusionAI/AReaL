@@ -9,14 +9,10 @@ from typing import Any, Dict
 
 import aiohttp
 
-try:
-    from realhf.base import constants, logging
-except Exception:
-    import logging
+from areal.utils import logging
 
-    constants = None
 
-logger = logging.getLogger("function call")
+logger = logging.getLogger("FunctionCall")
 
 FUNCTIONCALL_SERVICE_DOMAIN = os.getenv(
     "FUNCTIONCALL_SERVICE_DOMAIN",
@@ -208,13 +204,11 @@ def get_runtime_name(runtime, language):
 
 
 def caculate_concurrency():
-    # use 5000 cpu cores for one exp by default
+    # use 5000 cpu cores for one exp by default,
+    # batch size defaults to 512
     concurrency_for_one_exp = 5000
-    try:
-        dp = constants.parallelism_group_size()
-    except Exception as e:
-        dp = 16
-    return concurrency_for_one_exp // dp
+    batch_size = 512
+    return concurrency_for_one_exp // batch_size
 
 
 def batch_function_call(payload_list, task_type, timeout):

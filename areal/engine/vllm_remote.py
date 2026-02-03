@@ -21,11 +21,9 @@ from areal.api.io_struct import (
     WeightUpdateRequests,
 )
 from areal.api.scheduler_api import Scheduler
-from areal.api.workflow_api import RolloutWorkflow
-from areal.controller import RolloutController
-from areal.core import RemoteInfEngine
-from areal.core.workflow_executor import WorkflowExecutor
-from areal.platforms import current_platform
+from areal.api.workflow_api import WorkflowLike
+from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
+from areal.infra.platforms import current_platform
 from areal.utils import perf_tracer, stats_tracker
 from areal.utils.launcher import TRITON_CACHE_PATH
 
@@ -332,12 +330,14 @@ class RemotevLLMEngine(InferenceEngine):
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         task_id: int | None = None,
         callback_addr: str | None = None,
         is_eval: bool = False,
+        proxy_addr: str | None = None,
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
@@ -345,9 +345,11 @@ class RemotevLLMEngine(InferenceEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            group_size=group_size,
             task_id=task_id,
             callback_addr=callback_addr,
             is_eval=is_eval,
+            proxy_addr=proxy_addr,
         )
 
     def wait(
@@ -365,22 +367,29 @@ class RemotevLLMEngine(InferenceEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
         This method does not support asynchronous rollout and should be used for offline
         data collection or debugging, not in production experiments.
         """
-        return self._engine.rollout_batch(data, workflow, workflow_kwargs)
+        return self._engine.rollout_batch(
+            data=data,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            group_size=group_size,
+        )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
@@ -389,6 +398,7 @@ class RemotevLLMEngine(InferenceEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            group_size=group_size,
             dynamic_bs=dynamic_bs,
         )
 

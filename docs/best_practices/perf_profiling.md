@@ -136,7 +136,7 @@ does a single prompt take from submission to reward calculation?).
 **Example** (from `areal/workflow/rlvr.py`):
 
 ```python
-from areal.core import workflow_context
+from areal import workflow_context
 from areal.utils.perf_tracer import (
     atrace_session_phase,
     session_context,
@@ -150,20 +150,10 @@ class RLVRWorkflow(RolloutWorkflow):
         # Each sample will register its own session_id
 
         # Generate responses and collect rewards for n_samples
-        sample_results = await asyncio.gather(
-            *[
-                self._collect_samples(engine, req, prompt_str, data)
-                for _ in range(n_samples)
-            ]
-        )
-        if sample_results:
-            resps, rewards, completions_strs = map(list, zip(*sample_results))
-        else:
-            resps, rewards, completions_strs = [], [], []
+        resp, reward = self._collect_samples(engine, req, prompt_str, data)
 
         # Build result tensors
-        results = self._build_result_tensors(resps, rewards)
-        return concat_padded_tensors(results)
+        return self._build_result_tensors(resp, reward)
 
     @session_context()
     async def _collect_samples(
@@ -177,7 +167,7 @@ class RLVRWorkflow(RolloutWorkflow):
         async with atrace_session_phase("generate"):
             resp = await engine.agenerate(req)
 
-        reward, completion_str = await self._compute_rewards(
+        reward = await self._compute_rewards(
             resp,
             prompt_str,
             task_data,
@@ -185,7 +175,7 @@ class RLVRWorkflow(RolloutWorkflow):
 
         stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
-        return resp, reward, completion_str
+        return resp, reward
 
     @trace_session("reward")
     async def _compute_rewards(self, resp, prompt_str, task_data):
@@ -196,7 +186,7 @@ class RLVRWorkflow(RolloutWorkflow):
             resp.input_tokens, resp.output_tokens,
             **task_data
         )
-        return reward, completion_str
+        return reward
 ```
 
 #### `session_context` decorator
@@ -293,7 +283,7 @@ snapshot").
 - Creates a point-in-time marker (not a duration)
 - Useful for events that don't have a meaningful duration
 
-**Example** (from `areal/core/workflow_executor.py`):
+**Example** (from `areal/infra/workflow_executor.py`):
 
 ```python
 perf_tracer.instant(
@@ -326,7 +316,7 @@ consumption).
 - Parameters: Use `session_id=` to target a specific session, or `task_id=` to target
   all sessions in a task
 
-**Example** (from `areal/core/workflow_executor.py`):
+**Example** (from `areal/infra/workflow_executor.py`):
 
 ```python
 from areal.utils.perf_tracer import trace_session_event

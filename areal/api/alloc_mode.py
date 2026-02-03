@@ -252,7 +252,7 @@ class ModelAllocation:
     Parameters
     ----------
     backend : str
-        Backend type ("sglang", "vllm", "fsdp", "megatron")
+        Backend type ("sglang", "vllm", "fsdp", "megatron", "archon")
     name : str, optional
         Component name for referencing via allocation_mode[name]
     parallel : ParallelStrategy
@@ -265,7 +265,7 @@ class ModelAllocation:
     >>> ModelAllocation("sglang", "rollout", ParallelStrategy(dp=2), SchedulingStrategy("separation"))
     """
 
-    backend: Literal["fsdp", "megatron", "vllm", "sglang", "cpu"]
+    backend: Literal["fsdp", "megatron", "archon", "vllm", "sglang", "cpu"]
     name: str | None
     parallel: ParallelStrategy | None
     scheduling_strategy: SchedulingStrategy
@@ -443,8 +443,10 @@ class AllocationMode:
         return [a for a in self.allocations if a.backend in ("sglang", "vllm")]
 
     def _get_training_allocations(self) -> list[ModelAllocation]:
-        """Get all training allocations (fsdp, megatron backends)."""
-        return [a for a in self.allocations if a.backend in ("fsdp", "megatron")]
+        """Get all training allocations (fsdp, megatron, archon backends)."""
+        return [
+            a for a in self.allocations if a.backend in ("fsdp", "megatron", "archon")
+        ]
 
     ########### Legacy Attributes for Backward Compatiblity ###########
     @property
@@ -587,7 +589,7 @@ ALLOCATION_GRAMMAR = """
 
     EVAL: "cpu" | "eval"
     INFER_BACKEND: "sglang" | "vllm"
-    TRAIN_BACKEND: "fsdp" | "megatron"
+    TRAIN_BACKEND: "fsdp" | "megatron" | "archon"
 
     NAME: /[a-zA-Z_][a-zA-Z0-9_]*/
     NUMBER: /[1-9][0-9]*/
@@ -1034,6 +1036,9 @@ class _ParallelStrategyTransformer(Transformer):
                 attn_kwargs["context_parallel_size"] = dim.size
 
         # Build expert strategy parameters
+        # - pp: inherits from attn if omitted, must match if specified
+        # - dp: derived from world_size if omitted
+        # - tp/ep: default to 1 if omitted
         expert_data_parallel_size = None
         expert_pipeline_parallel_size = None
         expert_tensor_parallel_size = 1
@@ -1049,17 +1054,16 @@ class _ParallelStrategyTransformer(Transformer):
             elif dim.type_ == "e":
                 expert_parallel_size = dim.size
 
-        # Validate that pipeline parallel sizes match between attention and FFN sections
-        if (
-            expert_pipeline_parallel_size is not None
-            and expert_pipeline_parallel_size != attn_kwargs["pipeline_parallel_size"]
-        ):
+        # expert PP: inherit from attn if omitted, validate match if specified
+        if expert_pipeline_parallel_size is None:
+            expert_pipeline_parallel_size = attn_kwargs["pipeline_parallel_size"]
+        elif expert_pipeline_parallel_size != attn_kwargs["pipeline_parallel_size"]:
             raise AllocationValidationError(
                 f"Pipeline parallel size for attention and FFN modules must be identical. "
                 f"Got attention: {attn_kwargs['pipeline_parallel_size']}, FFN: {expert_pipeline_parallel_size}."
             )
 
-        # Validate that world sizes match
+        # Calculate attn world size
         attn_world_size = math.prod(
             [
                 attn_kwargs["data_parallel_size"],
@@ -1068,12 +1072,26 @@ class _ParallelStrategyTransformer(Transformer):
                 attn_kwargs["context_parallel_size"],
             ]
         )
+
+        # expert DP: derive from world_size if omitted
+        if expert_data_parallel_size is None:
+            ffn_non_dp_size = (
+                expert_parallel_size
+                * expert_tensor_parallel_size
+                * expert_pipeline_parallel_size
+            )
+            if attn_world_size % ffn_non_dp_size != 0:
+                raise AllocationValidationError(
+                    f"Cannot derive expert dp: attn world_size ({attn_world_size}) "
+                    f"is not divisible by ffn ep*tp*pp ({ffn_non_dp_size})."
+                )
+            expert_data_parallel_size = attn_world_size // ffn_non_dp_size
+
+        # Validate world sizes match
         expert_world_size = math.prod(
             [
-                expert_data_parallel_size or attn_kwargs["data_parallel_size"],
-                expert_pipeline_parallel_size or attn_kwargs["pipeline_parallel_size"],
-            ]
-            + [
+                expert_data_parallel_size,
+                expert_pipeline_parallel_size,
                 expert_tensor_parallel_size,
                 expert_parallel_size,
             ]

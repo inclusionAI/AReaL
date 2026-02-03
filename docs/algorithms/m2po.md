@@ -65,8 +65,3 @@ The setting for GRPO is stale 256 d2+d1 rollout 96
 The key findings in the trails are as follow:
 - The `grad_norm` of GRPO is higher than M2PO, which may cause training instability.
 - The evaluate reward of M2PO is higher than GRPO.
-
-
-## Baselines
-
-We still lack baseline, welcome to contribute!

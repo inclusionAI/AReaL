@@ -172,7 +172,7 @@ generation. We recommend manually configuring the following options:
 
 ```bash
 enforce_eager=True
-enable_chunked_prefill=False
+no_enable_chunked_prefill=True
 disable_custom_all_reduce=True
 disable_sliding_window=True
 ```

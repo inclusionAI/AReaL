@@ -218,8 +218,8 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
 
     # Verify conversation history
-    stored_messages_c2 = openai_client.get_completions(c2.id).messages
-    stored_messages_c3 = openai_client.get_completions(c3.id).messages
+    stored_messages_c2 = openai_client.get_interaction(c2.id).messages
+    stored_messages_c3 = openai_client.get_interaction(c3.id).messages
 
     # Verify thinking tags are stripped from assistant messages
     for msg_list in [stored_messages_c2, stored_messages_c3]:
@@ -245,9 +245,6 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     assert completions[c1.id].reward == 0.85 * (1.5 + 0.85 * 2.5)
 
 
-@pytest.mark.skip(
-    reason="In some case, sglang will output pad_token at the end of sequence rather than eos_token, and will make the test fail since the concat logic is based on eos_token."
-)
 @pytest.mark.asyncio
 async def test_multi_round_conversation_concat_style_export(openai_client):
     """Create a conversation tree using create() and verify parents and rewards.
@@ -276,6 +273,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
     c_a = await openai_client.chat.completions.create(
         messages=msgs_a, max_completion_tokens=2048
     )
+
     msgs_a1 = msgs_a + [
         c_a.choices[0].message,
         {"role": "user", "content": "Follow-up A1"},

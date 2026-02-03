@@ -22,8 +22,8 @@ from areal.api.io_struct import (
 )
 
 if TYPE_CHECKING:
-    from areal.api.workflow_api import RolloutWorkflow
-    from areal.core.workflow_executor import WorkflowExecutor
+    from areal.api.workflow_api import WorkflowLike
+    from areal.infra import WorkflowExecutor
     from areal.utils.data import MicroBatchList
 
 
@@ -195,10 +195,10 @@ class TrainEngine(abc.ABC):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        granularity: int = 1,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+        group_size: int = 1,
+    ) -> list[dict[str, Any]]:
         """Submit a batch of requests and wait for results.
 
         This method does not support asynchronous rollout and should be used for offline
@@ -210,17 +210,19 @@ class TrainEngine(abc.ABC):
         ----------
         data : list[dict[str, Any]]
             A list of input data dictionaries.
-        granularity : int, optional
-            The granularity of the rollout, by default 1.
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str | None, optional
-            The workflow to use for rollout generation, by default None.
+        workflow : WorkflowLike
+            The workflow to use for rollout generation.
         workflow_kwargs : dict[str, Any] | None, optional
             Keyword arguments to pass to the workflow constructor, by default None.
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
 
         Returns
         -------
-        dict[str, Any]
-            The rollout results.
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory contains tensors with shape [group_size, seqlen, ...].
         """
         raise NotImplementedError()
 
@@ -228,10 +230,10 @@ class TrainEngine(abc.ABC):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        granularity: int = 1,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         """Prepare a batch of data for training from a dataloader.
@@ -240,14 +242,15 @@ class TrainEngine(abc.ABC):
         ----------
         dataloader : StatefulDataLoader
             The dataloader to fetch data from.
-        granularity : int, optional
-            The granularity of the rollout, by default 1.
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str | None, optional
-            The workflow to use for rollout generation, by default None.
+        workflow : WorkflowLike
+            The workflow to use for rollout generation.
         workflow_kwargs : dict[str, Any] | None, optional
             Keyword arguments to pass to the workflow constructor, by default None.
         should_accept_fn : Callable[[dict[str, Any]], bool] | str | None, optional
             A function to filter trajectories, by default None.
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. The method will stop collecting
             when (accepted + rejected) >= batch_size, returning only accepted results.
@@ -700,9 +703,10 @@ class InferenceEngine(abc.ABC):
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        should_accept_fn: Callable | None = None,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable | None = None,
+        group_size: int = 1,
         task_id: int | None = None,
         is_eval: bool = False,
     ) -> int:
@@ -714,13 +718,14 @@ class InferenceEngine(abc.ABC):
         ----------
         data : dict[str, Any]
             The input data for rollout. Used by the user's customized workflow implementation.
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation. Can be:
 
             - An instance of RolloutWorkflow (for sharing resources between rollouts)
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
+            - An AgentWorkflow instance or class (will be wrapped in OpenAIProxyWorkflow)
         workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
@@ -728,6 +733,9 @@ class InferenceEngine(abc.ABC):
         should_accept_fn : Callable, optional
             A function used to decide whether to accept a specific trajectory, i.e., dynamic filtering.
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
         task_id : int, optional
             The task ID to use. If None, a new task ID will be generated internally.
         is_eval : bool, optional
@@ -801,9 +809,10 @@ class InferenceEngine(abc.ABC):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+        group_size: int = 1,
+    ) -> list[dict[str, Any]]:
         """Submit a batch of requests to the inference engine and wait for the results.
 
         This method does not support asynchronous rollout and should be used for offline
@@ -815,33 +824,40 @@ class InferenceEngine(abc.ABC):
         ----------
         data : list[dict[str, Any]]
             A list of input data dictionaries for rollout
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation. Can be:
 
             - An instance of RolloutWorkflow (for sharing resources between rollouts)
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
+            - An AgentWorkflow instance or class (will be wrapped in OpenAIProxyWorkflow)
         workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
             By default None.
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
 
         Returns
         -------
-        dict[str, Any]
-            A concatenated batch of trajectory results
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
+            where batch_size can vary per trajectory depending on the workflow output.
         """
         raise NotImplementedError()
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.
 
         See `workflow_api.py` for concrete implementation.
@@ -849,8 +865,8 @@ class InferenceEngine(abc.ABC):
         .. warning::
 
             This method caches an internal data generator on the first call.
-            The ``dataloader``, ``workflow``, ``workflow_kwargs``, and
-            ``should_accept_fn`` parameters are captured at the first invocation
+            The ``dataloader``, ``workflow``, ``workflow_kwargs``, ``group_size``,
+            and ``should_accept_fn`` parameters are captured at the first invocation
             and reused in all subsequent calls. Passing different arguments in
             later calls will **not** take effect.
 
@@ -863,19 +879,23 @@ class InferenceEngine(abc.ABC):
         ----------
         dataloader : StatefulDataLoader
             The data loader to pull data from for batch preparation
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation. Can be:
 
             - An instance of RolloutWorkflow (for sharing resources between rollouts)
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
+            - An AgentWorkflow instance or class (will be wrapped in OpenAIProxyWorkflow)
         workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
             By default None.
         should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory, by default None
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. The method will stop collecting
             when (accepted + rejected) >= batch_size, returning only accepted results.
@@ -883,8 +903,10 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        dict[str, Any]
-            A full batch of trajectory results with controlled staleness
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
+            where batch_size can vary per trajectory depending on the workflow output.
         """
         raise NotImplementedError()
 

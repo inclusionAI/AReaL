@@ -5,7 +5,7 @@ import torch
 
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
-from areal.controller.train_controller import TrainController
+from areal.infra import TrainController
 from areal.utils import logging, stats_tracker
 from areal.utils.constants import (
     PROX_APPROX_METHOD_LINEAR,
@@ -40,8 +40,6 @@ class PPOActor:
         self.reward_bias = config.reward_bias
         self.reward_scaling = config.reward_scaling
         self.reward_clip = config.reward_clip
-
-        self.group_size = config.group_size
 
         self.kl_ctl = config.kl_ctl
         self.kl_estimator = KLEstimator(config.kl_estimator)
@@ -115,7 +113,6 @@ class PPOActor:
             f"  reward_norm: {config.reward_norm if config.reward_norm else 'DISABLED (None)'}"
         )
         logger.info(f"  eps_clip: {config.eps_clip}")
-        logger.info(f"  group_size: {config.group_size}")
         logger.info("=" * 70)
 
     @trace_perf("ppo_actor.compute_logp", category="compute")

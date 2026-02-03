@@ -14,9 +14,9 @@ from typing import Any, Dict, List
 import numpy as np
 
 from functioncall.code.verify import code_verify
-from realhf.utils import load_hf_or_local_file
+from areal.utils.hf_utils import load_hf_or_local_file
 
-logger = logging.getLogger("function call")
+logger = logging.getLogger("FunctionCall")
 
 
 def parallel_code_verify(

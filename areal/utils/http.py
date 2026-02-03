@@ -73,11 +73,7 @@ async def arequest_with_retry(
                 if session is None:
                     await _session.close()
                 return res
-        except (
-            aiohttp.ClientError,
-            aiohttp.ClientResponseError,
-            asyncio.TimeoutError,
-        ) as e:
+        except (TimeoutError, aiohttp.ClientError, aiohttp.ClientResponseError) as e:
             if isinstance(e, asyncio.TimeoutError):
                 logger.warning(
                     "HTTP request to %s%s timed out after %.2fs (attempt %d/%d)",
@@ -116,3 +112,9 @@ def response_ok(http_code: int) -> bool:
 
 def response_retryable(http_code: int) -> bool:
     return http_code == HTTPStatus.REQUEST_TIMEOUT
+
+
+def ensure_end_with_slash(url: str) -> str:
+    if not url.endswith("/"):
+        return url + "/"
+    return url

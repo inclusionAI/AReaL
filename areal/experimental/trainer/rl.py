@@ -26,11 +26,11 @@ from areal.api.cli_args import (
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.scheduler_api import Scheduler
-from areal.api.workflow_api import RolloutWorkflow
-from areal.controller import RolloutController
+from areal.api.workflow_api import AgentWorkflow, WorkflowLike
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.platforms import current_platform
+from areal.infra import RolloutController
+from areal.infra.platforms import current_platform
 from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from areal.engine.megatron_engine import MegatronPPOActor, MegatronPPOCritic
     from areal.engine.ppo.actor import PPOActorController
     from areal.engine.ppo.critic import PPOCriticController
+    from areal.experimental.engine.archon_engine import ArchonPPOActor, ArchonPPOCritic
 
 logger = logging.getLogger("RLTrainer")
 
@@ -110,6 +111,9 @@ class PPOTrainer:
         self.rollout = self._init_rollout(config.rollout, is_eval=False)
         self.eval_rollout = self._init_rollout(config.rollout, is_eval=True)
 
+        # Proxy worker initialization (lazy, for AgentWorkflow support)
+        self._proxy_started = False
+
         ft_spec = FinetuneSpec(
             total_train_epochs=config.total_train_epochs,
             dataset_size=len(self.train_dataloader) * config.train_dataset.batch_size,
@@ -132,14 +136,22 @@ class PPOTrainer:
 
         # Prepare weight update meta and connect to inference engine
         if self.config.actor.weight_update_mode == "disk":
-            self.weight_update_meta = WeightUpdateMeta.from_disk(
-                experiment_name=config.experiment_name,
-                trial_name=config.trial_name,
-                file_root=config.cluster.fileroot,
-                name="default",
-                use_lora=config.actor.use_lora,
-                clear_checkpoint_after_load=True,
-            )
+            disk_kwargs = {
+                "experiment_name": config.experiment_name,
+                "trial_name": config.trial_name,
+                "file_root": config.cluster.fileroot,
+                "name": "default",
+                "clear_checkpoint_after_load": True,
+            }
+            if config.actor.use_lora:
+                disk_kwargs.update(
+                    {
+                        "use_lora": config.actor.use_lora,
+                        "lora_name": config.gconfig.lora_name,
+                        "base_model_name": config.actor.path,
+                    }
+                )
+            self.weight_update_meta = WeightUpdateMeta.from_disk(**disk_kwargs)
         elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
             if self.allocation_mode.train_backend == "megatron":
@@ -147,9 +159,16 @@ class PPOTrainer:
                     self.allocation_mode
                 )
             else:
-                self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
-                    self.allocation_mode
-                )
+                xccl_kwargs = {"allocation_mode": self.allocation_mode}
+                if config.actor.use_lora:
+                    xccl_kwargs.update(
+                        {
+                            "use_lora": config.actor.use_lora,
+                            "lora_name": config.gconfig.lora_name,
+                            "base_model_name": config.actor.path,
+                        }
+                    )
+                self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(**xccl_kwargs)
         else:
             raise ValueError(
                 f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
@@ -181,13 +200,12 @@ class PPOTrainer:
 
     def train(
         self,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: WorkflowLike,
+        eval_workflow: WorkflowLike | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         eval_workflow_kwargs: dict[str, Any] | None = None,
         dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         total_epochs: int | None = None,
-        granularity: int | None = None,
     ):
         config = self.config
         start_step = (
@@ -202,6 +220,10 @@ class PPOTrainer:
             raise ValueError(f"Total epochs must be positive: {total_epochs}")
         steps_per_epoch = len(self.train_dataloader)
         max_steps = total_epochs * steps_per_epoch
+
+        # Initialize proxy workers if using AgentWorkflow
+        if self._is_agent_workflow(workflow):
+            self._ensure_proxy_started()
 
         for global_step in range(start_step, max_steps):
             if (
@@ -225,10 +247,10 @@ class PPOTrainer:
             ):
                 rollout_batch = self.actor.prepare_batch(
                     self.train_dataloader,
-                    granularity=granularity or self.config.actor.group_size,
                     workflow=workflow,
                     workflow_kwargs=workflow_kwargs,
                     should_accept_fn=dynamic_filter_fn,
+                    group_size=config.gconfig.n_samples,
                     dynamic_bs=self.config.dynamic_bs,
                 )
 
@@ -465,7 +487,7 @@ class PPOTrainer:
 
     def _create_actor(
         self, actor_config: PPOActorConfig
-    ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
+    ) -> FSDPPPOActor | MegatronPPOActor | ArchonPPOActor | PPOActorController:
         if self.allocation_mode.train_backend == "fsdp":
             from areal.engine.fsdp_engine import FSDPPPOActor
 
@@ -474,9 +496,13 @@ class PPOTrainer:
             from areal.engine.megatron_engine import MegatronPPOActor
 
             actor_cls = MegatronPPOActor
+        elif self.allocation_mode.train_backend == "archon":
+            from areal.experimental.engine.archon_engine import ArchonPPOActor
+
+            actor_cls = ArchonPPOActor
         else:
             raise ValueError(
-                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
+                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp, megatron or archon"
             )
         if is_single_controller():
             actor = actor_cls.as_controller(actor_config, self.scheduler)
@@ -487,7 +513,7 @@ class PPOTrainer:
 
     def _create_critic(
         self, critic_config: PPOCriticConfig
-    ) -> FSDPPPOCritic | MegatronPPOCritic | PPOCriticController:
+    ) -> FSDPPPOCritic | MegatronPPOCritic | ArchonPPOCritic | PPOCriticController:
         if self.allocation_mode.train_backend == "fsdp":
             from areal.engine.fsdp_engine import FSDPPPOCritic
 
@@ -496,9 +522,13 @@ class PPOTrainer:
             from areal.engine.megatron_engine import MegatronPPOCritic
 
             critic_cls = MegatronPPOCritic
+        elif self.allocation_mode.train_backend == "archon":
+            from areal.experimental.engine.archon_engine import ArchonPPOCritic
+
+            critic_cls = ArchonPPOCritic
         else:
             raise ValueError(
-                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
+                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp, megatron or archon"
             )
         if is_single_controller():
             critic = critic_cls.as_controller(critic_config, self.scheduler)
@@ -589,7 +619,7 @@ class PPOTrainer:
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
         # Save recoverable checkpoints
-        to_save = dict(default=self.actor)
+        to_save: dict = dict(default=self.actor)
         if self.critic is not None:
             to_save["critic"] = self.critic
         step_info = StepInfo(
@@ -612,13 +642,21 @@ class PPOTrainer:
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
-    def _evaluate_fn(self, eval_workflow: RolloutWorkflow, eval_workflow_kwargs):
+    def _evaluate_fn(
+        self,
+        eval_workflow: WorkflowLike,
+        eval_workflow_kwargs,
+    ):
         if self.actor.is_data_parallel_head():
             cnt = 0
             for data in self.valid_dataloader:
                 for item in data:
                     self.eval_rollout.submit(
-                        item, eval_workflow, eval_workflow_kwargs, is_eval=True
+                        item,
+                        eval_workflow,
+                        eval_workflow_kwargs,
+                        group_size=self.config.eval_gconfig.n_samples,
+                        is_eval=True,
                     )
                     cnt += 1
             self.eval_rollout.wait(cnt, timeout=None)
@@ -628,7 +666,7 @@ class PPOTrainer:
 
     def _evaluate(
         self,
-        eval_workflow: RolloutWorkflow | None,
+        eval_workflow: WorkflowLike | None,
         eval_workflow_kwargs,
         epoch: int,
         epoch_step: int,
@@ -658,6 +696,45 @@ class PPOTrainer:
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
+
+    def _is_agent_workflow(self, workflow: WorkflowLike) -> bool:
+        """Check if workflow is or resolves to an AgentWorkflow."""
+        if isinstance(workflow, AgentWorkflow):
+            return True
+        if isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
+            return True
+        if isinstance(workflow, str):
+            # Try to resolve the string to check its type
+            from areal.utils.dynamic_import import import_from_string
+
+            cls = import_from_string(workflow)
+            return isinstance(cls, type) and issubclass(cls, AgentWorkflow)
+        return False
+
+    def _ensure_proxy_started(self) -> None:
+        """Lazily initialize proxy workers when AgentWorkflow is used.
+
+        This method is called before training when an AgentWorkflow is detected.
+        It creates proxy workers colocated with rollout workers to handle
+        OpenAI-compatible API requests from agent subprocesses.
+        """
+        if self._proxy_started:
+            return
+
+        # Only initialize proxy in single-controller mode with RolloutController
+        if not is_single_controller():
+            raise NotImplementedError("Proxy workers not supported in SPMD mode")
+
+        if self.config.scheduler.type == "ray":
+            raise NotImplementedError("Proxy workers not supported with RayScheduler")
+
+        assert isinstance(self.rollout, RolloutController)
+
+        logger.info("Initializing proxy workers for AgentWorkflow support")
+        self.rollout.start_proxy()
+        if self.eval_rollout is not None:
+            self.eval_rollout.start_proxy()
+        self._proxy_started = True
 
     def __enter__(self):
         return self

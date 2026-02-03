@@ -167,23 +167,21 @@ class TestLocalSchedulerInitialization:
 
     def test_init_without_gpu_devices_uses_cuda_visible_devices(self, tmp_path):
         """Should detect GPUs from CUDA_VISIBLE_DEVICES environment variable."""
-        with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1,3"}):
+        # We need to patch the current_platform module-level attribute used in local.py
+        # by patching the import in the local module directly
+        mock_platform = Mock()
+        mock_platform.device_control_env_var = "CUDA_VISIBLE_DEVICES"
+
+        with (
+            patch("areal.scheduler.local.current_platform", mock_platform),
+            patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1,3"}),
+        ):
             scheduler = LocalScheduler(
                 log_dir=str(tmp_path),
                 experiment_name="test_exp",
                 trial_name="test_trial",
             )
             assert scheduler.gpu_devices == [0, 1, 3]
-
-    def test_init_with_invalid_cuda_visible_devices(self, tmp_path):
-        """Should fall back to default [0] when CUDA_VISIBLE_DEVICES is invalid."""
-        with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "invalid,gpu,ids"}):
-            scheduler = LocalScheduler(
-                log_dir=str(tmp_path),
-                experiment_name="test_exp",
-                trial_name="test_trial",
-            )
-            assert scheduler.gpu_devices == [0]
 
     def test_init_creates_log_directory(self, tmp_path):
         """Should create log directory if it doesn't exist."""
@@ -391,6 +389,9 @@ class TestWorkerCreation:
             # Verify default spec was used
             assert mock_popen.call_count == 2
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local.find_free_ports")
@@ -439,6 +440,9 @@ class TestWorkerCreation:
         # All workers should use the same spec
         for worker_info in scheduler._workers["actor"]:
             assert len(worker_info.worker.worker_ports) == 3
+
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
@@ -493,6 +497,9 @@ class TestWorkerCreation:
         assert len(scheduler._workers["critic"][0].worker.worker_ports) == 1
         assert len(scheduler._workers["critic"][1].worker.worker_ports) == 2
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local.find_free_ports")
@@ -544,6 +551,9 @@ class TestWorkerCreation:
         # Verify that subprocess.Popen was called
         mock_popen.assert_called_once()
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local.find_free_ports")
@@ -559,44 +569,52 @@ class TestWorkerCreation:
         mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
 
-        scheduler = LocalScheduler(
-            gpu_devices=[0],
-            log_dir=str(tmp_path),
-            experiment_name="test_exp",
-            trial_name="test_trial",
-        )
+        # Mock the platform to use CUDA_VISIBLE_DEVICES
+        mock_platform = Mock()
+        mock_platform.device_control_env_var = "CUDA_VISIBLE_DEVICES"
 
-        job = Job(
-            replicas=1,
-            role="envtest",
-            tasks=[
-                SchedulingSpec(
-                    cpu=1,
-                    mem=1024,
-                    gpu=1,
-                    port_count=2,
-                    env_vars={"CUSTOM_VAR": "custom_value", "ANOTHER_VAR": "123"},
-                    cmd="python -m areal.scheduler.rpc.rpc_server",
-                )
-            ],
-        )
-        with patch.object(scheduler, "_configure_worker", return_value=None):
-            worker_ids = scheduler.create_workers(job)
+        with patch("areal.scheduler.local.current_platform", mock_platform):
+            scheduler = LocalScheduler(
+                gpu_devices=[0],
+                log_dir=str(tmp_path),
+                experiment_name="test_exp",
+                trial_name="test_trial",
+            )
 
-        assert len(worker_ids) == 1
+            job = Job(
+                replicas=1,
+                role="envtest",
+                tasks=[
+                    SchedulingSpec(
+                        cpu=1,
+                        mem=1024,
+                        gpu=1,
+                        port_count=2,
+                        env_vars={"CUSTOM_VAR": "custom_value", "ANOTHER_VAR": "123"},
+                        cmd="python -m areal.scheduler.rpc.rpc_server",
+                    )
+                ],
+            )
+            with patch.object(scheduler, "_configure_worker", return_value=None):
+                worker_ids = scheduler.create_workers(job)
 
-        # Verify environment variables were passed
-        # Environment variables are encoded into the shell command string, not passed as env parameter
-        popen_call = mock_popen.call_args
-        cmd_str = popen_call[0][0]
-        assert isinstance(cmd_str, str), f"Expected string, got {type(cmd_str)}"
-        # Verify custom environment variables are in the command string
-        assert "CUSTOM_VAR=custom_value" in cmd_str
-        assert "ANOTHER_VAR=123" in cmd_str
-        # Verify CUDA_VISIBLE_DEVICES is set correctly
-        assert "CUDA_VISIBLE_DEVICES=0" in cmd_str
-        # Verify shell=True is used since cmd is a string
-        assert popen_call[1]["shell"] is True
+            assert len(worker_ids) == 1
+
+            # Verify environment variables were passed
+            # Environment variables are encoded into the shell command string, not passed as env parameter
+            popen_call = mock_popen.call_args
+            cmd_str = popen_call[0][0]
+            assert isinstance(cmd_str, str), f"Expected string, got {type(cmd_str)}"
+            # Verify custom environment variables are in the command string
+            assert "CUSTOM_VAR=custom_value" in cmd_str
+            assert "ANOTHER_VAR=123" in cmd_str
+            # Verify CUDA_VISIBLE_DEVICES is set correctly
+            assert "CUDA_VISIBLE_DEVICES=0" in cmd_str
+            # Verify shell=True is used since cmd is a string
+            assert popen_call[1]["shell"] is True
+
+            # Clean up workers while mock is still active
+            scheduler.delete_workers(None)
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
@@ -644,7 +662,7 @@ class TestWorkerCreation:
         assert actor_ids == ["actor/0", "actor/1"]
         initial_popen_count = mock_popen.call_count
 
-        # Create colocated workers (critics) - should NOT spawn new processes
+        # Create colocated workers (critics) with fork=False - should NOT spawn new processes
         critic_job = Job(
             replicas=2,
             role="critic",
@@ -658,7 +676,7 @@ class TestWorkerCreation:
                 )
             ],
             scheduling_strategy=SchedulingStrategy(
-                type=SchedulingStrategyType.colocation, target="actor"
+                type=SchedulingStrategyType.colocation, target="actor", fork=False
             ),
         )
         critic_ids = scheduler.create_workers(critic_job)
@@ -672,6 +690,9 @@ class TestWorkerCreation:
         # Verify colocation tracking is set up correctly
         assert "critic" in scheduler._colocated_roles
         assert scheduler._colocated_roles["critic"] == "actor"
+
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
 
     def test_create_workers_duplicate_role_error(self, tmp_path):
         """Should raise WorkerCreationError when attempting to create workers for existing role."""
@@ -704,6 +725,9 @@ class TestWorkerCreation:
 
             assert "Worker group already exists" in str(exc_info.value)
             assert exc_info.value.worker_key == "test"
+
+            # Clean up workers while mock is still active
+            scheduler.delete_workers(None)
 
     def test_create_workers_zero_replicas_error(self, tmp_path):
         """Should raise WorkerCreationError when replicas is 0."""
@@ -1455,7 +1479,7 @@ class TestEngineCreation:
         mock_session = AsyncMock()
         mock_session.__aenter__.return_value = mock_session
         mock_session.__aexit__.return_value = None
-        mock_session.post = Mock(side_effect=asyncio.TimeoutError("Request timeout"))
+        mock_session.post = Mock(side_effect=TimeoutError("Request timeout"))
 
         with patch(
             "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
@@ -1786,6 +1810,9 @@ class TestEdgeCases:
             "worker/4",
         ]
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     def test_empty_workers_dict_operations(self, tmp_path):
         """Should handle operations on empty workers dictionary gracefully."""
         scheduler = LocalScheduler(
@@ -1866,12 +1893,12 @@ class TestColocationBehavior:
         with patch.object(scheduler, "_configure_worker", return_value=None):
             scheduler.create_workers(actor_job)
 
-        # Create colocated role
+        # Create colocated role with fork=False (reuses existing workers)
         ref_job = Job(
             replicas=1,
             role="ref",
             scheduling_strategy=SchedulingStrategy(
-                type=SchedulingStrategyType.colocation, target="actor"
+                type=SchedulingStrategyType.colocation, target="actor", fork=False
             ),
         )
         scheduler.create_workers(ref_job)
@@ -1882,6 +1909,9 @@ class TestColocationBehavior:
 
         assert len(workers) == 1
         assert workers[0].id == "actor/0"
+
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
@@ -1910,12 +1940,12 @@ class TestColocationBehavior:
         with patch.object(scheduler, "_configure_worker", return_value=None):
             scheduler.create_workers(actor_job)
 
-        # Create colocated role
+        # Create colocated role with fork=False (reuses existing workers)
         ref_job = Job(
             replicas=1,
             role="ref",
             scheduling_strategy=SchedulingStrategy(
-                type=SchedulingStrategyType.colocation, target="actor"
+                type=SchedulingStrategyType.colocation, target="actor", fork=False
             ),
         )
         scheduler.create_workers(ref_job)
@@ -1936,6 +1966,9 @@ class TestColocationBehavior:
         # Target role's workers should still exist
         assert "actor" in scheduler._workers
         assert len(scheduler._workers["actor"]) == 1
+
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
@@ -1980,6 +2013,9 @@ class TestColocationBehavior:
 
         assert "replica count" in str(exc_info.value).lower()
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local.find_free_ports")
@@ -2007,3 +2043,518 @@ class TestColocationBehavior:
         )
         with pytest.raises(WorkerNotFoundError):
             scheduler.create_workers(ref_job)
+
+
+class TestForkColocationBehavior:
+    """Test fork colocation behavior for spawning new worker processes.
+
+    These tests use real subprocesses and RPC servers to verify fork functionality.
+    """
+
+    @pytest.fixture
+    def rpc_server_process(self, tmp_path):
+        """Start a real RPC server process for testing.
+
+        Returns tuple of (process, host, port).
+        """
+        import socket
+        import subprocess
+
+        host = "127.0.0.1"
+
+        # Try to find a free port and start the server
+        # Retry a few times in case of port collision
+        proc = None
+        port = None
+        last_error = None
+        for _ in range(5):
+            # Find a free port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                port = s.getsockname()[1]
+
+            # Start RPC server
+            cmd = [
+                "python",
+                "-m",
+                "areal.scheduler.rpc.rpc_server",
+                "--host",
+                host,
+                "--port",
+                str(port),
+                "--experiment-name",
+                "test_fork_exp",
+                "--trial-name",
+                "test_fork_trial",
+                "--role",
+                "actor",
+                "--worker-index",
+                "0",
+                "--fileroot",
+                str(tmp_path),
+            ]
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+
+            # Wait for server to be ready
+            deadline = time.time() + 15
+            server_ready = False
+            while time.time() < deadline:
+                try:
+                    resp = requests.get(f"http://{host}:{port}/health", timeout=2)
+                    if resp.status_code == 200:
+                        server_ready = True
+                        break
+                except (
+                    requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                ):
+                    pass
+                # Check if process died
+                if proc.poll() is not None:
+                    stdout = proc.stdout.read().decode() if proc.stdout else ""
+                    last_error = (
+                        f"Process died with code {proc.returncode}: {stdout[:500]}"
+                    )
+                    break
+                time.sleep(0.5)
+
+            if server_ready:
+                break
+            else:
+                # Kill the failed process and retry
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+                proc = None
+        else:
+            raise RuntimeError(
+                f"RPC server failed to start after 5 attempts on port {port}. "
+                f"Last error: {last_error}"
+            )
+
+        yield proc, host, port
+
+        # Cleanup
+        kill_process_tree(proc.pid, timeout=3, graceful=True)
+
+    def test_fork_endpoint_spawns_new_process(self, rpc_server_process):
+        """Should spawn a new RPC server process when /fork is called."""
+        _, host, port = rpc_server_process
+
+        # Call /fork endpoint
+        response = requests.post(
+            f"http://{host}:{port}/fork",
+            json={"role": "ref", "worker_index": 0},
+            timeout=60,
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["status"] == "success"
+        assert "host" in result
+        assert "port" in result
+        assert "pid" in result
+
+        forked_pid = result["pid"]
+        forked_port = result["port"]
+
+        # Verify new process exists
+        assert psutil.pid_exists(forked_pid)
+
+        # Verify forked server is responsive
+        forked_response = requests.get(
+            f"http://{result['host']}:{forked_port}/health", timeout=5
+        )
+        assert forked_response.status_code == 200
+
+    def test_forked_worker_inherits_environment(self, rpc_server_process):
+        """Forked worker should inherit environment variables from parent."""
+        _, host, port = rpc_server_process
+
+        # Call /fork endpoint
+        response = requests.post(
+            f"http://{host}:{port}/fork",
+            json={"role": "ref", "worker_index": 0},
+            timeout=60,
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+
+        # Verify forked server is alive and accessible
+        forked_response = requests.get(
+            f"http://{result['host']}:{result['port']}/health", timeout=5
+        )
+        assert forked_response.status_code == 200
+
+    def test_create_forked_workers_via_scheduler(self, tmp_path):
+        """LocalScheduler should create forked workers through /fork endpoint."""
+        import socket
+        import subprocess
+
+        # Find two free ports
+        ports = []
+        for _ in range(2):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                ports.append(s.getsockname()[1])
+
+        host = "127.0.0.1"
+
+        # Start RPC server manually
+        cmd = [
+            "python",
+            "-m",
+            "areal.scheduler.rpc.rpc_server",
+            "--host",
+            host,
+            "--port",
+            str(ports[0]),
+            "--experiment-name",
+            "test_fork_exp",
+            "--trial-name",
+            "test_fork_trial",
+            "--role",
+            "actor",
+            "--worker-index",
+            "0",
+            "--fileroot",
+            str(tmp_path),
+        ]
+
+        server_proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+
+        try:
+            # Wait for server to be ready
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                try:
+                    resp = requests.get(f"http://{host}:{ports[0]}/health", timeout=1)
+                    if resp.status_code == 200:
+                        break
+                except (
+                    requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                ):
+                    pass
+                time.sleep(0.2)
+            else:
+                raise RuntimeError("RPC server failed to start")
+
+            # Create scheduler and manually add the worker
+            scheduler = LocalScheduler(
+                gpu_devices=[0],
+                log_dir=str(tmp_path),
+                experiment_name="test_fork_exp",
+                trial_name="test_fork_trial",
+            )
+
+            # Manually register the actor worker (simulating what create_workers does)
+            actor_worker = Worker(
+                id="actor/0",
+                ip=host,
+                worker_ports=[str(ports[0])],
+                engine_ports=[],
+            )
+            actor_worker_info = WorkerInfo(
+                worker=actor_worker,
+                process=server_proc,
+                role="actor",
+                gpu_devices=[0],
+                created_at=time.time(),
+                log_file=str(tmp_path / "actor.log"),
+                env_vars={},
+            )
+            scheduler._workers["actor"] = [actor_worker_info]
+
+            # Now create forked workers using fork=True
+            ref_job = Job(
+                replicas=1,
+                role="ref",
+                scheduling_strategy=SchedulingStrategy(
+                    type=SchedulingStrategyType.colocation, target="actor", fork=True
+                ),
+            )
+
+            worker_ids = scheduler.create_workers(ref_job)
+
+            # Verify forked workers were created
+            assert worker_ids == ["ref/0"]
+            assert "ref" in scheduler._workers
+            assert len(scheduler._workers["ref"]) == 1
+
+            # Verify forked role is tracked in _colocated_roles
+            assert "ref" in scheduler._colocated_roles
+            assert scheduler._colocated_roles["ref"] == "actor"
+
+            # Verify forked worker has process=None (managed by parent)
+            forked_worker = scheduler._workers["ref"][0]
+            assert forked_worker.process is None
+
+            # Verify forked worker is a real, responsive server
+            forked_response = requests.get(
+                f"http://{forked_worker.worker.ip}:{forked_worker.worker.worker_ports[0]}/health",
+                timeout=5,
+            )
+            assert forked_response.status_code == 200
+
+            # Cleanup via scheduler
+            scheduler.delete_workers(None)
+
+        finally:
+            # Ensure cleanup
+            kill_process_tree(server_proc.pid, timeout=3, graceful=True)
+
+    def test_fork_replica_mismatch_raises_error(self, tmp_path):
+        """Should raise error when forked role has different replica count."""
+        import socket
+        import subprocess
+
+        # Find ports for 2 workers
+        ports = []
+        for _ in range(4):  # 2 ports per worker
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                ports.append(s.getsockname()[1])
+
+        host = "127.0.0.1"
+        server_procs = []
+
+        try:
+            # Start 2 RPC servers for actor role
+            for i in range(2):
+                cmd = [
+                    "python",
+                    "-m",
+                    "areal.scheduler.rpc.rpc_server",
+                    "--host",
+                    host,
+                    "--port",
+                    str(ports[i]),
+                    "--experiment-name",
+                    "test_fork_exp",
+                    "--trial-name",
+                    "test_fork_trial",
+                    "--role",
+                    "actor",
+                    "--worker-index",
+                    str(i),
+                    "--fileroot",
+                    str(tmp_path),
+                ]
+
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+                server_procs.append(proc)
+
+            # Wait for servers to be ready
+            for i in range(2):
+                deadline = time.time() + 30
+                while time.time() < deadline:
+                    try:
+                        resp = requests.get(
+                            f"http://{host}:{ports[i]}/health", timeout=1
+                        )
+                        if resp.status_code == 200:
+                            break
+                    except (
+                        requests.exceptions.ConnectionError,
+                        requests.exceptions.Timeout,
+                    ):
+                        pass
+                    time.sleep(0.2)
+                else:
+                    raise RuntimeError(f"RPC server {i} failed to start")
+
+            # Create scheduler and manually add workers
+            scheduler = LocalScheduler(
+                gpu_devices=[0, 1],
+                log_dir=str(tmp_path),
+                experiment_name="test_fork_exp",
+                trial_name="test_fork_trial",
+            )
+
+            # Manually register actor workers
+            scheduler._workers["actor"] = []
+            for i in range(2):
+                actor_worker = Worker(
+                    id=f"actor/{i}",
+                    ip=host,
+                    worker_ports=[str(ports[i])],
+                    engine_ports=[],
+                )
+                actor_worker_info = WorkerInfo(
+                    worker=actor_worker,
+                    process=server_procs[i],
+                    role="actor",
+                    gpu_devices=[i],
+                    created_at=time.time(),
+                    log_file=str(tmp_path / f"actor_{i}.log"),
+                    env_vars={},
+                )
+                scheduler._workers["actor"].append(actor_worker_info)
+
+            # Try to create forked role with different replica count
+            ref_job = Job(
+                replicas=1,  # Mismatch - actor has 2 replicas!
+                role="ref",
+                scheduling_strategy=SchedulingStrategy(
+                    type=SchedulingStrategyType.colocation, target="actor", fork=True
+                ),
+            )
+
+            with pytest.raises(WorkerCreationError) as exc_info:
+                scheduler.create_workers(ref_job)
+
+            assert "replica count" in str(exc_info.value).lower()
+
+        finally:
+            # Cleanup all server processes
+            for proc in server_procs:
+                kill_process_tree(proc.pid, timeout=3, graceful=True)
+
+    def test_fork_target_not_found_raises_error(self, tmp_path):
+        """Should raise error when fork target role doesn't exist."""
+        scheduler = LocalScheduler(
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
+        )
+
+        # Try to create forked role with non-existent target
+        ref_job = Job(
+            replicas=1,
+            role="ref",
+            scheduling_strategy=SchedulingStrategy(
+                type=SchedulingStrategyType.colocation, target="nonexistent", fork=True
+            ),
+        )
+
+        with pytest.raises(WorkerNotFoundError):
+            scheduler.create_workers(ref_job)
+
+    def test_delete_forked_workers_cleans_up_tracking(self, tmp_path):
+        """Should remove forked role from tracking when deleted."""
+        import socket
+        import subprocess
+
+        # Find a free port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            port = s.getsockname()[1]
+
+        host = "127.0.0.1"
+
+        # Start RPC server
+        cmd = [
+            "python",
+            "-m",
+            "areal.scheduler.rpc.rpc_server",
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--experiment-name",
+            "test_fork_exp",
+            "--trial-name",
+            "test_fork_trial",
+            "--role",
+            "actor",
+            "--worker-index",
+            "0",
+            "--fileroot",
+            str(tmp_path),
+        ]
+
+        server_proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+
+        try:
+            # Wait for server to be ready
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                try:
+                    resp = requests.get(f"http://{host}:{port}/health", timeout=1)
+                    if resp.status_code == 200:
+                        break
+                except (
+                    requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                ):
+                    pass
+                time.sleep(0.2)
+            else:
+                raise RuntimeError("RPC server failed to start")
+
+            # Create scheduler and manually add the worker
+            scheduler = LocalScheduler(
+                gpu_devices=[0],
+                log_dir=str(tmp_path),
+                experiment_name="test_fork_exp",
+                trial_name="test_fork_trial",
+            )
+
+            # Manually register the actor worker
+            actor_worker = Worker(
+                id="actor/0",
+                ip=host,
+                worker_ports=[str(port)],
+                engine_ports=[],
+            )
+            actor_worker_info = WorkerInfo(
+                worker=actor_worker,
+                process=server_proc,
+                role="actor",
+                gpu_devices=[0],
+                created_at=time.time(),
+                log_file=str(tmp_path / "actor.log"),
+                env_vars={},
+            )
+            scheduler._workers["actor"] = [actor_worker_info]
+
+            # Create forked workers
+            ref_job = Job(
+                replicas=1,
+                role="ref",
+                scheduling_strategy=SchedulingStrategy(
+                    type=SchedulingStrategyType.colocation, target="actor", fork=True
+                ),
+            )
+
+            scheduler.create_workers(ref_job)
+
+            # Verify forked role exists
+            assert "ref" in scheduler._colocated_roles
+            assert "ref" in scheduler._workers
+
+            # Delete forked role
+            scheduler.delete_workers("ref")
+
+            # Verify forked role is removed
+            assert "ref" not in scheduler._colocated_roles
+            assert "ref" not in scheduler._workers
+
+            # Target role should still exist
+            assert "actor" in scheduler._workers
+
+        finally:
+            # Cleanup
+            kill_process_tree(server_proc.pid, timeout=3, graceful=True)

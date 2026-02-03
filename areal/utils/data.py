@@ -14,8 +14,9 @@ from torch.utils.data import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import MicroBatchSpec, NormConfig
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import datapack, logging
+from areal.utils.math import align
 
 logger = logging.getLogger("DataUtils")
 
@@ -371,12 +372,14 @@ class MicroBatchItem(NamedTuple):
         padded_mb: Padded micro-batch dict (for model forward)
         padding_length: Batch-level padding added to this micro-batch
         old_cu_seqlens: Original cu_seqlens before sequence alignment (or None)
+        padded_to_length: The padded sequence length for this micro-batch (or None)
     """
 
     orig_mb: dict[str, Any]
     padded_mb: dict[str, Any]
     padding_length: int
     old_cu_seqlens: torch.Tensor | None
+    padded_to_length: int | None = None
 
 
 @dataclass
@@ -384,10 +387,11 @@ class MicroBatchList:
     data: dict[str, Any]
     mb_spec: MicroBatchSpec
     mbs: list[dict[str, Any]]
-    forward_indices: list[int]
-    backward_indices: list[int]
     group_lens: list[int]
+    forward_indices: list[int] | None = None
+    backward_indices: list[int] | None = None
     padded_mbs: list[dict[str, Any]] | None = None
+    _max_seqlen: int | None = None
     # Batch-level padding information
     padding_lengths: list[int] | None = None
     padded_to_lengths: list[int] | None = None
@@ -400,7 +404,12 @@ class MicroBatchList:
         """Return the maximum sequence length across all padded micro-batches."""
         if self.padded_mbs is None:
             raise ValueError("padded_mbs is None. Call pad_mb_list first.")
-        return max(m["cu_seqlens"][-1].item() for m in self.padded_mbs)
+        if self._max_seqlen is None:
+            assert all("cu_seqlens" in m for m in self.padded_mbs), (
+                "cu_seqlens not found in some padded micro-batches."
+            )
+            self._max_seqlen = max(m["cu_seqlens"][-1].item() for m in self.padded_mbs)
+        return self._max_seqlen
 
     def __len__(self) -> int:
         return len(self.mbs)
@@ -414,6 +423,7 @@ class MicroBatchList:
                 - padded_mb: Padded micro-batch dict (for model forward)
                 - padding_length: Batch-level padding added to this micro-batch
                 - old_cu_seqlens: Original cu_seqlens before sequence alignment (or None)
+                - padded_to_length: The padded sequence length for this micro-batch (or None)
         """
         if self.padded_mbs is None:
             raise ValueError("padded_mbs is None. Call pad_mb_list first.")
@@ -421,11 +431,15 @@ class MicroBatchList:
             old_cu_seqlens = (
                 self.old_cu_seqlens_list[i] if self.old_cu_seqlens_list else None
             )
+            padded_to_length = (
+                self.padded_to_lengths[i] if self.padded_to_lengths else None
+            )
             yield MicroBatchItem(
                 orig_mb=self.mbs[i],
                 padded_mb=self.padded_mbs[i],
                 padding_length=self.padding_lengths[i],
                 old_cu_seqlens=old_cu_seqlens,
+                padded_to_length=padded_to_length,
             )
 
     def to(self, *args, **kwargs):
@@ -449,6 +463,7 @@ class MicroBatchList:
             backward_indices=self.backward_indices,
             group_lens=self.group_lens,
             padded_mbs=padded_mbs,
+            _max_seqlen=self._max_seqlen,
             padding_lengths=self.padding_lengths,
             padded_to_lengths=self.padded_to_lengths,
             old_cu_seqlens_list=old_cu_seqlens_list,
@@ -585,8 +600,7 @@ def pad_packed_tensor_dict(
     data: dict[str, Any],
     pad_to_length: int,
     pad_value: float = 0.0,
-    align_sequences: bool = False,
-    align_to_multiple_of: int | None = None,
+    seq_align_to: int | None = None,
 ) -> tuple[dict[str, Any], int, torch.Tensor, int]:
     """Pad a packed dict of tensors to a specified length.
     This function assumes that the input data contains "cu_seqlens" and "max_seqlen" key,
@@ -612,17 +626,11 @@ def pad_packed_tensor_dict(
     # First pad sequences
     sequence_padded_data = {}
     align_to_length = None
-    if align_sequences:
-        if align_to_multiple_of is None:
-            raise ValueError(
-                "align_to_multiple_of must be specified when align_sequences is True."
-            )
+    if seq_align_to is not None:
         input_lens = cu_seqlens[1:] - cu_seqlens[:-1]
         batch_size = input_lens.shape[0]
-        # Align sequences to an integer multiple of align_to_multiple_of
-        pad_size = (
-            align_to_multiple_of - input_lens % align_to_multiple_of
-        ) % align_to_multiple_of
+        # Align sequences to an integer multiple of seq_align_to
+        pad_size = (-input_lens) % seq_align_to
         input_lens_padded = input_lens + pad_size
         cu_seqlens_padded = torch.zeros(
             batch_size + 1, dtype=torch.int32, device=cu_seqlens.device
@@ -688,8 +696,8 @@ def pad_packed_tensor_dict(
 
         data = sequence_padded_data
         align_to_length = cu_seqlens_padded[-1].item()
-        # ensure pad_to_length is a integer multiple of both align_to_multiple_of and N_TOKENS_PER_PAGE
-        lcm = np.lcm(align_to_multiple_of, N_TOKENS_PER_PAGE).item()
+        # ensure pad_to_length is a integer multiple of both seq_align_to and N_TOKENS_PER_PAGE
+        lcm = np.lcm(seq_align_to, N_TOKENS_PER_PAGE).item()
         pad_to_length = (pad_to_length + lcm - 1) // lcm * lcm
 
         cu_seqlens = data["cu_seqlens"]
@@ -748,29 +756,25 @@ def pad_mb_list(
     mb_list: MicroBatchList,
     pad_value: float = 0.0,
     pad_to_maximum: bool = False,
-    align_sequences: bool = False,
-    align_to_multiple_of: int | None = None,
+    batch_align_to: int | None = None,
+    seq_align_to: int | None = None,
 ) -> MicroBatchList:
     """Pad the micro-batch list to the maximum length or to a specific size to:
         1. Reduce memory fragmentation.
-        2. Align sequences to an integer multiple of `align_to_multiple_of`
+        2. Align sequences to an integer multiple of `seq_align_to`
         to be equally sliced into context and sequence parallel ranks.
+        3. Align batch total length to an integer multiple of `batch_align_to`.
 
     Args:
         mb_list (MicroBatchList): The micro-batch list to pad.
         pad_value (float, optional): The value to pad the tensors with. Defaults to 0.0.
         pad_to_maximum (bool, optional): Whether to pad to the maximum length specified in `mb_spec`. Defaults to False.
-        align_sequences (bool, optional): Whether to align sequences to an integer multiple of `align_to_multiple_of`. Defaults to False.
-        align_to_multiple_of (int, optional): The size to align sequences to. Defaults to None.
+        batch_align_to (int, optional): The size to align batch total length to. Defaults to None.
+        seq_align_to (int, optional): The size to align each sequence length to. Defaults to None.
 
     Returns:
         MicroBatchList: The padded micro-batch list.
     """
-    if align_sequences:
-        if align_to_multiple_of is None:
-            raise ValueError(
-                "align_to_multiple_of must be specified when align_sequences is True."
-            )
     padded_mb_inputs, pad_lengths = [], []
     pad_to_lengths = []
     old_cu_seqlens_list = []
@@ -784,23 +788,20 @@ def pad_mb_list(
         )
         pad_to_maximum = False
     for mb, length in zip(mb_list.mbs, mb_list.group_lens):
-        if pad_to_maximum:
+        if pad_to_maximum and mb_list.mb_spec.max_tokens_per_mb is not None:
             pad_to_length = mb_list.mb_spec.max_tokens_per_mb
         else:
             # NOTE: GPU page size is 2MB
             # Take hidden size 4096 with bf16 dtype as an example,
             # the batch size of a page is 256
-            pad_to_length = (
-                (int(length) + N_TOKENS_PER_PAGE - 1)
-                // N_TOKENS_PER_PAGE
-                * N_TOKENS_PER_PAGE
-            )
+            pad_to_length = align(length, N_TOKENS_PER_PAGE)
+            if batch_align_to is not None:
+                pad_to_length = align(pad_to_length, batch_align_to)
         padded_mb, pad_len, old_cu_seqlens, align_to_length = pad_packed_tensor_dict(
             mb,
             pad_to_length,
             pad_value=pad_value,
-            align_sequences=align_sequences,
-            align_to_multiple_of=align_to_multiple_of,
+            seq_align_to=seq_align_to,
         )
         padded_mb_inputs.append(padded_mb)
         pad_lengths.append(pad_len)
@@ -810,7 +811,7 @@ def pad_mb_list(
     mb_list.padded_mbs = padded_mb_inputs
     mb_list.padding_lengths = pad_lengths
     mb_list.padded_to_lengths = pad_to_lengths
-    if align_sequences:
+    if seq_align_to is not None:
         mb_list.old_cu_seqlens_list = old_cu_seqlens_list
         mb_list.align_to_lengths = align_to_lengths
     return mb_list
@@ -974,6 +975,7 @@ def _flatten_pad_to_max_numel(x, shapes):
 
 
 def all_gather_tensor_container(data, group=None) -> list:
+    world_size = dist.get_world_size(group)
     if torch.is_tensor(data):
         local_shape = list(data.shape)
         shapes = [None for _ in range(dist.get_world_size(group))]
@@ -987,10 +989,25 @@ def all_gather_tensor_container(data, group=None) -> list:
         return [_unpad_unflatten(y, shape) for y, shape in zip(ys, shapes)]
 
     if isinstance(data, list):
+        lengths = [None for _ in range(world_size)]
+        dist.all_gather_object(lengths, len(data), group=group)
+        if not len(set(lengths)) == 1:
+            raise RuntimeError(
+                f"Trying to all-gather lists with mismatched lengths: {lengths}"
+            )
+
         data = [all_gather_tensor_container(d, group=group) for d in data]
         return list(zip(*data))
 
     if isinstance(data, dict):
+        all_keys = [None for _ in range(world_size)]
+        local_keys = set(data.keys())
+        dist.all_gather_object(all_keys, local_keys, group=group)
+        if any(keys != local_keys for keys in all_keys):
+            raise RuntimeError(
+                f"Trying to all-gather dicts with mismatched keys: {all_keys}"
+            )
+
         results = {
             k: all_gather_tensor_container(v, group=group) for k, v in data.items()
         }

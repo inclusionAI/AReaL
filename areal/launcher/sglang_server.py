@@ -17,18 +17,30 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import logging, name_resolve, names
-from areal.utils.launcher import TRITON_CACHE_PATH, maybe_apply_sglang_patch
+from areal.utils.launcher import (
+    TRITON_CACHE_PATH,
+    apply_sglang_patch,
+    get_scheduling_spec,
+    TRITON_CACHE_PATH,
+    maybe_apply_sglang_patch
+)
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.proc import kill_process_tree
 
 logger = logging.getLogger("SGLangWrapper")
 
 
-def launch_server_cmd(command: list[str]) -> subprocess.Popen:
+def launch_server_cmd(
+    command: list[str], custom_env: dict[str, str] | None = None
+) -> subprocess.Popen:
     """
     Launch inference server in a new process and return its process handle.
+
+    Args:
+        command: The command to execute.
+        custom_env: Custom environment variables to set for the subprocess.
     """
     # Replace newline continuations and split the command string.
     logger.info(f"Launch command: {' '.join(command)}")
@@ -37,6 +49,10 @@ def launch_server_cmd(command: list[str]) -> subprocess.Popen:
     triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
     unique_triton_cache_path = os.path.join(triton_cache_path, str(uuid.uuid4()))
     _env["TRITON_CACHE_PATH"] = unique_triton_cache_path
+
+    if custom_env is not None:
+        _env.update(custom_env)
+
     return subprocess.Popen(
         command,
         env=_env,
@@ -77,6 +93,7 @@ class SGLangServerWrapper:
         sglang_config: SGLangConfig,
         allocation_mode: AllocationMode,
         n_gpus_per_node: int,
+        cpu_per_gpu: int | None = None,
         enable_routing_replay: bool = False,
     ):
         self.experiment_name = experiment_name
@@ -85,6 +102,7 @@ class SGLangServerWrapper:
         self.allocation_mode = allocation_mode
         self.server_processes = []  # List to store multiple server processes
         self.n_gpus_per_node = n_gpus_per_node
+        self.cpu_per_gpu = cpu_per_gpu
 
         if self.config.enable_fast_load or self.config.enable_multithread_load:
             apply_sglang_patch()
@@ -223,6 +241,8 @@ def launch_sglang_server(argv):
     allocation_mode = AllocationMode.from_str(allocation_mode)
     assert allocation_mode.gen_backend == "sglang"
 
+    # Get CPU per GPU from rollout scheduling spec
+    rollout_spec = get_scheduling_spec(config.rollout)
     # Get enable_routing_replay from actor config if available
     enable_routing_replay = (
         getattr(config.actor, "enable_routing_replay", False)
@@ -236,6 +256,7 @@ def launch_sglang_server(argv):
         config.sglang,
         allocation_mode,
         n_gpus_per_node=config.cluster.n_gpus_per_node,
+        cpu_per_gpu=rollout_spec.cpu,
         enable_routing_replay=enable_routing_replay,
     )
     sglang_server.run()

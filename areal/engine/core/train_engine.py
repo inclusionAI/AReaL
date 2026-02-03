@@ -10,6 +10,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from areal.infra.platforms import current_platform
 from areal.utils.data import (
     MicroBatchList,
     pad_and_stack_tensors_along_first_dim,
@@ -61,25 +62,44 @@ def compute_total_loss_weight(
 
 
 def aggregate_eval_losses(
-    losses: list[torch.Tensor],
+    losses: list[torch.Tensor] | None,
     dp_group: dist.ProcessGroup,
+    is_pp_last_stage: bool = True,
+    pp_group: dist.ProcessGroup | None = None,
+    pp_src_rank: int | None = None,
 ) -> torch.Tensor:
-    """Aggregate evaluation losses from micro-batches and all_reduce.
+    """Aggregate evaluation losses from micro-batches.
 
     Parameters
     ----------
-    losses : list[torch.Tensor]
-        List of loss tensors from each micro-batch.
+    losses : list[torch.Tensor] | None
+        List of loss tensors from each micro-batch. None on non-last PP stages.
     dp_group : dist.ProcessGroup
         The data parallel process group for all_reduce.
+    is_pp_last_stage : bool
+        Whether this rank is the last PP stage. True by default.
+    pp_group : dist.ProcessGroup | None
+        Pipeline parallel group for broadcast. None if PP broadcast is not required.
+    pp_src_rank : int | None
+        Global rank of last PP stage (required if pp_group is set).
 
     Returns
     -------
     torch.Tensor
         The aggregated loss after summing and all_reduce.
     """
-    loss = torch.stack(losses).sum(dtype=torch.float32)
-    dist.all_reduce(loss, group=dp_group)
+    if is_pp_last_stage:
+        assert losses is not None, "losses required on last PP stage"
+        loss = torch.stack(losses).sum(dtype=torch.float32)
+        dist.all_reduce(loss, group=dp_group)
+    else:
+        device = current_platform.current_device()
+        loss = torch.empty(1, device=device, dtype=torch.float32)
+
+    if pp_group is not None:
+        assert pp_src_rank is not None, "pp_src_rank required when pp_group is set"
+        dist.broadcast(loss, src=pp_src_rank, group=pp_group)
+
     return loss
 
 

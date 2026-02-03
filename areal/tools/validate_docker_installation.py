@@ -4,7 +4,13 @@ Docker Installation Validation Script for AReaL
 
 This script validates dependencies in the Docker environment, which includes
 additional packages (grouped_gemm, apex, transformer_engine, flash_attn_3)
-and a different flash-attn version (2.8.1 instead of 2.8.3).
+and flash-attn version 2.8.1 (installed separately in Dockerfile).
+
+Also validates DeepSeek-V3 related packages:
+- FlashMLA: Multi-head Latent Attention (requires SM90+ GPU)
+- DeepGEMM: FP8 GEMM library (requires SM90+ GPU)
+- DeepEP: Expert Parallelism communication (requires SM80+ GPU)
+- flash-linear-attention (fla): Linear attention with Triton kernels
 """
 
 import sys
@@ -23,6 +29,17 @@ class DockerInstallationValidator(BaseInstallationValidator):
         "apex": ["apex.optimizers", "apex.normalization"],
         "transformer_engine": ["transformer_engine.pytorch"],
         "flash_attn_3": ["flash_attn_3"],
+        "vllm": ["vllm._C"],
+        "sglang": ["sgl_kernel", "sgl_kernel.flash_attn"],
+        "megatron-core": [
+            "megatron.core.parallel_state",
+            "megatron.core.tensor_parallel",
+        ],
+        # DeepSeek-V3 related packages
+        "flash_mla": ["flash_mla"],
+        "deep_gemm": ["deep_gemm"],
+        "deep_ep": ["deep_ep"],
+        "fla": ["fla.ops", "fla.layers", "fla.modules"],
     }
 
     # Add Docker-specific packages to critical list
@@ -32,30 +49,42 @@ class DockerInstallationValidator(BaseInstallationValidator):
         "apex",
         "transformer_engine",
         "flash_attn_3",
+        "vllm",
+        "sglang",
+        "megatron-core",
+        "mbridge",
     }
 
     def __init__(self, pyproject_path: Path | None = None):
         super().__init__(pyproject_path)
 
     def parse_pyproject(self):
-        """Parse pyproject.toml and override flash-attn version for Docker."""
+        """Parse pyproject.toml and add Docker-specific packages."""
         super().parse_pyproject()
 
-        # Override flash-attn version to match Docker environment (2.8.1)
-        if "flash-attn" in self.dependencies:
-            self.dependencies["flash-attn"]["version"] = "2.8.1"
-            self.dependencies["flash-attn"]["operator"] = "=="
-            self.dependencies["flash-attn"]["spec"] = "==2.8.1"
-            self.dependencies["flash-attn"]["raw"] = "flash-attn==2.8.1"
-            print(
-                "  Note: Overriding flash-attn version to 2.8.1 for Docker environment"
-            )
+        # Add flash-attn (installed separately in Dockerfile, not in pyproject.toml)
+        self.add_additional_package("flash-attn", "==2.8.1", required=True)
+        print("  Note: Expecting flash-attn version 2.8.1 for Docker environment")
 
         # Add Docker-specific packages not in pyproject.toml
         self.add_additional_package("grouped_gemm", required=True)
         self.add_additional_package("apex", required=True)
         self.add_additional_package("transformer_engine", required=True)
         self.add_additional_package("flash_attn_3", required=False)
+
+        # Add optional extras that are installed in Docker via --extra flags
+        self.add_additional_package("sglang", "==0.5.7", required=True)
+        self.add_additional_package("vllm", "==0.14.0", required=True)
+        self.add_additional_package("megatron-core", "==0.13.1", required=True)
+        self.add_additional_package("mbridge", "==0.13.0", required=True)
+
+        # Add DeepSeek-V3 related packages (installed in Dockerfile, not pyproject.toml)
+        self.add_additional_package("flash_mla", required=False)  # SM90+ only
+        self.add_additional_package("deep_gemm", required=False)  # SM90+ only
+        self.add_additional_package("deep_ep", required=False)  # SM80+ only
+        self.add_additional_package(
+            "fla", required=True
+        )  # Pure Triton, works everywhere
 
     def test_cuda_functionality(self):
         """Run CUDA functionality tests including Docker-specific packages."""
@@ -137,6 +166,69 @@ class DockerInstallationValidator(BaseInstallationValidator):
             print("⚠ Grouped GEMM not available")
         except Exception as e:
             print(f"⚠ Grouped GEMM test failed: {e}")
+
+        print("\n=== DeepSeek-V3 Package Tests ===")
+
+        # Test FlashMLA (requires SM90+ GPU)
+        try:
+            from flash_mla import flash_mla_with_kvcache, get_mla_metadata  # noqa: F401
+
+            print(
+                "✓ FlashMLA imported successfully "
+                "(functions: get_mla_metadata, flash_mla_with_kvcache)"
+            )
+        except ImportError:
+            print("⚠ FlashMLA not available (requires SM90+ GPU)")
+        except Exception as e:
+            print(f"⚠ FlashMLA import failed: {e}")
+
+        # Test DeepGEMM (requires SM90+ GPU)
+        try:
+            import deep_gemm
+
+            num_sms = deep_gemm.get_num_sms()
+            print(f"✓ DeepGEMM imported successfully (detected {num_sms} SMs)")
+        except ImportError:
+            print("⚠ DeepGEMM not available (requires SM90+ GPU)")
+        except Exception as e:
+            print(f"⚠ DeepGEMM test failed: {e}")
+
+        # Test DeepEP (requires SM80+ GPU and NVSHMEM)
+        try:
+            from deep_ep import Buffer, EventOverlap  # noqa: F401
+
+            print("✓ DeepEP imported successfully (classes: Buffer, EventOverlap)")
+        except ImportError:
+            print("⚠ DeepEP not available (requires SM80+ GPU and NVSHMEM)")
+        except Exception as e:
+            print(f"⚠ DeepEP import failed: {e}")
+
+        # Test flash-linear-attention (fla) with actual layer instantiation
+        try:
+            import fla  # noqa: F401
+            import torch
+            from fla.layers import MultiScaleRetention
+
+            if torch.cuda.is_available():
+                device, dtype = "cuda:0", torch.bfloat16
+                retnet = MultiScaleRetention(hidden_size=1024, num_heads=4).to(
+                    device=device, dtype=dtype
+                )
+                x = torch.randn(1, 64, 1024, device=device, dtype=dtype)
+                y, *_ = retnet(x)
+                assert y.shape == x.shape, f"Shape mismatch: {y.shape} != {x.shape}"
+                print(
+                    "✓ flash-linear-attention (fla) - MultiScaleRetention forward pass OK"
+                )
+            else:
+                print(
+                    "✓ flash-linear-attention (fla) imported successfully "
+                    "(CUDA not available for layer test)"
+                )
+        except ImportError:
+            print("⚠ flash-linear-attention (fla) not available")
+        except Exception as e:
+            print(f"⚠ flash-linear-attention (fla) test failed: {e}")
 
     def get_validation_title(self) -> str:
         """Get the title for validation output."""

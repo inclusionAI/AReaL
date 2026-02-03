@@ -100,7 +100,7 @@ async def _run_one_episode(self, engine, data, rid):
         )
 
         # Get completion with token data
-        comp_data = client.get_completions(completion.id)
+        comp_data = client.get_interaction(completion.id)
 
         # Evaluate reward
         reward = await self.async_reward_fn(

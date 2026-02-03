@@ -14,10 +14,15 @@ from megatron.core.fp8_utils import is_float8tensor
 from safetensors.torch import save_file
 from torch.distributed._functional_collectives import all_gather_into_tensor_coalesced
 
+from areal.infra.platforms import current_platform
 from areal.models.mcore.registry import unwrap_to_gpt_model
-from areal.platforms import current_platform
 from areal.utils import logging
-from areal.utils.fp8 import quantize_params
+from areal.utils.fp8 import (
+    FP8BlockwiseTensorHelper,
+    convert_fp8_helper_to_pytorch_fp8,
+    get_block_size_from_config,
+    quantize_params,
+)
 
 logger = logging.getLogger("HFSaver")
 
@@ -29,6 +34,83 @@ HF_MODEL_CONFIG_FILES = [
     "special_tokens_map.json",
     "tokenizer.json",
 ]
+
+
+def _maybe_convert_from_te_fp8_params(
+    params, fp8_direct_convert: bool, weight_block_size: int
+):
+    """Convert TE FP8 parameters to the appropriate format.
+
+    Args:
+        params: Parameter or list of parameters to convert
+        fp8_direct_convert: If True, convert TE FP8 to FP8BlockwiseTensorHelper;
+                            If False, dequantize to bf16
+        weight_block_size: Block size for FP8 quantization
+
+    Returns:
+        Converted parameter(s) in the same structure as input
+    """
+    is_single_param = not isinstance(params, list)
+    param_list = [params] if is_single_param else params
+
+    if fp8_direct_convert:
+        # Direct FP8 conversion: convert TE FP8 to FP8BlockwiseTensorHelper
+        converted = [
+            FP8BlockwiseTensorHelper.from_te(p, weight_block_size)
+            if is_float8tensor(p)
+            else p
+            for p in param_list
+        ]
+    else:
+        # Dequantize TE FP8 tensors to bf16
+        converted = [p.dequantize() if is_float8tensor(p) else p for p in param_list]
+
+    return converted[0] if is_single_param else converted
+
+
+def _maybe_convert_to_torch_fp8_params(
+    global_name: str,
+    converted_names: list,
+    converted_params: list,
+    quantization_config,
+    fp8_direct_convert: bool,
+):
+    """Convert HF-format parameters to PyTorch FP8 format if quantization is configured.
+
+    This function handles three cases:
+    1. No quantization_config: Returns parameters unchanged
+    2. fp8_direct_convert=True: Direct conversion (FP8BlockwiseTensorHelper -> PyTorch FP8)
+    3. fp8_direct_convert=False: Quantization (bf16 -> PyTorch FP8)
+
+    Args:
+        global_name: Global name of the parameter (for logging/tracking)
+        converted_names: List of HF-format parameter names
+        converted_params: List of HF-format parameters (bf16 or FP8BlockwiseTensorHelper)
+        quantization_config: Quantization configuration. If None, returns unchanged
+        fp8_direct_convert: If True, direct FP8 conversion; if False, quantize from bf16
+
+    Returns:
+        Tuple of (converted_names, converted_params), optionally in PyTorch FP8 format
+    """
+    if quantization_config is None:
+        return converted_names, converted_params
+
+    if fp8_direct_convert:
+        # Direct FP8 conversion: convert FP8BlockwiseTensorHelper to PyTorch FP8
+        converted_named_params = convert_fp8_helper_to_pytorch_fp8(
+            list(zip(converted_names, converted_params))
+        )
+    else:
+        # Quantize from bf16 to PyTorch FP8
+        converted_named_params = list(zip(converted_names, converted_params))
+        converted_named_params = quantize_params(
+            global_name, converted_named_params, quantization_config
+        )
+
+    converted_names = [name for name, _ in converted_named_params]
+    converted_params = [param for _, param in converted_named_params]
+
+    return converted_names, converted_params
 
 
 def copy_hf_configs(src_model_dir, dst_model_dir):
@@ -103,6 +185,7 @@ def save_weights_to_hf_with_mbridge_fast(
     max_shard_size_byte: int = int(3e9),
     max_workers: int | None = None,
     is_critic: bool = False,
+    fp8_direct_convert: bool = False,
 ):
     # 1. Prepare some global metadata required for saving the model.
     models = [unwrap_model(model) for model in models]
@@ -253,6 +336,8 @@ def save_weights_to_hf_with_mbridge_fast(
     _all_gather_specs = []
     all_gather_outputs = {}
     quantization_config = getattr(bridge.hf_config, "quantization_config", None)
+    weight_block_size = get_block_size_from_config(quantization_config, strict=True)
+
     for s in non_expert_specs:
         if s.tensor_model_parallel and mpu.get_tensor_model_parallel_world_size() > 1:
             _all_gather_specs.append(s)
@@ -276,27 +361,28 @@ def save_weights_to_hf_with_mbridge_fast(
                 )
             # Convert TE FP8 -> torch bf16 -> torch FP8 and finally save the native torch FP8 model
             # First dequantize TE FP8 tensors to bf16, then convert_to_hf will quantize to PyTorch FP8
-            infer_params = [
-                p.dequantize() if is_float8tensor(p) else p for p in infer_params
-            ]
+            # Or if fp8_direct_convert=True, convert TE FP8 -> FP8BlockwiseTensorHelper -> torch FP8
+            infer_params = _maybe_convert_from_te_fp8_params(
+                infer_params, fp8_direct_convert, weight_block_size
+            )
             infer_params = bridge._weight_merge_across_tp(
                 s.global_name, infer_params, param
             )
         else:
             infer_params = param
-            if is_float8tensor(infer_params):
-                infer_params = infer_params.dequantize()
+            infer_params = _maybe_convert_from_te_fp8_params(
+                infer_params, fp8_direct_convert, weight_block_size
+            )
         converted_names, converted_params = bridge._weight_to_hf_format(
             s.global_name, infer_params
         )
-        # Apply quantization if quantization_config is present
-        if quantization_config is not None:
-            converted_named_params = list(zip(converted_names, converted_params))
-            quantized_named_params = quantize_params(
-                s.global_name, converted_named_params, quantization_config
-            )
-            converted_names = [name for name, _ in quantized_named_params]
-            converted_params = [param for _, param in quantized_named_params]
+        converted_names, converted_params = _maybe_convert_to_torch_fp8_params(
+            s.global_name,
+            converted_names,
+            converted_params,
+            quantization_config,
+            fp8_direct_convert,
+        )
         for n, p in zip(converted_names, converted_params):
             assert n not in non_expert_sd, n
             non_expert_sd[n] = p
@@ -390,19 +476,20 @@ def save_weights_to_hf_with_mbridge_fast(
             else:
                 params = [param]
 
-            params = [p.dequantize() if is_float8tensor(p) else p for p in params]
+            params = _maybe_convert_from_te_fp8_params(
+                params, fp8_direct_convert, weight_block_size
+            )
             merge_params = bridge._weight_merge_across_tp(s.global_name, params, param)
             converted_names, converted_params = bridge._weight_to_hf_format(
                 s.global_name, merge_params
             )
-            # Apply quantization if quantization_config is present
-            if quantization_config is not None:
-                converted_named_params = list(zip(converted_names, converted_params))
-                quantized_named_params = quantize_params(
-                    s.global_name, converted_named_params, quantization_config
-                )
-                converted_names = [name for name, _ in quantized_named_params]
-                converted_params = [param for _, param in quantized_named_params]
+            converted_names, converted_params = _maybe_convert_to_torch_fp8_params(
+                s.global_name,
+                converted_names,
+                converted_params,
+                quantization_config,
+                fp8_direct_convert,
+            )
             for n, p in zip(converted_names, converted_params):
                 assert n not in expert_sd, n
                 expert_sd[n] = p

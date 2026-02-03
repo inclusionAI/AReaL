@@ -51,15 +51,35 @@ from areal.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
-from areal.api.workflow_api import RolloutWorkflow
-from areal.core.dist_rollout import DistRolloutCoordinator
+from areal.api.workflow_api import WorkflowLike
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_total_loss_weight,
     reorder_and_pad_outputs,
 )
+from areal.infra.dist_rollout import DistRolloutCoordinator
+from areal.infra.platforms import current_platform
+from areal.models.fsdp.ulysses import (
+    set_ulysses_sequence_parallel_group,
+    ulysses_pad,
+    ulysses_pad_and_slice_inputs,
+    ulysses_prepare_inputs,
+)
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
-from areal.platforms import current_platform
+from areal.models.tree_attn.functional import (
+    _gather_packed_tree_logprobs,
+    gather_packed_tree_logprobs_entropy,
+    merge_packed_tree_results,
+)
+from areal.models.tree_attn.module import (
+    BLOCK_SIZE,
+    TRITON_AVAILABLE,
+    USE_TRITON_TREE_ATTN,
+    build_block_mask_from_trie,
+    build_triton_attn_data_from_trie,
+    patch_fsdp_for_tree_training,
+)
+from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
 from areal.utils import (
     logging,
     name_resolve,
@@ -98,17 +118,11 @@ from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
-from areal.utils.ulysses import (
-    set_ulysses_sequence_parallel_group,
-    ulysses_pad,
-    ulysses_pad_and_slice_inputs,
-    ulysses_prepare_inputs,
-)
 
 if TYPE_CHECKING:
+    from areal.api.scheduler_api import Scheduler
     from areal.engine.ppo.actor import PPOActorConfig
     from areal.engine.ppo.critic import PPOCriticConfig
-    from areal.scheduler.scheduler import Scheduler
 
 
 @dataclasses.dataclass
@@ -125,12 +139,26 @@ class FSDPTrainContext:
         Number of padding tokens added for sequence packing.
     ulysses_pad_size
         Extra padding added for Ulysses sequence parallel alignment.
+    trie_node
+        The root TrieNode for tree training (if applicable).
     """
 
     model_inputs: dict[str, Any]
     mb_input: dict[str, Any]
     pad_length: int = 0
     ulysses_pad_size: int = 0
+    trie_node: TrieNode | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict without recursive serialization of trie_node.
+
+        Note: We cannot use dataclasses.asdict() here because it recursively
+        converts all nested objects. The trie_node field contains a TrieNode
+        with recursive parent/child references, which causes
+        "RecursionError: maximum recursion depth exceeded" when asdict()
+        attempts to serialize the entire tree structure.
+        """
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
 
 
 class FSDPEngine(TrainEngine):
@@ -178,6 +206,7 @@ class FSDPEngine(TrainEngine):
         self.dp_rank: int
 
         self.is_offload: bool = False
+        self.enable_tree_training: bool = self.config.enable_tree_training
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -238,11 +267,17 @@ class FSDPEngine(TrainEngine):
         # Create device model
         self._create_device_model()
 
+        if self.enable_tree_training and self.parallel_helper.sp_size > 1:
+            raise ValueError(
+                "Tree training currently cannot be enabled with sp_size > 1."
+            )
         # Monkey patch: replace attention's forward() with Ulysses variant.
         apply_monkey_patch(
             model=self.model,
             ulysses_sp_size=self.parallel_helper.sp_size,
         )
+        # Monkey patch: replace attention's forward() with tree attention.
+        patch_fsdp_for_tree_training(enable=self.enable_tree_training)
 
         if self.config.use_lora:
             self._apply_peft_wrapper()
@@ -253,12 +288,40 @@ class FSDPEngine(TrainEngine):
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         tik = time.perf_counter()
-        # Prepare lora weights synchronization
-        if self.config.use_lora:
+
+        full_state = None
+        need_broadcast = False
+
+        is_llm_cpu_load = (
+            self.config.fsdp.memory_efficient_load
+            and not self.config.init_from_scratch
+            and not self.is_vision_model
+        )
+
+        if is_llm_cpu_load or self.config.use_lora:
+            need_broadcast = True
             if dist.get_rank() == 0:
+                if is_llm_cpu_load:
+                    pretrained_state = get_state_dict_from_repo_id_or_path(
+                        self.config.path
+                    )
+                    missing, unexpected = self.model.load_state_dict(
+                        pretrained_state, strict=False
+                    )
+                    if missing:
+                        self.logger.warning(
+                            f"Missing keys when loading pretrained weights: {missing}"
+                        )
+                    if unexpected:
+                        self.logger.warning(
+                            f"Unexpected keys when loading pretrained weights: {unexpected}"
+                        )
+                    del pretrained_state
+                    gc.collect()
                 full_state = self.model.state_dict()
             else:
                 full_state = {}
+
         # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         parallelize_model(
             self.model,
@@ -269,14 +332,19 @@ class FSDPEngine(TrainEngine):
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
-        # Synchronize initialized lora weights
-        if self.config.use_lora:
+
+        if need_broadcast:
+            broadcast_tik = time.perf_counter()
             fsdp2_load_full_state_dict(
                 self.model,
                 full_state,
                 self.cpu_offload,
                 tie_word_embeddings=self.model_config.tie_word_embeddings,
             )
+            self.logger.info(
+                f"Broadcasting model weights took {time.perf_counter() - broadcast_tik:.2f} seconds"
+            )
+
         self.logger.info(
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
         )
@@ -357,34 +425,34 @@ class FSDPEngine(TrainEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        granularity: int = 1,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
             data,
-            granularity=granularity,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
+            group_size=group_size,
         )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        granularity: int = 1,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
             dataloader,
-            granularity=granularity,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            group_size=group_size,
             dynamic_bs=dynamic_bs,
         )
 
@@ -444,8 +512,9 @@ class FSDPEngine(TrainEngine):
 
         grad_norm = fsdp2_clip_grad_norm(
             list(self.model.parameters()),
-            self.world_mesh,
             max_norm=self.optimizer_config.gradient_clipping,
+            fsdp_group=self.world_mesh["dp_sp"].get_group(),
+            tp_group=self.world_mesh["tp"].get_group(),
             offload_params=self.config.fsdp.offload_params,
         )
 
@@ -479,11 +548,36 @@ class FSDPEngine(TrainEngine):
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
+            # Lazily create tree attention metadata just before forward
+            if self.enable_tree_training and ctx.trie_node is not None:
+                padded_size = mb_item.padded_to_length
+                if padded_size is None:
+                    raise ValueError(
+                        "padded_size must be set for tree training with FSDP."
+                    )
+                if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
+                    triton_attn_data = build_triton_attn_data_from_trie(
+                        ctx.trie_node, padded_size
+                    )
+                    inputs["triton_attn_data"] = triton_attn_data
+                else:
+                    block_mask = build_block_mask_from_trie(
+                        ctx.trie_node, padded_size, self.device
+                    )
+                    inputs["block_mask"] = block_mask
+
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
 
-            ctx_dict = dataclasses.asdict(ctx)
+            # Release tree attention metadata after forward pass
+            if self.enable_tree_training:
+                if "block_mask" in inputs:
+                    del inputs["block_mask"]
+                if "triton_attn_data" in inputs:
+                    del inputs["triton_attn_data"]
+
+            ctx_dict = ctx.to_dict()
             loss = process_output_fn(logits, ctx_dict)
 
             if not forward_only and loss is not None:
@@ -578,6 +672,8 @@ class FSDPEngine(TrainEngine):
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+        assert output_seqlens is not None
+        batch_size = len(output_seqlens)
 
         # Step 2: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_).to(self.device)
@@ -594,6 +690,8 @@ class FSDPEngine(TrainEngine):
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
 
         # Step 4: Aggregate and reorder outputs
+        if self.enable_tree_training:
+            return merge_packed_tree_results(outputs, batch_size)
         return reorder_and_pad_outputs(outputs, output_seqlens, mb_list, aggregate_fn)
 
     def export_stats(self) -> dict[str, float]:
@@ -670,9 +768,7 @@ class FSDPEngine(TrainEngine):
         }
         model_kwargs.update(common_kwargs)
 
-        if self.config.init_from_scratch:
-            # initialize model from config
-            # NOTE: VLM cannot directly load state dict using this random initialized model
+        if self.config.init_from_scratch or self.config.fsdp.memory_efficient_load:
             model = model_class.from_config(
                 self.model_config,
                 **model_kwargs,
@@ -691,6 +787,13 @@ class FSDPEngine(TrainEngine):
 
         dtype = getattr(torch, self.config.dtype)
 
+        if self.config.fsdp.memory_efficient_load:
+            loading_device = "cpu"
+        else:
+            loading_device = current_platform.device_type
+
+        self.get_device_stats().log("before model creation/loading")
+
         if self.is_vision_model:
             if dtype == torch.float16:
                 raise ValueError(
@@ -705,8 +808,8 @@ class FSDPEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            device = current_platform.device_type
-            with torch.device(device):
+            # VLM: Use from_pretrained() on loading_device.
+            with torch.device(loading_device):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -719,17 +822,20 @@ class FSDPEngine(TrainEngine):
             self.tokenizer = load_hf_tokenizer(self.config.path)
             self.processor = None
             tik = time.perf_counter()
-            with torch.device(current_platform.device_type):
+            # LLM: Decide between from_config() or from_pretrained() based on memory_efficient_load
+            with torch.device(loading_device):
                 model = self._create_llm_actor_or_critic()
                 if self.config.disable_dropout:
                     disable_dropout_in_model(model)
+
+        self.get_device_stats().log("after model creation/loading")
 
         if self.config.gradient_checkpointing:
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
         self.logger.info(
-            f"Model creation and loading time: {time.perf_counter() - tik}"
+            f"Model creation and loading time: {time.perf_counter() - tik:.2f}s"
         )
         self.model = model
 
@@ -1154,6 +1260,26 @@ class FSDPEngine(TrainEngine):
         assert "attention_mask" in input_ and "input_ids" in input_
         input_ = input_.copy()
 
+        # Tree training path
+        if self.enable_tree_training:
+            sp_size = self.parallel_helper.sp_size
+            tp_size = self.parallel_helper.tp_size
+            # Build tree inputs
+            assert BLOCK_SIZE % (tp_size * sp_size) == 0, (
+                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by the product of tensor and sequence parallel sizes ({tp_size * sp_size})."
+            )
+            mb_list = build_packed_tree_batch(
+                input_,
+                mb_spec=self.config.mb_spec,
+                pad_to_maximum=self.config.pad_to_maximum,
+                dp_group=self.data_parallel_group,
+            )
+            self.logger.info(
+                f"Packed tree #microbatch: {len(mb_list)}, microbatch #tokens: {mb_list.group_lens}, "
+                f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}."
+            )
+            return mb_list
+
         if is_qwen_vl_model(self.model_config.model_type):
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
@@ -1301,6 +1427,7 @@ class FSDPEngine(TrainEngine):
             )
         else:
             inputs = mb_item.padded_mb
+            trie_node = inputs.pop("trie_node", None)
             ulysses_pad_size = 0
 
         ctx = FSDPTrainContext(
@@ -1308,6 +1435,7 @@ class FSDPEngine(TrainEngine):
             mb_input=mb_item.orig_mb,
             pad_length=mb_item.padding_length,
             ulysses_pad_size=ulysses_pad_size,
+            trie_node=trie_node,
         )
         return inputs, ctx
 
@@ -1409,18 +1537,43 @@ class FSDPEngine(TrainEngine):
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
+        if self.config.is_critic and self.enable_tree_training:
+            raise NotImplementedError(
+                "Tree training with critic model is not supported yet."
+            )
         if not self.config.is_critic:
-            logprobs, entropy = self._compute_logprobs_entropy(
-                logits, ctx.model_inputs, ctx.ulysses_pad_size
-            )
-            vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
-                logits, ctx.ulysses_pad_size
-            )
-            if ctx.pad_length > 0:
-                logprobs = logprobs[: -ctx.pad_length]
-                entropy = entropy[: -ctx.pad_length]
-                vocab_min_logits = vocab_min_logits[: -ctx.pad_length]
-                vocab_max_logits = vocab_max_logits[: -ctx.pad_length]
+            if self.enable_tree_training:
+                # Handle dummy trie (empty tree for DP synchronization)
+                # When trie has no sequences, return zero loss with grad connection
+                if ctx.trie_node is None or not ctx.trie_node.all_sequence_ids:
+                    # Return zero loss that maintains gradient connection to logits
+                    # This ensures backward() works correctly for FSDP synchronization
+                    return logits.sum() * 0.0
+
+                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
+                    logits
+                )
+                logprobs, entropy = gather_packed_tree_logprobs_entropy(
+                    logits,
+                    ctx.trie_node,
+                    ctx.mb_input["input_ids"],
+                    temperature=self.config.temperature,
+                    tp_group=self.parallel_helper.tp_group
+                    if self.parallel_helper.tp_size > 1
+                    else None,
+                )
+            else:
+                logprobs, entropy = self._compute_logprobs_entropy(
+                    logits, ctx.model_inputs, ctx.ulysses_pad_size
+                )
+                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
+                    logits, ctx.ulysses_pad_size
+                )
+                if ctx.pad_length > 0:
+                    logprobs = logprobs[: -ctx.pad_length]
+                    entropy = entropy[: -ctx.pad_length]
+                    vocab_min_logits = vocab_min_logits[: -ctx.pad_length]
+                    vocab_max_logits = vocab_max_logits[: -ctx.pad_length]
             loss = loss_fn(
                 logprobs,
                 entropy,
@@ -1441,9 +1594,24 @@ class FSDPEngine(TrainEngine):
         self,
         logits: torch.Tensor,
         ctx: FSDPTrainContext,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | dict[int, torch.Tensor]:
         """Compute forward output (logprobs or values)."""
+        if self.config.is_critic and self.enable_tree_training:
+            raise NotImplementedError(
+                "Tree training with critic model is not supported yet."
+            )
         if not self.config.is_critic:
+            if self.enable_tree_training:
+                result = _gather_packed_tree_logprobs(
+                    logits,
+                    ctx.trie_node,
+                    ctx.mb_input["input_ids"],
+                    temperature=self.config.temperature,
+                    tp_group=self.parallel_helper.tp_group
+                    if self.parallel_helper.tp_size > 1
+                    else None,
+                )
+                return result
             result = self._compute_logprobs(
                 logits, ctx.model_inputs, ctx.ulysses_pad_size
             )

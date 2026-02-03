@@ -5,13 +5,13 @@ from copy import deepcopy
 
 import torch.distributed as dist
 
+from areal import current_platform
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.fsdp_engine import FSDPPPOActor
 from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.platforms import current_platform
 from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils import seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
@@ -164,7 +164,7 @@ def main(args):
         with stats_tracker.record_timing("rollout"):
             batch = actor.prepare_batch(
                 train_dataloader,
-                granularity=actor.config.group_size,
+                group_size=config.gconfig.n_samples,
                 workflow=workflow,
                 should_accept_fn=lambda sample: True,
             )
@@ -224,7 +224,11 @@ def main(args):
                     cnt = 0
                     for data in valid_dataloader:
                         for item in data:
-                            eval_rollout.submit(item, eval_workflow)
+                            eval_rollout.submit(
+                                item,
+                                eval_workflow,
+                                group_size=config.eval_gconfig.n_samples,
+                            )
                             cnt += 1
                     eval_rollout.wait(cnt, timeout=None)
                 dist.barrier(device_ids=[actor.device.index])

@@ -4,7 +4,7 @@ import os
 import uuid
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from pydantic import BaseModel
 
@@ -40,7 +40,7 @@ from openai.types.responses.tool_param import ToolParam
 from openai.types.shared_params.metadata import Metadata
 
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import ModelRequest
+from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
@@ -49,7 +49,13 @@ from areal.utils import logging
 if TYPE_CHECKING:
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-    from areal.api.engine_api import InferenceEngine
+
+class _AsyncGenerateEngine(Protocol):
+    async def agenerate(self, req: ModelRequest) -> ModelResponse:
+        raise NotImplementedError()
+
+
+TRolloutEngine = TypeVar("TRolloutEngine", bound=_AsyncGenerateEngine)
 
 # reset OpenAI keys when using the wrapped client.
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "none")
@@ -150,7 +156,7 @@ def concat_prompt_token_ids_with_parent(
         # TODO: (yulangz) how to handle here when stop is set?
         parent_tokens = (
             parent.model_response.input_tokens
-            + parent.model_response.output_tokens  # with stop tokens
+            + parent.model_response.output_tokens_without_stop  # without stop tokens
         )
         all_message_list += parent.messages if parent.messages is not None else []
         all_message_list += (
@@ -161,14 +167,10 @@ def concat_prompt_token_ids_with_parent(
         # We will add an extra EOS token to align with the chat template. During training, this added EOS will be treated
         # as part of the child message's prompt rather than the parent message's output, and therefore will be masked out
         # by the loss_mask.
+        # If the parent terminated with an EOS token, it will be removed by parent.model_response.output_tokens_without_stop, and
+        # we add it here.
         # TODO: should we mask this extra eos token in loss_mask during training?
-        if parent.model_response.stop_reason in ["length", "abort"]:
-            parent_tokens += [eos_token_id]
-        else:
-            if len(parent_tokens) > 0 and parent_tokens[-1] != eos_token_id:
-                raise RuntimeError(
-                    f"Parent tokens do not end with eos_token_id when stop_reason is {parent.model_response.stop_reason}, parent_tokens[-1] is {parent_tokens[-1]}."
-                )
+        parent_tokens += [eos_token_id]
 
     all_message_list += message_list
 
@@ -208,7 +210,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
     def __init__(
         self,
         client,
-        engine: "InferenceEngine",
+        engine: TRolloutEngine,
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
         tool_call_parser: str,
@@ -472,7 +474,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
     def __init__(
         self,
         client,
-        engine: "InferenceEngine",
+        engine: TRolloutEngine,
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
         tool_call_parser: str,
@@ -816,7 +818,7 @@ class ArealOpenAI(AsyncOpenAI):
 
     def __init__(
         self,
-        engine: "InferenceEngine",
+        engine: TRolloutEngine,
         tokenizer: "PreTrainedTokenizerFast",
         tool_call_parser: str = "qwen3",
         reasoning_parser: str = "qwen3",
@@ -861,18 +863,6 @@ class ArealOpenAI(AsyncOpenAI):
         """Get completion/response with its reward from cache."""
         return self._cache.get(id)
 
-    def get_completions(self, id: str) -> InteractionWithTokenLogpReward | None:
-        logger.warning(
-            "get_completions is deprecated. Please use get_interaction instead."
-        )
-        return self.get_interaction(id)
-
-    def get_responses(self, id: str) -> InteractionWithTokenLogpReward | None:
-        logger.warning(
-            "get_responses is deprecated. Please use get_interaction instead."
-        )
-        return self.get_interaction(id)
-
     def set_reward(self, id: str, reward: float) -> None:
         """Set reward for a specific completion/response by its ID."""
         if id not in self._cache:
@@ -884,13 +874,6 @@ class ArealOpenAI(AsyncOpenAI):
         if not self._cache:
             raise RuntimeError("No interaction in cache to set reward for")
         return self._cache.set_last_reward(reward)
-
-    def set_final_reward(self, reward: float) -> None:
-        """Set reward for the final completion/response."""
-        logger.warning(
-            "set_final_reward is deprecated. Please use set_last_reward instead."
-        )
-        return self.set_last_reward(reward)
 
     def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
         """Apply backward discounted rewards across cached completions/responses.
@@ -955,22 +938,6 @@ class ArealOpenAI(AsyncOpenAI):
             If an unsupported ``style`` is provided.
         """
         return self._cache.export_interactions(style)
-
-    def export_completions(
-        self, style: str = "concat"
-    ) -> dict[str, InteractionWithTokenLogpReward]:
-        logger.warning(
-            "export_completions is deprecated. Please use export_interactions instead."
-        )
-        return self.export_interactions(style)
-
-    def export_responses(
-        self, style: str = "concat"
-    ) -> dict[str, InteractionWithTokenLogpReward]:
-        logger.warning(
-            "export_responses is deprecated. Please use export_interactions instead."
-        )
-        return self.export_interactions(style)
 
 
 def is_omitted(value) -> bool:

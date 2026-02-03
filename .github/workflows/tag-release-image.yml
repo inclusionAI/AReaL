@@ -1,11 +1,17 @@
-name: Tag Release Docker Image
+name: Build Release Docker Image
 
 on:
   release:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (e.g., v0.5.3)'
+        required: true
+        type: string
 
 concurrency:
-  group: tag-release-image-${{ github.event.release.tag_name }}
+  group: tag-release-image-${{ github.event.release.tag_name || github.event.inputs.tag }}
   cancel-in-progress: true
 
 permissions:
@@ -15,7 +21,6 @@ permissions:
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   IMAGE_NAME: ghcr.io/inclusionai/areal-runtime
-  SOURCE_TAG: dev
 
 jobs:
   start-builder:
@@ -105,13 +110,39 @@ jobs:
 
             throw new Error(`Timed out waiting for builder runner ${instanceName} to come online.`);
 
-  tag-and-push-image:
+  build-and-push-release:
     needs:
       - start-builder
-    name: Tag and push release Docker image
+    name: Build and push release Docker image
     runs-on: [self-hosted, areal-docker-builder]
-    timeout-minutes: 30
+    timeout-minutes: 180
+    outputs:
+      package_version: ${{ steps.get-version.outputs.version }}
+      release_tag: ${{ steps.get-version.outputs.release_tag }}
     steps:
+      - name: Checkout code at release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+
+      - name: Get package version
+        id: get-version
+        run: |
+          # Extract version from areal/version.py
+          VERSION=$(grep -oP '__version__\s*=\s*"\K[^"]+' areal/version.py)
+          RELEASE_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+
+          echo "Package version: $VERSION"
+          echo "Release tag: $RELEASE_TAG"
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -119,33 +150,30 @@ jobs:
           username: inclusionai
           password: ${{ secrets.GHCR_TOKEN }}
 
-      - name: Pull dev image
-        run: |
-          echo "Pulling source image: ${{ env.IMAGE_NAME }}:${{ env.SOURCE_TAG }}"
-          docker pull ${{ env.IMAGE_NAME }}:${{ env.SOURCE_TAG }}
-
-      - name: Tag image with release version
-        run: |
-          echo "Tagging image with release version: ${{ github.event.release.tag_name }}"
-          docker tag ${{ env.IMAGE_NAME }}:${{ env.SOURCE_TAG }} ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }}
-
-      - name: Push release image
-        run: |
-          echo "Pushing image: ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }}"
-          docker push ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.get-version.outputs.release_tag }}
+            ${{ env.IMAGE_NAME }}:latest
 
       - name: Image details
         run: |
-          echo "✅ Docker image tagged and pushed successfully!"
-          echo "Image: ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }}"
-          echo "Source: ${{ env.IMAGE_NAME }}:${{ env.SOURCE_TAG }}"
-          echo "Release: ${{ github.event.release.name }}"
-          echo "Tag: ${{ github.event.release.tag_name }}"
+          echo "Docker image built and pushed successfully!"
+          echo "Image: ${{ env.IMAGE_NAME }}"
+          echo "Tags:"
+          echo "  - ${{ steps.get-version.outputs.release_tag }}"
+          echo "  - latest"
+          echo "Release: ${{ github.event.release.name || github.event.inputs.tag }}"
+          echo "Commit: ${{ github.sha }}"
 
   stop-builder:
     name: Stop areal-docker-builder instance
     needs:
-      - tag-and-push-image
+      - build-and-push-release
       - start-builder
     if: always()
     runs-on: ubuntu-latest

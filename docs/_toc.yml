@@ -33,37 +33,9 @@ parts:
     - file: customization/dataset
     - file: customization/agent
     - file: customization/algorithm
-  - caption: References
-    chapters:
-    - file: references/benchmark
-    - file: references/reproduce
   - caption: Algorithms
     chapters:
     - file: algorithms/async
-    - file: algorithms/ppo
-    - file: algorithms/grpo
-    - file: algorithms/rloo
-    - file: algorithms/dapo
-    - file: algorithms/gspo
-    - file: algorithms/sapo
-    - file: algorithms/dr.GRPO
-    - file: algorithms/litePPO
-
-  # - caption: Customization (Legacy)
-  #   chapters:
-  #   - file: legacy/customization/dataset
-  #   - file: legacy/customization/agent
-  #   - file: legacy/customization/algorithm
-  # - caption: Code Walkthrough (Legacy)
-  #   chapters:
-  #   - file: developer/overview
-  #   - file: developer/trainer
-  #     sections:
-  #       - file: developer/trainer/master_worker
-  #       - file: developer/trainer/model_worker
-  #       - file: developer/trainer/algo_interface
-  #       - file: developer/trainer/allocation_parallel
-  #   - file: developer/rollout
-  #     sections:
-  #       - file: developer/rollout/gserver
-  #       - file: developer/rollout/rollout_worker
+    - file: algorithms/grpo_series
+    - file: algorithms/m2po
+    - file: algorithms/prox_approx

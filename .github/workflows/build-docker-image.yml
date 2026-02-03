@@ -32,6 +32,8 @@ jobs:
        github.ref_name == 'build-docker-image')
     name: Start areal-docker-builder instance
     runs-on: ubuntu-latest
+    outputs:
+      was_running: ${{ steps.start-instance.outputs.was_running }}
     env:
       INSTANCE_NAME: areal-docker-builder
       INSTANCE_ZONE: us-central1-f
@@ -45,6 +47,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Start builder instance if stopped
+        id: start-instance
         run: |
           set -euo pipefail
 
@@ -61,12 +64,14 @@ jobs:
 
           if [ "$status" = "RUNNING" ]; then
             echo "Instance $INSTANCE_NAME is already running."
+            echo "was_running=true" >> $GITHUB_OUTPUT
           elif [ "$status" = "TERMINATED" ] || [ "$status" = "SUSPENDED" ]; then
             echo "Instance $INSTANCE_NAME is $status. Starting it..."
             gcloud compute instances start "$INSTANCE_NAME" \
               --project "$GCP_PROJECT_ID" \
               --zone "$INSTANCE_ZONE"
             echo "Instance started successfully."
+            echo "was_running=false" >> $GITHUB_OUTPUT
           else
             echo "Instance $INSTANCE_NAME has unexpected status: $status" >&2
             exit 1
@@ -163,7 +168,7 @@ jobs:
     needs:
       - build-and-push-image
       - start-builder
-    if: always()
+    if: always() && needs.start-builder.outputs.was_running != 'true'
     runs-on: ubuntu-latest
     env:
       INSTANCE_NAME: areal-docker-builder

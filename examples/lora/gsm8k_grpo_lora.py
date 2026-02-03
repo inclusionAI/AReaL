@@ -4,20 +4,18 @@ from copy import deepcopy
 
 import torch.distributed as dist
 
+from areal import current_platform
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
-from areal.core.dist_rollout import redistribute
 from areal.dataset import get_custom_dataset
 from areal.engine.fsdp_engine import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.platforms import current_platform
+from areal.infra.dist_rollout import redistribute_trajectories
 from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
-    concat_padded_tensors,
-    get_batch_size,
     tensor_container_to,
 )
 from areal.utils.dataloader import create_dataloader
@@ -29,17 +27,16 @@ from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
 
-def bcast_and_split_from_rank0(batch: dict | None, granularity: int) -> dict:
+def bcast_and_split_from_rank0(batch: list) -> dict:
     batch = broadcast_tensor_container(batch, src_rank=0)
-    bs = get_batch_size(batch)
+    bs = len(batch)
     assert bs % dist.get_world_size() == 0
     bs_per_rank = bs // dist.get_world_size()
-    local_batch = []
-    for i in range(dist.get_rank() * bs_per_rank, (dist.get_rank() + 1) * bs_per_rank):
-        local_batch.append({k: v[i : i + 1] for k, v in batch.items()})
-    local_batch = concat_padded_tensors(local_batch)
+    local_batch = batch[
+        dist.get_rank() * bs_per_rank : (dist.get_rank() + 1) * bs_per_rank
+    ]
     # Make the sequences on each rank more balanced.
-    return redistribute(local_batch, granularity=granularity).data
+    return redistribute_trajectories(local_batch).data
 
 
 def main(args):
@@ -170,11 +167,10 @@ def main(args):
                     train_dataloader,
                     workflow=workflow,
                     should_accept_fn=lambda sample: True,
+                    group_size=config.gconfig.n_samples,
                 )
                 batch = tensor_container_to(batch, actor.device)
-            batch = bcast_and_split_from_rank0(
-                batch, granularity=config.actor.group_size
-            )
+            batch = bcast_and_split_from_rank0(batch)
 
         # Create barrier to synchronize all rollout processes.
         current_platform.synchronize()

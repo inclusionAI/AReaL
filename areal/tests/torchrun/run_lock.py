@@ -6,7 +6,7 @@ import uuid
 
 import torch.distributed as dist
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils.lock import DistributedLock
 
 

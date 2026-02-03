@@ -4,14 +4,14 @@ import torch
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 from transformers.modeling_utils import PreTrainedModel
 
-from areal.utils import logging
-from areal.utils.ulysses import (
+from areal.models.fsdp.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
     get_ulysses_sequence_parallel_rank,
     get_ulysses_sequence_parallel_world_size,
     slice_input_tensor,
 )
+from areal.utils import logging
 
 logger = logging.getLogger("UlyssesPatch")
 

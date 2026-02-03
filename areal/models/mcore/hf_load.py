@@ -9,12 +9,17 @@ import torch
 import torch.distributed as dist
 from mbridge.core.bridge import Bridge
 from megatron.core import parallel_state as mpu
+from megatron.core.fp8_utils import is_float8tensor
 from safetensors import safe_open
 
+from areal.infra.platforms import current_platform
 from areal.models.mcore.registry import unwrap_to_gpt_model
-from areal.platforms import current_platform
 from areal.utils import logging
-from areal.utils.fp8 import dequantize_params
+from areal.utils.fp8 import (
+    FP8BlockwiseTensorHelper,
+    dequantize_params,
+    get_block_size_from_config,
+)
 
 logger = logging.getLogger("HFLoader")
 
@@ -35,6 +40,91 @@ def _get_shape(obj) -> list:
         return obj.get_shape()
 
 
+def _merge_qkv_weights(
+    hf_config,
+    mcore_weights_name: str,
+    hf_weights_safe_slice: list,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
+    """Merge Q, K, V weights into a single QKV weight tensor."""
+    assert len(hf_weights_safe_slice) == 3
+    num_key_value_heads = hf_config.num_key_value_heads
+    hidden_dim = hf_config.hidden_size
+    num_attention_heads = hf_config.num_attention_heads
+    head_dim = getattr(hf_config, "head_dim", hidden_dim // num_attention_heads)
+    group_dim = head_dim * num_attention_heads // num_key_value_heads
+    q, k, v = hf_weights_safe_slice
+    # q k v might be tp split
+    real_num_key_value_heads = _get_shape(q)[0] // group_dim
+    s = _get_tp_slice((real_num_key_value_heads * group_dim,), 0, tp_rank, tp_size)
+    q = q[s].reshape(
+        real_num_key_value_heads // tp_size,
+        group_dim,
+        -1,
+    )
+    s = _get_tp_slice((real_num_key_value_heads * head_dim,), 0, tp_rank, tp_size)
+    k = k[s].reshape(real_num_key_value_heads // tp_size, head_dim, -1)
+    v = v[s].reshape(real_num_key_value_heads // tp_size, head_dim, -1)
+    out_shape = [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
+    return torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
+
+
+def _merge_gate_up_weights(
+    hf_weights_safe_slice: list,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
+    """Merge gate_proj and up_proj into a single fc1 weight tensor."""
+    assert len(hf_weights_safe_slice) == 2, len(hf_weights_safe_slice)
+    gate, up = hf_weights_safe_slice
+    # chunk 0 for TP split
+    gate = gate[
+        _get_tp_slice(_get_shape(gate), dim=0, tp_rank=tp_rank, tp_size=tp_size)
+    ]
+    up = up[_get_tp_slice(_get_shape(up), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
+    return torch.cat([gate, up], dim=0)
+
+
+def _slice_moe_expert_weight(
+    hf_weights_safe_slice: list,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
+    """Slice MoE expert weight along the appropriate dimension."""
+    assert len(hf_weights_safe_slice) == 1
+    x = hf_weights_safe_slice[0]
+    shape = _get_shape(x)
+    # dim 1 chunk
+    partition_dim = 1
+    return x[_get_tp_slice(shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)]
+
+
+def _slice_generic_weight(
+    mcore_param_shape: list,
+    hf_weights_safe_slice: list,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
+    """Slice generic weight tensor based on shape mismatch."""
+    assert len(hf_weights_safe_slice) == 1
+    x = hf_weights_safe_slice[0]
+    x_shape = _get_shape(x)
+    partition_dim = None
+    if mcore_param_shape == x_shape:
+        return x[:] if not isinstance(x, torch.Tensor) else x
+    else:
+        assert len(x_shape) == len(mcore_param_shape)
+        for dim, (s1, s2) in enumerate(zip(x_shape, mcore_param_shape)):
+            if s1 != s2:
+                partition_dim = dim
+                break
+        # chunk on `partition_dim`
+        return x[
+            _get_tp_slice(x_shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)
+        ]
+
+
 def _weight_to_mcore_tp(
     hf_config,
     mcore_weights_name: str,
@@ -43,74 +133,35 @@ def _weight_to_mcore_tp(
     tp_rank: int,
     tp_size: int,
     dtype: torch.dtype | None = None,
-) -> torch.Tensor:
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
+    """Convert HF weights to Megatron-Core format with tensor/expert parallelism.
+
+    Dispatches to specialized handlers based on weight type:
+    - QKV weights: merge Q, K, V into single tensor
+    - FC1 weights: merge gate and up projections
+    - MoE expert weights: slice along expert dimension
+    - Generic weights: slice based on shape mismatch
+    """
     if (
         "self_attention.linear_qkv." in mcore_weights_name
         and "layer_norm" not in mcore_weights_name
     ):
-        # merge qkv
-        assert len(hf_weights_safe_slice) == 3
-        num_key_value_heads = hf_config.num_key_value_heads
-        hidden_dim = hf_config.hidden_size
-        num_attention_heads = hf_config.num_attention_heads
-        head_dim = getattr(hf_config, "head_dim", hidden_dim // num_attention_heads)
-        group_dim = head_dim * num_attention_heads // num_key_value_heads
-        q, k, v = hf_weights_safe_slice
-        # q k v might be tp split
-        real_num_key_value_heads = _get_shape(q)[0] // group_dim
-        s = _get_tp_slice((real_num_key_value_heads * group_dim,), 0, tp_rank, tp_size)
-        q = q[s].reshape(
-            real_num_key_value_heads // tp_size,
-            group_dim,
-            -1,
+        res = _merge_qkv_weights(
+            hf_config, mcore_weights_name, hf_weights_safe_slice, tp_rank, tp_size
         )
-        s = _get_tp_slice((real_num_key_value_heads * head_dim,), 0, tp_rank, tp_size)
-        k = k[s].reshape(real_num_key_value_heads // tp_size, head_dim, -1)
-        v = v[s].reshape(real_num_key_value_heads // tp_size, head_dim, -1)
-        out_shape = [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
-        res = torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
     elif (
         "linear_fc1.weight" in mcore_weights_name
         or "linear_fc1.bias" in mcore_weights_name
     ):
-        # merge gate_proj and up_proj
-        assert len(hf_weights_safe_slice) == 2, len(hf_weights_safe_slice)
-        gate, up = hf_weights_safe_slice
-        # chunk 0 for TP split
-        gate = gate[
-            _get_tp_slice(_get_shape(gate), dim=0, tp_rank=tp_rank, tp_size=tp_size)
-        ]
-        up = up[_get_tp_slice(_get_shape(up), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
-        res = torch.cat([gate, up], dim=0)
-    elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
-        assert len(hf_weights_safe_slice) == 1
-        x = hf_weights_safe_slice[0]
-        shape = _get_shape(x)
-        # dim 1 chunk
-        partition_dim = 1
-        res = x[
-            _get_tp_slice(shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)
-        ]
+        res = _merge_gate_up_weights(hf_weights_safe_slice, tp_rank, tp_size)
+    elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:
+        res = _slice_moe_expert_weight(hf_weights_safe_slice, tp_rank, tp_size)
     else:
-        assert len(hf_weights_safe_slice) == 1
-        x = hf_weights_safe_slice[0]
-        x_shape = _get_shape(x)
-        partition_dim = None
-        if mcore_param_shape == x_shape:
-            res = x[:] if not isinstance(x, torch.Tensor) else x
-        else:
-            assert len(x_shape) == len(mcore_param_shape)
-            for dim, (s1, s2) in enumerate(zip(x_shape, mcore_param_shape)):
-                if s1 != s2:
-                    partition_dim = dim
-                    break
-            # chunk on `partition_dim`
-            res = x[
-                _get_tp_slice(
-                    x_shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size
-                )
-            ]
-    if dtype is not None:
+        res = _slice_generic_weight(
+            mcore_param_shape, hf_weights_safe_slice, tp_rank, tp_size
+        )
+
+    if dtype is not None and not isinstance(res, FP8BlockwiseTensorHelper):
         res = res.to(dtype)
     return res
 
@@ -122,6 +173,7 @@ def _load_weight_with_bridge_worker(
     filenames: list[str],
     local_to_hf_map: dict[str, list[str]],
     weights_path: str,
+    fp8_direct_convert: bool = False,
 ):
     all_slices = {}
     for filename in filenames:
@@ -131,6 +183,9 @@ def _load_weight_with_bridge_worker(
                 all_slices[name] = f.get_slice(name)
 
     quantization_config = getattr(bridge.hf_config, "quantization_config", None)
+    enable_fp8_param = (
+        bridge.config.fp8 is not None and bridge.config.fp8_param and fp8_direct_convert
+    )
 
     for local_name in local_names:
         hf_names = local_to_hf_map[local_name]
@@ -143,11 +198,17 @@ def _load_weight_with_bridge_worker(
             tp_size = mpu.get_tensor_model_parallel_world_size()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
+        # Get weight_block_size from quantization_config
+        weight_block_size = get_block_size_from_config(quantization_config, strict=True)
+
+        is_te_fp8_param = is_float8tensor(param)
         # Check if any HF weight is FP8 (has _scale_inv suffix)
         # If fp8 mode is not enabled in megatron,
         # we need to dequantize FP8 weights before converting to mcore format
         # Now only support FP8 dequantization
         hf_weights_safe_slice = []
+        hf_has_fp8 = False
+        hf_all_fp8 = True  # Track if all inputs are FP8
 
         for hf_name in hf_names:
             if "_scale_inv" in hf_name:
@@ -155,21 +216,39 @@ def _load_weight_with_bridge_worker(
             hf_slice = all_slices[hf_name]
             scale_inv_name = f"{hf_name}_scale_inv"
             if scale_inv_name in all_slices:
-                # HF weight is FP8, dequantize to higher precision (bf16)
-                # TODO: convert pytorch fp8 to te fp8 directly
-                device = torch.device(current_platform.device_type)
-                weight = hf_slice[:].to(device)
-                scale_inv = all_slices[scale_inv_name][:].to(device)
-                dequantized_weight = dequantize_params(
-                    weight,
-                    scale_inv,
-                    dst_dtype=bridge.dtype,
-                    quantization_config=quantization_config,
-                )
-                dequantized_weight = dequantized_weight.cpu()
-                hf_weights_safe_slice.append(dequantized_weight)
+                # HF weight is FP8
+                hf_has_fp8 = True
+                scale_inv_slice = all_slices[scale_inv_name]
+
+                if is_te_fp8_param and enable_fp8_param:
+                    # Convert to FP8BlockwiseTensorHelper to simplify handling
+                    weight = hf_slice[:]
+                    scale_inv = scale_inv_slice[:]
+                    weight_helper = FP8BlockwiseTensorHelper(
+                        weight, scale_inv, block_size=weight_block_size
+                    )
+                    hf_weights_safe_slice.append(weight_helper)
+                else:
+                    # Dequantize to higher precision (bf16)
+                    device = torch.device(current_platform.device_type)
+                    weight = hf_slice[:].to(device)
+                    scale_inv = scale_inv_slice[:].to(device)
+                    dequantized_weight = dequantize_params(
+                        weight,
+                        scale_inv,
+                        dst_dtype=bridge.dtype,
+                        quantization_config=quantization_config,
+                    )
+                    dequantized_weight = dequantized_weight.cpu()
+                    hf_weights_safe_slice.append(dequantized_weight)
+                    hf_all_fp8 = False
             else:
                 hf_weights_safe_slice.append(hf_slice)
+                hf_all_fp8 = False
+
+        # If target is TE FP8 but not all inputs are FP8, we can't merge FP8 and non-FP8 tensors
+        if is_te_fp8_param and enable_fp8_param and hf_has_fp8 and not hf_all_fp8:
+            raise RuntimeError("Expected all inputs to be FP8 for TE FP8 parameter")
 
         param_to_load = _weight_to_mcore_tp(
             hf_config=bridge.hf_config,
@@ -178,12 +257,29 @@ def _load_weight_with_bridge_worker(
             hf_weights_safe_slice=hf_weights_safe_slice,
             tp_rank=tp_rank,
             tp_size=tp_size,
-            dtype=bridge.dtype,
+            dtype=bridge.dtype
+            if not (is_te_fp8_param and hf_has_fp8 and hf_all_fp8)
+            else None,
         )
 
         # Load the parameter
-        # NOTE: for megatron FP8 param, `param.copy_` will do quantization internally
-        param.copy_(param_to_load, non_blocking=True)
+        if is_te_fp8_param and hf_has_fp8 and hf_all_fp8 and enable_fp8_param:
+            # Direct FP8 to FP8 conversion
+            try:
+                from transformer_engine.pytorch.constants import TE_DType_To_Torch
+            except ImportError as e:
+                raise ImportError(
+                    "transformer_engine is required for FP8 training. "
+                    "Please install transformer_engine to use FP8 functionality."
+                ) from e
+            if TE_DType_To_Torch[param._fp8_dtype] is not param_to_load.dtype:
+                raise ValueError(
+                    f"Expected {TE_DType_To_Torch[param._fp8_dtype]} tensor for TE FP8 param, got {param_to_load.dtype}"
+                )
+            param_to_load.to_te_fp8_inplace(param)
+        else:
+            # NOTE: for megatron FP8 param, `param.copy_` will do quantization internally
+            param.copy_(param_to_load, non_blocking=True)
 
 
 def make_filename_bins(
@@ -264,6 +360,7 @@ def load_weights_from_hf_with_mbridge_fast(
     weights_path: str,
     max_workers: int | None = None,
     is_critic: bool = False,
+    fp8_direct_convert: bool = False,
 ) -> None:
     weights_path = bridge._get_actual_hf_path(weights_path)
     index_file = os.path.join(weights_path, "model.safetensors.index.json")
@@ -282,14 +379,11 @@ def load_weights_from_hf_with_mbridge_fast(
                 with safe_open(safetensor_file, framework="pt", device="cpu") as f:
                     for k in f.keys():
                         index[k] = safetensor_file
-                if (
-                    "model.embed_tokens.weight" in index
-                    and "lm_head.weight" not in index
-                ):
-                    manual_tie_word_embedding = True
-                    index["lm_head.weight"] = index["model.embed_tokens.weight"]
         else:
             raise FileNotFoundError("No safetensors found in the model path to load.")
+    if "model.embed_tokens.weight" in index and "lm_head.weight" not in index:
+        manual_tie_word_embedding = True
+        index["lm_head.weight"] = index["model.embed_tokens.weight"]
 
     # Calling model.state_dict() is very expensive
     # We call it in advance
@@ -342,6 +436,7 @@ def load_weights_from_hf_with_mbridge_fast(
                     filenames=filenames,
                     local_to_hf_map=local_to_hf_map,
                     weights_path=weights_path,
+                    fp8_direct_convert=fp8_direct_convert,
                 )
             )
 

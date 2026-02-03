@@ -11,7 +11,7 @@ from torch.distributed.fsdp import (
 )
 from transformers import PreTrainedModel
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import logging, pkg_version
 
 if pkg_version.is_version_greater_or_equal("torch", "2.6.0"):

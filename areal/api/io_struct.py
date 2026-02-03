@@ -12,7 +12,7 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import logging
 
 if TYPE_CHECKING:
@@ -85,9 +85,42 @@ class ModelResponse:
         return len(self.output_tokens)
 
     @property
+    def end_with_stop(self) -> bool:
+        if self.tokenizer is None:
+            raise ValueError("tokenizer is None, cannot check end_with_stop")
+        eos_id = self.tokenizer.eos_token_id
+        pad_id = self.tokenizer.pad_token_id
+        if len(self.output_tokens) == 0:
+            return False
+        last_token = self.output_tokens[-1]
+        return (eos_id is not None and last_token == eos_id) or (
+            pad_id is not None and last_token == pad_id
+        )
+
+    @property
     def output_tokens_without_stop(self) -> list[int]:
+        if self.tokenizer is None:
+            raise ValueError("tokenizer is None, cannot get output_tokens_without_stop")
         if self.stop_reason not in ["length", "abort"] and self.output_tokens:
-            return self.output_tokens[:-1]
+            if not self.end_with_stop:
+                raise ValueError(
+                    f"output_tokens does not end with eos or pad token, it ends with {self.output_tokens[-1]}, but stop_reason is {self.stop_reason}"
+                )
+            pad_or_eos_len = 0
+            eos_id = self.tokenizer.eos_token_id
+            pad_id = self.tokenizer.pad_token_id
+            stop_tokens = {eos_id, pad_id}
+            stop_tokens.discard(None)
+            for tok in reversed(self.output_tokens):
+                if tok in stop_tokens:
+                    pad_or_eos_len += 1
+                else:
+                    break
+            if pad_or_eos_len == len(self.output_tokens):
+                raise ValueError(
+                    "All output_tokens are EOS or PAD tokens; cannot strip stop tokens without removing entire output."
+                )
+            return self.output_tokens[:-pad_or_eos_len]
         return self.output_tokens
 
 
@@ -148,7 +181,7 @@ class WeightUpdateMeta:
         use_lora: bool = False,
         clear_checkpoint_after_load: bool = True,
         lora_name: str = "",
-        lora_int_id: int = 0,
+        lora_int_id: int = 1,
         base_model_name: str = "",
     ) -> "WeightUpdateMeta":
         from areal.utils.saver import Saver
@@ -186,7 +219,7 @@ class WeightUpdateMeta:
         weight_chunked_mem_mb: int = 1024,
         use_lora: bool = False,
         lora_name: str = "",
-        lora_int_id: int = 0,
+        lora_int_id: int = 1,
         base_model_name: str = "",
     ):
         return cls(

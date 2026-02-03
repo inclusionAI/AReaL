@@ -154,7 +154,7 @@ class AsyncRewardWrapper:
                     timeout=self.timeout_seconds,
                 )
                 return reward
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     f"Computing reward timeout after {self.timeout_seconds}s. Set reward to 0."
                 )

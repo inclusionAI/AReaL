@@ -5,7 +5,7 @@ from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import uvloop
 import yaml
@@ -27,8 +27,6 @@ if TYPE_CHECKING:
 uvloop.install()
 
 logger = logging.getLogger("CLIArgs")
-
-ConfigT = TypeVar("ConfigT")
 
 
 @dataclass
@@ -126,7 +124,7 @@ class GenerationHyperparameters:
         default=0, metadata={"help": "Minimum number of tokens to generate."}
     )
     max_tokens: int = field(
-        default=65536,
+        default=32768,
         metadata={
             "help": "Maximum number of tokens including prompt and generated tokens."
         },
@@ -382,6 +380,79 @@ class FSDPEngineConfig:
         default=False,
         metadata={"help": "Whether to offload FSDP parameters to CPU."},
     )
+    memory_efficient_load: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable memory-efficient model loading. When enabled, model weights "
+            "are initialized on CPU and only rank 0 loads pretrained weights, which are "
+            "then broadcast to all ranks after FSDP sharding. This reduces peak GPU memory "
+            "during initialization for large models. Note: For VLMs, rank 0 broadcast is "
+            "not used; each rank loads weights independently on CPU."
+        },
+    )
+
+
+@dataclass
+class ArchonEngineConfig:
+    """Configuration for Archon Engine training backend."""
+
+    # Attention backend
+    attn_type: str = field(
+        default="varlen",
+        metadata={
+            "help": "Attention backend type.",
+            "choices": ["varlen", "sdpa"],
+        },
+    )
+
+    # CPU offloading for FSDP
+    offload_params: bool = field(
+        default=False,
+        metadata={"help": "Whether to offload FSDP parameters to CPU."},
+    )
+
+    # Whether to enable torch.compile
+    enable_compile: bool = field(
+        default=True,
+        metadata={"help": "Enable torch.compile for TransformerBlocks."},
+    )
+
+    # Activation Checkpointing (enabled when gradient_checkpointing=True)
+    ac_mode: str = field(
+        default="selective",
+        metadata={
+            "help": "Activation checkpointing mode. "
+            "'memory_budget' requires enable_compile=True.",
+            "choices": ["none", "full", "selective", "memory_budget"],
+        },
+    )
+    selective_ac_option: str = field(
+        default="op",
+        metadata={
+            "help": "Selective AC option: 'op' for op-level, "
+            "or integer string (e.g., '2') for every Nth layer."
+        },
+    )
+    ac_memory_budget: float = field(
+        default=0.5,
+        metadata={
+            "help": "Memory budget for 'memory_budget' AC mode. "
+            "0.0 = minimum memory (max recompute), 1.0 = default behavior (no recompute)."
+        },
+    )
+    ac_preserve_rng_state: bool = field(
+        default=False,
+        metadata={
+            "help": "Preserve RNG state during checkpointing for deterministic output. "
+            "Enabling this may slow down training."
+        },
+    )
+    ac_debug: bool = field(
+        default=False,
+        metadata={
+            "help": "(Testing only) Capture AC debug information. Will be slower."
+        },
+    )
 
 
 # These configurations are used by Megatron Bridge to build Megatron models.
@@ -497,6 +568,15 @@ class FP8EngineConfig:
         },
     )
 
+    direct_convert: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use direct FP8 conversion during weight updates and save/load. "
+            "When True, FP8 parameters are directly converted between TE FP8 and PyTorch FP8 "
+            "without intermediate dequantization/quantization."
+        },
+    )
+
 
 @dataclass
 class MegatronEngineConfig:
@@ -588,12 +668,20 @@ class SchedulingStrategy:
     target: str | None = field(
         default=None, metadata={"help": "The target role to be colocated with"}
     )
+    fork: bool = field(
+        default=True,
+        metadata={
+            "help": "When True with colocation, the target worker spawns a new "
+            "process on the same node/GPUs instead of sharing its process. "
+            "Provides process isolation while sharing GPU resources."
+        },
+    )
 
 
 @dataclass
 class SchedulingSpec:
     cpu: int = field(
-        default=4, metadata={"help": "Number of CPU cores required per GPU"}
+        default=8, metadata={"help": "Number of CPU cores required per GPU"}
     )
     gpu: int = field(
         default=0,
@@ -718,6 +806,7 @@ class TrainEngineConfig:
         metadata={"help": "Weight update backend type.", "choices": ["disk", "xccl"]},
     )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
+    archon: ArchonEngineConfig = field(default_factory=ArchonEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
 
     # Lora
@@ -737,6 +826,16 @@ class TrainEngineConfig:
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
+
+    # Tree training
+    enable_tree_training: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable tree training with flex attention module. Not supported for Archon engine yet."
+        },
+    )
+
+    # Scheduling
     scheduling_spec: tuple[SchedulingSpec, ...] = field(
         default_factory=lambda: (
             SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
@@ -757,11 +856,17 @@ class TrainEngineConfig:
     )
 
     def __post_init__(self):
-        """Validate scheduling_spec length."""
+        """Validate scheduling_spec length and config combinations."""
         if len(self.scheduling_spec) not in (1, 2):
             raise ValueError(
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
+            )
+        if self.fsdp.memory_efficient_load and self.init_from_scratch:
+            raise ValueError(
+                "memory_efficient_load cannot be used with init_from_scratch=True. "
+                "memory_efficient_load is for loading pretrained weights on CPU, "
+                "but init_from_scratch creates a model without loading any weights."
             )
 
 
@@ -770,9 +875,6 @@ class PPOActorConfig(TrainEngineConfig):
     """Configuration for PPO actor model, a subclass of a TrainEngine."""
 
     # Core PPO/GRPO Parameters
-    group_size: int = field(
-        default=1, metadata={"help": "Number of sequences in each group"}
-    )
     ppo_n_minibatches: int = field(
         default=4, metadata={"help": "Number of minibatches for each PPO update"}
     )
@@ -989,19 +1091,27 @@ class vLLMConfig:
     swap_space: int = 4
     cpu_offload_gb: float = 0
     disable_sliding_window: bool = True
-    # NOTE: Defaults max_model_len to 32k because a larger value
-    # will enable chunked prefill in vLLM, which will cause
-    # evalution performance degeneration.
     max_model_len: int | None = 32768
-    enable_chunked_prefill: bool = False
-    # NOTE: Setting enable_prefix_caching to False
-    # because it will reuse the block after
-    # model weights are updated. Using v0.7.2 reset_prefix_cache
-    # will fix this issue.
-    enable_prefix_caching: bool = False
+    # NOTE: We use no_enable_* prefix (instead of enable_*) because get_py_cmd()
+    # ignores parameters with False values. Setting enable_chunked_prefill=False
+    # or enable_prefix_caching=False has NO effect - vLLM will use its default
+    # values (True). Using no_enable_*=True correctly passes --no-enable-* flags
+    # to vLLM, achieving enable_*=False behavior.
+    #
+    # IMPORTANT: vLLM V1 engine forces enable_chunked_prefill=True by default
+    # for non-pooling tasks (generation tasks). And no_enable_chunked_prefill=True
+    # has NO effect for generation tasks in vLLM v0.11.0.
+    #
+    # TODO(vllm-v0.11.0): vLLM v0.11.0 has inference quality issues when
+    # temperature=1.0 - multiple sampling runs produce garbled/corrupted outputs.
+    # This affects generation quality in RL training workflows.
+    no_enable_chunked_prefill: bool = False
+    # NOTE: Disables prefix caching (vLLM default is enabled) because it will
+    # make RL training corrupted in single controller mode.
+    no_enable_prefix_caching: bool = True
     gpu_memory_utilization: float = 0.9
     worker_extension_cls: str = (
-        "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
+        "areal.engine.vllm_ext.vllm_worker_extension.VLLMWorkerExtension"
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
@@ -1047,7 +1157,7 @@ class vLLMConfig:
 
     @staticmethod
     def build_cmd_from_args(args: dict[str, Any]):
-        return get_py_cmd("areal.thirdparty.vllm.areal_vllm_server", args)
+        return get_py_cmd("areal.engine.vllm_ext.areal_vllm_server", args)
 
     @staticmethod
     def build_cmd(
@@ -1245,6 +1355,67 @@ class SGLangConfig:
 
 
 @dataclass
+class OpenAIProxyConfig:
+    """Configuration for OpenAI proxy when using AgentWorkflow workflows."""
+
+    mode: str = field(
+        default="inline",
+        metadata={
+            "help": (
+                "OpenAI proxy mode: 'inline' (in-process) or 'subproc' (subprocess). "
+                "`inline` mode runs the provided agent workflow directly in the same process. "
+                "It can use the provided `base_url` and `http_client` to reduce overhead. "
+                "`subproc` mode launches a separate process to run the agent with `OPENAI_BASE_URL` environment variable, "
+                "which offers more flexible deployment options at the cost of larger overhead."
+            ),
+            "choices": ["inline", "subproc"],
+        },
+    )
+    tool_call_parser: str = field(
+        default="qwen3",
+        metadata={"help": "Parser for tool calls in model output."},
+    )
+    reasoning_parser: str = field(
+        default="qwen3",
+        metadata={"help": "Parser for reasoning content (<think> tags)."},
+    )
+    chat_template_type: str = field(
+        default="hf",
+        metadata={
+            "help": "Chat template type: 'hf' (standard) or 'concat' (multi-turn concatenation).",
+            "choices": ["hf", "concat"],
+        },
+    )
+    engine_max_tokens: int | None = field(
+        default=None,
+        metadata={"help": "Maximum total tokens for the engine (prompt + completion)."},
+    )
+    turn_discount: float = field(
+        default=1.0,
+        metadata={"help": "Discount factor for multi-turn reward propagation."},
+    )
+    export_style: str = field(
+        default="individual",
+        metadata={
+            "help": "Export style: 'individual' (all interactions) or 'concat' (leaf nodes only).",
+            "choices": ["individual", "concat"],
+        },
+    )
+    subproc_max_workers: int = field(
+        default=4,
+        metadata={
+            "help": "Maximum number of worker processes for subprocess mode execution pool."
+        },
+    )
+    session_timeout_seconds: int = field(
+        default=3600,
+        metadata={
+            "help": "Session timeout in seconds. Sessions inactive longer than this will be garbage collected."
+        },
+    )
+
+
+@dataclass
 class InferenceEngineConfig:
     """Configuration for inference servers, including offpolicyness control."""
 
@@ -1340,6 +1511,12 @@ class InferenceEngineConfig:
     use_lora: bool = field(
         default=False,
         metadata={"help": "Whether to use LoRA. Should be same as actors LORA option."},
+    )
+    openai: OpenAIProxyConfig | None = field(
+        default=None,
+        metadata={
+            "help": "OpenAI proxy configuration (used when workflow is AgentWorkflow)."
+        },
     )
 
     def __post_init__(self):
@@ -1750,6 +1927,12 @@ class PPOConfig(BaseExperimentConfig):
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
+    eval_gconfig: GenerationHyperparameters | None = field(
+        default=None,
+        metadata={
+            "help": "Generation hyperparameters for evaluation. If None, use gconfig."
+        },
+    )
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig | None = field(default=None)
@@ -1764,6 +1947,9 @@ class PPOConfig(BaseExperimentConfig):
     )
 
     def __post_init__(self):
+        """Validate the eval generation config."""
+        if self.eval_gconfig is None:
+            self.eval_gconfig = self.gconfig.new()
         # Validate routing replay is only used with SGLang backend
         if self.actor.enable_routing_replay:
             # Parse allocation_mode to determine backend
@@ -1826,7 +2012,9 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def load_expr_config(argv: list[str], config_cls: type[ConfigT]) -> tuple[ConfigT, str]:
+def load_expr_config[ConfigT](
+    argv: list[str], config_cls: type[ConfigT]
+) -> tuple[ConfigT, str]:
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)

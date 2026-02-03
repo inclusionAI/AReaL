@@ -2,6 +2,7 @@ import asyncio
 import getpass
 import os
 import re
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass
@@ -32,13 +33,15 @@ from areal.scheduler.exceptions import (
 )
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging, name_resolve, names
+from areal.utils.concurrent import run_async_task
 from areal.utils.http import get_default_connector
 from areal.utils.launcher import (
     JobState,
     get_env_vars,
+    get_thread_env_vars,
 )
-from areal.utils.logging import LOG_PREFIX_WIDTH
 from areal.utils.offload import get_tms_env_vars
+from areal.utils.proc import build_streaming_log_cmd
 from areal.utils.slurm import (
     cancel_jobs,
     parse_slurm_nodelist,
@@ -54,7 +57,7 @@ class SlurmWorkerInfo:
 
     worker: Worker
     role: str
-    slurm_job_id: int
+    slurm_job_id: int  # -1 for forked workers (managed by parent)
     task_index: int
     discovered: bool = False
     spec: SchedulingSpec | None = None
@@ -70,7 +73,6 @@ class SlurmScheduler(Scheduler):
         fileroot: str | None = None,
         cluster_name: str | None = None,
         container_type: str = "apptainer",
-        container_image: str | None = "/storage/openpsi/images/areal-latest.sif",
         container_mounts: str | None = "/storage:/storage",
         srun_additional_args: str = "--unbuffered --mpi=pmi2 -K --chdir $PWD",
         startup_timeout: float = 300.0,
@@ -118,7 +120,6 @@ class SlurmScheduler(Scheduler):
             )
 
         self.container_type = container_type
-        self.container_image = container_image
         self.container_mounts = container_mounts
         self.srun_additional_args = srun_additional_args
         self.startup_timeout = startup_timeout
@@ -134,6 +135,7 @@ class SlurmScheduler(Scheduler):
         self._status_cache_ttl = 5.0  # Cache status for 5 seconds
 
         # Colocation tracking: colocated roles reuse workers from target role
+        # For forked roles, they also track target but have their own workers in _workers
         self._colocated_roles: dict[str, str] = {}  # colocated_role -> target_role
 
         logger.info(
@@ -196,6 +198,11 @@ class SlurmScheduler(Scheduler):
 
     def _check_job_status(self, role: str) -> None:
         """Check Slurm job status and raise if failed/cancelled."""
+        # For colocated/forked roles, check the target role's job status instead
+        if role in self._colocated_roles:
+            target_role = self._colocated_roles[role]
+            return self._check_job_status(target_role)
+
         if role not in self._jobs:
             raise WorkerNotFoundError(f"Role '{role}' not found")
 
@@ -397,7 +404,12 @@ class SlurmScheduler(Scheduler):
             sch.env_vars["AREAL_RECOVER_RUN"] = os.getenv("AREAL_RECOVER_RUN", str(0))
             if self.enable_tms_offload:
                 sch.env_vars.update(get_tms_env_vars())
-            sch.env_vars.update(get_env_vars(self.cluster_name))
+            sch.env_vars.update(get_env_vars())
+            thread_env = get_thread_env_vars(
+                cpus_per_task=sch.cpu,
+                existing_env_vars=sch.env_vars,
+            )
+            sch.env_vars.update(thread_env)
 
         if len(schedulings) == 1:
             # Expand single spec to all workers
@@ -438,6 +450,282 @@ class SlurmScheduler(Scheduler):
             return nodes, nodelist
         except subprocess.CalledProcessError as e:
             raise WorkerCreationError(target_role, f"Failed to query target job: {e}")
+
+    async def _fork_single_worker(
+        self,
+        session: aiohttp.ClientSession,
+        role: str,
+        idx: int,
+        target_wi: SlurmWorkerInfo,
+        target_role: str,
+        command: str | None = None,
+    ) -> SlurmWorkerInfo:
+        """Fork a single worker asynchronously.
+
+        Parameters
+        ----------
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked process runs this module.
+        """
+        worker_id = f"{role}/{idx}"
+        target_url = (
+            f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/fork"
+        )
+
+        try:
+            payload = {"role": role, "worker_index": idx}
+            if command is not None:
+                payload["command"] = command
+            async with session.post(
+                target_url,
+                json=payload,
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise WorkerCreationError(
+                        role,
+                        f"Fork failed for worker {idx}",
+                        f"HTTP {response.status}: {error_text}",
+                    )
+
+                result = await response.json()
+
+                if result.get("status") != "success":
+                    raise WorkerCreationError(
+                        role,
+                        f"Fork failed for worker {idx}",
+                        result.get("error", "Unknown error"),
+                    )
+
+                forked_host = result["host"]
+                forked_port = result["port"]
+                forked_pid = result.get("pid")
+
+                logger.info(
+                    f"Forked worker {worker_id} created at {forked_host}:{forked_port} "
+                    f"(pid={forked_pid}) from {target_role}/{idx}"
+                )
+
+        except aiohttp.ClientError as e:
+            raise WorkerCreationError(
+                role,
+                f"Failed to fork worker {idx} from {target_role}/{idx}",
+                str(e),
+            ) from e
+
+        worker = Worker(
+            id=worker_id,
+            ip=forked_host,
+            worker_ports=[str(forked_port)],
+            engine_ports=[],
+        )
+        port_cnt = len(self._workers[target_role][0].worker.worker_ports)
+        if port_cnt > 1:
+            async with session.post(
+                f"http://{forked_host}:{forked_port}/alloc_ports",
+                json=dict(count=port_cnt - 1),
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise WorkerCreationError(
+                        role,
+                        f"Fork failed for worker {idx}",
+                        f"HTTP {response.status}: {error_text}",
+                    )
+                new_ports = (await response.json())["ports"]
+                worker.worker_ports += list(map(str, new_ports))
+
+        return SlurmWorkerInfo(
+            worker=worker,
+            role=role,
+            slurm_job_id=-1,  # Not a separate Slurm job
+            task_index=idx,
+            discovered=True,  # Already discovered during fork
+            spec=target_wi.spec,  # Inherit from target
+            node=target_wi.node,  # Same node as target
+        )
+
+    async def _kill_forked_worker(
+        self,
+        session: aiohttp.ClientSession,
+        role: str,
+        idx: int,
+        target_wi: SlurmWorkerInfo,
+    ) -> None:
+        """Kill a single forked worker via its parent's RPC server."""
+        target_url = f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/kill_forked_worker"
+
+        try:
+            payload = {"role": role, "worker_index": idx}
+            async with session.post(
+                target_url,
+                json=payload,
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.warning(
+                        f"Failed to kill forked worker {role}/{idx}: "
+                        f"HTTP {response.status}: {error_text}"
+                    )
+                else:
+                    result = await response.json()
+                    logger.info(
+                        result.get("message", f"Killed forked worker {role}/{idx}")
+                    )
+        except Exception as e:
+            logger.warning(f"Exception killing forked worker {role}/{idx}: {e}")
+
+    async def _cleanup_forked_workers_async(
+        self,
+        role: str,
+        target_role: str,
+        workers: list[SlurmWorkerInfo],
+    ) -> None:
+        """Cleanup forked workers by calling kill endpoint on parent workers."""
+        target_workers = self._workers.get(target_role, [])
+        if not target_workers:
+            logger.warning(
+                f"Cannot cleanup forked workers: target role '{target_role}' not found"
+            )
+            return
+
+        timeout = aiohttp.ClientTimeout(total=30.0)
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=get_default_connector(),
+        ) as session:
+            tasks = []
+            for worker_info in workers:
+                worker_index = int(worker_info.worker.id.split("/")[-1])
+                if worker_index < len(target_workers):
+                    tasks.append(
+                        self._kill_forked_worker(
+                            session, role, worker_index, target_workers[worker_index]
+                        )
+                    )
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _create_forked_workers_async(
+        self,
+        role: str,
+        target_role: str,
+        target_workers: list[SlurmWorkerInfo],
+        command: str | None = None,
+    ) -> list[str]:
+        """Create forked workers concurrently using async requests.
+
+        Parameters
+        ----------
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked processes run this module.
+        """
+        timeout = aiohttp.ClientTimeout(total=120.0)
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=get_default_connector(),
+        ) as session:
+            # Launch all fork requests concurrently with exception handling
+            tasks = [
+                self._fork_single_worker(
+                    session, role, idx, target_wi, target_role, command
+                )
+                for idx, target_wi in enumerate(target_workers)
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Separate successful workers from failures
+        workers = []
+        failed_indices = []
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                failed_indices.append(idx)
+                logger.error(
+                    f"Failed to fork worker {role}/{idx} from {target_role}/{idx}: {result}"
+                )
+            else:
+                workers.append(result)
+
+        # If any fork failed, cleanup successful workers and raise
+        if failed_indices:
+            if workers:
+                logger.warning(
+                    f"Cleaning up {len(workers)} successfully forked workers due to partial failure"
+                )
+                # Kill the forked processes via parent RPC servers
+                try:
+                    await self._cleanup_forked_workers_async(role, target_role, workers)
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup forked workers: {cleanup_error}")
+
+            raise WorkerCreationError(
+                role,
+                f"Failed to fork {len(failed_indices)} out of {len(target_workers)} workers",
+                f"Failed indices: {failed_indices}",
+            )
+
+        self._workers[role] = list(workers)
+        self._colocated_roles[role] = target_role
+        worker_ids = [w.worker.id for w in workers]
+
+        logger.info(
+            f"Role '{role}' forked from '{target_role}': "
+            f"created {len(workers)} new worker processes"
+        )
+
+        # Configure forked workers if exp_config is available
+        if self.exp_config is not None:
+            for worker_rank, worker_info in enumerate(workers):
+                self._configure_worker(worker_info, worker_rank)
+
+        return worker_ids
+
+    def fork_workers(
+        self,
+        role: str,
+        target_role: str,
+        command: str | None = None,
+    ) -> list[str]:
+        """Fork new worker processes from existing workers.
+
+        Creates new worker processes by forking from existing workers of the target role.
+        The forked workers are colocated on the same nodes as their target workers.
+
+        Parameters
+        ----------
+        role : str
+            Role name for the new forked workers (e.g., "proxy")
+        target_role : str
+            Role of existing workers to fork from (e.g., "rollout")
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked process runs this module.
+
+        Returns
+        -------
+        list[str]
+            List of worker IDs created (e.g., ["proxy/0", "proxy/1"])
+        """
+        if target_role not in self._workers:
+            raise WorkerNotFoundError(f"Target role '{target_role}' not found for fork")
+        target_workers = self._workers[target_role]
+
+        try:
+            return run_async_task(
+                self._create_forked_workers_async,
+                role,
+                target_role,
+                target_workers,
+                command,
+            )
+        except Exception:
+            # Cleanup on failure
+            if role in self._workers:
+                del self._workers[role]
+            if role in self._colocated_roles:
+                del self._colocated_roles[role]
+            raise
 
     def _generate_sbatch_script(
         self,
@@ -502,10 +790,17 @@ class SlurmScheduler(Scheduler):
             "--etcd3-addr",
             self.name_resolve_config.etcd3_addr,
         ]
+        if self.fileroot:
+            rpc_cmd_flags.extend(["--fileroot", str(self.fileroot)])
         rpc_cmd = " ".join([rpc_cmd] + rpc_cmd_flags)
 
         # Build environment variables (common to all workers)
         env_vars_dict = spec.env_vars.copy() if spec.env_vars else {}
+
+        bash_cmds = (spec.additional_bash_cmds or []).copy()
+        bash_cmds.append(rpc_cmd)
+        bash_cmds_str = ";\n".join(bash_cmds)
+        cmd = f"bash -c {shlex.quote(bash_cmds_str)}"
 
         # Build final command and export string
         if self.container_type == "apptainer":
@@ -515,10 +810,10 @@ class SlurmScheduler(Scheduler):
             if self.container_mounts:
                 final_cmd += f" --bind {self.container_mounts}"
             final_cmd += f" {env_string}"
-            final_cmd += f" {self.container_image}"
-            final_cmd += f" {rpc_cmd}"
+            final_cmd += f" {spec.image}"
+            final_cmd += f" {cmd}"
         else:  # native
-            final_cmd = rpc_cmd
+            final_cmd = cmd
 
         srun_flags = [
             f"--nodes={nodes}",
@@ -532,19 +827,21 @@ class SlurmScheduler(Scheduler):
         # Log files and prefix for merged log
         role_log = self._log_path_of(role)
         merged_log = self._merged_log_path()
-        prefix = f"[{role}]".ljust(LOG_PREFIX_WIDTH)
+
+        # Build srun command with streaming log pipeline
+        srun_cmd = (
+            f"srun {self.srun_additional_args} {' '.join(srun_flags)} {final_cmd}"
+        )
+        log_pipeline = build_streaming_log_cmd(srun_cmd, role_log, merged_log, role)
 
         # Complete sbatch script with single srun command
-        # Output is piped through tee to role log and sed+append to merged log
-        # Uses process substitution with stdbuf -oL for line-buffered streaming
         sbatch_script = f"""#!/bin/bash
 {sbatch_options_str}
 
 # Single srun command launches all workers
 # Output goes to role log (no prefix) and merged log (with prefix)
 # stdbuf -oL ensures line-buffered streaming for both outputs
-srun {self.srun_additional_args} {" ".join(srun_flags)} \\
-    stdbuf -oL {final_cmd} 2>&1 | tee -a {role_log} >(stdbuf -oL sed 's/^/{prefix}/' >> {merged_log})
+{log_pipeline}
 """
         return sbatch_script
 
@@ -613,6 +910,11 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
                     f"Colocated role must have same replica count as target "
                     f"({num_workers} != {len(target_workers)})",
                 )
+
+            # Check if fork mode is enabled
+            if strategy.fork:
+                # Fork mode: spawn new processes on same nodes via /fork endpoint
+                return self.fork_workers(role, colocate_role)
 
             # Reuse existing workers - no new Slurm job submitted
             worker_ids = [w.worker.id for w in target_workers]
@@ -738,14 +1040,30 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         WorkerFailedError
             If workers failed
         """
-        # Handle colocated roles: delegate to target role's workers
+        # Handle colocated/forked roles
         if role in self._colocated_roles:
-            target_role = self._colocated_roles[role]
-            logger.debug(
-                f"Role '{role}' is colocated with '{target_role}', "
-                "returning target role's workers"
-            )
-            return self.get_workers(target_role, timeout)
+            # Forked roles have their own workers in _workers
+            if role in self._workers:
+                workers = self._workers[role]
+                # Forked workers are already discovered and configured during creation
+                # Just verify they're still healthy
+                for worker_info in workers:
+                    if not self._is_worker_ready(worker_info):
+                        raise WorkerFailedError(
+                            worker_info.worker.id, -1, "Forked worker not responding"
+                        )
+                logger.info(
+                    f"All {len(workers)} forked workers ready for role '{role}'"
+                )
+                return [w.worker for w in workers]
+            else:
+                # Colocated roles delegate to target role's workers
+                target_role = self._colocated_roles[role]
+                logger.debug(
+                    f"Role '{role}' is colocated with '{target_role}', "
+                    "returning target role's workers"
+                )
+                return self.get_workers(target_role, timeout)
 
         if role not in self._workers:
             raise WorkerNotFoundError(f"Role '{role}' not found")
@@ -824,7 +1142,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
             Role to delete. If None, deletes all roles.
         """
         if role is None:
-            # Delete colocated roles first (they don't own Slurm jobs)
+            # Delete colocated/forked roles first (they don't own Slurm jobs)
             colocated_roles = list(self._colocated_roles.keys())
             for r in colocated_roles:
                 self.delete_workers(r)
@@ -833,9 +1151,14 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
                 self.delete_workers(r)
             return
 
-        # Handle colocated role: just remove mapping, don't cancel Slurm job
+        # Handle colocated/forked role
         if role in self._colocated_roles:
-            logger.info(f"Removing colocated role '{role}' mapping")
+            # Forked roles have their own workers that need cleanup
+            if role in self._workers:
+                logger.info(f"Removing forked role '{role}' (managed by parent worker)")
+                del self._workers[role]
+            else:
+                logger.info(f"Removing colocated role '{role}' mapping")
             del self._colocated_roles[role]
             return
 
@@ -843,7 +1166,13 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
             logger.warning(f"Role '{role}' not found, skipping deletion")
             return
 
-        job_id = self._jobs[role]
+        job_id = self._jobs.get(role)
+        if job_id is None:
+            # Role exists in _workers but not in _jobs - shouldn't happen for regular roles
+            logger.warning(f"Role '{role}' has no job ID, cleaning up workers only")
+            del self._workers[role]
+            return
+
         logger.info(f"Deleting workers for role '{role}' (job ID {job_id})")
 
         # Cancel Slurm job
@@ -911,7 +1240,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
             raise RPCConnectionError(
                 worker_id, worker_info.worker.ip, port, str(e)
             ) from e
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise SchedulerError(worker_id, f"set_env timed out: {e}") from e
 
     async def create_engine(
@@ -1021,7 +1350,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
                 worker_id, worker_info.worker.ip, port, str(e)
             ) from e
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise EngineCreationError(
                 worker_id, f"Engine creation timed out: {e}"
             ) from e
@@ -1278,7 +1607,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
                                 attempt=attempt,
                             )
 
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 last_error = f"Request timeout: {e}"
                 logger.warning(f"Request timeout on attempt {attempt}/{max_retries}")
             except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:

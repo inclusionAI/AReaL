@@ -82,7 +82,7 @@ pip install openai-agents
 
 ## Training with CAMEL
 
-CAMEL‑AI is an open‑source, modular framework for building intelligent multi‑agent
+CAMEL-AI is an open-source, modular framework for building intelligent multi-agent
 systems. It provides a flexible agent architecture that can handle complex dialogue
 flows, tool calling, and multi-agent interactions.
 
@@ -153,7 +153,7 @@ response = await agent.astep("Solve: 2 + 2 = ?")
 
 # Evaluate and set reward
 reward = math_reward_fn(response.msg.content, "4")
-client.set_final_reward(reward)
+client.set_last_reward(reward)
 ```
 
 #### Step 4: Wrapping the Agent in a Reusable Class
@@ -194,7 +194,7 @@ class CamelMathAgent:
 
         # Evaluate reward and set reward on client for RL training
         reward = await self.async_reward_fn(result=content, answer=data["answer"])
-        client.set_final_reward(reward)
+        client.set_last_reward(reward)
 
         return reward
 ```
@@ -214,11 +214,9 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        n_trajs: int = 2,  # Collect 2 trajectories per query
     ):
         self.gconfig = gconfig
         self.tokenizer = tokenizer
-        self.n_trajs = n_trajs
 
         # Create our agent wrapper
         self.agent = CamelMathAgent(tokenizer=self.tokenizer)
@@ -226,29 +224,15 @@ class CamelRLVRWorkflow(RolloutWorkflow):
     async def arun_episode(self, engine, data):
         """Run one training episode: collect trajectories and return training data."""
         # Create one client per trajectory (enables parallel collection)
-        clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-            for _ in range(self.n_trajs)
-        ]
+        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
 
         # Run agents in parallel
-        rewards = await asyncio.gather(
-            *[
-                self.agent.run_agent(data=data, client=clients[i])
-                for i in range(self.n_trajs)
-            ]
-        )
+        reward = await self.agent.run_agent(data=data, client=client)
 
-        # Export all interactions with rewards
-        interactions_with_reward = {}
-        for client in clients:
-            # Apply reward discounting for multi-turn conversations
-            client.apply_reward_discount(turn_discount=0.9)
-            # Export interactions with token-level data
-            interactions = client.export_interactions(style="individual")
-            interactions_with_reward.update(interactions)
-
-        return interactions_with_reward
+        # Apply reward discounting for multi-turn conversations
+        client.apply_reward_discount(turn_discount=0.9)
+        # Export interactions with token-level data
+        return client.export_interactions(style="individual")
 ```
 
 **Key points:**
@@ -256,9 +240,6 @@ class CamelRLVRWorkflow(RolloutWorkflow):
 - **Parallel episode execution**: AReaL's training loop calls `arun_episode` in parallel
   across multiple samples in a batch, enabling parallel trajectory collection at the
   batch level.
-- **Parallel trajectory collection within episodes**: Each `arun_episode` call creates
-  multiple `ArealOpenAI` clients and runs agents in parallel using `asyncio.gather()`,
-  collecting diverse trajectories for each query.
 - **Reward discounting**: For multi-turn conversations, rewards are discounted backward
   through the conversation tree.
 - **Interactions export**: All interactions with token-level data and rewards are
@@ -277,7 +258,6 @@ seamlessly with AReaL's actor and training infrastructure:
 workflow = CamelRLVRWorkflow(
     gconfig=config.gconfig,
     tokenizer=tokenizer,
-    n_trajs=2,
 )
 
 # AReaL will call workflow.arun_episode() for each batch
@@ -467,27 +447,14 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
     async def arun_episode(self, engine, data):
         """Run one training episode: collect trajectories and return training data."""
         # Create one client per trajectory (controlled by gconfig.n_samples)
-        clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-            for _ in range(self.gconfig.n_samples)
-        ]
+        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
 
         # Run agents in parallel
-        rewards = await asyncio.gather(
-            *[
-                self.agent.run_agent(data=data, client=clients[i])
-                for i in range(self.gconfig.n_samples)
-            ]
-        )
+        reward = await self.agent.run_agent(data=data, client=client)
 
         # Export all interactions with rewards
-        interactions_with_reward = {}
-        for client in clients:
-            client.apply_reward_discount(turn_discount=0.9)
-            interactions = client.export_interactions(style="individual")
-            interactions_with_reward.update(interactions)
-
-        return interactions_with_reward
+        client.apply_reward_discount(turn_discount=0.9)
+        return client.export_interactions(style="individual")
 ```
 
 The `OpenAIAgentWrapper` handles the agent execution:
@@ -539,7 +506,7 @@ class OpenAIAgentWrapper:
             prompt_ids=None,
             completion_ids=None,
         )
-        client.set_final_reward(reward)
+        client.set_last_reward(reward)
 
         return reward
 ```

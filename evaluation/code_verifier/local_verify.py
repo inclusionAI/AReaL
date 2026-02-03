@@ -18,7 +18,7 @@ import logging
 
 from utils import load_jsonl
 
-logger = logging.getLogger("function call")
+logger = logging.getLogger("FunctionCall")
 
 
 def capture_stdout(code):

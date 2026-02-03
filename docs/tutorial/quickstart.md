@@ -56,12 +56,6 @@ python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
     +sglang.attention_backend=triton
 ```
 
-> We're currently refactoring from legacy AReaL to AReaL-lite, which introduces some
-> configuration differences. We provide a **config converter** to transfer old AReaL
-> config into AReaL-lite YAML file for users' convenience.
-> [Click here](#switching-from-legacy-areal-to-areal-lite) to learn how to use the
-> **config converter**.
-
 (distributed-experiments-with-ray-or-slurm)=
 
 ## Distributed Experiments with Ray or Slurm
@@ -133,21 +127,6 @@ Check
 for more details about the examples. Check
 [SkyPilot Documentation](https://docs.skypilot.co/en/latest/docs/index.html) for more
 information about SkyPilot.
-
-(switching-from-legacy-areal-to-areal-lite)=
-
-## Switching from legacy AReaL to AReaL-lite
-
-We also provide a convenient script to convert your AReaL YAML config into AReaL-lite
-config in one command line. First you need to locate your AReaL config either modified
-from files from `examples` folder, or generated when you run your experiments in
-`<fileroot>/<expr_name>/<trial_name>` folder. Runs:
-
-```bash
-python examples/config_converter.py --convert_src AReaL --src_config_path <path_to_areal_yaml> --template_path examples/math/gsm8k_grpo.yaml --output_path <output_yaml>
-```
-
-Then you should be able to run experiments with your old settings on AReaL-lite!
 
 ## Next Steps
 

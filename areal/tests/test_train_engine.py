@@ -10,7 +10,7 @@ from transformers import AutoTokenizer
 
 from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.utils import get_model_path
 
 VOCAB_SIZE = 100

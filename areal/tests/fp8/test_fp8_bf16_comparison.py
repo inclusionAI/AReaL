@@ -17,7 +17,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from transformers import AutoTokenizer
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.fp8.comparison_utils import (
     compare_logits,
     compare_tensors_dict,

@@ -10,9 +10,10 @@ import uuid
 
 import pytest
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.tests.utils import get_dataset_path, get_model_path
 from areal.utils import logging
+from areal.utils.concurrent import run_async_task
 from areal.utils.proc import kill_process_tree
 
 logger = logging.getLogger("TestExamples")
@@ -82,7 +83,7 @@ async def run_example(
         try:
             line = await asyncio.wait_for(process.stdout.readline(), timeout=0.1)
             line = line.decode()
-        except (ValueError, asyncio.TimeoutError):
+        except (TimeoutError, ValueError):
             # NOTE: Here ValueError is raised when the input line is too long
             # that exceeds the buffer size, which will happen if the experiment
             # has tqdm progress bar output.
@@ -103,7 +104,7 @@ async def run_example(
             return_code = await asyncio.wait_for(process.wait(), timeout=0.1)
             logger.error(f"Process terminated unexpectedly. Return code: {return_code}")
             break
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
         # Check timeout
@@ -145,24 +146,22 @@ def test_countdown_example(tmp_path_factory):
 
     example_file = "examples/countdown/train.py"
     config_name = "examples/countdown/train_config.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+fsdp:d1",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=128",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            "train_dataset.batch_size=16",
-            "valid_dataset.batch_size=16",
-            f"train_dataset.path={str(train_file_path)}",
-            f"valid_dataset.path={str(test_file_path)}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=128",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={str(train_file_path)}",
+        f"valid_dataset.path={str(test_file_path)}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
     )
     assert success, "Countdown example failed"
 
@@ -207,15 +206,13 @@ def test_gsm8k_grpo(tmp_path_factory, alloc_mode, single_controller):
     if single_controller:
         additional_args.append("scheduler.type=local")
 
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            *additional_args,
-            timeout=900,
-            single_controller=single_controller,
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        *additional_args,
+        timeout=900,
+        single_controller=single_controller,
     )
     assert success, f"GSM8K GRPO example failed (single_controller={single_controller})"
 
@@ -256,14 +253,12 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode, single_controller):
     if single_controller:
         additional_args.append("scheduler.type=local")
 
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            *additional_args,
-            single_controller=single_controller,
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        *additional_args,
+        single_controller=single_controller,
     )
     assert success, f"GSM8K SFT example failed (single_controller={single_controller})"
 
@@ -279,22 +274,20 @@ def test_gsm8k_eval(tmp_path_factory):
 
     example_file = "examples/math/gsm8k_eval.py"
     config_name = "examples/math/gsm8k_grpo.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+eval",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=256",
-            "valid_dataset.batch_size=16",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=1",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-            success_pattern=re.compile(r"Evaluation results:\n"),
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+eval",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=256",
+        "valid_dataset.batch_size=16",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=1",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        success_pattern=re.compile(r"Evaluation results:\n"),
     )
     assert success, "GSM8K Eval example failed"
 
@@ -315,25 +308,23 @@ def test_vlm_grpo(tmp_path_factory):
 
     example_file = "examples/vlm/clevr_count_70k_grpo.py"
     config_name = "examples/vlm/clevr_count_70k_grpo.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+fsdp:d1",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=256",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            "train_dataset.batch_size=16",
-            "valid_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-            timeout=1800,
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=256",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        timeout=1800,
     )
     assert success, "CLEVR Count 70k GRPO example failed"
 
@@ -354,23 +345,21 @@ def test_vlm_sft(tmp_path_factory):
 
     example_file = "examples/vlm/clevr_count_70k_sft.py"
     config_name = "examples/vlm/clevr_count_70k_sft.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=d1",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            "train_dataset.batch_size=16",
-            "valid_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=1",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-            timeout=600,  # tokenizing the VLM dataset for SFT takes a long time
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=d1",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=1",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        timeout=600,  # tokenizing the VLM dataset for SFT takes a long time
     )
     assert success, "CLEVR Count 70k SFT example failed"
 
@@ -386,26 +375,24 @@ def test_gsm8k_ppo(tmp_path_factory):
 
     example_file = "examples/math/gsm8k_rl.py"
     config_name = "examples/math/gsm8k_ppo.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+fsdp:d1",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=256",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            "critic.mb_spec.max_tokens_per_mb=1024",
-            "train_dataset.batch_size=16",
-            "valid_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-            f"critic.path={model_path}",
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=256",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "critic.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        f"critic.path={model_path}",
     )
     assert success, "GSM8K PPO example failed"
 
@@ -421,24 +408,22 @@ def test_gsm8k_grpo_lora(tmp_path_factory):
 
     example_file = "examples/lora/gsm8k_grpo_lora.py"
     config_name = "examples/lora/gsm8k_grpo_lora.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+fsdp:d1",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=256",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            "train_dataset.batch_size=16",
-            "valid_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=256",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
     )
     assert success, "GSM8K GRPO LoRA example failed"
 
@@ -454,23 +439,21 @@ def test_multi_turn_math(tmp_path_factory):
 
     example_file = "examples/multi_turn_math/gsm8k_rl_mt.py"
     config_name = "examples/multi_turn_math/gsm8k_grpo_mt.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+fsdp:d1",
-            "gconfig.n_samples=1",
-            "gconfig.max_new_tokens=256",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            "train_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=1",
+        "gconfig.max_new_tokens=256",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
     )
     assert success, "Multi-turn Math example failed"
 
@@ -488,23 +471,21 @@ def test_hhrlhf_rw(tmp_path_factory):
 
     example_file = "examples/alignment/hhrlhf_rw.py"
     config_name = "examples/alignment/hhrlhf_rw.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=d1",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            "train_dataset.batch_size=16",
-            "valid_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=1",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-            timeout=1800,
-        ),
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=d1",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=1",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        timeout=1800,
     )
     assert success, "HH-RLHF Reward Modeling example failed"
 
@@ -520,25 +501,23 @@ def test_tir_grpo(tmp_path_factory):
 
     example_file = "examples/tir/train_tir.py"
     config_name = "examples/tir/tir_math_config.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+fsdp:d1",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=64",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            "tir.max_length=1024",
-            "train_dataset.batch_size=16",
-            "valid_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=64",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "tir.max_length=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
     )
     assert success, "TIR GRPO example failed"
 
@@ -598,26 +577,23 @@ def test_search_agent_deepresearch(tmp_path_factory):
     try:
         time.sleep(20)
 
-        loop = asyncio.get_event_loop()
-        success = loop.run_until_complete(
-            run_example(
-                example_file,
-                config_name,
-                "allocation_mode=sglang:d1+megatron:d1",
-                "gconfig.n_samples=1",
-                "gconfig.max_new_tokens=128",
-                "actor.mb_spec.max_tokens_per_mb=2048",
-                "train_dataset.batch_size=4",
-                f"train_dataset.path={dataset_path}",
-                f"cluster.fileroot={str(experiments_path)}",
-                f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-                f"actor.path={model_path}",
-                "n_trajs=2",
-                "max_tokens_per_trajectory=1024",
-                "max_llm_calls_per_run=2",
-                f"judge_engine.experiment_name={llm_judge_exp_name}",
-                f"judge_engine.trial_name={llm_judge_trial_name}",
-            )
+        success = run_async_task(
+            run_example,
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+megatron:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=128",
+            "actor.mb_spec.max_tokens_per_mb=2048",
+            "train_dataset.batch_size=4",
+            f"train_dataset.path={dataset_path}",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            "max_tokens_per_trajectory=1024",
+            "max_llm_calls_per_run=2",
+            f"judge_engine.experiment_name={llm_judge_exp_name}",
+            f"judge_engine.trial_name={llm_judge_trial_name}",
         )
         if not success:
             raise RuntimeError("Search Agent DeepResearch example failed")
@@ -635,24 +611,22 @@ def test_openai_agents(tmp_path_factory):
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
     example_file = "examples/openai_agents/train_agents.py"
     config_name = "examples/openai_agents/config.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+fsdp:d1",
-            "gconfig.n_samples=1",
-            "gconfig.max_tokens=256",
-            "actor.mb_spec.max_tokens_per_mb=4096",
-            "train_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            "valid_dataset.batch_size=16",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=1",
+        "gconfig.max_tokens=256",
+        "actor.mb_spec.max_tokens_per_mb=4096",
+        "train_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        "valid_dataset.batch_size=16",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
     )
     if not success:
         raise RuntimeError("OpenAI Agents example failed")
@@ -672,23 +646,20 @@ def test_camel(tmp_path_factory):
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
     example_file = "examples/camel/train.py"
     config_name = "examples/camel/config.yaml"
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+fsdp:d1",
-            "gconfig.n_samples=1",
-            "gconfig.max_new_tokens=256",
-            "actor.mb_spec.max_tokens_per_mb=4096",
-            "train_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-            "n_trajs=1",
-        )
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=256",
+        "actor.mb_spec.max_tokens_per_mb=4096",
+        "train_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
     )
     if not success:
         raise RuntimeError("Camel Math example failed")

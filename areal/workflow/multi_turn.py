@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -6,14 +5,13 @@ from typing import Any
 import torch
 from transformers import PreTrainedTokenizerFast
 
+from areal import workflow_context
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
-from areal.utils.data import concat_padded_tensors
 
 logger = logging.getLogger("MultiTurnWorkflow")
 
@@ -59,9 +57,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         )
         self.multi_turn_prompt_ids = s2[len(s1) :]
 
-    async def _run_one_episode(
-        self, engine: InferenceEngine, data: dict[str, Any]
-    ) -> tuple[dict[str, torch.Tensor], str, str, float, int]:
+    async def arun_episode(self, engine: InferenceEngine, data: dict[str, Any]):
         # Enforces `n_samples=1`
         # Placeholders for the results
         seq, logprobs, loss_mask, versions = [], [], [], []
@@ -139,22 +135,4 @@ class MultiTurnWorkflow(RolloutWorkflow):
             rewards=torch.tensor(reward, dtype=torch.float32),
             attention_mask=torch.ones(len(seq), dtype=torch.bool),
         )
-        res = {k: v.unsqueeze(0) for k, v in res.items()}
-        return (
-            res,
-            prompt_str,
-            completions_str,
-            reward,
-            len(seq),
-        )
-
-    async def arun_episode(
-        self, engine: InferenceEngine, data: dict[str, Any]
-    ) -> dict[str, torch.Tensor]:
-        tasks = [
-            self._run_one_episode(engine, data) for _ in range(self.gconfig.n_samples)
-        ]
-        results = await asyncio.gather(*tasks)
-
-        traj_data = [res[0] for res in results]
-        return concat_padded_tensors(traj_data)
+        return {k: v.unsqueeze(0) for k, v in res.items()}

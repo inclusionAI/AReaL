@@ -16,8 +16,12 @@ from ray.util.placement_group import (
 )
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-from areal.api.cli_args import BaseExperimentConfig, SchedulingStrategyType
-from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
+from areal.api.cli_args import (
+    BaseExperimentConfig,
+    SchedulingSpec,
+    SchedulingStrategyType,
+)
+from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.scheduler.exceptions import (
     EngineCallError,
     WorkerCreationError,
@@ -27,7 +31,7 @@ from areal.scheduler.exceptions import (
 )
 from areal.scheduler.rpc.ray_rpc_server import RayRPCServer
 from areal.utils import logging
-from areal.utils.launcher import get_env_vars
+from areal.utils.launcher import get_env_vars, get_thread_env_vars
 from areal.utils.ray import get_placement_group_master_ip_and_port
 
 logger = logging.getLogger("RayScheduler")
@@ -37,7 +41,7 @@ def ray_resource_type():
     if torch.cuda.is_available():
         return "GPU"
 
-    from areal.platforms import is_npu_available
+    from areal.infra.platforms import is_npu_available
 
     if is_npu_available:
         return "NPU"
@@ -165,13 +169,14 @@ class RayScheduler(Scheduler):
         if device == "CPU":
             return res
 
+        # Use 0.9 GPUs to allow forked workers
         if device == "GPU":
-            res["num_gpus"] = float(gpu)
+            res["num_gpus"] = float(gpu) * 0.9
             return res
 
         return {
             "num_cpus": cpu,
-            "resources": {device: float(gpu)},
+            "resources": {device: float(gpu) * 0.9},
             "memory": mem * 1024**3,
         }
 
@@ -230,33 +235,34 @@ class RayScheduler(Scheduler):
         additional_envs_str = None
         if spec.env_vars:
             additional_envs_str = ",".join(f"{k}={v}" for k, v in spec.env_vars.items())
-        return get_env_vars(
-            self.exp_config.cluster.cluster_name if self.exp_config else "",
-            additional_envs_str,
+        env = get_env_vars(additional_envs_str)
+        thread_env = get_thread_env_vars(
+            cpus_per_task=spec.cpu,
+            existing_env_vars=spec.env_vars,
         )
+        env.update(thread_env)
+        return env
 
     def _create_ray_workers(
-        self, role: str, schedulings: list[SchedulingSpec], shared_placement_group: bool
+        self, role: str, schedulings: list[SchedulingSpec]
     ) -> tuple[list[RayWorkerInfo], list[str]]:
+        """Create Ray workers with individual placement groups per worker.
+
+        Each worker gets its own placement group with exclusive GPU access.
+        This ensures proper GPU isolation and supports forked workers sharing
+        the same PG/GPU.
+        """
         worker_info_list: list[RayWorkerInfo] = []
         worker_ids: list[str] = []
 
-        if shared_placement_group:
-            # Train-style: one shared PG with summed/split bundles across nodes
-            sum_cpu, sum_gpu, sum_mem = self._sum_resource_spec(schedulings)
-            bundles = self._create_bundle_list_gpu(sum_cpu, sum_gpu, sum_mem)
-            shared_pg = self._create_placement_group(role, bundles)
-            placement_groups = [shared_pg] * len(schedulings)
-            bundle_indices: list[int | None] = [None] * len(schedulings)
-        else:
-            # Rollout-style: one PG per worker
-            placement_groups = []
-            bundle_indices = []
-            for spec in schedulings:
-                bundles = [self._bundle_spec(spec.cpu, spec.gpu, spec.mem)]
-                pg = self._create_placement_group(role, bundles)
-                placement_groups.append(pg)
-                bundle_indices.append(0)
+        # Create one PG per worker with explicit bundle_index=0
+        placement_groups = []
+        bundle_indices: list[int] = []
+        for spec in schedulings:
+            bundles = [self._bundle_spec(spec.cpu, spec.gpu, spec.mem)]
+            pg = self._create_placement_group(role, bundles)
+            placement_groups.append(pg)
+            bundle_indices.append(0)  # Always use bundle_index=0
 
         master_ip, master_port = get_placement_group_master_ip_and_port(
             placement_groups[0], placement_group_bundle_index=0
@@ -269,13 +275,12 @@ class RayScheduler(Scheduler):
             env = self._build_env_vars(spec)
             options = self._actor_resource_spec(spec.cpu, spec.gpu, spec.mem)
 
-            # Build scheduling strategy with optional bundle index
+            # Build scheduling strategy with explicit bundle index
             strategy_kwargs: dict[str, Any] = {
                 "placement_group": pg,
                 "placement_group_capture_child_tasks": True,
+                "placement_group_bundle_index": bundle_idx,  # Always 0
             }
-            if bundle_idx is not None:
-                strategy_kwargs["placement_group_bundle_index"] = bundle_idx
 
             actor = RayRPCServer.options(
                 **options,
@@ -303,6 +308,145 @@ class RayScheduler(Scheduler):
             worker_ids.append(worker_id)
 
         return worker_info_list, worker_ids
+
+    def _create_forked_workers_internal(
+        self,
+        role: str,
+        target_role: str,
+        target_workers: list[RayWorkerInfo],
+        schedulings,
+    ) -> list[str]:
+        """Create forked workers on same placement groups as target workers.
+
+        Since each target worker has its own PG with bundle_index=0, forked workers
+        share the exact same GPU by using the same PG and bundle_index=0.
+
+        Main workers use num_gpus=0.9, leaving 0.1 for forked workers.
+        Using num_gpus=0.01 allows up to 10 forked workers per target if needed.
+
+        Parameters
+        ----------
+        role : str
+            Role name for the forked workers
+        target_role : str
+            Target role to fork from
+        target_workers : list[RayWorkerInfo]
+            List of target worker infos to fork from
+        schedulings : list[SchedulingSpec]
+            Scheduling specs for the forked workers
+
+        Returns
+        -------
+        list[str]
+            List of forked worker IDs
+        """
+        worker_info_list: list[RayWorkerInfo] = []
+        worker_ids: list[str] = []
+
+        for idx, (target_wi, spec) in enumerate(zip(target_workers, schedulings)):
+            worker_id = f"{role}/{idx}"
+
+            # Reuse placement group from target worker
+            pg = target_wi.placement_group
+            bundle_idx = target_wi.bundle_index  # Should always be 0 now
+
+            # Build scheduling strategy for same placement group
+            strategy_kwargs: dict[str, Any] = {
+                "placement_group": pg,
+                "placement_group_capture_child_tasks": True,
+                "placement_group_bundle_index": bundle_idx,  # Same as target (0)
+            }
+
+            # Use 0.01 GPU to share with target worker (which uses 0.9)
+            # This allows multiple forked workers per target if needed
+            device = ray_resource_type()
+            additional_options = {}
+            if spec.gpu > 0:
+                if device == "GPU":
+                    additional_options = dict(num_gpus=0.01)
+                else:
+                    additional_options = {"resources": {device: 0.01}}
+            actor = RayRPCServer.options(
+                **additional_options,
+                num_cpus=0,  # Minimal CPU allocation for forked actor
+                name=worker_id,
+                runtime_env=RuntimeEnv(env_vars=target_wi.env_vars),
+                scheduling_strategy=PlacementGroupSchedulingStrategy(**strategy_kwargs),
+            ).remote()
+
+            # Build Worker object with same IP/ports as target
+            worker_ports = ray.get(
+                target_wi.actor.alloc_ports.remote(
+                    count=len(target_wi.worker.worker_ports)
+                )
+            )
+
+            worker = Worker(
+                id=worker_id,
+                ip=target_wi.worker.ip,
+                worker_ports=worker_ports,
+                engine_ports=[],
+            )
+
+            wi = RayWorkerInfo(
+                worker=worker,
+                actor=actor,
+                role=role,
+                placement_group=pg,  # Same PG as target
+                bundle_index=bundle_idx,
+                created_at=time.time(),
+                env_vars=target_wi.env_vars.copy(),
+            )
+            worker_info_list.append(wi)
+            worker_ids.append(worker_id)
+
+        # Register forked workers
+        self._workers[role] = worker_info_list
+        for wi in worker_info_list:
+            self._worker_info_by_id[wi.worker.id] = wi
+
+        # Ping forked workers to ensure they're ready
+        self._ping_workers(role, self.startup_timeout)
+
+        # Configure if exp_config available
+        if self.exp_config is not None:
+            for rank, wi in enumerate(worker_info_list):
+                try:
+                    wi.actor.configure.remote(self.exp_config, wi.role, rank)
+                except Exception as e:
+                    logger.error(
+                        f"Configure failed on forked worker {wi.worker.id}: {e}",
+                        exc_info=True,
+                    )
+                    self._cleanup_forked_workers(worker_info_list)
+                    raise WorkerCreationError(
+                        role, "Forked worker configuration failed", str(e)
+                    )
+
+        logger.info(
+            f"Role '{role}' forked from '{target_role}': "
+            f"created {len(worker_ids)} new actors on same placement groups"
+        )
+
+        return worker_ids
+
+    def _cleanup_forked_workers(self, workers: list[RayWorkerInfo]):
+        """Clean up forked workers without removing placement groups.
+
+        Unlike _cleanup_workers, this doesn't remove placement groups since
+        forked workers share placement groups with target workers.
+        """
+        for wi in workers:
+            actor = wi.actor
+            try:
+                actor.destroy.remote()
+            except Exception:
+                logger.warning(
+                    f"Could not destroy forked actor {actor}, force killing actor"
+                )
+                ray.kill(actor, no_restart=True)
+            # Remove from worker_info_by_id
+            self._worker_info_by_id.pop(wi.worker.id, None)
 
     def create_workers(self, job: Job, *args, **kwargs) -> list[str]:
         """
@@ -373,6 +517,15 @@ class RayScheduler(Scheduler):
                     f"({num_workers} != {len(target_workers)})",
                 )
 
+            # Check if fork mode is enabled
+            if strategy.fork:
+                # Fork mode: spawn new actors on same placement groups
+                worker_ids = self._create_forked_workers_internal(
+                    role, colocate_role, target_workers, schedulings
+                )
+                self._colocated_roles[role] = colocate_role
+                return worker_ids
+
             # Reuse existing workers - no new actors spawned
             worker_ids = [w.worker.id for w in target_workers]
             self._colocated_roles[role] = colocate_role
@@ -386,9 +539,7 @@ class RayScheduler(Scheduler):
         if strategy_type != SchedulingStrategyType.separation:
             raise ValueError(f"Unknown scheduling strategy type: {strategy_type}")
         # Non-colocated: spawn new worker actors
-        worker_info_list, worker_ids = self._create_ray_workers(
-            role, schedulings, job.shared_placement_group
-        )
+        worker_info_list, worker_ids = self._create_ray_workers(role, schedulings)
 
         self._workers[role].extend(worker_info_list)
 
@@ -413,8 +564,14 @@ class RayScheduler(Scheduler):
         return worker_ids
 
     def get_workers(self, role: str, timeout: float | None = None) -> list[Worker]:
-        # Check if this is a colocated role - delegate to target role
+        # Check if this is a colocated role
         if role in self._colocated_roles:
+            # If forked role (has its own workers), use those
+            if role in self._workers:
+                worker_info_list = self._workers[role]
+                self._ping_workers(role, timeout)
+                return [wi.worker for wi in worker_info_list]
+            # Otherwise delegate to target role
             target_role = self._colocated_roles[role]
             return self.get_workers(target_role, timeout)
 
@@ -447,9 +604,20 @@ class RayScheduler(Scheduler):
                 self.delete_workers(r)
             return
 
-        # Handle colocated role: just remove the mapping, don't kill actors
+        # Handle colocated role
         if role in self._colocated_roles:
-            logger.info(f"Removing colocated role '{role}' mapping")
+            # Check if this is a forked role (has its own workers)
+            if role in self._workers:
+                # Forked role: clean up the spawned actors (but not placement groups)
+                workers = self._workers[role]
+                logger.info(
+                    f"Cleaning up {len(workers)} forked actors for role '{role}'"
+                )
+                self._cleanup_forked_workers(workers)
+                del self._workers[role]
+            else:
+                logger.info(f"Removing colocated role '{role}' mapping")
+            # Remove colocated mapping
             del self._colocated_roles[role]
             return
 
@@ -465,6 +633,55 @@ class RayScheduler(Scheduler):
         del self._workers[role]
 
         logger.info(f"Successfully deleted workers for role '{role}'")
+
+    def fork_workers(
+        self,
+        role: str,
+        target_role: str,
+        command: str | None = None,
+    ) -> list[str]:
+        """Fork new worker processes from existing workers.
+
+        Creates new Ray actors colocated with existing workers of the target role.
+        The forked workers share the same placement groups as their target workers.
+
+        Note: The `command` parameter is ignored for RayScheduler since Ray actors
+        always run the RayRPCServer. For custom module behavior, use LocalScheduler.
+
+        Parameters
+        ----------
+        role : str
+            Role name for the new forked workers (e.g., "proxy")
+        target_role : str
+            Role of existing workers to fork from (e.g., "rollout")
+        command : str, optional
+            Custom module path (ignored for Ray - Ray actors always run RayRPCServer)
+
+        Returns
+        -------
+        list[str]
+            List of worker IDs created (e.g., ["proxy/0", "proxy/1"])
+        """
+        if command is not None:
+            logger.warning(
+                f"RayScheduler.fork_workers: 'command' parameter is ignored. "
+                f"Ray actors always use RayRPCServer. Got command='{command}'"
+            )
+
+        if target_role not in self._workers:
+            raise WorkerNotFoundError(f"Target role '{target_role}' not found for fork")
+        target_workers = self._workers[target_role]
+
+        schedulings = []
+        for target_wi in target_workers:
+            # Use minimal resources for forked workers
+            schedulings.append(SchedulingSpec(cpu=0, mem=0, gpu=1, port_count=1))
+
+        worker_ids = self._create_forked_workers(
+            role, target_role, target_workers, schedulings
+        )
+        self._colocated_roles[role] = target_role
+        return worker_ids
 
     def _cleanup_workers(self, workers: list[RayWorkerInfo]):
         # Kill actors first

@@ -29,7 +29,7 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelSaveStrategyWrapper,
 )
 
-from areal.platforms import current_platform
+from areal.infra.platforms import current_platform
 from areal.utils import logging
 
 logger = logging.getLogger("MegatronCheckpointer")
