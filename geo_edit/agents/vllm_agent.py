@@ -21,12 +21,13 @@ class VLLMBasedAgent(BaseAgent):
         logger.info("Loaded vLLM model %s at %s", self.model, self.config.api_base)
 
     def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, Any]]:
-        gen_kwargs = dict(self.config.generate_config or {})
+        gen_kwargs = dict(self.config.generate_config)
+        # print(model_input)
         if isinstance(model_input, dict):
             messages = model_input.get("messages", [])
         else:
             messages = model_input
-
+        # breakpoint()
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,

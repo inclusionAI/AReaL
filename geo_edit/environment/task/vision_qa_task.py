@@ -300,23 +300,17 @@ class VisionQATask(AbstractVLMTask):
             tokens_input = extra_info.get("tokens_input")
             tokens_output = extra_info.get("tokens_output")
             tokens_thoughts = extra_info.get("tokens_thoughts")
+                
+            tokens_total_per_step.append(tokens_used)
 
-            if isinstance(tokens_used, (int, float)):
-                tokens_total_per_step.append(tokens_used)
-            else:
-                tokens_total_per_step.append(None)
-
-            if isinstance(tokens_input, (int, float)):
-                tokens_input_per_step.append(tokens_input)
-            else:
-                tokens_input_per_step.append(None)
+            tokens_input_per_step.append(tokens_input)
 
             if isinstance(tokens_output, (int, float)) and isinstance(tokens_thoughts, (int, float)):
                 tokens_output_per_step.append(tokens_output + tokens_thoughts)
                 tokens_output_total += tokens_output + tokens_thoughts
             elif isinstance(tokens_output, (int, float)):
                 tokens_output_per_step.append(tokens_output)
-                tokens_output_total += tokens_output
+                tokens_output_tota.l += tokens_output
             else:
                 tokens_output_per_step.append(None)
 
@@ -330,8 +324,8 @@ class VisionQATask(AbstractVLMTask):
         tokens_input_total = None
         if isinstance(tokens_used_total, (int, float)) and isinstance(tokens_output_total, (int, float)):
             tokens_input_total = float(tokens_used_total) - float(tokens_output_total)
-            if tokens_input_total < 0:
-                raise ValueError("Calculated tokens_input_total is negative.")
+            # if tokens_input_total < 0:
+            #     raise ValueError("Calculated tokens_input_total is negative.")
 
         meta_info = {
             "id": self.task_id,
@@ -344,7 +338,7 @@ class VisionQATask(AbstractVLMTask):
             "function_call_each_count": function_call_each_count,
             "function_call_per_step": function_call_per_step,
             "tokens_used_total": tokens_used_total,
-            "tokens_used_per_step": tokens_output_per_step,
+            "tokens_output_per_step": tokens_output_per_step,
             "tokens_output_total": tokens_output_total,
             "tokens_input_total": tokens_input_total,
             "tokens_input_per_step": tokens_input_per_step,
