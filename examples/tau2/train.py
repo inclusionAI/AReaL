@@ -1,6 +1,7 @@
 """Training script for Tau2 benchmark with AReaL proxy mode."""
 
 import sys
+import warnings
 from typing import Any
 
 from datasets import Dataset
@@ -63,9 +64,6 @@ def group_filter(x: dict[str, Any]):
 
 
 def main(args):
-    import warnings
-
-    print("[debug] valid changes", flush=True)
     # Suppress pydantic UserWarning
     warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 

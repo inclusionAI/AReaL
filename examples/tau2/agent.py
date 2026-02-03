@@ -8,9 +8,7 @@ import asyncio
 import time
 from typing import Any
 
-import httpx
 from litellm import acompletion, register_model
-from openai import AsyncOpenAI
 from tau2.agent.llm_agent import LLMAgent, LLMAgentState, LLMSoloAgent, LocalAgent
 from tau2.data_model.tasks import Task
 from tau2.environment.environment import Environment
@@ -20,11 +18,11 @@ from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.registry import registry
 from tau2.user.user_simulator import BaseUser, DummyUser, UserSimulator
 
-from areal.api.workflow_api import AgentWorkflow
-from areal.utils import logging
-
 # Import utilities (also patches tau2.utils.llm_utils)
 from examples.tau2.utils import Tau2EnvConfig, Tau2RunInfo
+
+from areal.api.workflow_api import AgentWorkflow
+from areal.utils import logging
 
 logger = logging.getLogger("Tau2 Agent")
 
@@ -58,17 +56,17 @@ def think(thoughts: str):
 
 
 class Tau2Runner:
-    """Runner for Tau2 environment using AsyncOpenAI client via proxy."""
+    """Runner for Tau2 environment using litellm acompletion via proxy."""
 
     def __init__(
         self,
         econfig: Tau2EnvConfig,
         gen_args: dict,
-        client: AsyncOpenAI,
+        base_url: str,
     ):
         self.econfig = econfig
         self.gen_args = gen_args
-        self.client = client
+        self.base_url = base_url
         self.domain = econfig.domain
         self.solo_mode = econfig.solo_mode
 
@@ -87,17 +85,13 @@ class Tau2Runner:
             tools.append(Tool(think))
 
         async def _acompletion_via_proxy(*args, **kwargs):
-            """Completion function that uses AsyncOpenAI client via proxy."""
+            """Completion function that uses litellm acompletion via proxy."""
             start_time = time.perf_counter()
             kwargs.update(
                 extra_body={"chat_template_kwargs": {"enable_thinking": True}},
             )
-            # Remove litellm-specific arguments
-            kwargs.pop("num_retries", None)
             try:
-                # Use AsyncOpenAI client pointing to proxy server
-                completion = await self.client.chat.completions.create(*args, **kwargs)
-                return completion
+                return await acompletion(*args, base_url=self.base_url, **kwargs)
             except ValueError as e:
                 logger.warning(f"ValueError in _acompletion_via_proxy: {e}")
                 raise
@@ -261,13 +255,11 @@ class Tau2AgentWorkflow(AgentWorkflow):
             data: Input data containing task_id, split, and optional econfig/gconfig
             **extra_kwargs: Additional kwargs including:
                 - base_url: Proxy server URL
-                - http_client: httpx.AsyncClient for requests
 
         Returns:
             float: The reward from the simulation
         """
-        # Get proxy URL and HTTP client from workflow context
-        http_client: httpx.AsyncClient | None = extra_kwargs.get("http_client", None)
+        # Get proxy URL from workflow context
         base_url: str | None = extra_kwargs.get("base_url", None)
 
         if base_url is None:
@@ -289,24 +281,16 @@ class Tau2AgentWorkflow(AgentWorkflow):
         task_id = data["task_id"]
         task = _get_task(domain=domain, task_id=task_id, split=split)
 
-        # Create AsyncOpenAI client pointing to proxy server
-        client = AsyncOpenAI(
-            base_url=base_url,
-            http_client=http_client,
-            api_key="dummy",  # Not used by proxy
-            max_retries=0,
-        )
-
         # Create runner and execute
         runner = Tau2Runner(
             econfig=econfig,
             gen_args=gen_args,
-            client=client,
+            base_url=base_url,
         )
 
         try:
             run_info = await asyncio.wait_for(runner.run(task), timeout=self.timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 f"TIMEOUT: Task {task_id} exceeded {self.timeout}s limit. "
                 f"Setting reward to 0.0"

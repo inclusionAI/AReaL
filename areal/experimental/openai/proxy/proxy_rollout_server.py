@@ -58,6 +58,29 @@ logger = getLogger("ProxyRolloutServer")
 
 
 # =============================================================================
+# Warning Deduplication
+# =============================================================================
+
+
+# Set AREAL_PROXY_WARN_ONCE=1 to avoid warning spamming
+_warn_once_enabled = os.environ.get("AREAL_PROXY_WARN_ONCE", "0") == "1"
+_warned_messages: set[str] = set()
+_warn_lock = threading.Lock()
+
+
+def _warn_once(msg: str) -> None:
+    """Log a warning message, optionally only once if AREAL_PROXY_WARN_ONCE=1."""
+    if not _warn_once_enabled:
+        logger.warning(msg)
+        return
+
+    with _warn_lock:
+        if msg not in _warned_messages:
+            _warned_messages.add(msg)
+            logger.warning(msg)
+
+
+# =============================================================================
 # Module-Level Globals (like rpc_server.py)
 # =============================================================================
 
@@ -409,17 +432,17 @@ async def _call_client_create(
         dropped_args_str = "\n".join(
             [f"  {k}: {v}" for k, v in dropped_non_default_args]
         )
-        logger.warning(
+        _warn_once(
             f"dropped unsupported non-default arguments for areal client:\n"
             f"{dropped_args_str}"
         )
 
     if "temperature" not in kwargs:
         kwargs["temperature"] = 1.0
-        logger.warning("temperature not set in request, defaulting to 1.0")
+        _warn_once("temperature not set in request, defaulting to 1.0")
     if "top_p" not in kwargs:
         kwargs["top_p"] = 1.0
-        logger.warning("top_p not set in request, defaulting to 1.0")
+        _warn_once("top_p not set in request, defaulting to 1.0")
 
     # Add stream parameter if requested
     if stream:
