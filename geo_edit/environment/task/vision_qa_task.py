@@ -331,7 +331,7 @@ class VisionQATask(AbstractVLMTask):
         if isinstance(tokens_used_total, (int, float)) and isinstance(tokens_output_total, (int, float)):
             tokens_input_total = float(tokens_used_total) - float(tokens_output_total)
             if tokens_input_total < 0:
-                tokens_input_total = 0.0
+                raise ValueError("Calculated tokens_input_total is negative.")
 
         meta_info = {
             "id": self.task_id,
