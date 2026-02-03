@@ -14,7 +14,7 @@ env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   RUNNER_LABELS: gcp-a2-highgpu-2g
   RUNNER_VERSION: '2.317.0'
-  GCP_OS_IMAGE: areal-cicd-test-202512290
+  GCP_OS_IMAGE: areal-cicd-test-202602030
   CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:dev
 
 jobs:
@@ -98,6 +98,7 @@ jobs:
               --cap-add=SYS_ADMIN \
               --device=/dev/fuse \
               --security-opt=apparmor:unconfined \
+              -v /storage:/storage \
               --entrypoint=/bin/bash \
               "$CONTAINER_IMAGE" \
               -lc "trap : TERM INT; sleep infinity & wait"
