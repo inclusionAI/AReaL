@@ -1018,7 +1018,7 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Enable routing replay to record and return routed expert indices for MoE models. "
             "Only supported with SGLang backend (allocation_mode must use 'sglang'). "
-            "Requires SGLang version 0.5.5.post1 or >= 0.5.7."
+            "Requires SGLang version >= 0.5.7."
         },
     )
 
@@ -1312,11 +1312,10 @@ class SGLangConfig:
         args.pop("enable_fast_load", None)
         # Enable return routed experts if routing_replay is enabled
         if enable_routing_replay:
-            if (
-                not pkg_version.is_version_equal("sglang", "0.5.5.post1")
-            ) and pkg_version.is_version_less("sglang", "0.5.7"):
+            if pkg_version.is_version_less("sglang", "0.5.7"):
                 raise RuntimeError(
-                    "Routing replay patch requires SGLang version 0.5.5.post1 or >= 0.5.7"
+                    f"Routing replay requires SGLang >= 0.5.7. "
+                    f"Current version is {pkg_version.get_version('sglang')}."
                 )
             args["enable_routing_replay"] = True
         args.pop("enable_routing_replay", None)

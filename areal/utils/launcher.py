@@ -359,55 +359,14 @@ def _apply_routing_replay_patch():
     """Apply routing replay patch to SGLang installation.
 
     Raises:
-        RuntimeError: If patch file doesn't exist or patch application fails.
+        RuntimeError: If SGLang version < 0.5.7 (routing replay requires >= 0.5.7).
     """
-    # if sglang version >= 0.5.7, routing_replay is built-in
-    if pkg_version.get_version("sglang") >= "0.5.7":
-        return
-
-    p = Path(os.path.dirname(__file__))
-    routing_replay_patch = (
-        p.parent.parent
-        / "patch"
-        / "sglang"
-        / "routing_replay"
-        / f"v{pkg_version.get_version('sglang')}.patch"
-    )
-
-    if not routing_replay_patch.exists():
+    if pkg_version.is_version_less("sglang", "0.5.7"):
         raise RuntimeError(
-            f"Routing_replay patch file {routing_replay_patch} does not exist."
+            f"Routing replay requires SGLang >= 0.5.7, but found {pkg_version.get_version('sglang')}. "
+            "Please upgrade SGLang to use routing replay."
         )
-
-    target_path, patch_binary = _get_sglang_install_info()
-
-    result = subprocess.run(
-        [patch_binary, "-p2", "-N", "-i", str(routing_replay_patch)],
-        cwd=target_path,
-        capture_output=True,
-        text=True,
-    )
-
-    output = (result.stdout or "") + (result.stderr or "")
-    if result.returncode == 0:
-        logger.info(f"Applied routing_replay patch to {target_path}")
-    elif (
-        "Reversed (or previously applied) patch detected" in output
-        or "Skipping patch." in output
-    ):
-        logger.warning(
-            f"Routing_replay patch {routing_replay_patch} appears to be already applied for {target_path}."
-        )
-    else:
-        logger.error(
-            "Failed to apply routing_replay patch %s to %s. Output:\n%s",
-            str(routing_replay_patch),
-            target_path,
-            output.strip(),
-        )
-        raise RuntimeError(
-            f"Routing_replay patch failed with exit code {result.returncode}"
-        )
+    # No patch needed for >= 0.5.7 (built-in support)
 
 
 def maybe_apply_sglang_patch(config: SGLangConfig, enable_routing_replay: bool = False):
