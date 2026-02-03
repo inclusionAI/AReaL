@@ -1,6 +1,7 @@
 """Training script for Tau2 benchmark with AReaL proxy mode."""
 
 import sys
+from typing import Any
 
 from datasets import Dataset
 from tau2.registry import registry
@@ -57,7 +58,7 @@ def get_tau2_dataset(
     return dataset
 
 
-def filter(x):
+def group_filter(x: dict[str, Any]):
     return x["rewards"].mean() <= 0.95
 
 
@@ -116,7 +117,7 @@ def main(args):
             workflow_kwargs=workflow_kwargs,
             eval_workflow="examples.tau2.agent.Tau2AgentWorkflow",
             eval_workflow_kwargs=eval_workflow_kwargs,
-            dynamic_filter_fn="examples.tau2.train.filter",
+            dynamic_filter_fn="examples.tau2.train.group_filter",
         )
 
 
