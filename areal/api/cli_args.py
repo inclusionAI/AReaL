@@ -1937,8 +1937,10 @@ class PPOConfig(BaseExperimentConfig):
         )
 
         # Always request routed_experts when using SGLang backend
-        if backend == "sglang":
-            self.gconfig.return_routed_experts = True
+        if backend == "sglang" and not self.gconfig.return_routed_experts:
+            raise ValueError(
+                "PPOConfig requires gconfig.return_routed_experts=True when using SGLang backend."
+            )
 
 
 @dataclass
