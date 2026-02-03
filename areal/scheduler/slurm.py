@@ -2,6 +2,7 @@ import asyncio
 import getpass
 import os
 import re
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass
@@ -72,7 +73,6 @@ class SlurmScheduler(Scheduler):
         fileroot: str | None = None,
         cluster_name: str | None = None,
         container_type: str = "apptainer",
-        container_image: str | None = "/storage/openpsi/images/areal-latest.sif",
         container_mounts: str | None = "/storage:/storage",
         srun_additional_args: str = "--unbuffered --mpi=pmi2 -K --chdir $PWD",
         startup_timeout: float = 300.0,
@@ -120,7 +120,6 @@ class SlurmScheduler(Scheduler):
             )
 
         self.container_type = container_type
-        self.container_image = container_image
         self.container_mounts = container_mounts
         self.srun_additional_args = srun_additional_args
         self.startup_timeout = startup_timeout
@@ -798,6 +797,11 @@ class SlurmScheduler(Scheduler):
         # Build environment variables (common to all workers)
         env_vars_dict = spec.env_vars.copy() if spec.env_vars else {}
 
+        bash_cmds = (spec.additional_bash_cmds or []).copy()
+        bash_cmds.append(rpc_cmd)
+        bash_cmds_str = ";\n".join(bash_cmds)
+        cmd = f"bash -c {shlex.quote(bash_cmds_str)}"
+
         # Build final command and export string
         if self.container_type == "apptainer":
             # For apptainer, pass env vars to singularity
@@ -806,10 +810,10 @@ class SlurmScheduler(Scheduler):
             if self.container_mounts:
                 final_cmd += f" --bind {self.container_mounts}"
             final_cmd += f" {env_string}"
-            final_cmd += f" {self.container_image}"
-            final_cmd += f" {rpc_cmd}"
+            final_cmd += f" {spec.image}"
+            final_cmd += f" {cmd}"
         else:  # native
-            final_cmd = rpc_cmd
+            final_cmd = cmd
 
         srun_flags = [
             f"--nodes={nodes}",
