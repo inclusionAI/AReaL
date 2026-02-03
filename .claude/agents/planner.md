@@ -23,6 +23,12 @@ Use this agent PROACTIVELY when:
 - **Architectural decisions needed**
 - User asks "how should I..." or "what's the best way to..."
 
+**Do NOT use for:**
+
+- Single-file changes with obvious implementation
+- Typo fixes, simple renames, documentation updates
+- Pure research/exploration (use Explore agent instead)
+
 ## Planning Process
 
 ### Phase 1: Understanding
@@ -31,92 +37,115 @@ Use this agent PROACTIVELY when:
 1. **Identify scope** - Which files/modules are affected?
 1. **Find existing patterns** - How is similar functionality implemented?
 
+#### Clarifying Requirements
+
+Before planning, identify missing critical information. Ask **specific** questions with
+options, not open-ended ones:
+
+| Request Type | Key Questions to Ask                                          |
+| ------------ | ------------------------------------------------------------- |
+| New feature  | Input/output format? Integration point with existing code?    |
+| Refactor     | Change interface or just implementation? Backward compat?     |
+| Bug fix      | Reproduction steps? Expected vs actual behavior?              |
+| Performance  | Where is the bottleneck? Acceptable tradeoffs? Target metric? |
+
+**Good vs Bad Questions:**
+
+```
+Bad:  "What are your constraints?"
+Good: "Should this be compatible with the existing checkpoint format?"
+
+Bad:  "What do you want?"
+Good: "Should this reward support batch computation, or single-sample is enough?"
+
+Bad:  "Any preferences?"
+Good: "Raise exception on error, or return default value?"
+```
+
+**Rules:**
+
+- Ask max 2-3 questions at a time
+- Only ask what **affects implementation decisions**
+- If user already provided info, don't ask again
+- When confident enough to proceed, proceed
+
 ### Phase 2: Research
 
-Search the codebase to understand:
+Search the codebase systematically:
 
-```
-- Existing implementations to follow (grep for similar patterns)
-- API contracts to respect (check areal/api/*.py)
-- Test patterns to follow (check areal/tests/)
-- Configuration options (check areal/api/cli_args.py)
-```
+1. **Find similar implementations**
+
+   - Search for classes/functions with similar patterns:
+     `grep "class.*Workflow" areal/workflow/`
+   - Check files in the same directory as your target
+
+1. **Find callers/dependencies**
+
+   - Who calls the API you're modifying?
+   - What will break if you change the interface?
+
+1. **Check tests**
+
+   - Does the target file have tests? `ls areal/tests/test_<module>.py`
+   - What test patterns are used? Read a test file for reference
+
+1. **Check configuration**
+
+   - Does this involve `areal/api/cli_args.py`?
+   - Are there config dataclasses in `areal/api/` to modify?
 
 ### Phase 3: Plan Output
 
-Produce a structured plan:
+**For simple tasks (2-3 files, clear implementation)** - use Quick Path:
 
 ```markdown
-## Task Summary
+## Summary
+[1-2 sentences]
+
+## Changes
+| File | Change |
+|------|--------|
+| path/file.py | What to do |
+
+## Steps
+1. Step 1
+2. Step 2
+```
+
+**For complex tasks** - use Full Plan:
+
+```markdown
+## Summary
 [1-2 sentence description]
 
-## Files to Modify/Create
+## Changes
 | File | Action | Purpose |
 |------|--------|---------|
 | path/to/file.py | Modify | Add X functionality |
 | path/to/new.py | Create | New Y implementation |
 
-## Implementation Steps
-1. [ ] Step 1 - Description
-2. [ ] Step 2 - Description
-3. [ ] Step 3 - Description
+## Steps
+1. Step 1 - Description
+2. Step 2 - Description
+3. Step 3 - Description
 
-## Key Patterns to Follow
-- Pattern 1: Reference `path/to/example.py:123`
-- Pattern 2: Reference `path/to/example2.py:456`
+## Patterns to Follow
+- `path/to/example.py:123` - Reference for X
+- `path/to/example2.py:456` - Reference for Y
 
-## Risk Areas
-- Risk 1: [description and mitigation]
-- Risk 2: [description and mitigation]
+## Risks
+- Risk 1: [description] -> Mitigation: [how to handle]
 
-## Testing Strategy
-- Unit tests: [approach]
-- Integration tests: [approach, note if GPU required]
-
-## Open Questions
-- [ ] Question 1 (if any)
+## Testing
+- How to verify the changes work
+- Note if GPU/multi-node required
 ```
 
-## AReaL-Specific Guidelines
+**Section guidelines:**
 
-### Adding a Workflow
-
-1. Check `areal/workflow/multi_turn.py` as reference
-1. Inherit from `RolloutWorkflow`
-1. Implement `arun_episode` (must be async, non-blocking)
-1. Use `concat_padded_tensors` for output
-1. Wrap rewards with `AsyncRewardWrapper`
-
-### Adding a Dataset
-
-1. Check `areal/dataset/gsm8k.py` as reference
-1. Create `get_<name>_<type>_dataset` function
-1. Register in `areal/dataset/__init__.py`
-1. Add config to `areal/api/cli_args.py` if needed
-
-### Adding a Reward
-
-1. Check `areal/reward/geometry3k.py` as reference
-1. Follow signature: `(prompt, completions, prompt_ids, completion_ids, **data)`
-1. Register in `areal/reward/__init__.py`
-1. Use `AsyncRewardWrapper` for blocking operations
-
-### Modifying Distributed Code
-
-1. Understand the parallel strategy (FSDP, TP, EP, CP)
-1. Check `areal/experimental/models/archon/parallel_dims.py` for mesh semantics
-1. Verify mesh dimension usage (dp_shard, dp_shard_mod_ep, etc.)
-1. Consider interaction with other parallel strategies
-
-## Output Format
-
-Always output:
-
-1. **Confidence level** (High/Medium/Low) in understanding the task
-1. **Estimated complexity** (Simple/Medium/Complex)
-1. **The structured plan** as shown above
-
-If confidence is Low, ask clarifying questions before producing the plan.
+- `Patterns to Follow`: Include only if there are specific code references
+- `Risks`: Include only if there are non-obvious risks
+- `Testing`: Always include, even if just "run existing tests"
 
 ______________________________________________________________________
 
@@ -136,10 +165,6 @@ Activation: Automatic (PROACTIVE) when complex tasks detected
 - **Proactive**: Auto-activates for multi-file changes, new features, architectural decisions
 
 ## How to Update
-
-### Adding New Task Types
-1. Add a new section under "AReaL-Specific Guidelines"
-2. Include: reference file, step-by-step checklist, common pitfalls
 
 ### Updating Plan Output Format
 1. Add to the markdown template in "Phase 3: Plan Output"
