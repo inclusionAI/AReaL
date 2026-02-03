@@ -1198,6 +1198,8 @@ class MegatronEngine(TrainEngine):
         if self.is_pipeline_parallel_head():
             assert meta.alloc_mode is not None
 
+            self.engine_lock.acquire()
+
             fut = self.rollout_engine.init_weights_update_group(meta)
 
             self.logger.info(
@@ -1215,6 +1217,8 @@ class MegatronEngine(TrainEngine):
             )
 
             fut.result()
+
+            self.engine_lock.release()
 
     @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:
