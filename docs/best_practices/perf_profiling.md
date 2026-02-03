@@ -20,8 +20,8 @@ making it easy to correlate computation, communication, and I/O across multiple 
 
 ### 1. Enable tracing in your config
 
-Add a [`PerfTracerConfig`](../cli_reference.md#section-perf-tracer) to your training
-script's YAML config or CLI overrides:
+Add a {ref}`PerfTracerConfig <section-perf-tracer>` to your training script's YAML
+config or CLI overrides:
 
 ```yaml
 perf_tracer:
@@ -57,7 +57,7 @@ Execute your training script as usual. The tracer automatically writes events to
 produces its own file.
 
 ```bash
-python -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
+python examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml scheduler.type=local
 ```
 
 ### 4. View traces in Perfetto
@@ -547,7 +547,7 @@ Handle errors internally and return error responses instead.
 
 ## See also
 
-- [CLI Reference: PerfTracerConfig](../cli_reference.md#section-perf-tracer)
+- {ref}`CLI Reference: PerfTracerConfig <section-perf-tracer>`
 - [Workflow customization guide](../customization/agent.md)
 - [Chrome Trace Event Format](https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/)
 - [Perfetto UI](https://ui.perfetto.dev/)

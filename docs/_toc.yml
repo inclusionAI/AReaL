@@ -9,7 +9,7 @@ parts:
     - file: version_history
   - caption: Getting Started with AReaL-lite
     chapters:
-    - file: lite/gsm8k_grpo
+    - file: tutorial/gsm8k_grpo
   - caption: Tutorial
     chapters:
     - file: tutorial/installation
@@ -20,8 +20,6 @@ parts:
     - file: tutorial/eval
     - file: tutorial/megatron
     - file: cli_reference
-    # - file: tutorial/quickstart_legacy
-    # - file: tutorial/troubleshooting
   - caption: Best Practices
     chapters:
     - file: best_practices/algo_perf

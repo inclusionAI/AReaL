@@ -19,11 +19,10 @@ Our training scripts will automatically download the dataset (openai/gsm8k) and 
 the repository directory:
 
 ```
-python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
+python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml scheduler.type=local experiment_name=<your experiment name> trial_name=<your trial name>
 ```
 
-> **Note**: The command above uses `LocalLauncher`, which only works for a single node
-> (`cluster.n_nodes == 1`). For distributed experiments, see
+> **Note**: For distributed experiments across multiple nodes, see
 > [Distributed Experiments with Ray or Slurm](#distributed-experiments-with-ray-or-slurm).
 
 ## Modifying configuration
@@ -44,8 +43,9 @@ For example, here is the command to launch a customized configuration, based on 
 GSM8K GRPO example:
 
 ```
-python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
+python3 examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=local \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
     allocation_mode=sglang:d2p1t1+d2p1t1 \
@@ -60,56 +60,74 @@ python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
 
 ## Distributed Experiments with Ray or Slurm
 
-AReaL-lite provides standalone launchers for distributed experiments. After setting up
-your Ray or Slurm cluster, launch experiments similarly to `LocalLauncher`:
+For distributed experiments across multiple nodes, you can use Ray or Slurm schedulers.
+After setting up your Ray or Slurm cluster, launch experiments by specifying the
+appropriate scheduler type:
 
 ```
-# Launch with Ray launcher. 4 nodes (4 GPUs each), 3 nodes for generation, 1 node for training.
-python3 -m areal.launcher.ray examples/math/gsm8k_rl.py \
+# Launch with Ray scheduler. 4 nodes (4 GPUs each), 3 nodes for generation, 1 node for training.
+python3 examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=ray \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
     allocation_mode=sglang:d12p1t1+d4p1t1 \
     cluster.n_nodes=4 \
-    cluster.n_gpus_per_node=4 \
+    cluster.n_gpus_per_node=4
 
-# Launch with Slurm launcher. 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
-python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py \
+# Launch with Slurm scheduler. 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
+python3 examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=slurm \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
     allocation_mode=sglang:d96p1t1+d32p1t1 \
     cluster.n_nodes=16 \
-    cluster.n_gpus_per_node=8 \
+    cluster.n_gpus_per_node=8
 ```
 
 Additional references:
 
-- For more options for launchers, check `LauncherConfig` in
+- For more options for schedulers, check `SchedulerConfig` in
   [areal/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py).
 - Ray cluster setup guide (see installation.md for distributed setup) for a guide on how
   to set up a ray cluster.
 
-> **Important Notes**:
->
-> 1. Ensure `allocation_mode` matches your cluster configuration
->    (`#GPUs == cluster.n_nodes * cluster.n_gpus_per_node`)
-> 1. Ray or Slurm launchers only works for more than 1 node (`cluster.n_nodes > 1`). For
->    single node scenario, please use `LocalLauncher`.
-> 1. In Ray or Slurm launchers, GPUs are allocated at node granularity, which means
->    #GPUs for generation or training must be integer multiples of
->    `cluster.n_gpus_per_node`.
+> **Important Note**: Ensure `allocation_mode` matches your cluster configuration
+> (`#GPUs == cluster.n_nodes * cluster.n_gpus_per_node`)
 
 <!--
 > **Notes**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`.
 > **Note**: Ray and Slurm launchers only work for distributed experiments with more than 1 node (`cluster.n_nodes > 1`). They allocate GPUs for training and generation at the granularity of **nodes**, which means the number of GPUs allocated for generation and training must be integer multiples of `cluster.n_gpus_per_node`.
 -->
 
+## Legacy: SPMD Mode with Dedicated Launchers
+
+AReaL also supports SPMD (Single Program Multiple Data) mode via dedicated launchers.
+This mode is maintained for backwards compatibility but the single-controller mode
+(direct script execution with `scheduler.type`) is now the recommended approach for most
+use cases.
+
+In SPMD mode, the launcher manages process spawning via `torchrun` and sets
+`AREAL_SPMD_MODE=1`. Each GPU worker runs the full training script independently, with
+coordination handled through PyTorch distributed primitives.
+
+```bash
+# SPMD mode with local launcher (legacy)
+python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
+
+# SPMD mode with Ray launcher (legacy)
+python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
+
+# SPMD mode with Slurm launcher (legacy)
+python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
+```
+
 ## Distributed Experiments on Cloud or K8s with SkyPilot
 
 If you want to directly run an experiment on cloud or your own Kubernetes
 infrastructure, we recommend you to use SkyPilot. After installing and setting up
-SkyPilot (see [Install SkyPilot](installation.md#install-skypilot)), you could launch a
+SkyPilot (see {ref}`Install SkyPilot <install-skypilot>`), you could launch a
 distributed experiment based on our SkyPilot example (two 8xA100 GPU nodes) with one
 command line:
 
@@ -130,8 +148,8 @@ information about SkyPilot.
 
 ## Next Steps
 
-Check [Getting Started with AReaL-lite](../lite/gsm8k_grpo.md) for a complete code
-walkthrough on the GRPO GSM8K Example.
+Check [Getting Started with AReaL](gsm8k_grpo.md) for a complete code walkthrough on the
+GRPO GSM8K Example.
 
 Customization guides:
 

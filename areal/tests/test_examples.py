@@ -79,20 +79,20 @@ async def run_example(
 
     while True:
         # Read output by line
-        line = None
-        try:
-            line = await asyncio.wait_for(process.stdout.readline(), timeout=0.1)
-            line = line.decode()
-        except (TimeoutError, ValueError):
-            # NOTE: Here ValueError is raised when the input line is too long
-            # that exceeds the buffer size, which will happen if the experiment
-            # has tqdm progress bar output.
-            pass
-
-        if line:
-            logger.info(f"[Example Output] {line.rstrip()}")
-            # Check for success patterns
-            success = bool(success_pattern.search(line))
+        while True:
+            try:
+                line = await asyncio.wait_for(process.stdout.readline(), timeout=0.1)
+                line = line.decode()
+                logger.info(f"[Example Output] {line.rstrip()}")
+                # Check for success patterns
+                success = bool(success_pattern.search(line))
+                if success:
+                    break
+            except (TimeoutError, ValueError):
+                # NOTE: Here ValueError is raised when the input line is too long
+                # that exceeds the buffer size, which will happen if the experiment
+                # has tqdm progress bar output.
+                break
 
         if success:
             logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
@@ -101,7 +101,7 @@ async def run_example(
 
         # Check if process has terminated
         try:
-            return_code = await asyncio.wait_for(process.wait(), timeout=0.1)
+            return_code = await asyncio.wait_for(process.wait(), timeout=0.01)
             logger.error(f"Process terminated unexpectedly. Return code: {return_code}")
             break
         except TimeoutError:
@@ -278,16 +278,18 @@ def test_gsm8k_eval(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+eval",
-        "gconfig.n_samples=2",
-        "gconfig.max_new_tokens=256",
+        "allocation_mode=sglang:d1",
+        "gconfig.n_samples=1",
+        "gconfig.max_new_tokens=16",
         "valid_dataset.batch_size=16",
         f"valid_dataset.path={dataset_path}",
         "cluster.n_gpus_per_node=1",
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
-        success_pattern=re.compile(r"Evaluation results:\n"),
+        "scheduler.type=local",
+        success_pattern=re.compile(r"Evaluation Results:"),
+        single_controller=True,
     )
     assert success, "GSM8K Eval example failed"
 

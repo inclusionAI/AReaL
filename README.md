@@ -143,20 +143,16 @@ Our training scripts automatically download the required dataset (openai/gsm8k) 
 model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
 
 ```bash
-python3 -m areal.launcher.local \
-  examples/math/gsm8k_rl.py \
-  --config examples/math/gsm8k_grpo.yaml
+python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml scheduler.type=local
 ```
 
 To run on a Ray cluster with 2 nodes and 8 GPUs per node (remember to update paths in
 the YAML file to point to your shared storage):
 
 ```bash
-python3 -m areal.launcher.ray \
-  examples/math/gsm8k_rl.py \
-  --config examples/math/gsm8k_grpo.yaml \
-  cluster.n_nodes=2 \
-  cluster.n_gpus_per_node=8
+python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
+  cluster.n_nodes=2 cluster.n_gpus_per_node=8 \
+  scheduler.type=ray
 ```
 
 For comprehensive setup instructions, see

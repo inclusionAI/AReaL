@@ -86,7 +86,8 @@ As an example, you can run GRPO on the Qwen3 30B-A3B MoE model and GSM8K dataset
 
 ```bash
 # NOTE: Allocation mode here is only for illustration purposes. It is not optimized.
-python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config <megatron_config.yaml> \
+python3 examples/math/gsm8k_rl.py --config <megatron_config.yaml> \
+    scheduler.type=ray \
     experiment_name=megatron-moe-gsm8k-grpo trial_name=trial-0 allocation_mode=sglang:d4t4+megatron:(attn:d1p4t2c2|ffn:d1p4t1e4) \
     cluster.n_nodes=4 cluster.n_gpus_per_node=8 actor.path=Qwen/Qwen3-30B-A3B \
     actor.megatron.use_deterministic_algorithms=True

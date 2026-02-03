@@ -29,14 +29,14 @@ algorithms.
 
 ## Example Usage
 
-All algorithms use the same launcher pattern. We recommend modifying parameters in the
+All algorithms use the same execution pattern. We recommend modifying parameters in the
 configuration YAML file.
 
-| Backend   | Command                                                                                              |
-| --------- | ---------------------------------------------------------------------------------------------------- |
-| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml` |
-| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml`   |
-| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml` |
+| Backend   | Command                                                                                                 |
+| --------- | ------------------------------------------------------------------------------------------------------- |
+| **local** | `python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml scheduler.type=local`      |
+| **ray**   | `python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml scheduler.type=ray`        |
+| **slurm** | `python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml scheduler.type=slurm`      |
 
 Replace `<algo>` with: `ppo`, `grpo`, `drgrpo`, `liteppo`, `rloo`, `gspo`, `dapo_dynamic_bs`,
 or `sapo`.
@@ -47,19 +47,22 @@ You can also switch algorithms by overriding configuration parameters:
 
 ```bash
 # Dr.GRPO from GRPO config
-python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
+python3 examples/math/gsm8k_rl.py \
   --config examples/math/gsm8k_grpo.yaml \
+  scheduler.type=local \
   actor.adv_norm.mean_level=group \
   actor.adv_norm.std_level=null
 
 # GSPO from GRPO config
-python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
+python3 examples/math/gsm8k_rl.py \
   --config examples/math/gsm8k_grpo.yaml \
+  scheduler.type=local \
   +actor.importance_sampling_level=sequence
 
 # SAPO from GRPO config
-python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
+python3 examples/math/gsm8k_rl.py \
   --config examples/math/gsm8k_grpo.yaml \
+  scheduler.type=local \
   +actor.use_sapo_loss=true \
   +actor.sapo_tau_pos=1.0 \
   +actor.sapo_tau_neg=1.05 \
@@ -152,7 +155,7 @@ parameters:
 
 **Note**: The "GRPO" row reflects the original DeepSeekMath formulation. AReaL's default
 GRPO config uses these settings but with length normalization already removed (see
-[AReaL Implementation Notes](#areal-implementation-notes)).
+AReaL Implementation Notes below).
 
 ## Algorithm-Specific Options
 

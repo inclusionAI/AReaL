@@ -276,8 +276,9 @@ The full working CAMEL training example is located in
 To run the example on a single node:
 
 ```bash
-python3 -m areal.launcher.local examples/camel/train.py \
+python3 examples/camel/train.py \
     --config examples/camel/config.yaml \
+    scheduler.type=local \
     experiment_name=<your experiment name> \
     trial_name=<your trial name>
 ```
@@ -570,8 +571,9 @@ The full working OpenAI Agents training example is located in
 To run the example on a single node:
 
 ```bash
-python3 -m areal.launcher.local examples/openai_agents/train_agents.py \
+python3 examples/openai_agents/train_agents.py \
     --config examples/openai_agents/config.yaml \
+    scheduler.type=local \
     experiment_name=<your experiment name> \
     trial_name=<your trial name>
 ```

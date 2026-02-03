@@ -524,14 +524,10 @@ def ray_main(config, run_id: int = 0):
     else:
         tms_env_vars = {}
 
-    if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
-        trainer_n_nodes = 1
-        gpus_per_task = 0
-    else:
-        trainer_n_nodes = n_nodes - (
-            n_sglang_nodes if allocation_mode.gen_backend == "sglang" else n_vllm_nodes
-        )
-        gpus_per_task = 1
+    trainer_n_nodes = n_nodes - (
+        n_sglang_nodes if allocation_mode.gen_backend == "sglang" else n_vllm_nodes
+    )
+    gpus_per_task = 1
     trainer_entry_point = sys.argv[1]
     n_trainer_processes = trainer_n_nodes * config.cluster.n_gpus_per_node
     trainer_args_list = [[sys.argv[2:]] for _ in range(n_trainer_processes)]
@@ -634,6 +630,5 @@ def ray_main(config, run_id: int = 0):
 
 if __name__ == "__main__":
     # usage: python -m areal.launcher.ray \
-    #   <entry_point> --config <config_path> [<additional_args>] \
-    #   launcher.ray.main_func_name=<main_func_name_in_entry_point>
+    #   <entry_point> --config <config_path> [<additional_args>]
     main()

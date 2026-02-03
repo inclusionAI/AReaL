@@ -17,7 +17,6 @@ class AllocationType(enum.Enum):
     COLOCATE = 0  # Shared resources between training and inference (including SFT/training-only)
     DECOUPLED_TRAIN = 1  # Separate resources for training and inference
     LLM_SERVER_ONLY = 2  # Inference-only allocation
-    DECOUPLED_EVAL = 3  # Separate resources for inference and evaluation
 
 
 class AllocationValidationError(Exception):
@@ -451,7 +450,7 @@ class AllocationMode:
     ########### Legacy Attributes for Backward Compatiblity ###########
     @property
     def type_(self) -> AllocationType:
-        """Backward compatible: Check if any allocation uses eval backend (cpu or eval)."""
+        """Backward compatible: Infer allocation type from allocations."""
         if len(self.allocations) not in [1, 2]:
             raise AttributeError(
                 "Can only infer allocation type from 1 or 2 allocations."
@@ -461,10 +460,6 @@ class AllocationMode:
             if self.allocations[0].backend in ("sglang", "vllm"):
                 return AllocationType.LLM_SERVER_ONLY
             return AllocationType.COLOCATE
-
-        for alloc in self.allocations:
-            if alloc.backend == "cpu":
-                return AllocationType.DECOUPLED_EVAL
 
         inf_alloc = self._get_inference_allocations()
         train_alloc = self._get_training_allocations()
@@ -553,13 +548,12 @@ class AllocationMode:
 ALLOCATION_GRAMMAR = """
     start: expression
 
-    expression: disaggregate_chain | component | eval_expr
+    expression: disaggregate_chain | component
 
     disaggregate_chain: component ("+" component)+
     component: colocate_expr | single_allocation
     single_allocation: inf_para | train_para
     colocate_expr: single_allocation ("|" single_allocation)+
-    eval_expr: inf_para "+" EVAL
 
     inf_para: modern_inf_para
     modern_inf_para: INFER_BACKEND ("[" NAME "]")? ":" inf_dim+
@@ -587,7 +581,6 @@ ALLOCATION_GRAMMAR = """
     FFN_DIM_TYPE: "d" | "e" | "t" | "p"
     INF_DIM_TYPE: "d" | "t" | "p"
 
-    EVAL: "cpu" | "eval"
     INFER_BACKEND: "sglang" | "vllm"
     TRAIN_BACKEND: "fsdp" | "megatron" | "archon"
 
@@ -637,27 +630,6 @@ class InferenceParallelism:
         if not dims:  # Show at least data parallel if all dimensions are 1
             dims.append(f"d{self.strategy.data_parallel_size}")
         return f"{self.backend}:{''.join(dims)}"
-
-
-@dataclass
-class EvalType:
-    """Evaluation expression type (cpu or eval)."""
-
-    eval_type: str
-
-    def __str__(self):
-        return self.eval_type
-
-
-@dataclass
-class EvalAllocationExpression:
-    """Backward Compatible: Evaluation allocation expression (inference + eval)."""
-
-    inference: InferenceParallelism
-    eval_type: EvalType
-
-    def __str__(self):
-        return f"{self.inference}+{self.eval_type}"
 
 
 class _ParallelStrategyTransformer(Transformer):
@@ -778,18 +750,6 @@ class _ParallelStrategyTransformer(Transformer):
                 allocations.append(alloc)
 
         return allocations
-
-    def eval_expr(self, items):
-        """Handle inference + eval expression."""
-        # For backward compatibility, keep EvalAllocationExpression
-        alloc = items[0]
-        eval_type = items[1]
-        return EvalAllocationExpression(
-            inference=InferenceParallelism(
-                backend=alloc.backend, strategy=alloc.parallel
-            ),
-            eval_type=eval_type,
-        )
 
     def inf_para(self, items):
         return items[0]
@@ -1142,9 +1102,6 @@ class _ParallelStrategyTransformer(Transformer):
     def INF_DIM_TYPE(self, token):
         return str(token)
 
-    def EVAL(self, token):
-        return EvalType(eval_type=str(token))
-
     def INFER_BACKEND(self, token):
         return str(token)
 
@@ -1214,7 +1171,7 @@ Hints:
         """Convert parsed result to AllocationMode object.
 
         Args:
-            result: Parsed result (list of ModelAllocation or special expressions)
+            result: Parsed result (list of ModelAllocation)
 
         Returns:
             AllocationMode: Converted allocation mode configuration
@@ -1228,24 +1185,5 @@ Hints:
         elif isinstance(result, ModelAllocation):
             # Single allocation
             return AllocationMode(allocations=[result])
-        elif isinstance(result, EvalAllocationExpression):
-            # Special case for eval expressions (backward compatibility)
-            inf_alloc = ModelAllocation(
-                backend=result.inference.backend,
-                name=None,
-                parallel=result.inference.strategy,
-                scheduling_strategy=SchedulingStrategy(
-                    type=SchedulingStrategyType.separation, target=None
-                ),
-            )
-            eval_alloc = ModelAllocation(
-                backend="cpu",
-                name=None,
-                parallel=None,
-                scheduling_strategy=SchedulingStrategy(
-                    type=SchedulingStrategyType.separation, target=None
-                ),
-            )
-            return AllocationMode(allocations=[inf_alloc, eval_alloc])
         else:
             raise ValueError(f"Unknown result type: {type(result)}")

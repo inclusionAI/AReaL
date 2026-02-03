@@ -7,8 +7,9 @@ training data and discount reward.
 # To run the example
 
 ```bash
-python3 -m areal.launcher.ray examples/multi_turn_math/gsm8k_rl_mt.py \
+python3 examples/multi_turn_math/gsm8k_rl_mt.py \
     --config examples/multi_turn_math/gsm8k_grpo_mt.yaml \
+    scheduler.type=ray \
     experiment_name=gsm8k-grpo-multiturn trial_name=trial0
 ```
 

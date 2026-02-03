@@ -45,11 +45,11 @@ For more details:
 We recommend to change the parameter within the configuration file
 (i.e.gsm8k_m2po.yaml).
 
-| Backend   | CMD                                                                                                                              |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_m2po.yaml --<other_args_to_overwrite>` |
-| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_m2po.yaml --<other_args_to_overwrite>`   |
-| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_m2po.yaml --<other_args_to_overwrite>` |
+| Backend   | CMD                                                                                                                                 |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **local** | `python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_m2po.yaml scheduler.type=local --<other_args_to_overwrite>`       |
+| **ray**   | `python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_m2po.yaml scheduler.type=ray --<other_args_to_overwrite>`         |
+| **slurm** | `python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_m2po.yaml scheduler.type=slurm --<other_args_to_overwrite>`       |
 
 ## Test Result
 

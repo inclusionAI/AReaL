@@ -559,12 +559,8 @@ def slurm_main(config, run_id: int = 0):
             launcher.stop_all(force=True)
             raise e
 
-    if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
-        trainer_n_nodes = 1
-        gpus_per_node = 0
-    else:
-        trainer_n_nodes = n_nodes - n_backend_nodes
-        gpus_per_node = config.cluster.n_gpus_per_node
+    trainer_n_nodes = n_nodes - n_backend_nodes
+    gpus_per_node = config.cluster.n_gpus_per_node
 
     def _build_trainer_cmds(
         trainer_n_nodes: int,
