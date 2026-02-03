@@ -11,6 +11,18 @@ logger = setup_logger(__name__)
 class VLLMBasedAgent(BaseAgent):
     """Agent that interacts with a local vLLM OpenAI-compatible server."""
 
+    def __init__(self, config):
+        super().__init__(config)
+        # Cumulative token counters to convert per-step token counts to cumulative
+        # This makes VLLM token stats consistent with Google/OpenAI APIs
+        self._cumulative_tokens_input = 0
+        self._cumulative_tokens_output = 0
+
+    def reset(self):
+        super().reset()
+        self._cumulative_tokens_input = 0
+        self._cumulative_tokens_output = 0
+
     def load_model(self):
         if self._model_loaded:
             return
@@ -46,13 +58,15 @@ class VLLMBasedAgent(BaseAgent):
                 tokens_total = getattr(usage, "total_tokens", None)
 
             if tokens_input is not None:
-                extra_info["tokens_input"] = tokens_input
+                self._cumulative_tokens_input += tokens_input
+                extra_info["tokens_input"] = self._cumulative_tokens_input
             if tokens_output is not None:
-                extra_info["tokens_output"] = tokens_output
+                self._cumulative_tokens_output += tokens_output
+                extra_info["tokens_output"] = self._cumulative_tokens_output
             if tokens_total is not None:
-                extra_info["tokens_used"] = tokens_total
+                extra_info["tokens_used"] = self._cumulative_tokens_input + self._cumulative_tokens_output
             elif tokens_input is not None and tokens_output is not None:
-                extra_info["tokens_used"] = tokens_input + tokens_output
+                extra_info["tokens_used"] = self._cumulative_tokens_input + self._cumulative_tokens_output
         return response, extra_info
 
     def _validate_response(self, response: Any) -> None:
