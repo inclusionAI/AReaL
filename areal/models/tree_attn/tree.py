@@ -8,7 +8,7 @@ prefix computation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
@@ -24,6 +24,9 @@ from areal.models.tree_attn.triton_kernel import (
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
+
+if TYPE_CHECKING:
+    from torch.nn.attention.flex_attention import BlockMask
 
 logger = logging.getLogger(__name__)
 

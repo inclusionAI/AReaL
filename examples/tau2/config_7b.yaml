@@ -1,5 +1,5 @@
-experiment_name: mzy-tau2
-trial_name: 1.5b-airline-packed-bs32-ppo
+experiment_name: tau2-grpo
+trial_name: trial0
 
 seed: 1
 enable_offload: false
@@ -8,7 +8,7 @@ total_train_steps: 500
 tokenizer_path: ${actor.path}
 
 cluster:
-  n_nodes: 1
+  n_nodes: 3
   n_gpus_per_node: 8
   fileroot: /storage/openpsi/experiments
   name_resolve:
@@ -16,16 +16,16 @@ cluster:
     nfs_record_root: /storage/openpsi/experiments/name_resolve/mzy
     etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-su18-01.hn01.su18-hn.local:2379
 
-allocation_mode: sglang:d6+d2
+allocation_mode: sglang:d16+fsdp:d8
 
 scheduler:
-  type: local
+  type: slurm
 
 gconfig:
   n_samples: 8
   min_new_tokens: 0
   max_new_tokens: 8192
-  max_tokens: 16384
+  max_tokens: 32767
   greedy: false
   temperature: 1.0
 
@@ -36,7 +36,7 @@ rollout:
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
-  enable_rollout_tracing: true
+  enable_rollout_tracing: false
   scheduling_spec: ${actor.scheduling_spec}
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
@@ -52,13 +52,13 @@ rollout:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen__Qwen3-1.7B
+  path: /storage/openpsi/models/Qwen__Qwen3-8B
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 24576
+    max_tokens_per_mb: 32768
   optimizer:
     type: adam
     lr: 1.7e-5
@@ -89,9 +89,10 @@ actor:
     - task_type: worker
       port_count: 2
       gpu: 1
-      cpu: 2
-      mem: 16
+      cpu: 4
+      mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
+      image: /storage/openpsi/images/areal-dev.sif
       env_vars:
         NCCL_DEBUG: "WARN"
         NCCL_IB_DISABLE: "0"
@@ -110,6 +111,9 @@ actor:
         TAU2_DATA_DIR: /storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench/data
         WANDB_BASE_URL: http://8.150.1.98:8080
         WANDB_API_KEY: local-8726acfd20a41b5ab8ac35fd51014b15169fa20a
+      additional_bash_cmds:
+        - cp -r /storage/openpsi/users/meizhiyu.mzy/tau2-bench /tau2-bench
+        - uv pip install /tau2-bench
 
 ref:
   experiment_name: ${experiment_name}
@@ -119,7 +123,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 24576
+    max_tokens_per_mb: 32768
   optimizer: null
 
 # Tau2 environment configuration
@@ -129,7 +133,7 @@ econfig:
   add_thinking_tool: false
   solo_mode: false
   user_llm_base_url: http://33.180.173.83:30000/v1/
-  user_llm: openai/hosted
+  user_llm: openai/Qwen2.5-72B
   user_llm_args:
     temperature: 0.0
     max_completion_tokens: 512
@@ -156,7 +160,7 @@ vllm:
 
 # Datasets
 train_dataset:
-  batch_size: 16
+  batch_size: 30
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -178,7 +182,7 @@ saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  freq_epochs: null
+  freq_epochs: 1
   freq_steps: null
   freq_secs: null
 

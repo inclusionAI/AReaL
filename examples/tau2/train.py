@@ -1,28 +1,17 @@
 """Training script for Tau2 benchmark with AReaL proxy mode."""
 
-import os
 import sys
-from dataclasses import dataclass, field
 
 from datasets import Dataset
-from loguru import logger as loguru_logger
 from tau2.registry import registry
 
-from areal.api.cli_args import PPOConfig, load_expr_config
+from examples.tau2.config_types import Tau2PPOConfig
+
+from areal.api.cli_args import load_expr_config
 from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils import logging
-from areal.utils.stats_logger import StatsLogger
-
-from utils import Tau2EnvConfig
 
 logger = logging.getLogger("Tau2 Train")
-
-
-@dataclass
-class Tau2PPOConfig(PPOConfig):
-    """PPO configuration with Tau2-specific settings."""
-
-    econfig: Tau2EnvConfig = field(default_factory=Tau2EnvConfig)
 
 
 def get_tau2_dataset(
@@ -68,22 +57,20 @@ def get_tau2_dataset(
     return dataset
 
 
+def filter(x):
+    return x["rewards"].mean() <= 0.95
+
+
 def main(args):
     import warnings
 
+    print("[debug] valid changes", flush=True)
     # Suppress pydantic UserWarning
     warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
     config, _ = load_expr_config(args, Tau2PPOConfig)
     econfig = config.econfig
     domain = econfig.domain
-
-    # Configure loguru logger for tau2-bench package
-    loguru_logger.remove()
-    loguru_logger.add(
-        os.path.join(StatsLogger.get_log_path(config.stats_logger), "tau2.log"),
-        level="INFO",
-    )
 
     # Create dataset and dataloaders
     train_dataset = get_tau2_dataset(
@@ -129,6 +116,7 @@ def main(args):
             workflow_kwargs=workflow_kwargs,
             eval_workflow="examples.tau2.agent.Tau2AgentWorkflow",
             eval_workflow_kwargs=eval_workflow_kwargs,
+            dynamic_filter_fn="examples.tau2.train.filter",
         )
 
 

@@ -832,6 +832,7 @@ class SlurmScheduler(Scheduler):
         srun_cmd = (
             f"srun {self.srun_additional_args} {' '.join(srun_flags)} {final_cmd}"
         )
+        logger.info(f"[debug] srun_cmd={srun_cmd}")
         log_pipeline = build_streaming_log_cmd(srun_cmd, role_log, merged_log, role)
 
         # Complete sbatch script with single srun command

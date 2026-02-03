@@ -24,7 +24,7 @@ from areal.api.workflow_api import AgentWorkflow
 from areal.utils import logging
 
 # Import utilities (also patches tau2.utils.llm_utils)
-from utils import Tau2EnvConfig, Tau2RunInfo
+from examples.tau2.utils import Tau2EnvConfig, Tau2RunInfo
 
 logger = logging.getLogger("Tau2 Agent")
 
@@ -91,7 +91,6 @@ class Tau2Runner:
             start_time = time.perf_counter()
             kwargs.update(
                 extra_body={"chat_template_kwargs": {"enable_thinking": True}},
-                thinking=True,
             )
             # Remove litellm-specific arguments
             kwargs.pop("num_retries", None)

@@ -1,7 +1,7 @@
 """Utilities for Tau2 benchmark training with AReaL."""
 
 import json
-from dataclasses import dataclass, field
+import sys
 
 import yaml
 from loguru import logger
@@ -11,6 +11,17 @@ from tau2.data_model.message import AssistantMessage, Message, ToolCall
 from tau2.data_model.simulation import RewardInfo
 from tau2.data_model.tasks import Task
 import tau2.utils.llm_utils
+
+# Re-export Tau2EnvConfig for backward compatibility
+from examples.tau2.config_types import Tau2EnvConfig
+
+__all__ = ["Tau2EnvConfig", "Tau2RunInfo", "_get_message_from_completion"]
+
+# Configure loguru logger for tau2-bench package
+# This runs at import time, so workers will also have this configuration
+logger.remove()
+# Log to stderr by default, will be captured by the worker's log system
+logger.add(sys.stderr, level="INFO", format="{time} {level} {message}")
 
 
 def _get_message_from_completion(completion: ChatCompletion) -> AssistantMessage:
@@ -117,41 +128,3 @@ class Tau2RunInfo(BaseModel):
         if self.error:
             s += f"[ERROR]: {self.error}\n"
         return s
-
-
-@dataclass
-class Tau2EnvConfig:
-    """Environment configuration for Tau2 benchmark."""
-
-    domain: str = field(
-        default="telecom",
-        metadata={
-            "help": "The tau2 domain name, e.g., 'retail', 'airline', 'telecom'."
-        },
-    )
-    max_steps: int = field(
-        default=100, metadata={"help": "Maximum number of steps per episode."}
-    )
-    add_thinking_tool: bool = field(
-        default=False, metadata={"help": "Whether to add a thinking tool."}
-    )
-    solo_mode: bool = field(
-        default=False, metadata={"help": "Whether to use solo mode."}
-    )
-    user_llm_base_url: str | None = field(
-        default=None,
-        metadata={"help": "The base URL of the user LLM."},
-    )
-    user_llm: str | None = field(
-        default=None,
-        metadata={"help": "The user LLM to use, default to the gpt-4.1 model."},
-    )
-    user_llm_args: dict | None = field(
-        default=None, metadata={"help": "The arguments for the user LLM."}
-    )
-    turn_discount: float = field(
-        default=1.0, metadata={"help": "Discount factor for turn-based learning."}
-    )
-    invalid_format_penalty: float = field(
-        default=0.1, metadata={"help": "Penalty for invalid format in completions."}
-    )
