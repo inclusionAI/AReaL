@@ -93,7 +93,7 @@ You respond clearly, accurately, and concisely, following the specific output fo
 
 CARTOMAPQA_SRN_INPUT_TEMPLATE="""You are provided with a cartographic map sourced from OpenStreetMap. Two colored map markers are shown: the blue marker indicates the starting location, and the red one marks the destination.\n\
 Assume the user is located at the blue marker, seated in a vehicle, and initially facing toward the top of the map. Your task is to determine the shortest drivable route from the blue marker to the red marker, and describe all required driving actions to reach the destination.\n\
-Output your answer using the following strict format: Answer: [blue, <action_1>, road_1, <action_2>, road_2, ..., <action_N>, road_N, red]\n\
+Output your answer using the following strict format: <answerAnswer: [blue, <action_1>, road_1, <action_2>, road_2, ..., <action_N>, road_N, red]</answer>\n\
 Each <action> must be one of the following:\n\
 - "make a U-turn and continue straight"\n\
 - "continue straight"\n\
