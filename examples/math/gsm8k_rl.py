@@ -1,17 +1,9 @@
 import sys
 
-import debugpy
-
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.experimental.trainer import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
-
-if int(os.environ.get("RANK", "0")) == 0:
-    debugpy.listen(("0.0.0.0", 5678))  # 可自定义端口
-    print("⏳ Waiting for debugger attach (rank 0) on port 5678...")
-    debugpy.wait_for_client()  # 阻塞直到 VSCode attach
-    print("✅ Debugger attached!")
 
 
 def main(args):

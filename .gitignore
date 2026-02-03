@@ -2,8 +2,6 @@
 .legacy/
 .data/
 .idea/
-# Ignore auto-gen claude files without global CLAUDE.md file
-.claude/
 
 # claude
 .claude/settings.local.json

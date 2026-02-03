@@ -23,8 +23,6 @@ from areal.utils.launcher import (
     TRITON_CACHE_PATH,
     apply_sglang_patch,
     get_scheduling_spec,
-    TRITON_CACHE_PATH,
-    maybe_apply_sglang_patch
 )
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.proc import kill_process_tree
@@ -203,20 +201,6 @@ class SGLangServerWrapper:
         # Monitor server processes
         self._monitor_server_processes(server_addresses)
 
-        except Exception as e:
-            # Log error and clean up child processes
-            logger.error(f"Error in SGLang server wrapper: {e}")
-            logger.error(f"Traceback:\n{traceback.format_exc()}")
-
-            # Clean up child server processes only
-            if hasattr(self, "server_processes"):
-                for process in self.server_processes:
-                    if process.poll() is None:  # Still running
-                        kill_process_tree(process.pid, graceful=True)
-
-            # Re-raise to let Python print full traceback
-            raise
-
     def launch_one_server(self, cmd, host_ip, server_port, node_rank):
         server_process = launch_server_cmd(cmd)
         wait_for_server(f"http://{host_ip}:{server_port}")
@@ -242,7 +226,6 @@ def launch_sglang_server(argv):
 
     # Get CPU per GPU from rollout scheduling spec
     rollout_spec = get_scheduling_spec(config.rollout)
-    
 
     sglang_server = SGLangServerWrapper(
         config.experiment_name,
