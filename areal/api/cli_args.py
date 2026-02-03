@@ -1299,8 +1299,6 @@ class SGLangConfig:
             )
         args.pop("enable_multithread_load", None)
         args.pop("enable_fast_load", None)
-        # Always enable routing replay for MoE expert information
-        args["enable_routing_replay"] = True
         # Map "all-linear" to "all"
         if "lora_target_modules" in args and args["lora_target_modules"]:
             args["lora_target_modules"] = [
