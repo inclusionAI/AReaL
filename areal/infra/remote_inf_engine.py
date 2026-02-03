@@ -772,9 +772,7 @@ class RemoteInfEngine(InferenceEngine):
                     raise RuntimeError(
                         "Requested return_routed_experts=True but received None from SGLang. "
                         "This usually means the model is not a MoE (Mixture of Experts) model. "
-                        "Please either:\n"
-                        "  1. Use a MoE model, or\n"
-                        "  2. Set actor.enable_routing_replay=False in your config"
+                        "Please use a MoE model to get routed_experts information."
                     )
 
             # Update accumulated outputs

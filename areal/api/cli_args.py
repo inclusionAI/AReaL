@@ -1013,14 +1013,6 @@ class PPOActorConfig(TrainEngineConfig):
         default=1024,
         metadata={"help": "Maximum number of new tokens to generate"},
     )
-    enable_routing_replay: bool = field(
-        default=False,
-        metadata={
-            "help": "Enable routing replay to record and return routed expert indices for MoE models. "
-            "Only supported with SGLang backend (allocation_mode must use 'sglang'). "
-            "Requires SGLang version >= 0.5.7."
-        },
-    )
 
     def should_compute_prox_logp(self) -> bool:
         """Determine if forward pass is needed for proximal log-probabilities.
@@ -1262,7 +1254,6 @@ class SGLangConfig:
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
-        enable_routing_replay: bool = False,
     ):
         args = SGLangConfig.build_args(
             sglang_config=sglang_config,
@@ -1273,7 +1264,6 @@ class SGLangConfig:
             dist_init_addr=dist_init_addr,
             n_nodes=n_nodes,
             node_rank=node_rank,
-            enable_routing_replay=enable_routing_replay,
         )
 
         return SGLangConfig.build_cmd_from_args(args)
@@ -1292,7 +1282,6 @@ class SGLangConfig:
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
-        enable_routing_replay: bool = False,
     ):
         # Map "all-linear" to "all"
         args: dict = conf_as_dict(sglang_config)
@@ -1310,15 +1299,8 @@ class SGLangConfig:
             )
         args.pop("enable_multithread_load", None)
         args.pop("enable_fast_load", None)
-        # Enable return routed experts if routing_replay is enabled
-        if enable_routing_replay:
-            if pkg_version.is_version_less("sglang", "0.5.7"):
-                raise RuntimeError(
-                    f"Routing replay requires SGLang >= 0.5.7. "
-                    f"Current version is {pkg_version.get_version('sglang')}."
-                )
-            args["enable_routing_replay"] = True
-        args.pop("enable_routing_replay", None)
+        # Always enable routing replay for MoE expert information
+        args["enable_routing_replay"] = True
         # Map "all-linear" to "all"
         if "lora_target_modules" in args and args["lora_target_modules"]:
             args["lora_target_modules"] = [
@@ -1949,25 +1931,15 @@ class PPOConfig(BaseExperimentConfig):
         """Validate the eval generation config."""
         if self.eval_gconfig is None:
             self.eval_gconfig = self.gconfig.new()
-        # Validate routing replay is only used with SGLang backend
-        if self.actor.enable_routing_replay:
-            # Parse allocation_mode to determine backend
-            backend = (
-                self.allocation_mode.split(":")[0]
-                if ":" in self.allocation_mode
-                else "sglang"
-            )
+        # Parse allocation_mode to determine backend
+        backend = (
+            self.allocation_mode.split(":")[0]
+            if ":" in self.allocation_mode
+            else "sglang"
+        )
 
-            if backend == "vllm":
-                raise RuntimeError(
-                    f"Routing replay (actor.enable_routing_replay=True) is only supported with SGLang backend. "
-                    f"Current allocation_mode is '{self.allocation_mode}' which uses vLLM. "
-                    f"Please either:\n"
-                    f"  1. Disable routing replay: set actor.enable_routing_replay=False, or\n"
-                    f"  2. Switch to SGLang: change allocation_mode to use 'sglang:...'"
-                )
-
-            # Set generation config flag for downstream use
+        # Always request routed_experts when using SGLang backend
+        if backend == "sglang":
             self.gconfig.return_routed_experts = True
 
 

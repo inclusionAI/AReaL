@@ -94,7 +94,6 @@ class SGLangServerWrapper:
         allocation_mode: AllocationMode,
         n_gpus_per_node: int,
         cpu_per_gpu: int | None = None,
-        enable_routing_replay: bool = False,
     ):
         self.experiment_name = experiment_name
         self.trial_name = trial_name
@@ -243,12 +242,7 @@ def launch_sglang_server(argv):
 
     # Get CPU per GPU from rollout scheduling spec
     rollout_spec = get_scheduling_spec(config.rollout)
-    # Get enable_routing_replay from actor config if available
-    enable_routing_replay = (
-        getattr(config.actor, "enable_routing_replay", False)
-        if hasattr(config, "actor")
-        else False
-    )
+    
 
     sglang_server = SGLangServerWrapper(
         config.experiment_name,
@@ -257,7 +251,6 @@ def launch_sglang_server(argv):
         allocation_mode,
         n_gpus_per_node=config.cluster.n_gpus_per_node,
         cpu_per_gpu=rollout_spec.cpu,
-        enable_routing_replay=enable_routing_replay,
     )
     sglang_server.run()
 
