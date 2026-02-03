@@ -1554,11 +1554,9 @@ class FSDPEngine(TrainEngine):
                     # This ensures backward() works correctly for FSDP synchronization
                     return logits.sum() * 0.0
 
-                # vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
-                #     logits
-                # )
-                vocab_min_logits = None
-                vocab_max_logits = None
+                vocab_min_logits, vocab_max_logits = gather_packed_tree_vocab_stats(
+                    logits, ctx.trie_node
+                )
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
                     logits,
                     ctx.trie_node,
