@@ -42,11 +42,6 @@ classifiers = [
 
 dependencies = [
     # Core ML/AI libraries
-    "torch>=2.9.1,<2.10",
-    "torchao==0.15.0",
-    "torchaudio",
-    "torchvision",
-    "torchdata",
     "huggingface_hub",
     "datasets>=3.0.0",
     "transformers==4.57.1",
@@ -133,6 +128,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Platform-dependent PyTorch libraries
+pytorch-cuda = [
+    "torch>=2.9.1,<2.10; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchao==0.15.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchdata; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+pytorch-npu = [
+    "torch==2.9.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "torch-npu==2.9.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "torchdata; sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
 # CUDA-dependent extras - these packages only have Linux x86_64 wheels
 # Platform markers ensure they're skipped on unsupported platforms
 sglang = [
@@ -153,11 +163,15 @@ megatron = [
 ]
 # Convenience extra for all CUDA packages (requires Linux x86_64 with CUDA)
 cuda = [
+    "areal[pytorch-cuda]",
     "areal[vllm]",
     "areal[sglang]",
     "areal[tms]",
     "areal[megatron]",
     "areal[flash-attn]",
+]
+npu = [
+    "areal[pytorch-npu]",
 ]
 # 'all' extra - kept for compatibility, CUDA packages skipped on non-Linux via markers
 all = [
@@ -209,13 +223,41 @@ environments = [
 override-dependencies = [
     "torchao==0.15.0",
     "openai>2.6.1",
-    "soundfile>=0.12.1,<0.13.0",
+    "soundfile==0.13.1",
     "outlines-core==0.1.26",
     "grpcio>=1.76.0",
     "grpcio-reflection>=1.76.0",
     "xgrammar == 0.1.29; platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 's390x' or platform_machine == 'ppc64le'",
     "llguidance >= 1.3.0, < 1.4.0; platform_machine == 'x86_64' or platform_machine == 'arm64' or platform_machine == 'aarch64' or platform_machine == 's390x' or platform_machine == 'ppc64le'",
 ]
+conflicts = [
+    [{ extra = "npu" }, { extra = "cuda" }],
+    [{ extra = "npu" }, { extra = "all" }],
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu129", extra = "pytorch-cuda", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cpu", extra = "pytorch-npu", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
+    { index = "pytorch-cu129", extra = "pytorch-cuda", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cpu", extra = "pytorch-npu", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
+    { index = "pytorch-cu129", extra = "pytorch-cuda", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cpu", extra = "pytorch-npu", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
 
 [tool.uv.extra-build-dependencies]
 flash-attn = ["torch>=2.9.1,<2.10"]
