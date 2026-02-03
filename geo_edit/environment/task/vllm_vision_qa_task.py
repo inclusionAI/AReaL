@@ -86,7 +86,7 @@ class VLLMVisionQATask(VisionQATask):
             raise ValueError("vLLM response contained no choices.")
 
         message = action.choices[0].message
-        print(message)
+
         content = message.content 
         native_tool_calls = message.tool_calls
 
@@ -131,7 +131,6 @@ class VLLMVisionQATask(VisionQATask):
                  "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
                 for tc in native_tool_calls
             ]
-        print(assistant_message)
 
         self.contents.append(assistant_message)
 
