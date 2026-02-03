@@ -1,4 +1,4 @@
-MAX_TOOL_CALLS = 1
+MAX_TOOL_CALLS = 4
 
 API_CALL_SYSTEM_PROMPT = '''
 You are an advanced AI agent capable of complex

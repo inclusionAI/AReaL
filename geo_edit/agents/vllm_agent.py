@@ -36,9 +36,9 @@ class VLLMBasedAgent(BaseAgent):
         extra_info = {"original_response": str(response)}
         if response.usage is not None:
             usage = response.usage
-            tokens_input = usage.get("prompt_tokens")
-            tokens_output = usage.get("completion_tokens")
-            tokens_total = usage.get("total_tokens")
+            tokens_input = usage.prompt_tokens
+            tokens_output = usage.completion_tokens
+            tokens_total = usage.total_tokens
             
             extra_info["tokens_input"] = tokens_input
             extra_info["tokens_output"] = tokens_output
