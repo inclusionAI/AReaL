@@ -318,9 +318,15 @@ class VisionQATask(AbstractVLMTask):
 
         tokens_used_total =  tokens_total_per_step[-1]
     
-        if self.model_type == "vllm" or self.model_type == "openai":
+        if  self.model_type == "openai":
             tokens_output_total=tokens_output_per_step[-1]
             tokens_input_total=tokens_input_per_step[-1]
+        elif self.model_type=="vllm":
+            tokens_output_total = sum(
+                t for t in tokens_output_per_step if isinstance(t, (int, float))
+            )
+            tokens_input_total=tokens_input_per_step[-1]
+            tokens_used_total=tokens_output_total+tokens_input_total
         elif self.model_type == "google":
             tokens_output_total = sum(
                 t for t in tokens_output_per_step if isinstance(t, (int, float))
