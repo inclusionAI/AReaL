@@ -57,9 +57,9 @@ After LLM services are launched, run experiments through the following scripts:
 python scripts/run_imobench_experiment.py
 python scripts/run_lcb_pro_experiment.py
 
-// aggregation
+// aggregation. more under aggregation_scripts directory
 python scripts/run_aggregation_experiment.py
-python sripts/run_lcb_pro_aggregation_experiment.py
+python scripts/run_lcb_pro_aggregation_experiment.py
 ```
 
 ## Methods
