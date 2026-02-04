@@ -6,7 +6,7 @@ enable_offload: false
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
-workflow: areal.workflow.anthropic.math_tool_agent.MathToolAgent
+workflow: areal.workflow.anthropic.claude_math_agent.MathToolAgent
 eval_workflow: ${workflow}
 max_turns: 10
 
