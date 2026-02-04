@@ -431,7 +431,7 @@ def grpo_loss_fn(
     stats_tracker.denominator(
         # NOTE: n_tokens must have shape [batch, seq] to match vocab stats.
         # Using torch.ones_like(loss_mask) ensures correct shape when this function is called
-        # standalone (e.g., by recipe/AEnt or tests), not just from ppo_update() which already
+        # standalone (e.g., by tests), not just from ppo_update() which already
         # registers n_tokens.
         n_tokens=torch.ones_like(loss_mask, dtype=torch.bool, device=logprobs.device),
         n_valid_tokens=loss_mask.bool(),

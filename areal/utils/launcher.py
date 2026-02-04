@@ -3,14 +3,11 @@ import enum
 import getpass
 import os
 import pathlib
-import shutil
-import subprocess
 import sys
 import time
-from pathlib import Path
 
 from areal.api.alloc_mode import AllocationMode, AllocationType
-from areal.utils import logging, name_resolve, names, pkg_version
+from areal.utils import logging, name_resolve, names
 
 logger = logging.getLogger("LauncherUtils")
 
@@ -258,66 +255,3 @@ def validate_config_for_distributed_launcher(config):
             )
         if allocation_mode.gen.tp_size > config.cluster.n_gpus_per_node:
             raise ValueError("Currently only support vLLM TP size <= #GPUs per node.")
-
-
-def apply_sglang_patch():
-    p = Path(os.path.dirname(__file__))
-    patch_path = str(
-        p.parent.parent
-        / "patch"
-        / "sglang"
-        / f"v{pkg_version.get_version('sglang')}.patch"
-    )
-    target_path = None
-    sglang_meta = subprocess.check_output(
-        [sys.executable, "-m", "pip", "show", "sglang"]
-    ).decode("utf-8")
-    # Prioritize editable install location, since pip show lists both locations
-    # if installed in editable mode.
-    for line in sglang_meta.split("\n"):
-        line = line.strip()
-        if line.startswith("Editable project location: "):
-            target_path = str(Path(line.split(": ")[1]) / "sglang")
-            break
-    else:
-        for line in sglang_meta.split("\n"):
-            line = line.strip()
-            if line.startswith("Location: "):
-                target_path = str(Path(line.split(": ")[1]) / "sglang")
-                break
-
-    if not target_path or not os.path.exists(target_path):
-        raise RuntimeError("Could not determine the installation path of SGLang.")
-
-    patch_binary = shutil.which("patch")
-    if not patch_binary:
-        raise RuntimeError(
-            "Could not locate the `patch` command; SGLang patch application failed."
-        )
-    result = subprocess.run(
-        [patch_binary, "-p1", "-N", "-i", patch_path],
-        cwd=target_path,
-        capture_output=True,
-        text=True,
-    )
-
-    output = (result.stdout or "") + (result.stderr or "")
-    if result.returncode == 0:
-        logger.info(f"Applied SGLang patch {patch_path} to {target_path}")
-    elif (
-        "Reversed (or previously applied) patch detected" in output
-        or "Skipping patch." in output
-    ):
-        logger.warning(
-            f"SGLang patch {patch_path} appears to be already applied for {target_path}."
-        )
-    else:
-        logger.error(
-            "Failed to apply SGLang patch %s to %s. Output:\n%s",
-            patch_path,
-            target_path,
-            output.strip(),
-        )
-        raise RuntimeError(
-            f"SGLang patch {patch_path} failed with exit code {result.returncode}."
-        )

@@ -44,11 +44,9 @@ repos:
         name: Run Linter Check (Ruff)
         types_or: [ python, pyi, jupyter ]
         args: [ --fix ]
-        exclude: ^(evaluation|functioncall)/
       - id: ruff-format # Run the formatter.
         name: Run Formatter (Ruff)
         types_or: [ python, pyi, jupyter ]
-        exclude: ^(evaluation|functioncall)/
 
   # Clean notebook outputs and metadata
   - repo: https://github.com/kynan/nbstripout

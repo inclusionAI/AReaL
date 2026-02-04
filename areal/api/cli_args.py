@@ -1235,7 +1235,6 @@ class SGLangConfig:
     # NOTE: These arguments will be parsed into a dict json-string
     # and passed as `model_loader_extra_config` to SGLang.
     enable_multithread_load: bool = False
-    enable_fast_load: bool = False
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
@@ -1279,20 +1278,14 @@ class SGLangConfig:
     ):
         # Map "all-linear" to "all"
         args: dict = conf_as_dict(sglang_config)
-        if sglang_config.enable_multithread_load or sglang_config.enable_fast_load:
-            if not pkg_version.is_version_equal("sglang", "0.5.2"):
-                raise RuntimeError(
-                    "Customized model loading requires exact SGLang version 0.5.2"
-                )
+        if sglang_config.enable_multithread_load:
             model_loader_extra_config = dict(
                 enable_multithread_load=sglang_config.enable_multithread_load,
-                enable_fast_load=sglang_config.enable_fast_load,
             )
             args["model_loader_extra_config"] = json.dumps(
                 model_loader_extra_config, separators=(",", ":")
             )
         args.pop("enable_multithread_load", None)
-        args.pop("enable_fast_load", None)
         # Map "all-linear" to "all"
         if "lora_target_modules" in args and args["lora_target_modules"]:
             args["lora_target_modules"] = [
