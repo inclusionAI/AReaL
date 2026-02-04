@@ -196,7 +196,7 @@ version = {attr = "areal.__version__"}
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["areal*"]
-exclude = ["tests*", "docs*", "examples*", "evaluation*"]
+exclude = ["tests*", "docs*", "examples*"]
 
 # =============================================================================
 # Tool configurations: uv

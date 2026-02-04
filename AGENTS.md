@@ -66,19 +66,11 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 - `blog/` — Release notes and update write-ups documenting project progress.
 - `docs/` — Jupyter Book source for https://inclusionai.github.io/AReaL/ plus CLI
   reference generators.
-- `evaluation/` — Offline scoring pipelines (math, code, Elo) and shared
-  evaluators/utilities.
 - `examples/` — End-to-end training scripts and launcher recipes for math reasoning,
   multi-turn conversations, VLM, RLHF alignment, agent-based workflows, LoRA
   fine-tuning, SkyPilot deployment, and more.
-- `functioncall/` — Tool-calling scaffolding reused by workflows and evaluation
-  harnesses.
 - `notebook/` — Reference notebooks (outputs stripped via pre-commit) for quick
   experimentation.
-- `patch/` — In-tree patches applied to third-party dependencies (e.g., SGLang
-  hotfixes).
-- `recipe/` — Deployment recipes and higher-level orchestration configs per target
-  environment.
 
 ## Distributed operations & tooling
 

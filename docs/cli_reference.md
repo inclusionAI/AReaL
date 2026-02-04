@@ -574,7 +574,6 @@ https://github.com/sgl-project/sglang for detailed documentation.
 | `enable_metrics`                  | boolean                 | `True`       | -           |
 | `decode_log_interval`             | integer                 | `1`          | -           |
 | `enable_multithread_load`         | boolean                 | `False`      | -           |
-| `enable_fast_load`                | boolean                 | `False`      | -           |
 
 (section-v-llm)=
 
