@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Data and outputs
+data/results/
+data/cache/
+*.log
+outputs/
+
+# Environment variables
+.env
+.env.local
+
+# Model outputs and experiments
+experiments/
+checkpoints/
+*.pkl
+*.pickle
+
+INTEGRATION_SUMMARY.md
+local_data/
+
+# Mid Files
+*.txt
+tournament_simulation_results.json
+analyze_script/*.json
+env_vars.sh
+slurm_jobs/
+logs/
+results/
+testcases/
+reeval_llama_70b.json
+scripts/code_eval/
+results_single/
+
+past_results/
+aggregation_results/
+aggregation_experiments/
+exp_logs/
