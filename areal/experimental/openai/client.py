@@ -4,7 +4,7 @@ import os
 import uuid
 from collections.abc import AsyncGenerator, Iterable, Mapping
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, cast, overload
 
 from pydantic import BaseModel
 
@@ -27,6 +27,9 @@ from openai.types.chat.chat_completion_chunk import (
     ChoiceDelta,
     ChoiceDeltaToolCall,
     ChoiceDeltaToolCallFunction,
+)
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,
 )
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_tool_choice_option_param import (
@@ -634,12 +637,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
             # Tool calls chunks (if any)
             if tool_calls:
-                from openai.types.chat.chat_completion_message_function_tool_call import (
-                    ChatCompletionMessageFunctionToolCall,
-                )
-
                 for idx, tool_call in enumerate(tool_calls):
-                    tool_call: ChatCompletionMessageFunctionToolCall
+                    tool_call = cast(ChatCompletionMessageFunctionToolCall, tool_call)
                     yield ChatCompletionChunk(
                         id=completion_id,
                         choices=[
