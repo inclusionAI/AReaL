@@ -33,7 +33,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     WeightUpdateRequests,
 )
-from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow, WorkflowLike
+from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
 from areal.infra import workflow_context
 from areal.infra.platforms import current_platform
 from areal.utils import logging, name_resolve, names
@@ -487,12 +487,12 @@ class RemoteInfEngine(InferenceEngine):
             return self._version
 
     def _wrap_openai_agent(self, agent, proxy_addr: str) -> RolloutWorkflow:
-        """Wrap AgentWorkflow in OpenAIProxyWorkflow (HTTP mode only).
+        """Wrap an agent workflow in OpenAIProxyWorkflow (HTTP mode only).
 
         Parameters
         ----------
-        agent : AgentWorkflow
-            The agent workflow to wrap
+        agent : Any
+            The agent workflow to wrap (any class with async run() method)
         proxy_addr : str
             HTTP address of the proxy server (required)
         """
@@ -518,6 +518,7 @@ class RemoteInfEngine(InferenceEngine):
     ) -> RolloutWorkflow:
         resolved: RolloutWorkflow
 
+        # 1. Already a RolloutWorkflow instance
         if isinstance(workflow, RolloutWorkflow):
             if workflow_kwargs is not None:
                 self.logger.warning(
@@ -525,18 +526,16 @@ class RemoteInfEngine(InferenceEngine):
                 )
             resolved = workflow
 
-        elif isinstance(workflow, AgentWorkflow):
-            if workflow_kwargs is not None:
-                self.logger.warning(
-                    "workflow_kwargs is ignored when workflow is already an AgentWorkflow instance"
-                )
-            if proxy_addr is None:
+        # 2. RolloutWorkflow class
+        elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
+            if workflow_kwargs is None:
                 raise ValueError(
-                    "proxy_addr is required for AgentWorkflow. "
-                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                    f"workflow_kwargs is required when workflow is a class. "
+                    f"Got workflow={workflow}, but workflow_kwargs=None."
                 )
-            resolved = self._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
+            resolved = workflow(**workflow_kwargs)
 
+        # 3. String import path
         elif isinstance(workflow, str):
             try:
                 imported_obj = import_from_string(workflow)
@@ -555,6 +554,7 @@ class RemoteInfEngine(InferenceEngine):
                         f"Got workflow={workflow}, but workflow_kwargs=None."
                     )
                 resolved = imported_obj(**workflow_kwargs)
+
             # Check if it's a RolloutWorkflow instance
             elif isinstance(imported_obj, RolloutWorkflow):
                 if workflow_kwargs is not None:
@@ -562,52 +562,47 @@ class RemoteInfEngine(InferenceEngine):
                         "workflow_kwargs is ignored when workflow resolves to an instance"
                     )
                 resolved = imported_obj
-            # Check if it's an AgentWorkflow class
-            elif isinstance(imported_obj, type) and issubclass(
-                imported_obj, AgentWorkflow
-            ):
-                if proxy_addr is None:
-                    raise ValueError(
-                        "proxy_addr is required for AgentWorkflow. "
-                        "Ensure proxy workers are initialized via RolloutController.start_proxy()."
-                    )
-                agent = imported_obj(**(workflow_kwargs or {}))
-                resolved = self._wrap_openai_agent(agent, proxy_addr=proxy_addr)
-            # Check if it's an AgentWorkflow instance
-            elif isinstance(imported_obj, AgentWorkflow):
-                if proxy_addr is None:
-                    raise ValueError(
-                        "proxy_addr is required for AgentWorkflow. "
-                        "Ensure proxy workers are initialized via RolloutController.start_proxy()."
-                    )
-                resolved = self._wrap_openai_agent(imported_obj, proxy_addr=proxy_addr)
+
+            # Otherwise, treat it as an agent-like workflow (needs proxy)
             else:
-                raise TypeError(
-                    f"Imported object from {workflow!r} is not a valid RolloutWorkflow or AgentWorkflow."
-                )
+                if proxy_addr is None:
+                    raise ValueError(
+                        f"proxy_addr is required for agent workflows (non-RolloutWorkflow). "
+                        f"Ensure proxy workers are initialized via RolloutController.start_proxy(). "
+                        f"Got workflow={workflow!r}"
+                    )
 
-        elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
-            if workflow_kwargs is None:
-                raise ValueError(
-                    f"workflow_kwargs is required when workflow is a class. "
-                    f"Got workflow={workflow}, but workflow_kwargs=None."
-                )
-            resolved = workflow(**workflow_kwargs)
+                # Instantiate if it's a class
+                if isinstance(imported_obj, type):
+                    agent = imported_obj(**(workflow_kwargs or {}))
+                else:
+                    # Already an instance
+                    agent = imported_obj
 
-        elif isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
+                resolved = self._wrap_openai_agent(agent, proxy_addr=proxy_addr)
+
+        # 4. Callable class (agent-like workflow)
+        elif isinstance(workflow, type):
             if proxy_addr is None:
                 raise ValueError(
-                    "proxy_addr is required for AgentWorkflow. "
+                    "proxy_addr is required for agent workflows (non-RolloutWorkflow). "
                     "Ensure proxy workers are initialized via RolloutController.start_proxy()."
                 )
             agent = workflow(**(workflow_kwargs or {}))
             resolved = self._wrap_openai_agent(agent, proxy_addr=proxy_addr)
 
+        # 5. Instance of agent-like workflow
         else:
-            raise TypeError(
-                f"Invalid workflow type: {type(workflow)}. "
-                f"Expected RolloutWorkflow, AgentWorkflow, class, or string module path."
-            )
+            if proxy_addr is None:
+                raise ValueError(
+                    "proxy_addr is required for agent workflows (non-RolloutWorkflow). "
+                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                )
+            if workflow_kwargs is not None:
+                self.logger.warning(
+                    "workflow_kwargs is ignored when workflow is already an instance"
+                )
+            resolved = self._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
 
         # Wrap with GroupedRolloutWorkflow if group_size > 1
         if group_size > 1:

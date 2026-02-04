@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
-from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow
+from areal.api.workflow_api import RolloutWorkflow
 from areal.infra import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.perf_tracer import session_context, trace_session
@@ -58,7 +58,8 @@ def _shutdown_executor() -> None:
         _executor = None
 
 
-def _wrap_run(agent: AgentWorkflow, data: dict[str, Any], extra_envs: dict[str, str]):
+def _wrap_run(agent: Any, data: dict[str, Any], extra_envs: dict[str, str]):
+    """Run agent in subprocess with environment variables."""
     for key, value in extra_envs.items():
         os.environ[key] = value
     return asyncio.run(agent.run(data))
@@ -68,7 +69,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
     def __init__(
         self,
         mode: str,
-        agent: AgentWorkflow,
+        agent: Any,
         proxy_addr: str,
         discount: float = 1.0,
         export_style: str = "individual",
@@ -76,6 +77,19 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
     ):
         if mode not in ("inline", "subproc"):
             raise ValueError(f"Invalid mode: {mode}. Must be 'inline' or 'subproc'")
+
+        # Validate that agent has an async 'run' method
+        if not hasattr(agent, "run") or not callable(getattr(agent, "run")):
+            raise TypeError(
+                f"Agent must have a callable 'run' method. "
+                f"Got agent of type {type(agent).__name__} without a callable 'run' attribute."
+            )
+        if not asyncio.iscoroutinefunction(agent.run):
+            raise TypeError(
+                f"Agent's 'run' method must be an async function. "
+                f"Got {type(agent).__name__}.run which is not a coroutine function."
+            )
+
         self.mode = mode
         self.agent = agent
         self.proxy_addr = proxy_addr

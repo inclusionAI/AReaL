@@ -1,6 +1,6 @@
 from __future__ import annotations  # noqa
 
-from abc import ABC, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod
 from typing import TYPE_CHECKING, Any, Union
 
 
@@ -37,7 +37,45 @@ class RolloutWorkflow(ABC):
         raise NotImplementedError()
 
 
-class AgentWorkflow(ABC):
+class _DeprecatedAgentWorkflowMeta(ABCMeta):
+    """Metaclass that ensures deprecation warning triggers on any subclass instantiation.
+
+    This approach guarantees the warning fires even if subclasses forget to call
+    super().__init__(), since __call__ executes before any __init__ method.
+    Inherits from ABCMeta to maintain compatibility with ABC.
+    """
+
+    def __call__(cls, *args, **kwargs):
+        import warnings
+
+        warnings.warn(
+            f"{cls.__name__} inherits from deprecated AgentWorkflow. "
+            "You no longer need to inherit from this class. "
+            "Any class with a compatible async run() method will work.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return super().__call__(*args, **kwargs)
+
+
+class AgentWorkflow(ABC, metaclass=_DeprecatedAgentWorkflowMeta):
+    """Base class for agent-based workflows (DEPRECATED).
+
+    .. deprecated:: 1.0.0
+        Inheriting from AgentWorkflow is no longer required. Any class with
+        a compatible ``run()`` method will work. This class is kept for
+        backward compatibility but may be removed in a future version.
+
+    To use agent-based workflows, simply implement a class with::
+
+        async def run(self, data: dict[str, Any], **extra_kwargs: Any) -> dict[str, float] | float
+
+    The ``extra_kwargs`` will receive:
+
+    - base_url: str - The OpenAI-compatible proxy server URL
+    - http_client: httpx.AsyncClient - HTTP client for async requests
+    """
+
     @abstractmethod
     async def run(
         self, data: dict[str, Any], **extra_kwargs: Any
@@ -48,6 +86,7 @@ class AgentWorkflow(ABC):
         include any parameters or hyperparameters required.
 
         `extra_kwargs` includes parameters provided by AReaL:
+
         - base_url: str
             The base URL of the OpenAI-compatible proxy server
         - http_client: httpx.AsyncClient
@@ -67,11 +106,11 @@ class AgentWorkflow(ABC):
 
 
 # Type alias for workflow parameter across the stack.
-# Accepts RolloutWorkflow instances/classes, string import paths, or AgentWorkflow instances/classes.
+# Accepts RolloutWorkflow instances/classes, string import paths, or any
+# callable object with a compatible run() method.
 WorkflowLike = Union[
     "RolloutWorkflow",
     type["RolloutWorkflow"],
     str,
-    "AgentWorkflow",
-    type["AgentWorkflow"],
+    Any,  # Any object with async def run(data, **extra_kwargs) method
 ]

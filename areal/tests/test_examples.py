@@ -665,3 +665,39 @@ def test_camel(tmp_path_factory):
     )
     if not success:
         raise RuntimeError("Camel Math example failed")
+
+
+@pytest.mark.multi_gpu
+def test_openai_proxy(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct",
+        "Qwen/Qwen2.5-1.5B-Instruct",
+    )
+    dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
+    example_file = "examples/experimental/proxy/train.py"
+    config_name = "examples/experimental/proxy/config.yaml"
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=16",
+        "gconfig.max_tokens=512",
+        "actor.mb_spec.max_tokens_per_mb=4096",
+        "train_dataset.batch_size=1",
+        f"train_dataset.path={dataset_path}",
+        "valid_dataset.batch_size=1",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        "scheduler.type=local",
+        "actor.weight_update_mode=xccl",
+        single_controller=True,
+    )
+    if not success:
+        raise RuntimeError("OpenAI Proxy example failed")
