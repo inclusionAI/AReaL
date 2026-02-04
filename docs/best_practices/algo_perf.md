@@ -41,4 +41,4 @@ diagnostic steps:
    is appropriate for your base model. You can enable dynamic filtering (similar to
    DAPO) by passing a `should_accept_fn` parameter to `prepare_batch` to ensure task
    difficulty remains appropriate during runtime. See our
-   [detailed code walk-through](../lite/gsm8k_grpo.md) for more information.
+   [detailed code walk-through](../tutorial/gsm8k_grpo.md) for more information.
