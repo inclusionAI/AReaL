@@ -1931,15 +1931,13 @@ class PPOConfig(BaseExperimentConfig):
             self.eval_gconfig = self.gconfig.new()
         # Parse allocation_mode to determine backend
         backend = (
-            self.allocation_mode.split(":", 1)[0]
-            if self.allocation_mode
+            self.allocation_mode.split(":",1)[0]
+            if ":" in self.allocation_mode
             else "sglang"
         )
-
-        # Always request routed_experts when using SGLang backend
-        if backend == "sglang" and not self.gconfig.return_routed_experts:
+        if backend == "vllm" and self.gconfig.return_routed_experts:
             raise ValueError(
-                "PPOConfig requires gconfig.return_routed_experts=True when using SGLang backend."
+                "return_routed_experts is only supported with SGLang backend."
             )
 
 
