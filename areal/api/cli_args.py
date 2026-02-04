@@ -1329,7 +1329,7 @@ class SGLangConfig:
 
 @dataclass
 class OpenAIProxyConfig:
-    """Configuration for OpenAI proxy when using AgentWorkflow workflows."""
+    """Configuration for OpenAI proxy when using agent workflows."""
 
     mode: str = field(
         default="inline",
@@ -1488,7 +1488,7 @@ class InferenceEngineConfig:
     openai: OpenAIProxyConfig | None = field(
         default=None,
         metadata={
-            "help": "OpenAI proxy configuration (used when workflow is AgentWorkflow)."
+            "help": "OpenAI proxy configuration (used when workflow is an agent workflow)."
         },
     )
 

@@ -13,7 +13,6 @@ from langchain.agents import create_agent
 from langchain.tools import tool
 
 from areal.api.reward_api import AsyncRewardWrapper
-from areal.api.workflow_api import AgentWorkflow
 
 
 def math_reward_fn(completions: str, answer: str) -> float:
@@ -67,7 +66,7 @@ def sqrt(n: float) -> float:
 CALCULATOR_TOOLS = [add, subtract, multiply, divide, power, sqrt]
 
 
-class MathAgent(AgentWorkflow):
+class MathAgent:
     """Simple single-turn math agent using LangChain ChatOpenAI.
 
     This agent uses the AReaL proxy to generate responses and calculates
@@ -110,7 +109,7 @@ class MathAgent(AgentWorkflow):
         return await reward_fn(completions=completion_text, answer=data["answer"])
 
 
-class MathToolAgent(AgentWorkflow):
+class MathToolAgent:
     """Math agent with calculator tools using LangChain's create_agent.
 
     This agent uses LangChain's official agent API with calculator tools
