@@ -583,7 +583,9 @@ def _build_attention_mask(
         # Get or create lower triangular indices
         rows_cols = tril_cache.get(seq_len)
         if rows_cols is None:
-            rows_cols = torch.tril_indices(seq_len, seq_len, device=device)
+            rows_cols = torch.tril_indices(
+                seq_len, seq_len, device=device, dtype=torch.int32
+            )
             tril_cache[seq_len] = rows_cols
         rows, cols = rows_cols
 
