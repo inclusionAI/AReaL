@@ -47,6 +47,7 @@ async def run_example(
     """
     # Construct the command
     if single_controller:
+        print("[debug] running single controller mode")
         # Single-controller mode: run script directly
         cmd = [
             "python3",
@@ -82,8 +83,10 @@ async def run_example(
         while True:
             try:
                 line = await asyncio.wait_for(process.stdout.readline(), timeout=0.1)
-                line = line.decode()
-                logger.info(f"[Example Output] {line.rstrip()}")
+                line = line.decode().rstrip()
+                # Skip empty lines (e.g., from tqdm progress bar cleanup)
+                if line:
+                    logger.info(f"[Example Output] {line}")
                 # Check for success patterns
                 success = bool(success_pattern.search(line))
                 if success:
@@ -717,6 +720,15 @@ def test_tau2(tmp_path_factory):
     except ImportError:
         pytest.skip("tau2-bench is not installed. Skipping tau2 example test.")
 
+    # Check TAU2_DATA_DIR is set and valid
+    tau2_data_dir = os.environ.get("TAU2_DATA_DIR")
+    if not tau2_data_dir:
+        pytest.skip("TAU2_DATA_DIR environment variable not set. Skipping tau2 test.")
+    if not os.path.exists(tau2_data_dir):
+        pytest.skip(
+            f"TAU2_DATA_DIR ({tau2_data_dir}) does not exist. Skipping tau2 test."
+        )
+
     # Check chat template exists
     chat_template_path = "/storage/openpsi/data/qwen3_nonthinking.jinja"
     if not os.path.exists(chat_template_path):
@@ -785,6 +797,7 @@ def test_tau2(tmp_path_factory):
 
         example_file = "examples/tau2/train.py"
         config_name = "examples/tau2/config_1.7b_airline.yaml"
+        print("[debug] single controller")
 
         # Run tau2 training with first 2 GPUs
         success = run_async_task(
@@ -793,13 +806,13 @@ def test_tau2(tmp_path_factory):
             config_name,
             "allocation_mode=sglang:d1+megatron:d1",
             "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=256",
-            "gconfig.max_tokens=2048",
-            "actor.mb_spec.max_tokens_per_mb=4096",
-            "train_dataset.batch_size=4",
-            "train_dataset.path=tau2/small",  # Use small split for testing
-            "valid_dataset.batch_size=4",
-            "valid_dataset.path=tau2/small",
+            "gconfig.max_new_tokens=1024",
+            "gconfig.max_tokens=8192",
+            "actor.mb_spec.max_tokens_per_mb=8192",
+            "train_dataset.batch_size=2",
+            "train_dataset.path=tau2/train",
+            "valid_dataset.batch_size=2",
+            "valid_dataset.path=tau2/test",
             "cluster.n_gpus_per_node=2",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
@@ -811,6 +824,7 @@ def test_tau2(tmp_path_factory):
             "scheduler.type=local",
             "stats_logger.wandb.mode=disabled",
             timeout=600,
+            single_controller=True,
         )
         assert success, "Tau2 airline example failed"
     finally:
