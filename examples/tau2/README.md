@@ -130,4 +130,5 @@ python3 -m areal.launcher.slurm examples/tau2/train.py \
 
 1. **Tree training**: The configs enable `enable_tree_training=true` by default, which
    optimizes training by sharing prefix computations across rollouts with the same
-   prompt. This option can largely accelerate training
+   prompt. This option can largely accelerate training but will possibly increase GPU
+   memory usage if `actor.mb_spec.max_tokens_per_mb` is large.
