@@ -99,6 +99,21 @@ class PipelinedRunner(ForwardBackwardRunner):
         self.has_last_stage = has_last_stage
         self.prepare_inputs_fn = prepare_inputs_fn
 
+    def _patch_skip_output_merge(self, schedule: Schedule1F1B) -> None:
+        """Patch schedule to skip output merging, halving memory usage.
+
+        TODO(pytorch-upgrade): PyTorch 2.10+ adds step(return_outputs=False) parameter.
+        This is cleaner and avoids saving outputs entirely when not needed.
+
+        HACK: We monkey patch schedule._merge_outputs to skip the torch.cat operation
+        that merges all microbatch outputs. This is safe because:
+        1. Archon iterates pp_stage.output_chunks directly, not the merged return value
+        2. output_chunks contains the same data, just as a list instead of concatenated
+        3. Skipping merge avoids allocating a second copy, halving memory usage
+        """
+        # NOTE: Upgrading PyTorch may resolve this in the future.
+        schedule._merge_outputs = lambda output_chunks: None
+
     def run(
         self,
         mb_list: MicroBatchList,
@@ -148,6 +163,7 @@ class PipelinedRunner(ForwardBackwardRunner):
             scale_grads=False,
         )
 
+        self._patch_skip_output_merge(schedule)
         schedule.eval(*args, **batched_kwargs)
 
         if not self.has_last_stage:
@@ -199,6 +215,7 @@ class PipelinedRunner(ForwardBackwardRunner):
             scale_grads=False,
         )
 
+        self._patch_skip_output_merge(schedule)
         schedule.step(*args, target=batched_target, **batched_kwargs)
 
         return []
