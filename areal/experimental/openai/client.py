@@ -64,6 +64,38 @@ os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 logger = logging.getLogger("OpenAIClient")
 
 
+def _normalize_message_content(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalize message content from list format to string format.
+
+    OpenAI's multi-content format uses a list of content parts:
+        {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+
+    Many chat templates (e.g., Qwen) only support string content:
+        {"role": "user", "content": "Hello"}
+
+    This function converts list content to string by extracting text parts.
+    """
+    content = message.get("content")
+    if content is None or isinstance(content, str):
+        return message
+
+    if isinstance(content, list):
+        # Extract text from content parts
+        text_parts = []
+        for part in content:
+            if isinstance(part, dict):
+                if part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+                # Skip non-text parts (images, etc.)
+            elif isinstance(part, str):
+                text_parts.append(part)
+        # Join all text parts
+        message = message.copy()
+        message["content"] = "".join(text_parts)
+
+    return message
+
+
 def _ensure_message_dict_list(
     name: str,
     value: list[Any],
@@ -107,7 +139,10 @@ def _ensure_message_dict_list(
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(value):
         if isinstance(item, dict) or isinstance(item, BaseModel):
-            normalized.append(_normalize(item))
+            msg = _normalize(item)
+            # Normalize list content to string content for chat template compatibility
+            msg = _normalize_message_content(msg)
+            normalized.append(msg)
         else:
             raise TypeError(
                 f"{name}[{index}] must be a dict or a BaseModel; got {type(item).__name__}"

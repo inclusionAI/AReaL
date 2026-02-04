@@ -1,10 +1,11 @@
 """OpenHands SDK-based math agent implementation for AReaL training."""
 
 import asyncio
+import atexit
 import math
-import tempfile
 import threading
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Self
 
 from math_verify import parse, verify
@@ -23,11 +24,43 @@ from openhands.sdk import (
 )
 from openhands.sdk.tool import ToolExecutor
 
-from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import AgentWorkflow
 from areal.utils import logging
 
 logger = logging.getLogger("OpenHandsMathAgent")
+
+
+# Lazy-initialized thread pool for running OpenHands agent tasks
+_executor: ThreadPoolExecutor | None = None
+_executor_lock = threading.Lock()
+_DEFAULT_MAX_WORKERS = 4
+
+
+def _get_executor(max_workers: int = _DEFAULT_MAX_WORKERS) -> ThreadPoolExecutor:
+    """Get or create the shared thread pool executor.
+
+    Parameters
+    ----------
+    max_workers : int
+        Maximum number of worker threads for the pool. Only used when
+        creating a new executor. If an executor already exists, this
+        parameter is ignored.
+    """
+    global _executor
+    if _executor is None:
+        with _executor_lock:
+            if _executor is None:
+                _executor = ThreadPoolExecutor(max_workers=max_workers)
+                atexit.register(_shutdown_executor)
+    return _executor
+
+
+def _shutdown_executor() -> None:
+    """Shutdown the shared thread pool executor if it exists."""
+    global _executor
+    if _executor is not None:
+        _executor.shutdown(wait=False)
+        _executor = None
 
 
 def math_reward_fn(completions: str, answer: str) -> float:
@@ -244,7 +277,8 @@ class OpenHandsAgentBuilder:
 
     def __init__(self):
         self._base_url: str | None = None
-        self._model: str = "default"
+        # Use "openai/" prefix for litellm to use OpenAI-compatible API
+        self._model: str = "openai/default"
         self._temperature: float = 1.0
         self._top_p: float = 1.0
         self._max_tokens: int = 1024
@@ -258,7 +292,7 @@ class OpenHandsAgentBuilder:
 
     def with_llm_config(
         self,
-        model: str = "default",
+        model: str = "openai/default",
         temperature: float = 1.0,
         top_p: float = 1.0,
         max_tokens: int = 1024,
@@ -378,7 +412,8 @@ class MathAgent(AgentWorkflow):
     """Simple single-turn math agent using OpenHands SDK.
 
     This agent uses the AReaL proxy to generate responses and calculates
-    rewards based on math answer correctness.
+    rewards based on math answer correctness. Designed for inline mode
+    where the base_url is passed via extra_kwargs.
 
     Example:
         >>> agent = MathAgent(temperature=1.0, max_tokens=1024)
@@ -393,13 +428,59 @@ class MathAgent(AgentWorkflow):
 
         Args:
             **kwargs: Configuration options including:
-                - model: Model name (default: "default")
+                - model: Model name (default: "openai/default")
                 - temperature: Sampling temperature (default: 1.0)
                 - top_p: Top-p sampling parameter (default: 1.0)
                 - max_tokens: Maximum tokens for completion (default: 1024)
                 - max_completion_tokens: Alternative name for max_tokens
         """
         self.kwargs = kwargs.copy()
+
+    def _run_sync(self, data: dict[str, Any], base_url: str | None) -> str | None:
+        """Synchronous implementation of the agent logic.
+
+        Args:
+            data: Input data containing:
+                - messages: List of message dicts with "role" and "content"
+            base_url: The base URL of the AReaL proxy server
+
+        Returns:
+            Completion text from the agent, or None if failed
+        """
+        user_content = OpenHandsAgentBuilder.extract_user_content(
+            data.get("messages", [])
+        )
+        if not user_content:
+            logger.warning("No user message found in input data")
+            return None
+
+        # Build agent
+        agent = (
+            OpenHandsAgentBuilder()
+            .with_base_url(base_url)
+            .with_llm_config(
+                model=self.kwargs.get("model", "openai/default"),
+                temperature=self.kwargs.get("temperature", 1.0),
+                top_p=self.kwargs.get("top_p", 1.0),
+                max_tokens=self.kwargs.get("max_tokens", 1024),
+                max_completion_tokens=self.kwargs.get("max_completion_tokens"),
+            )
+            .build()
+        )
+
+        # Run conversation synchronously
+        conversation = Conversation(agent=agent, visualizer=None)
+        try:
+            conversation.send_message(user_content)
+            conversation.run()
+        except Exception as e:
+            logger.error(f"OpenHands SDK error: {e}")
+            return None
+
+        events = list(conversation.state.events)
+
+        # Extract completion text
+        return OpenHandsAgentBuilder.extract_all_agent_text(events)
 
     async def run(self, data: dict[str, Any], **extra_kwargs: Any) -> float:
         """Run the agent on a single math problem.
@@ -413,54 +494,22 @@ class MathAgent(AgentWorkflow):
 
         Returns:
             Reward value (0.0 or 1.0) based on answer correctness
-
-        Raises:
-            ValueError: If "answer" key is missing from data
         """
         answer = data.get("answer")
         if answer is None:
             raise ValueError("Input data must contain 'answer' key")
 
-        user_content = OpenHandsAgentBuilder.extract_user_content(
-            data.get("messages", [])
+        base_url = extra_kwargs.get("base_url")
+        loop = asyncio.get_running_loop()
+        completion_text = await loop.run_in_executor(
+            _get_executor(), self._run_sync, data, base_url
         )
-        if not user_content:
-            logger.warning("No user message found in input data")
+
+        if completion_text is None:
             return 0.0
 
-        # Build agent
-        agent = (
-            OpenHandsAgentBuilder()
-            .with_base_url(extra_kwargs.get("base_url"))
-            .with_llm_config(
-                model=self.kwargs.get("model", "default"),
-                temperature=self.kwargs.get("temperature", 1.0),
-                top_p=self.kwargs.get("top_p", 1.0),
-                max_tokens=self.kwargs.get("max_tokens", 1024),
-                max_completion_tokens=self.kwargs.get("max_completion_tokens"),
-            )
-            .build()
-        )
-
-        # Run conversation
-        with tempfile.TemporaryDirectory() as workspace:
-            conversation = Conversation(agent=agent, workspace=workspace)
-            try:
-                conversation.send_message(user_content)
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, conversation.run)
-            except Exception as e:
-                logger.error(f"OpenHands SDK error: {e}")
-                return 0.0
-
-            events = list(conversation.state.events)
-
-        # Extract completion and calculate reward
-        completion_text = OpenHandsAgentBuilder.extract_all_agent_text(events)
-        logger.debug(f"Extracted completion: {completion_text[:100]}...")
-
-        reward_fn = AsyncRewardWrapper(math_reward_fn)
-        return await reward_fn(completions=completion_text, answer=answer)
+        # Calculate reward in main thread (math_verify uses signal.alarm)
+        return math_reward_fn(completion_text, answer)
 
 
 class MathToolAgent(AgentWorkflow):
@@ -468,6 +517,7 @@ class MathToolAgent(AgentWorkflow):
 
     This agent extends the basic MathAgent with calculator tools,
     allowing the LLM to perform mathematical operations step by step.
+    Designed for inline mode where the base_url is passed via extra_kwargs.
 
     Example:
         >>> agent = MathToolAgent(temperature=1.0, max_tokens=2048)
@@ -491,13 +541,61 @@ class MathToolAgent(AgentWorkflow):
 
         Args:
             **kwargs: Configuration options including:
-                - model: Model name (default: "default")
+                - model: Model name (default: "openai/default")
                 - temperature: Sampling temperature (default: 1.0)
                 - top_p: Top-p sampling parameter (default: 1.0)
                 - max_tokens: Maximum tokens for completion (default: 2048)
                 - max_completion_tokens: Alternative name for max_tokens
         """
         self.kwargs = kwargs.copy()
+
+    def _run_sync(self, data: dict[str, Any], base_url: str | None) -> str | None:
+        """Synchronous implementation of the agent logic with tools.
+
+        Args:
+            data: Input data containing:
+                - messages: List of message dicts with "role" and "content"
+            base_url: The base URL of the AReaL proxy server
+
+        Returns:
+            Final answer text from the agent, or None if failed
+        """
+        user_content = OpenHandsAgentBuilder.extract_user_content(
+            data.get("messages", [])
+        )
+        if not user_content:
+            logger.warning("No user message found in input data")
+            return None
+
+        # Build agent with tools
+        agent = (
+            OpenHandsAgentBuilder()
+            .with_base_url(base_url)
+            .with_llm_config(
+                model=self.kwargs.get("model", "openai/default"),
+                temperature=self.kwargs.get("temperature", 1.0),
+                top_p=self.kwargs.get("top_p", 1.0),
+                max_tokens=self.kwargs.get("max_tokens", 2048),
+                max_completion_tokens=self.kwargs.get("max_completion_tokens"),
+            )
+            .with_calculator_tools()
+            .with_system_prompt(self.SYSTEM_PROMPT)
+            .build()
+        )
+
+        # Run conversation synchronously
+        conversation = Conversation(agent=agent, visualizer=None)
+        try:
+            conversation.send_message(user_content)
+            conversation.run()
+        except Exception as e:
+            logger.error(f"OpenHands SDK error: {e}")
+            return None
+
+        events = list(conversation.state.events)
+
+        # Extract final answer text
+        return OpenHandsAgentBuilder.extract_final_agent_text(events)
 
     async def run(self, data: dict[str, Any], **extra_kwargs: Any) -> float:
         """Run the agent with tool-calling capabilities.
@@ -511,53 +609,19 @@ class MathToolAgent(AgentWorkflow):
 
         Returns:
             Reward value (0.0 or 1.0) based on answer correctness
-
-        Raises:
-            ValueError: If "answer" key is missing from data
         """
         answer = data.get("answer")
         if answer is None:
             raise ValueError("Input data must contain 'answer' key")
 
-        user_content = OpenHandsAgentBuilder.extract_user_content(
-            data.get("messages", [])
+        base_url = extra_kwargs.get("base_url")
+        loop = asyncio.get_running_loop()
+        final_answer = await loop.run_in_executor(
+            _get_executor(), self._run_sync, data, base_url
         )
-        if not user_content:
-            logger.warning("No user message found in input data")
+
+        if final_answer is None:
             return 0.0
 
-        # Build agent with tools
-        agent = (
-            OpenHandsAgentBuilder()
-            .with_base_url(extra_kwargs.get("base_url"))
-            .with_llm_config(
-                model=self.kwargs.get("model", "default"),
-                temperature=self.kwargs.get("temperature", 1.0),
-                top_p=self.kwargs.get("top_p", 1.0),
-                max_tokens=self.kwargs.get("max_tokens", 2048),
-                max_completion_tokens=self.kwargs.get("max_completion_tokens"),
-            )
-            .with_calculator_tools()
-            .with_system_prompt(self.SYSTEM_PROMPT)
-            .build()
-        )
-
-        # Run conversation
-        with tempfile.TemporaryDirectory() as workspace:
-            conversation = Conversation(agent=agent, workspace=workspace)
-            try:
-                conversation.send_message(user_content)
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, conversation.run)
-            except Exception as e:
-                logger.error(f"OpenHands SDK error: {e}")
-                return 0.0
-
-            events = list(conversation.state.events)
-
-        # Extract final answer and calculate reward
-        final_answer = OpenHandsAgentBuilder.extract_final_agent_text(events)
-        logger.debug(f"Extracted final answer: {final_answer[:100]}...")
-
-        reward_fn = AsyncRewardWrapper(math_reward_fn)
-        return await reward_fn(completions=final_answer, answer=answer)
+        # Calculate reward in main thread (math_verify uses signal.alarm)
+        return math_reward_fn(final_answer, answer)
