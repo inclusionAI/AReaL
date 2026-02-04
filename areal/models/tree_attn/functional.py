@@ -473,17 +473,17 @@ def _gather_packed_tree_vocab_stats(
     """Compute vocab min and max logits for all sequences in a packed tree.
 
     For tree training, vocab_min_logits and vocab_max_logits need to be unpacked
-    from the tree structure back to per-sequence format.
+    from the tree structure back to per-sequence format, similar to logprobs.
 
-    Unlike logprobs calculation which requires shifted labels, vocab stats only
-    need the min/max values from logits at each prediction position. For a
-    sequence with tree indices [(s0,e0), (s1,e1), ...], the prediction positions
-    are: [s0:e0+1], [s1:e1+1], ...
+    The key insight is that for positions within a shared prefix, the vocab stats
+    are identical across all sequences sharing that prefix. We use caching to
+    avoid redundant computation.
 
     Parameters
     ----------
     logits : torch.Tensor
-        Model output logits of shape (T, vocab_size). T is the padded tree size.
+        Model output logits of shape (T, vocab_size) or (T, vocab_size/tp)
+        when tensor parallelism is enabled. T is the padded tree size.
     trie : TrieNode
         Root TrieNode of the packed tree structure.
 
@@ -492,6 +492,8 @@ def _gather_packed_tree_vocab_stats(
     tuple[dict[int, torch.Tensor], dict[int, torch.Tensor]]
         Tuple of (vocab_min_dict, vocab_max_dict), where each dictionary maps
         sequence_id to the corresponding tensor of shape (seq_len - 1,).
+        The values are aligned such that vocab_min[i] and vocab_max[i]
+        correspond to the logits used to predict the (i+1)-th token.
     """
     vocab_min_results: dict[int, torch.Tensor] = {}
     vocab_max_results: dict[int, torch.Tensor] = {}
@@ -502,6 +504,11 @@ def _gather_packed_tree_vocab_stats(
     all_vocab_min = logits.detach().min(-1).values.float()  # (T,)
     all_vocab_max = logits.detach().max(-1).values.float()  # (T,)
 
+    # Cache for internal node stats: (start_idx, end_idx) -> (min, max) tensors
+    node_cache: dict[tuple[int, int], tuple[torch.Tensor, torch.Tensor]] = {}
+    # Cache for transition stats: (pred_pos, label_pos) -> (min, max) scalars
+    transition_cache: dict[tuple[int, int], tuple[torch.Tensor, torch.Tensor]] = {}
+
     for seq_id in trie.all_sequence_ids:
         indices = trie.get_sequence_tree_indices(seq_id)
         if not indices:
@@ -510,12 +517,50 @@ def _gather_packed_tree_vocab_stats(
             vocab_max_results[seq_id] = empty
             continue
 
-        # Gather vocab stats for each node segment [start, end] (inclusive)
-        min_parts = [all_vocab_min[start : end + 1] for start, end in indices]
-        max_parts = [all_vocab_max[start : end + 1] for start, end in indices]
+        min_parts: list[torch.Tensor] = []
+        max_parts: list[torch.Tensor] = []
 
-        vocab_min_results[seq_id] = torch.cat(min_parts, dim=0)
-        vocab_max_results[seq_id] = torch.cat(max_parts, dim=0)
+        for i, (start, end) in enumerate(indices):
+            # Get or compute cached internal node stats
+            node_key = (start, end)
+            if node_key not in node_cache:
+                # Internal predictions: positions [start, end-1] predict [start+1, end]
+                num_internal = end - start
+                if num_internal > 0:
+                    internal_min = all_vocab_min[start:end]
+                    internal_max = all_vocab_max[start:end]
+                else:
+                    internal_min = torch.empty(0, device=device, dtype=dtype)
+                    internal_max = torch.empty(0, device=device, dtype=dtype)
+                node_cache[node_key] = (internal_min, internal_max)
+
+            internal_min, internal_max = node_cache[node_key]
+            if internal_min.numel() > 0:
+                min_parts.append(internal_min)
+                max_parts.append(internal_max)
+
+            # Get or compute cached transition stats to next node
+            next_start = 0
+            if i + 1 < len(indices):
+                next_start, _ = indices[i + 1]
+            trans_key = (end, next_start)
+            if trans_key not in transition_cache:
+                # Transition: position 'end' predicts token at 'next_start'
+                trans_min = all_vocab_min[end]
+                trans_max = all_vocab_max[end]
+                transition_cache[trans_key] = (trans_min, trans_max)
+
+            trans_min, trans_max = transition_cache[trans_key]
+            min_parts.append(trans_min.unsqueeze(0))
+            max_parts.append(trans_max.unsqueeze(0))
+
+        if min_parts:
+            vocab_min_results[seq_id] = torch.cat(min_parts, dim=0)
+            vocab_max_results[seq_id] = torch.cat(max_parts, dim=0)
+        else:
+            empty = torch.empty(0, device=device, dtype=dtype)
+            vocab_min_results[seq_id] = empty
+            vocab_max_results[seq_id] = empty
 
     return vocab_min_results, vocab_max_results
 
