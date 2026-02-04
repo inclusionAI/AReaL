@@ -264,6 +264,9 @@ def generate_config_section(
 
     for field in fields(config_class):
         field_name = field.name
+        # Skip internal fields ("_" is not designed for end-user)
+        if field_name.startswith("_"):
+            continue
         field_type = get_type_description(field.type, all_dataclasses)
         default_value = format_default_value(field)
 
