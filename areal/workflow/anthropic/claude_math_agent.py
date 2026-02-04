@@ -111,6 +111,11 @@ class MathToolAgent:
 
         base_url = extra_kwargs.get("base_url", None)
 
+        # Set SDK timeout in current process BEFORE creating ClaudeSDKClient
+        # The SDK reads CLAUDE_CODE_STREAM_CLOSE_TIMEOUT from os.environ during __init__,
+        # not from ClaudeAgentOptions.env (which only passes to subprocess)
+        os.environ["CLAUDE_CODE_STREAM_CLOSE_TIMEOUT"] = "300000"  # 300s timeout
+
         env = {}
         if base_url:
             env.update(
