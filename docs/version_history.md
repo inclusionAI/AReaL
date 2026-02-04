@@ -5,7 +5,8 @@ development history, highlighting the key contributions of each version release.
 
 ## AReaL-lite (July 2025): Simplifying RL for Everyone
 
-*📖 [Step-by-step Tutorial](https://inclusionai.github.io/AReaL/lite/gsm8k_grpo.html)*
+*📖
+[Step-by-step Tutorial](https://inclusionai.github.io/AReaL/tutorial/gsm8k_grpo.html)*
 
 AReaL-lite represents a fundamental rethinking of how researchers interact with
 reinforcement learning systems. Born from the recognition that AReaL's system-first

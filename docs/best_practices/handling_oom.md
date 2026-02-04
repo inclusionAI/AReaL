@@ -177,7 +177,7 @@ weight_update_meta = WeightUpdateMeta.from_disk(config.saver)
 ```
 
 Check the "Transferring Weights to Inference Servers" section in the
-[Weight Updates Guide](../lite/gsm8k_grpo.md) for the full implementation details.
+[Weight Updates Guide](../tutorial/gsm8k_grpo.md) for the full implementation details.
 
 ### 2. Reduce Memory Buffer Size
 

@@ -226,7 +226,7 @@ Reference docs:
 ### Publish docs
 
 - Place prose in the right section under `docs/` (tutorial, algorithms, customization,
-  lite, etc.) and update `_toc.yml` so Jupyter Book exposes the new page.
+  etc.) and update `_toc.yml` so Jupyter Book exposes the new page.
 - Run `mdformat` (or `mdformat --check`) on edited Markdown plus `ruff format` on
   embedded code blocks when needed.
 - Regenerate CLI docs with `python docs/generate_cli_docs.py` whenever
@@ -322,8 +322,8 @@ skipped.
 - **Tutorials & quickstart** (`docs/tutorial/quickstart.md`): End-to-end GSM8K GRPO run
   covering single-node LocalLauncher flows, Ray/Slurm deployment knobs, and SkyPilot
   recipes.
-- **Lite deep dive** (`docs/lite/gsm8k_grpo.md`): Architecture-level walkthrough of how
-  launchers, RemoteSGLangEngine, workflows, and FSDP PPO actors coordinate during
+- **Lite deep dive** (`docs/tutorial/gsm8k_grpo.md`): Architecture-level walkthrough of
+  how launchers, RemoteSGLangEngine, workflows, and FSDP PPO actors coordinate during
   asynchronous GRPO on GSM8K; great for understanding control flow before editing
   engines or workflows.
 - **Customization guides** (`docs/customization/*.md`): Step-by-step patterns for adding
@@ -341,4 +341,5 @@ skipped.
   dataset/model combos, and experiment-log expectations to mention in PR validation
   notes.
 - **Version history** (`docs/version_history.md`): Release timeline noting major API
-  moves, deprecations, and migration steps from legacy AReaL to AReaL-lite.
+  moves, deprecations, and migration steps from legacy AReaL to AReaL-lite (the current
+  AReaL).

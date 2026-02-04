@@ -46,8 +46,9 @@ actor:
 
 Run with:
 ```bash
-python -m areal.launcher.local examples/math/gsm8k_rl.py \
-  --config examples/experimental/prox_approx/gsm8k_grpo_prox_approx.yaml
+python examples/math/gsm8k_rl.py \
+  --config examples/experimental/prox_approx/gsm8k_grpo_prox_approx.yaml \
+  scheduler.type=local
 ```
 
 ### Evaluation Configuration (With Metrics)

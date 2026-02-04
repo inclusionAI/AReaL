@@ -3,7 +3,7 @@
 ## TL;DR
 
 Follow our
-[step-by-step code walkthrough](https://inclusionai.github.io/AReaL/lite/gsm8k_grpo.html)
+[step-by-step code walkthrough](https://inclusionai.github.io/AReaL/tutorial/gsm8k_grpo.html)
 to get started with AReaL immediately!
 
 ## Motivation

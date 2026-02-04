@@ -87,7 +87,7 @@ uv run python docs/generate_cli_docs.py
 | Add Reward             | `areal/api/reward_api.py`, `areal/reward/geometry3k.py`       |
 | Algorithm Details      | `docs/algorithms/*.md`                                        |
 | Quickstart             | `docs/tutorial/quickstart.md`                                 |
-| Architecture Deep Dive | `docs/lite/gsm8k_grpo.md`                                     |
+| Architecture Deep Dive | `docs/tutorial/gsm8k_grpo.md`                                 |
 | CLI Reference          | `docs/cli_reference.md`                                       |
 
 ## Git Workflow

@@ -364,11 +364,7 @@ def local_main(config, run_id: int = 0):
         tms_env_vars = {}
     # Launch trainer entrypoint
     if alloc_mode.type_ != AllocationType.LLM_SERVER_ONLY:
-        if alloc_mode.type_ == AllocationType.DECOUPLED_EVAL:
-            gpu = 0
-            nprocs = 1
-        else:
-            gpu = nprocs = alloc_mode.train.world_size
+        gpu = nprocs = alloc_mode.train.world_size
         _env_vars = dict(
             AREAL_LLM_SERVER_ADDRS=",".join(server_addrs),
             AREAL_RECOVER_RUN=str(int(is_recover_run)),

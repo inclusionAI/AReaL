@@ -1,183 +1,161 @@
 # Evaluation
 
-## Option 1: Using AReaL's Standalone Evaluation Package
+AReaL provides distributed inference evaluation using the same RolloutController
+infrastructure as training. This allows you to leverage existing workflows and
+schedulers to scale evaluation across multiple GPUs and nodes.
 
-The evaluation code is located in the `evaluation` folder of the repository. Following
-the previous tutorial, trained checkpoints will be saved under
-`${fileroot}/checkpoints/${USER}/${experiment_name}/${trial_name}/`.
+## Quick Start
 
-### Install Evaluation Dependencies
-
-The evaluation package has its own dependencies that are separate from the main AReaL
-package. Before running evaluation, install the evaluation dependencies:
+Run evaluation on GSM8K:
 
 ```bash
-cd evaluation
-pip install -r requirements.txt
-pip install -e ./latex2sympy
+python3 examples/math/gsm8k_eval.py \
+    --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=local \
+    actor.path=/path/to/checkpoint
 ```
 
-### Run Evaluation
-
-Specify an `output_path` to save the test results. If not specified, the results will be
-saved in `model_path`.
-
-#### Math Evaluation
+For distributed evaluation:
 
 ```bash
-cd evaluation
-nohup python eval_and_aggregate.py \
-    --model_path /path/to/checkpoint \
-    --output_path /path/to/outputs \
-    --max_gen_tokens 32768 \
-    --data_names math_500,aime24,amc23 \
-    --prompt_type qwen3-think \
-    --task math &> eval_and_aggregate_parallel.log &
+# With Ray (3 nodes, 12 GPUs)
+python3 examples/math/gsm8k_eval.py \
+    --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=ray \
+    allocation_mode=sglang:d12p1t1 \
+    cluster.n_nodes=3
+
+# With Slurm (12 nodes, 96 GPUs)
+python3 examples/math/gsm8k_eval.py \
+    --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=slurm \
+    allocation_mode=sglang:d96p1t1 \
+    cluster.n_nodes=12
 ```
 
-#### Code Evaluation
+## Architecture
 
-**Obtaining Data:**
-
-- Due to the size of code datasets (some test cases are relatively large), we have
-  uploaded all our code datasets to [Hugging Face](https://huggingface.co/inclusionAI).
-- Once you have downloaded the code dataset, place it under `./evaluation/data/`.
-
-**Running Evaluation:**
-
-```bash
-cd evaluation
-nohup python eval_and_aggregate.py \
-    --model_path /path/to/checkpoint \
-    --output_path /path/to/outputs \
-    --max_gen_tokens 32768 \
-    --data_names codeforces,lcb_v5 \
-    --prompt_type qwen3-think-pure \
-    --temperature 1.0 \
-    --top_p 0.95 \
-    --num_sample_nodes 8 \
-    --samples_per_node 1 \
-    --n_sampling $((num_sample_nodes * samples_per_node)) \
-    --task code &> eval_and_aggregate_parallel.log &
-```
-
-#### Command Line Parameters
-
-- **`--model_path`**: Path to the saved model parameters
-- **`--output_path`**: Path to store generated answers and log files during evaluation
-- **`--data_names`**: Dataset(s) to evaluate. Multiple datasets can be separated by
-  commas. Available options:
-  - Math: `math_500`, `aime24`, `aime25`, `amc23`
-  - Code: `lcb_v5`, `lcb_v5_2410_2502`, `codeforces`, `code_contest_all`
-- **`--max_gen_tokens`**: Maximum length of generated answers (default: 32768)
-- **`--prompt_type`**: Specify the prompt template. For our latest model, we use
-  `qwen3-think` for math datasets and `qwen3-think-pure` for code datasets.
-- **`--num_sample_nodes`**: Number of multiple sampling seeds to ensure sampling
-  diversity.
-- **`--samples_per_node`**: Number of samples to generate per seed for each problem.
-
-### Logs and Evaluation Results
-
-Check `${output_path}/math_eval_${max_gen_tokens}/logs` to review the log of each
-worker.
-
-The evaluation script will output a results table in the terminal:
+Evaluation uses a single-controller architecture without training workers:
 
 ```
-+----------+---------------+---------------+---------------+------------+---------------+--------+---------+
-| dataset  | num_questions | greedy_length | sample_length | greedy_acc | sample_pass@1 | pass@8 | pass@16 |
-+----------+---------------+---------------+---------------+------------+---------------+--------+---------+
-| math_500 |      500      |     6757.4    |     4139.5    |    84.4    |      92.7     |  97.3  |   97.7  |
-|  aime24  |       30      |    19328.0    |    13663.5    |    50.0    |      50.4     |  77.3  |   80.0  |
-|  amc23   |       40      |     8850.0    |     6526.2    |    80.0    |      90.5     |  96.8  |   98.8  |
-+----------+---------------+---------------+---------------+------------+---------------+--------+---------+
+Controller Process
+    │
+    └─> RolloutController
+        ├─> Scheduler creates inference workers (SGLang/vLLM)
+        ├─> BatchTaskDispatcher submits eval tasks
+        └─> Collects results and computes metrics
 ```
 
-#### Metrics Explanation
+The controller orchestrates evaluation from a CPU process while inference workers run on
+GPUs.
 
-- **`{greedy|sample}_length`**: Average answer length under greedy or random sampling
-  strategy
-- **`greedy_acc`**: Average accuracy under greedy sampling
-- **`sample_pass@{k}`**: Probability of generating a correct answer within `k` attempts
-  under random sampling
+## Implementation
 
-For the Codeforces dataset, we use the Elo ranking algorithm to evaluate model
-performance, referring to [CodeElo](https://github.com/QwenLM/CodeElo) and
-[rllm](https://github.com/agentica-project/rllm):
+See [`examples/math/gsm8k_eval.py`](../../examples/math/gsm8k_eval.py) for a complete
+example. The key pattern:
 
-```
-+------------+----------------+-----------+
-|  Dataset   | Percentile (%) | CF Rating |
-+------------+----------------+-----------+
-| codeforces |      17.9      |    590    |
-+------------+----------------+-----------+
-```
+```python
+# Parse allocation mode and initialize scheduler
+allocation_mode = AllocationMode.from_str(config.allocation_mode)
+scheduler = LocalScheduler(exp_config=config)  # or Ray/Slurm
 
-- **`CF Rating`**: The overall Elo rank score of the model across 57 Codeforces
-  contests.
-- **`Percentile`**: The Elo ranking percentile of the model among all Codeforces users.
+# Create RolloutController
+if allocation_mode.gen_backend == "sglang":
+    engine_cls = RemoteSGLangEngine
+    server_args = SGLangConfig.build_args(...)
+elif allocation_mode.gen_backend == "vllm":
+    engine_cls = RemotevLLMEngine
+    server_args = vLLMConfig.build_args(...)
 
-> **Note**: As the penalty mechanism may cause fluctuations in Elo rankings, we suggest
-> performing multiple evaluations and taking the average score as the final result.
+eval_rollout = engine_cls.as_controller(config.rollout, scheduler)
+eval_rollout.initialize(
+    role="eval-rollout",
+    alloc_mode=allocation_mode,
+    server_args=server_args,
+)
 
-### Configuration Details
+# Submit evaluation tasks
+for data in dataloader:
+    for item in data:
+        eval_rollout.submit(item, workflow, group_size=config.gconfig.n_samples)
+        cnt += 1
 
-#### Sampling Parameters
-
-- The evaluation script defaults to averaging 32 samples with temperature 1.0. For the
-  code dataset, we set it to 8 samples.
-- We observed that the `enforce_eager` parameter in vLLM significantly impacts
-  evaluation performance. When `enforce_eager=True`, we can reproduce the model
-  performance reported in previous work. Without this setting, evaluation results may
-  fall below reported performance. Therefore, we enforce `enforce_eager=True` during
-  evaluation.
-
-#### Runtime Expectations
-
-Due to the sampling requirements and `enforce_eager` setting, the evaluation process
-typically takes considerable time.
-
-Runtime depends on several factors:
-
-- Maximum generation length
-- Number of questions in the dataset
-- Model size
-
-**Performance benchmarks** (on 8x H100 GPUs):
-
-- **AIME dataset**: ~80 minutes
-- **MATH_500 dataset**: ~160 minutes
-
-## Option 2: Using AReaL-lite's Integration for RL Rollout
-
-When using AReaL-lite, you can leverage the existing workflow from your training script
-for evaluation purposes. This approach allows you to reuse the rollout components you've
-already implemented, making the transition from training to evaluation seamless.
-
-### Setting Up Evaluation
-
-To set up evaluation using this method, create a new script that contains only the
-rollout portion of your original training script. This focused script should include the
-data collection and inference logic without the training components.
-
-Once you have prepared your evaluation script, launch the evaluation experiment using
-the following command:
-
-```bash
-python3 -m areal.launcher.${local|slurm|ray} my_script.py --config my-config.yaml allocation_mode=sglang:d4p1t2+eval
+# Wait and collect results
+eval_rollout.wait(cnt, timeout=None)
+eval_stats = eval_rollout.export_stats()
 ```
 
-### Key Differences from Training
+This follows the same controller pattern as training (see
+[`areal/experimental/trainer/rl.py:540-594`](../../areal/experimental/trainer/rl.py))
+but without training components.
 
-The primary difference between training and evaluation commands lies in the
-`allocation_mode` parameter. In the evaluation setup, we remove the allocation of
-training processes and replace them with an `eval` annotation. This modified allocation
-mode launches **CPU processes** that run your customized workflow and collect data from
-the LLM server, optimizing resource usage for evaluation tasks.
+## Configuration
 
-> **Note**: Optimal configurations often differ significantly between training and
-> evaluation phases. As a user, you are responsible for ensuring that your evaluation
-> experiment configuration and evaluation metrics are appropriate for your specific use
-> case. Pay particular attention to settings such as `GenerationHyperparameters` and
-> reward function to ensure they align with your evaluation objectives rather than your
-> training setup.
+Evaluation configs use only inference components.
+
+It is also valid to use the previous training config but with the evaluation script.
+
+```yaml
+experiment_name: gsm8k-eval
+trial_name: eval0
+seed: 1
+
+allocation_mode: sglang:d4p1t1  # Inference-only
+
+scheduler:
+  type: local  # or 'ray', 'slurm'
+
+rollout:
+  max_concurrent_rollouts: 256
+  max_head_offpolicyness: 1e12  # No staleness control
+
+gconfig:
+  n_samples: 8
+  temperature: 1.0
+  max_new_tokens: 1024
+
+actor:
+  path: Qwen/Qwen2.5-1.5B-Instruct
+  dtype: bfloat16
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+
+valid_dataset:
+  name: gsm8k
+  split: test
+  batch_size: 32
+```
+
+## Logging Metrics
+
+Export stats and log to both console and wandb:
+
+```python
+eval_stats = eval_rollout.export_stats()
+
+if rank == 0:
+    print(tabulate_stats(eval_stats))
+
+    try:
+        import wandb
+        if wandb.run is not None:
+            wandb.log({"eval": eval_stats})
+    except ImportError:
+        pass
+```
+
+## Custom Workflows
+
+Reuse training workflows or create custom ones. See
+[agentic RL tutorial](../tutorial/agentic_rl.md) and
+[Customization: Rollout Workflows](../customization/agent.md) for complete guides.
+
+## Next Steps
+
+- [Distributed Experiments](quickstart.md#distributed-experiments-with-ray-or-slurm)
+- [Customization: Workflows](../customization/agent.md)
+- [Agentic RL Tutorial](../tutorial/agentic_rl.md)
+- [Large MoE Training](../tutorial/megatron.md)

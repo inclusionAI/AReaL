@@ -50,8 +50,9 @@ This will generate the required `train_e.jsonl` and `test_e.jsonl` files in the
 Launch the local AReaL training process using the provided configuration.
 
 ```bash
-python3 -m areal.launcher.local train.py \
+python3 train.py \
     --config train_config.yaml \
+    scheduler.type=local \
     experiment_name=countdown-grpo \
     trial_name=trial1 \
     actor.path=Qwen/Qwen2.5-3B-Instruct \
