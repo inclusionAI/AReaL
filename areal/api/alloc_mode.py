@@ -264,7 +264,7 @@ class ModelAllocation:
     >>> ModelAllocation("sglang", "rollout", ParallelStrategy(dp=2), SchedulingStrategy("separation"))
     """
 
-    backend: Literal["fsdp", "megatron", "archon", "vllm", "sglang", "cpu"]
+    backend: Literal["fsdp", "megatron", "archon", "vllm", "sglang"]
     name: str | None
     parallel: ParallelStrategy | None
     scheduling_strategy: SchedulingStrategy
