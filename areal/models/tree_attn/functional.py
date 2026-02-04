@@ -465,6 +465,147 @@ def gather_packed_tree_logprobs_entropy(
     return logprob, entropy
 
 
+@trace_perf("tree_attn._gather_packed_tree_vocab_stats")
+def _gather_packed_tree_vocab_stats(
+    logits: torch.Tensor,
+    trie: TrieNode,
+) -> tuple[dict[int, torch.Tensor], dict[int, torch.Tensor]]:
+    """Compute vocab min and max logits for all sequences in a packed tree.
+
+    For tree training, vocab_min_logits and vocab_max_logits need to be unpacked
+    from the tree structure back to per-sequence format, similar to logprobs.
+
+    The key insight is that for positions within a shared prefix, the vocab stats
+    are identical across all sequences sharing that prefix. We use caching to
+    avoid redundant computation.
+
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Model output logits of shape (T, vocab_size) or (T, vocab_size/tp)
+        when tensor parallelism is enabled. T is the padded tree size.
+    trie : TrieNode
+        Root TrieNode of the packed tree structure.
+
+    Returns
+    -------
+    tuple[dict[int, torch.Tensor], dict[int, torch.Tensor]]
+        Tuple of (vocab_min_dict, vocab_max_dict), where each dictionary maps
+        sequence_id to the corresponding tensor of shape (seq_len - 1,).
+        The values are aligned such that vocab_min[i] and vocab_max[i]
+        correspond to the logits used to predict the (i+1)-th token.
+    """
+    vocab_min_results: dict[int, torch.Tensor] = {}
+    vocab_max_results: dict[int, torch.Tensor] = {}
+    device = logits.device
+    dtype = torch.float
+
+    # Compute vocab min/max for all positions once
+    all_vocab_min = logits.detach().min(-1).values.float()  # (T,)
+    all_vocab_max = logits.detach().max(-1).values.float()  # (T,)
+
+    # Cache for internal node stats: (start_idx, end_idx) -> (min, max) tensors
+    node_cache: dict[tuple[int, int], tuple[torch.Tensor, torch.Tensor]] = {}
+    # Cache for transition stats: (pred_pos, label_pos) -> (min, max) scalars
+    transition_cache: dict[tuple[int, int], tuple[torch.Tensor, torch.Tensor]] = {}
+
+    for seq_id in trie.all_sequence_ids:
+        indices = trie.get_sequence_tree_indices(seq_id)
+        if not indices:
+            empty = torch.empty(0, device=device, dtype=dtype)
+            vocab_min_results[seq_id] = empty
+            vocab_max_results[seq_id] = empty
+            continue
+
+        min_parts: list[torch.Tensor] = []
+        max_parts: list[torch.Tensor] = []
+
+        for i, (start, end) in enumerate(indices):
+            # Get or compute cached internal node stats
+            node_key = (start, end)
+            if node_key not in node_cache:
+                # Internal predictions: positions [start, end-1] predict [start+1, end]
+                num_internal = end - start
+                if num_internal > 0:
+                    internal_min = all_vocab_min[start:end]
+                    internal_max = all_vocab_max[start:end]
+                else:
+                    internal_min = torch.empty(0, device=device, dtype=dtype)
+                    internal_max = torch.empty(0, device=device, dtype=dtype)
+                node_cache[node_key] = (internal_min, internal_max)
+
+            internal_min, internal_max = node_cache[node_key]
+            if internal_min.numel() > 0:
+                min_parts.append(internal_min)
+                max_parts.append(internal_max)
+
+            # Get or compute cached transition stats to next node
+            next_start = 0
+            if i + 1 < len(indices):
+                next_start, _ = indices[i + 1]
+            trans_key = (end, next_start)
+            if trans_key not in transition_cache:
+                # Transition: position 'end' predicts token at 'next_start'
+                trans_min = all_vocab_min[end]
+                trans_max = all_vocab_max[end]
+                transition_cache[trans_key] = (trans_min, trans_max)
+
+            trans_min, trans_max = transition_cache[trans_key]
+            min_parts.append(trans_min.unsqueeze(0))
+            max_parts.append(trans_max.unsqueeze(0))
+
+        if min_parts:
+            vocab_min_results[seq_id] = torch.cat(min_parts, dim=0)
+            vocab_max_results[seq_id] = torch.cat(max_parts, dim=0)
+        else:
+            empty = torch.empty(0, device=device, dtype=dtype)
+            vocab_min_results[seq_id] = empty
+            vocab_max_results[seq_id] = empty
+
+    return vocab_min_results, vocab_max_results
+
+
+@trace_perf("tree_attn.gather_packed_tree_vocab_stats")
+def gather_packed_tree_vocab_stats(
+    logits: torch.Tensor,
+    trie: TrieNode,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute vocab min and max logits for all sequences in a packed tree.
+
+    This is the public API that returns concatenated tensors instead of
+    per-sequence dictionaries.
+
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Model output logits of shape (T, vocab_size).
+    trie : TrieNode
+        Root TrieNode of the packed tree structure.
+
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor]
+        Tuple of (vocab_min_logits, vocab_max_logits), each of shape
+        (total_tokens - num_sequences,) where total_tokens is the sum of
+        all sequence lengths.
+    """
+    # Handle empty/dummy trie
+    if not trie.all_sequence_ids:
+        empty = torch.empty(0, device=logits.device, dtype=torch.float)
+        return empty, empty
+
+    vocab_min_results, vocab_max_results = _gather_packed_tree_vocab_stats(logits, trie)
+
+    # Pack results according to trie.all_sequence_ids
+    vocab_min = torch.cat(
+        [vocab_min_results[sid] for sid in trie.all_sequence_ids], dim=0
+    )
+    vocab_max = torch.cat(
+        [vocab_max_results[sid] for sid in trie.all_sequence_ids], dim=0
+    )
+    return vocab_min, vocab_max
+
+
 @trace_perf("tree_attn.merge_packed_tree_results")
 def merge_packed_tree_results(
     results_list: list[dict[int, torch.Tensor]],

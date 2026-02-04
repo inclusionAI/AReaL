@@ -16,7 +16,10 @@ from megatron.core.transformer.transformer_layer import (
 from torch.nn.attention.flex_attention import BlockMask
 
 from areal.models.tree_attn.constants import USE_TRITON_TREE_ATTN
-from areal.models.tree_attn.module_fsdp import _flex_attention
+from areal.models.tree_attn.module_fsdp import (
+    _flex_attention,
+    create_block_mask_from_dense,
+)
 from areal.models.tree_attn.triton_kernel import (
     TRITON_AVAILABLE,
     TreeAttentionData,
@@ -63,7 +66,7 @@ class PytorchFlexAttention(torch.nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        attention_mask: BlockMask | TreeAttentionData,
+        attention_mask: BlockMask | TreeAttentionData | torch.Tensor,
         attn_mask_type: AttnMaskType,
         attention_bias: torch.Tensor = None,
         packed_seq_params: PackedSeqParams = None,
@@ -71,7 +74,10 @@ class PytorchFlexAttention(torch.nn.Module):
         # query: [S, B, H, D] in which B should be 1 in current tree training implementation
         # key: [S, B, H, D]
         # value: [S, B, H, D]
-        # attention_mask: BlockMask | TreeAttentionData (pre-created)
+        # attention_mask: BlockMask | TreeAttentionData | torch.Tensor
+        #   - BlockMask: pre-created block mask for flex_attention
+        #   - TreeAttentionData: for Triton tree attention
+        #   - torch.Tensor: dense attention mask that will be converted to BlockMask
         # attention_mask_type: arbitrary
 
         # Check for Triton path
@@ -118,10 +124,20 @@ class PytorchFlexAttention(torch.nn.Module):
                 raise NotImplementedError(
                     "PytorchFlexAttention does not support packed sequences yet."
                 )
-            if not isinstance(attention_mask, BlockMask):
+
+            if isinstance(attention_mask, torch.Tensor):
+                seq_len = attention_mask.shape[0]
+                block_mask = create_block_mask_from_dense(
+                    attention_mask, seq_len, attention_mask.device
+                )
+            elif isinstance(attention_mask, BlockMask):
+                block_mask = attention_mask
+            else:
                 raise ValueError(
-                    "PytorchFlexAttention requires a pre-created BlockMask for flex_attention path. "
-                    "Use create_block_mask_from_dense() during data preparation."
+                    "PytorchFlexAttention requires either a BlockMask, dense tensor, "
+                    "or TreeAttentionData as attention_mask. "
+                    "For flex_attention path, use create_block_mask_from_dense() "
+                    "or pass a dense mask tensor."
                 )
 
             # query, key, value shape: [S, B, H, D] -> [B, H, S, D]
@@ -134,7 +150,7 @@ class PytorchFlexAttention(torch.nn.Module):
                 query,
                 key,
                 value,
-                block_mask=attention_mask,
+                block_mask=block_mask,
                 score_mod=None,
                 scale=self.softmax_scale,
                 enable_gqa=enable_gqa,
