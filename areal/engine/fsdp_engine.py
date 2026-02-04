@@ -69,6 +69,7 @@ from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.models.tree_attn.functional import (
     _gather_packed_tree_logprobs,
     gather_packed_tree_logprobs_entropy,
+    gather_packed_tree_vocab_stats,
     merge_packed_tree_results,
 )
 from areal.models.tree_attn.module import (
@@ -564,6 +565,9 @@ class FSDPEngine(TrainEngine):
                     block_mask = build_block_mask_from_trie(
                         ctx.trie_node, padded_size, self.device
                     )
+                    # Pass block_mask as a separate kwarg, not as attention_mask.
+                    # The patched _tree_attn_fwd_func expects block_mask in kwargs,
+                    # which transformers will pass through to the attention function.
                     inputs["block_mask"] = block_mask
 
             with trace_scope("fsdp_engine.forward"):
@@ -1550,8 +1554,12 @@ class FSDPEngine(TrainEngine):
                     # This ensures backward() works correctly for FSDP synchronization
                     return logits.sum() * 0.0
 
-                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
-                    logits
+                # For tree training, use gather_packed_tree_vocab_stats to properly
+                # unpack vocab stats from tree structure back to per-sequence format.
+                # This is necessary because the logits are in packed tree format where
+                # multiple sequences share prefix positions.
+                vocab_min_logits, vocab_max_logits = gather_packed_tree_vocab_stats(
+                    logits, ctx.trie_node
                 )
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
                     logits,
