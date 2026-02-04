@@ -65,7 +65,7 @@ python3 -m sglang.launch_server \
     --host 0.0.0.0 \
     --port 8000 \
     --tool-call-parser qwen25 \
-    --chat-template ./qwen3_nonthinking.jinja
+    --chat-template ./qwen3_nonthinking.jinja \
     --dp-size 2 \
     --tp-size 4
 ```
