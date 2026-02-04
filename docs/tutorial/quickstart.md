@@ -1,7 +1,7 @@
 # Quickstart
 
-Welcome to the **AReaL-lite** Quickstart Guide! This guide demonstrates how to run an
-AReaL-lite experiment training an LLM on the GSM8K dataset using the GRPO algorithm with
+Welcome to the **AReaL** Quickstart Guide! This guide demonstrates how to run an AReaL
+experiment training an LLM on the GSM8K dataset using the GRPO algorithm with
 function-based rewards. Ensure you've completed
 [the installation and environment setup](installation.md) before proceeding.
 

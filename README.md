@@ -171,7 +171,7 @@ For comprehensive setup instructions, see
 
 ### Code Walkthrough
 
-- [Running GRPO on GSM8K dataset with AReaL-lite](https://inclusionai.github.io/AReaL/lite/gsm8k_grpo.html)
+- [Running GRPO on GSM8K dataset with AReaL-lite](https://inclusionai.github.io/AReaL/tutorial/gsm8k_grpo.html)
 
 ### Customization
 

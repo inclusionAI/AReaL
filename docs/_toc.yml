@@ -7,7 +7,7 @@ parts:
   - caption: Version History
     chapters:
     - file: version_history
-  - caption: Getting Started with AReaL-lite
+  - caption: Getting Started
     chapters:
     - file: tutorial/gsm8k_grpo
   - caption: Tutorial
