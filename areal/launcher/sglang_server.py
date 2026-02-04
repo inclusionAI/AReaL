@@ -228,11 +228,8 @@ def launch_sglang_server(argv):
     # Get CPU per GPU from rollout scheduling spec
     rollout_spec = get_scheduling_spec(config.rollout)
 
-    # Automatically enable return_routed_experts server flag based on generation config
-    gconfig = getattr(config, "gconfig", None)
-    if gconfig is not None and isinstance(gconfig, GenerationHyperparameters):
-        if gconfig.return_routed_experts:
-            config.sglang._return_routed_experts = True
+    if config.gconfig.return_routed_experts:
+        config.sglang.enable_return_routed_experts = True
 
     sglang_server = SGLangServerWrapper(
         config.experiment_name,

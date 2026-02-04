@@ -1242,13 +1242,9 @@ class SGLangConfig:
     # and passed as `model_loader_extra_config` to SGLang.
     enable_multithread_load: bool = False
     enable_fast_load: bool = False
-    # Internal field for return_routed_experts server flag
-    _return_routed_experts: bool = field(
-        default=False,
-        metadata={"help": "Internal flag for return_routed_experts."},
-        init=False,
-        repr=False,
-    )
+
+    # Internal field, not exposed to users.
+    enable_return_routed_experts: bool = False
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
@@ -1337,8 +1333,8 @@ class SGLangConfig:
             raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
         if is_version_less("sglang", "0.4.10.post2"):
             args.pop("max_loaded_loras", None)
-        # Automatically enable return_routed_experts server flag
-        if sglang_config._return_routed_experts:
+
+        if sglang_config.enable_return_routed_experts:
             args["enable_return_routed_experts"] = True
         return args
 
