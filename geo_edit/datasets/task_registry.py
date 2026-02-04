@@ -3,7 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from geo_edit.datasets.input_template import SUDOKU_TEXT_INPUT_TEMPLATE, SUDOKU_TOOL_CALL_INPUT_TEMPLATE, CARTOMAPQA_INPUT_TEMPLATE, CARTOMAPQA_SRN_INPUT_TEMPLATE, MATHVISION_INPUT_TEMPLATE, MATHVISION_NOTOOL_INPUT_TEMPLATE
+from geo_edit.datasets.input_template import (
+    CARTOMAPQA_INPUT_TEMPLATE,
+    CARTOMAPQA_SRN_INPUT_TEMPLATE,
+    CARTOMAPQA_STMF_COUNTING_TEMPLATE,
+    CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
+    CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
+    MATHVISION_INPUT_TEMPLATE,
+    MATHVISION_NOTOOL_INPUT_TEMPLATE,
+    SUDOKU_TEXT_INPUT_TEMPLATE,
+    SUDOKU_TOOL_CALL_INPUT_TEMPLATE,
+)
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
 
@@ -79,6 +89,39 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         template_fields={
             "question": "question",
             "options": "options",
+        },
+    ),
+    "cartomapqa_stmf_presence": DatasetSpec(
+        name="cartomapqa_stmf_presence",
+        id_key="id",
+        answer_key="correct_answer",
+        image_key="image",
+        prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
+        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
+        template_fields={
+            "mf_type": "mf_type",
+        },
+    ),
+    "cartomapqa_stmf_counting": DatasetSpec(
+        name="cartomapqa_stmf_counting",
+        id_key="id",
+        answer_key="correct_answer",
+        image_key="image",
+        prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_COUNTING_TEMPLATE,
+        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_COUNTING_TEMPLATE,
+        template_fields={
+            "mf_type": "mf_type",
+        },
+    ),
+    "cartomapqa_stmf_name_listing": DatasetSpec(
+        name="cartomapqa_stmf_name_listing",
+        id_key="id",
+        answer_key="correct_answer",
+        image_key="image",
+        prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
+        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
+        template_fields={
+            "mf_type": "mf_type",
         },
     ),
 }
