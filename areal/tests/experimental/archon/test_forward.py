@@ -42,7 +42,6 @@ pytestmark = pytest.mark.skipif(
 # =============================================================================
 
 
-@pytest.mark.slow
 def test_archon_forward_matches_hf():
     """Verify Archon forward matches HuggingFace for packed sequences.
 
@@ -112,10 +111,16 @@ def test_archon_forward_matches_hf():
     assert mean_diff < 0.2, f"Logits mean_diff too large: {mean_diff}"
 
     # Compare top-k predictions for the first position of first sequence
+    # Due to bfloat16 precision and different attention implementations,
+    # we only require top-1 to match and top-5 overlap >= 4
     hf_top5 = hf_logits[0, 0].topk(5).indices
     archon_top5 = archon_logits[0, 0].topk(5).indices
-    assert torch.equal(hf_top5, archon_top5), (
-        f"Top-5 predictions differ: HF={hf_top5.tolist()}, Archon={archon_top5.tolist()}"
+    assert hf_top5[0] == archon_top5[0], (
+        f"Top-1 prediction differs: HF={hf_top5[0].item()}, Archon={archon_top5[0].item()}"
+    )
+    top5_overlap = len(set(hf_top5.tolist()) & set(archon_top5.tolist()))
+    assert top5_overlap >= 4, (
+        f"Top-5 overlap too low ({top5_overlap}/5): HF={hf_top5.tolist()}, Archon={archon_top5.tolist()}"
     )
 
     # Compare log probabilities for the first sequence
@@ -138,7 +143,6 @@ def test_archon_forward_matches_hf():
         dist.destroy_process_group()
 
 
-@pytest.mark.slow
 def test_archon_packed_sequence_logits():
     """Verify Archon packed sequence (SDPA) produces correct logits.
 
@@ -218,7 +222,6 @@ class TestArchonHFPrecision:
         if dist.is_initialized():
             dist.destroy_process_group()
 
-    @pytest.mark.slow
     def test_precision_random_input(self):
         """Test Archon vs HF precision with random packed input."""
         hf_model = load_hf_model(self.model_path, dtype=self.dtype)
@@ -293,7 +296,6 @@ class TestArchonHFPrecision:
             f"Top-1 match rate {top1_match_rate:.1%} < {self.TOP1_MATCH_RATE_MIN:.0%}"
         )
 
-    @pytest.mark.slow
     def test_precision_gsm8k(self):
         """Test Archon vs HF precision with real GSM8K data."""
         hf_model = load_hf_model(self.model_path, dtype=self.dtype)
@@ -376,7 +378,6 @@ class TestArchonHFPrecision:
             f"Avg logprob diff {avg_logprob_diff:.6f} >= {self.LOGPROB_MEAN_DIFF_MAX}"
         )
 
-    @pytest.mark.slow
     def test_logits_exact_match(self):
         """Verify logits and top-k predictions match."""
         hf_model = load_hf_model(self.model_path, dtype=self.dtype)

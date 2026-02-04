@@ -139,7 +139,6 @@ def test_pp_backward_2gpu():
 
 
 @pytest.mark.multi_gpu
-@pytest.mark.slow
 def test_pp_gradient_correctness_2gpu():
     """Test PP gradient correctness with 2 GPUs (pp=2).
 
