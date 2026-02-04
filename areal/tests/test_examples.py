@@ -701,3 +701,118 @@ def test_openai_proxy(tmp_path_factory):
     )
     if not success:
         raise RuntimeError("OpenAI Proxy example failed")
+
+
+@pytest.mark.multi_gpu
+def test_tau2(tmp_path_factory):
+    """Test tau2 airline domain training with a user LLM server.
+
+    This test requires at least 3 GPUs:
+    - 1 GPU for user LLM (SGLang server simulating the user)
+    - 2 GPUs for RL training (1 for rollout, 1 for training)
+    """
+    # Check tau2-bench is installed
+    try:
+        import tau2  # noqa
+    except ImportError:
+        pytest.skip("tau2-bench is not installed. Skipping tau2 example test.")
+
+    # Check chat template exists
+    chat_template_path = "/storage/openpsi/data/qwen3_nonthinking.jinja"
+    if not os.path.exists(chat_template_path):
+        pytest.skip(f"Chat template not found at {chat_template_path}")
+
+    if current_platform.device_count() < 3:
+        pytest.skip(
+            "This test requires at least 3 GPUs (1 for user LLM, 2 for RL) to run."
+        )
+
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B"
+    )
+
+    # Get visible devices
+    visible_devices = os.getenv(
+        current_platform.device_control_env_var,
+        ",".join(map(str, range(current_platform.device_count()))),
+    ).split(",")
+    assert len(visible_devices) >= 3
+
+    # Launch user LLM server on the last GPU
+    user_llm_gpu = visible_devices[-1]
+    user_llm_port = 30080  # Use a different port to avoid conflicts
+
+    _env = os.environ.copy()
+    _env[current_platform.device_control_env_var] = user_llm_gpu
+
+    logger.info(
+        f"Launching user LLM server on GPU {user_llm_gpu}, port {user_llm_port}"
+    )
+    user_llm_proc = subprocess.Popen(
+        [
+            "python3",
+            "-m",
+            "sglang.launch_server",
+            "--model-path",
+            model_path,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(user_llm_port),
+            "--tool-call-parser",
+            "qwen25",
+            "--chat-template",
+            chat_template_path,
+            "--dp-size",
+            "1",
+            "--mem-fraction-static",
+            "0.8",
+        ],
+        # Redirect to DEVNULL to avoid SGLang's progress bars cluttering the terminal
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=_env,
+    )
+
+    try:
+        # Wait for user LLM server to start
+        logger.info("Waiting for user LLM server to start...")
+        time.sleep(60)  # SGLang server takes time to load model
+
+        user_llm_base_url = f"http://localhost:{user_llm_port}/v1/"
+
+        example_file = "examples/tau2/train.py"
+        config_name = "examples/tau2/config_1.7b_airline.yaml"
+
+        # Run tau2 training with first 2 GPUs
+        success = run_async_task(
+            run_example,
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+megatron:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "gconfig.max_tokens=2048",
+            "actor.mb_spec.max_tokens_per_mb=4096",
+            "train_dataset.batch_size=4",
+            "train_dataset.path=tau2/small",  # Use small split for testing
+            "valid_dataset.batch_size=4",
+            "valid_dataset.path=tau2/small",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            "econfig.max_steps=3",  # Limit steps for faster testing
+            f"econfig.user_llm_base_url={user_llm_base_url}",
+            "econfig.user_llm=openai/self-hosted-qwen3",
+            "actor.enable_tree_training=false",  # Disable tree training for simpler test
+            "scheduler.type=local",
+            "stats_logger.wandb.mode=disabled",
+            timeout=600,
+        )
+        assert success, "Tau2 airline example failed"
+    finally:
+        logger.info("Shutting down user LLM server...")
+        kill_process_tree(user_llm_proc.pid, graceful=False)

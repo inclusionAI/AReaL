@@ -95,8 +95,9 @@ actor:
         # NCCL settings - adjust based on your cluster network configuration
         NCCL_DEBUG: "WARN"
         TAU2_DATA_DIR: /path/to/tau2-bench/data  # Set if using tau2-bench
-        WANDB_BASE_URL: <your-wandb-url>  # Optional: for W&B logging
-        WANDB_API_KEY: <your-wandb-api-key>  # Optional: for W&B logging
+        WANDB_BASE_URL: your-wandb-url  # Optional: for W&B logging
+        WANDB_API_KEY: your-wandb-api-key  # Optional: for W&B logging
+        AREAL_PROXY_WARN_ONCE: "1" # Avoid warning spamming
 
 ref:
   experiment_name: ${experiment_name}

@@ -7,7 +7,7 @@ from typing import Any
 from datasets import Dataset
 from tau2.registry import registry
 
-from examples.tau2.config_types import Tau2PPOConfig
+from examples.tau2.utils import Tau2PPOConfig
 
 from areal.api.cli_args import load_expr_config
 from areal.experimental.trainer.rl import PPOTrainer

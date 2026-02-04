@@ -1,21 +1,65 @@
 """Utilities for Tau2 benchmark training with AReaL."""
 
-import json
 import sys
+from dataclasses import dataclass, field
 
+import tau2.utils.llm_utils
 import yaml
+from litellm import completion_cost
+from litellm.main import ModelResponse
 from loguru import logger
-from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
-from tau2.data_model.message import AssistantMessage, Message, ToolCall
+from tau2.data_model.message import Message
 from tau2.data_model.simulation import RewardInfo
 from tau2.data_model.tasks import Task
-import tau2.utils.llm_utils
 
-# Re-export Tau2EnvConfig for backward compatibility
-from examples.tau2.config_types import Tau2EnvConfig
+from areal.api.cli_args import PPOConfig
 
-__all__ = ["Tau2EnvConfig", "Tau2RunInfo", "_get_message_from_completion"]
+
+@dataclass
+class Tau2EnvConfig:
+    """Environment configuration for Tau2 benchmark."""
+
+    domain: str = field(
+        default="telecom",
+        metadata={
+            "help": "The tau2 domain name, e.g., 'retail', 'airline', 'telecom'."
+        },
+    )
+    max_steps: int = field(
+        default=100, metadata={"help": "Maximum number of steps per episode."}
+    )
+    add_thinking_tool: bool = field(
+        default=False, metadata={"help": "Whether to add a thinking tool."}
+    )
+    solo_mode: bool = field(
+        default=False, metadata={"help": "Whether to use solo mode."}
+    )
+    user_llm_base_url: str | None = field(
+        default=None,
+        metadata={"help": "The base URL of the user LLM."},
+    )
+    user_llm: str | None = field(
+        default=None,
+        metadata={"help": "The user LLM to use, default to the gpt-4.1 model."},
+    )
+    user_llm_args: dict | None = field(
+        default=None, metadata={"help": "The arguments for the user LLM."}
+    )
+    turn_discount: float = field(
+        default=1.0, metadata={"help": "Discount factor for turn-based learning."}
+    )
+    invalid_format_penalty: float = field(
+        default=0.1, metadata={"help": "Penalty for invalid format in completions."}
+    )
+
+
+@dataclass
+class Tau2PPOConfig(PPOConfig):
+    """PPO configuration with Tau2-specific settings."""
+
+    econfig: Tau2EnvConfig = field(default_factory=Tau2EnvConfig)
+
 
 # Configure loguru logger for tau2-bench package
 # This runs at import time, so workers will also have this configuration
@@ -24,67 +68,28 @@ logger.remove()
 logger.add(sys.stderr, level="INFO", format="{time} {level} {message}")
 
 
-def _get_message_from_completion(completion: ChatCompletion) -> AssistantMessage:
-    """Convert a ChatCompletion (from OpenAI SDK) to AssistantMessage.
+def _get_response_cost_silent(response: ModelResponse) -> float:
+    """Get cost from response, silently returning 0.0 for unmapped models.
 
-    This is a replacement for tau2.utils.llm_utils._get_message_from_response
-    that works with ChatCompletion from the proxy server.
+    This is a patched version of tau2.utils.llm_utils.get_response_cost that
+    suppresses the error log when LiteLLM doesn't have pricing info for a model
+    (e.g., self-hosted models like 'openai/self-hosted-Qwen2.5-72B').
 
-    Args:
-        completion: ChatCompletion object from proxy/ArealOpenAI client
-
-    Returns:
-        AssistantMessage: Tau2 message format
+    The original function logs an error via logger.error(e) which is noisy.
+    This version silently returns 0.0 for unmapped models.
     """
-    # Extract usage information
-    usage = None
-    if completion.usage is not None:
-        usage = {
-            "completion_tokens": completion.usage.completion_tokens,
-            "prompt_tokens": completion.usage.prompt_tokens,
-        }
-
-    # Get the first choice
-    choice = completion.choices[0]
-
-    # Check finish reason
+    # Parse fine-tuned model names (reuse tau2's helper)
+    response.model = tau2.utils.llm_utils._parse_ft_model_name(response.model)
     try:
-        finish_reason = choice.finish_reason
-        if finish_reason == "length":
-            logger.warning("Output might be incomplete due to token limit!")
-    except Exception as e:
-        logger.error(e)
-        raise e
-
-    assert choice.message.role == "assistant", (
-        "The response should be an assistant message"
-    )
-
-    content = choice.message.content
-    tool_calls_raw = choice.message.tool_calls or []
-    tool_calls = [
-        ToolCall(
-            id=tool_call.id,
-            name=tool_call.function.name,
-            arguments=json.loads(tool_call.function.arguments),
-        )
-        for tool_call in tool_calls_raw
-    ]
-    tool_calls = tool_calls or None
-
-    message = AssistantMessage(
-        role="assistant",
-        content=content,
-        tool_calls=tool_calls,
-        cost=0.0,  # No cost tracking for proxy mode
-        usage=usage,
-        raw_data=completion.model_dump(),
-    )
-    return message
+        cost = completion_cost(completion_response=response)
+    except Exception:
+        # Silently return 0.0 for unmapped models (e.g., self-hosted models)
+        return 0.0
+    return cost
 
 
-# Patch tau2.utils.llm_utils._get_message_from_response with our implementation
-tau2.utils.llm_utils._get_message_from_response = _get_message_from_completion
+# Patch tau2.utils.llm_utils.get_response_cost with our silent version
+tau2.utils.llm_utils.get_response_cost = _get_response_cost_silent
 
 
 class Tau2RunInfo(BaseModel):
