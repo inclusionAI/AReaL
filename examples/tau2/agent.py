@@ -179,9 +179,6 @@ class Tau2Runner:
             simulation = await orchestrator.arun()
             run_info.messages = simulation.messages
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
             logger.error(
                 f"ERROR RUNNING SIMULATION: Domain: {domain}, Task: {task.id}, "
                 f"Agent: {agent.__class__.__name__}, User: {user.__class__.__name__}. "
@@ -229,14 +226,14 @@ class Tau2AgentWorkflow(AgentWorkflow):
     Args:
         econfig: Tau2 environment configuration
         gen_args: Generation arguments (temperature, max_tokens, etc.)
-        timeout: Maximum time allowed for a single episode (default: 600s)
+        timeout: Maximum time allowed for a single episode (default: 7200s)
     """
 
     def __init__(
         self,
         econfig: Tau2EnvConfig | dict | None = None,
         gen_args: dict | None = None,
-        timeout: float = 600.0,
+        timeout: float = 7200.0,
     ):
         if econfig is None:
             econfig = Tau2EnvConfig()
