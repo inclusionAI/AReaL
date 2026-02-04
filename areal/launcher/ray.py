@@ -564,7 +564,6 @@ def ray_main(config, run_id: int = 0):
 
         _env_vars = dict(
             AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
-            AREAL_RECOVER_RUN=str(int(is_recover_run)),
         )
         if allocation_mode.gen_backend == "sglang":
             # Required by NCCL weight update group.
@@ -617,7 +616,7 @@ def ray_main(config, run_id: int = 0):
             recover_this = (
                 e.reason in recover_states
                 and run_id < config.recover.retries
-                and config.recover.mode in ["auto", "fault"]
+                and config.recover.mode in ("on", "auto")
             )
             if recover_this:
                 time.sleep(RECOVER_TIME_INTERVAL)

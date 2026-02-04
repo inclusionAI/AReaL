@@ -1,6 +1,5 @@
 import asyncio
 import getpass
-import os
 import re
 import shlex
 import subprocess
@@ -401,7 +400,6 @@ class SlurmScheduler(Scheduler):
         # Amend environment variables
         for sch in schedulings:
             # AReaL env var forwarding
-            sch.env_vars["AREAL_RECOVER_RUN"] = os.getenv("AREAL_RECOVER_RUN", str(0))
             if self.enable_tms_offload:
                 sch.env_vars.update(get_tms_env_vars())
             sch.env_vars.update(get_env_vars())
