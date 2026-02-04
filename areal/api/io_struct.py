@@ -249,7 +249,7 @@ class HttpGenerationResult:
     output_tokens: list[int]
     output_logprobs: list[float]
     stop_reason: str
-    routed_experts: Any | None = None
+    routed_experts: np.ndarray | None = None
 
 
 @dataclass
