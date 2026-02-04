@@ -507,7 +507,7 @@ Configuration for inference servers, including offpolicyness control.
 | `scheduling_spec`         | `tuple`                                              | **Required**    | inference engine schedule specs. Can accept 1 or 2 SchedulingSpec: if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; if 2 specs provided, first one is for worker, second one is for engine. Currently only used by the RolloutController. |
 | `scheduling_strategy`     | [`SchedulingStrategy`](section-scheduling-strategy)  | **Required**    | The scheduling strategy of this TrainEngine, either separation or colocation. Currently only used by the RolloutController.                                                                                                                                                          |
 | `use_lora`                | boolean                                              | `False`         | Whether to use LoRA. Should be same as actors LORA option.                                                                                                                                                                                                                           |
-| `openai`                  | [`OpenAIProxyConfig`](section-open-ai-proxy) \| None | `None`          | OpenAI proxy configuration (used when workflow is AgentWorkflow).                                                                                                                                                                                                                    |
+| `openai`                  | [`OpenAIProxyConfig`](section-open-ai-proxy) \| None | `None`          | OpenAI proxy configuration (used when workflow is an agent workflow).                                                                                                                                                                                                                |
 
 (section-sg-lang)=
 
@@ -883,7 +883,7 @@ Refer to Megatron-LM documentation for implementation details.
 
 ## OpenAIProxy Configuration
 
-Configuration for OpenAI proxy when using AgentWorkflow workflows.
+Configuration for OpenAI proxy when using agent workflows.
 
 | Parameter                 | Type            | Default        | Description                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------------- | --------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

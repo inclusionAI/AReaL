@@ -3,7 +3,6 @@ from math_verify import parse, verify
 import anthropic
 
 from areal.api.reward_api import AsyncRewardWrapper
-from areal.api.workflow_api import AgentWorkflow
 
 
 def math_reward_fn(completions: str, answer: str) -> float:
@@ -12,7 +11,7 @@ def math_reward_fn(completions: str, answer: str) -> float:
     return float(verify(ans, gold))
 
 
-class MathAgent(AgentWorkflow):
+class MathAgent:
     """Simple single-turn math agent using Anthropic Messages API."""
 
     def __init__(self, **kwargs):

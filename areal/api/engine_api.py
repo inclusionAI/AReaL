@@ -725,7 +725,7 @@ class InferenceEngine(abc.ABC):
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
-            - An AgentWorkflow instance or class (will be wrapped in OpenAIProxyWorkflow)
+            - An agent workflow (any class with async run() method)
         workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
@@ -831,7 +831,7 @@ class InferenceEngine(abc.ABC):
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
-            - An AgentWorkflow instance or class (will be wrapped in OpenAIProxyWorkflow)
+            - An agent workflow (any class with async run() method)
         workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
@@ -886,7 +886,7 @@ class InferenceEngine(abc.ABC):
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
-            - An AgentWorkflow instance or class (will be wrapped in OpenAIProxyWorkflow)
+            - An agent workflow (any class with async run() method)
         workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.

@@ -12,7 +12,6 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 from areal.api.reward_api import AsyncRewardWrapper
-from areal.api.workflow_api import AgentWorkflow
 
 
 def math_reward_fn(completions: str, answer: str) -> float:
@@ -21,7 +20,7 @@ def math_reward_fn(completions: str, answer: str) -> float:
     return float(verify(ans, gold))
 
 
-class MathAgent(AgentWorkflow):
+class MathAgent:
     def __init__(self, **kwargs):
         self.kwargs = kwargs.copy()
         self.kwargs.pop("max_tokens", None)
@@ -40,7 +39,7 @@ class MathAgent(AgentWorkflow):
         )
 
 
-class MultiTurnMathAgent(AgentWorkflow):
+class MultiTurnMathAgent:
     def __init__(self, max_turns: int = 8, **kwargs):
         self.max_turns = max_turns
         self.kwargs = kwargs.copy()
@@ -116,7 +115,7 @@ def sqrt(a: float) -> float:
     return a**0.5
 
 
-class MathToolAgent(AgentWorkflow):
+class MathToolAgent:
     def __init__(self, **kwargs):
         self.kwargs = kwargs.copy()
         self.kwargs.pop("max_tokens", None)

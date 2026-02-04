@@ -26,7 +26,7 @@ from areal.api.cli_args import (
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.scheduler_api import Scheduler
-from areal.api.workflow_api import AgentWorkflow, WorkflowLike
+from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.infra import RolloutController
@@ -221,8 +221,8 @@ class PPOTrainer:
         steps_per_epoch = len(self.train_dataloader)
         max_steps = total_epochs * steps_per_epoch
 
-        # Initialize proxy workers if using AgentWorkflow
-        if self._is_agent_workflow(workflow):
+        # Initialize proxy workers if not using RolloutWorkflow
+        if self._requires_proxy_workflow(workflow):
             self._ensure_proxy_started()
 
         for global_step in range(start_step, max_steps):
@@ -696,24 +696,50 @@ class PPOTrainer:
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
-    def _is_agent_workflow(self, workflow: WorkflowLike) -> bool:
-        """Check if workflow is or resolves to an AgentWorkflow."""
-        if isinstance(workflow, AgentWorkflow):
-            return True
-        if isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
-            return True
+    def _requires_proxy_workflow(self, workflow: WorkflowLike) -> bool:
+        """Check if workflow requires proxy workers (i.e., not a RolloutWorkflow).
+
+        Returns True if:
+        - Workflow is NOT a RolloutWorkflow instance
+        - Workflow is NOT a RolloutWorkflow class
+        - Workflow is a string that does NOT import to a RolloutWorkflow
+
+        This enables any callable object with a compatible signature to work
+        without requiring inheritance from AgentWorkflow.
+        """
+        # Direct RolloutWorkflow instances
+        if isinstance(workflow, RolloutWorkflow):
+            return False
+
+        # RolloutWorkflow classes
+        if isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
+            return False
+
+        # String import paths
         if isinstance(workflow, str):
-            # Try to resolve the string to check its type
             from areal.utils.dynamic_import import import_from_string
 
-            cls = import_from_string(workflow)
-            return isinstance(cls, type) and issubclass(cls, AgentWorkflow)
-        return False
+            try:
+                imported_obj = import_from_string(workflow)
+            except (ValueError, ImportError, AttributeError):
+                # If import fails, assume it needs proxy (fail-safe)
+                return True
+
+            # Check if imported object is RolloutWorkflow
+            if isinstance(imported_obj, RolloutWorkflow):
+                return False
+            if isinstance(imported_obj, type) and issubclass(
+                imported_obj, RolloutWorkflow
+            ):
+                return False
+
+        # Everything else requires proxy workers
+        return True
 
     def _ensure_proxy_started(self) -> None:
-        """Lazily initialize proxy workers when AgentWorkflow is used.
+        """Lazily initialize proxy workers when agent workflows are used.
 
-        This method is called before training when an AgentWorkflow is detected.
+        This method is called before training when a non-RolloutWorkflow is detected.
         It creates proxy workers colocated with rollout workers to handle
         OpenAI-compatible API requests from agent subprocesses.
         """

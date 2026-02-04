@@ -1,6 +1,8 @@
+import pathlib
 import sys
 
-from examples.experimental.proxy.configs import AgentConfig
+sys.path.append(str(pathlib.Path(__file__).parent))
+from configs import AgentConfig
 
 from areal.api.cli_args import load_expr_config
 from areal.dataset import get_custom_dataset
