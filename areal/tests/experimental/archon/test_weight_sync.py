@@ -479,7 +479,6 @@ cuda_required = pytest.mark.skipif(
 
 
 @cuda_required
-@pytest.mark.slow
 def test_archon_weights_match_hf():
     """Verify Archon weight conversion from HuggingFace is correct.
 
