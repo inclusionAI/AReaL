@@ -268,7 +268,7 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
         "function_call_total_count":record["function_call_total_count"],
         "function_call_per_step":record["function_call_per_step"],
         "tokens_used_total":record["tokens_used_total"],
-        "tokens_used_per_step":record["tokens_used_per_step"],
+        "tokens_output_per_step":record["tokens_output_per_step"],
         "tokens_output_total": record.get("tokens_output_total"),
         "tokens_input_total": record.get("tokens_input_total"),
         "tokens_input_per_step": record.get("tokens_input_per_step"),
