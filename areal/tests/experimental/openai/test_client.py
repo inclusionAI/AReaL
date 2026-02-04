@@ -113,6 +113,60 @@ async def test_single_turn_rollout(openai_client):
 
 
 @pytest.mark.asyncio
+async def test_streaming_conversation(openai_client):
+    """Test streaming mode for a conversation."""
+    chunks = []
+    stream = await openai_client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Say hello in one sentence."},
+        ],
+        max_completion_tokens=256,
+        stream=True,
+    )
+
+    async for chunk in stream:
+        chunks.append(chunk)
+
+    # Verify we got multiple chunks
+    assert len(chunks) > 0, "Should receive at least one chunk"
+
+    # Verify all chunks have consistent id
+    chunk_ids = {chunk.id for chunk in chunks}
+    assert len(chunk_ids) == 1, "All chunks should have the same id"
+
+    # Verify chunk structure
+    for chunk in chunks:
+        assert chunk.id is not None
+        assert chunk.object == "chat.completion.chunk"
+        assert len(chunk.choices) == 1
+
+    # Find chunks with content
+    content_chunks = [
+        chunk
+        for chunk in chunks
+        if chunk.choices[0].delta.content is not None
+        and len(chunk.choices[0].delta.content) > 0
+    ]
+    assert len(content_chunks) > 0, "Should have at least one chunk with content"
+
+    # Find the final chunk with finish_reason
+    final_chunks = [
+        chunk for chunk in chunks if chunk.choices[0].finish_reason is not None
+    ]
+    assert len(final_chunks) == 1, "Should have exactly one chunk with finish_reason"
+    assert final_chunks[0].choices[0].finish_reason in ["stop", "length"]
+
+    # Verify usage is included in final chunk
+    assert final_chunks[0].usage is not None
+    assert final_chunks[0].usage.prompt_tokens > 0
+    assert final_chunks[0].usage.completion_tokens > 0
+    assert final_chunks[0].usage.total_tokens == (
+        final_chunks[0].usage.prompt_tokens + final_chunks[0].usage.completion_tokens
+    )
+
+
+@pytest.mark.asyncio
 async def test_multi_round_conversation(openai_client):
     """Test multi-round conversation with reward backpropagation."""
     # Round 1

@@ -346,6 +346,21 @@ the
 [complete train script](https://github.com/inclusionAI/AReaL/blob/main/examples/camel/train.py)
 for a full working implementation.
 
+### More Examples
+
+Beyond the two examples above, AReaL supports integration with various other agent
+frameworks and SDKs:
+
+- **Claude Agent SDK**: Train agents using Anthropic's Claude Agent SDK with MCP tools.
+  See the
+  [Claude example](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/anthropic/claude_math_agent.py)
+  for a math agent with calculator tools.
+
+- **LangChain**: Integrate LangChain agents with AReaL's training infrastructure. See
+  the
+  [LangChain example](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/langchain/math_agent.py)
+  for details.
+
 ## Under the Hood
 
 ### Two Integration Paradigms
