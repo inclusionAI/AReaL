@@ -693,6 +693,47 @@ def build_block_mask_from_trie(
     return block_mask
 
 
+@trace_perf("tree_attn.build_attention_mask_from_trie")
+def build_attention_mask_from_trie(
+    trie: TrieNode,
+    padded_size: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Build a dense attention mask tensor from a trie node.
+
+    This function builds the dense attention mask from the trie structure.
+    Unlike build_block_mask_from_trie, this returns a torch.Tensor that can
+    be saved by gradient checkpointing mechanisms.
+
+    This is useful for Megatron engine where gradient checkpointing requires
+    all forward arguments to be tensors (BlockMask cannot be saved by
+    save_for_backward). The BlockMask can be created inside the attention
+    module from this dense tensor.
+
+    Parameters
+    ----------
+    trie : TrieNode
+        The root trie node containing the tree structure.
+    padded_size : int
+        The padded sequence length.
+    device : torch.device
+        Device to create the attention mask on.
+
+    Returns
+    -------
+    torch.Tensor
+        Dense attention mask of shape (padded_size, padded_size) with dtype bool.
+    """
+    # Handle dummy trie (empty tree for DP synchronization)
+    if not trie.all_sequence_ids:
+        return torch.zeros((padded_size, padded_size), dtype=torch.bool, device=device)
+
+    with trace_scope("tree_attn.build_attention_mask"):
+        attention_mask = _build_attention_mask(trie, padded_size, device)
+
+    return attention_mask
+
+
 @trace_perf("tree_attn.build_triton_attn_data_from_trie")
 def build_triton_attn_data_from_trie(
     trie: TrieNode,

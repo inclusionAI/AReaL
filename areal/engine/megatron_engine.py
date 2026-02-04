@@ -56,13 +56,14 @@ from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_mod
 from areal.models.tree_attn.functional import (
     _gather_packed_tree_logprobs,
     gather_packed_tree_logprobs_entropy,
+    gather_packed_tree_vocab_stats,
     merge_packed_tree_results,
 )
 from areal.models.tree_attn.module import (
     BLOCK_SIZE,
     TRITON_AVAILABLE,
     USE_TRITON_TREE_ATTN,
-    build_block_mask_from_trie,
+    build_attention_mask_from_trie,
     build_triton_attn_data_from_trie,
     patch_bridge_for_tree_training,
 )
@@ -576,6 +577,9 @@ class MegatronEngine(TrainEngine):
             # Lazily create tree attention metadata just before forward
             if self.enable_tree_training:
                 trie_node = mb_input.padded_mb.get("trie_node", None)
+                # Ensure trie_node is also in orig_mb for _compute_logprobs_and_loss
+                if trie_node is not None and "trie_node" not in mb_input.orig_mb:
+                    mb_input.orig_mb["trie_node"] = trie_node
                 padded_size = mb_input.padded_to_length
                 if trie_node is not None and padded_size is not None:
                     if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
@@ -584,19 +588,26 @@ class MegatronEngine(TrainEngine):
                         )
                         mb_input.padded_mb["triton_attn_data"] = triton_attn_data
                     else:
-                        block_mask = build_block_mask_from_trie(
+                        # FIX: Use dense attention mask tensor instead of BlockMask.
+                        # Megatron's gradient checkpointing (tensor_parallel.checkpoint)
+                        # uses save_for_backward() which can only save torch.Tensor objects.
+                        # BlockMask is a custom data structure that cannot be serialized.
+                        # By passing a dense tensor, the checkpoint mechanism can save it,
+                        # and the BlockMask will be created inside PytorchFlexAttention.forward()
+                        # during both forward and recompute (backward) passes.
+                        attention_mask = build_attention_mask_from_trie(
                             trie_node,
                             padded_size,
                             mb_input.padded_mb["input_ids"].device,
                         )
-                        mb_input.padded_mb["block_mask"] = block_mask
+                        mb_input.padded_mb["attention_mask"] = attention_mask
 
             output = packed_context_parallel_forward(model, mb_input.padded_mb)
 
             # Release tree attention metadata after forward pass
             if self.enable_tree_training:
-                if "block_mask" in mb_input.padded_mb:
-                    del mb_input.padded_mb["block_mask"]
+                if "attention_mask" in mb_input.padded_mb:
+                    del mb_input.padded_mb["attention_mask"]
                 if "triton_attn_data" in mb_input.padded_mb:
                     del mb_input.padded_mb["triton_attn_data"]
 
@@ -1466,6 +1477,13 @@ class MegatronEngine(TrainEngine):
             )
         if not self.config.is_critic:
             if self.enable_tree_training:
+                # For tree training, use gather_packed_tree_vocab_stats to properly
+                # unpack vocab stats from tree structure back to per-sequence format.
+                # This is necessary because the logits are in packed tree format where
+                # multiple sequences share prefix positions.
+                vocab_min_logits, vocab_max_logits = gather_packed_tree_vocab_stats(
+                    output, inputs["trie_node"]
+                )
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
                     output,
                     inputs["trie_node"],
@@ -1485,7 +1503,15 @@ class MegatronEngine(TrainEngine):
                     if mpu.get_tensor_model_parallel_world_size() > 1
                     else None,
                 )
-            loss = loss_fn(logprobs, entropy, inputs)
+                vocab_min_logits = output.detach().min(-1).values.float()
+                vocab_max_logits = output.detach().max(-1).values.float()
+            loss = loss_fn(
+                logprobs,
+                entropy,
+                inputs,
+                vocab_min_logits=vocab_min_logits,
+                vocab_max_logits=vocab_max_logits,
+            )
         else:
             values = output.squeeze(-1)
             loss = loss_fn(values, inputs)

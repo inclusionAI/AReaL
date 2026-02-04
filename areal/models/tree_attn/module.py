@@ -5,6 +5,7 @@ from areal.models.tree_attn.module_fsdp import (
     restore_patch_fsdp_for_tree_training,
 )
 from areal.models.tree_attn.tree import (
+    build_attention_mask_from_trie,
     build_block_mask_from_trie,
     build_triton_attn_data_from_trie,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "create_block_mask_from_dense",
     "patch_fsdp_for_tree_training",
     "restore_patch_fsdp_for_tree_training",
+    "build_attention_mask_from_trie",
     "build_block_mask_from_trie",
     "build_triton_attn_data_from_trie",
     # Triton exports (may be None if Triton not installed)
