@@ -1,8 +1,7 @@
 """Tau2 configuration types.
 
 This module contains only dataclass definitions with minimal dependencies,
-so it can be imported by worker processes for deserialization without
-requiring heavy dependencies like tau2-bench.
+so it can be imported by worker processes for deserialization.
 """
 
 from dataclasses import dataclass, field

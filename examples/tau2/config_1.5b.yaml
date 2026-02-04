@@ -1,5 +1,5 @@
-experiment_name: mzy-tau2
-trial_name: 1.5b-airline-packed-bs32-ppo
+experiment_name: tau2-rl
+trial_name: 1.5b-airline
 
 seed: 1
 enable_offload: false
@@ -10,11 +10,10 @@ tokenizer_path: ${actor.path}
 cluster:
   n_nodes: 1
   n_gpus_per_node: 8
-  fileroot: /storage/openpsi/experiments
+  fileroot: /path/to/experiments  # Replace with your experiment directory
   name_resolve:
     type: nfs
-    nfs_record_root: /storage/openpsi/experiments/name_resolve/mzy
-    etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-su18-01.hn01.su18-hn.local:2379
+    nfs_record_root: /path/to/name_resolve  # Replace with your name resolve directory
 
 allocation_mode: sglang:d6+d2
 
@@ -52,7 +51,7 @@ rollout:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen__Qwen3-1.7B
+  path: Qwen/Qwen3-1.7B  # HuggingFace model path
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -93,23 +92,11 @@ actor:
       mem: 16
       cmd: python3 -m areal.scheduler.rpc.rpc_server
       env_vars:
+        # NCCL settings - adjust based on your cluster network configuration
         NCCL_DEBUG: "WARN"
-        NCCL_IB_DISABLE: "0"
-        NCCL_SOCKET_IFNAME: "bond0"
-        NCCL_NET: "IB"
-        NCCL_NET_PLUGIN: ""
-        NCCL_IB_GID_INDEX: "3"
-        NCCL_IB_TIMEOUT: "22"
-        NCCL_IB_RETRY_CNT: "7"
-        NCCL_IB_SL: "5"
-        NCCL_IB_TC: "136"
-        NCCL_IB_HCA: "mlx5_bond"
-        NCCL_IB_QPS_PER_CONNECTION: "8"
-        NCCL_SET_THREAD_NAME: "1"
-        PYTORCH_NPU_ALLOC_CONF: "expandable_segments:True"
-        TAU2_DATA_DIR: /storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench/data
-        WANDB_BASE_URL: http://8.150.1.98:8080
-        WANDB_API_KEY: local-8726acfd20a41b5ab8ac35fd51014b15169fa20a
+        TAU2_DATA_DIR: /path/to/tau2-bench/data  # Set if using tau2-bench
+        WANDB_BASE_URL: <your-wandb-url>  # Optional: for W&B logging
+        WANDB_API_KEY: <your-wandb-api-key>  # Optional: for W&B logging
 
 ref:
   experiment_name: ${experiment_name}
@@ -128,8 +115,8 @@ econfig:
   max_steps: 50
   add_thinking_tool: false
   solo_mode: false
-  user_llm_base_url: http://33.180.173.83:30000/v1/
-  user_llm: openai/hosted
+  user_llm_base_url: http://localhost:8000/v1/  # Replace with your user LLM endpoint
+  user_llm: openai/self-hosted-Qwen2.5-72B
   user_llm_args:
     temperature: 0.0
     max_completion_tokens: 512
@@ -178,7 +165,7 @@ saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  freq_epochs: null
+  freq_epochs: 1
   freq_steps: null
   freq_secs: null
 
