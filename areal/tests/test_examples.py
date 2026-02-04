@@ -47,7 +47,6 @@ async def run_example(
     """
     # Construct the command
     if single_controller:
-        print("[debug] running single controller mode")
         # Single-controller mode: run script directly
         cmd = [
             "python3",
@@ -797,7 +796,6 @@ def test_tau2(tmp_path_factory):
 
         example_file = "examples/tau2/train.py"
         config_name = "examples/tau2/config_1.7b_airline.yaml"
-        print("[debug] single controller")
 
         # Run tau2 training with first 2 GPUs
         success = run_async_task(

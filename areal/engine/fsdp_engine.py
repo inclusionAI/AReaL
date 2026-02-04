@@ -1554,6 +1554,10 @@ class FSDPEngine(TrainEngine):
                     # This ensures backward() works correctly for FSDP synchronization
                     return logits.sum() * 0.0
 
+                # For tree training, use gather_packed_tree_vocab_stats to properly
+                # unpack vocab stats from tree structure back to per-sequence format.
+                # This is necessary because the logits are in packed tree format where
+                # multiple sequences share prefix positions.
                 vocab_min_logits, vocab_max_logits = gather_packed_tree_vocab_stats(
                     logits, ctx.trie_node
                 )
