@@ -1365,7 +1365,7 @@ class OpenAIProxyConfig:
         metadata={
             "help": "Export style: 'individual' (all interactions) or 'concat' (leaf nodes only). "
             "The 'individual' style exports each interaction (input-output-reward) step separately, "
-            "and treat them as independent samples to train the model. "
+            "and treats them as independent samples to train the model. "
             "The 'concat' style exports only the final concatenated trajectory from the root. "
             "It is only suitable for linear conversation histories without token mismatching (whether valid depends on the tokenizer).",
             "choices": ["individual", "concat"],
