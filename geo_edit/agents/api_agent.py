@@ -70,12 +70,7 @@ class APIBasedAgent(BaseAgent):
                 extra_info["tokens_used"] = response.usage.total_tokens
                 extra_info["tokens_input"] = response.usage.input_tokens
                 extra_info["tokens_output"] = response.usage.output_tokens
-                output_details = getattr(response.usage, "output_tokens_details", None)
-                if output_details is not None:
-                    if isinstance(output_details, dict):
-                        extra_info["tokens_thoughts"] = output_details.get("reasoning_tokens")
-                    else:
-                        extra_info["tokens_thoughts"] = getattr(output_details, "reasoning_tokens", None)
+
             return response, extra_info
 
         raise NotImplementedError(f"Model type {self.config.model_type} not supported yet.")

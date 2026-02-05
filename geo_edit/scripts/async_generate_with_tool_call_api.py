@@ -72,7 +72,7 @@ def _init_worker(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
             tool_mode=use_tools,
-            reasoning_level="low",
+            reasoning_level="high",
         )
         _WORKER_TASK_CLASS = OpenAIVisionQATask
     else:
