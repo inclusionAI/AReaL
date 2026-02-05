@@ -12,14 +12,14 @@ import torch
 
 from areal.scheduler.rpc.rtensor import RTensor, TensorShardInfo
 from areal.scheduler.rpc.serialization import serialize_value
+from areal.utils.network import find_free_ports
 from areal.utils.proc import kill_process_tree
-
-RPC_SERVER_PORT = 8077
 
 
 @pytest.fixture(scope="module")
 def rpc_server():
     """Start RPC server for integration tests."""
+    RPC_SERVER_PORT = find_free_ports(1)[0]
     proc = subprocess.Popen(
         [
             sys.executable,
