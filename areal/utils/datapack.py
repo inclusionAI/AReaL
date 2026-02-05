@@ -208,12 +208,67 @@ def ffd_allocate(
     return res
 
 
+def balanced_greedy_partition(nums: list[int], K: int) -> list[list[int]]:
+    """
+    Splits `nums` into K groups such that the maximum difference between group sums is minimized.
+
+    Returns indices (not values) for each group.
+
+    Greedy with capacity-aware assignment.
+
+    Args:
+        nums: List of values to partition
+        K: Number of groups to partition into
+
+    Returns:
+        List of K lists, where each inner list contains the indices assigned to that group
+
+    Raises:
+        ValueError: If len(nums) is not divisible by K or if len(nums) < K
+    """
+    n = len(nums)
+    if n < K:
+        raise ValueError(f"Number of items ({n}) must be >= K ({K}).")
+    if n % K != 0:
+        raise ValueError("The length of nums must be divisible by K.")
+    m = n // K
+
+    # Sort indices by value in descending order
+    sorted_indices = sorted(range(n), key=lambda i: -nums[i])
+
+    groups: list[list[int]] = [[] for _ in range(K)]
+    sums = [0 for _ in range(K)]
+    counts = [0 for _ in range(K)]
+
+    for idx in sorted_indices:
+        num = nums[idx]
+        # Create list of candidate groups that aren't full
+        candidates = []
+        for i in range(K):
+            if counts[i] < m:
+                # Estimate final sum if we add this number
+                estimated_sum = sums[i] + num
+                candidates.append((estimated_sum, i))
+
+        # Sort candidates by current sum (ascending)
+        candidates.sort(key=lambda x: sums[x[1]])
+
+        # Choose the group with smallest current sum
+        chosen_group = candidates[0][1]
+
+        groups[chosen_group].append(idx)
+        sums[chosen_group] += num
+        counts[chosen_group] += 1
+
+    return groups
+
+
 if __name__ == "__main__":
     import time
 
     for i in range(100):
         st = time.monotonic()
-        nums = np.random.randint(1024, 8192, size=(100,))
+        nums = np.random.randint(1024, 8192, size=(100,)).tolist()
         # k = np.random.randint(2, 20)
         # min_size = np.random.randint(1, len(nums) // k)
         # res = min_abs_diff_partition(nums, k, min_size)

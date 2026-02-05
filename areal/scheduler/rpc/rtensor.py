@@ -14,7 +14,7 @@ import ray
 import torch
 
 from areal.utils.concurrent import run_async_task
-from areal.utils.datapack import ffd_allocate, flat2d
+from areal.utils.datapack import balanced_greedy_partition, flat2d
 
 
 class TensorBackend(Protocol):
@@ -399,9 +399,7 @@ class RTensor:
             if layout_rtensor is not None:
                 seqlens = [sum(s.seqlens) for s in layout_rtensor.shards]
                 # Use FFD to allocate shards to DP groups
-                group_indices = ffd_allocate(
-                    seqlens, capacity=int(1e12), min_groups=dp_size
-                )
+                group_indices = balanced_greedy_partition(seqlens, K=dp_size)
             # else: no RTensors found, will replicate scalars without group_indices
 
         if isinstance(obj, RTensor):
