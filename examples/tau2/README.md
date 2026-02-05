@@ -118,12 +118,6 @@ python3 -m areal.launcher.slurm examples/tau2/train.py \
 
 ## Notes
 
-1. **LiteLLM multiprocessing error**: When using litellm with multiprocessing, the
-   `Queue bound to different event loop` error may occur. See
-   [litellm issue #17813](https://github.com/BerriAI/litellm/issues/17813). This will
-   not stop the training, but will make the outputs hard to read. You may use
-   `grep -aivE "loop|queue|\^|asyncio|litellm"` to filter out the error messages.
-
 1. **Trajectory logging**: Trajectories are dumped as `json` and `txt` files in the
    `generated/` directory under `cluster.fileroot`. You can analyze these for debugging
    and evaluation.
