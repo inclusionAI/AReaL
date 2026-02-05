@@ -29,8 +29,9 @@ as much as you'd enjoy real milk tea. Cheers!
   asynchronous RL training with **industry-leading speed**. AReaL seamlessly adapts to
   diverse computational environments, scaling from a single node to 1,000+ GPUs.
 - ✨ **Cutting-Edge Performance**: AReaL produces state-of-the-art
-  [math](/blog/AReaL_v0_2.md), [coding](/blog/AReaL_v0_3.md), and
-  [search agents](https://github.com/inclusionAI/ASearcher) with exceptional
+  [math](/blog/AReaL_v0_2.md), [coding](/blog/AReaL_v0_3.md),
+  [search agent](https://github.com/inclusionAI/ASearcher), and
+  [customer service agent](https://arxiv.org/abs/2601.22607) with exceptional
   capabilities.
 
 ## 📰 News
@@ -84,16 +85,39 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 
 ## 📚 Examples
 
-| Task                                             | Description                                                                          | Performance                                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| **[Math](examples/math/)**                       | Mathematical problem solving (SFT, GRPO, or PPO)                                     | TBA                                                                               |
-| **[Multi-Turn Math](examples/multi_turn_math/)** | Iterative mathematical problem solving with self-correction                          | [Training Curve](examples/multi_turn_math/reward_curve.png)                       |
-| **[LoRA Math](examples/lora/)**                  | Math Agent Trained With LoRA                                                         | TBA                                                                               |
-| **[VLM Math](examples/vlm/)**                    | CLEVR visual counting tasks                                                          | TBA                                                                               |
-| **[Reasoning](examples/countdown/)**             | Countdown numbers game with custom rewards                                           | [Training Curve](/examples/countdown/countdown_training_curve.png)                |
-| **[Search Agent](examples/search_agent/)**       | An agent with end-to-end reasoning, search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)                        |
-| **[Tool-Integrated Reasoning](examples/tir/)**   | An agent that can invoke tools during reasoning                                      | [TIR Example](https://github.com/inclusionAI/AReaL/tree/main/examples/tir)        |
-| **[RLHF](examples/alignment/)**                  | RLHF for LLM Alignment                                                               | [RLHF Example](https://github.com/inclusionAI/AReaL/tree/main/examples/alignment) |
+### Math & Reasoning
+
+| Task                                             | Description                                                                                  | Performance                                                       |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **[Math](examples/math/)**                       | GSM8K math reasoning with GRPO, PPO, DAPO, REINFORCE, RLOO, LitePPO, DR-GRPO, GSPO, and more | -                                                                 |
+| **[Multi-Turn Math](examples/multi_turn_math/)** | Multi-turn math agent with reward discounting across turns                                   | [Training Curve](examples/multi_turn_math/reward_curve.png)       |
+| **[LoRA Math](examples/lora/)**                  | Parameter-efficient math training with LoRA (SGLang/vLLM backends)                           | -                                                                 |
+| **[Countdown](examples/countdown/)**             | Countdown numbers game with custom rewards                                                   | [Training Curve](examples/countdown/countdown_training_curve.png) |
+
+### Agentic RL
+
+| Task                                                     | Description                                                            | Performance                                                                  |
+| -------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **[General Agent](examples/agent_workflow/)**            | General agentic training with any agentic frameworks                   | [Guide](docs/tutorial/agentic_rl.md)                                         |
+| **[Tau2 Customer Service](examples/tau2/)**              | Customer service agent on Tau2-Bench (retail, airline, telecom)        | [Paper](https://arxiv.org/abs/2601.22607)                                    |
+| **[Search Agent](examples/search_agent/)**               | End-to-end search agent with Tongyi-DeepResearch workflow              | [Training Curve](examples/search_agent/tongyi_deepresearch/reward_curve.png) |
+| **[Tool-Integrated Reasoning](examples/tir/)**           | Multi-turn tool calling during reasoning (Python executor, calculator) | [Training Curve](examples/tir/figures/task_reward.png)                       |
+| **[OpenAI Agents Integration](examples/openai_agents/)** | Integration with OpenAI Agents SDK for agentic workflows               | -                                                                            |
+| **[CAMEL-AI Integration](examples/camel/)**              | Integration with CAMEL-AI framework for agentic RL                     | -                                                                            |
+
+### Vision-Language Models
+
+| Task                                | Description                                               | Performance                                     |
+| ----------------------------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| **[VLM](examples/vlm/)**            | Geometry3K and CLEVR Count 70K visual reasoning with GRPO | -                                               |
+| **[VLM on NPU](examples/vlm_npu/)** | VLM training on Huawei NPU hardware                       | [Benchmark Results](examples/vlm_npu/README.md) |
+
+### Alignment & Infrastructure
+
+| Task                                            | Description                                           | Performance                                       |
+| ----------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------- |
+| **[RLHF Reward Modeling](examples/alignment/)** | Bradley-Terry reward modeling on Anthropic HH-RLHF    | [Training Curve](examples/alignment/rw_curve.png) |
+| **[SkyPilot Deployment](examples/skypilot/)**   | Cloud deployment with SkyPilot (GCP, AWS, Kubernetes) | [Screenshots](examples/skypilot/README.md)        |
 
 ## 🔧 Support Matrix
 
