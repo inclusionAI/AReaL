@@ -21,7 +21,6 @@ from tau2.user.user_simulator import BaseUser, DummyUser, UserSimulator
 # Import utilities (also patches tau2.utils.llm_utils)
 from examples.tau2.utils import Tau2EnvConfig, Tau2RunInfo
 
-from areal.api.workflow_api import AgentWorkflow
 from areal.utils import logging
 
 logger = logging.getLogger("Tau2 Agent")
@@ -216,7 +215,7 @@ class Tau2Runner:
         return run_info
 
 
-class Tau2AgentWorkflow(AgentWorkflow):
+class Tau2AgentWorkflow:
     """Tau2 agent workflow for AReaL proxy mode.
 
     This workflow runs a Tau2 customer service simulation using the proxy server
@@ -249,7 +248,7 @@ class Tau2AgentWorkflow(AgentWorkflow):
         """Run a Tau2 simulation episode.
 
         Args:
-            data: Input data containing task_id, split, and optional econfig/gconfig
+            data: Input data containing ask_id, split, and optional econfig/gconfig
             **extra_kwargs: Additional kwargs including:
                 - base_url: Proxy server URL
 
