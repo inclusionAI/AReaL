@@ -271,7 +271,7 @@ defines how prompts become training samples. Each trajectory goes through these 
 [`gsm8k_reward_fn`](https://github.com/inclusionAI/AReaL/blob/main/areal/reward/gsm8k.py).
 
 **NOTE:** This workflow adopts the low-level API of inference engines --- the
-`agenerate` API. It is perferrable if you want more fine-grained control over token IDs.
+`agenerate` API. It is preferable if you want more fine-grained control over token IDs.
 `agenerate` inputs token IDs to the inference server and produces output token IDs for
 user's processing. We also provide high-level API for convenient agentic workflow
 orchestration. We refer to the [agentic RL guide](../tutorial/agentic_rl.md).
