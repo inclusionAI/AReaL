@@ -225,17 +225,20 @@ class VLLMWorkerExtension:
             }
             peft_helper = PEFTHelper.from_dict(peft_config)
 
+            extra_vocab = getattr(
+                self.model_runner.lora_manager.lora_config,
+                "lora_extra_vocab_size",
+                0,
+            )
+            model_vocab_size = self.model_runner.lora_manager.vocab_size + extra_vocab
+
             new_lora_model = LoRAModel.from_lora_tensors(
                 lora_model_id=self.areal_lora_int_id,
                 tensors=normalized_weights,
                 peft_helper=peft_helper,
                 device=self.model_runner.device,
                 dtype=self.model_runner.lora_manager.lora_config.lora_dtype,
-                embeddings=None,  # Note: Current version does not support lora embeddings (see vllm/lora/models.py)
-                target_embedding_padding=self.model_runner.lora_manager.vocab_size
-                + self.model_runner.lora_manager.lora_config.lora_extra_vocab_size,
-                embedding_modules=self.model_runner.lora_manager.embedding_modules,
-                embedding_padding_modules=self.model_runner.lora_manager.embedding_padding_modules,
+                model_vocab_size=model_vocab_size,
                 weights_mapper=getattr(
                     self.model_runner.model, "hf_to_vllm_mapper", None
                 ),
