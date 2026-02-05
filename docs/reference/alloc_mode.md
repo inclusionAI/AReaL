@@ -139,4 +139,6 @@ megatron:(attn:d4p2t2c2|ffn:d2p2t4e2)
 
 - [Fine-tuning Large MoE Models](../tutorial/megatron.md) - Tutorial for Megatron
   backend
+- [Archon: PyTorch-Native Training Engine](../tutorial/archon.md) - Tutorial for Archon
+  backend
 - [Megatron Performance Best Practice](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core/transformer/moe#performance-best-practice)
