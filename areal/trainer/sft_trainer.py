@@ -37,8 +37,8 @@ from areal.utils.stats_logger import StatsLogger
 if TYPE_CHECKING:
     from areal.engine.fsdp_engine import FSDPLMEngine
     from areal.engine.megatron_engine import MegatronLMEngine
-    from areal.engine.sft.lm_engine import LMController
     from areal.experimental.engine.archon_engine import ArchonLMEngine
+    from areal.trainer.sft.lm_engine import LMController
 
 logger = logging.getLogger("SFTTrainer")
 

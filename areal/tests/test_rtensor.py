@@ -12,14 +12,14 @@ import torch
 
 from areal.scheduler.rpc.rtensor import RTensor, TensorShardInfo
 from areal.scheduler.rpc.serialization import serialize_value
+from areal.utils.network import find_free_ports
 from areal.utils.proc import kill_process_tree
-
-RPC_SERVER_PORT = 8077
 
 
 @pytest.fixture(scope="module")
 def rpc_server():
     """Start RPC server for integration tests."""
+    RPC_SERVER_PORT = find_free_ports(1)[0]
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -43,7 +43,7 @@ def rpc_server():
     )
 
     # Wait for server to be ready
-    max_attempts = 20
+    max_attempts = 60
     for _ in range(max_attempts):
         try:
             resp = requests.get(f"http://localhost:{RPC_SERVER_PORT}/health", timeout=1)
@@ -51,7 +51,7 @@ def rpc_server():
                 break
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(1)
     else:
         proc.kill()
         raise RuntimeError("RPC server failed to start")

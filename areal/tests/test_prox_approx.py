@@ -7,7 +7,7 @@ Tests the compute_prox_logp_approximations function and related metrics.
 import pytest
 import torch
 
-from areal.engine.ppo.actor import compute_prox_logp_approximations
+from areal.trainer.ppo.actor import compute_prox_logp_approximations
 from areal.utils.constants import (
     PROX_APPROX_METHOD_ROLLOUT,
     PROX_APPROX_METHODS_ALL,
@@ -237,7 +237,7 @@ class TestProximalApproximationIntegration:
 
     def test_approximation_metrics_only_with_metrics_method(self):
         """Test that metrics are only computed when prox_logp_method='metrics'."""
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
 
         batch_size, seq_len = 2, 4
         logprobs = torch.randn(batch_size, seq_len)
@@ -270,7 +270,7 @@ class TestProximalApproximationIntegration:
 
 def test_import_success():
     """Test that the approximation function can be imported."""
-    from areal.engine.ppo.actor import compute_prox_logp_approximations
+    from areal.trainer.ppo.actor import compute_prox_logp_approximations
 
     assert callable(compute_prox_logp_approximations)
 
@@ -337,7 +337,7 @@ class TestComputeLogpOptimization:
         """Test that compute_logp() always returns a tensor (no longer returns None)."""
         from unittest.mock import MagicMock
 
-        from areal.engine.ppo.actor import PPOActor, PPOActorConfig
+        from areal.trainer.ppo.actor import PPOActor, PPOActorConfig
 
         # Create config with any method - compute_logp should always return tensor
         config = PPOActorConfig(
@@ -419,7 +419,7 @@ class TestGrpoLossFnNoneHandling:
 
     def test_grpo_loss_fn_detects_none_prox_logp(self):
         """Test that grpo_loss_fn() detects None prox_logp and validates configuration."""
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
 
         # Create dummy inputs with prox_logp=None
         batch_size, seq_len = 2, 4
@@ -452,7 +452,7 @@ class TestGrpoLossFnNoneHandling:
 
     def test_grpo_loss_fn_requires_versions_when_prox_logp_none(self):
         """Test that grpo_loss_fn() requires versions when prox_logp is None."""
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
 
         # Create dummy inputs with prox_logp=None but no versions
         batch_size, seq_len = 2, 4
@@ -486,7 +486,7 @@ class TestGrpoLossFnNoneHandling:
 
     def test_grpo_loss_fn_computes_approximation_when_prox_logp_none(self):
         """Test that grpo_loss_fn() successfully computes approximation when prox_logp is None."""
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
 
         # Create valid inputs with prox_logp=None
         batch_size, seq_len = 2, 4
@@ -520,7 +520,7 @@ class TestGrpoLossFnNoneHandling:
 
     def test_grpo_loss_fn_works_with_tensor_prox_logp(self):
         """Test that grpo_loss_fn() still works normally with tensor prox_logp."""
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
 
         # Create valid inputs with prox_logp as tensor (normal case)
         batch_size, seq_len = 2, 4
@@ -553,7 +553,7 @@ class TestGrpoLossFnNoneHandling:
 
     def test_grpo_loss_fn_metrics_disabled_when_prox_logp_none(self):
         """Test that metrics are not logged when prox_logp is None (no ground truth)."""
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
 
         # Create inputs with prox_logp=None and metrics enabled
         batch_size, seq_len = 2, 4
@@ -598,7 +598,7 @@ class TestEndToEndOptimization:
         """Test the full flow as it would happen in user scripts (new pattern)."""
         from unittest.mock import MagicMock
 
-        from areal.engine.ppo.actor import PPOActor, PPOActorConfig
+        from areal.trainer.ppo.actor import PPOActor, PPOActorConfig
 
         # Setup: user configuration with optimization enabled (loglinear skips forward)
         config = PPOActorConfig(
@@ -636,7 +636,7 @@ class TestEndToEndOptimization:
         """Test all combinations of prox_logp_method values with caller decision pattern."""
         from unittest.mock import MagicMock
 
-        from areal.engine.ppo.actor import PPOActor, PPOActorConfig
+        from areal.trainer.ppo.actor import PPOActor, PPOActorConfig
 
         test_cases = [
             # (prox_logp_method, should_call_compute_logp, description)
@@ -691,7 +691,7 @@ class TestConfigValidation:
         from unittest.mock import MagicMock
 
         from areal.api.cli_args import PPOActorConfig
-        from areal.engine.ppo.actor import PPOActor
+        from areal.trainer.ppo.actor import PPOActor
 
         # Test each valid method from the config
         valid_methods = PROX_LOGP_METHODS_ALL
@@ -763,7 +763,7 @@ class TestComputeLogpMetricsLogging:
         """Test that loglinear mode logs approx_logp and importance weights without errors."""
         from unittest.mock import MagicMock, patch
 
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
 
         batch_size, seq_len = 2, 4
         logprobs = torch.randn(batch_size, seq_len)
@@ -783,7 +783,7 @@ class TestComputeLogpMetricsLogging:
         def mock_stat(**kwargs):
             logged_stats.update(kwargs)
 
-        with patch("areal.engine.ppo.actor.stats_tracker") as mock_tracker:
+        with patch("areal.trainer.ppo.actor.stats_tracker") as mock_tracker:
             mock_tracker.stat = mock_stat
             mock_tracker.scope = MagicMock()
             mock_tracker.scope.return_value.__enter__ = MagicMock()
@@ -817,7 +817,7 @@ class TestComputeLogpMetricsLogging:
         """Test that recompute mode logs only prox_logp_gt."""
         from unittest.mock import MagicMock, patch
 
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
 
         batch_size, seq_len = 2, 4
         logprobs = torch.randn(batch_size, seq_len)
@@ -836,7 +836,7 @@ class TestComputeLogpMetricsLogging:
         def mock_stat(**kwargs):
             logged_stats.update(kwargs)
 
-        with patch("areal.engine.ppo.actor.stats_tracker") as mock_tracker:
+        with patch("areal.trainer.ppo.actor.stats_tracker") as mock_tracker:
             mock_tracker.stat = mock_stat
             mock_tracker.scope = MagicMock()
             mock_tracker.scope.return_value.__enter__ = MagicMock()
@@ -867,7 +867,7 @@ class TestComputeLogpMetricsLogging:
         """Test that metrics mode logs all methods with complete error metrics."""
         from unittest.mock import MagicMock, patch
 
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
         from areal.utils.constants import PROX_APPROX_METHODS_ALL
 
         batch_size, seq_len = 2, 4
@@ -887,7 +887,7 @@ class TestComputeLogpMetricsLogging:
         def mock_stat(**kwargs):
             logged_stats.update(kwargs)
 
-        with patch("areal.engine.ppo.actor.stats_tracker") as mock_tracker:
+        with patch("areal.trainer.ppo.actor.stats_tracker") as mock_tracker:
             mock_tracker.stat = mock_stat
             mock_tracker.scope = MagicMock()
             mock_tracker.scope.return_value.__enter__ = MagicMock()
@@ -933,7 +933,7 @@ class TestComputeLogpMetricsLogging:
         """Test that metric names use correct spelling (behave not behav)."""
         from unittest.mock import MagicMock, patch
 
-        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.trainer.ppo.actor import grpo_loss_fn
 
         batch_size, seq_len = 2, 4
         logprobs = torch.randn(batch_size, seq_len)
@@ -952,7 +952,7 @@ class TestComputeLogpMetricsLogging:
         def mock_stat(**kwargs):
             logged_stats.update(kwargs)
 
-        with patch("areal.engine.ppo.actor.stats_tracker") as mock_tracker:
+        with patch("areal.trainer.ppo.actor.stats_tracker") as mock_tracker:
             mock_tracker.stat = mock_stat
             mock_tracker.scope = MagicMock()
             mock_tracker.scope.return_value.__enter__ = MagicMock()

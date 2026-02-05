@@ -207,7 +207,7 @@ See [CLI Reference](../cli_reference.md) for configuration options, and
 ## The PPOTrainer: Controller-Based Training
 
 The
-[`PPOTrainer`](https://github.com/inclusionAI/AReaL/blob/main/areal/experimental/trainer/rl.py)
+[`PPOTrainer`](https://github.com/inclusionAI/AReaL/blob/main/areal/trainer/rl_trainer.py)
 orchestrates distributed training by initializing the scheduler and creating controllers
 for actors (policy/critic) and rollout workers.
 
@@ -426,7 +426,7 @@ directly from rollout workers, avoiding controller memory overhead.
 ### Training Workers: Algorithm Implementation
 
 On each training worker,
-[`FSDPPPOActor`](https://github.com/inclusionAI/AReaL/blob/main/areal/engine/ppo/actor.py)
+[`FSDPPPOActor`](https://github.com/inclusionAI/AReaL/blob/main/areal/trainer/ppo/actor.py)
 implements the GRPO/PPO algorithm:
 
 **Algorithm Methods:**
@@ -453,14 +453,12 @@ GPU 3: SGLang        GPU 7: FSDP rank 3  ─┘
                      NCCL AllReduce for gradients
 ```
 
-Each worker processes its shard, then synchronizes gradients via NCCL. For custom
-algorithms, see
-[Customization: Algorithms](https://inclusionai.github.io/AReaL/customization/algorithm.html).
+Each worker processes its shard, then synchronizes gradients via NCCL.
 
 ### The Training Loop
 
 The `trainer.train()` method orchestrates the complete loop. See
-[`PPOTrainer.train()`](https://github.com/inclusionAI/AReaL/blob/main/areal/experimental/trainer/rl.py)
+[`PPOTrainer.train()`](https://github.com/inclusionAI/AReaL/blob/main/areal/trainer/rl_trainer.py)
 for the full implementation:
 
 ```python
@@ -518,7 +516,7 @@ The weight sync process in `PPOTrainer.train()` follows this pattern:
 1. Resume rollout with updated weights with re-computed KV cache
 
 See
-[`PPOTrainer.train()`](https://github.com/inclusionAI/AReaL/blob/main/areal/experimental/trainer/rl.py)
+[`PPOTrainer.train()`](https://github.com/inclusionAI/AReaL/blob/main/areal/trainer/rl_trainer.py)
 lines 861-874 for the full implementation.
 
 ## Monitoring and Utilities
@@ -581,7 +579,7 @@ from rank 0. At each training step, `PPOTrainer` collects metrics from all compo
 and commits them:
 
 ```python
-# areal/experimental/trainer/rl.py
+# areal/trainer/rl_trainer.py
 stats = self.actor.export_stats()         # Training metrics
 stats.update(self.rollout.export_stats()) # Rollout metrics
 self.stats_logger.commit(epoch, step, global_step, stats)  # → wandb/tensorboard
@@ -599,12 +597,11 @@ Now that you understand the basics, explore these advanced topics:
 - [Evaluation](../tutorial/eval.md) - Evaluate your trained model
 - [Training Large MoE Models](../tutorial/megatron.md) - Scale to massive models with
   Megatron integration
-- [Agentic RL with OpenAI APIs](../tutorial/agentic_rl.md) - Build agents that use tools
-  and APIs
+- [Agentic RL](../tutorial/agentic_rl.md) - Build agents that use tools and any agentic
+  frameworks
 
 **Customization Guides**:
 
 - [Custom Datasets](../customization/dataset.md) - Use your own data sources
 - [Custom Workflows](../customization/agent.md) - Build agentic/RLVR workflows with
   custom reward functions
-- [Custom Algorithms](../customization/algorithm.md) - Implement your own RL algorithms

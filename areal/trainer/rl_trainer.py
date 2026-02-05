@@ -45,9 +45,9 @@ from areal.utils.stats_logger import StatsLogger
 if TYPE_CHECKING:
     from areal.engine.fsdp_engine import FSDPPPOActor, FSDPPPOCritic
     from areal.engine.megatron_engine import MegatronPPOActor, MegatronPPOCritic
-    from areal.engine.ppo.actor import PPOActorController
-    from areal.engine.ppo.critic import PPOCriticController
     from areal.experimental.engine.archon_engine import ArchonPPOActor, ArchonPPOCritic
+    from areal.trainer.ppo.actor import PPOActorController
+    from areal.trainer.ppo.critic import PPOCriticController
 
 logger = logging.getLogger("RLTrainer")
 

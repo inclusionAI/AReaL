@@ -119,9 +119,9 @@ Pass the agent path to the trainer:
 ```python
 import sys
 
+from areal import PPOTrainer
 from areal.api.cli_args import load_expr_config, GRPOConfig
 from areal.dataset import get_custom_dataset
-from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
 
 def main(args):

@@ -4,9 +4,9 @@ import sys
 sys.path.append(str(pathlib.Path(__file__).parent))
 from configs import AgentConfig
 
+from areal import PPOTrainer
 from areal.api.cli_args import load_expr_config
 from areal.dataset import get_custom_dataset
-from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
 
 

@@ -7,12 +7,11 @@ from datasets.distributed import split_dataset_by_node
 from reward_score import compute_score
 from transformers import PreTrainedTokenizerFast
 
-from areal import workflow_context
+from areal import PPOTrainer, workflow_context
 from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest
 from areal.api.workflow_api import RolloutWorkflow
-from areal.experimental.trainer import PPOTrainer
 from areal.utils import logging, stats_tracker
 
 worker_id = uuid.uuid4().hex[:4]

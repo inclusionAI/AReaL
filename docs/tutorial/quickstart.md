@@ -155,4 +155,3 @@ Customization guides:
 
 - [Custom dataset](../customization/dataset.md)
 - [Custom agentic/RVLR rollout workflows](../customization/agent.md)
-- [Custom algorithms](../customization/algorithm.md)

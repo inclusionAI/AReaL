@@ -101,7 +101,7 @@ export time.
 **Example from `PPOActor`:**
 
 ```python
-# areal/engine/ppo/actor.py
+# areal/trainer/ppo/actor.py
 def ppo_update(self, data):
     loss_mask = data["loss_mask"].bool()
     reward_score = data["rewards"]
@@ -257,7 +257,7 @@ sends aggregated metrics to external logging backends. It is automatically manag
 The trainer calls `StatsLogger.commit()` at the end of each training step:
 
 ```python
-# areal/experimental/trainer/rl.py
+# areal/trainer/rl_trainer.py
 def _export_and_commit_stats(self, epoch, epoch_step, global_step):
     # 1. Collect metrics from all components
     stats = self.actor.export_stats()           # Training metrics (all-reduced)

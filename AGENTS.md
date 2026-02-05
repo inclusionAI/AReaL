@@ -119,11 +119,11 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 
 ## Core concepts & extension points
 
-1. **Trainer (`areal/experimental/trainer/`)** – High-level training orchestrator. Use
-   `PPOTrainer` for RL training or `SFTTrainer` for supervised fine-tuning. See
+1. **Trainer (`areal/trainer/`)** – High-level training orchestrator. Use `PPOTrainer`
+   for RL training or `SFTTrainer` for supervised fine-tuning. See
    `examples/math/gsm8k_rl.py` for a complete example:
    ```python
-   from areal.experimental.trainer import PPOTrainer
+   from areal import PPOTrainer
    with PPOTrainer(config, train_dataset, valid_dataset) as trainer:
        trainer.train(workflow="areal.workflow.rlvr.RLVRWorkflow", ...)
    ```

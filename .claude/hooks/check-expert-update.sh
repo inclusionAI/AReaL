@@ -44,7 +44,7 @@ check_expert_update() {
     fi
 
     # Algorithm related (PPO, GRPO, workflows)
-    if [[ "$file" == *"areal/engine/ppo/"* ]] || \
+    if [[ "$file" == *"areal/trainer/ppo/"* ]] || \
        [[ "$file" == *"areal/workflow/"* ]] || \
        [[ "$file" == *"areal/reward/"* ]]; then
         reminder_file="algorithm-expert.md"

@@ -29,7 +29,7 @@ class TestWorkflowDetection:
         """Create a minimal object with the detection method."""
         # We can't easily instantiate a full PPOTrainer in unit tests,
         # so we'll create a simple object with just the method we need
-        from areal.experimental.trainer.rl import PPOTrainer
+        from areal.trainer import PPOTrainer
 
         class MinimalTrainer:
             def _requires_proxy_workflow(self, workflow):
