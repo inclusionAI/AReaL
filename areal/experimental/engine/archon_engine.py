@@ -42,10 +42,7 @@ from areal.experimental.engine.archon_checkpoint import (
     save_optimizer_state,
     save_to_dcp,
 )
-from areal.experimental.engine.archon_runner import (
-    PipelinedRunner,
-    SequentialRunner,
-)
+from areal.experimental.engine.archon_runner import create_runner
 from areal.experimental.engine.archon_weight_sync import (
     WeightSyncState,
     init_weight_update_group,
@@ -318,10 +315,20 @@ class ArchonEngine(TrainEngine):
         )
 
         self._materialize_and_load_weights()
-
-        self._create_runner()
-
         self._create_optimizer(ft_spec)
+
+        self.runner = create_runner(
+            pp_enabled=self.parallel_dims.pp_enabled,
+            model_parts=self.model_parts,
+            prepare_inputs_fn=self._prepare_pipelined_mb_inputs
+            if self.parallel_dims.pp_enabled
+            else self._prepare_mb_inputs,
+            pp_stages=self.pp_stages,
+            pp_schedule=self.config.archon.pp_schedule,
+            pp_group_size=self.parallel_dims.pp,
+            has_first_stage=self.pp_has_first_stage,
+            has_last_stage=self.pp_has_last_stage,
+        )
 
         self._initialized = True
 
@@ -356,6 +363,7 @@ class ArchonEngine(TrainEngine):
 
     @property
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
+        assert self._pp_cp_tp_group is not None
         return self._pp_cp_tp_group
 
     @property
@@ -766,8 +774,9 @@ class ArchonEngine(TrainEngine):
             self.pp_has_last_stage,
         ) = self.spec.pipelining_fn(
             model=self.model,
-            parallel_dims=self.parallel_dims,
             device=self.device,
+            parallel_dims=self.parallel_dims,
+            archon_config=self.config.archon,
             parallelize_fn=self.spec.parallelize_fn,
             param_dtype=param_dtype,
             reduce_dtype=torch.float32,
@@ -780,7 +789,6 @@ class ArchonEngine(TrainEngine):
 
         # Delete original model to free memory
         del self.model
-        self.model = None
 
         self.logger.info(
             f"PP enabled: has_first={self.pp_has_first_stage}, "
@@ -806,20 +814,6 @@ class ArchonEngine(TrainEngine):
             enable_compile=enable_compile,
         )
         self.model_parts = [self.model]
-
-    def _create_runner(self) -> None:
-        if self.parallel_dims.pp_enabled:
-            self.runner = PipelinedRunner(
-                pp_stage=self.pp_stages[0],
-                has_first_stage=self.pp_has_first_stage,
-                has_last_stage=self.pp_has_last_stage,
-                prepare_inputs_fn=self._prepare_pipelined_mb_inputs,
-            )
-        else:
-            self.runner = SequentialRunner(
-                model=self.model,
-                prepare_inputs_fn=self._prepare_mb_inputs,
-            )
 
     def _prepare_mb_inputs(
         self, mb_item: MicroBatchItem

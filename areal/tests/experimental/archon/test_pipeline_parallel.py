@@ -83,10 +83,13 @@ class TestGenerateLLMFqnPerModelPart:
         assert result[2] == ["layers.5", "norm", "output"]
 
     def test_custom_weights(self):
-        """Test with custom input/output weights."""
-        # input_weight=2, output_weight=2 means embedding "costs" 2 slots
+        """Test with custom first_stage_less_layers/last_stage_less_layers."""
+        # first_stage_less_layers=2, last_stage_less_layers=2 means embedding "costs" 2 slots
         result = generate_llm_fqn_per_model_part(
-            num_stages=2, num_layers=4, input_weight=2, output_weight=2
+            num_stages=2,
+            num_layers=4,
+            first_stage_less_layers=2,
+            last_stage_less_layers=2,
         )
         assert len(result) == 2
         # 4 + 2 + 2 = 8 effective layers, 8 // 2 = 4 per stage
@@ -95,10 +98,13 @@ class TestGenerateLLMFqnPerModelPart:
         # Stage 1: 2 layers + norm + output (counts as 2)
         assert result[1] == ["layers.2", "layers.3", "norm", "output"]
 
-    def test_zero_input_weight(self):
-        """Test with zero input weight."""
+    def test_zero_first_stage_less_layers(self):
+        """Test with zero first_stage_less_layers."""
         result = generate_llm_fqn_per_model_part(
-            num_stages=2, num_layers=4, input_weight=0, output_weight=1
+            num_stages=2,
+            num_layers=4,
+            first_stage_less_layers=0,
+            last_stage_less_layers=1,
         )
         assert len(result) == 2
         # 4 + 0 + 1 = 5 effective layers, 5 // 2 = 2 per stage, 1 extra
@@ -122,20 +128,30 @@ class TestGenerateLLMFqnPerModelPart:
         with pytest.raises(ValueError, match="cannot exceed effective layers"):
             generate_llm_fqn_per_model_part(num_stages=10, num_layers=4)
 
-    def test_validation_input_weight_too_large(self):
-        """Test validation error when input_weight exceeds layers_per_stage."""
-        # 4 + 5 + 1 = 10 effective, 10 // 4 = 2 per stage, but input_weight=5 > 2
-        with pytest.raises(ValueError, match="input_weight.*exceeds layers_per_stage"):
+    def test_validation_first_stage_less_layers_too_large(self):
+        """Test validation error when first_stage_less_layers exceeds layers_per_stage."""
+        # 4 + 5 + 1 = 10 effective, 10 // 4 = 2 per stage, but first_stage_less_layers=5 > 2
+        with pytest.raises(
+            ValueError, match="first_stage_less_layers.*exceeds layers_per_stage"
+        ):
             generate_llm_fqn_per_model_part(
-                num_stages=4, num_layers=4, input_weight=5, output_weight=1
+                num_stages=4,
+                num_layers=4,
+                first_stage_less_layers=5,
+                last_stage_less_layers=1,
             )
 
-    def test_validation_output_weight_too_large(self):
-        """Test validation error when output_weight exceeds layers_per_stage."""
-        # 4 + 1 + 5 = 10 effective, 10 // 4 = 2 per stage, but output_weight=5 > 2
-        with pytest.raises(ValueError, match="output_weight.*exceeds layers_per_stage"):
+    def test_validation_last_stage_less_layers_too_large(self):
+        """Test validation error when last_stage_less_layers exceeds layers_per_stage."""
+        # 4 + 1 + 5 = 10 effective, 10 // 4 = 2 per stage, but last_stage_less_layers=5 > 2
+        with pytest.raises(
+            ValueError, match="last_stage_less_layers.*exceeds layers_per_stage"
+        ):
             generate_llm_fqn_per_model_part(
-                num_stages=4, num_layers=4, input_weight=1, output_weight=5
+                num_stages=4,
+                num_layers=4,
+                first_stage_less_layers=1,
+                last_stage_less_layers=5,
             )
 
     def test_large_model(self):

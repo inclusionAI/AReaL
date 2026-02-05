@@ -42,6 +42,8 @@ pre-commit install            # Set up hooks (run once)
 pre-commit run --all-files    # Format and lint
 
 # Run tests
+# First check GPU availability (many tests require GPU)
+python -c "import torch; print('GPU available:', torch.cuda.is_available())"
 uv run pytest areal/tests/test_<topic>.py
 
 # Generate CLI docs
@@ -69,7 +71,8 @@ uv run python docs/generate_cli_docs.py
 - Adding new dependencies
 - Changing launcher or scheduler logic
 - Deleting or renaming public APIs
-- Running pytest tests (may require GPU/multi-node)
+- Running GPU/distributed tests (check GPU first:
+  `python -c "import torch; print('GPU available:', torch.cuda.is_available())"`)
 
 ### Never Do
 

@@ -183,6 +183,9 @@ This skill complements other AReaL development skills:
 ## Running Tests
 
 ```bash
+# First check GPU availability (many tests require GPU)
+python -c "import torch; print('GPU available:', torch.cuda.is_available())"
+
 # Run specific test file
 uv run pytest areal/tests/test_<name>.py
 
@@ -192,7 +195,7 @@ uv run pytest -m "not slow"
 # Run with verbose output
 uv run pytest -v
 
-# Run distributed tests (requires torchrun)
+# Run distributed tests (requires torchrun and multi-GPU)
 # Note: Usually invoked via pytest test files
 torchrun --nproc_per_node=2 areal/tests/torchrun/run_<test>.py
 ```
