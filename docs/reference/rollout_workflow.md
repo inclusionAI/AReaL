@@ -3,9 +3,15 @@
 This document describes the `RolloutWorkflow` abstraction, the core interface for
 implementing rollout generation in AReaL's reinforcement learning pipeline.
 
-**Note**: This page targets developers seeking a deep understanding of the codebase. For
-agentic RL training, use the high-level API described in the
-[Agentic RL Guide](../tutorial/agentic_rl.md).
+**Notes**:
+
+1. This page targets developers seeking a deep understanding of the codebase. For
+   agentic RL training, use the high-level API described in the
+   [Agentic RL Guide](../tutorial/agentic_rl.md).
+
+1. **Legacy pattern**: Directly subclassing `RolloutWorkflow` is considered legacy and
+   should not be used proactively. For new agentic RL workflows, use the
+   [agent workflow pattern](./agent_workflow.md) with `async def run()` instead.
 
 ## Overview
 
@@ -142,6 +148,74 @@ Each line in the JSONL file contains:
   "prompt": "<|im_start|>user\nWhat is 2+2?<|im_end|>\n<|im_start|>assistant\n",
   "completion": "The answer is 4.<|im_end|>"
 }
+```
+
+## Grouped Rollout
+
+Grouped rollout runs the same workflow multiple times per input prompt, producing
+diverse completions for training. This is useful for algorithms like GRPO that benefit
+from multiple samples per prompt.
+
+### Configuration
+
+Set `group_size` when submitting rollouts:
+
+```python
+engine.submit(
+    data=sample,
+    workflow=MyWorkflow,
+    workflow_kwargs={...},
+    group_size=4,  # Run workflow 4 times per input
+)
+```
+
+Or via CLI:
+
+```yaml
+rollout:
+  group_size: 4
+```
+
+### How It Works
+
+When `group_size > 1`, the workflow is wrapped in `GroupedRolloutWorkflow`:
+
+1. The wrapper runs `arun_episode` concurrently `group_size` times using
+   `asyncio.gather`
+1. Results are merged based on their type:
+   - **Tensor dictionaries**: Concatenated along the batch dimension
+   - **InteractionWithTokenLogpReward dicts**: Merged into a single dictionary
+1. If some runs return `None` (rejected), only valid results are kept
+1. If all runs return `None`, the entire grouped result is `None`
+
+### Output Shape
+
+With `group_size=4` and a workflow returning `[1, seq_len]` tensors, the grouped output
+has shape `[4, seq_len]` (4 samples concatenated).
+
+### Implementation
+
+From `areal/infra/remote_inf_engine.py`:
+
+```python
+class GroupedRolloutWorkflow(RolloutWorkflow):
+    async def arun_episode(self, engine, data):
+        # Run N times concurrently
+        results = await asyncio.gather(
+            *[self.workflow.arun_episode(engine, data)
+              for _ in range(self.group_size)]
+        )
+
+        # Filter None results
+        valid_results = [r for r in results if r is not None]
+        if not valid_results:
+            return None
+
+        # Merge based on result type
+        if all_interaction_dicts(valid_results):
+            return merge_dicts(valid_results)
+        else:
+            return concat_padded_tensors(valid_results)
 ```
 
 ## Implementing Custom Workflows

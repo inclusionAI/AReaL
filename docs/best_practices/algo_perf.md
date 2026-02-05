@@ -29,7 +29,8 @@ diagnostic steps:
 
 1. **Establish a baseline:** Run evaluation on the test set to measure baseline
    performance before training. AReaL allows zero-code changes between training and
-   evaluation, so you can reuse your training code for evaluation.
+   evaluation, so you can reuse your training code for evaluation. See
+   [Evaluation Guide](../tutorial/eval.md) for details.
 1. **Test on simpler data:** Run RL training on the test set instead of the training set
    to verify whether rewards increase.
 1. **If rewards don't increase on the test set:** Tune your hyperparameters (e.g.,
