@@ -5,11 +5,14 @@ for OpenAI-compatible API calls during RL training.
 """
 
 import asyncio
+import json
+import os
 import time
 from typing import Any
 
 import litellm
 from litellm import register_model
+from litellm.exceptions import BadRequestError
 from litellm.main import ModelResponse
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
@@ -146,7 +149,20 @@ class Tau2Runner:
 
             try:
                 completion = await client.chat.completions.create(**kwargs)
-                return self._convert_to_model_response(completion)
+                response = self._convert_to_model_response(completion)
+                # Clean up thinking content from user simulator response
+                # User simulator (GPT-4 etc) may output <think>...</think> tags
+                # which should not appear in conversation history
+                if not is_agent and response and hasattr(response, "choices") and response.choices:
+                    for choice in response.choices:
+                        if hasattr(choice, "message") and choice.message:
+                            content = getattr(choice.message, "content", None)
+                            if content and "</think>" in content:
+                                # Remove thinking content from user simulator response
+                                parts = content.split("</think>", 1)
+                                if len(parts) > 1:
+                                    choice.message.content = parts[1].lstrip("\n")
+                return response
             except Exception as e:
                 role = "Agent" if is_agent else "User"
                 logger.error(f"{role} LLM error: {type(e).__name__}: {e}")
@@ -243,6 +259,22 @@ class Tau2Runner:
         try:
             simulation = await orchestrator.arun()
             run_info.messages = simulation.messages
+        except BadRequestError as e:
+            # Handle context length exceeded errors
+            error_msg = str(e)
+            if "context length" in error_msg.lower() or "token" in error_msg.lower():
+                logger.error(
+                    f"CONTEXT LENGTH EXCEEDED: Domain: {domain}, Task: {task.id}. "
+                    f"Error: {e}. Setting reward to 0.0"
+                )
+            else:
+                logger.error(
+                    f"BAD REQUEST ERROR: Domain: {domain}, Task: {task.id}. "
+                    f"Error: {e}. Setting reward to 0.0"
+                )
+            run_info.messages = orchestrator.get_trajectory()
+            run_info.error = str(e)
+            return run_info
         except Exception as e:
             logger.error(
                 f"ERROR RUNNING SIMULATION: Domain: {domain}, Task: {task.id}, "
@@ -292,13 +324,17 @@ class Tau2AgentWorkflow:
         econfig: Tau2 environment configuration
         gen_args: Generation arguments (temperature, max_tokens, etc.)
         timeout: Maximum time allowed for a single episode (default: 600s)
+        save_rollout: Whether to save rollout results (default: False)
+        save_path: Base path to save rollout results (default: None)
     """
 
     def __init__(
         self,
         econfig: Tau2EnvConfig | dict | None = None,
         gen_args: dict | None = None,
-        timeout: float = 600.0,
+        timeout: float = 7200.0,
+        save_rollout: bool = False,
+        save_path: str | None = None,
     ):
         if econfig is None:
             econfig = Tau2EnvConfig()
@@ -307,6 +343,8 @@ class Tau2AgentWorkflow:
         self.econfig = econfig
         self.gen_args = gen_args or {}
         self.timeout = timeout
+        self.save_rollout = save_rollout
+        self.save_path = save_path
 
     async def run(
         self, data: dict[str, Any], **extra_kwargs: Any
@@ -382,6 +420,61 @@ class Tau2AgentWorkflow:
             )
             raise
 
+        # Save rollout results if enabled
+        if self.save_rollout and self.save_path:
+            self._save_rollout(run_info, task_id)
+
         # Return the reward
         # The proxy server handles tracking completions and assigning rewards
         return run_info.reward
+
+    def _save_rollout(self, run_info: Tau2RunInfo, task_id: str) -> None:
+        """Save rollout results to file.
+
+        Args:
+            run_info: The run info containing task, messages, and reward
+            task_id: The task ID
+        """
+        try:
+            save_dir = os.path.join(self.save_path, "generated")
+            os.makedirs(save_dir, exist_ok=True)
+
+            # Convert messages to OpenAI format
+            messages_openai = []
+            for msg in run_info.messages:
+                msg_dict = {
+                    "role": msg.role,
+                    "content": msg.content,
+                }
+                # Add tool_calls if present
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    msg_dict["tool_calls"] = [
+                        tc.model_dump() if hasattr(tc, "model_dump") else tc
+                        for tc in msg.tool_calls
+                    ]
+                # Add tool_call_id if present (for tool messages)
+                if hasattr(msg, "tool_call_id") and msg.tool_call_id:
+                    msg_dict["tool_call_id"] = msg.tool_call_id
+                messages_openai.append(msg_dict)
+
+            # Build rollout data
+            rollout_data = {
+                "task_id": task_id,
+                "task": run_info.task.model_dump() if hasattr(run_info.task, "model_dump") else str(run_info.task),
+                "messages": messages_openai,
+                "reward": run_info.reward,
+                "reward_info": run_info.reward_info.model_dump() if run_info.reward_info and hasattr(run_info.reward_info, "model_dump") else None,
+                "error": run_info.error,
+                "timestamp": time.time(),
+            }
+
+            # Save to file: {task_id}_{timestamp}.json
+            safe_task_id = task_id.replace("/", "_").replace("\\", "_").replace("[", "_").replace("]", "_")
+            timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+            filepath = os.path.join(save_dir, f"{safe_task_id}_{timestamp_str}.json")
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(rollout_data, f, ensure_ascii=False, indent=2)
+
+            logger.debug(f"Saved rollout result to {filepath}")
+        except Exception as e:
+            logger.warning(f"Failed to save rollout result for {task_id}: {e}")

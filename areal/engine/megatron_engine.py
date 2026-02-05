@@ -213,6 +213,9 @@ class MegatronEngine(TrainEngine):
         self.process_group_initialized = True
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
+        # Set CUDA memory allocator config to reduce fragmentation
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
         try:
             self.seed = get_seed()
         except ValueError:

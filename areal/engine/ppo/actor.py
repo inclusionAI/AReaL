@@ -377,6 +377,11 @@ def grpo_loss_fn(
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
     loss_mask = input_data["loss_mask"].bool()
+
+    # Early return if loss_mask is empty (e.g., in PP stages that don't have data)
+    if loss_mask.numel() == 0:
+        return torch.tensor(0.0, device=logprobs.device, requires_grad=True)
+
     prox_logp_gt = input_data.get("prox_logp")  # Could be None if skipped
 
     entropy = entropy.detach()

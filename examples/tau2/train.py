@@ -60,7 +60,7 @@ def get_tau2_dataset(
 
 
 def group_filter(x: dict[str, Any]):
-    return x["rewards"].mean() <= 0.95
+    return 0.05 <= x["rewards"].mean() <= 0.95
 
 
 def main(args):

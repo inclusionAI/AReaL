@@ -257,8 +257,23 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         Returns:
             A tuple of (ChatCompletion, ChatCompletionMessage).
         """
+        # Separate thinking content from the output for chat history
+        # The full output (with thinking) is stored in model_response for training
+        # But the message content (for conversation history) should not include thinking
+        #
+        # Note: Agent output may not have <think> prefix (Qwen3 adds it in generation prompt),
+        # but will have </think> suffix. We need to handle both cases:
+        # 1. Full format: <think>...\n</think>\n\ncontent
+        # 2. Agent format: thinking content...\n</think>\n\ncontent
+        output_text_for_message = output_text
+        if "</think>" in output_text:
+            # Extract only the non-thinking part for the message content
+            parts = output_text.split("</think>", 1)
+            if len(parts) > 1:
+                output_text_for_message = parts[1].lstrip("\n")
+
         output_message = ChatCompletionMessage(
-            content=output_text,
+            content=output_text_for_message,
             role="assistant",
             # For all empty tool calls, set tool_calls=None
             tool_calls=tool_calls or None,
@@ -920,7 +935,13 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         )
 
         # Call inference engine
-        engine_resp = await self.engine.agenerate(model_request)
+        try:
+            engine_resp = await self.engine.agenerate(model_request)
+        except Exception as e:
+            # Clean up cache on failure to avoid Interaction ID mismatch error
+            if cache is not None and resp_id in cache:
+                del cache[resp_id]
+            raise
         output_text = self.tokenizer.decode(engine_resp.output_tokens_without_stop)
 
         # Parse tool calls.
