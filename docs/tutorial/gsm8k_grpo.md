@@ -453,9 +453,7 @@ GPU 3: SGLang        GPU 7: FSDP rank 3  ─┘
                      NCCL AllReduce for gradients
 ```
 
-Each worker processes its shard, then synchronizes gradients via NCCL. For custom
-algorithms, see
-[Customization: Algorithms](https://inclusionai.github.io/AReaL/customization/algorithm.html).
+Each worker processes its shard, then synchronizes gradients via NCCL.
 
 ### The Training Loop
 
@@ -599,12 +597,11 @@ Now that you understand the basics, explore these advanced topics:
 - [Evaluation](../tutorial/eval.md) - Evaluate your trained model
 - [Training Large MoE Models](../tutorial/megatron.md) - Scale to massive models with
   Megatron integration
-- [Agentic RL with OpenAI APIs](../tutorial/agentic_rl.md) - Build agents that use tools
-  and APIs
+- [Agentic RL](../tutorial/agentic_rl.md) - Build agents that use tools and any agentic
+  frameworks
 
 **Customization Guides**:
 
 - [Custom Datasets](../customization/dataset.md) - Use your own data sources
 - [Custom Workflows](../customization/agent.md) - Build agentic/RLVR workflows with
   custom reward functions
-- [Custom Algorithms](../customization/algorithm.md) - Implement your own RL algorithms

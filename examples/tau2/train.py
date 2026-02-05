@@ -9,8 +9,8 @@ from tau2.registry import registry
 
 from examples.tau2.utils import Tau2PPOConfig
 
+from areal import PPOTrainer
 from areal.api.cli_args import load_expr_config
-from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils import logging
 
 logger = logging.getLogger("Tau2Train")
