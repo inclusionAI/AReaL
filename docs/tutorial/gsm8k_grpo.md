@@ -56,46 +56,46 @@ Controller Process (Your Script)
 ### Data Flow with RTensor
 
 ```
-Rollout Workers (GPUs 0-3)         Controller              Training Workers (GPUs 4-7)
-─────────────────────────         ──────────             ───────────────────────────
+Rollout Workers (GPUs 0-3)              Controller              Training Workers (GPUs 4-7)
+─────────────────────────────          ────────────            ─────────────────────────────
 Worker 0: Generates 16 samples
-          ├─> Shard 0 stored ──────┐
-Worker 1: Generates 16 samples      │
-          ├─> Shard 1 stored ────┐  │
-Worker 2: Generates 16 samples    │  │
-          ├─> Shard 2 stored ──┐ │  │
-Worker 3: Generates 16 samples  │ │  │
-          └─> Shard 3 stored ─┐│ │  │
-                              ││ │  │
-                              ││ │  │         RTensor metadata
-                              ││ │  └──> Controller ──> data_parallel_dispatch()
-                              ││ └─────────────┼──────────────┬─────────────┐
-                              │└───────────────┼──────────────┼─────────────┤
-                              └────────────────┼──────────────┼─────────────┤
-                                               │              │             │
-                                               ▼              ▼             ▼
-                                           Worker 4:      Worker 5:    Worker 6:
-                                           Fetch          Fetch        Fetch
-                                           Shards 0,1     Shards 2     Shards 3
-                                           │              │             │
-                                           ├─> Forward    ├─> Forward  ├─> Forward
-                                           ├─> Backward   ├─> Backward ├─> Backward
-                                           └─> Gradients  └─> Gradients└─> Gradients
-                                                          │
-                                                   NCCL AllReduce
-                                                          │
-                                           Worker 4:      Worker 5:    Worker 6:
-                                           Returns        Returns      Returns
-                                           RTensor        RTensor      RTensor
-                                               │              │             │
-                                               └──────────────┴─────────────┘
-                                                              │
-                                                   data_parallel_merge()
-                                                              │
-                                                              ▼
-                                                    Controller receives:
-                                                    • loss (scalar)
-                                                    • metrics (dict)
+          ├─> Shard 0 stored ────────────┐
+Worker 1: Generates 16 samples           │
+          ├─> Shard 1 stored ──────────┐ │
+Worker 2: Generates 16 samples         │ │
+          ├─> Shard 2 stored ────────┐ │ │
+Worker 3: Generates 16 samples       │ │ │
+          └─> Shard 3 stored ──────┐ │ │ │
+                                   │ │ │ │
+                                   │ │ │ │    RTensor metadata
+                                   │ │ │ └─> Controller ─> data_parallel_dispatch()
+                                   │ │ └───────────┼────────────┬────────────┐
+                                   │ └─────────────┼────────────┼────────────┤
+                                   └───────────────┼────────────┼────────────┤
+                                                   │            │            │
+                                                   ▼            ▼            ▼
+                                               Worker 4:    Worker 5:    Worker 6:
+                                               Fetch        Fetch        Fetch
+                                               Shards 0,1   Shards 2     Shards 3
+                                                   │            │            │
+                                               ├─> Forward  ├─> Forward  ├─> Forward
+                                               ├─> Backward ├─> Backward ├─> Backward
+                                               └─> Grads    └─> Grads    └─> Grads
+                                                            │
+                                                     NCCL AllReduce
+                                                            │
+                                               Worker 4:    Worker 5:    Worker 6:
+                                               Returns      Returns      Returns
+                                               RTensor      RTensor      RTensor
+                                                   │            │            │
+                                                   └────────────┴────────────┘
+                                                                │
+                                                     data_parallel_merge()
+                                                                │
+                                                                ▼
+                                                      Controller receives:
+                                                      • loss (scalar)
+                                                      • metrics (dict)
 ```
 
 In the following sections, we'll walk through the code to explain each component in
@@ -270,11 +270,11 @@ defines how prompts become training samples. Each trajectory goes through these 
 **GSM8K Reward**: Binary reward (1.0 for correct answer, 0.0 otherwise). See
 [`gsm8k_reward_fn`](https://github.com/inclusionAI/AReaL/blob/main/areal/reward/gsm8k.py).
 
-This workflow adopts the low-level API of inference engines --- the `agenerate` API. It
-is perferrable if you want more fine-grained control over token IDs. `agenerate` inputs
-token IDs to the inference server and produces output token IDs for user's processing.
-We also provide high-level API for convenient agentic workflow orchestration. We refer
-to the [agentic RL guide](../tutorial/agentic_rl.md).
+**NOTE:** This workflow adopts the low-level API of inference engines --- the
+`agenerate` API. It is preferable if you want more fine-grained control over token IDs.
+`agenerate` inputs token IDs to the inference server and produces output token IDs for
+user's processing. We also provide high-level API for convenient agentic workflow
+orchestration. We refer to the [agentic RL guide](../tutorial/agentic_rl.md).
 
 ### Asynchronous Rollout Collection
 
@@ -284,28 +284,28 @@ overlap between generation and training.
 #### Three-Process Architecture
 
 ```
-Controller Process              Worker Process (RPC Server)        GPU Process
-──────────────────              ───────────────────────────        ───────────
-RolloutController               Flask HTTP Server (CPU)            SGLang/vLLM
-    │                               │                                  │
-    └─> BatchTaskDispatcher     /call endpoint                    Inference
-        (background thread)         │                             Engine
-            │                       └─> Engine Thread                 │
-            ├─ submit task 1            └─> RemoteInfEngine           │
-            │  (HTTP POST)                   └─> submit() ────────────>│
-            │                                                       Generate
-            ├─ submit task 2                                       tokens
-            │  (HTTP POST)                                            │
-            │                                                          │
-            ├─ submit task 3              HTTP Callback  <─────────────┘
+Controller Process              Worker Process (RPC Server)         GPU Process
+──────────────────              ───────────────────────────         ───────────
+RolloutController               Flask HTTP Server (CPU)             SGLang/vLLM
+    │                               │                                   │
+    └─> BatchTaskDispatcher     /call endpoint                      Inference
+        (background thread)         │                               Engine
+            │                       └─> Engine Thread                   │
+            ├─ submit task 1            └─> RemoteInfEngine             │
+            │  (HTTP POST)                  └─> submit() ──────────────>│
+            │                                                        Generate
+            ├─ submit task 2                                         tokens
+            │  (HTTP POST)                                              │
+            │                                                           │
+            ├─ submit task 3              HTTP Callback  <──────────────┘
             │                             (trajectory)
-            │                  ┌──────────────┘
+            │                  ┌─────────────┘
             └─ collect  <──────┘
 
 Meanwhile (on different GPUs)...
 TrainController                 Training Worker
     │                               │
-    └─> ppo_update(batch) ──────────>│ Forward/Backward
+    └─> ppo_update(batch) ──────────> Forward/Backward
 
 Key: Generation and training happen SIMULTANEOUSLY on different GPUs
 ```
@@ -320,6 +320,9 @@ HTTP:
 - Submits tasks round-robin to rollout workers
 - Maintains 2+ batches of inflight requests to hide latency
 - Non-blocking: returns task_id immediately
+
+As such, **rollout and training happen simultaneously** in AReaL, even though the code
+looks like a synchronous orchestration.
 
 **Level 2 - Worker RPC Server**: Each rollout worker runs a Flask HTTP server
 ([`rpc_server.py`](https://github.com/inclusionAI/AReaL/blob/main/areal/scheduler/rpc/rpc_server.py))
@@ -368,21 +371,6 @@ results = dispatcher.wait_results(batch_size)
 return concat_padded_tensors(results)  # Shape: [batch_size, seq_len]
 ```
 
-#### Overlap with Training
-
-The key benefit of this architecture is that **rollout and training happen
-simultaneously**:
-
-```
-Timeline:
-─────────────────────────────────────────────────────────────
-Rollout GPUs:   [Generate Batch N+1] [Generate Batch N+2] ...
-Training GPUs:           [Train on Batch N] [Train Batch N+1] ...
-                             │
-                    Weight sync happens here
-                    (rollout paused briefly)
-```
-
 **Staleness Control**:
 [`StalenessManager`](https://github.com/inclusionAI/AReaL/blob/main/areal/infra/staleness_manager.py)
 limits concurrent inflight requests:
@@ -390,16 +378,6 @@ limits concurrent inflight requests:
 - `max_concurrent_rollouts`: Maximum inflight trajectories
 - `max_head_offpolicyness`: Reject samples generated with weights too old
 - Version tracking: Each token tagged with model version used during generation
-
-**Pause/Resume**: During weight sync, rollout is paused to avoid stale generations:
-
-```python
-# In PPOTrainer.train() loop
-rollout.pause()           # Pause new submissions
-actor.update_weights(...) # Sync weights to inference GPUs
-rollout.set_version(step) # Update version tracker
-rollout.resume()          # Resume submissions
-```
 
 ## Training: Controller-Worker Pattern
 
@@ -419,24 +397,24 @@ provides the core RPC dispatch:
 **Data Flow with RTensor:**
 
 ```
-Controller                  Worker 0                Worker 1
-    │                          │                       │
-    ├─ RTensor (metadata) ─────┼───────────────────────┤
-    │  • Shard 0,1,2,3         │                       │
-    │                          │                       │
-    ├─ dispatch() ─────────────>│                       │
-    │  • Worker 0: Shards 0,1   │                       │
-    │  • Worker 1: Shards 2,3   │                       │
-    │                          │                       │
-    │                          ├─> Fetch Shards 0,1    │
-    │                          │   from rollout workers│
-    │                          │                       ├─> Fetch Shards 2,3
-    │                          │                       │   from rollout workers
-    │                          │                       │
-    │                          ├─> compute_logp()      ├─> compute_logp()
-    │                          │                       │
-    │                          ├─> RTensor (result)    ├─> RTensor (result)
-    │<─ merge() ───────────────┴───────────────────────┘
+Controller                  Worker 0                  Worker 1
+    │                           │                         │
+    ├─ RTensor (metadata) ──────┼─────────────────────────┤
+    │  • Shards 0,1,2,3         │                         │
+    │                           │                         │
+    ├─ dispatch() ────────────> │                         │
+    │  • Worker 0: Shards 0,1   │                         │
+    │  • Worker 1: Shards 2,3   │                         │
+    │                           │                         │
+    │                           ├─> Fetch Shards 0,1      │
+    │                           │   from rollout workers  │
+    │                           │                         ├─> Fetch Shards 2,3
+    │                           │                         │   from rollout workers
+    │                           │                         │
+    │                           ├─> compute_logp()        ├─> compute_logp()
+    │                           │                         │
+    │                           ├─> RTensor (result)      ├─> RTensor (result)
+    │<─ merge() ────────────────┴─────────────────────────┘
     │  • Reconstruct ordering
     │  • Return unified RTensor
     └─> batch["logp"] = result
@@ -520,9 +498,9 @@ supports two transfer methods:
 
 **NCCL-based transfer** (Recommended):
 
-- Direct GPU-to-GPU broadcast
+- Direct GPU-to-GPU communication based on NCCL broadcast
 - Faster but uses more GPU memory
-- Requires training and inference GPUs on the same communication backend
+- Requires non-overlapped training and inference GPUs on the same communication backend
 
 **Disk-based transfer**:
 
@@ -533,10 +511,11 @@ supports two transfer methods:
 
 The weight sync process in `PPOTrainer.train()` follows this pattern:
 
-1. Pause rollout to avoid stale generations
+1. Pause rollout servers to interrupt all inflight generations back to the rollout
+   client (e.g., `RemoteSGLangEngine`)
 1. Transfer weights via configured method (NCCL or disk)
 1. Update version tracking for staleness management
-1. Resume rollout with updated weights
+1. Resume rollout with updated weights with re-computed KV cache
 
 See
 [`PPOTrainer.train()`](https://github.com/inclusionAI/AReaL/blob/main/areal/experimental/trainer/rl.py)
@@ -549,9 +528,22 @@ metrics tracking. These are automatically orchestrated during training.
 
 ### Checkpointing
 
-The [`Saver`](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/saver.py)
-handles periodic checkpoint saving. Configure via `config.saver` (interval, format,
-etc.). Called automatically in `trainer.train()`.
+AReaL provides two checkpointing mechanisms:
+
+| Component                                                                                 | Purpose                          | Format        | Configuration    |
+| ----------------------------------------------------------------------------------------- | -------------------------------- | ------------- | ---------------- |
+| [`Saver`](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/saver.py)            | Export for evaluation/deployment | HuggingFace   | `config.saver`   |
+| [`RecoverHandler`](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/recover.py) | Resume after failures            | DCP (sharded) | `config.recover` |
+
+**Saver** creates HuggingFace-compatible checkpoints that can be loaded with
+`transformers` or published to HuggingFace Hub. Each save creates a new directory.
+
+**RecoverHandler** saves complete training state (model, optimizer, dataloader, RNG) for
+fault tolerance. Checkpoints are backend-specific and require the same parallelism
+configuration to load. Each save overwrites the previous checkpoint.
+
+Both are called automatically during `trainer.train()`. For details, see the
+[Checkpointing Reference](../reference/checkpointing.md).
 
 ### Evaluation
 
@@ -562,21 +554,41 @@ automatically in `trainer.train()`.
 
 ### Metrics Tracking
 
+AReaL uses a two-component metrics system:
+
 **`stats_tracker`**
 ([source](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/stats_tracker.py)):
-Collects and aggregates training statistics across ranks.
+Collects statistics with two paradigms optimized for different use cases:
 
-- `scalar(key=value)`: Record simple metrics
-- `stat(key=tensor, denominator=mask)`: Record tensor statistics with selective
-  aggregation
-- `record_timing(name)`: Context manager for timing
-- `scope(name)`: Hierarchical metric keys
-- `export()`: Returns aggregated stats across all ranks
+- **Streaming metrics** for rollout workers: Each workflow logs scalars individually
+  (e.g., `reward`), which are aggregated across workers by the controller
+- **Batch metrics** for training: Tensor statistics with boolean masks are logged per
+  batch, then all-reduced across data-parallel ranks
+
+```python
+# Rollout metrics (streaming) - in workflows
+stats_tracker.get("rollout").scalar(reward=0.8, num_turns=3)
+
+# Training metrics (batch) - in PPO actor
+stats_tracker.denominator(n_valid_tokens=loss_mask.bool())
+stats_tracker.stat(advantages=tensor, denominator="n_valid_tokens")
+```
 
 **`StatsLogger`**
 ([source](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/stats_logger.py)):
-Sends metrics to logging backends (W&B, TensorBoard) from rank 0. Configure via
-`config.stats_logger`.
+Sends aggregated metrics to logging backends (Weights & Biases, SwanLab, TensorBoard)
+from rank 0. At each training step, `PPOTrainer` collects metrics from all components
+and commits them:
+
+```python
+# areal/experimental/trainer/rl.py
+stats = self.actor.export_stats()         # Training metrics
+stats.update(self.rollout.export_stats()) # Rollout metrics
+self.stats_logger.commit(epoch, step, global_step, stats)  # → wandb/tensorboard
+```
+
+For the complete API reference, see the
+[Metrics Tracking Reference](../reference/metrics_tracking.md).
 
 ## Next Steps
 
@@ -584,6 +596,7 @@ Now that you understand the basics, explore these advanced topics:
 
 **Tutorials**:
 
+- [Evaluation](../tutorial/eval.md) - Evaluate your trained model
 - [Training Large MoE Models](../tutorial/megatron.md) - Scale to massive models with
   Megatron integration
 - [Agentic RL with OpenAI APIs](../tutorial/agentic_rl.md) - Build agents that use tools

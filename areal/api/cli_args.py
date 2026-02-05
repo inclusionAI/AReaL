@@ -1538,16 +1538,23 @@ class RecoverConfig(_Timer):
         metadata={
             "help": "Recovery mode for the launcher. "
             "Options: "
-            "'disabled': Never recover from previous runs. "
-            "'auto': Automatically recover from previous runs if recover info and checkpoints are available. "
-            "'fault': Only recover from previous runs if the new run fails. "
-            "'resume': Force to resume, raise an error if no recover info was found. Never resume if failed again."
+            "'on' or 'auto': Automatically recover from previous runs if recover info and checkpoints are available. "
+            "'off' or 'disabled': Never recover from previous runs."
         },
     )
     retries: int = field(
         default=3,
-        metadata={"help": "Number of recovery retries (auto/fault modes only)."},
+        metadata={"help": "Number of recovery retries when recovery is enabled."},
     )
+
+    def __post_init__(self):
+        valid_modes = {"on", "off", "auto", "disabled"}
+        if self.mode not in valid_modes:
+            raise ValueError(
+                f"Invalid recover mode '{self.mode}'. "
+                f"Valid options: {valid_modes}. "
+                f"Note: 'fault' and 'resume' modes have been removed."
+            )
 
 
 @dataclass

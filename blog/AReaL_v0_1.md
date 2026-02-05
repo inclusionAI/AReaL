@@ -132,8 +132,8 @@ highlight some of the major research topics we are working on.
     enhancements?
   - How to properly curate the distillation dataset for cold-start to achieve the best
     RL results?
-- **Boosting Reasoning with Auxiliary Training Signals.** Can auxiliary signals — such
-  as Process Reward Models (PRMs) and expert-curated labels — be adopted in RL training
+- **Boosting Reasoning with Auxiliary Training Signals.** Can auxiliary signals - such
+  as Process Reward Models (PRMs) and expert-curated labels - be adopted in RL training
   to refine the reasoning processes of LRMs?
 - **Adaptive Response Lengths: Quality Over Quantity.** How can RL training schemes
   teach LRMs to dynamically adjust response complexity based on task difficulty? The

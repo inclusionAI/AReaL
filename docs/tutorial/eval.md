@@ -1,8 +1,13 @@
 # Evaluation
 
-AReaL provides distributed inference evaluation using the same RolloutController
-infrastructure as training. This allows you to leverage existing workflows and
-schedulers to scale evaluation across multiple GPUs and nodes.
+AReaL supports distributed inference using the same controller infrastructure as
+training. This allows you to leverage existing workflows and schedulers to scale
+evaluation across multiple GPUs and nodes.
+
+**Note:** AReaL provides distributed inference for your trained model, not a complete
+evaluation pipeline with dataset retrieval and metrics computation. You can use
+third-party evaluation frameworks with AReaL checkpoints directly --- no conversion
+required since AReaL saves HuggingFace-compatible checkpoints.
 
 ## Quick Start
 
@@ -33,6 +38,61 @@ python3 examples/math/gsm8k_eval.py \
     cluster.n_nodes=12
 ```
 
+## Evaluation Metrics
+
+Select an appropriate dataset and metrics for your task, then integrate the evaluation
+logic as a workflow. See the [Agentic RL guide](./agentic_rl.md) for details.
+
+Example with an agentic math evaluator (the evaluation code is independent with AReaL):
+
+```python
+from agents import Agent, OpenAIProvider, RunConfig, SQLiteSession, function_tool
+from agents import Runner as OpenAIRunner
+from math_verify import parse, verify
+from openai import AsyncOpenAI
+
+
+@function_tool
+def add(a: float, b: float) -> float:
+    """Add two numbers."""
+    return a + b
+
+
+@function_tool
+def multiply(a: float, b: float) -> float:
+    """Multiply two numbers."""
+    return a * b
+
+
+def math_reward_fn(completions: str, answer: str) -> float:
+    return float(verify(parse(completions), parse(answer)))
+
+
+class MathAgent:
+    async def run(self, data, **extra_kwargs):
+        http_client = extra_kwargs.get("http_client")
+        base_url = extra_kwargs.get("base_url")
+        client = AsyncOpenAI(base_url=base_url, http_client=http_client, max_retries=0)
+
+        run_config = RunConfig(
+            model_provider=OpenAIProvider(openai_client=client),
+            model="default",
+            tracing_disabled=True,
+        )
+        agent = Agent(
+            name="RLVR Math with Calculator",
+            instructions="Answer math questions using the calculator tools.",
+            tools=[add, multiply],
+        )
+        result = await OpenAIRunner.run(
+            agent,
+            input=data["messages"][-1]["content"],
+            session=SQLiteSession("math"),
+            run_config=run_config,
+        )
+        return math_reward_fn(result.final_output, data["answer"])
+```
+
 ## Architecture
 
 Evaluation uses a single-controller architecture without training workers:
@@ -40,9 +100,9 @@ Evaluation uses a single-controller architecture without training workers:
 ```
 Controller Process
     │
-    └─> RolloutController
-        ├─> Scheduler creates inference workers (SGLang/vLLM)
-        ├─> BatchTaskDispatcher submits eval tasks
+    └─> Inference Engine Controller (SGLang/vLLM)
+        ├─> Scheduler creates inference workers
+        ├─> Submits evaluation tasks with workflow
         └─> Collects results and computes metrics
 ```
 
@@ -55,18 +115,41 @@ See [`examples/math/gsm8k_eval.py`](../../examples/math/gsm8k_eval.py) for a com
 example. The key pattern:
 
 ```python
-# Parse allocation mode and initialize scheduler
-allocation_mode = AllocationMode.from_str(config.allocation_mode)
-scheduler = LocalScheduler(exp_config=config)  # or Ray/Slurm
+from areal.api.alloc_mode import AllocationMode
+from areal.api.cli_args import GRPOConfig, SGLangConfig, load_expr_config, vLLMConfig
+from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine.vllm_remote import RemotevLLMEngine
+from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
 
-# Create RolloutController
+# Load config and parse allocation mode
+config, _ = load_expr_config(args, GRPOConfig)
+allocation_mode = AllocationMode.from_str(config.allocation_mode)
+
+# Initialize scheduler based on config
+if config.scheduler.type == "local":
+    scheduler = LocalScheduler(exp_config=config)
+elif config.scheduler.type == "ray":
+    scheduler = RayScheduler(exp_config=config)
+elif config.scheduler.type == "slurm":
+    scheduler = SlurmScheduler(exp_config=config)
+
+# Select inference engine and build server args
 if allocation_mode.gen_backend == "sglang":
     engine_cls = RemoteSGLangEngine
-    server_args = SGLangConfig.build_args(...)
+    server_args = SGLangConfig.build_args(
+        sglang_config=config.sglang,
+        tp_size=allocation_mode.gen.tp_size,
+        base_gpu_id=0,
+    )
 elif allocation_mode.gen_backend == "vllm":
     engine_cls = RemotevLLMEngine
-    server_args = vLLMConfig.build_args(...)
+    server_args = vLLMConfig.build_args(
+        vllm_config=config.vllm,
+        tp_size=allocation_mode.gen.tp_size,
+        pp_size=allocation_mode.gen.pp_size,
+    )
 
+# Create controller and initialize
 eval_rollout = engine_cls.as_controller(config.rollout, scheduler)
 eval_rollout.initialize(
     role="eval-rollout",
@@ -74,40 +157,52 @@ eval_rollout.initialize(
     server_args=server_args,
 )
 
+# Define workflow and its configuration
+workflow = "areal.workflow.rlvr.RLVRWorkflow"
+workflow_kwargs = dict(
+    reward_fn="areal.reward.gsm8k.gsm8k_reward_fn",
+    gconfig=config.gconfig,
+    tokenizer=config.tokenizer_path,
+    enable_thinking=False,
+)
+
 # Submit evaluation tasks
-for data in dataloader:
+cnt = 0
+for data in valid_dataloader:
     for item in data:
-        eval_rollout.submit(item, workflow, group_size=config.gconfig.n_samples)
+        eval_rollout.submit(
+            item,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            group_size=config.gconfig.n_samples,
+        )
         cnt += 1
 
-# Wait and collect results
+# Wait for completion and collect results
 eval_rollout.wait(cnt, timeout=None)
 eval_stats = eval_rollout.export_stats()
 ```
 
-This follows the same controller pattern as training (see
-[`areal/experimental/trainer/rl.py:540-594`](../../areal/experimental/trainer/rl.py))
-but without training components.
+This follows the same controller pattern as training but without training components.
 
 ## Configuration
 
-Evaluation configs use only inference components.
-
-It is also valid to use the previous training config but with the evaluation script.
+Evaluation reuses the same config structure as training. You can use an existing
+training config directly with the evaluation script.
 
 ```yaml
 experiment_name: gsm8k-eval
 trial_name: eval0
 seed: 1
 
-allocation_mode: sglang:d4p1t1  # Inference-only
+allocation_mode: sglang:d4p1t1  # Inference-only allocation
 
 scheduler:
   type: local  # or 'ray', 'slurm'
 
 rollout:
   max_concurrent_rollouts: 256
-  max_head_offpolicyness: 1e12  # No staleness control
+  # max_head_offpolicyness is set to 1e12 internally for eval
 
 gconfig:
   n_samples: 8
@@ -129,33 +224,26 @@ valid_dataset:
   batch_size: 32
 ```
 
-## Logging Metrics
+## Logging Results
 
-Export stats and log to both console and wandb:
+Use `tabulate_stats` to format evaluation metrics:
 
 ```python
+from areal.utils.printing import tabulate_stats
+
 eval_stats = eval_rollout.export_stats()
-
-if rank == 0:
-    print(tabulate_stats(eval_stats))
-
-    try:
-        import wandb
-        if wandb.run is not None:
-            wandb.log({"eval": eval_stats})
-    except ImportError:
-        pass
+logger.info(f"Evaluation Results: {tabulate_stats(eval_stats)}")
 ```
 
 ## Custom Workflows
 
-Reuse training workflows or create custom ones. See
-[agentic RL tutorial](../tutorial/agentic_rl.md) and
+Reuse training workflows or create custom ones. See the
+[Agentic RL tutorial](../tutorial/agentic_rl.md) and
 [Customization: Rollout Workflows](../customization/agent.md) for complete guides.
 
 ## Next Steps
 
-- [Distributed Experiments](quickstart.md#distributed-experiments-with-ray-or-slurm)
+- {ref}`Distributed Experiments <distributed-experiments-with-ray-or-slurm>`
 - [Customization: Workflows](../customization/agent.md)
 - [Agentic RL Tutorial](../tutorial/agentic_rl.md)
 - [Large MoE Training](../tutorial/megatron.md)

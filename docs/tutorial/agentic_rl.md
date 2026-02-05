@@ -49,7 +49,7 @@ AReaL addresses these limitations by providing:
    diversity and improves policy gradient estimates.
 
 We demonstrate several concrete examples below. More examples can be found in the
-[`workflow/` directory](../../areal/workflow/).
+[`workflow/` directory](https://github.com/inclusionAI/AReaL/tree/main/areal/workflow).
 
 ## Examples
 

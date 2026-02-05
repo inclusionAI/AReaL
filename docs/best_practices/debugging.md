@@ -14,9 +14,9 @@ logic, enabling repeated testing without server restarts.
 
 **Benefits:**
 
-- **Lightweight** — Your debug program only requires CPU while inference runs on GPU
-- **IDE-friendly** — Works seamlessly with VS Code's Python debugger and other IDEs
-- **Fast iterations** — No server restarts needed between debugging sessions
+- **Lightweight** - Your debug program only requires CPU while inference runs on GPU
+- **IDE-friendly** - Works seamlessly with VS Code's Python debugger and other IDEs
+- **Fast iterations** - No server restarts needed between debugging sessions
 
 ### 1. Launch the Standalone SGLang Server
 
@@ -89,10 +89,10 @@ SFT) by using pre-generated data instead of running live inference.
 
 **Benefits:**
 
-- **No inference servers** — Eliminate server management overhead
-- **Faster iterations** — Skip the expensive data collection step
-- **Reproducible** — Use identical data across debugging sessions
-- **Isolated testing** — Focus exclusively on your RL logic
+- **No inference servers** - Eliminate server management overhead
+- **Faster iterations** - Skip the expensive data collection step
+- **Reproducible** - Use identical data across debugging sessions
+- **Isolated testing** - Focus exclusively on your RL logic
 
 ### 1. Configure Allocation Mode
 
