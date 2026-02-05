@@ -43,7 +43,7 @@ def rpc_server():
     )
 
     # Wait for server to be ready
-    max_attempts = 20
+    max_attempts = 60
     for _ in range(max_attempts):
         try:
             resp = requests.get(f"http://localhost:{RPC_SERVER_PORT}/health", timeout=1)
@@ -51,7 +51,7 @@ def rpc_server():
                 break
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(1)
     else:
         proc.kill()
         raise RuntimeError("RPC server failed to start")
