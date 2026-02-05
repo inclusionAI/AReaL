@@ -44,17 +44,16 @@ diagnostic steps:
    difficulty remains appropriate during runtime. See our
    [detailed code walk-through](../tutorial/gsm8k_grpo.md) for more information.
 
-
 ## Important Metrics to Monitor
 
 Monitoring these metrics helps ensure stable training and diagnose issues early.
 
 ### Reward Metrics
 
-| Metric | Description |
-|--------|-------------|
-| `eval-rollout/reward` | Reward on the **test set**. Primary indicator of model generalization. |
-| `rollout/reward` | Reward on the **training set**. Tracks learning progress during training. |
+| Metric                  | Description                                                                                                                                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `eval-rollout/reward`   | Reward on the **test set**. Primary indicator of model generalization.                                                                                                                              |
+| `rollout/reward`        | Reward on the **training set**. Tracks learning progress during training.                                                                                                                           |
 | `ppo/actor/task_reward` | Reward of trajectories **actually used for training**. Differs from `rollout/reward` when dynamic filtering is enabled—filtered trajectories are excluded here but still count in `rollout/reward`. |
 
 **Troubleshooting high variance in `task_reward`:**
@@ -64,9 +63,10 @@ increasing batch size if resources allow—this is often an effective remedy.
 
 ### Importance Weight Metrics
 
-We recommend **asynchronous training with decoupled PPO loss** (`use_decoupled_loss=true`)
-for optimal throughput. The two importance weight metrics below are critical for monitoring
-training stability—their average values should remain very close to 1.0.
+We recommend **asynchronous training with decoupled PPO loss**
+(`use_decoupled_loss=true`) for optimal throughput. The two importance weight metrics
+below are critical for monitoring training stability—their average values should remain
+very close to 1.0.
 
 With `use_decoupled_loss=true`, the loss function separates three policies:
 
@@ -78,15 +78,16 @@ The decoupled PPO loss combines two importance weights:
 
 $$L = -\mathbb{E}\left[ \underbrace{\frac{\pi_{\text{proximal}}}{\pi_{\text{behave}}}}_{\text{behave\_imp\_weight}} \cdot \min\left( \underbrace{\frac{\pi_\theta}{\pi_{\text{proximal}}}}_{\text{importance\_weight}} A, \text{clip}\left(\frac{\pi_\theta}{\pi_{\text{proximal}}}, 1-\epsilon, 1+\epsilon\right) A \right) \right]$$
 
-| Metric | Formula | Description |
-|--------|---------|-------------|
-| `ppo_actor/update/importance_weight` | π_θ / π_proximal | Ratio for PPO clipping between current and proximal policies |
+| Metric                               | Formula               | Description                                                       |
+| ------------------------------------ | --------------------- | ----------------------------------------------------------------- |
+| `ppo_actor/update/importance_weight` | π_θ / π_proximal      | Ratio for PPO clipping between current and proximal policies      |
 | `ppo_actor/update/behave_imp_weight` | π_proximal / π_behave | Off-policy correction for distribution mismatch in async training |
 
 **Troubleshooting `importance_weight` deviations:**
 
 - If `importance_weight/avg` deviates significantly from 1, reduce `ppo_n_minibatches`.
-- With `ppo_n_minibatches == 1`, theoretically `importance_weight` should equal 1 exactly.
+- With `ppo_n_minibatches == 1`, theoretically `importance_weight` should equal 1
+  exactly.
 - If deviation persists at `ppo_n_minibatches == 1` (common in MoE training), add
   `actor.megatron.use_deterministic_algorithms=1` to your config.
 
@@ -99,10 +100,10 @@ $$L = -\mathbb{E}\left[ \underbrace{\frac{\pi_{\text{proximal}}}{\pi_{\text{beha
 
 When training with long trajectories, monitor these metrics to detect truncation issues:
 
-| Metric | Description |
-|--------|-------------|
+| Metric                   | Description                                                    |
+| ------------------------ | -------------------------------------------------------------- |
 | `ppo_actor/no_eos_ratio` | Fraction of trajectories truncated before generating EOS token |
-| `ppo_actor/seq_len` | Average sequence length during training |
+| `ppo_actor/seq_len`      | Average sequence length during training                        |
 
 **Troubleshooting high `no_eos_ratio`:**
 
@@ -115,4 +116,3 @@ If `no_eos_ratio` exceeds 0.05 (5% of trajectories truncated):
 
 If `seq_len` increases steadily during training, watch `no_eos_ratio` closely—growing
 sequence lengths often lead to more truncations.
-
