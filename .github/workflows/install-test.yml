@@ -112,3 +112,42 @@ jobs:
               status = 'installed' if spec else 'not found'
               print(f'{pkg}: {status}')
           "
+
+  install-test-docker:
+    # Test editable installation in Docker runtime image
+    # This mirrors the installation method documented for Docker users
+    runs-on: ubuntu-latest
+    name: Install test (Docker runtime image)
+    container:
+      image: ghcr.io/inclusionai/areal-runtime:v0.5.3
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install package (editable, no deps)
+        # This is the documented Docker installation method
+        # Dependencies are pre-installed in the runtime image
+        run: uv pip install -e . --no-deps
+
+      - name: Verify package import
+        run: |
+          python -c "import areal; print(f'areal version: {areal.__version__}')"
+
+      - name: Verify core modules are importable
+        run: |
+          python -c "
+          from areal import (
+              TrainController,
+              RolloutController,
+              WorkflowExecutor,
+              StalenessManager,
+              workflow_context,
+              current_platform,
+          )
+          print('All core modules imported successfully')
+          "
+
+      - name: Run Docker installation validation
+        run: |
+          python areal/tools/validate_docker_installation.py
