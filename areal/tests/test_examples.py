@@ -79,20 +79,22 @@ async def run_example(
 
     while True:
         # Read output by line
-        line = None
-        try:
-            line = await asyncio.wait_for(process.stdout.readline(), timeout=0.1)
-            line = line.decode()
-        except (TimeoutError, ValueError):
-            # NOTE: Here ValueError is raised when the input line is too long
-            # that exceeds the buffer size, which will happen if the experiment
-            # has tqdm progress bar output.
-            pass
-
-        if line:
-            logger.info(f"[Example Output] {line.rstrip()}")
-            # Check for success patterns
-            success = bool(success_pattern.search(line))
+        while True:
+            try:
+                line = await asyncio.wait_for(process.stdout.readline(), timeout=0.1)
+                line = line.decode().rstrip()
+                # Skip empty lines (e.g., from tqdm progress bar cleanup)
+                if line:
+                    logger.info(f"[Example Output] {line}")
+                # Check for success patterns
+                success = bool(success_pattern.search(line))
+                if success:
+                    break
+            except (TimeoutError, ValueError):
+                # NOTE: Here ValueError is raised when the input line is too long
+                # that exceeds the buffer size, which will happen if the experiment
+                # has tqdm progress bar output.
+                break
 
         if success:
             logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
@@ -101,7 +103,7 @@ async def run_example(
 
         # Check if process has terminated
         try:
-            return_code = await asyncio.wait_for(process.wait(), timeout=0.1)
+            return_code = await asyncio.wait_for(process.wait(), timeout=0.01)
             logger.error(f"Process terminated unexpectedly. Return code: {return_code}")
             break
         except TimeoutError:
@@ -278,16 +280,18 @@ def test_gsm8k_eval(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+eval",
-        "gconfig.n_samples=2",
-        "gconfig.max_new_tokens=256",
+        "allocation_mode=sglang:d1",
+        "gconfig.n_samples=1",
+        "gconfig.max_new_tokens=16",
         "valid_dataset.batch_size=16",
         f"valid_dataset.path={dataset_path}",
         "cluster.n_gpus_per_node=1",
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
-        success_pattern=re.compile(r"Evaluation results:\n"),
+        "scheduler.type=local",
+        success_pattern=re.compile(r"Evaluation Results:"),
+        single_controller=True,
     )
     assert success, "GSM8K Eval example failed"
 
@@ -663,3 +667,164 @@ def test_camel(tmp_path_factory):
     )
     if not success:
         raise RuntimeError("Camel Math example failed")
+
+
+@pytest.mark.multi_gpu
+def test_openai_proxy(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct",
+        "Qwen/Qwen2.5-1.5B-Instruct",
+    )
+    dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
+    example_file = "examples/experimental/proxy/train.py"
+    config_name = "examples/experimental/proxy/config.yaml"
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=16",
+        "gconfig.max_tokens=512",
+        "actor.mb_spec.max_tokens_per_mb=4096",
+        "train_dataset.batch_size=1",
+        f"train_dataset.path={dataset_path}",
+        "valid_dataset.batch_size=1",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        "scheduler.type=local",
+        "actor.weight_update_mode=xccl",
+        single_controller=True,
+    )
+    if not success:
+        raise RuntimeError("OpenAI Proxy example failed")
+
+
+@pytest.mark.multi_gpu
+def test_tau2(tmp_path_factory):
+    """Test tau2 airline domain training with a user LLM server.
+
+    This test requires at least 3 GPUs:
+    - 1 GPU for user LLM (SGLang server simulating the user)
+    - 2 GPUs for RL training (1 for rollout, 1 for training)
+    """
+    # Check tau2-bench is installed
+    try:
+        import tau2  # noqa
+    except ImportError:
+        pytest.skip("tau2-bench is not installed. Skipping tau2 example test.")
+
+    # Check TAU2_DATA_DIR is set and valid
+    tau2_data_dir = os.environ.get("TAU2_DATA_DIR")
+    if not tau2_data_dir:
+        pytest.skip("TAU2_DATA_DIR environment variable not set. Skipping tau2 test.")
+    if not os.path.exists(tau2_data_dir):
+        pytest.skip(
+            f"TAU2_DATA_DIR ({tau2_data_dir}) does not exist. Skipping tau2 test."
+        )
+
+    # Check chat template exists
+    chat_template_path = "/storage/openpsi/data/qwen3_nonthinking.jinja"
+    if not os.path.exists(chat_template_path):
+        pytest.skip(f"Chat template not found at {chat_template_path}")
+
+    if current_platform.device_count() < 3:
+        pytest.skip(
+            "This test requires at least 3 GPUs (1 for user LLM, 2 for RL) to run."
+        )
+
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B"
+    )
+
+    # Get visible devices
+    visible_devices = os.getenv(
+        current_platform.device_control_env_var,
+        ",".join(map(str, range(current_platform.device_count()))),
+    ).split(",")
+    assert len(visible_devices) >= 3
+
+    # Launch user LLM server on the last GPU
+    user_llm_gpu = visible_devices[-1]
+    user_llm_port = 30080  # Use a different port to avoid conflicts
+
+    _env = os.environ.copy()
+    _env[current_platform.device_control_env_var] = user_llm_gpu
+
+    logger.info(
+        f"Launching user LLM server on GPU {user_llm_gpu}, port {user_llm_port}"
+    )
+    user_llm_proc = subprocess.Popen(
+        [
+            "python3",
+            "-m",
+            "sglang.launch_server",
+            "--model-path",
+            model_path,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(user_llm_port),
+            "--tool-call-parser",
+            "qwen25",
+            "--chat-template",
+            chat_template_path,
+            "--dp-size",
+            "1",
+            "--mem-fraction-static",
+            "0.8",
+        ],
+        # Redirect to DEVNULL to avoid SGLang's progress bars cluttering the terminal
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=_env,
+    )
+
+    try:
+        # Wait for user LLM server to start
+        logger.info("Waiting for user LLM server to start...")
+        time.sleep(60)  # SGLang server takes time to load model
+
+        user_llm_base_url = f"http://localhost:{user_llm_port}/v1/"
+
+        example_file = "examples/tau2/train.py"
+        config_name = "examples/tau2/config_1.7b_airline.yaml"
+
+        # Run tau2 training with first 2 GPUs
+        success = run_async_task(
+            run_example,
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+megatron:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=1024",
+            "gconfig.max_tokens=8192",
+            "actor.mb_spec.max_tokens_per_mb=8192",
+            "train_dataset.batch_size=2",
+            "train_dataset.path=tau2/train",
+            "valid_dataset.batch_size=2",
+            "valid_dataset.path=tau2/test",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            "econfig.max_steps=3",  # Limit steps for faster testing
+            f"econfig.user_llm_base_url={user_llm_base_url}",
+            "econfig.user_llm=openai/self-hosted-qwen3",
+            "actor.enable_tree_training=false",  # Disable tree training for simpler test
+            "scheduler.type=local",
+            "stats_logger.wandb.mode=disabled",
+            timeout=600,
+            single_controller=True,
+        )
+        assert success, "Tau2 airline example failed"
+    finally:
+        logger.info("Shutting down user LLM server...")
+        kill_process_tree(user_llm_proc.pid, graceful=False)

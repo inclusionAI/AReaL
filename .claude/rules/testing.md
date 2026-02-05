@@ -33,7 +33,7 @@ def test_<what>_<condition>_<expected>():
 
 - Use `torch.distributed.fake_pg` for unit tests
 - Mock `dist.get_rank()` and `dist.get_world_size()` explicitly
-- Don't mock internals of FSDP/DTensor — use integration tests
+- Don't mock internals of FSDP/DTensor - use integration tests
 
 ## GPU Test Constraints
 
@@ -58,4 +58,4 @@ def test_<what>_<condition>_<expected>():
 
 - Use `torch.testing.assert_close()` for tensor comparison
 - Specify `rtol`/`atol` explicitly for numerical tests
-- Avoid bare `assert tensor.equal()` — no useful error message
+- Avoid bare `assert tensor.equal()` - no useful error message

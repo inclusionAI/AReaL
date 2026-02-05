@@ -19,6 +19,7 @@ import argparse
 import torch
 import torch.distributed as dist
 
+from areal.api.cli_args import ArchonEngineConfig
 from areal.experimental.models.archon import ArchonParallelDims
 from areal.experimental.models.archon.pipeline_parallel import (
     generate_llm_fqn_per_model_part,
@@ -124,6 +125,7 @@ def test_pp_tp_forward(out_file: str | None = None) -> bool:
     pp_stages, model_parts = pipeline_module_split(
         whole_model=model,
         pp_mesh=pp_mesh,
+        pp_schedule="1F1B",
         device=device,
         module_names_per_stage=module_names_per_stage,
     )
@@ -335,6 +337,7 @@ def test_pp_dp_forward(out_file: str | None = None) -> bool:
     pp_stages, model_parts = pipeline_module_split(
         whole_model=model,
         pp_mesh=pp_mesh,
+        pp_schedule="1F1B",
         device=device,
         module_names_per_stage=module_names_per_stage,
     )
@@ -541,11 +544,13 @@ def test_pp_ep_forward(out_file: str | None = None) -> bool:
         model = Qwen3Model(model_args)
 
     # Use pipeline_llm to split model across PP stages with parallelization
+    archon_config = ArchonEngineConfig(pp_schedule="1F1B")
     try:
         pp_stages, model_parts, has_first, has_last = pipeline_llm(
             model=model,
-            parallel_dims=parallel_dims,
             device=device,
+            parallel_dims=parallel_dims,
+            archon_config=archon_config,
             parallelize_fn=parallelize_qwen3,
             enable_compile=False,  # Disable compile for faster test
         )

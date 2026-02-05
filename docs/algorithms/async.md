@@ -49,6 +49,6 @@ actor:
 
 ## References
 
-For a practical walkthrough of asynchronous training, see our [GSM8K GRPO example](../lite/gsm8k_grpo.md).
+For a practical walkthrough of asynchronous training, see our [GSM8K GRPO example](../tutorial/gsm8k_grpo.md).
 
 For algorithmic details and empirical analysis, refer to the [AReaL paper](https://arxiv.org/pdf/2505.24298).

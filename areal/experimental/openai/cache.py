@@ -91,9 +91,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         key: str,
         value: InteractionWithTokenLogpReward,
     ) -> None:
-        """Add a new interaction to the cache, automatically building
-        parent-child relationships if `find_parent` is True.
-        """
+        """Add a new interaction to the cache, automatically building parent-child relationships."""
         if value.messages is None:
             raise ValueError(
                 "Interaction messages must be set to find parent relationship."
@@ -133,12 +131,13 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             self.values(), key=lambda x: len(x.messages), reverse=True
         )
 
-        # Reset parents before rebuilding
+        # Find parent for the new interaction
         for parent in interactions:
+            # Skip interactions that are still being processed (output_message_list not set yet)
+            # This can happen with concurrent requests where a streaming request hasn't
+            # finished setting up yet. Such interactions cannot be parents anyway.
             if parent.output_message_list is None or parent.messages is None:
-                raise ValueError(
-                    "Parent interaction output_message_list and messages must be set to find parent relationship."
-                )
+                continue
             parent_data = parent.messages + parent.output_message_list
             if _is_prefix(parent_data, value.messages):
                 value.parent = parent
@@ -197,14 +196,32 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         if len(cache) == 0:
             return {}
 
+        # Filter out incomplete interactions (those still being processed)
+        # This can happen when using anthropic agent sdk
+        # where Claude Code CLI may send internal requests (e.g., git history analysis)
+        # that are still in-flight when the main user request completes.
+        complete_cache = {}
         for id, interaction in self.items():
+            if (
+                interaction.interaction_id is None
+                or interaction.output_message_list is None
+            ):
+                logger.warning(
+                    f"Skipping incomplete interaction during export: cache_key={id}, "
+                    f"messages={interaction.messages[:1] if interaction.messages else []}..."
+                )
+                continue
             if interaction.interaction_id != id:
                 raise ValueError(
                     f"Interaction ID mismatch: {interaction.interaction_id} != {id}"
                 )
+            complete_cache[id] = interaction
+
+        if len(complete_cache) == 0:
+            return {}
 
         if style == "concat":
-            for interaction in self.values():
+            for interaction in complete_cache.values():
                 if interaction.chat_template_type != "concat":
                     raise ValueError(
                         "Cannot export interactions in 'concat' style when "
@@ -217,17 +234,17 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
 
             # Build children mapping to find leaf nodes.
             has_children = set()
-            for obj in self.values():
+            for obj in complete_cache.values():
                 if obj.parent is not None:
                     has_children.add(obj.parent.interaction_id)
 
             # Return only leaf nodes (nodes without children)
             return {
                 id: interaction
-                for id, interaction in self.items()
+                for id, interaction in complete_cache.items()
                 if id not in has_children
             }
         elif style == "individual":
-            return dict(**cache)
+            return dict(**complete_cache)
         else:
             raise ValueError(f"Invalid export interactions style {style}")

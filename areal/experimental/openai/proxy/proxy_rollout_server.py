@@ -1,23 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import inspect
 import os
 import threading
 import time
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
 import uvicorn
 from anthropic.types.message import Message
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import StreamingResponse
 from litellm.llms.anthropic.experimental_pass_through.adapters.transformation import (
     AnthropicAdapter,
 )
 from litellm.types.utils import ModelResponse as LitellmModelResponse
 from pydantic import BaseModel
 
-from openai.types.chat import ChatCompletion
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from openai.types.responses import Response
 from openai.types.responses.response_create_params import ResponseCreateParams
@@ -55,6 +58,29 @@ logger = getLogger("ProxyRolloutServer")
 
 
 # =============================================================================
+# Warning Deduplication
+# =============================================================================
+
+
+# Set AREAL_PROXY_WARN_ONCE=1 to avoid warning spamming
+_warn_once_enabled = os.environ.get("AREAL_PROXY_WARN_ONCE", "0") == "1"
+_warned_messages: set[str] = set()
+_warn_lock = threading.Lock()
+
+
+def _warn_once(msg: str) -> None:
+    """Log a warning message, optionally only once if AREAL_PROXY_WARN_ONCE=1."""
+    if not _warn_once_enabled:
+        logger.warning(msg)
+        return
+
+    with _warn_lock:
+        if msg not in _warned_messages:
+            _warned_messages.add(msg)
+            logger.warning(msg)
+
+
+# =============================================================================
 # Module-Level Globals (like rpc_server.py)
 # =============================================================================
 
@@ -73,6 +99,10 @@ _session_timeout_seconds: int = 3600  # Default timeout (overridden by config)
 # Server address (set at startup)
 _server_host: str = "0.0.0.0"
 _server_port: int = 8000
+
+# Port allocation tracking
+_allocated_ports: set[int] = set()
+_port_alloc_lock = asyncio.Lock()
 
 # Server config (needed for name_resolve registration)
 _experiment_name: str | None = None
@@ -115,6 +145,47 @@ app = FastAPI()
 @app.get("/health")
 def health():
     return {"status": "ok", "initialized": _engine is not None}
+
+
+@app.post("/alloc_ports")
+async def alloc_ports(raw_request: Request):
+    """Allocate multiple free ports.
+
+    Expected JSON payload:
+    {
+        "count": 5  # Number of ports to allocate
+    }
+
+    This endpoint is required for compatibility with SlurmScheduler's
+    fork_workers mechanism, which may request additional ports after
+    forking a new worker process.
+    """
+    global _allocated_ports
+
+    try:
+        data = await raw_request.json()
+        count = data.get("count")
+        if count is None:
+            raise HTTPException(
+                status_code=400, detail="Missing 'count' field in request"
+            )
+
+        if not isinstance(count, int) or count <= 0:
+            raise HTTPException(
+                status_code=400, detail="'count' must be a positive integer"
+            )
+
+        async with _port_alloc_lock:
+            ports = find_free_ports(count, exclude_ports=_allocated_ports)
+        _allocated_ports.update(ports)
+
+        return {"status": "success", "ports": ports, "host": _server_host}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in alloc_ports: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 def _setup_openai_client():
@@ -311,7 +382,8 @@ async def _call_client_create(
     request: dict[str, Any] | BaseModel,
     session_id: str,
     extra_ignored_args: list[str] | None = None,
-) -> ChatCompletion | Response:
+    stream: bool = False,
+) -> ChatCompletion | Response | AsyncGenerator[ChatCompletionChunk, None]:
     """Common logic for chat completions and responses."""
     if _openai_client is None:
         raise HTTPException(
@@ -360,22 +432,28 @@ async def _call_client_create(
         dropped_args_str = "\n".join(
             [f"  {k}: {v}" for k, v in dropped_non_default_args]
         )
-        logger.warning(
+        _warn_once(
             f"dropped unsupported non-default arguments for areal client:\n"
             f"{dropped_args_str}"
         )
 
     if "temperature" not in kwargs:
         kwargs["temperature"] = 1.0
-        logger.warning("temperature not set in request, defaulting to 1.0")
+        _warn_once("temperature not set in request, defaulting to 1.0")
     if "top_p" not in kwargs:
         kwargs["top_p"] = 1.0
-        logger.warning("top_p not set in request, defaulting to 1.0")
+        _warn_once("top_p not set in request, defaulting to 1.0")
+
+    # Add stream parameter if requested
+    if stream:
+        kwargs["stream"] = True
 
     try:
         return await create_fn(areal_cache=session_data.completions, **kwargs)
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
 @app.post(
@@ -416,11 +494,66 @@ async def responses(request: ResponseCreateParams, session_id: str) -> Response:
     )
 
 
+def _translate_anthropic_to_openai_request(anthropic_request: dict[str, Any]) -> dict:
+    """Translate an Anthropic Messages API request to OpenAI format."""
+    openai_request = _adapter.translate_completion_input_params(
+        anthropic_request.copy()
+    )
+    if openai_request is None:
+        raise ValueError("Failed to translate request")
+    openai_request = dict(openai_request)
+
+    # Fix message content if it's a list (Anthropic format with content blocks)
+    # LiteLLM's adapter may not properly convert content from list to string
+    # Claude Code CLI sends content as: [{"type":"text","text":"...","cache_control":{...}}, ...]
+    if "messages" in openai_request:
+        for msg in openai_request["messages"]:
+            if isinstance(msg.get("content"), list):
+                # Convert list of content blocks to string
+                text_parts = []
+                for block in msg["content"]:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif isinstance(block, str):
+                        text_parts.append(block)
+                msg["content"] = "\n".join(text_parts)
+
+    return openai_request
+
+
+async def _safe_stream_wrapper(
+    stream: AsyncGenerator,
+) -> AsyncGenerator:
+    """Wrap an async generator to handle client disconnection gracefully.
+
+    Ensures proper cleanup of the underlying stream when the client disconnects
+    or an error occurs during streaming.
+
+    Args:
+        stream: The async generator to wrap.
+
+    Yields:
+        Chunks from the underlying stream.
+    """
+    try:
+        async for chunk in stream:
+            yield chunk
+    except asyncio.CancelledError:
+        logger.info("Streaming cancelled by client disconnect")
+        raise
+    finally:
+        if hasattr(stream, "aclose"):
+            await stream.aclose()
+
+
 @app.post(
     "/{session_id}/" + ANTHROPIC_MESSAGES_PATHNAME,
     dependencies=[Depends(validate_json_request)],
+    response_model=None,
 )
-async def anthropic_messages(raw_request: Request, session_id: str) -> Message:
+async def anthropic_messages(
+    raw_request: Request, session_id: str
+) -> Message | StreamingResponse:
     """Anthropic Messages API compatible endpoint.
 
     Converts Anthropic format requests to OpenAI format, processes through
@@ -428,6 +561,12 @@ async def anthropic_messages(raw_request: Request, session_id: str) -> Message:
     Anthropic format.
 
     Uses LiteLLM's AnthropicAdapter for format conversion.
+
+    For streaming requests (stream=True in the request body), returns a
+    StreamingResponse with Server-Sent Events (SSE) in Anthropic format.
+    The SSE stream includes message_start, content_block_start,
+    content_block_delta, content_block_stop, and message_stop events
+    following the Anthropic streaming protocol.
     """
 
     if _openai_client is None:
@@ -439,13 +578,10 @@ async def anthropic_messages(raw_request: Request, session_id: str) -> Message:
     # Parse Anthropic request
     anthropic_request = await raw_request.json()
 
+    is_streaming = anthropic_request.get("stream", False)
+
     try:
-        openai_request = _adapter.translate_completion_input_params(
-            anthropic_request.copy()
-        )
-        if openai_request is None:
-            raise ValueError("Failed to translate request")
-        openai_request = dict(openai_request)
+        openai_request = _translate_anthropic_to_openai_request(anthropic_request)
     except (ValueError, TypeError, KeyError) as e:
         logger.warning(
             f"Failed to convert Anthropic request to OpenAI format due to invalid input: {e}"
@@ -462,11 +598,51 @@ async def anthropic_messages(raw_request: Request, session_id: str) -> Message:
             status_code=500, detail="Internal server error during request conversion."
         )
 
-    # Call OpenAI-compatible endpoint
+    if is_streaming:
+        openai_stream = None
+        try:
+            # Get streaming response from OpenAI client
+            openai_stream = await _call_client_create(
+                create_fn=_openai_client.chat.completions.create,
+                request=openai_request,
+                session_id=session_id,
+                stream=True,
+            )
+
+            # Use LiteLLM's adapter to convert to Anthropic SSE format
+            anthropic_sse_stream = (
+                _adapter.translate_completion_output_params_streaming(
+                    completion_stream=openai_stream,
+                    model=anthropic_request.get("model", "default"),
+                )
+            )
+
+            # Wrap the stream to handle client disconnection gracefully
+            safe_stream = _safe_stream_wrapper(anthropic_sse_stream)
+
+            # Return streaming response
+            return StreamingResponse(
+                safe_stream,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        except Exception as e:
+            # Clean up stream on error during setup
+            if openai_stream is not None and hasattr(openai_stream, "aclose"):
+                await openai_stream.aclose()
+            logger.error(f"Error setting up streaming response: {e}")
+            raise HTTPException(status_code=500, detail=f"Streaming setup failed: {e}")
+
+    # Non-streaming
     openai_response = await _call_client_create(
         create_fn=_openai_client.chat.completions.create,
         request=openai_request,
         session_id=session_id,
+        stream=False,
     )
 
     # Convert OpenAI response to Anthropic format using LiteLLM's adapter
@@ -616,6 +792,7 @@ def main():
 
     # Determine port
     _server_port = args.port if args.port != 0 else find_free_ports(1)[0]
+    _allocated_ports.add(_server_port)
 
     # Configure name_resolve and register this server
     name_resolve.reconfigure(

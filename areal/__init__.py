@@ -10,6 +10,7 @@ from .infra import (
     workflow_context,
     current_platform,
 )
+from .trainer import PPOTrainer, SFTTrainer
 
 __all__ = [
     "TrainController",
@@ -18,4 +19,6 @@ __all__ = [
     "StalenessManager",
     "workflow_context",
     "current_platform",
+    "PPOTrainer",
+    "SFTTrainer",
 ]

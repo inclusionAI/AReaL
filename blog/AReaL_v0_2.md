@@ -39,7 +39,9 @@ using only 200 data samples, replicating **QwQ-32B's** inference performance on 
 
 <span id="eval_detail"></span> We declare that the reported numbers are based on our
 re-testing, with each number representing the average results of 32 sampling responses.
-The evaluation code is available in our [evaluation](/evaluation/) folder.
+The evaluation code was available in the `evaluation/` folder. Please roll back to
+[commit f55fe68](https://github.com/inclusionAI/AReaL/commit/f55fe685c661b0117d888fcae47d6f46e9a85087)
+(Feb 4, 2026) or earlier.
 
 For the baselines and the SFT model AReaL-boba-SFT-32B, we follow the recommended
 configuration (temperature = 0.6, top_p = 0.95, suggested by DeepSeek) and use the

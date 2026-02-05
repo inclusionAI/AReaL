@@ -208,12 +208,61 @@ def ffd_allocate(
     return res
 
 
+def balanced_greedy_partition(nums: list[int], K: int) -> list[list[int]]:
+    """
+    Splits `nums` into K groups such that the maximum difference between group sums is minimized.
+
+    Returns indices (not values) for each group.
+
+    Greedy with capacity-aware assignment.
+
+    Args:
+        nums: List of values to partition
+        K: Number of groups to partition into
+
+    Returns:
+        List of K lists, where each inner list contains the indices assigned to that group
+
+    Raises:
+        ValueError: If len(nums) is not divisible by K or if len(nums) < K
+    """
+    n = len(nums)
+    if n < K:
+        raise ValueError(f"Number of items ({n}) must be >= K ({K}).")
+    if n % K != 0:
+        raise ValueError("The length of nums must be divisible by K.")
+    m = n // K
+
+    # Sort indices by value in descending order
+    sorted_indices = sorted(range(n), key=lambda i: -nums[i])
+
+    groups: list[list[int]] = [[] for _ in range(K)]
+    sums = [0 for _ in range(K)]
+    counts = [0 for _ in range(K)]
+
+    for idx in sorted_indices:
+        num = nums[idx]
+        # Find the non-full group with the smallest current sum
+        chosen_group = -1
+        min_sum = float("inf")
+        for i in range(K):
+            if counts[i] < m and sums[i] < min_sum:
+                min_sum = sums[i]
+                chosen_group = i
+
+        groups[chosen_group].append(idx)
+        sums[chosen_group] += num
+        counts[chosen_group] += 1
+
+    return groups
+
+
 if __name__ == "__main__":
     import time
 
     for i in range(100):
         st = time.monotonic()
-        nums = np.random.randint(1024, 8192, size=(100,))
+        nums = np.random.randint(1024, 8192, size=(100,)).tolist()
         # k = np.random.randint(2, 20)
         # min_size = np.random.randint(1, len(nums) // k)
         # res = min_abs_diff_partition(nums, k, min_size)

@@ -17,6 +17,10 @@ from torch.nn.attention.flex_attention import BlockMask
 from areal.api.cli_args import MicroBatchSpec
 from areal.models.tree_attn.constants import BLOCK_SIZE
 from areal.models.tree_attn.module_fsdp import create_block_mask_from_dense
+from areal.models.tree_attn.triton_kernel import (
+    TreeAttentionData,
+    precompute_tree_attention_data,
+)
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
@@ -220,6 +224,42 @@ def _compress_trie(root: _BuildNode) -> TrieNode:
     return trie_root
 
 
+def trie_to_parent_array(trie: TrieNode, max_tokens: int) -> torch.Tensor:
+    """Build a parent array from TrieNode structure.
+
+    The parent array `fa` is a 1D tensor where `fa[i]` is the index of the
+    parent token of token `i`. For root tokens, the parent index is -1.
+    In this tree structure, all tokens within a compressed trie node
+    share the same parent, which is the last token of the parent node.
+
+    Args:
+        trie: The root TrieNode.
+        max_tokens: Maximum number of tokens (length of the output tensor).
+
+    Returns:
+        torch.Tensor: Parent array of shape (1, max_tokens) with dtype int32.
+    """
+    fa = torch.full((1, max_tokens), -1, dtype=torch.int32)
+
+    if not trie.nodes:  # Empty/dummy trie
+        return fa
+
+    for node in trie.nodes:
+        parent_end_pos = -1
+        if node.ancestors:  # Has parent
+            parent_node = node.ancestors[-1]  # Last ancestor is parent
+            parent_end_pos = parent_node.end_idx
+
+        # First token in node attends to parent; internal tokens attend to previous token
+        if node.start_idx >= 0 and node.start_idx < max_tokens:
+            fa[0, node.start_idx] = parent_end_pos
+        for pos in range(node.start_idx + 1, node.end_idx + 1):
+            if pos < max_tokens:
+                fa[0, pos] = pos - 1
+
+    return fa
+
+
 # =============================================================================
 # Public API
 # =============================================================================
@@ -392,7 +432,6 @@ def build_packed_tree_batch(
                 non_packable_keys,
             )
 
-        # Build micro-batch dict without block_mask (will be created lazily in forward)
         mb = {
             "input_ids": input_ids,
             "position_ids": position_ids,
@@ -541,7 +580,9 @@ def _build_attention_mask(
         # Get or create lower triangular indices
         rows_cols = tril_cache.get(seq_len)
         if rows_cols is None:
-            rows_cols = torch.tril_indices(seq_len, seq_len, device=device)
+            rows_cols = torch.tril_indices(
+                seq_len, seq_len, device=device, dtype=torch.int32
+            )
             tril_cache[seq_len] = rows_cols
         rows, cols = rows_cols
 
@@ -652,3 +693,90 @@ def build_block_mask_from_trie(
     del attention_mask
 
     return block_mask
+
+
+@trace_perf("tree_attn.build_attention_mask_from_trie")
+def build_attention_mask_from_trie(
+    trie: TrieNode,
+    padded_size: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Build a dense attention mask tensor from a trie node.
+
+    This function builds the dense attention mask from the trie structure.
+    Unlike build_block_mask_from_trie, this returns a torch.Tensor that can
+    be saved by gradient checkpointing mechanisms.
+
+    This is useful for Megatron engine where gradient checkpointing requires
+    all forward arguments to be tensors (BlockMask cannot be saved by
+    save_for_backward). The BlockMask can be created inside the attention
+    module from this dense tensor.
+
+    Parameters
+    ----------
+    trie : TrieNode
+        The root trie node containing the tree structure.
+    padded_size : int
+        The padded sequence length.
+    device : torch.device
+        Device to create the attention mask on.
+
+    Returns
+    -------
+    torch.Tensor
+        Dense attention mask of shape (padded_size, padded_size) with dtype bool.
+    """
+    # Handle dummy trie (empty tree for DP synchronization)
+    if not trie.all_sequence_ids:
+        return torch.zeros((padded_size, padded_size), dtype=torch.bool, device=device)
+
+    with trace_scope("tree_attn.build_attention_mask"):
+        attention_mask = _build_attention_mask(trie, padded_size, device)
+
+    return attention_mask
+
+
+@trace_perf("tree_attn.build_triton_attn_data_from_trie")
+def build_triton_attn_data_from_trie(
+    trie: TrieNode,
+    padded_size: int,
+) -> TreeAttentionData:
+    """Lazily build Triton tree attention data from a trie node.
+
+    This function builds the parent array from the trie structure and
+    precomputes packed masks and sparse block indices for Triton kernels.
+
+    Parameters
+    ----------
+    trie : TrieNode
+        The root trie node containing the tree structure.
+    padded_size : int
+        The padded sequence length.
+
+    Returns
+    -------
+    TreeAttentionData
+        The precomputed Triton attention data.
+    """
+    # Handle dummy trie (empty tree for DP synchronization)
+    if not trie.all_sequence_ids:
+        num_words = (padded_size + 63) >> 6
+        num_q_blocks = (padded_size + 128 - 1) // 128
+        num_kv_blocks = num_words
+        packed_mask = torch.zeros((1, padded_size, num_words), dtype=torch.int64)
+        kv_indices = torch.zeros((0,), dtype=torch.int32)
+        kv_offsets = torch.zeros((1, num_q_blocks + 1), dtype=torch.int32)
+        q_indices = torch.zeros((0,), dtype=torch.int32)
+        q_offsets = torch.zeros((1, num_kv_blocks + 1), dtype=torch.int32)
+        return TreeAttentionData(
+            packed_mask=packed_mask,
+            kv_indices=kv_indices,
+            kv_offsets=kv_offsets,
+            q_indices=q_indices,
+            q_offsets=q_offsets,
+        )
+
+    with trace_scope("tree_attn.precompute_triton_data"):
+        fa = trie_to_parent_array(trie, padded_size)
+        triton_attn_data = precompute_tree_attention_data(fa)
+    return triton_attn_data

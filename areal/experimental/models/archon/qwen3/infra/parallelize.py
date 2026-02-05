@@ -575,7 +575,7 @@ def _apply_compile(model: Compilable, ep_enabled: bool = False) -> None:
                                 moe_submod, backend="inductor", fullgraph=True
                             ),
                         )
-                elif attr_name == "attention_norm" or attr_name == "ffn_norm":
+                elif attr_name in ("attention_norm", "ffn_norm"):
                     # NOTE: attention_norm/ffn_norm may use SequenceParallel
                     # which has issues with torch.compile + Inductor
                     # SequenceParallel has async redistribute which breaks

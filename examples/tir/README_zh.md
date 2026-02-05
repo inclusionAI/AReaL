@@ -139,9 +139,9 @@ tir:
 **单机多GPU训练**
 
 ```bash
-python3 -m areal.launcher.local \
-  examples/tir/train_tir.py \
-  --config examples/tir/tir_config.yaml
+python3 examples/tir/train_tir.py \
+  --config examples/tir/tir_config.yaml \
+  scheduler.type=local
 ```
 
 **多机多GPU训练**

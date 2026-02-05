@@ -1070,19 +1070,6 @@ class TestRolloutControllerResolveWorkflow:
         result = controller._resolve_workflow_str("areal.workflow.rlvr.RLVRWorkflow")
         assert result == "areal.workflow.rlvr.RLVRWorkflow"
 
-    def test_resolve_workflow_str_with_invalid_type(self):
-        """Test _resolve_workflow_str raises for invalid type."""
-        config = create_test_config(consumer_batch_size=16)
-        scheduler = MockScheduler()
-        controller = RolloutController(
-            inf_engine=MockInferenceEngine,
-            config=config,
-            scheduler=scheduler,
-        )
-
-        with pytest.raises(ValueError, match="Invalid workflow type"):
-            controller._resolve_workflow_str(12345)
-
 
 class TestRolloutControllerShouldAcceptFn:
     """Tests for should_accept_fn resolution."""

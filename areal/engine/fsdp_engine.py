@@ -69,11 +69,15 @@ from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.models.tree_attn.functional import (
     _gather_packed_tree_logprobs,
     gather_packed_tree_logprobs_entropy,
+    gather_packed_tree_vocab_stats,
     merge_packed_tree_results,
 )
 from areal.models.tree_attn.module import (
     BLOCK_SIZE,
+    TRITON_AVAILABLE,
+    USE_TRITON_TREE_ATTN,
     build_block_mask_from_trie,
+    build_triton_attn_data_from_trie,
     patch_fsdp_for_tree_training,
 )
 from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
@@ -117,9 +121,8 @@ from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
 if TYPE_CHECKING:
+    from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
     from areal.api.scheduler_api import Scheduler
-    from areal.engine.ppo.actor import PPOActorConfig
-    from areal.engine.ppo.critic import PPOCriticConfig
 
 
 @dataclasses.dataclass
@@ -545,25 +548,37 @@ class FSDPEngine(TrainEngine):
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
-            # Lazily create block mask for tree training just before forward
+            # Lazily create tree attention metadata just before forward
             if self.enable_tree_training and ctx.trie_node is not None:
                 padded_size = mb_item.padded_to_length
                 if padded_size is None:
                     raise ValueError(
                         "padded_size must be set for tree training with FSDP."
                     )
-                block_mask = build_block_mask_from_trie(
-                    ctx.trie_node, padded_size, self.device
-                )
-                inputs["block_mask"] = block_mask
+                if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
+                    triton_attn_data = build_triton_attn_data_from_trie(
+                        ctx.trie_node, padded_size
+                    )
+                    inputs["triton_attn_data"] = triton_attn_data
+                else:
+                    block_mask = build_block_mask_from_trie(
+                        ctx.trie_node, padded_size, self.device
+                    )
+                    # Pass block_mask as a separate kwarg, not as attention_mask.
+                    # The patched _tree_attn_fwd_func expects block_mask in kwargs,
+                    # which transformers will pass through to the attention function.
+                    inputs["block_mask"] = block_mask
 
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
 
-            # Release block mask memory after forward pass
-            if self.enable_tree_training and "block_mask" in inputs:
-                del inputs["block_mask"]
+            # Release tree attention metadata after forward pass
+            if self.enable_tree_training:
+                if "block_mask" in inputs:
+                    del inputs["block_mask"]
+                if "triton_attn_data" in inputs:
+                    del inputs["triton_attn_data"]
 
             ctx_dict = ctx.to_dict()
             loss = process_output_fn(logits, ctx_dict)
@@ -1538,8 +1553,12 @@ class FSDPEngine(TrainEngine):
                     # This ensures backward() works correctly for FSDP synchronization
                     return logits.sum() * 0.0
 
-                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
-                    logits
+                # For tree training, use gather_packed_tree_vocab_stats to properly
+                # unpack vocab stats from tree structure back to per-sequence format.
+                # This is necessary because the logits are in packed tree format where
+                # multiple sequences share prefix positions.
+                vocab_min_logits, vocab_max_logits = gather_packed_tree_vocab_stats(
+                    logits, ctx.trie_node
                 )
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
                     logits,
@@ -1619,7 +1638,7 @@ class FSDPPPOActor(FSDPEngine):
     """PPO Actor implementation using FSDP backend."""
 
     def __init__(self, config: PPOActorConfig):
-        from areal.engine.ppo.actor import PPOActor
+        from areal.trainer.ppo.actor import PPOActor
 
         super().__init__(config)
         self.actor = PPOActor(config, self)
@@ -1637,7 +1656,7 @@ class FSDPPPOActor(FSDPEngine):
 
     @classmethod
     def as_controller(cls, config: PPOActorConfig, scheduler: Scheduler):
-        from areal.engine.ppo.actor import PPOActorController
+        from areal.trainer.ppo.actor import PPOActorController
 
         return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
 
@@ -1646,7 +1665,7 @@ class FSDPPPOCritic(FSDPEngine):
     """PPO Critic implementation using FSDP backend."""
 
     def __init__(self, config: PPOCriticConfig):
-        from areal.engine.ppo.critic import PPOCritic
+        from areal.trainer.ppo.critic import PPOCritic
 
         super().__init__(config)
         self.critic = PPOCritic(config, self)
@@ -1660,7 +1679,7 @@ class FSDPPPOCritic(FSDPEngine):
 
     @classmethod
     def as_controller(cls, config: PPOCriticConfig, scheduler: Scheduler):
-        from areal.engine.ppo.critic import PPOCriticController
+        from areal.trainer.ppo.critic import PPOCriticController
 
         return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
 
@@ -1669,7 +1688,7 @@ class FSDPLMEngine(FSDPEngine):
     """Language model engine for SFT using FSDP backend."""
 
     def __init__(self, config: TrainEngineConfig):
-        from areal.engine.sft.lm_engine import LMEngine
+        from areal.trainer.sft.lm_engine import LMEngine
 
         super().__init__(config)
         self.lm_engine = LMEngine(self)
@@ -1682,7 +1701,7 @@ class FSDPLMEngine(FSDPEngine):
 
     @classmethod
     def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
-        from areal.engine.sft.lm_engine import LMController
+        from areal.trainer.sft.lm_engine import LMController
 
         return LMController(train_engine=cls, config=config, scheduler=scheduler)
 
@@ -1693,7 +1712,7 @@ class FSDPRWEngine(FSDPEngine):
     def __init__(self, config: TrainEngineConfig):
         from copy import deepcopy
 
-        from areal.engine.rw.rw_engine import RWEngine
+        from areal.trainer.rw.rw_engine import RWEngine
 
         super().__init__(config)
         self.rw_engine = RWEngine(self)
@@ -1711,6 +1730,6 @@ class FSDPRWEngine(FSDPEngine):
 
     @classmethod
     def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
-        from areal.engine.rw.rw_engine import RWController
+        from areal.trainer.rw.rw_engine import RWController
 
         return RWController(train_engine=cls, config=config, scheduler=scheduler)

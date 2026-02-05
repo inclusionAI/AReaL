@@ -21,7 +21,6 @@ from areal.infra.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
     TRITON_CACHE_PATH,
-    apply_sglang_patch,
     get_scheduling_spec,
 )
 from areal.utils.network import find_free_ports, gethostip
@@ -100,9 +99,6 @@ class SGLangServerWrapper:
         self.server_processes = []  # List to store multiple server processes
         self.n_gpus_per_node = n_gpus_per_node
         self.cpu_per_gpu = cpu_per_gpu
-
-        if self.config.enable_fast_load or self.config.enable_multithread_load:
-            apply_sglang_patch()
 
     def _monitor_server_processes(self, server_addresses):
         """Monitor server processes and exit if any dies."""

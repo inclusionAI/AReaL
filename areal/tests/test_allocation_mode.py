@@ -134,13 +134,6 @@ TEST_CASES = [
         "critic_sched": SchedulingStrategyType.colocation.value,
         "critic_target": "actor",
     },
-    # Eval expressions (backward compat)
-    {
-        "id": "eval_modern_colon",
-        "input": "sglang:d4p1t1+eval",
-        "num_allocs": 2,
-        "gen_world": 4,
-    },
     # Anonymous training backends
     {
         "id": "anonymous_training_single",

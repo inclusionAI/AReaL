@@ -6,7 +6,7 @@ enable_offload: false
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
-workflow: areal.workflow.langchain.math_agent.MathAgent
+workflow: areal.workflow.openai.math_agent.MathAgent
 eval_workflow: ${workflow}
 
 cluster:

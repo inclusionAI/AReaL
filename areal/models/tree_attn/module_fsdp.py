@@ -7,7 +7,8 @@ from torch.nn.attention.flex_attention import (
     flex_attention,
 )
 
-from areal.models.tree_attn.constants import BLOCK_SIZE
+from areal.models.tree_attn.constants import BLOCK_SIZE, USE_TRITON_TREE_ATTN
+from areal.models.tree_attn.triton_kernel import TRITON_AVAILABLE, tree_attention
 from areal.utils import logging
 
 logger = logging.getLogger(__name__)
@@ -88,33 +89,57 @@ def _tree_attn_fwd_func(
     *args,
     **kwargs,
 ):
-    # Require pre-created block_mask
-    block_mask = kwargs.get("block_mask", None)
-    if block_mask is None or not isinstance(block_mask, BlockMask):
-        raise ValueError(
-            "_tree_attn_fwd_func requires a pre-created BlockMask in kwargs['block_mask']. "
-            "Use create_block_mask_from_dense() during data preparation."
+    # Check for Triton path
+    triton_attn_data = kwargs.get("triton_attn_data", None)
+
+    if USE_TRITON_TREE_ATTN and triton_attn_data is not None and TRITON_AVAILABLE:
+        # [B, S, H, D] -> [B, H, S, D]
+        query = query.permute(0, 2, 1, 3).contiguous()
+        key = key.permute(0, 2, 1, 3).contiguous()
+        value = value.permute(0, 2, 1, 3).contiguous()
+
+        output = tree_attention(
+            query,
+            key,
+            value,
+            triton_attn_data.packed_mask,
+            triton_attn_data.kv_indices,
+            triton_attn_data.kv_offsets,
+            triton_attn_data.q_indices,
+            triton_attn_data.q_offsets,
+            sm_scale=softmax_scale,
         )
+        # [B, H, S, D] -> [B, S, H, D]
+        output = output.permute(0, 2, 1, 3).contiguous()
+        return output
+    else:
+        # Require pre-created block_mask
+        block_mask = kwargs.get("block_mask", None)
+        if block_mask is None or not isinstance(block_mask, BlockMask):
+            raise ValueError(
+                "_tree_attn_fwd_func requires a pre-created BlockMask in kwargs['block_mask']. "
+                "Use create_block_mask_from_dense() during data preparation."
+            )
 
-    # [B, S, H, D] -> [B, H, S, D]
-    query = query.permute(0, 2, 1, 3).contiguous()
-    key = key.permute(0, 2, 1, 3).contiguous()
-    value = value.permute(0, 2, 1, 3).contiguous()
+        # [B, S, H, D] -> [B, H, S, D]
+        query = query.permute(0, 2, 1, 3).contiguous()
+        key = key.permute(0, 2, 1, 3).contiguous()
+        value = value.permute(0, 2, 1, 3).contiguous()
 
-    enable_gqa = query.shape[1] != key.shape[1]
+        enable_gqa = query.shape[1] != key.shape[1]
 
-    output = _flex_attention(
-        query,
-        key,
-        value,
-        block_mask=block_mask,
-        score_mod=None,
-        scale=softmax_scale,
-        enable_gqa=enable_gqa,
-    )
-    # [B, H, S, D] -> [B, S, H, D]
-    output = output.permute(0, 2, 1, 3).contiguous()
-    return output
+        output = _flex_attention(
+            query,
+            key,
+            value,
+            block_mask=block_mask,
+            score_mod=None,
+            scale=softmax_scale,
+            enable_gqa=enable_gqa,
+        )
+        # [B, H, S, D] -> [B, S, H, D]
+        output = output.permute(0, 2, 1, 3).contiguous()
+        return output
 
 
 ORIGINAL_FLASH_ATTENTION_FORWARD = None

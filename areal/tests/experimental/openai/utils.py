@@ -1,9 +1,7 @@
 from openai import AsyncOpenAI
 
-from areal.api.workflow_api import AgentWorkflow
 
-
-class SimpleAgent(AgentWorkflow):
+class SimpleAgent:
     async def run(self, data: dict, **extra_kwargs) -> float:
         http_client = extra_kwargs.get("http_client", None)
         base_url = extra_kwargs.get("base_url", None)

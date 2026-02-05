@@ -63,22 +63,26 @@ class ArchonParallelDims:
 
     Available mesh dimensions (when EP disabled):
         - pp: Pipeline Parallel
+        - dp_shard: FSDP shard dimension
+        - cp: Context Parallel
+        - tp: Tensor Parallel
         - dp: dp_shard (for data loading)
         - dp_shard_cp: dp_shard * cp (for FSDP sharding)
         - dp_cp: dp_shard * cp (for loss all-reduce)
-        - cp: Context Parallel
-        - tp: Tensor Parallel
+        - pp_cp_tp: pp * cp * tp (for context and model parallel group / data broadcast)
 
     Available mesh dimensions (when EP enabled):
         - pp: Pipeline Parallel
+        - dp_shard_mod_ep: dp_shard * cp / ep when etp=tp, else dp_shard * cp * tp / ep
+        - dp_shard_in_ep: ep / cp when etp=tp, else ep / (cp * tp)
+        - cp: Context Parallel
+        - tp: Tensor Parallel
         - dp: dp_shard (for data loading)
         - dp_shard_cp: dp_shard * cp (for FSDP sharding of dense params)
         - dp_cp: dp_shard * cp (for loss all-reduce)
-        - cp: Context Parallel
-        - tp: Tensor Parallel
+        - pp_cp_tp: pp * cp * tp (for context and model parallel group / data broadcast)
         - ep: Expert Parallel (flattened from dp_shard_in_ep * cp * etp)
         - ep_tp: 2D mesh [ep, tp] for ExpertTensorParallel (only when etp=tp)
-        - dp_shard_mod_ep: dp_shard_cp * tp / ep (for FSDP sharding of MoE experts)
 
     Example (pp=1, dp_shard=2, cp=2, tp=2, ep=1, etp=1, 8 GPUs):
         - fsdp_size = dp_shard × cp = 2 × 2 = 4
@@ -200,8 +204,10 @@ class ArchonParallelDims:
         # dp_cp mesh: for loss all-reduce
         self._meshes["dp_cp"] = mesh["dp_shard", "cp"]._flatten(mesh_dim_name="dp_cp")
 
-        # cp_tp mesh: for context parallel × tensor parallel (data broadcast group)
-        self._meshes["cp_tp"] = mesh["cp", "tp"]._flatten(mesh_dim_name="cp_tp")
+        # pp_cp_tp mesh: for PP × CP × TP (context and model parallel group)
+        self._meshes["pp_cp_tp"] = mesh["pp", "cp", "tp"]._flatten(
+            mesh_dim_name="pp_cp_tp"
+        )
 
         self._world_mesh = mesh
         return mesh
@@ -255,8 +261,10 @@ class ArchonParallelDims:
             "dp_shard_mod_ep", "dp_shard_in_ep", "cp"
         ]._flatten(mesh_dim_name="dp_cp")
 
-        # cp_tp mesh: for context parallel × tensor parallel
-        self._meshes["cp_tp"] = mesh["cp", "tp"]._flatten(mesh_dim_name="cp_tp")
+        # pp_cp_tp mesh: for PP × CP × TP (context and model parallel group)
+        self._meshes["pp_cp_tp"] = mesh["pp", "cp", "tp"]._flatten(
+            mesh_dim_name="pp_cp_tp"
+        )
 
         # ep mesh: flatten based on ETP mode
         if self.etp == self.tp:
@@ -377,9 +385,9 @@ class ArchonParallelDims:
 
         Args:
             name: Mesh dimension name. Available names depend on EP status:
-                - Without EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'cp_tp'
+                - Without EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'pp_cp_tp'
                 - With EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'ep', 'dp_shard_mod_ep',
-                          'dp_shard_in_ep', 'cp', 'tp', 'cp_tp'
+                          'dp_shard_in_ep', 'cp', 'tp', 'pp_cp_tp'
 
         Returns:
             DeviceMesh for the requested dimension, or None if not available.
@@ -397,9 +405,9 @@ class ArchonParallelDims:
 
         Args:
             name: Mesh dimension name. Available names depend on EP status:
-                - Without EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'cp_tp'
+                - Without EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'pp_cp_tp'
                 - With EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'ep', 'dp_shard_mod_ep',
-                          'dp_shard_in_ep', 'cp', 'tp', 'cp_tp'
+                          'dp_shard_in_ep', 'cp', 'tp', 'pp_cp_tp'
 
         Returns:
             ProcessGroup for the requested dimension, or None if mesh not available.

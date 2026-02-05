@@ -1,11 +1,21 @@
 import subprocess
 from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+
+
+def _get_package_version() -> str:
+    """Get version from installed package metadata (single source of truth)."""
+    try:
+        return version("areal")
+    except PackageNotFoundError:
+        # Package not installed, fallback for development
+        return "0.0.0.dev"
 
 
 class VersionInfo:
     def __init__(self):
-        self.__version__ = "0.5.3"
+        self.__version__ = _get_package_version()
         self.__branch__ = ""
         self.__commit__ = ""
         self.__is_dirty__ = False

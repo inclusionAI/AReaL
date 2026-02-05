@@ -176,7 +176,7 @@ class RecoverHandler:
         processor: AutoProcessor | None = None,
         base_model_path: str | None = None,
     ):
-        if self.config.mode == "disabled":
+        if self.config.mode in ("disabled", "off"):
             return
         # currently only support recover on one engine
         if not self.freq_ctl.check(
@@ -223,9 +223,7 @@ class RecoverHandler:
         weight_update_meta: WeightUpdateMeta | None = None,
         inference_engine_update_from: str = "default",
     ) -> RecoverInfo | None:
-        if self.config.mode == "disabled":
-            return
-        if os.environ.get("AREAL_RECOVER_RUN", "0") != "1":
+        if self.config.mode in ("disabled", "off"):
             return
         if inference_engine is not None and weight_update_meta is None:
             raise ValueError("Weight update meta is required for recovery.")
@@ -324,8 +322,8 @@ class RecoverHandler:
 
 
 def check_if_auto_recover(config: RecoverConfig) -> bool:
-    # This method is called only by launchers to check if the experiment should be a recover run
-    # when "recover_mode" is auto.
+    # This method is called by check_if_recover to check if the experiment should
+    # recover from a previous run when recovery is enabled ("on" or "auto" mode).
     experiment_name = config.experiment_name
     trial_name = config.trial_name
     fileroot = config.fileroot
@@ -363,16 +361,20 @@ def check_if_auto_recover(config: RecoverConfig) -> bool:
     return False
 
 
-def check_if_recover(config: RecoverConfig, run_id: int) -> bool:
-    # This method is called by the launcher to check if the experiment should be a recover run
-    # when "recover_mode" is not disabled.
-    if config.mode == "disabled":
+def check_if_recover(config: RecoverConfig, _run_id: int) -> bool:
+    """Check if the experiment should be a recover run.
+
+    When recovery is enabled ('on' or 'auto'), this checks if valid recover
+    info and checkpoints are available for automatic recovery.
+
+    Args:
+        config: Recovery configuration.
+        _run_id: Unused. Kept for API compatibility.
+
+    Returns:
+        True if the experiment should recover from a previous run.
+    """
+    if config.mode in ("disabled", "off"):
         return False
-    elif config.mode == "auto":
-        return check_if_auto_recover(config)
-    elif config.mode == "fault":
-        return run_id > 0
-    elif config.mode == "resume":
-        return True
-    else:
-        raise ValueError(f"Unknown recover mode: {config.mode}")
+    # Both "on" and "auto" use auto-recovery behavior
+    return check_if_auto_recover(config)

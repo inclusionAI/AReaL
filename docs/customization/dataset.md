@@ -4,8 +4,8 @@
 package. This gives you full flexibility to load, process, and filter your data before
 training.
 
-The required columns in your dataset depend on the specific implementation of the
-`RolloutWorkflow` (for online reinforcement learning) or the training engines (for
+The required column names (keys) and data format depend on the specific implementation
+of the agent workflow (for online reinforcement learning) or the training engines (for
 offline training, such as `LMEngine` for Supervised Fine-Tuning (SFT)).
 
 Here are two concrete examples from the existing implementation:
@@ -16,19 +16,10 @@ In the SFT example, we see that the loaded data is directly passed to the `train
 method:
 
 ```python
-# examples/math/gsm8k_sft.py
-def main(args):
-    ...
-    # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
-        get_gsm8k_dataset("train", tokenizer, rank, world_size),
-        collate_fn=pad_sequences_to_tensors,
-    )
-    ...
-    # Run training loop
-    for epoch in range(total_epochs):
-        for step, data in enumerate(train_dataloader):
-            engine.train_lm(data)
+# areal/trainer/sft_trainer.py
+for global_step in range(start_step, max_steps):
+    batch = self._load_bcast_from(data_generator)
+    self.actor.train_lm(batch)
 ```
 
 In this case, the `train_lm` method requires the keys "input_ids", "attention_mask", and
@@ -37,7 +28,15 @@ In this case, the `train_lm` method requires the keys "input_ids", "attention_ma
 sequences and append the "attention_mask":
 
 ```python
-def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
+# areal/dataset/gsm8k.py
+def get_gsm8k_sft_dataset(
+    path: str,
+    split: str,
+    tokenizer,
+    max_length: int | None = None,
+):
+    dataset = load_dataset(path=path, name="main", split=split)
+
     def process(sample):
         seq_token = tokenizer.encode(
             sample["question"] + sample["answer"] + tokenizer.eos_token
@@ -46,47 +45,48 @@ def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
         loss_mask = [0] * len(prompt_token) + [1] * (len(seq_token) - len(prompt_token))
         return {"input_ids": seq_token, "loss_mask": loss_mask}
 
-    # Remove unnecessary columns to avoid errors during collation
     dataset = dataset.map(process).remove_columns(["question", "answer"])
-    return dataset
 
-def get_gsm8k_dataset(split, tokenizer, rank, world_size):
-    dataset = load_dataset(path="openai/gsm8k", name="main", split=split)
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-    return process_gsm8k_sft_dataset(dataset, tokenizer)
+    if max_length is not None:
+        # Filter out sequences longer than max_length
+        dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
+
+    return dataset
 ```
 
 ## GRPO (Online Training)
 
-In the GRPO example, the loaded data is passed to the `InferenceEngine`, rather than the
-`TrainEngine`:
+In the GRPO example, the loaded data is first used for inference rather than training:
 
 ```python
-# examples/math/gsm8k_rl.py (simplified with PPOTrainer)
-def main(args):
-    ...
-    # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
-        get_gsm8k_dataset("train", rank, world_size),
-        collate_fn=lambda x: x,
+# areal/trainer/rl_trainer.py
+self.train_dataloader = self._create_dataloader(
+    train_dataset,
+    dataset_config=self.config.train_dataset,
+    rank=self.actor.data_parallel_rank,
+    world_size=self.actor.data_parallel_world_size,
+)
+for global_step in range(start_step, max_steps):
+    rollout_batch = self.actor.prepare_batch(
+        self.train_dataloader,
+        workflow=workflow,
+        workflow_kwargs=workflow_kwargs,
+        should_accept_fn=dynamic_filter_fn,
+        group_size=config.gconfig.n_samples,
+        dynamic_bs=self.config.dynamic_bs,
     )
-    # Initialize inference engine (abstracted by PPOTrainer)
-    rollout = RemoteSGLangEngine(config.rollout)
-    workflow = RLVRWorkflow(
-        reward_fn=gsm8k_reward_fn,
-        ...
-    )
-    # Run training loop
-    ...
-    for global_step in range(max_steps):
-        batch = rollout.prepare_batch(dataloader, workflow=workflow)
-        ...
 ```
 
 Note that the `collate_fn` here is an identity function, meaning it simply returns the
 list of individual data items as a batch. In `prepare_batch`, the data is then
-dispatched to multiple concurrent executions of `workflow.arun_episode`, where each
-dispatched data corresponds to a single episode.
+dispatched to multiple concurrent executions of workflows, where each dispatched data
+corresponds to a single episode.
+
+In the following sections, we take
+[`RLVRWorkflow`](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/rlvr.py)
+as an example. Agent workflows have the same pattern of using input data. You are free
+to modify the customized dataset to include any keys as long as they accord with your
+workflow implementation.
 
 The `RLVRWorkflow` implementation extracts the "messages" field from the data dictionary
 as the prompt for generating a response. Additionally, this data is passed to the
@@ -94,6 +94,7 @@ as the prompt for generating a response. Additionally, this data is passed to th
 dataset fields, like "answers". Here’s an example:
 
 ```python
+# areal/workflow/rlvr.py
 class RLVRWorkflow(RolloutWorkflow):
 
     async def arun_episode(self, engine: InferenceEngine, data):
@@ -122,28 +123,38 @@ function should be defined to handle the dataset's specific fields. Here’s how
 process the dataset for this example:
 
 ```python
-def process_gsm8k_rl_dataset(dataset: Dataset):
+from datasets import load_dataset
+
+def get_gsm8k_rl_dataset(
+    path: str,
+    split: str,
+    tokenizer,
+    max_length: int | None = None,
+):
+    dataset = load_dataset(path=path, name="main", split=split)
+
     def process(sample):
-        messages = [{"role": "user", "content": sample["question"]}]
+        messages = [
+            {
+                "role": "user",
+                "content": sample["question"]
+                + "\nPlease put your final answer within \\boxed{}.",
+            }
+        ]
         return {"messages": messages}
 
-    # The dataset has two fields "messages" and "answer"
     dataset = dataset.map(process).remove_columns(["question"])
+
+    # Filter out sequences longer than max_length if tokenizer and max_length are provided
+    if max_length is not None:
+
+        def filter_length(sample):
+            # Tokenize the user content to check length
+            content = sample["messages"][0]["content"]
+            tokens = tokenizer.encode(content)
+            return len(tokens) <= max_length
+
+        dataset = dataset.filter(filter_length)
+
     return dataset
-
-def get_gsm8k_dataset(split, rank, world_size):
-    dataset = load_dataset(path="openai/gsm8k", name="main", split=split)
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-    return process_gsm8k_rl_dataset(dataset)
-
-def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    # "answer" is passed in through "**data"
-    from areal.reward import get_math_verify_worker
-
-    worker = get_math_verify_worker()
-
-    try:
-        return worker.verify(str(completions), str(answer))
-    except Exception:
-        return 0.0
 ```

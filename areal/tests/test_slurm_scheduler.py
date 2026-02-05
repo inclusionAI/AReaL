@@ -364,7 +364,7 @@ def test_create_workers_with_colocate_strategy(scheduler):
         replicas=2,
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
     )
-    actor_ids = scheduler.create_workers(actor_job)
+    scheduler.create_workers(actor_job)
     scheduler.get_workers("actor", timeout=180)
 
     # Create colocated role
@@ -378,20 +378,22 @@ def test_create_workers_with_colocate_strategy(scheduler):
     )
     ref_ids = scheduler.create_workers(ref_job)
 
-    # Verify colocated role returns the SAME worker IDs as target role
-    assert ref_ids == actor_ids
+    # Verify colocated role with fork=True returns NEW worker IDs (not same as target)
+    # Forked workers get their own IDs like "ref/0", "ref/1"
+    assert ref_ids == ["ref/0", "ref/1"]
 
     # Verify colocation tracking is set up correctly
     assert "ref" in scheduler._colocated_roles
     assert scheduler._colocated_roles["ref"] == "actor"
-    assert scheduler._role_to_workers["ref"] == actor_ids
+    # Forked workers have their own entries in _workers
+    assert "ref" in scheduler._workers
 
     # Cleanup
     scheduler.delete_workers()
 
 
 def test_get_workers_for_colocated_role_delegates_to_target(scheduler):
-    """Test that get_workers for colocated role returns target's workers."""
+    """Test that get_workers for forked colocated role returns forked workers."""
     # Create target role
     actor_job = Job(
         role="actor",
@@ -401,7 +403,7 @@ def test_get_workers_for_colocated_role_delegates_to_target(scheduler):
     scheduler.create_workers(actor_job)
     actor_workers = scheduler.get_workers("actor", timeout=180)
 
-    # Create colocated role
+    # Create colocated role (with fork=True by default)
     ref_job = Job(
         role="ref",
         replicas=2,
@@ -413,12 +415,16 @@ def test_get_workers_for_colocated_role_delegates_to_target(scheduler):
     scheduler.create_workers(ref_job)
     ref_workers = scheduler.get_workers("ref", timeout=60)
 
-    # Verify same worker info is returned
+    # Forked workers have their own IDs and ports, but same IP (same node)
     assert len(ref_workers) == len(actor_workers)
     for ref_w, actor_w in zip(ref_workers, actor_workers):
-        assert ref_w.id == actor_w.id
+        # Forked workers have different IDs (ref/0 vs actor/0)
+        assert ref_w.id != actor_w.id
+        assert ref_w.id.startswith("ref/")
+        # Same IP since they're on the same node
         assert ref_w.ip == actor_w.ip
-        assert ref_w.worker_ports == actor_w.worker_ports
+        # Different ports since they're separate processes
+        assert ref_w.worker_ports != actor_w.worker_ports
 
     # Cleanup
     scheduler.delete_workers()
@@ -451,7 +457,7 @@ def test_delete_colocated_role_does_not_kill_processes(scheduler):
 
     # Verify colocated role is removed from tracking
     assert "ref" not in scheduler._colocated_roles
-    assert "ref" not in scheduler._role_to_workers
+    assert "ref" not in scheduler._workers
 
     # Verify target role workers are still available
     actor_workers = scheduler.get_workers("actor", timeout=60)

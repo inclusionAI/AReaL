@@ -142,9 +142,9 @@ tir:
 **Single-machine Multi-GPU Training**
 
 ```bash
-python3 -m areal.launcher.local \
-  examples/tir/train_tir.py \
-  --config examples/tir/tir_config.yaml
+python3 examples/tir/train_tir.py \
+  --config examples/tir/tir_config.yaml \
+  scheduler.type=local
 ```
 
 **Multi-machine Multi-GPU Training**

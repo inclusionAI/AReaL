@@ -64,6 +64,9 @@ pre-commit run --files <file1> <file2>
 For Python changes, identify relevant tests:
 
 ```bash
+# First, check if GPU is available
+python -c "import torch; print('GPU available:', torch.cuda.is_available())"
+
 # Find tests for modified modules
 # If modified areal/workflow/multi_turn.py, run:
 uv run pytest areal/tests/test_workflow.py -v
@@ -80,6 +83,9 @@ uv run pytest areal/tests/test_utils.py -v
 | GRPO tests  | `pytest areal/tests/grpo/`          | Yes            |
 | FSDP tests  | `pytest areal/tests/test_fsdp_*.py` | Yes            |
 | Distributed | `pytest areal/tests/torchrun/`      | Yes, multi-GPU |
+
+**Auto-skip GPU tests when no GPU**: If GPU is not available, skip GPU-required test
+categories.
 
 ### Phase 4: Documentation Checks
 
@@ -158,6 +164,7 @@ After auto-fix, remind user:
 
 If tests cannot be run locally:
 
+1. First check GPU availability
 1. Document which tests were skipped
 1. Explain why (GPU, multi-node, etc.)
 1. Note that CI will run them

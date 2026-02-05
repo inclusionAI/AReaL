@@ -19,3 +19,7 @@ class AgentConfig(PPOConfig):
         default="areal.workflow.langchain.math_agent.MathAgent",
         metadata={"help": "Path to the workflow class for evaluation."},
     )
+    max_turns: int = field(
+        default=10,
+        metadata={"help": "Maximum turns for multi-turn agents."},
+    )

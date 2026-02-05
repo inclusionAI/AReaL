@@ -1,4 +1,4 @@
-# CLAUDE.md — AReaL
+# CLAUDE.md - AReaL
 
 ## WHAT: Project Overview
 
@@ -9,15 +9,15 @@ learning.
 
 **Core Directories**:
 
-- `areal/` — Core package
-  - `api/` — Config dataclasses, workflow/engine contracts
-  - `engine/` — FSDP2, Megatron, SGLang/vLLM adapters
-  - `workflow/` — RolloutWorkflow implementations
-  - `reward/` — Reward functions
-  - `dataset/` — Dataset loaders
-  - `utils/` — Logging, tensor ops, checkpoints
-- `examples/` — Training scripts and configs
-- `docs/` — Jupyter Book source
+- `areal/` - Core package
+  - `api/` - Config dataclasses, workflow/engine contracts
+  - `engine/` - FSDP2, Megatron, SGLang/vLLM adapters
+  - `workflow/` - RolloutWorkflow implementations
+  - `reward/` - Reward functions
+  - `dataset/` - Dataset loaders
+  - `utils/` - Logging, tensor ops, checkpoints
+- `examples/` - Training scripts and configs
+- `docs/` - Jupyter Book source
 
 ## WHY: Purpose
 
@@ -42,6 +42,8 @@ pre-commit install            # Set up hooks (run once)
 pre-commit run --all-files    # Format and lint
 
 # Run tests
+# First check GPU availability (many tests require GPU)
+python -c "import torch; print('GPU available:', torch.cuda.is_available())"
 uv run pytest areal/tests/test_<topic>.py
 
 # Generate CLI docs
@@ -69,7 +71,8 @@ uv run python docs/generate_cli_docs.py
 - Adding new dependencies
 - Changing launcher or scheduler logic
 - Deleting or renaming public APIs
-- Running pytest tests (may require GPU/multi-node)
+- Running GPU/distributed tests (check GPU first:
+  `python -c "import torch; print('GPU available:', torch.cuda.is_available())"`)
 
 ### Never Do
 
@@ -87,7 +90,7 @@ uv run python docs/generate_cli_docs.py
 | Add Reward             | `areal/api/reward_api.py`, `areal/reward/geometry3k.py`       |
 | Algorithm Details      | `docs/algorithms/*.md`                                        |
 | Quickstart             | `docs/tutorial/quickstart.md`                                 |
-| Architecture Deep Dive | `docs/lite/gsm8k_grpo.md`                                     |
+| Architecture Deep Dive | `docs/tutorial/gsm8k_grpo.md`                                 |
 | CLI Reference          | `docs/cli_reference.md`                                       |
 
 ## Git Workflow

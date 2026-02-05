@@ -1,183 +1,249 @@
 # Evaluation
 
-## Option 1: Using AReaL's Standalone Evaluation Package
+AReaL supports distributed inference using the same controller infrastructure as
+training. This allows you to leverage existing workflows and schedulers to scale
+evaluation across multiple GPUs and nodes.
 
-The evaluation code is located in the `evaluation` folder of the repository. Following
-the previous tutorial, trained checkpoints will be saved under
-`${fileroot}/checkpoints/${USER}/${experiment_name}/${trial_name}/`.
+**Note:** AReaL provides distributed inference for your trained model, not a complete
+evaluation pipeline with dataset retrieval and metrics computation. You can use
+third-party evaluation frameworks with AReaL checkpoints directly --- no conversion
+required since AReaL saves HuggingFace-compatible checkpoints.
 
-### Install Evaluation Dependencies
+## Quick Start
 
-The evaluation package has its own dependencies that are separate from the main AReaL
-package. Before running evaluation, install the evaluation dependencies:
-
-```bash
-cd evaluation
-pip install -r requirements.txt
-pip install -e ./latex2sympy
-```
-
-### Run Evaluation
-
-Specify an `output_path` to save the test results. If not specified, the results will be
-saved in `model_path`.
-
-#### Math Evaluation
+Run evaluation on GSM8K:
 
 ```bash
-cd evaluation
-nohup python eval_and_aggregate.py \
-    --model_path /path/to/checkpoint \
-    --output_path /path/to/outputs \
-    --max_gen_tokens 32768 \
-    --data_names math_500,aime24,amc23 \
-    --prompt_type qwen3-think \
-    --task math &> eval_and_aggregate_parallel.log &
+python3 examples/math/gsm8k_eval.py \
+    --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=local \
+    actor.path=/path/to/checkpoint
 ```
 
-#### Code Evaluation
-
-**Obtaining Data:**
-
-- Due to the size of code datasets (some test cases are relatively large), we have
-  uploaded all our code datasets to [Hugging Face](https://huggingface.co/inclusionAI).
-- Once you have downloaded the code dataset, place it under `./evaluation/data/`.
-
-**Running Evaluation:**
+For distributed evaluation:
 
 ```bash
-cd evaluation
-nohup python eval_and_aggregate.py \
-    --model_path /path/to/checkpoint \
-    --output_path /path/to/outputs \
-    --max_gen_tokens 32768 \
-    --data_names codeforces,lcb_v5 \
-    --prompt_type qwen3-think-pure \
-    --temperature 1.0 \
-    --top_p 0.95 \
-    --num_sample_nodes 8 \
-    --samples_per_node 1 \
-    --n_sampling $((num_sample_nodes * samples_per_node)) \
-    --task code &> eval_and_aggregate_parallel.log &
+# With Ray (3 nodes, 12 GPUs)
+python3 examples/math/gsm8k_eval.py \
+    --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=ray \
+    allocation_mode=sglang:d12p1t1 \
+    cluster.n_nodes=3
+
+# With Slurm (12 nodes, 96 GPUs)
+python3 examples/math/gsm8k_eval.py \
+    --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=slurm \
+    allocation_mode=sglang:d96p1t1 \
+    cluster.n_nodes=12
 ```
 
-#### Command Line Parameters
+## Evaluation Metrics
 
-- **`--model_path`**: Path to the saved model parameters
-- **`--output_path`**: Path to store generated answers and log files during evaluation
-- **`--data_names`**: Dataset(s) to evaluate. Multiple datasets can be separated by
-  commas. Available options:
-  - Math: `math_500`, `aime24`, `aime25`, `amc23`
-  - Code: `lcb_v5`, `lcb_v5_2410_2502`, `codeforces`, `code_contest_all`
-- **`--max_gen_tokens`**: Maximum length of generated answers (default: 32768)
-- **`--prompt_type`**: Specify the prompt template. For our latest model, we use
-  `qwen3-think` for math datasets and `qwen3-think-pure` for code datasets.
-- **`--num_sample_nodes`**: Number of multiple sampling seeds to ensure sampling
-  diversity.
-- **`--samples_per_node`**: Number of samples to generate per seed for each problem.
+Select an appropriate dataset and metrics for your task, then integrate the evaluation
+logic as a workflow. See the [Agentic RL guide](./agentic_rl.md) for details.
 
-### Logs and Evaluation Results
+Example with an agentic math evaluator (the evaluation code is independent with AReaL):
 
-Check `${output_path}/math_eval_${max_gen_tokens}/logs` to review the log of each
-worker.
+```python
+from agents import Agent, OpenAIProvider, RunConfig, SQLiteSession, function_tool
+from agents import Runner as OpenAIRunner
+from math_verify import parse, verify
+from openai import AsyncOpenAI
 
-The evaluation script will output a results table in the terminal:
 
-```
-+----------+---------------+---------------+---------------+------------+---------------+--------+---------+
-| dataset  | num_questions | greedy_length | sample_length | greedy_acc | sample_pass@1 | pass@8 | pass@16 |
-+----------+---------------+---------------+---------------+------------+---------------+--------+---------+
-| math_500 |      500      |     6757.4    |     4139.5    |    84.4    |      92.7     |  97.3  |   97.7  |
-|  aime24  |       30      |    19328.0    |    13663.5    |    50.0    |      50.4     |  77.3  |   80.0  |
-|  amc23   |       40      |     8850.0    |     6526.2    |    80.0    |      90.5     |  96.8  |   98.8  |
-+----------+---------------+---------------+---------------+------------+---------------+--------+---------+
-```
+@function_tool
+def add(a: float, b: float) -> float:
+    """Add two numbers."""
+    return a + b
 
-#### Metrics Explanation
 
-- **`{greedy|sample}_length`**: Average answer length under greedy or random sampling
-  strategy
-- **`greedy_acc`**: Average accuracy under greedy sampling
-- **`sample_pass@{k}`**: Probability of generating a correct answer within `k` attempts
-  under random sampling
+@function_tool
+def multiply(a: float, b: float) -> float:
+    """Multiply two numbers."""
+    return a * b
 
-For the Codeforces dataset, we use the Elo ranking algorithm to evaluate model
-performance, referring to [CodeElo](https://github.com/QwenLM/CodeElo) and
-[rllm](https://github.com/agentica-project/rllm):
 
-```
-+------------+----------------+-----------+
-|  Dataset   | Percentile (%) | CF Rating |
-+------------+----------------+-----------+
-| codeforces |      17.9      |    590    |
-+------------+----------------+-----------+
-```
+def math_reward_fn(completions: str, answer: str) -> float:
+    return float(verify(parse(completions), parse(answer)))
 
-- **`CF Rating`**: The overall Elo rank score of the model across 57 Codeforces
-  contests.
-- **`Percentile`**: The Elo ranking percentile of the model among all Codeforces users.
 
-> **Note**: As the penalty mechanism may cause fluctuations in Elo rankings, we suggest
-> performing multiple evaluations and taking the average score as the final result.
+class MathAgent:
+    async def run(self, data, **extra_kwargs):
+        http_client = extra_kwargs.get("http_client")
+        base_url = extra_kwargs.get("base_url")
+        client = AsyncOpenAI(base_url=base_url, http_client=http_client, max_retries=0)
 
-### Configuration Details
-
-#### Sampling Parameters
-
-- The evaluation script defaults to averaging 32 samples with temperature 1.0. For the
-  code dataset, we set it to 8 samples.
-- We observed that the `enforce_eager` parameter in vLLM significantly impacts
-  evaluation performance. When `enforce_eager=True`, we can reproduce the model
-  performance reported in previous work. Without this setting, evaluation results may
-  fall below reported performance. Therefore, we enforce `enforce_eager=True` during
-  evaluation.
-
-#### Runtime Expectations
-
-Due to the sampling requirements and `enforce_eager` setting, the evaluation process
-typically takes considerable time.
-
-Runtime depends on several factors:
-
-- Maximum generation length
-- Number of questions in the dataset
-- Model size
-
-**Performance benchmarks** (on 8x H100 GPUs):
-
-- **AIME dataset**: ~80 minutes
-- **MATH_500 dataset**: ~160 minutes
-
-## Option 2: Using AReaL-lite's Integration for RL Rollout
-
-When using AReaL-lite, you can leverage the existing workflow from your training script
-for evaluation purposes. This approach allows you to reuse the rollout components you've
-already implemented, making the transition from training to evaluation seamless.
-
-### Setting Up Evaluation
-
-To set up evaluation using this method, create a new script that contains only the
-rollout portion of your original training script. This focused script should include the
-data collection and inference logic without the training components.
-
-Once you have prepared your evaluation script, launch the evaluation experiment using
-the following command:
-
-```bash
-python3 -m areal.launcher.${local|slurm|ray} my_script.py --config my-config.yaml allocation_mode=sglang:d4p1t2+eval
+        run_config = RunConfig(
+            model_provider=OpenAIProvider(openai_client=client),
+            model="default",
+            tracing_disabled=True,
+        )
+        agent = Agent(
+            name="RLVR Math with Calculator",
+            instructions="Answer math questions using the calculator tools.",
+            tools=[add, multiply],
+        )
+        result = await OpenAIRunner.run(
+            agent,
+            input=data["messages"][-1]["content"],
+            session=SQLiteSession("math"),
+            run_config=run_config,
+        )
+        return math_reward_fn(result.final_output, data["answer"])
 ```
 
-### Key Differences from Training
+## Architecture
 
-The primary difference between training and evaluation commands lies in the
-`allocation_mode` parameter. In the evaluation setup, we remove the allocation of
-training processes and replace them with an `eval` annotation. This modified allocation
-mode launches **CPU processes** that run your customized workflow and collect data from
-the LLM server, optimizing resource usage for evaluation tasks.
+Evaluation uses a single-controller architecture without training workers:
 
-> **Note**: Optimal configurations often differ significantly between training and
-> evaluation phases. As a user, you are responsible for ensuring that your evaluation
-> experiment configuration and evaluation metrics are appropriate for your specific use
-> case. Pay particular attention to settings such as `GenerationHyperparameters` and
-> reward function to ensure they align with your evaluation objectives rather than your
-> training setup.
+```
+Controller Process
+    │
+    └─> Inference Engine Controller (SGLang/vLLM)
+        ├─> Scheduler creates inference workers
+        ├─> Submits evaluation tasks with workflow
+        └─> Collects results and computes metrics
+```
+
+The controller orchestrates evaluation from a CPU process while inference workers run on
+GPUs.
+
+## Implementation
+
+See [`examples/math/gsm8k_eval.py`](../../examples/math/gsm8k_eval.py) for a complete
+example. The key pattern:
+
+```python
+from areal.api.alloc_mode import AllocationMode
+from areal.api.cli_args import GRPOConfig, SGLangConfig, load_expr_config, vLLMConfig
+from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine.vllm_remote import RemotevLLMEngine
+from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
+
+# Load config and parse allocation mode
+config, _ = load_expr_config(args, GRPOConfig)
+allocation_mode = AllocationMode.from_str(config.allocation_mode)
+
+# Initialize scheduler based on config
+if config.scheduler.type == "local":
+    scheduler = LocalScheduler(exp_config=config)
+elif config.scheduler.type == "ray":
+    scheduler = RayScheduler(exp_config=config)
+elif config.scheduler.type == "slurm":
+    scheduler = SlurmScheduler(exp_config=config)
+
+# Select inference engine and build server args
+if allocation_mode.gen_backend == "sglang":
+    engine_cls = RemoteSGLangEngine
+    server_args = SGLangConfig.build_args(
+        sglang_config=config.sglang,
+        tp_size=allocation_mode.gen.tp_size,
+        base_gpu_id=0,
+    )
+elif allocation_mode.gen_backend == "vllm":
+    engine_cls = RemotevLLMEngine
+    server_args = vLLMConfig.build_args(
+        vllm_config=config.vllm,
+        tp_size=allocation_mode.gen.tp_size,
+        pp_size=allocation_mode.gen.pp_size,
+    )
+
+# Create controller and initialize
+eval_rollout = engine_cls.as_controller(config.rollout, scheduler)
+eval_rollout.initialize(
+    role="eval-rollout",
+    alloc_mode=allocation_mode,
+    server_args=server_args,
+)
+
+# Define workflow and its configuration
+workflow = "areal.workflow.rlvr.RLVRWorkflow"
+workflow_kwargs = dict(
+    reward_fn="areal.reward.gsm8k.gsm8k_reward_fn",
+    gconfig=config.gconfig,
+    tokenizer=config.tokenizer_path,
+    enable_thinking=False,
+)
+
+# Submit evaluation tasks
+cnt = 0
+for data in valid_dataloader:
+    for item in data:
+        eval_rollout.submit(
+            item,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            group_size=config.gconfig.n_samples,
+        )
+        cnt += 1
+
+# Wait for completion and collect results
+eval_rollout.wait(cnt, timeout=None)
+eval_stats = eval_rollout.export_stats()
+```
+
+This follows the same controller pattern as training but without training components.
+
+## Configuration
+
+Evaluation reuses the same config structure as training. You can use an existing
+training config directly with the evaluation script.
+
+```yaml
+experiment_name: gsm8k-eval
+trial_name: eval0
+seed: 1
+
+allocation_mode: sglang:d4p1t1  # Inference-only allocation
+
+scheduler:
+  type: local  # or 'ray', 'slurm'
+
+rollout:
+  max_concurrent_rollouts: 256
+  # max_head_offpolicyness is set to 1e12 internally for eval
+
+gconfig:
+  n_samples: 8
+  temperature: 1.0
+  max_new_tokens: 1024
+
+actor:
+  path: Qwen/Qwen2.5-1.5B-Instruct
+  dtype: bfloat16
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+
+valid_dataset:
+  name: gsm8k
+  split: test
+  batch_size: 32
+```
+
+## Logging Results
+
+Use `tabulate_stats` to format evaluation metrics:
+
+```python
+from areal.utils.printing import tabulate_stats
+
+eval_stats = eval_rollout.export_stats()
+logger.info(f"Evaluation Results: {tabulate_stats(eval_stats)}")
+```
+
+## Custom Workflows
+
+Reuse training workflows or create custom ones. See the
+[Agentic RL tutorial](../tutorial/agentic_rl.md) and
+[Customization: Rollout Workflows](../customization/agent.md) for complete guides.
+
+## Next Steps
+
+- {ref}`Distributed Experiments <distributed-experiments-with-ray-or-slurm>`
+- [Customization: Workflows](../customization/agent.md)
+- [Agentic RL Tutorial](../tutorial/agentic_rl.md)
+- [Large MoE Training](../tutorial/megatron.md)

@@ -123,6 +123,7 @@ def test_pp_forward(pp_size: int, out_file: str | None = None) -> bool:
     pp_stages, model_parts = pipeline_module_split(
         whole_model=model,
         pp_mesh=pp_mesh,
+        pp_schedule="1F1B",
         device=device,
         module_names_per_stage=module_names_per_stage,
     )
@@ -394,6 +395,7 @@ def test_pp_backward(pp_size: int, out_file: str | None = None) -> bool:
     pp_stages, model_parts = pipeline_module_split(
         whole_model=model,
         pp_mesh=pp_mesh,
+        pp_schedule="1F1B",
         device=device,
         module_names_per_stage=module_names_per_stage,
     )

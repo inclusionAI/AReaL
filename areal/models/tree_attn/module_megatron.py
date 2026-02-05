@@ -15,7 +15,16 @@ from megatron.core.transformer.transformer_layer import (
 )
 from torch.nn.attention.flex_attention import BlockMask
 
-from areal.models.tree_attn.module_fsdp import _flex_attention
+from areal.models.tree_attn.constants import USE_TRITON_TREE_ATTN
+from areal.models.tree_attn.module_fsdp import (
+    _flex_attention,
+    create_block_mask_from_dense,
+)
+from areal.models.tree_attn.triton_kernel import (
+    TRITON_AVAILABLE,
+    TreeAttentionData,
+    tree_attention,
+)
 from areal.utils import logging
 
 logger = logging.getLogger(__name__)
@@ -57,7 +66,7 @@ class PytorchFlexAttention(torch.nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        attention_mask: BlockMask,
+        attention_mask: BlockMask | TreeAttentionData | torch.Tensor,
         attn_mask_type: AttnMaskType,
         attention_bias: torch.Tensor = None,
         packed_seq_params: PackedSeqParams = None,
@@ -65,46 +74,95 @@ class PytorchFlexAttention(torch.nn.Module):
         # query: [S, B, H, D] in which B should be 1 in current tree training implementation
         # key: [S, B, H, D]
         # value: [S, B, H, D]
-        # attention_mask: BlockMask (pre-created)
+        # attention_mask: BlockMask | TreeAttentionData | torch.Tensor
+        #   - BlockMask: pre-created block mask for flex_attention
+        #   - TreeAttentionData: for Triton tree attention
+        #   - torch.Tensor: dense attention mask that will be converted to BlockMask
         # attention_mask_type: arbitrary
 
-        if attention_bias is not None:
-            raise NotImplementedError(
-                "PytorchFlexAttention does not support attention_bias yet."
+        # Check for Triton path
+        if (
+            USE_TRITON_TREE_ATTN
+            and isinstance(attention_mask, TreeAttentionData)
+            and TRITON_AVAILABLE
+        ):
+            # Triton path
+            if attention_bias is not None:
+                raise NotImplementedError("Triton path does not support attention_bias")
+            if packed_seq_params is not None:
+                raise NotImplementedError(
+                    "Triton path does not support packed sequences"
+                )
+
+            # Input: [S, B, H, D], Triton expects [B, H, N, D]
+            query = query.permute(1, 2, 0, 3).contiguous()
+            key = key.permute(1, 2, 0, 3).contiguous()
+            value = value.permute(1, 2, 0, 3).contiguous()
+
+            output = tree_attention(
+                query,
+                key,
+                value,
+                attention_mask.packed_mask,
+                attention_mask.kv_indices,
+                attention_mask.kv_offsets,
+                attention_mask.q_indices,
+                attention_mask.q_offsets,
+                sm_scale=self.softmax_scale,
             )
-        if packed_seq_params is not None:
-            raise NotImplementedError(
-                "PytorchFlexAttention does not support packed sequences yet."
-            )
-        if not isinstance(attention_mask, BlockMask):
-            raise ValueError(
-                "PytorchFlexAttention requires a pre-created BlockMask. "
-                "Use create_block_mask_from_dense() during data preparation."
+            # Output: [B, H, S, D], convert to [S, B, H*D]
+            output = output.permute(2, 0, 1, 3).contiguous()
+            output = output.view(output.shape[0], output.shape[1], -1)
+            return output
+        else:
+            # Existing flex_attention path
+            if attention_bias is not None:
+                raise NotImplementedError(
+                    "PytorchFlexAttention does not support attention_bias yet."
+                )
+            if packed_seq_params is not None:
+                raise NotImplementedError(
+                    "PytorchFlexAttention does not support packed sequences yet."
+                )
+
+            if isinstance(attention_mask, torch.Tensor):
+                seq_len = attention_mask.shape[0]
+                block_mask = create_block_mask_from_dense(
+                    attention_mask, seq_len, attention_mask.device
+                )
+            elif isinstance(attention_mask, BlockMask):
+                block_mask = attention_mask
+            else:
+                raise ValueError(
+                    "PytorchFlexAttention requires either a BlockMask, dense tensor, "
+                    "or TreeAttentionData as attention_mask. "
+                    "For flex_attention path, use create_block_mask_from_dense() "
+                    "or pass a dense mask tensor."
+                )
+
+            # query, key, value shape: [S, B, H, D] -> [B, H, S, D]
+            query = query.permute(1, 2, 0, 3)
+            key = key.permute(1, 2, 0, 3)
+            value = value.permute(1, 2, 0, 3)
+            enable_gqa = query.shape[1] != key.shape[1]
+
+            output = _flex_attention(
+                query,
+                key,
+                value,
+                block_mask=block_mask,
+                score_mod=None,
+                scale=self.softmax_scale,
+                enable_gqa=enable_gqa,
             )
 
-        # query, key, value shape: [S, B, H, D] -> [B, H, S, D]
-        query = query.permute(1, 2, 0, 3)
-        key = key.permute(1, 2, 0, 3)
-        value = value.permute(1, 2, 0, 3)
-        enable_gqa = query.shape[1] != key.shape[1]
-
-        output = _flex_attention(
-            query,
-            key,
-            value,
-            block_mask=attention_mask,
-            score_mod=None,
-            scale=self.softmax_scale,
-            enable_gqa=enable_gqa,
-        )
-
-        # output shape: [B, H, S, D] -> [S, B, H, D] -> [S, B, H*D]
-        output = (
-            output.permute(2, 0, 1, 3)
-            .contiguous()
-            .view(output.shape[2], output.shape[0], -1)
-        )
-        return output
+            # output shape: [B, H, S, D] -> [S, B, H, D] -> [S, B, H*D]
+            output = (
+                output.permute(2, 0, 1, 3)
+                .contiguous()
+                .view(output.shape[2], output.shape[0], -1)
+            )
+            return output
 
 
 @contextmanager

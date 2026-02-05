@@ -28,7 +28,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
-from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow, WorkflowLike
+from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
 from areal.scheduler.rpc.serialization import deserialize_value
 from areal.utils import logging, perf_tracer
 from areal.utils.concurrent import run_async_task
@@ -535,21 +535,28 @@ class RolloutController:
     def _resolve_workflow_str(self, workflow: WorkflowLike) -> str:
         """Resolve workflow to a string import path.
 
-        Handles RolloutWorkflow, AgentWorkflow instances/classes, and string paths.
+        Handles RolloutWorkflow, agent workflow instances/classes, and string paths.
         """
 
+        # String paths - return as-is
         if isinstance(workflow, str):
             return workflow
+
+        # RolloutWorkflow classes
         elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
             return f"{workflow.__module__}.{workflow.__name__}"
+
+        # RolloutWorkflow instances
         elif isinstance(workflow, RolloutWorkflow):
             return f"{workflow.__module__}.{workflow.__class__.__name__}"
-        elif isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
+
+        # Agent-like workflow classes
+        elif isinstance(workflow, type):
             return f"{workflow.__module__}.{workflow.__name__}"
-        elif isinstance(workflow, AgentWorkflow):
-            return f"{workflow.__module__}.{workflow.__class__.__name__}"
+
+        # Agent-like workflow instances
         else:
-            raise ValueError(f"Invalid workflow type: {type(workflow)}")
+            return f"{workflow.__module__}.{workflow.__class__.__name__}"
 
     def _resolve_should_accept_fn(
         self, should_accept_fn: Callable[[dict[str, Any]], bool] | str | None

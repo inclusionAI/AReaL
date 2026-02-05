@@ -559,12 +559,8 @@ def slurm_main(config, run_id: int = 0):
             launcher.stop_all(force=True)
             raise e
 
-    if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
-        trainer_n_nodes = 1
-        gpus_per_node = 0
-    else:
-        trainer_n_nodes = n_nodes - n_backend_nodes
-        gpus_per_node = config.cluster.n_gpus_per_node
+    trainer_n_nodes = n_nodes - n_backend_nodes
+    gpus_per_node = config.cluster.n_gpus_per_node
 
     def _build_trainer_cmds(
         trainer_n_nodes: int,
@@ -613,7 +609,6 @@ def slurm_main(config, run_id: int = 0):
         # launch trainers
         _env_vars = dict(
             AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
-            AREAL_RECOVER_RUN=str(int(is_recover_run)),
         )
         if allocation_mode.gen_backend == "sglang":
             # Required by NCCL weight update group.
@@ -670,7 +665,7 @@ def slurm_main(config, run_id: int = 0):
             recover_this = (
                 e.reason in recover_states
                 and run_id < config.recover.retries
-                and config.recover.mode in ["auto", "fault"]
+                and config.recover.mode in ("on", "auto")
             )
             if recover_this:
                 time.sleep(RECOVER_TIME_INTERVAL)

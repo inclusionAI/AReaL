@@ -20,7 +20,9 @@ pip install -r examples/search_agent/tongyi_deepresearch/requirements.txt
 2. Launch LLM judge SGLang servers.
 
 ```bash
-python3 -m areal.launcher.ray --config examples/search_agent/tongyi_deepresearch/config.yaml \
+python3 examples/search_agent/tongyi_deepresearch/train.py \
+    --config examples/search_agent/tongyi_deepresearch/config.yaml \
+    scheduler.type=ray \
     experiment_name=llm-judge trial_name=trial0 \
     actor.path=Qwen/Qwen2.5-72B-Instruct
 ```
@@ -28,8 +30,9 @@ python3 -m areal.launcher.ray --config examples/search_agent/tongyi_deepresearch
 3. Run the experiment:
 
 ```bash
-python3 -m areal.launcher.ray examples/search_agent/tongyi_deepresearch/train.py \
+python3 examples/search_agent/tongyi_deepresearch/train.py \
     --config examples/search_agent/tongyi_deepresearch/config.yaml \
+    scheduler.type=ray \
     experiment_name=train-tongyi-deepresearch trial_name=trial0 \
     judge_engine.experiment_name=llm-judge trial_name=trial0 \
     launcher.trainer_env_vars=SERPER_KEY_ID=<your serper key>,JINA_API_KEYS=<your jina key>

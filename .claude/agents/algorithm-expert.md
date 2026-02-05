@@ -103,7 +103,7 @@ def reward_fn(
 
 ### 5. Loss Computation
 
-Location: `areal/engine/ppo/actor.py`
+Location: `areal/trainer/ppo/actor.py`
 
 **PPO Loss:**
 
@@ -154,7 +154,7 @@ print(f"Clipping rate: {clipped.float().mean():.2%}")
 | File                             | Purpose                    |
 | -------------------------------- | -------------------------- |
 | `areal/api/cli_args.py`          | PPOActorConfig, NormConfig |
-| `areal/engine/ppo/actor.py`      | PPO loss computation       |
+| `areal/trainer/ppo/actor.py`     | PPO loss computation       |
 | `areal/workflow/rlvr.py`         | Single-turn workflow       |
 | `areal/reward/__init__.py`       | Reward function registry   |
 | `docs/algorithms/grpo_series.md` | Algorithm documentation    |

@@ -1,6 +1,6 @@
 [build-system]
-requires = [ "setuptools", "build>=1.2.1"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.9.18,<0.10.0"]
+build-backend = "uv_build"
 
 [project]
 name = "areal"
@@ -8,7 +8,7 @@ description = "AReaL: A Large-Scale Asynchronous Reinforcement Learning System f
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12,<3.13"
-dynamic = ["version"]
+version = "0.5.3"
 authors = [
     {name = "AReaL Team"},
 ]
@@ -187,20 +187,12 @@ dev = [
 ]
 
 # =============================================================================
-# Tool configurations: setuptools
-# =============================================================================
-
-[tool.setuptools.dynamic]
-version = {attr = "areal.__version__"}
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["areal*"]
-exclude = ["tests*", "docs*", "examples*", "evaluation*"]
-
-# =============================================================================
 # Tool configurations: uv
 # =============================================================================
+
+[tool.uv.build-backend]
+# Package is in root directory (not src/), so set module-root to empty string
+module-root = ""
 
 [tool.uv]
 # Restrict lock file resolution to supported environments
