@@ -210,14 +210,14 @@ that implement OpenAI-compatible endpoints.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         PPOTrainer                               │
-│         (Detects agent workflow, initializes proxies)            │
+│                         PPOTrainer                              │
+│         (Detects agent workflow, initializes proxies)           │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    RolloutController                             │
-│                                                                  │
+│                    RolloutController                            │
+│                                                                 │
 │  ┌──────────────┐     ┌──────────────┐                          │
 │  │   Rollout    │     │    Proxy     │  FastAPI server          │
 │  │   Worker     │◄────│    Worker    │  /v1/chat/completions    │
@@ -228,6 +228,105 @@ that implement OpenAI-compatible endpoints.
 ```
 
 **Key file:** `areal/experimental/openai/proxy/proxy_rollout_server.py`
+
+### Four-Process Architecture (Proxy)
+
+The proxy mode introduces a proxy server between the agent and the inference engine:
+
+```
+│ Controller Process │  │ Rollout Worker (RPC) │  │ Proxy Worker │  │ GPU Process │
+│                    │  │                      │  │              │  │             │
+│ RolloutController  │  │  Flask HTTP Server   │  │ FastAPI HTTP │  │ SGLang/vLLM │
+│        │           │  │        │             │  │    Server    │  │      │      │
+│        ▼           │  │   /call endpoint     │  │ OpenAI API   │  │ Inference   │
+│ BatchTaskDispatcher│  │        │             │  │ compatible   │  │   Engine    │
+│   (bg thread)      │  │        ▼             │  │      │       │  │      │      │
+│        │           │  │   Engine Thread      │  │      │       │  │      │      │
+│        │           │  │        │             │  │      │       │  │      │      │
+│        │    HTTP   │  │        ▼             │  │      │       │  │      │      │
+│ submit ├────POST───┼─>│   RemoteInfEngine    │  │      │       │  │      │      │
+│ task 1 │           │  │        │             │  │      │       │  │      │      │
+│        │           │  │        ▼             │  │      │       │  │      │      │
+│ submit │           │  │ OpenAIProxyWorkflow  │  │      │       │  │      │      │
+│ task 2 │           │  │        │             │  │      │       │  │      │      │
+│        │           │  │  OpenAIProxyClient ──┼──┼──────┤       │  │      │      │
+│ submit │           │  │        │             │  │      │       │  │      │      │
+│ task 3 │           │  │   agent.run()        │  │      │       │  │      │      │
+│        │           │  │        │             │  │      │       │  │      │      │
+│        │           │  │        ▼             │  │      │       │  │      │      │
+│        │           │  │   OpenAI API call ───┼──┼─>  /chat/ ───┼──┼─> generate  │
+│        │           │  │        │             │  │ completions  │  │    tokens   │
+│        │           │  │        │             │  │      │       │  │      │      │
+│        │           │  │  ChatCompletion <────┼──┼──────<───────┼──┼──────┘      │
+│        │           │  │        │             │  │   (cached)   │  │             │
+│        │           │  │        │             │  │      │       │  │             │
+│        │           │  │        ▼             │  │      │       │  │             │
+│        │           │  │     reward           │  │      │       │  │             │
+│        │           │  │        │             │  │      │       │  │             │
+│        │           │  │   set_reward() ──────┼──┼─>  /rl/      │  │             │
+│        │           │  │        │             │  │ set_reward   │  │             │
+│        │           │  │        ▼             │  │      │       │  │             │
+│        │           │  │     ...              │  │      │       │  │             │
+│        │           │  │        │             │  │      │       │  │             │
+│        │           │  │        ▼             │  │      │       │  │             │
+│        │           │  │    trajectory        │  │      │       │  │             │
+│        │           │  │        │             │  │      │       │  │             │
+│    collect<────────┼──┼────────┘             │  │      │       │  │             │
+│                    │  │                      │  │              │  │             │
+└────────────────────┴──┴──────────────────────┴──┴──────────────┴──┴─────────────┘
+```
+
+The `OpenAIProxyWorkflow` contains an `OpenAIProxyClient` that manages the session
+lifecycle with the proxy server. Key interactions include:
+
+- **chat/completions**: Routes agent's OpenAI API calls to inference engine, caches
+  token-level data
+- **set_reward**: Assigns rewards to completions for RL training
+
+### Data Flow Detail
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│                               Rollout Worker + Proxy Worker                                │
+│                                                                                            │
+│  ┌─────────────────────┐      ┌──────────────────────────────────────────────────────────┐ │
+│  │ OpenAIProxyWorkflow │      │               ProxyRolloutServer (FastAPI)               │ │
+│  │                     │      │                                                          │ │
+│  │ 1. grant_capacity()─┼─────>│                                                          │ │
+│  │                     │      │                                                          │ │
+│  │ 2. start_session() ─┼─────>│ → SessionData created                                    │ │
+│  │    → session_id    <┼──────┤                                                          │ │
+│  │                     │      │                                                          │ │
+│  │ 3. agent.run()      │      │   ┌──────────────────────────────────────────────────┐   │ │
+│  │    │                │      │   │                   ArealOpenAI                    │   │ │
+│  │    └─> OpenAI call ─┼─────>│   │                                                  │   │ │
+│  │                     │      │   │  /chat/completions                               │   │ │
+│  │                     │      │   │    → tokenize, engine.agenerate() ───────────────┼───┼─┼──┐
+│  │                     │      │   │    → cache in InteractionCache    <──────────────┼───┼─┼──┤
+│  │    ChatCompletion  <┼──────┤   │    → return ChatCompletion                       │   │ │  │
+│  │                     │      │   │                                                  │   │ │  │
+│  │                     │      │   └──────────────────────────────────────────────────┘   │ │  │
+│  │                     │      │                                                          │ │  │
+│  │ 4. set_reward()    ─┼─────>│ → reward stored in InteractionCache                      │ │  │
+│  │                     │      │                                                          │ │  │
+│  │ 5. end_session()   ─┼─────>│ → session marked complete                                │ │  │
+│  │                     │      │                                                          │ │  │
+│  │ 6. export_          │      │                                                          │ │  │
+│  │    trajectories()  ─┼─────>│ → apply discount, to_tensor_dict()                       │ │  │
+│  │    → tensors       <┼──────┤                                                          │ │  │
+│  └─────────────────────┘      └──────────────────────────────────────────────────────────┘ │  │
+│                                                                                            │  │
+└────────────────────────────────────────────────────────────────────────────────────────────┘  │
+                                                                                                │
+                                             ┌──────────────────────────────────────────────────┘
+                                             │
+                                             ▼
+                           ┌─────────────────────────────────────────────────────────┐
+                           │                  GPU Process (SGLang/vLLM)              │
+                           │                                                         │
+                           │   Continuous batching, KV cache, tensor parallelism     │
+                           └─────────────────────────────────────────────────────────┘
+```
 
 ### Proxy Endpoints
 
