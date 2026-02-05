@@ -203,6 +203,7 @@ exclude = ["tests*", "docs*", "examples*"]
 # =============================================================================
 
 [tool.uv]
+no-build-isolation = true
 # Restrict lock file resolution to supported environments
 # This prevents uv from failing when CUDA-only packages don't have wheels for macOS
 environments = [
