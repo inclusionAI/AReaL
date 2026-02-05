@@ -1,267 +1,206 @@
-# Rollout and Agentic RL
+# Custom Agent Workflows
 
-This guide demonstrates how to create custom rollout behaviors for RL training by
-building a multi-turn math agent that keeps attempting to solve math problems until it
-finds the correct answer.
+This guide shows how to create custom agents for RL training. AReaL supports any agent
+framework (OpenAI Agents SDK, LangChain, CAMEL-AI, etc.) with minimal integration.
 
-Throughout this example, we use the low-level `agenerate` API to directly manipulate
-tokens, which introduces some verbose data management code (converting lists to tensors,
-tokenization, and detokenization). We also introduce a set of high-level APIs like
-OpenAI clients and the OpenAI Agents SDK. See the corresponding
-[agentic RL tutorial](../tutorial/agentic_rl.md).
+**Notes**:
 
-You can find the complete implementation in `areal/workflow/multi_turn.py`.
+1. Agent workflows are supported on `local` and `slurm` schedulers only. The `ray`
+   scheduler is incompatible with the HTTP proxy architecture.
 
-## Step 1: Define Your Workflow
+1. For internal architecture details, see the
+   [Agent Workflow Reference](../reference/agent_workflow.md).
 
-AReaL gives you flexibility in how you design your agents to run **an episode**. **An
-episode** defines how your agent rollouts a complete training sample from an input
-prompt, using tools, reward functions, and (multi-turn) generation. Instead of rigid
-`Agent` classes that might constrain your agent's capabilities, AReaL captures all
-rollout behavior in a `RolloutWorkflow` class. This approach allows you to customize
-your agent's behavior however you need.
+## Quick Start
+
+An agent workflow is any class with an `async def run(data, **extra_kwargs)` method that
+returns a reward. AReaL automatically wraps it for RL training.
 
 ```python
-# areal/api/workflow_api.py
-class RolloutWorkflow:
-    async def arun_episode(
-        self, engine: InferenceEngine, data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Run a single episode of the workflow.
+class MyAgent:
+    async def run(self, data, **extra_kwargs):
+        # Get injected client and URL
+        http_client = extra_kwargs.get("http_client")
+        base_url = extra_kwargs.get("base_url")
 
-        See concrete example implementations under the `areal/workflow` directory.
-        """
-        raise NotImplementedError()
-```
-
-The workflow exposes an `arun_episode` method that runs and collects data from a single
-episode. This method takes two key arguments:
-
-1. **InferenceEngine**: Provides the `agenerate` method for generating responses to user
-   inputs
-1. **data**: The prompt data loaded from your RL dataset
-
-Within this method, you have complete control over how your agent and environment
-interact.
-
-> **Note**: Each `arun_episode` call takes a single prompt and outputs the trajectories
-> generated from that prompt—it's not batched. However, you can generate multiple
-> trajectories from a single prompt (for example, with GRPO or tree search).
-
-### Setting Up the Multi-turn Math Workflow
-
-Let's build a multi-turn rollout workflow for solving math problems. First, we'll define
-the `__init__` method to set up what we need during rollout:
-
-> **Note**: You have complete flexibility in defining the `__init__` method. Pass
-> whatever arguments you need to construct your workflow. If you want to use tools, pass
-> the corresponding environment here so your agent can call it in the `arun_episode`
-> method.
-
-```python
-class MultiTurnWorkflow(RolloutWorkflow):
-    def __init__(
-        self,
-        reward_fn,
-        gconfig: GenerationHyperparameters,  # aka sampling_params
-        tokenizer: PreTrainedTokenizerFast,
-        max_turns: int,
-        turn_discount: float,
-    ):
-        self.reward_fn = reward_fn
-        self.gconfig = gconfig
-        self.tokenizer = tokenizer
-        self.max_turns = max_turns
-        # Discount rewards if the agent takes longer to find the correct answer
-        self.turn_discount = turn_discount
-```
-
-### Implementing the Episode Logic
-
-Now let's implement the `arun_episode` method. We'll start by tokenizing the prompt data
-and converting it into an `ModelRequest` object for the inference engine:
-
-```python
-class MultiTurnWorkflow(RolloutWorkflow):
-    # ... __init__ method above ...
-
-    async def arun_episode(self, engine: InferenceEngine, data) -> Dict[str, Any]:
-        # Initialize result containers
-        seq, logprobs, loss_mask, versions = [], [], [], []
-        messages = data["messages"]
-        # Run multi-turn rollout until we get the correct answer
-        turn_index = 0
-        reward = 0
-        discount = 1.0
-        rid = uuid.uuid4().hex
-        while reward == 0 and turn_index < self.max_turns:
-            # Convert the conversation into input tokens
-            input_ids = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-            )
-            # Generate response from the model
-            req = ModelRequest(
-                rid=rid,
-                input_ids=input_ids,
-                gconfig=self.gconfig.new(n_samples=1),
-            )
-            resp = await engine.agenerate(req)
-            # ... continue processing ...
-```
-
-> **Note**: This example uses the "messages" key from the prompt data to get
-> OpenAI-compatible messages. This isn't required—the key and prompt format depend
-> entirely on your implementation. For instance, if your dataset stores prompt strings
-> in a "prompt" column, you could get input token IDs with
-> `self.tokenizer.encode(data["prompt"])`.
-
-> **Note**: The `rid` field in `ModelRequest` is the request ID. Requests with the same
-> ID will reuse the LLM inference server's KV caches for better efficiency.
-
-### Handling Multi-turn Conversations
-
-Next, we'll check if the current answer is correct using our `reward_fn`. This function
-should return 1 for correct answers and 0 otherwise. When the answer is wrong, we'll
-apply a discount, add feedback to the conversation, and let the model try again:
-
-```python
-class MultiTurnWorkflow(RolloutWorkflow):
-    # ... previous methods ...
-
-    async def arun_episode(self, engine: InferenceEngine, data) -> Dict[str, Any]:
-        # ... initialization code ...
-        while reward == 0 and t < self.max_turns:
-            # Add feedback if the previous answer was incorrect
-            if t > 0:
-                messages += [
-                    {"role": "assistant", "content": completions_str},
-                    {
-                        "role": "user",
-                        "content": "Your answer is not correct. Please try to answer it again."
-                    },
-                ]
-            # Generate response (code from above)
-            # ...
-            # Evaluate the response
-            prompt_str = self.tokenizer.decode(input_ids)
-            completions_str = self.tokenizer.decode(resp.output_tokens)
-            reward = self.reward_fn(
-                prompt=prompt_str,
-                completions=completions_str,
-                prompt_ids=resp.input_tokens,
-                completion_ids=resp.output_tokens,
-                **data,
-            )
-            # Update counters
-            t += 1
-            discount *= self.turn_discount
-```
-
-### Reward Function Signature
-
-To make it easier to switch between different reward functions, we recommend following
-this signature:
-
-```python
-def reward_fn(
-    prompt: str,
-    completions: str,
-    prompt_ids: List[int],
-    completion_ids: List[int],
-    **kwargs,
-):
-    """Reward function for evaluating agent performance.
-
-    This signature is recommended for compatibility with predefined workflows,
-    but you can modify it freely in custom implementations.
-
-    Args:
-        prompt: The task description string
-        completions: The agent's response string
-        prompt_ids: Tokenized prompt
-        completion_ids: Tokenized response
-        **kwargs: Additional dataset attributes (solutions, input_outputs, etc.)
-
-    Returns:
-        float: Reward value (typically 1.0 for correct, 0.0 for incorrect)
-    """
-```
-
-While this signature is convenient, you're not restricted to it in custom
-workflows—modify as needed for your specific use case.
-
-### Collecting Training Data
-
-Finally, let's complete the implementation by collecting trajectories in a `dict`:
-
-```python
-class MultiTurnWorkflow(RolloutWorkflow):
-    # ... previous methods ...
-
-    async def arun_episode(self, engine: InferenceEngine, data) -> Dict[str, Any]:
-        # ... episode logic above ...
-
-        while reward == 0 and t < self.max_turns:
-            # ... generation and evaluation ...
-
-            # Collect trajectory data
-            input_len = len(resp.input_tokens) - len(seq)
-            seq += resp.input_tokens[-input_len:] + resp.output_tokens
-            logprobs += [0.0] * input_len + resp.output_logprobs
-            loss_mask += [0] * input_len + [1] * resp.output_len
-            versions += [-1] * input_len + resp.output_versions
-
-        # Package results
-        res = dict(
-            input_ids=torch.tensor(seq),
-            logprobs=torch.tensor(logprobs),
-            loss_mask=torch.tensor(loss_mask),
-            versions=torch.tensor(versions),
-            rewards=torch.tensor(float(reward * discount)),
-            attention_mask=torch.ones(len(seq), dtype=torch.bool),
+        # Use standard OpenAI SDK
+        client = AsyncOpenAI(
+            base_url=base_url,
+            http_client=http_client,
+            max_retries=0,
         )
-        res = {k: v.unsqueeze(0) for k, v in res.items()}
-        return concat_padded_tensors([res])
+
+        response = await client.chat.completions.create(
+            model="default",
+            messages=data["messages"],
+        )
+
+        # Return reward (float or dict[str, float])
+        return compute_reward(response, data["answer"])
 ```
 
-> **Important**: The returned `dict` must follow HuggingFace's padded data format, where
-> each tensor has shape `[batch_size, sequence_length, *]`. This allows AReaL to
-> automatically batch multiple trajectories for training. Since this example returns a
-> single trajectory, we use `unsqueeze(0)` to create a batch of size 1.
-
-> **Note**: You're not restricted to specific keys in your `dict`—different algorithms
-> need different keys. This example targets the GRPO algorithm, so we include
-> `input_ids`, `loss_mask`, `attention_mask`, and `logprobs` (needed for computing
-> importance ratios).
-
-## Step 2: Training with Your Custom Workflow
-
-Using your custom workflow is straightforward—just create it in your training script and
-pass it to the `prepare_batch` method:
+Pass the agent to the trainer:
 
 ```python
-def main(args):
-    # ... setup code ...
-
-    # Create your custom workflow
-    workflow = MultiTurnWorkflow(
-        reward_fn=gsm8k_reward_fn,
-        gconfig=config.gconfig,
-        tokenizer=tokenizer,
-        turn_discount=0.9,
-        max_turns=5,
-    )
-
-    # Run training—no other changes needed!
-    for global_step in range(max_steps):
-        with stats_tracker.record_timing("rollout"):
-            # the `should_accept_fn` parameter is used for dynamic filtering
-            batch = rollout.prepare_batch(train_dataloader, workflow=workflow, should_accept_fn=lambda sample: True)
-        # ... continue with training loop ...
+trainer.train(workflow="my_module.MyAgent")
 ```
 
-That's it! Your custom multi-turn math agent is now ready for reinforcement learning
-training. The workflow will automatically handle the multi-turn conversations, reward
-computation, and data collection needed for effective RL training.
+## Method Signature
+
+The `run` method must follow this signature:
+
+```python
+async def run(self, data: dict, **extra_kwargs) -> float | dict[str, float]
+```
+
+| Parameter      | Description                                           |
+| -------------- | ----------------------------------------------------- |
+| `data`         | A sample from your dataset (dict with your data keys) |
+| `extra_kwargs` | AReaL-injected arguments (see below)                  |
+| **Return**     | `float`: reward for last completion                   |
+|                | `dict[str, float]`: maps completion IDs to rewards    |
+
+### Injected Arguments
+
+AReaL injects these arguments via `extra_kwargs`:
+
+| Key           | Type                | Description                           |
+| ------------- | ------------------- | ------------------------------------- |
+| `base_url`    | `str`               | URL to AReaL's proxy server           |
+| `http_client` | `httpx.AsyncClient` | Shared HTTP client (reduces overhead) |
+
+## Execution Modes
+
+AReaL supports two execution modes, configured via `rollout.openai.mode`:
+
+### Inline Mode (Default)
+
+The agent runs in the same process as the rollout worker. Recommended for most use
+cases.
+
+```yaml
+rollout:
+  openai:
+    mode: inline
+```
+
+**Requirements:**
+
+- The `run` method must be `async`
+- Use `extra_kwargs["base_url"]` for LLM calls
+- Optionally use `extra_kwargs["http_client"]` to reduce overhead
+
+**Advantages:**
+
+- No serialization overhead
+- Direct access to shared HTTP client
+- Lower latency
+
+### Subprocess Mode
+
+The agent runs in a separate process pool. Use this when your agent code is not
+async-compatible or uses libraries that conflict with the main process.
+
+```yaml
+rollout:
+  openai:
+    mode: subproc
+    subproc_max_workers: 4  # Process pool size
+```
+
+**Requirements:**
+
+- The agent class must be picklable (serializable)
+- Read `OPENAI_BASE_URL` from environment instead of `extra_kwargs`
+
+**Example:**
+
+```python
+import os
+from openai import OpenAI  # Sync client is OK
+
+class MySyncAgent:
+    async def run(self, data, **extra_kwargs):
+        # In subproc mode, base_url comes from environment
+        client = OpenAI(
+            base_url=os.environ.get("OPENAI_BASE_URL"),
+            api_key="DUMMY",  # Not used by AReaL
+        )
+
+        response = client.chat.completions.create(
+            model="default",
+            messages=data["messages"],
+        )
+
+        return compute_reward(response, data["answer"])
+```
+
+**Note:** The method signature remains `async def run(...)` even in subprocess mode, but
+AReaL wraps the call with `asyncio.run()` internally. You can use synchronous code
+inside the method.
+
+**Trade-offs:**
+
+- Pickling overhead for agent and data
+- No access to shared HTTP client
+- Higher latency per call
+- Useful for non-async libraries or process isolation
+
+## Reward Assignment
+
+### Simple Reward
+
+Return a single float to assign reward to the last LLM completion:
+
+```python
+async def run(self, data, **extra_kwargs):
+    # ... agent logic ...
+    return 1.0 if is_correct else 0.0
+```
+
+### Per-Completion Rewards
+
+For multi-turn conversations, return a dict mapping completion IDs to rewards:
+
+```python
+async def run(self, data, **extra_kwargs):
+    # ... multi-turn agent logic ...
+    return {
+        "completion-id-1": 0.5,
+        "completion-id-2": 1.0,
+    }
+```
+
+Access completion IDs from the response:
+
+```python
+response = await client.chat.completions.create(...)
+completion_id = response.id  # Use this ID for reward mapping
+```
+
+## Configuration
+
+Agent workflow settings are in `rollout.openai`:
+
+```yaml
+rollout:
+  openai:
+    mode: inline              # "inline" or "subproc"
+    turn_discount: 0.9        # Reward discount for earlier turns
+    export_style: individual  # "individual" or "concat"
+    subproc_max_workers: 4    # Process pool size (subproc mode only)
+```
+
+| Field                 | Default      | Description                               |
+| --------------------- | ------------ | ----------------------------------------- |
+| `mode`                | `inline`     | Execution mode                            |
+| `turn_discount`       | `1.0`        | Geometric discount for multi-turn rewards |
+| `export_style`        | `individual` | How to export interactions for training   |
+| `subproc_max_workers` | `4`          | Max worker processes for subprocess mode  |
+
+## See Also
+
+- [Agentic RL Tutorial](../tutorial/agentic_rl.md) - End-to-end training examples
+- [Async Workflow Best Practices](../best_practices/workflow.md) - Writing efficient
+  inline async agent workflows
+- [Agent Workflow Reference](../reference/agent_workflow.md) - Internal architecture
