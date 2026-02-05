@@ -34,7 +34,7 @@ repos:
           - mdformat-gfm
           - mdformat-tables
           - mdformat-frontmatter
-        exclude: ^docs/algorithms/.*\.md$
+        exclude: ^(docs/algorithms/.*\.md|docs/best_practices/algo_perf.md)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
