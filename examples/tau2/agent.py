@@ -8,6 +8,7 @@ import asyncio
 import time
 from typing import Any
 
+import litellm
 from litellm import register_model
 from litellm.main import ModelResponse
 from openai import AsyncOpenAI
@@ -27,6 +28,9 @@ from examples.tau2.utils import Tau2EnvConfig, Tau2RunInfo
 from areal.utils import logging
 
 logger = logging.getLogger("Tau2Agent")
+
+# Silence litellm verbose output (Provider List messages)
+litellm.suppress_debug_info = True
 
 # Register dummy model for litellm
 register_model(
