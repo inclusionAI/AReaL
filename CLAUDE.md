@@ -1,4 +1,4 @@
-# CLAUDE.md — AReaL
+# CLAUDE.md - AReaL
 
 ## WHAT: Project Overview
 
@@ -9,15 +9,15 @@ learning.
 
 **Core Directories**:
 
-- `areal/` — Core package
-  - `api/` — Config dataclasses, workflow/engine contracts
-  - `engine/` — FSDP2, Megatron, SGLang/vLLM adapters
-  - `workflow/` — RolloutWorkflow implementations
-  - `reward/` — Reward functions
-  - `dataset/` — Dataset loaders
-  - `utils/` — Logging, tensor ops, checkpoints
-- `examples/` — Training scripts and configs
-- `docs/` — Jupyter Book source
+- `areal/` - Core package
+  - `api/` - Config dataclasses, workflow/engine contracts
+  - `engine/` - FSDP2, Megatron, SGLang/vLLM adapters
+  - `workflow/` - RolloutWorkflow implementations
+  - `reward/` - Reward functions
+  - `dataset/` - Dataset loaders
+  - `utils/` - Logging, tensor ops, checkpoints
+- `examples/` - Training scripts and configs
+- `docs/` - Jupyter Book source
 
 ## WHY: Purpose
 

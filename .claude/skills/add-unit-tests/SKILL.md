@@ -150,7 +150,7 @@ def test_gpu_function():
 
 - Use `torch.testing.assert_close()` for tensor comparison
 - Specify `rtol`/`atol` explicitly for numerical tests
-- Avoid bare `assert tensor.equal()` — no useful error message
+- Avoid bare `assert tensor.equal()` - no useful error message
 
 ## Reference Implementations
 

@@ -59,8 +59,8 @@ placed within the existing GPU mesh.
 
 | Allocation Mode                   | Inference GPUs | Training GPUs | Total |
 | --------------------------------- | -------------- | ------------- | ----- |
-| `d8`                              | —              | 8             | 8     |
-| `sglang:d2t4`                     | 8              | —             | 8     |
+| `d8`                              | -              | 8             | 8     |
+| `sglang:d2t4`                     | 8              | -             | 8     |
 | `sglang:d2t4 + fsdp:d4t2`         | 8              | 8             | 16    |
 | `sglang:d4t4 + megatron:d2p2t4e4` | 16             | 16            | 32    |
 
@@ -132,8 +132,8 @@ megatron:(attn:d4p2t2c2|ffn:d2p2t4e2)
 
 | Module | dp  | pp  | tp  | cp  | ep  | World Size |
 | ------ | --- | --- | --- | --- | --- | ---------- |
-| attn   | 4   | 2   | 2   | 2   | —   | 32         |
-| ffn    | 2   | 2   | 4   | —   | 2   | 32         |
+| attn   | 4   | 2   | 2   | 2   | -   | 32         |
+| ffn    | 2   | 2   | 4   | -   | 2   | 32         |
 
 ## See Also
 

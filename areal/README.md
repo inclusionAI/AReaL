@@ -23,17 +23,17 @@ principles:
 To achieve an *algorithm-first* and *lightweight* design while maintaining efficiency,
 AReaL is guided by seven core principles:
 
-1. **Native asynchronous RL training** — Built from the ground up for decoupled
+1. **Native asynchronous RL training** - Built from the ground up for decoupled
    generation and training
-1. **System-abstracted design** — Minimize exposure to low-level system concepts like
+1. **System-abstracted design** - Minimize exposure to low-level system concepts like
    "PlacementGroup"
-1. **PyTorch-centric approach** — Use native PyTorch types without unnecessary
+1. **PyTorch-centric approach** - Use native PyTorch types without unnecessary
    abstractions
-1. **Transparent orchestration** — Make the flow of operations clear and understandable
-1. **Developer-friendly navigation** — Enable easy access to implementation details via
+1. **Transparent orchestration** - Make the flow of operations clear and understandable
+1. **Developer-friendly navigation** - Enable easy access to implementation details via
    IDE features (Ctrl+click)
-1. **Ecosystem compatibility** — Integrate seamlessly with existing ML/RL tools
-1. **Single-file customization** — Support RL pipeline modifications within a single
+1. **Ecosystem compatibility** - Integrate seamlessly with existing ML/RL tools
+1. **Single-file customization** - Support RL pipeline modifications within a single
    file
 
 ## Architecture
