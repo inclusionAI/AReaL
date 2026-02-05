@@ -1,9 +1,16 @@
 """Tests for datapack allocation functions."""
 
+from unittest.mock import AsyncMock, Mock
+
 import numpy as np
 import pytest
 import torch
 
+from areal.api.cli_args import SchedulingSpec, TrainEngineConfig
+from areal.api.engine_api import TrainEngine
+from areal.api.io_struct import AllocationMode
+from areal.infra import TrainController
+from areal.scheduler.rpc.rtensor import RTensor, TensorShardInfo
 from areal.utils.datapack import balanced_greedy_partition, ffd_allocate
 
 # =============================================================================
@@ -454,8 +461,6 @@ class TestRTensorDataParallelDispatchIntegration:
 
     def _create_rtensor_with_seqlens(self, seqlens: list[int]):
         """Helper to create an RTensor with specified sequence lengths."""
-        from areal.scheduler.rpc.rtensor import RTensor, TensorShardInfo
-
         shards = [
             TensorShardInfo(size=1, seqlens=[slen], shard_id=str(i), node_addr="")
             for i, slen in enumerate(seqlens)
@@ -467,8 +472,6 @@ class TestRTensorDataParallelDispatchIntegration:
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_uniform_distribution(self, dp_size):
         """Test that uniform distribution splits into equal-size groups."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         n_seqs = dp_size * 16  # 16 sequences per DP rank
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=1000, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
@@ -490,8 +493,6 @@ class TestRTensorDataParallelDispatchIntegration:
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_bimodal_distribution(self, dp_size):
         """Test that bimodal distribution splits into equal-size groups."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         n_seqs = dp_size * 20
         seqlens = generate_bimodal_seqlens(
             n_long=n_seqs // 4,
@@ -514,8 +515,6 @@ class TestRTensorDataParallelDispatchIntegration:
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_skewed_distribution(self, dp_size):
         """Test that skewed distribution splits into equal-size groups."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         n_seqs = dp_size * 24
         seqlens = generate_skewed_seqlens(n=n_seqs, max_len=2000, skew=3.0, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
@@ -531,8 +530,6 @@ class TestRTensorDataParallelDispatchIntegration:
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_exponential_distribution(self, dp_size):
         """Test that exponential distribution splits into equal-size groups."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         n_seqs = dp_size * 16
         seqlens = generate_exponential_seqlens(n=n_seqs, scale=500.0, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
@@ -548,8 +545,6 @@ class TestRTensorDataParallelDispatchIntegration:
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_code_distribution(self, dp_size):
         """Test that code-like distribution splits into equal-size groups."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         n_seqs = dp_size * 32
         seqlens = generate_code_seqlens(n=n_seqs, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
@@ -565,8 +560,6 @@ class TestRTensorDataParallelDispatchIntegration:
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_chat_distribution(self, dp_size):
         """Test that chat-like distribution splits into equal-size groups."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         n_seqs = dp_size * 24
         seqlens = generate_chat_seqlens(n=n_seqs, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
@@ -582,8 +575,6 @@ class TestRTensorDataParallelDispatchIntegration:
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_math_distribution(self, dp_size):
         """Test that math problem distribution splits into equal-size groups."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         n_seqs = dp_size * 16
         seqlens = generate_math_seqlens(n=n_seqs, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
@@ -599,8 +590,6 @@ class TestRTensorDataParallelDispatchIntegration:
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_power_law_distribution(self, dp_size):
         """Test that power-law distribution splits into equal-size groups."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         n_seqs = dp_size * 20
         seqlens = generate_power_law_seqlens(n=n_seqs, alpha=2.0, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
@@ -616,8 +605,6 @@ class TestRTensorDataParallelDispatchIntegration:
     @pytest.mark.parametrize("seed", [42, 123, 456, 789, 1000, 2024, 3141, 9999])
     def test_equal_split_various_seeds(self, seed):
         """Test equal split consistency across many random seeds."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         dp_size = 4
         n_seqs = 64
         seqlens = generate_bimodal_seqlens(
@@ -639,8 +626,6 @@ class TestRTensorDataParallelDispatchIntegration:
 
     def test_all_indices_preserved_after_split(self):
         """Test that all original indices are preserved after dispatch."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         dp_size = 4
         n_seqs = 100
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=500, seed=42)
@@ -655,8 +640,6 @@ class TestRTensorDataParallelDispatchIntegration:
 
     def test_token_balance_across_dp_ranks(self):
         """Test that total tokens are reasonably balanced across DP ranks."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         dp_size = 4
         seqlens = generate_bimodal_seqlens(
             n_long=20,
@@ -693,8 +676,6 @@ class TestRTensorDataParallelDispatchIntegration:
     )
     def test_large_batch_equal_split(self, batch_size, dp_size):
         """Test equal split for various large batch sizes."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         seqlens = generate_uniform_seqlens(n=batch_size, low=100, high=2000, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
@@ -708,8 +689,6 @@ class TestRTensorDataParallelDispatchIntegration:
 
     def test_dispatch_with_nested_dict(self):
         """Test equal split when RTensor is in a nested dict structure."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         dp_size = 4
         n_seqs = 64
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=500, seed=42)
@@ -733,8 +712,6 @@ class TestRTensorDataParallelDispatchIntegration:
 
     def test_dispatch_with_multiple_rtensors(self):
         """Test equal split when multiple RTensors share the same layout."""
-        from areal.scheduler.rpc.rtensor import RTensor
-
         dp_size = 4
         n_seqs = 48
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=500, seed=42)
@@ -768,8 +745,6 @@ class TestTrainControllerDispatchIntegration:
     @pytest.fixture
     def mock_scheduler(self):
         """Create a mock scheduler for testing."""
-        from unittest.mock import AsyncMock, Mock
-
         scheduler = Mock()
         scheduler.async_call_engine = AsyncMock(return_value=None)
         return scheduler
@@ -777,8 +752,6 @@ class TestTrainControllerDispatchIntegration:
     @pytest.fixture
     def train_config(self):
         """Create a TrainEngineConfig for testing."""
-        from areal.api.cli_args import SchedulingSpec, TrainEngineConfig
-
         return TrainEngineConfig(
             scheduling_spec=(
                 SchedulingSpec(cpu=4, gpu=1, mem=16000, port_count=2, cmd="dummy"),
@@ -787,8 +760,6 @@ class TestTrainControllerDispatchIntegration:
 
     def _create_rtensor_with_seqlens(self, seqlens: list[int]):
         """Helper to create an RTensor with specified sequence lengths."""
-        from areal.scheduler.rpc.rtensor import RTensor, TensorShardInfo
-
         shards = [
             TensorShardInfo(size=1, seqlens=[slen], shard_id=str(i), node_addr="")
             for i, slen in enumerate(seqlens)
@@ -802,9 +773,6 @@ class TestTrainControllerDispatchIntegration:
         self, mock_scheduler, train_config, dp_size
     ):
         """Test TrainController dispatches batches to equal-size DP groups."""
-        from areal.api.engine_api import TrainEngine
-        from areal.api.io_struct import AllocationMode
-        from areal.infra import TrainController
 
         class MockTrainEngine(TrainEngine):
             pass
@@ -864,9 +832,6 @@ class TestTrainControllerDispatchIntegration:
         self, mock_scheduler, train_config, generator_name, generator_func
     ):
         """Test TrainController dispatch with all distribution types."""
-        from areal.api.engine_api import TrainEngine
-        from areal.api.io_struct import AllocationMode
-        from areal.infra import TrainController
 
         class MockTrainEngine(TrainEngine):
             pass
@@ -898,9 +863,6 @@ class TestTrainControllerDispatchIntegration:
         self, mock_scheduler, train_config
     ):
         """Test that all sequence indices are preserved after dispatch."""
-        from areal.api.engine_api import TrainEngine
-        from areal.api.io_struct import AllocationMode
-        from areal.infra import TrainController
 
         class MockTrainEngine(TrainEngine):
             pass
@@ -929,9 +891,6 @@ class TestTrainControllerDispatchIntegration:
         self, mock_scheduler, train_config, seed
     ):
         """Test that dispatch is deterministic for the same input."""
-        from areal.api.engine_api import TrainEngine
-        from areal.api.io_struct import AllocationMode
-        from areal.infra import TrainController
 
         class MockTrainEngine(TrainEngine):
             pass

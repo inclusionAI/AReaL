@@ -242,19 +242,13 @@ def balanced_greedy_partition(nums: list[int], K: int) -> list[list[int]]:
 
     for idx in sorted_indices:
         num = nums[idx]
-        # Create list of candidate groups that aren't full
-        candidates = []
+        # Find the non-full group with the smallest current sum
+        chosen_group = -1
+        min_sum = float("inf")
         for i in range(K):
-            if counts[i] < m:
-                # Estimate final sum if we add this number
-                estimated_sum = sums[i] + num
-                candidates.append((estimated_sum, i))
-
-        # Sort candidates by current sum (ascending)
-        candidates.sort(key=lambda x: sums[x[1]])
-
-        # Choose the group with smallest current sum
-        chosen_group = candidates[0][1]
+            if counts[i] < m and sums[i] < min_sum:
+                min_sum = sums[i]
+                chosen_group = i
 
         groups[chosen_group].append(idx)
         sums[chosen_group] += num
