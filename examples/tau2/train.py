@@ -13,7 +13,7 @@ from areal.api.cli_args import load_expr_config
 from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils import logging
 
-logger = logging.getLogger("Tau2 Train")
+logger = logging.getLogger("Tau2Train")
 
 
 def get_tau2_dataset(

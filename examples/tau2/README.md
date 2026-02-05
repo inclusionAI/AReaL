@@ -76,8 +76,8 @@ Update the `econfig.user_llm_base_url` in your config to point to this server.
 
 #### Single Node (1.7B Model)
 
-On a single 8x GPU node with our offical dev image
-(ghcr.io/inclusionai/areal-runtime:dev), run:
+On a single 8x GPU node with our offical image
+(ghcr.io/inclusionai/areal-runtime:v0.5.2), from repositoty root directory run:
 
 ```bash
 python3 examples/tau2/train.py \
@@ -93,7 +93,7 @@ On a SLURM cluster with at least 3 8x GPU nodes, directly run from a intermediat
 with AReaL and SLURM cli installed:
 
 ```bash
-python3 -m areal.launcher.slurm examples/tau2/train.py \
+python3 examples/tau2/train.py \
     --config examples/tau2/config_8b_airline.yaml \
     experiment_name=$experiment_name \
     trial_name=$trial_name \

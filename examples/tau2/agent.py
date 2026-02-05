@@ -23,7 +23,7 @@ from examples.tau2.utils import Tau2EnvConfig, Tau2RunInfo
 
 from areal.utils import logging
 
-logger = logging.getLogger("Tau2 Agent")
+logger = logging.getLogger("Tau2Agent")
 
 # Register dummy model for litellm
 register_model(
@@ -289,9 +289,9 @@ class Tau2AgentWorkflow:
         except TimeoutError:
             logger.error(
                 f"TIMEOUT: Task {task_id} exceeded {self.timeout}s limit. "
-                f"Setting reward to 0.0"
+                f"Raise and discard current trajectory."
             )
-            return 0.0
+            raise
 
         # Return the reward
         # The proxy server handles tracking completions and assigning rewards
