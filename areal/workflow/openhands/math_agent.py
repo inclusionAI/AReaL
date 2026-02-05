@@ -1,11 +1,11 @@
 """OpenHands SDK-based math agent implementation for AReaL training."""
 
 import asyncio
-import atexit
 import math
+import os
+import tempfile
 import threading
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Self
 
 from math_verify import parse, verify
@@ -24,43 +24,11 @@ from openhands.sdk import (
 )
 from openhands.sdk.tool import ToolExecutor
 
+from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import AgentWorkflow
 from areal.utils import logging
 
 logger = logging.getLogger("OpenHandsMathAgent")
-
-
-# Lazy-initialized thread pool for running OpenHands agent tasks
-_executor: ThreadPoolExecutor | None = None
-_executor_lock = threading.Lock()
-_DEFAULT_MAX_WORKERS = 4
-
-
-def _get_executor(max_workers: int = _DEFAULT_MAX_WORKERS) -> ThreadPoolExecutor:
-    """Get or create the shared thread pool executor.
-
-    Parameters
-    ----------
-    max_workers : int
-        Maximum number of worker threads for the pool. Only used when
-        creating a new executor. If an executor already exists, this
-        parameter is ignored.
-    """
-    global _executor
-    if _executor is None:
-        with _executor_lock:
-            if _executor is None:
-                _executor = ThreadPoolExecutor(max_workers=max_workers)
-                atexit.register(_shutdown_executor)
-    return _executor
-
-
-def _shutdown_executor() -> None:
-    """Shutdown the shared thread pool executor if it exists."""
-    global _executor
-    if _executor is not None:
-        _executor.shutdown(wait=False)
-        _executor = None
 
 
 def math_reward_fn(completions: str, answer: str) -> float:
@@ -249,7 +217,7 @@ class OpenHandsAgentBuilder:
         ...     .with_base_url("http://localhost:8000/v1")
         ...     .with_llm_config(temperature=1.0, max_tokens=1024)
         ...     .with_calculator_tools()
-        ...     .with_system_prompt("You are a math assistant.")
+        ...     .with_system_prompt_file("/path/to/prompt.j2")
         ...     .build()
         ... )
         >>>
@@ -271,6 +239,11 @@ class OpenHandsAgentBuilder:
         "SqrtTool": SqrtTool,
     }
 
+    # Default simple system prompt template path
+    DEFAULT_PROMPT_FILE = os.path.join(
+        os.path.dirname(__file__), "prompts", "simple_math.j2"
+    )
+
     # Thread-safe tool registration state
     _registered_tools: set[str] = set()
     _registration_lock = threading.Lock()
@@ -283,7 +256,7 @@ class OpenHandsAgentBuilder:
         self._top_p: float = 1.0
         self._max_tokens: int = 1024
         self._tool_names: list[str] = []
-        self._system_prompt: str | None = None
+        self._system_prompt_file: str | None = None
 
     def with_base_url(self, base_url: str | None) -> Self:
         """Set the base URL of the AReaL proxy server."""
@@ -315,9 +288,13 @@ class OpenHandsAgentBuilder:
         """Enable all calculator tools."""
         return self.with_tools(list(self.CALCULATOR_TOOLS.keys()))
 
-    def with_system_prompt(self, prompt: str) -> Self:
-        """Set the system prompt for the agent."""
-        self._system_prompt = prompt
+    def with_system_prompt_file(self, filepath: str) -> Self:
+        """Set the system prompt template file for the agent.
+
+        Args:
+            filepath: Absolute path to a Jinja2 template file (.j2)
+        """
+        self._system_prompt_file = filepath
         return self
 
     @classmethod
@@ -342,13 +319,23 @@ class OpenHandsAgentBuilder:
             temperature=self._temperature,
             top_p=self._top_p,
             max_output_tokens=self._max_tokens,
+            input_cost_per_token=0.0,
+            output_cost_per_token=0.0,
         )
 
         tools = [Tool(name=name) for name in self._tool_names]
 
-        if self._system_prompt:
-            return Agent(llm=llm, tools=tools, system_prompt=self._system_prompt)
-        return Agent(llm=llm, tools=tools)
+        # Use custom or default simple system prompt template
+        prompt_file = self._system_prompt_file or self.DEFAULT_PROMPT_FILE
+
+        # Disable default tools (FinishTool, ThinkTool) to avoid tool_call parsing
+        # issues with AReaL's OpenAI-compatible API
+        return Agent(
+            llm=llm,
+            tools=tools,
+            system_prompt_filename=prompt_file,
+            include_default_tools=[],
+        )
 
     @staticmethod
     def extract_user_content(messages: list[dict[str, Any]]) -> str:
@@ -433,6 +420,7 @@ class MathAgent(AgentWorkflow):
                 - top_p: Top-p sampling parameter (default: 1.0)
                 - max_tokens: Maximum tokens for completion (default: 1024)
                 - max_completion_tokens: Alternative name for max_tokens
+                - system_prompt_file: Path to custom system prompt template (optional)
         """
         self.kwargs = kwargs.copy()
 
@@ -455,7 +443,7 @@ class MathAgent(AgentWorkflow):
             return None
 
         # Build agent
-        agent = (
+        builder = (
             OpenHandsAgentBuilder()
             .with_base_url(base_url)
             .with_llm_config(
@@ -465,19 +453,20 @@ class MathAgent(AgentWorkflow):
                 max_tokens=self.kwargs.get("max_tokens", 1024),
                 max_completion_tokens=self.kwargs.get("max_completion_tokens"),
             )
-            .build()
         )
+        if "system_prompt_file" in self.kwargs:
+            builder = builder.with_system_prompt_file(self.kwargs["system_prompt_file"])
+        agent = builder.build()
 
-        # Run conversation synchronously
-        conversation = Conversation(agent=agent, visualizer=None)
-        try:
+        # Run conversation synchronously with temporary workspace
+        with tempfile.TemporaryDirectory() as workspace:
+            conversation = Conversation(
+                agent=agent, workspace=workspace, visualizer=None
+            )
             conversation.send_message(user_content)
             conversation.run()
-        except Exception as e:
-            logger.error(f"OpenHands SDK error: {e}")
-            return None
 
-        events = list(conversation.state.events)
+            events = list(conversation.state.events)
 
         # Extract completion text
         return OpenHandsAgentBuilder.extract_all_agent_text(events)
@@ -500,16 +489,11 @@ class MathAgent(AgentWorkflow):
             raise ValueError("Input data must contain 'answer' key")
 
         base_url = extra_kwargs.get("base_url")
-        loop = asyncio.get_running_loop()
-        completion_text = await loop.run_in_executor(
-            _get_executor(), self._run_sync, data, base_url
-        )
+        # Use asyncio.to_thread to avoid fork issues with shared ThreadPoolExecutor
+        completion_text = await asyncio.to_thread(self._run_sync, data, base_url)
 
-        if completion_text is None:
-            return 0.0
-
-        # Calculate reward in main thread (math_verify uses signal.alarm)
-        return math_reward_fn(completion_text, answer)
+        reward_fn = AsyncRewardWrapper(math_reward_fn)
+        return await reward_fn(completions=completion_text, answer=answer)
 
 
 class MathToolAgent(AgentWorkflow):
@@ -527,14 +511,8 @@ class MathToolAgent(AgentWorkflow):
         ... )
     """
 
-    SYSTEM_PROMPT = (
-        "You are a math assistant with calculator tools. "
-        "You MUST use the provided calculator tools (AddTool, SubtractTool, "
-        "MultiplyTool, DivideTool, PowerTool, SqrtTool) to perform ALL "
-        "mathematical calculations. Do not calculate in your head. "
-        "Show your step-by-step reasoning and use tools for each calculation. "
-        "After completing calculations, provide your final answer."
-    )
+    # System prompt template for tool-using math agent
+    PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "math_tool.j2")
 
     def __init__(self, **kwargs: Any):
         """Initialize the MathToolAgent.
@@ -546,6 +524,7 @@ class MathToolAgent(AgentWorkflow):
                 - top_p: Top-p sampling parameter (default: 1.0)
                 - max_tokens: Maximum tokens for completion (default: 2048)
                 - max_completion_tokens: Alternative name for max_tokens
+                - system_prompt_file: Path to custom system prompt template (optional)
         """
         self.kwargs = kwargs.copy()
 
@@ -568,6 +547,7 @@ class MathToolAgent(AgentWorkflow):
             return None
 
         # Build agent with tools
+        prompt_file = self.kwargs.get("system_prompt_file", self.PROMPT_FILE)
         agent = (
             OpenHandsAgentBuilder()
             .with_base_url(base_url)
@@ -579,20 +559,19 @@ class MathToolAgent(AgentWorkflow):
                 max_completion_tokens=self.kwargs.get("max_completion_tokens"),
             )
             .with_calculator_tools()
-            .with_system_prompt(self.SYSTEM_PROMPT)
+            .with_system_prompt_file(prompt_file)
             .build()
         )
 
-        # Run conversation synchronously
-        conversation = Conversation(agent=agent, visualizer=None)
-        try:
+        # Run conversation synchronously with temporary workspace
+        with tempfile.TemporaryDirectory() as workspace:
+            conversation = Conversation(
+                agent=agent, workspace=workspace, visualizer=None
+            )
             conversation.send_message(user_content)
             conversation.run()
-        except Exception as e:
-            logger.error(f"OpenHands SDK error: {e}")
-            return None
 
-        events = list(conversation.state.events)
+            events = list(conversation.state.events)
 
         # Extract final answer text
         return OpenHandsAgentBuilder.extract_final_agent_text(events)
@@ -615,13 +594,8 @@ class MathToolAgent(AgentWorkflow):
             raise ValueError("Input data must contain 'answer' key")
 
         base_url = extra_kwargs.get("base_url")
-        loop = asyncio.get_running_loop()
-        final_answer = await loop.run_in_executor(
-            _get_executor(), self._run_sync, data, base_url
-        )
+        # Use asyncio.to_thread to avoid fork issues with shared ThreadPoolExecutor
+        final_answer = await asyncio.to_thread(self._run_sync, data, base_url)
 
-        if final_answer is None:
-            return 0.0
-
-        # Calculate reward in main thread (math_verify uses signal.alarm)
-        return math_reward_fn(final_answer, answer)
+        reward_fn = AsyncRewardWrapper(math_reward_fn)
+        return await reward_fn(completions=final_answer, answer=answer)
