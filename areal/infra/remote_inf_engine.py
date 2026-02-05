@@ -762,6 +762,14 @@ class RemoteInfEngine(InferenceEngine):
             gen_result = self.backend.parse_generation_response(result)
             stop_reason = gen_result.stop_reason
 
+            if req.gconfig.return_routed_experts and gen_result.routed_experts is None:
+                if stop_reason != "abort":  # Only validate for successful generations
+                    raise RuntimeError(
+                        "Requested return_routed_experts=True but received None from SGLang. "
+                        "This usually means the model is not a MoE (Mixture of Experts) model. "
+                        "Please use a MoE model to get routed_experts information."
+                    )
+
             # Update accumulated outputs
             accumulated_output_tokens.extend(gen_result.output_tokens)
             accumulated_output_logprobs.extend(gen_result.output_logprobs)

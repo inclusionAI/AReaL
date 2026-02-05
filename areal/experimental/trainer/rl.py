@@ -555,6 +555,8 @@ class PPOTrainer:
         # Determine engine class and server args based on backend
         if self.allocation_mode.gen_backend == "sglang":
             engine_cls = RemoteSGLangEngine
+            if self.config.gconfig.return_routed_experts:
+                self.config.sglang.enable_return_routed_experts = True
             server_args = SGLangConfig.build_args(
                 sglang_config=self.config.sglang,
                 tp_size=self.allocation_mode.gen.tp_size,

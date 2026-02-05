@@ -182,6 +182,12 @@ class GenerationHyperparameters:
             "help": "Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored."
         },
     )
+    return_routed_experts: bool = field(
+        default=False,
+        metadata={
+            "help": "Return routed expert indices for MoE models. This should not be manually set and will be handled internally."
+        },
+    )
     # NOTE: to add new parameters, please correctly handle them in the `to_openai_args_dict` method.
 
     def new(self, **kwargs):
@@ -1284,6 +1290,9 @@ class SGLangConfig:
     # and passed as `model_loader_extra_config` to SGLang.
     enable_multithread_load: bool = False
 
+    # Internal field, not exposed to users.
+    enable_return_routed_experts: bool = False
+
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
     def build_cmd(
@@ -1365,6 +1374,9 @@ class SGLangConfig:
             raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
         if is_version_less("sglang", "0.4.10.post2"):
             args.pop("max_loaded_loras", None)
+
+        if sglang_config.enable_return_routed_experts:
+            args["enable_return_routed_experts"] = True
         return args
 
 
@@ -1975,6 +1987,16 @@ class PPOConfig(BaseExperimentConfig):
         """Validate the eval generation config."""
         if self.eval_gconfig is None:
             self.eval_gconfig = self.gconfig.new()
+        # Parse allocation_mode to determine backend
+        backend = (
+            self.allocation_mode.split(":", 1)[0]
+            if ":" in self.allocation_mode
+            else "sglang"
+        )
+        if backend == "vllm" and self.gconfig.return_routed_experts:
+            raise ValueError(
+                "return_routed_experts is only supported with SGLang backend."
+            )
 
 
 @dataclass
