@@ -13,7 +13,9 @@ with user's request by both using agent tools and guiding users using their tool
 - `train.py`: Training script that creates tau2 datasets and runs PPO training with the
   `Tau2AgentWorkflow`.
 - `agent.py`: Implements `Tau2AgentWorkflow` which runs tau2 simulations. The
-  implementation
+  implementation is completely independent from AReaL (except for logging, which you can
+  replace with other logging tools). AReaL's proxy server will automatically connects to
+  the workflow and runs it with self-hosted inference servers for RL training.
 - `utils.py`: Common utilities including `Tau2EnvConfig`, `Tau2PPOConfig`, and
   `Tau2RunInfo` dataclasses. Also patches tau2's cost calculation to silently handle
   self-hosted models.
