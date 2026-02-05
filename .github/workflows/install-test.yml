@@ -75,6 +75,8 @@ jobs:
 
   install-test-cuda-extras:
     # Test CUDA extras installation on Linux only (CUDA packages have Linux-only wheels)
+    # Note: flash-attn is excluded because it requires CUDA compilation infrastructure
+    # which is not available on standard GitHub runners
     runs-on: ubuntu-latest
     name: Install test (Linux, CUDA extras)
 
@@ -91,8 +93,10 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install package with CUDA extras
-        run: uv sync --extra cuda
+      - name: Install package with CUDA extras (excluding flash-attn)
+        # flash-attn requires CUDA toolkit for compilation, skip it in CI
+        # Test individual extras that have pre-built wheels
+        run: uv sync --extra vllm --extra sglang --extra megatron --extra tms
 
       - name: Verify package import with CUDA extras
         run: |
