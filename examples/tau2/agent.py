@@ -87,11 +87,12 @@ class Tau2Runner:
         return ModelResponse(**completion.model_dump())
 
     @staticmethod
-    def _clean_messages(messages: list[dict]) -> list[dict]:
+    def _clean_messages(messages: list[dict], for_user: bool = False) -> list[dict]:
         """Clean messages for OpenAI API compatibility.
 
-        - Remove tool_calls=None (OpenAI API doesn't accept None)
-        - Ensure proper message format
+        Args:
+            messages: List of message dicts
+            for_user: If True, also removes tool-related content for user simulator
         """
         cleaned = []
         for msg in messages:
@@ -100,8 +101,56 @@ class Tau2Runner:
                 # Remove tool_calls if it's None
                 if msg.get("tool_calls") is None:
                     msg = {k: v for k, v in msg.items() if k != "tool_calls"}
+                if for_user:
+                    # Skip tool messages for user simulator
+                    if msg.get("role") == "tool":
+                        continue
+                    # Remove tool_calls from assistant messages
+                    if msg.get("role") == "assistant" and "tool_calls" in msg:
+                        msg = {k: v for k, v in msg.items() if k != "tool_calls"}
             cleaned.append(msg)
         return cleaned
+
+    def _make_completion_fn(
+        self,
+        client: AsyncOpenAI,
+        time_list: list[float],
+        is_agent: bool = True,
+    ):
+        """Create a completion function for the given client."""
+
+        async def _completion(*args, **kwargs):
+            start_time = time.perf_counter()
+            # Remove litellm-specific arguments
+            kwargs.pop("num_retries", None)
+
+            # Agent-specific: add thinking template
+            if is_agent:
+                extra_body = kwargs.pop("extra_body", {})
+                extra_body["chat_template_kwargs"] = {"enable_thinking": True}
+                kwargs["extra_body"] = extra_body
+
+            # User-specific: set default top_p
+            if not is_agent and "top_p" not in kwargs:
+                kwargs["top_p"] = 1.0
+
+            # Clean messages
+            if "messages" in kwargs:
+                kwargs["messages"] = self._clean_messages(
+                    kwargs["messages"], for_user=not is_agent
+                )
+
+            try:
+                completion = await client.chat.completions.create(**kwargs)
+                return self._convert_to_model_response(completion)
+            except Exception as e:
+                role = "Agent" if is_agent else "User"
+                logger.error(f"{role} LLM error: {type(e).__name__}: {e}")
+                raise
+            finally:
+                time_list.append(time.perf_counter() - start_time)
+
+        return _completion
 
     def _get_agent_and_user(self, task: Task, env: Environment, run_info: Tau2RunInfo):
         agent_policy_doc = env.get_policy()
@@ -113,70 +162,12 @@ class Tau2Runner:
         if self.econfig.add_thinking_tool:
             tools.append(Tool(think))
 
-        async def _acompletion_via_proxy(*args, **kwargs):
-            """Completion function that uses AsyncOpenAI client via proxy."""
-            start_time = time.perf_counter()
-
-            # Remove litellm-specific arguments not supported by OpenAI
-            kwargs.pop("num_retries", None)
-
-            # Add extra_body for chat template kwargs
-            extra_body = kwargs.pop("extra_body", {})
-            extra_body["chat_template_kwargs"] = {"enable_thinking": True}
-            kwargs["extra_body"] = extra_body
-
-            # Clean messages
-            if "messages" in kwargs:
-                kwargs["messages"] = self._clean_messages(kwargs["messages"])
-
-            try:
-                completion = await self.agent_client.chat.completions.create(**kwargs)
-                # Convert to ModelResponse for tau2 compatibility
-                return self._convert_to_model_response(completion)
-            except Exception as e:
-                logger.error(f"Agent LLM error: {type(e).__name__}: {e}")
-                raise
-            finally:
-                run_info.agent_time.append(time.perf_counter() - start_time)
-
-        async def _acompletion_with_user_client(*args, **kwargs):
-            """Completion function for user simulator using AsyncOpenAI client."""
-            start_time = time.perf_counter()
-
-            # Remove litellm-specific arguments
-            kwargs.pop("num_retries", None)
-
-            # Set default top_p if not provided
-            if "top_p" not in kwargs:
-                kwargs["top_p"] = 1.0
-
-            # Clean messages for user simulator
-            if "messages" in kwargs:
-                cleaned = []
-                for msg in kwargs["messages"]:
-                    if isinstance(msg, dict):
-                        msg = msg.copy()
-                        # Remove tool_calls if it's None
-                        if msg.get("tool_calls") is None:
-                            msg = {k: v for k, v in msg.items() if k != "tool_calls"}
-                        # Skip tool messages for user simulator
-                        if msg.get("role") == "tool":
-                            continue
-                        # Remove tool_calls from assistant messages for user simulator
-                        if msg.get("role") == "assistant" and "tool_calls" in msg:
-                            msg = {k: v for k, v in msg.items() if k != "tool_calls"}
-                    cleaned.append(msg)
-                kwargs["messages"] = cleaned
-
-            try:
-                completion = await self.user_client.chat.completions.create(**kwargs)
-                # Convert to ModelResponse for tau2 compatibility
-                return self._convert_to_model_response(completion)
-            except Exception as e:
-                logger.error(f"User LLM error: {type(e).__name__}: {e}")
-                raise
-            finally:
-                run_info.user_time.append(time.perf_counter() - start_time)
+        agent_completion_fn = self._make_completion_fn(
+            self.agent_client, run_info.agent_time, is_agent=True
+        )
+        user_completion_fn = self._make_completion_fn(
+            self.user_client, run_info.user_time, is_agent=False
+        )
 
         if self.solo_mode:
             agent = LLMSoloAgent(
@@ -185,7 +176,7 @@ class Tau2Runner:
                 llm="dummy",
                 llm_args=self.gen_args,
                 task=task,
-                completion_fn=_acompletion_via_proxy,
+                completion_fn=agent_completion_fn,
             )
             user = DummyUser()
         else:
@@ -194,14 +185,14 @@ class Tau2Runner:
                 domain_policy=agent_policy_doc,
                 llm="dummy",
                 llm_args=self.gen_args,
-                completion_fn=_acompletion_via_proxy,
+                completion_fn=agent_completion_fn,
             )
             user = UserSimulator(
                 tools=user_tools if len(user_tools) > 0 else None,
                 instructions=str(task.user_scenario),
                 llm=self.econfig.user_llm,
                 llm_args=self.econfig.user_llm_args,
-                completion_fn=_acompletion_with_user_client,
+                completion_fn=user_completion_fn,
             )
         return agent, user
 

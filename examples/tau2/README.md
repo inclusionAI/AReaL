@@ -74,10 +74,12 @@ Update the `econfig.user_llm_base_url` in your config to point to this server.
 
 ### Training Commands
 
+NOTE: Following commands should be executed from root directory of this repository.
+
 #### Single Node (1.7B Model)
 
 On a single 8x GPU node with our offical image
-(ghcr.io/inclusionai/areal-runtime:v0.5.2), from repositoty root directory run:
+(ghcr.io/inclusionai/areal-runtime:v0.5.2), run:
 
 ```bash
 python3 examples/tau2/train.py \
