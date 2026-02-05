@@ -234,41 +234,46 @@ that implement OpenAI-compatible endpoints.
 The proxy mode introduces a proxy server between the agent and the inference engine:
 
 ```
-Controller Process           Rollout Worker (RPC)           Proxy Worker (FastAPI)       GPU Process
-──────────────────           ──────────────────────         ─────────────────────        ───────────
-RolloutController            Flask HTTP Server (CPU)        FastAPI HTTP Server          SGLang/vLLM
-    │                            │                              │                            │
-    └─> BatchTaskDispatcher  /call endpoint                 OpenAI-compatible            Inference
-        (background thread)      │                          endpoints                    Engine
-            │                    └─> Engine Thread              │                            │
-            │                        │                          │                            │
-            ├─ submit task 1         └─> RemoteInfEngine        │                            │
-            │  (HTTP POST)               │                      │                            │
-            │                            └─> OpenAIProxyWorkflow│                            │
-            ├─ submit task 2                 │                  │                            │
-            │  (HTTP POST)   ┌───────────────┼──────────────────┤                            │
-            │                │ OpenAIProxyClient                │                            │
-            ├─ submit task 3 │               │                  │                            │
-            │  (HTTP POST)   │  agent.run() ─┤                  │                            │
-            │                │    │          │                  │                            │
-            │                │    └─> OpenAI─┼─> POST /chat/completions ────────────────────>│
-            │                │       API call│                  │                         Generate
-            │                │               │                  │                         tokens
-            │                │               │                  │                            │
-            │                │  ChatCompletion<─────────────────────────────────────────────<┘
-            │                │    │          │  (cached in InteractionCache)
-            │                │    │          │                  │
-            │                │    └─> reward │                  │
-            │                │               │                  │
-            │                │  set_reward()─┼─> POST /rl/set_reward
-            │                │               │                  │
-            │                │  ...          │                  │
-            │                │               │                  │
-            │                └───────────────┘                  │
-            │                       │                           │
-            │                trajectory                         │
-            │                ┌──────┘                           │
-            └─ collect  <────┘
+│ Controller Process │  │ Rollout Worker (RPC) │  │ Proxy Worker │  │ GPU Process │
+│                    │  │                      │  │              │  │             │
+│ RolloutController  │  │  Flask HTTP Server   │  │ FastAPI HTTP │  │ SGLang/vLLM │
+│        │           │  │        │             │  │    Server    │  │      │      │
+│        ▼           │  │   /call endpoint     │  │ OpenAI API   │  │ Inference   │
+│ BatchTaskDispatcher│  │        │             │  │ compatible   │  │   Engine    │
+│   (bg thread)      │  │        ▼             │  │      │       │  │      │      │
+│        │           │  │   Engine Thread      │  │      │       │  │      │      │
+│        │           │  │        │             │  │      │       │  │      │      │
+│        │    HTTP   │  │        ▼             │  │      │       │  │      │      │
+│ submit ├────POST───┼─>│   RemoteInfEngine    │  │      │       │  │      │      │
+│ task 1 │           │  │        │             │  │      │       │  │      │      │
+│        │           │  │        ▼             │  │      │       │  │      │      │
+│ submit │           │  │ OpenAIProxyWorkflow  │  │      │       │  │      │      │
+│ task 2 │           │  │        │             │  │      │       │  │      │      │
+│        │           │  │  OpenAIProxyClient ──┼──┼──────┤       │  │      │      │
+│ submit │           │  │        │             │  │      │       │  │      │      │
+│ task 3 │           │  │   agent.run()        │  │      │       │  │      │      │
+│        │           │  │        │             │  │      │       │  │      │      │
+│        │           │  │        ▼             │  │      │       │  │      │      │
+│        │           │  │   OpenAI API call ───┼──┼─>  /chat/ ───┼──┼─> generate  │
+│        │           │  │        │             │  │ completions  │  │    tokens   │
+│        │           │  │        │             │  │      │       │  │      │      │
+│        │           │  │  ChatCompletion <────┼──┼──────<───────┼──┼──────┘      │
+│        │           │  │        │             │  │   (cached)   │  │             │
+│        │           │  │        │             │  │      │       │  │             │
+│        │           │  │        ▼             │  │      │       │  │             │
+│        │           │  │     reward           │  │      │       │  │             │
+│        │           │  │        │             │  │      │       │  │             │
+│        │           │  │   set_reward() ──────┼──┼─>  /rl/      │  │             │
+│        │           │  │        │             │  │ set_reward   │  │             │
+│        │           │  │        ▼             │  │      │       │  │             │
+│        │           │  │     ...              │  │      │       │  │             │
+│        │           │  │        │             │  │      │       │  │             │
+│        │           │  │        ▼             │  │      │       │  │             │
+│        │           │  │    trajectory        │  │      │       │  │             │
+│        │           │  │        │             │  │      │       │  │             │
+│    collect<────────┼──┼────────┘             │  │      │       │  │             │
+│                    │  │                      │  │              │  │             │
+└────────────────────┴──┴──────────────────────┴──┴──────────────┴──┴─────────────┘
 ```
 
 The `OpenAIProxyWorkflow` contains an `OpenAIProxyClient` that manages the session
