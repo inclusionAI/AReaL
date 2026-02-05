@@ -1228,11 +1228,9 @@ class TestRTensorEdgeCases:
         """Empty shards list handling."""
         rtensor = RTensor(shards=[], data=torch.tensor([]).cpu())
 
-        # Empty RTensor should raise RuntimeError in FFD allocation
+        # Empty RTensor should raise ValueError in balanced_greedy_partition
         # This is expected behavior - can't allocate 0 items to 4 groups
-        with pytest.raises(
-            RuntimeError, match="Number of values.*smaller than min_groups"
-        ):
+        with pytest.raises(ValueError, match="Number of items.*must be >= K"):
             RTensor.data_parallel_dispatch(rtensor, dp_size=4)
 
     def test_single_item_batch(self):

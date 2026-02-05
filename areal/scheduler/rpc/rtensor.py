@@ -14,7 +14,7 @@ import ray
 import torch
 
 from areal.utils.concurrent import run_async_task
-from areal.utils.datapack import ffd_allocate, flat2d
+from areal.utils.datapack import balanced_greedy_partition, flat2d
 
 
 class TensorBackend(Protocol):
@@ -140,7 +140,7 @@ class RayTensorBackend:
         """Store tensor in Ray object store, return ObjectRef."""
         return ray.put(tensor)
 
-    async def delete(self, _node_addr: str, shard_ids: list[ray.ObjectRef]) -> None:
+    async def delete(self, node_addr: str, shard_ids: list[Any]) -> None:
         """Free objects from Ray object store."""
         ray.internal.free(shard_ids)
 
@@ -236,8 +236,12 @@ class RTensor:
                 )
             if any(t.data is None for t in rtensors):
                 raise RuntimeError("Cannot concat rtensors with None data")
+            shards = []
+            for r in rtensors:
+                assert isinstance(r, RTensor)
+                shards.extend(r.shards)
             return RTensor(
-                shards=[shard for r in rtensors for shard in r.shards],
+                shards=shards,
                 data=_pad_cat_dim0([r.data for r in rtensors]),
             )
 
@@ -398,14 +402,13 @@ class RTensor:
             layout_rtensor = _find_in_structure(obj, RTensor)
             if layout_rtensor is not None:
                 seqlens = [sum(s.seqlens) for s in layout_rtensor.shards]
-                # Use FFD to allocate shards to DP groups
-                group_indices = ffd_allocate(
-                    seqlens, capacity=int(1e12), min_groups=dp_size
-                )
+                # Use balanced greedy partition to allocate shards to DP groups
+                group_indices = balanced_greedy_partition(seqlens, K=dp_size)
             # else: no RTensors found, will replicate scalars without group_indices
 
         if isinstance(obj, RTensor):
             tensors = RTensor.split_tensor(obj.data, obj)
+            assert group_indices is not None
             # Split shards according to group assignments
             split_rtensors = []
             for group_idxs in group_indices:
