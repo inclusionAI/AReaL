@@ -34,7 +34,12 @@ import torch.nn as nn
 from torch.distributed.tensor import DTensor
 
 from areal.api.alloc_mode import ParallelStrategy
-from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
+from areal.api.cli_args import (
+    ArchonEngineConfig,
+    MicroBatchSpec,
+    OptimizerConfig,
+    TrainEngineConfig,
+)
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.experimental.engine.archon_checkpoint import DCPState
 from areal.experimental.engine.archon_engine import ArchonLMEngine
@@ -684,10 +689,12 @@ def test_pp_dcp_checkpoint(pp_size: int, out_file: str | None = None) -> bool:
             model = Qwen3Model(model_args)
 
         # NOTE: Schedule is created dynamically by ArchonEngine, not returned here
+        archon_config = ArchonEngineConfig(pp_schedule="1F1B")
         pp_stages, model_parts, has_first, has_last = pipeline_llm(
             model=model,
-            parallel_dims=parallel_dims,
             device=device,
+            parallel_dims=parallel_dims,
+            archon_config=archon_config,
             parallelize_fn=parallelize_qwen3,
             enable_compile=False,  # Disable compile to speed up test
         )
@@ -874,10 +881,12 @@ def test_pp_dcp_with_optim(pp_size: int, out_file: str | None = None) -> bool:
             return nn.functional.cross_entropy(output_flat, target_flat)
 
         # NOTE: Schedule is created dynamically by ArchonEngine, not returned here
+        archon_config = ArchonEngineConfig(pp_schedule="1F1B")
         pp_stages, model_parts, has_first, has_last = pipeline_llm(
             model=model,
-            parallel_dims=parallel_dims,
             device=device,
+            parallel_dims=parallel_dims,
+            archon_config=archon_config,
             parallelize_fn=parallelize_qwen3,
             enable_compile=False,  # Disable compile to speed up test
         )
@@ -1097,10 +1106,12 @@ def test_pp_forward_match(pp_size: int, out_file: str | None = None) -> bool:
             model = Qwen3Model(model_args)
 
         # NOTE: Schedule is created dynamically by ArchonEngine, not returned here
+        archon_config = ArchonEngineConfig(pp_schedule="1F1B")
         pp_stages, model_parts, has_first, has_last = pipeline_llm(
             model=model,
-            parallel_dims=parallel_dims,
             device=device,
+            parallel_dims=parallel_dims,
+            archon_config=archon_config,
             parallelize_fn=parallelize_qwen3,
             enable_compile=False,  # Disable compile to speed up test
         )

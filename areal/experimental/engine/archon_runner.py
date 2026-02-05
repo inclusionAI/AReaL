@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import torch
-from torch.distributed.pipelining.schedules import Schedule1F1B
+
+from areal.experimental.models.archon.pipeline_parallel import build_pipeline_schedule
+from areal.utils import logging
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from torch import nn
     from torch.distributed.pipelining import PipelineStage
+    from torch.distributed.pipelining.schedules import _PipelineSchedule
 
     from areal.utils.data import MicroBatchItem, MicroBatchList
+
+logger = logging.getLogger("ArchonRunner")
 
 
 class ForwardBackwardRunner(ABC):
@@ -45,10 +49,11 @@ class SequentialRunner(ForwardBackwardRunner):
 
     def __init__(
         self,
-        model: nn.Module,
+        model_parts: list[nn.Module],
         prepare_inputs_fn: Callable[[MicroBatchItem], tuple[dict, Any]],
     ):
-        self.model = model
+        assert len(model_parts) == 1, "SequentialRunner expects exactly 1 model part"
+        self.model = model_parts[0]
         self.prepare_inputs_fn = prepare_inputs_fn
 
     def run(
@@ -85,21 +90,44 @@ class SequentialRunner(ForwardBackwardRunner):
 
 
 class PipelinedRunner(ForwardBackwardRunner):
-    """Pipeline-parallel execution using Schedule1F1B."""
+    """Unified pipeline-parallel runner supporting all schedule types."""
 
     def __init__(
         self,
-        pp_stage: PipelineStage,
+        pp_stages: list[PipelineStage],
+        prepare_inputs_fn: Callable[[MicroBatchList], tuple],
+        pp_schedule: str,
+        pp_group_size: int,
         has_first_stage: bool,
         has_last_stage: bool,
-        prepare_inputs_fn: Callable[[MicroBatchList], tuple],
     ):
-        self.pp_stage = pp_stage
+        self.pp_stages = pp_stages
+        self.prepare_inputs_fn = prepare_inputs_fn
+        self.pp_schedule = pp_schedule
+        self.pp_group_size = pp_group_size
         self.has_first_stage = has_first_stage
         self.has_last_stage = has_last_stage
-        self.prepare_inputs_fn = prepare_inputs_fn
 
-    def _patch_skip_output_merge(self, schedule: Schedule1F1B) -> None:
+    def _create_schedule(
+        self,
+        n_microbatches: int,
+        loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None,
+    ) -> _PipelineSchedule:
+        return build_pipeline_schedule(
+            stages=self.pp_stages,
+            pp_schedule=self.pp_schedule,
+            n_microbatches=n_microbatches,
+            pp_degree=self.pp_group_size,
+            loss_fn=loss_fn,
+        )
+
+    def _get_output_stage(self) -> PipelineStage:
+        for stage in self.pp_stages:
+            if stage.is_last:
+                return stage
+        raise RuntimeError("No last stage found in pp_stages")
+
+    def _patch_skip_output_merge(self, schedule: _PipelineSchedule) -> None:
         """Patch schedule to skip output merging, halving memory usage.
 
         TODO(pytorch-upgrade): PyTorch 2.10+ adds step(return_outputs=False) parameter.
@@ -107,7 +135,7 @@ class PipelinedRunner(ForwardBackwardRunner):
 
         HACK: We monkey patch schedule._merge_outputs to skip the torch.cat operation
         that merges all microbatch outputs. This is safe because:
-        1. Archon iterates pp_stage.output_chunks directly, not the merged return value
+        1. Archon iterates output_chunks directly, not the merged return value
         2. output_chunks contains the same data, just as a list instead of concatenated
         3. Skipping merge avoids allocating a second copy, halving memory usage
         """
@@ -156,29 +184,15 @@ class PipelinedRunner(ForwardBackwardRunner):
         contexts: list,
         process_output_fn: Callable,
     ) -> list[torch.Tensor] | None:
-        schedule = Schedule1F1B(
-            self.pp_stage,
-            n_microbatches=n_microbatches,
-            loss_fn=None,
-            scale_grads=False,
-        )
-
+        schedule = self._create_schedule(n_microbatches, loss_fn=None)
         self._patch_skip_output_merge(schedule)
         schedule.eval(*args, **batched_kwargs)
-
         if not self.has_last_stage:
             return None
-
-        results: list[torch.Tensor] = []
-        for output, ctx in zip(self.pp_stage.output_chunks, contexts, strict=True):
-            # Squeeze batch dim: outputs (1, seq_len, vocab) -> (seq_len, vocab)
-            if output.ndim == 3:
-                output = output.squeeze(0)
-            ctx_dict = ctx.__dict__.copy()
-            result = process_output_fn(output, ctx_dict)
-            if result is not None:
-                results.append(result.detach())
-        return results
+        output_stage = self._get_output_stage()
+        return self._process_outputs(
+            output_stage.output_chunks, contexts, process_output_fn
+        )
 
     def _run_train(
         self,
@@ -189,6 +203,17 @@ class PipelinedRunner(ForwardBackwardRunner):
         contexts: list,
         process_output_fn: Callable,
     ) -> list[torch.Tensor]:
+        pp_loss_fn = self._create_loss_fn(contexts, process_output_fn)
+        schedule = self._create_schedule(n_microbatches, loss_fn=pp_loss_fn)
+        self._patch_skip_output_merge(schedule)
+        schedule.step(*args, target=batched_target, **batched_kwargs)
+        return []
+
+    def _create_loss_fn(
+        self,
+        contexts: list,
+        process_output_fn: Callable,
+    ) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
         if self.has_last_stage:
             ctx_iter = iter(contexts)
 
@@ -208,14 +233,51 @@ class PipelinedRunner(ForwardBackwardRunner):
             def pp_loss_fn(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
                 return pred.sum() * 0.0
 
-        schedule = Schedule1F1B(
-            self.pp_stage,
-            n_microbatches=n_microbatches,
-            loss_fn=pp_loss_fn,
-            scale_grads=False,
+        return pp_loss_fn
+
+    def _process_outputs(
+        self,
+        output_chunks: list[torch.Tensor],
+        contexts: list,
+        process_output_fn: Callable,
+    ) -> list[torch.Tensor]:
+        results: list[torch.Tensor] = []
+        for output, ctx in zip(output_chunks, contexts, strict=True):
+            # Squeeze batch dim: outputs (1, seq_len, vocab) -> (seq_len, vocab)
+            if output.ndim == 3:
+                output = output.squeeze(0)
+            ctx_dict = ctx.__dict__.copy()
+            result = process_output_fn(output, ctx_dict)
+            if result is not None:
+                results.append(result.detach())
+        return results
+
+
+def create_runner(
+    *,
+    pp_enabled: bool,
+    model_parts: list[nn.Module],
+    prepare_inputs_fn: Callable,
+    pp_stages: list[PipelineStage] | None = None,
+    pp_schedule: str | None = None,
+    pp_group_size: int = 1,
+    has_first_stage: bool = True,
+    has_last_stage: bool = True,
+) -> ForwardBackwardRunner:
+    """Factory function to create the appropriate runner."""
+    if pp_enabled:
+        assert pp_stages is not None, "pp_stages required when pp_enabled=True"
+        assert pp_schedule is not None, "pp_schedule required when pp_enabled=True"
+        return PipelinedRunner(
+            pp_stages=pp_stages,
+            prepare_inputs_fn=prepare_inputs_fn,
+            pp_schedule=pp_schedule,
+            pp_group_size=pp_group_size,
+            has_first_stage=has_first_stage,
+            has_last_stage=has_last_stage,
         )
-
-        self._patch_skip_output_merge(schedule)
-        schedule.step(*args, target=batched_target, **batched_kwargs)
-
-        return []
+    else:
+        return SequentialRunner(
+            model_parts=model_parts,
+            prepare_inputs_fn=prepare_inputs_fn,
+        )

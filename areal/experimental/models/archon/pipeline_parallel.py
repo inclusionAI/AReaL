@@ -2,6 +2,7 @@
 
 import copy
 import functools
+import math
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -10,10 +11,18 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
+from torch.distributed.pipelining.schedules import (
+    PipelineScheduleMulti,
+    PipelineScheduleSingle,
+    get_schedule_class,
+)
 
 from areal.utils import logging
 
 if TYPE_CHECKING:
+    from torch.distributed.pipelining.schedules import _PipelineSchedule
+
+    from areal.api.cli_args import ArchonEngineConfig
     from areal.experimental.models.archon import ArchonParallelDims
 
 
@@ -28,14 +37,52 @@ __all__ = [
     "generate_llm_fqn_per_model_part",
     "pipeline_module_split",
     "pipeline_llm",
+    "build_pipeline_schedule",
 ]
+
+
+def build_pipeline_schedule(
+    stages: list[PipelineStage],
+    pp_schedule: str,
+    n_microbatches: int,
+    pp_degree: int = 1,
+    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+) -> "_PipelineSchedule":
+    """Build pipeline schedule, passing single stage or list based on schedule type.
+
+    Args:
+        stages: Pipeline stages for this rank (list, even for single-stage schedules)
+        pp_schedule: Schedule name (e.g., "1F1B", "Interleaved1F1B")
+        n_microbatches: Number of microbatches
+        pp_degree: Pipeline parallel degree (for bubble warning)
+        loss_fn: Loss function (None for eval mode)
+
+    Returns:
+        Configured pipeline schedule instance
+    """
+    schedule_class = get_schedule_class(pp_schedule)
+    looped_schedule = issubclass(schedule_class, PipelineScheduleMulti)
+
+    num_total_stages = len(stages) * pp_degree
+    if n_microbatches < num_total_stages:
+        _get_logger().warning(
+            f"n_microbatches ({n_microbatches}) < num_total_stages ({num_total_stages}), "
+            "may result in pipeline bubble"
+        )
+
+    return schedule_class(
+        stages if looped_schedule else stages[0],
+        n_microbatches=n_microbatches,
+        loss_fn=loss_fn,
+        scale_grads=False,
+    )
 
 
 def generate_llm_fqn_per_model_part(
     num_stages: int,
     num_layers: int,
-    input_weight: int = 1,
-    output_weight: int = 1,
+    first_stage_less_layers: int = 1,
+    last_stage_less_layers: int = 1,
     is_critic: bool = False,
 ) -> list[list[str]]:
     """Generate module FQN lists for each pipeline stage.
@@ -46,8 +93,8 @@ def generate_llm_fqn_per_model_part(
     Args:
         num_stages: Number of pipeline stages (must equal pp_degree for 1F1B)
         num_layers: Number of transformer layers in the model
-        input_weight: Weight for input modules (tok_embeddings), default 1
-        output_weight: Weight for output modules (norm + output/score), default 1
+        first_stage_less_layers: Weight for input modules (tok_embeddings), default 1
+        last_stage_less_layers: Weight for output modules (norm + output/score), default 1
         is_critic: Whether the model is a critic (uses 'score' instead of 'output')
 
     Returns:
@@ -77,12 +124,12 @@ def generate_llm_fqn_per_model_part(
         return [["tok_embeddings"] + layer_names + ["norm", output_module]]
 
     # Calculate effective layers including embedding/output overhead
-    num_effective_layers = num_layers + input_weight + output_weight
+    num_effective_layers = num_layers + first_stage_less_layers + last_stage_less_layers
 
     if num_stages > num_effective_layers:
         raise ValueError(
             f"num_stages ({num_stages}) cannot exceed effective layers "
-            f"({num_effective_layers} = {num_layers} + {input_weight} + {output_weight})"
+            f"({num_effective_layers} = {num_layers} + {first_stage_less_layers} + {last_stage_less_layers})"
         )
 
     layers_per_stage = num_effective_layers // num_stages
@@ -94,13 +141,13 @@ def generate_llm_fqn_per_model_part(
             f"and {num_stages} stages"
         )
 
-    if input_weight > layers_per_stage:
+    if first_stage_less_layers > layers_per_stage:
         raise ValueError(
-            f"input_weight ({input_weight}) exceeds layers_per_stage ({layers_per_stage})"
+            f"first_stage_less_layers ({first_stage_less_layers}) exceeds layers_per_stage ({layers_per_stage})"
         )
-    if output_weight > layers_per_stage:
+    if last_stage_less_layers > layers_per_stage:
         raise ValueError(
-            f"output_weight ({output_weight}) exceeds layers_per_stage ({layers_per_stage})"
+            f"last_stage_less_layers ({last_stage_less_layers}) exceeds layers_per_stage ({layers_per_stage})"
         )
 
     module_names_per_stage: list[list[str]] = []
@@ -117,7 +164,9 @@ def generate_llm_fqn_per_model_part(
         if stage_idx == 0:
             # First stage: tok_embeddings + transformer layers
             stage_modules.append("tok_embeddings")
-            num_transformer_layers = effective_layers_for_stage - input_weight
+            num_transformer_layers = (
+                effective_layers_for_stage - first_stage_less_layers
+            )
             for _ in range(num_transformer_layers):
                 if current_layer < num_layers:
                     stage_modules.append(f"layers.{current_layer}")
@@ -125,7 +174,7 @@ def generate_llm_fqn_per_model_part(
 
         elif stage_idx == num_stages - 1:
             # Last stage: transformer layers + norm + output/score
-            num_transformer_layers = effective_layers_for_stage - output_weight
+            num_transformer_layers = effective_layers_for_stage - last_stage_less_layers
             for _ in range(num_transformer_layers):
                 if current_layer < num_layers:
                     stage_modules.append(f"layers.{current_layer}")
@@ -147,6 +196,7 @@ def generate_llm_fqn_per_model_part(
 def pipeline_module_split(
     whole_model: nn.Module,
     pp_mesh: DeviceMesh,
+    pp_schedule: str,
     device: torch.device,
     module_names_per_stage: list[list[str]],
 ) -> tuple[list[PipelineStage], list[nn.Module]]:
@@ -160,6 +210,7 @@ def pipeline_module_split(
     Args:
         whole_model: The complete model to split
         pp_mesh: Pipeline parallel device mesh
+        pp_schedule: Schedule type ("1F1B" or "Interleaved1F1B")
         device: Target device for stages
         module_names_per_stage: Module FQNs for each stage
 
@@ -169,14 +220,6 @@ def pipeline_module_split(
     pp_rank = pp_mesh.get_local_rank()
     pp_degree = pp_mesh.size()
     num_stages = len(module_names_per_stage)
-
-    # 1F1B requires exactly 1 stage per rank
-    stages_per_rank = num_stages // pp_degree
-    if stages_per_rank != 1:
-        raise ValueError(
-            f"1F1B schedule requires exactly 1 stage per rank, "
-            f"got {stages_per_rank} ({num_stages} stages / {pp_degree} ranks)"
-        )
 
     def _build_stage_from_modules(
         stage_idx: int,
@@ -248,55 +291,92 @@ def pipeline_module_split(
 
         return stage, model
 
-    # For 1F1B: stage_idx equals pp_rank
-    stage_idx = pp_rank
-    stage, model_part = _build_stage_from_modules(
-        stage_idx, module_names_per_stage[stage_idx], num_stages
-    )
+    def _get_stage_indices() -> tuple[int, ...]:
+        """Get stage indices for this rank based on schedule style.
 
-    _get_logger().info(
-        f"Built stage {stage_idx} (pp_rank={pp_rank}) "
-        f"with modules: {module_names_per_stage[stage_idx]}"
-    )
+        Examples (pp_degree=4, num_stages=8):
+            1F1B:            Rank 0->(0,), Rank 1->(1,), ...
+            Interleaved1F1B: Rank 0->(0,4), Rank 1->(1,5), Rank 2->(2,6), Rank 3->(3,7)
+        """
+        if num_stages % pp_degree != 0:
+            raise ValueError(
+                f"num_stages ({num_stages}) must be divisible by pp_degree ({pp_degree})"
+            )
+        stages_per_rank = num_stages // pp_degree
 
-    return [stage], [model_part]
+        if pp_schedule == "1F1B":
+            if stages_per_rank != 1:
+                raise ValueError(
+                    f"1F1B schedule requires exactly 1 stage per rank, "
+                    f"got {stages_per_rank} ({num_stages} stages / {pp_degree} ranks)"
+                )
+            return (pp_rank,)
+        elif pp_schedule == "Interleaved1F1B":
+            if stages_per_rank < 2:
+                raise ValueError(
+                    f"Interleaved1F1B schedule requires >= 2 stages per rank, "
+                    f"got {stages_per_rank} ({num_stages} stages / {pp_degree} ranks)"
+                )
+            return tuple(pp_rank + s * pp_degree for s in range(stages_per_rank))
+        else:
+            raise ValueError(f"Unknown pp_schedule: {pp_schedule}")
+
+    stages: list[PipelineStage] = []
+    model_parts: list[nn.Module] = []
+
+    for stage_idx in _get_stage_indices():
+        stage, model_part = _build_stage_from_modules(
+            stage_idx, module_names_per_stage[stage_idx], num_stages
+        )
+        stages.append(stage)
+        model_parts.append(model_part)
+
+        _get_logger().info(
+            f"Built stage {stage_idx} (pp_rank={pp_rank}) "
+            f"with modules: {module_names_per_stage[stage_idx]}"
+        )
+
+    return stages, model_parts
 
 
 def pipeline_llm(
     model: nn.Module,
-    parallel_dims: "ArchonParallelDims",
     device: torch.device,
+    parallel_dims: "ArchonParallelDims",
+    archon_config: "ArchonEngineConfig",
     parallelize_fn: Callable,
-    input_weight: int = 1,
-    output_weight: int = 1,
     **parallelize_kwargs,
 ) -> tuple[list[PipelineStage], list[nn.Module], bool, bool]:
     """Main entry point for pipeline parallelism.
 
     Workflow:
-    1. Generate module names for each stage
-    2. Split model into stages
+    1. Generate module names for each virtual stage
+    2. Split model into stages (multiple per rank for Interleaved1F1B)
     3. Apply parallelization (TP, FSDP) to each model part
 
     Args:
         model: The complete model to pipeline
-        parallel_dims: ArchonParallelDims with PP configuration
         device: Target device
+        parallel_dims: ArchonParallelDims with PP configuration
+        archon_config: ArchonEngineConfig containing PP settings
         parallelize_fn: Function to apply TP/FSDP to model parts
-        input_weight: Weight for embedding layer (default 1)
-        output_weight: Weight for output layers (default 1)
         **parallelize_kwargs: Additional arguments for parallelize_fn
 
     Returns:
         Tuple of:
-        - stages: List of PipelineStage (1 for 1F1B schedule)
-        - model_parts: List of model parts (1 for 1F1B)
+        - stages: List of PipelineStage (1 for 1F1B, 2+ for Interleaved1F1B)
+        - model_parts: List of model parts
         - has_first_stage: Whether this rank has the first stage
         - has_last_stage: Whether this rank has the last stage
     """
     pp_mesh = parallel_dims.get_mesh("pp")
     if pp_mesh is None:
         raise RuntimeError("PP mesh not found. Ensure pp > 1 in parallel_dims")
+
+    pp_schedule = archon_config.pp_schedule
+    layers_per_stage = archon_config.pp_layers_per_stage
+    first_stage_less_layers = archon_config.pp_first_stage_less_layers
+    last_stage_less_layers = archon_config.pp_last_stage_less_layers
 
     # Get number of layers from model
     # Archon models may use n_layers or num_hidden_layers
@@ -319,12 +399,52 @@ def pipeline_llm(
     # Detect if model is a critic (uses 'score' instead of 'output')
     is_critic = getattr(getattr(model, "model_args", None), "is_critic", False)
 
-    # 1. Generate module names per stage
+    schedule_class = get_schedule_class(pp_schedule)
+    is_single_stage_schedule = issubclass(schedule_class, PipelineScheduleSingle)
+
+    if layers_per_stage is not None:
+        # Calculate number of virtual stages from layers_per_stage
+        num_virtual_stages = math.ceil(
+            (num_layers + first_stage_less_layers + last_stage_less_layers)
+            / layers_per_stage
+        )
+        # Validate divisibility
+        if num_virtual_stages % pp_degree != 0:
+            raise ValueError(
+                f"num_virtual_stages ({num_virtual_stages}) must be divisible by "
+                f"pp_degree ({pp_degree}). Calculated from: "
+                f"ceil(({num_layers} + {first_stage_less_layers} + {last_stage_less_layers}) / {layers_per_stage})"
+            )
+        stages_per_rank = num_virtual_stages // pp_degree
+        # Validate schedule compatibility
+        if is_single_stage_schedule and stages_per_rank != 1:
+            raise ValueError(
+                f"{pp_schedule} schedule requires exactly 1 stage per rank, "
+                f"but got {stages_per_rank} (from layers_per_stage={layers_per_stage}). "
+                f"Use Interleaved1F1B for multiple stages per rank."
+            )
+        if not is_single_stage_schedule and stages_per_rank < 2:
+            raise ValueError(
+                f"{pp_schedule} schedule requires >= 2 stages per rank, "
+                f"but got {stages_per_rank} (from layers_per_stage={layers_per_stage}). "
+                f"Use 1F1B schedule for single stage per rank."
+            )
+    else:
+        # Default: 1 for single-stage schedules, 2 for multi-stage schedules
+        stages_per_rank = 1 if is_single_stage_schedule else 2
+        num_virtual_stages = pp_degree * stages_per_rank
+
+    _get_logger().info(
+        f"PP setup: schedule={pp_schedule}, stages_per_rank={stages_per_rank}, "
+        f"num_virtual_stages={num_virtual_stages}"
+    )
+
+    # 1. Generate module names per stage for ALL virtual stages
     module_names_per_stage = generate_llm_fqn_per_model_part(
-        num_stages=pp_degree,
+        num_stages=num_virtual_stages,
         num_layers=num_layers,
-        input_weight=input_weight,
-        output_weight=output_weight,
+        first_stage_less_layers=first_stage_less_layers,
+        last_stage_less_layers=last_stage_less_layers,
         is_critic=is_critic,
     )
 
@@ -334,6 +454,7 @@ def pipeline_llm(
     stages, model_parts = pipeline_module_split(
         whole_model=model,
         pp_mesh=pp_mesh,
+        pp_schedule=pp_schedule,
         device=device,
         module_names_per_stage=module_names_per_stage,
     )

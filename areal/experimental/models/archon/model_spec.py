@@ -9,6 +9,7 @@ import torch.nn as nn
 if TYPE_CHECKING:
     from torch.distributed.pipelining import PipelineStage
 
+    from areal.api.cli_args import ArchonEngineConfig
     from areal.experimental.models.archon import ArchonParallelDims
     from areal.experimental.models.archon.activation_checkpoint import (
         ActivationCheckpointConfig,
@@ -71,11 +72,10 @@ class PipeliningFn(Protocol):
     def __call__(
         self,
         model: nn.Module,
-        parallel_dims: ArchonParallelDims,
         device: torch.device,
+        parallel_dims: ArchonParallelDims,
+        archon_config: ArchonEngineConfig,
         parallelize_fn: ParallelizeFn,
-        input_weight: int = 1,
-        output_weight: int = 1,
         **parallelize_kwargs,
     ) -> tuple[list[PipelineStage], list[nn.Module], bool, bool]: ...
 
