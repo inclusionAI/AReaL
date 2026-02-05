@@ -50,7 +50,7 @@ docker run -it --name areal-node1 \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL /path/to/mount/AReaL
 cd /path/to/mount/AReaL
-uv pip install -e . --no-deps --no-build-isolation
+uv pip install -e . --no-deps
 ```
 
 ### Option 2: Custom Environment Installation
