@@ -53,14 +53,12 @@ def _init_worker(
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
-    system_prompt = (
-        get_system_prompt(model_type, use_tools) if use_tools != "direct" else None
-    )
+    system_prompt =  get_system_prompt(model_type, use_tools) 
 
     if model_type == "Google":
         agent_configs = build_google_agent_configs(
             max_output_tokens=max_output_tokens,
-            thinking_level="low",
+            thinking_level="high",
             include_thoughts=True,
             temperature=1.0,
             system_prompt=system_prompt,
@@ -72,7 +70,8 @@ def _init_worker(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
             tool_mode=use_tools,
-            reasoning_level="high",
+            reasoning_level="low",
+            system_prompt=system_prompt,
         )
         _WORKER_TASK_CLASS = OpenAIVisionQATask
     else:

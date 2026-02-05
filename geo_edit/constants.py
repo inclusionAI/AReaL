@@ -33,11 +33,10 @@ VLLM_SYSTEM_PROMPT = '''
 You are an advanced AI agent capable of complex
 reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
-1. ALWAYS call the appropriate tool first;
-2. Call appropriate tools based on the task;
-3. If you call multiple tools in one action, only the final result will be returned;
-4. Reasoning Before Action: before selecting a tool,
-you must analyze the user's request and determine
+1. Call appropriate tools based on the task when needed;
+2. If you call multiple tools in one action, only the final result will be returned;
+3. Reasoning Before Action: before selecting a tool,
+4ou must analyze the user's request and determine
 the necessary steps. Output your internal monologue
 and logic inside <think> and </think> tags.
 5. Reasoning After Action: Once you receive the
@@ -45,7 +44,7 @@ output from a tool, you must analyze the results to
 determine if further actions are needed or if the task
 is complete. Output this analysis inside <think> and
 </think> tags;
-6. Final Output: When you have formulated your
+7. Final Output: When you have formulated your
 conclusion, you must wrap your final answer in
 <answer> and </answer> tags.
 
@@ -68,7 +67,7 @@ Force tool-call mode:
 - Only after tool results are returned should you output <answer>...</answer>.
 '''
 
-VLLM_NO_TOOL_SYSTEM_PROMPT = '''
+NO_TOOL_SYSTEM_PROMPT = '''
 You are an advanced AI assistant capable of complex reasoning.
 You must strictly adhere to the following protocol:
 
@@ -121,6 +120,10 @@ def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
         if tool_mode_normalized == "force":
             return f"{VLLM_SYSTEM_PROMPT}\n\n{VLLM_FORCE_TOOL_CALL_PROMPT}"
         elif tool_mode_normalized == "notool":
-            return VLLM_NO_TOOL_SYSTEM_PROMPT
+            return NO_TOOL_SYSTEM_PROMPT
         return VLLM_SYSTEM_PROMPT
-    return API_CALL_SYSTEM_PROMPT
+    else:
+        if tool_mode_normalized == "notool":
+            return NO_TOOL_SYSTEM_PROMPT
+        else:
+            return API_CALL_SYSTEM_PROMPT

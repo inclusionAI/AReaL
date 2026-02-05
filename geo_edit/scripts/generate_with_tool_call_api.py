@@ -76,6 +76,7 @@ def main():
             temperature=1.0,
             tool_mode=tool_mode,
             reasoning_level="medium",
+            system_prompt=system_prompt,
         )
     else:
         agent_configs = build_vllm_agent_configs(

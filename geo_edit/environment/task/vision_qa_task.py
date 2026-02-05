@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from pyexpat import model
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 from PIL import Image
 from sympy import N
@@ -21,7 +21,7 @@ logger = setup_logger(__name__)
 @dataclass
 class ToolCall:
     name: str
-    args: Dict[str, Any]
+    args: Dict[str, str | int]
     call_id: Optional[str] = None
 
 
@@ -36,7 +36,7 @@ class VisionQATask(AbstractVLMTask):
         task_image_path: str | None,
         save_dir: Path | str,
         model_type: Literal["google", "openai", "vllm"] = "openai",
-        tool_functions: Optional[Dict[str, Any]] = None,
+        tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
         **kwargs,
     ):
         super().__init__(task_id)
@@ -108,7 +108,7 @@ class VisionQATask(AbstractVLMTask):
         thinking_process: str,
         output_text: str,
         tool_calls: List[ToolCall],
-        extra_info: Dict[str, Any],
+        extra_info: Dict[str, int | float | str | None],
     ) -> None:
         """Record a step in conversation history."""
         self.conversation_history.append({
@@ -188,7 +188,7 @@ class VisionQATask(AbstractVLMTask):
             return
 
         if expected_name == "image_crop":
-            call_results: List[Tuple[str, ToolCall, Any]] = []
+            call_results: List[Tuple[str, ToolCall, Image.Image | str]] = []
             for call in tool_calls:
                 logger.info(
                     "Processing function call: %s with args: %s",
@@ -328,12 +328,15 @@ class VisionQATask(AbstractVLMTask):
             if tokens_input_total <0:
                 raise ValueError("Calculated tokens_input_total is negative.")
         elif self.model_type=="vllm":
-            #openai chat completions api
+            # vLLM OpenAI-compatible Responses API
             tokens_output_total = sum(
                 t for t in tokens_output_per_step if isinstance(t, (int, float))
             )
-            tokens_input_total=tokens_input_per_step[-1]
-            tokens_used_total=tokens_output_total+tokens_input_total
+            tokens_used_total = tokens_total_per_step[-1]
+            tokens_input_total = None
+            tokens_input_total = tokens_used_total - tokens_output_total
+            if tokens_input_total < 0:
+                raise ValueError("Calculated tokens_input_total is negative.")
         elif self.model_type == "google":
             tokens_output_total = sum(
                 t for t in tokens_output_per_step if isinstance(t, (int, float))

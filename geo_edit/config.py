@@ -108,6 +108,7 @@ def build_openai_agent_configs(
     temperature: float = 1.0,
     tool_mode: Optional[str] = None,
     reasoning_level: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> OpenAIAgentConfigs:
     
     tools =[]
@@ -138,6 +139,8 @@ def build_openai_agent_configs(
         "max_output_tokens": max_output_tokens,
         "reasoning": {"effort":reasoning_level}
     }
+    if system_prompt is not None:
+        generate_config["instructions"] = system_prompt
     
     force_final_generate_config = {
         "tools": tools,
@@ -146,6 +149,8 @@ def build_openai_agent_configs(
         "max_output_tokens": max_output_tokens,
         "reasoning": {"effort":reasoning_level},
     }
+    if system_prompt is not None:
+        force_final_generate_config["instructions"] = system_prompt
 
     return OpenAIAgentConfigs(
         tools=tools,
@@ -164,16 +169,10 @@ def build_vllm_agent_configs(
 ) -> VLLMAgentConfigs:
     tools = []
     for tool in TOOL_FUNCTIONS_DECLARE:
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": tool["parameters"],
-                },
-            }
-        )
+        tools.append({
+            "type": "function", "name": tool["name"],
+            "description": tool["description"], "parameters": tool["parameters"],
+        })
 
     if tool_mode == "direct":
         tool_mode = None
@@ -186,17 +185,13 @@ def build_vllm_agent_configs(
         raise ValueError(f"Invalid tool_mode: {tool_mode}")
 
     generate_config = {
-        "tools": tools,
-        "tool_choice": tool_mode,
-        "temperature": temperature,
-        "max_tokens": max_output_tokens,
+        "tools": tools, "tool_choice": tool_mode,
+        "temperature": temperature, "max_output_tokens": max_output_tokens,
     }
 
     force_final_generate_config = {
-        "tools": tools,
-        "tool_choice": "none",
-        "temperature": temperature,
-        "max_tokens": max_output_tokens,
+        "tools": tools, "tool_choice": "none",
+        "temperature": temperature, "max_output_tokens": max_output_tokens,
     }
     return VLLMAgentConfigs(
         tools=tools,

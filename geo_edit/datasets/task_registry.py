@@ -15,7 +15,7 @@ from geo_edit.datasets.input_template import (
     SUDOKU_TOOL_CALL_INPUT_TEMPLATE,
 )
 
-FieldSource = str | Callable[[Mapping[str, Any]], Any]
+FieldSource = str | Callable[[Mapping[str, Any]], str | int | float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +29,7 @@ class DatasetSpec:
     image_key: Optional[str] = None
 
     def build_prompt(self, item: Mapping[str, Any], use_tools: bool) -> str:
-        values: Dict[str, Any] = {}
+        values: Dict[str, str | int | float] = {}
         for template_key, source in self.template_fields.items():
             if callable(source):
                 values[template_key] = source(item)
@@ -122,6 +122,39 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
         template_fields={
             "mf_type": "mf_type",
+        },
+    ),
+    "shortest_path_text": DatasetSpec(
+        name="shortest_path_text",
+        id_key="case_id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template="{prompt}",
+        notool_prompt_template="{prompt}",
+        template_fields={
+            "prompt": "prompt",
+        },
+    ),
+    "shortest_path_image": DatasetSpec(
+        name="shortest_path_image",
+        id_key="case_id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template="{prompt}",
+        notool_prompt_template="{prompt}",
+        template_fields={
+            "prompt": "prompt",
+        },
+    ),
+    "shortest_path_image_text": DatasetSpec(
+        name="shortest_path_image_text",
+        id_key="case_id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template="{prompt}",
+        notool_prompt_template="{prompt}",
+        template_fields={
+            "prompt": "prompt",
         },
     ),
 }

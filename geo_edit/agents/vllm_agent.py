@@ -20,32 +20,20 @@ class VLLMBasedAgent(BaseAgent):
         self._model_loaded = True
         logger.info("Loaded vLLM model %s at %s", self.model, self.config.api_base)
 
-    def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, Any]]:
+    def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, int | float | str | None]]:
         gen_kwargs = dict(self.config.generate_config)
-  
-        if isinstance(model_input, dict):
-            messages = model_input.get("messages", [])
-        else:
-            messages = model_input
+        input_payload = model_input["input"]
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            **gen_kwargs,
-        )
+        response = self.client.responses.create(model=self.model, input=input_payload, **gen_kwargs)
 
         extra_info = {"original_response": str(response)}
-        if response.usage is not None:
-            usage = response.usage
-            tokens_input = usage.prompt_tokens
-            tokens_output = usage.completion_tokens
-            tokens_total = usage.total_tokens
-            
-            extra_info["tokens_input"] = tokens_input
-            extra_info["tokens_output"] = tokens_output
-            extra_info["tokens_used"] = tokens_total
+        usage = response.usage
+        if usage is not None:
+            if hasattr(usage, "total_tokens"): extra_info["tokens_used"] = usage.total_tokens
+            if hasattr(usage, "input_tokens"): extra_info["tokens_input"] = usage.input_tokens
+            if hasattr(usage, "output_tokens"): extra_info["tokens_output"] = usage.output_tokens
         return response, extra_info
 
     def _validate_response(self, response: Any) -> None:
-        if not response.choices:
-            raise ValueError("Generated response has no choices.")
+        if not response.output:
+            raise ValueError("Generated response has no output.")

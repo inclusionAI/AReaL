@@ -92,7 +92,7 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, Any]]:
+    def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, int | float | str | None]]:
         """Generate response from input
 
         Args:
@@ -109,7 +109,7 @@ class BaseAgent(ABC):
         """Validate the response, raise ValueError if invalid"""
         pass
 
-    def act(self, observation: Any) -> Tuple[Any, Dict[str, Any]]:
+    def act(self, observation: Any) -> Tuple[Any, Dict[str, int | float | str | None]]:
         """Main interface to get action from agent
 
         Args:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from PIL import Image
 
@@ -12,13 +12,12 @@ from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-
 class OpenAIVisionQATask(VisionQATask):
     """vision qa task for OpenAI Responses API"""
 
     def __init__(self, task_id: str, task_prompt: str, task_answer: str,
                  task_image_path: str | None, save_dir: Path | str,
-                 tool_functions: Optional[Dict[str, Any]] = None, **kwargs):
+                 tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None, **kwargs):
         super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer,
                          task_image_path=task_image_path, save_dir=save_dir,
                          tool_functions=tool_functions, **kwargs)
@@ -26,51 +25,51 @@ class OpenAIVisionQATask(VisionQATask):
         input_items: List[Dict[str, Any]] = []
         if self.text_only:
             logger.info("Initializing OpenAIVisionQATask in text only mode.")
-            input_items.append({
-                "role": "user",
-                "content": [{"type": "input_text", "text": self.task_prompt}],
-            })
+            content = [{"type": "input_text", "text": self.task_prompt}]
         else:
             image = self.image_list[0]
             image_url = image_to_data_url(image)
             self.image_url_map[image_url] = self.task_image_path
-            input_items.append({
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": self.task_prompt},
-                    {"type": "input_text", "text": "Observation 0:"},
-                    {"type": "input_image", "image_url": image_url},
-                ],
-            })
+            content = [
+                {"type": "input_text", "text": self.task_prompt},
+                {"type": "input_text", "text": "Observation 0:"},
+                {"type": "input_image", "image_url": image_url},
+            ]
+        input_items.append({"role": "user", "content": content})
         self.contents = {"input": input_items, "previous_response_id": None}
 
     def _append_tool_message(
-        self, tool_call_id: Optional[str], payload: Dict[str, Any]
+        self,
+        tool_call_id: Optional[str],
+        payload: Dict[str, str | Dict[str, str]] | List[Dict[str, str]],
     ) -> None:
-        text = json.dumps(payload, ensure_ascii=True)
-        self.contents["input"].append(
-            {
-                "type": "function_call_output",
-                "call_id": tool_call_id,
-                "output": text,
-            }
-        )
+        output = payload if isinstance(payload, list) else json.dumps(payload, ensure_ascii=True)
+        self.contents["input"].append({
+            "type": "function_call_output", "call_id": tool_call_id, "output": output,
+        })
 
     def append_prompt(self, text: str) -> None:
         self.contents["input"].append(
             {"role": "user", "content": [{"type": "input_text", "text": text}]}
         )
 
-    def _stringify_observation_item(self, item: Any) -> Any:
+    def _stringify_observation_item(self, item: object) -> object:
         if not isinstance(item, dict):
             return item
 
         if item.get("type") == "function_call_output":
-            return {
-                "type": "function_call_output",
-                "call_id": item["call_id"],
-                "output": item["output"],
-            }
+            output = item["output"]
+            if isinstance(output, list):
+                parts: List[Dict[str, str]] = []
+                for part in output:
+                    if part.get("type") == "input_image":
+                        image_url = part["image_url"]
+                        image_path = self.image_url_map[image_url] 
+                        parts.append({"type": "input_image", "image_path": image_path or "<omitted>"})
+                    else:
+                        parts.append(part)
+                output = parts
+            return {"type": "function_call_output", "call_id": item["call_id"], "output": output}
 
         output: Dict[str, Any] = {"role": item["role"], "content": []}
         if "tool_call_id" in item:
@@ -79,22 +78,13 @@ class OpenAIVisionQATask(VisionQATask):
             part_type = part["type"]
             if part_type == "input_image":
                 image_url = part["image_url"]
-                image_path = (
-                    self.image_url_map[image_url]
-                    if image_url in self.image_url_map
-                    else ""
-                )
-                output["content"].append(
-                    {
-                        "type": "input_image",
-                        "image_path": image_path or "<omitted>",
-                    }
-                )
+                image_path = self.image_url_map[image_url]
+                output["content"].append({"type": "input_image", "image_path": image_path or "<omitted>"})
             else:
                 output["content"].append(part)
         return output
 
-    def parse_action(self, step: int, action: Any, extra_info: Dict[str, Any]):
+    def parse_action(self, step: int, action: object, extra_info: Dict[str, int | float | str | None]):
         """update task contents from action"""
         output_text = ""
         thinking_process = ""
@@ -113,7 +103,7 @@ class OpenAIVisionQATask(VisionQATask):
                         output_text += part.text
             elif item.type == "function_call":
                 raw_arguments = item.arguments
-                arguments: Dict[str, Any] = {}
+                arguments: Dict[str, str | int] = {}
                 if isinstance(raw_arguments, str):
                     if raw_arguments:
                         try:
@@ -151,13 +141,11 @@ class OpenAIVisionQATask(VisionQATask):
         image_bytes: bytes,
         image_index: int,
     ) -> None:
-        payload = {"image_ref": {f"Observation {image_index}": image_name}}
-        for call in tool_calls:
-            self._append_tool_message(call.call_id, payload)
         image_url = image_to_data_url(image)
         self.image_url_map[image_url] = image_path
-        content = [
+        output = [
             {"type": "input_text", "text": f"Observation {image_index}:"},
             {"type": "input_image", "image_url": image_url},
         ]
-        self.contents["input"].append({"role": "user", "content": content})
+        for call in tool_calls:
+            self._append_tool_message(call.call_id, output)

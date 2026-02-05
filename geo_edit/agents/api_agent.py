@@ -34,7 +34,7 @@ class APIBasedAgent(BaseAgent):
         else:
             raise NotImplementedError(f"Model type {self.config.model_type} not supported yet.")
 
-    def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, Any]]:
+    def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, int | float | str | None]]:
         gen_kwargs = self.config.generate_config
         extra_info = {}
         contents = model_input

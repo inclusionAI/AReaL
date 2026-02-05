@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from PIL import Image
 
@@ -15,7 +15,7 @@ class GoogleVisionQATask(VisionQATask):
 
     def __init__(self, task_id: str, task_prompt: str, task_answer: str,
                  task_image_path: str | None, save_dir: Path | str,
-                 tool_functions: Optional[Dict[str, Any]] = None, **kwargs):
+                 tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None, **kwargs):
         super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer,
                          task_image_path=task_image_path, save_dir=save_dir,
                          tool_functions=tool_functions, **kwargs)
@@ -67,7 +67,7 @@ class GoogleVisionQATask(VisionQATask):
             }
         return item
 
-    def parse_action(self, step: int, action: Any, extra_info: Dict[str, Any]):
+    def parse_action(self, step: int, action: Any, extra_info: Dict[str, int | float | str | None]):
         """update task contents from action"""
         self.contents.append(action)
         thinking_process = ""

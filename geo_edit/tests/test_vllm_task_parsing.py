@@ -9,24 +9,33 @@ from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
 def _make_tool_call(call_id: str, name: str, arguments: dict):
     return SimpleNamespace(
         id=call_id,
-        type="function",
-        function=SimpleNamespace(
-            name=name,
-            arguments=json.dumps(arguments),
-        ),
+        call_id=call_id,
+        type="function_call",
+        name=name,
+        arguments=json.dumps(arguments),
     )
 
 
-def _make_response(content: str, tool_calls=None, tokens_used: int = 5):
-    message = SimpleNamespace(
-        content=content,
-        tool_calls=tool_calls,
-        role="assistant",
-    )
-    choice = SimpleNamespace(message=message)
+def _make_message_output(content: str):
+    part = SimpleNamespace(type="output_text", text=content)
+    return SimpleNamespace(type="message", content=[part])
+
+
+def _make_response(content: str | None, tool_calls=None, tokens_used: int = 5):
+    output_items = []
+    if content is not None:
+        output_items.append(_make_message_output(content))
+    if tool_calls:
+        output_items.extend(tool_calls)
     return SimpleNamespace(
-        choices=[choice],
-        usage=SimpleNamespace(total_tokens=tokens_used),
+        output=output_items,
+        output_text=content,
+        usage=SimpleNamespace(
+            input_tokens=max(tokens_used - 1, 0),
+            output_tokens=1,
+            total_tokens=tokens_used,
+        ),
+        id="resp_123",
     )
 
 
@@ -58,7 +67,7 @@ def test_vllm_task_parses_tool_calls(tmp_path):
     assert tool_calls[0].name == "draw_line"
     assert tool_calls[0].args == arguments
     assert tool_calls[0].call_id == "call_abc123"
-    assert task.contents[-1]["role"] == "assistant"
+    assert task.contents["input"][-1]["type"] == "function_call"
     assert task.conversation_history[0]["function_call"][0][0] == "draw_line"
     assert task.conversation_history[0]["thinking_process"] == "Need to draw a line."
     assert task.conversation_history[0]["output_text"] == ""
@@ -67,7 +76,7 @@ def test_vllm_task_parses_tool_calls(tmp_path):
     observation = task.conversation_history[0]["observation"]
     user_message = next(item for item in observation if item.get("role") == "user")
     image_part = next(
-        part for part in user_message["content"] if part.get("type") == "image_url"
+        part for part in user_message["content"] if part.get("type") == "input_image"
     )
     assert image_part["image_path"] == str(image_path)
 
@@ -75,8 +84,8 @@ def test_vllm_task_parses_tool_calls(tmp_path):
     assert len(task.image_list) == 2
     tool_result_messages = [
         message
-        for message in task.contents
-        if message.get("role") == "tool"
+        for message in task.contents["input"]
+        if message.get("type") == "function_call_output"
     ]
     assert tool_result_messages
 
