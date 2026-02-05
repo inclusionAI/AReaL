@@ -12,7 +12,6 @@ Note: These tests require GPU and are marked as slow.
 import pytest
 import torch
 
-from areal.engine.ppo.actor import grpo_loss_fn
 from areal.infra.platforms import current_platform
 from areal.tests.experimental.archon.utils import (
     ComparisonMetrics,
@@ -20,6 +19,7 @@ from areal.tests.experimental.archon.utils import (
     compare_tensors,
     create_grpo_batch,
 )
+from areal.trainer.ppo.actor import grpo_loss_fn
 from areal.utils.functional import gather_logprobs_entropy
 
 # Skip if no CUDA available

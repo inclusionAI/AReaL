@@ -1,9 +1,9 @@
 import re
 import sys
 
+from areal import PPOTrainer
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
-from areal.experimental.trainer import PPOTrainer
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 
 

@@ -207,7 +207,7 @@ See [CLI Reference](../cli_reference.md) for configuration options, and
 ## The PPOTrainer: Controller-Based Training
 
 The
-[`PPOTrainer`](https://github.com/inclusionAI/AReaL/blob/main/areal/experimental/trainer/rl.py)
+[`PPOTrainer`](https://github.com/inclusionAI/AReaL/blob/main/areal/trainer/rl_trainer.py)
 orchestrates distributed training by initializing the scheduler and creating controllers
 for actors (policy/critic) and rollout workers.
 
@@ -426,7 +426,7 @@ directly from rollout workers, avoiding controller memory overhead.
 ### Training Workers: Algorithm Implementation
 
 On each training worker,
-[`FSDPPPOActor`](https://github.com/inclusionAI/AReaL/blob/main/areal/engine/ppo/actor.py)
+[`FSDPPPOActor`](https://github.com/inclusionAI/AReaL/blob/main/areal/trainer/ppo/actor.py)
 implements the GRPO/PPO algorithm:
 
 **Algorithm Methods:**
@@ -460,7 +460,7 @@ algorithms, see
 ### The Training Loop
 
 The `trainer.train()` method orchestrates the complete loop. See
-[`PPOTrainer.train()`](https://github.com/inclusionAI/AReaL/blob/main/areal/experimental/trainer/rl.py)
+[`PPOTrainer.train()`](https://github.com/inclusionAI/AReaL/blob/main/areal/trainer/rl_trainer.py)
 for the full implementation:
 
 ```python
@@ -518,7 +518,7 @@ The weight sync process in `PPOTrainer.train()` follows this pattern:
 1. Resume rollout with updated weights with re-computed KV cache
 
 See
-[`PPOTrainer.train()`](https://github.com/inclusionAI/AReaL/blob/main/areal/experimental/trainer/rl.py)
+[`PPOTrainer.train()`](https://github.com/inclusionAI/AReaL/blob/main/areal/trainer/rl_trainer.py)
 lines 861-874 for the full implementation.
 
 ## Monitoring and Utilities
@@ -581,7 +581,7 @@ from rank 0. At each training step, `PPOTrainer` collects metrics from all compo
 and commits them:
 
 ```python
-# areal/experimental/trainer/rl.py
+# areal/trainer/rl_trainer.py
 stats = self.actor.export_stats()         # Training metrics
 stats.update(self.rollout.export_stats()) # Rollout metrics
 self.stats_logger.commit(epoch, step, global_step, stats)  # → wandb/tensorboard

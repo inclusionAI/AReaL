@@ -2,8 +2,8 @@ import sys
 
 from datasets import load_dataset
 
+from areal import PPOTrainer
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.experimental.trainer import PPOTrainer
 from areal.reward import get_math_verify_worker
 from areal.utils.hf_utils import load_hf_tokenizer
 

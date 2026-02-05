@@ -121,9 +121,8 @@ from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
 if TYPE_CHECKING:
+    from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
     from areal.api.scheduler_api import Scheduler
-    from areal.engine.ppo.actor import PPOActorConfig
-    from areal.engine.ppo.critic import PPOCriticConfig
 
 
 @dataclasses.dataclass
@@ -1639,7 +1638,7 @@ class FSDPPPOActor(FSDPEngine):
     """PPO Actor implementation using FSDP backend."""
 
     def __init__(self, config: PPOActorConfig):
-        from areal.engine.ppo.actor import PPOActor
+        from areal.trainer.ppo.actor import PPOActor
 
         super().__init__(config)
         self.actor = PPOActor(config, self)
@@ -1657,7 +1656,7 @@ class FSDPPPOActor(FSDPEngine):
 
     @classmethod
     def as_controller(cls, config: PPOActorConfig, scheduler: Scheduler):
-        from areal.engine.ppo.actor import PPOActorController
+        from areal.trainer.ppo.actor import PPOActorController
 
         return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
 
@@ -1666,7 +1665,7 @@ class FSDPPPOCritic(FSDPEngine):
     """PPO Critic implementation using FSDP backend."""
 
     def __init__(self, config: PPOCriticConfig):
-        from areal.engine.ppo.critic import PPOCritic
+        from areal.trainer.ppo.critic import PPOCritic
 
         super().__init__(config)
         self.critic = PPOCritic(config, self)
@@ -1680,7 +1679,7 @@ class FSDPPPOCritic(FSDPEngine):
 
     @classmethod
     def as_controller(cls, config: PPOCriticConfig, scheduler: Scheduler):
-        from areal.engine.ppo.critic import PPOCriticController
+        from areal.trainer.ppo.critic import PPOCriticController
 
         return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
 
@@ -1689,7 +1688,7 @@ class FSDPLMEngine(FSDPEngine):
     """Language model engine for SFT using FSDP backend."""
 
     def __init__(self, config: TrainEngineConfig):
-        from areal.engine.sft.lm_engine import LMEngine
+        from areal.trainer.sft.lm_engine import LMEngine
 
         super().__init__(config)
         self.lm_engine = LMEngine(self)
@@ -1702,7 +1701,7 @@ class FSDPLMEngine(FSDPEngine):
 
     @classmethod
     def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
-        from areal.engine.sft.lm_engine import LMController
+        from areal.trainer.sft.lm_engine import LMController
 
         return LMController(train_engine=cls, config=config, scheduler=scheduler)
 
@@ -1713,7 +1712,7 @@ class FSDPRWEngine(FSDPEngine):
     def __init__(self, config: TrainEngineConfig):
         from copy import deepcopy
 
-        from areal.engine.rw.rw_engine import RWEngine
+        from areal.trainer.rw.rw_engine import RWEngine
 
         super().__init__(config)
         self.rw_engine = RWEngine(self)
@@ -1731,6 +1730,6 @@ class FSDPRWEngine(FSDPEngine):
 
     @classmethod
     def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
-        from areal.engine.rw.rw_engine import RWController
+        from areal.trainer.rw.rw_engine import RWController
 
         return RWController(train_engine=cls, config=config, scheduler=scheduler)

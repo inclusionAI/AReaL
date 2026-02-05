@@ -16,7 +16,7 @@ In the SFT example, we see that the loaded data is directly passed to the `train
 method:
 
 ```python
-# areal/experimental/trainer/sft.py
+# areal/trainer/sft_trainer.py
 for global_step in range(start_step, max_steps):
     batch = self._load_bcast_from(data_generator)
     self.actor.train_lm(batch)
@@ -59,7 +59,7 @@ def get_gsm8k_sft_dataset(
 In the GRPO example, the loaded data is first used for inference rather than training:
 
 ```python
-# areal/experimental/trainer/rl.py
+# areal/trainer/rl_trainer.py
 self.train_dataloader = self._create_dataloader(
     train_dataset,
     dataset_config=self.config.train_dataset,

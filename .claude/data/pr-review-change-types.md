@@ -20,16 +20,16 @@ ______________________________________________________________________
 
 ## HIGH Level (Recommend Opus)
 
-| Change Type           | File Path Pattern             | Code Pattern                                                                     |
-| --------------------- | ----------------------------- | -------------------------------------------------------------------------------- |
-| **DISTRIBUTED_COMM**  | -                             | `all_reduce`, `all_gather`, `reduce_scatter`, `all_to_all`, `dist.`              |
-| **DTENSOR**           | -                             | `DTensor`, `DeviceMesh`, `Shard(`, `Replicate(`, `Partial(`, `distribute_tensor` |
-| **MOE_LAYER**         | `moe/`                        | `expert`, `token_dispatch`, `grouped_mm`, `MoE`                                  |
-| **EP_ETP**            | -                             | `ExpertParallel`, `TensorParallel`, `ExpertTensorParallel`, `ep_size`, `etp`     |
-| **TENSOR_PARALLEL**   | -                             | `ColwiseParallel`, `RowwiseParallel`, `parallelize_module`                       |
-| **SEQUENCE_PARALLEL** | -                             | `SequenceParallel`, `context_parallel`, `Ulysses`, `cp_size`                     |
-| **ASYNC_CONCURRENT**  | -                             | `async def`, `await`, `asyncio`, `threading.Lock`, `aiofiles`                    |
-| **TRAINER_CORE**      | `areal/experimental/trainer/` | `PPOTrainer`, `SFTTrainer`, `trainer.train`                                      |
+| Change Type           | File Path Pattern | Code Pattern                                                                     |
+| --------------------- | ----------------- | -------------------------------------------------------------------------------- |
+| **DISTRIBUTED_COMM**  | -                 | `all_reduce`, `all_gather`, `reduce_scatter`, `all_to_all`, `dist.`              |
+| **DTENSOR**           | -                 | `DTensor`, `DeviceMesh`, `Shard(`, `Replicate(`, `Partial(`, `distribute_tensor` |
+| **MOE_LAYER**         | `moe/`            | `expert`, `token_dispatch`, `grouped_mm`, `MoE`                                  |
+| **EP_ETP**            | -                 | `ExpertParallel`, `TensorParallel`, `ExpertTensorParallel`, `ep_size`, `etp`     |
+| **TENSOR_PARALLEL**   | -                 | `ColwiseParallel`, `RowwiseParallel`, `parallelize_module`                       |
+| **SEQUENCE_PARALLEL** | -                 | `SequenceParallel`, `context_parallel`, `Ulysses`, `cp_size`                     |
+| **ASYNC_CONCURRENT**  | -                 | `async def`, `await`, `asyncio`, `threading.Lock`, `aiofiles`                    |
+| **TRAINER_CORE**      | `areal/trainer/`  | `PPOTrainer`, `SFTTrainer`, `trainer.train`                                      |
 
 ## MEDIUM Level (Use Sonnet)
 
@@ -142,7 +142,7 @@ ______________________________________________________________________
 
 **Trainer Core**:
 
-- `areal/experimental/trainer/`
+- `areal/trainer/`
 
 **Training Engine Core** (excludes FSDP/Megatron which have their own categories):
 

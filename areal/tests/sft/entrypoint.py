@@ -4,9 +4,9 @@ import sys
 
 import torch.distributed as dist
 
+from areal import SFTTrainer
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.dataset import get_custom_dataset
-from areal.experimental.trainer import SFTTrainer
 from areal.utils import stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
 

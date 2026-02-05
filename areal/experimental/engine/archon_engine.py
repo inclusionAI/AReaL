@@ -1202,7 +1202,7 @@ class ArchonPPOActor(ArchonEngine):
     """PPO Actor implementation using Archon backend."""
 
     def __init__(self, config):
-        from areal.engine.ppo.actor import PPOActor
+        from areal.trainer.ppo.actor import PPOActor
 
         super().__init__(config)
         self.actor = PPOActor(config, self)
@@ -1220,7 +1220,7 @@ class ArchonPPOActor(ArchonEngine):
 
     @classmethod
     def as_controller(cls, config, scheduler: Scheduler):
-        from areal.engine.ppo.actor import PPOActorController
+        from areal.trainer.ppo.actor import PPOActorController
 
         return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
 
@@ -1229,7 +1229,7 @@ class ArchonPPOCritic(ArchonEngine):
     """PPO Critic implementation using Archon backend."""
 
     def __init__(self, config):
-        from areal.engine.ppo.critic import PPOCritic
+        from areal.trainer.ppo.critic import PPOCritic
 
         super().__init__(config)
         self.critic = PPOCritic(config, self)
@@ -1243,7 +1243,7 @@ class ArchonPPOCritic(ArchonEngine):
 
     @classmethod
     def as_controller(cls, config, scheduler: Scheduler):
-        from areal.engine.ppo.critic import PPOCriticController
+        from areal.trainer.ppo.critic import PPOCriticController
 
         return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
 
@@ -1252,7 +1252,7 @@ class ArchonLMEngine(ArchonEngine):
     """Archon-based LM Engine for SFT training."""
 
     def __init__(self, config: TrainEngineConfig):
-        from areal.engine.sft.lm_engine import LMEngine
+        from areal.trainer.sft.lm_engine import LMEngine
 
         super().__init__(config)
         self.lm_engine = LMEngine(self)
@@ -1265,6 +1265,6 @@ class ArchonLMEngine(ArchonEngine):
 
     @classmethod
     def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
-        from areal.engine.sft.lm_engine import LMController
+        from areal.trainer.sft.lm_engine import LMController
 
         return LMController(train_engine=cls, config=config, scheduler=scheduler)
