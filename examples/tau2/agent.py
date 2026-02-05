@@ -8,7 +8,10 @@ import asyncio
 import time
 from typing import Any
 
-from litellm import acompletion, register_model
+from litellm import register_model
+from litellm.main import ModelResponse
+from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletion
 from tau2.agent.llm_agent import LLMAgent, LLMAgentState, LLMSoloAgent, LocalAgent
 from tau2.data_model.tasks import Task
 from tau2.environment.environment import Environment
@@ -55,23 +58,50 @@ def think(thoughts: str):
 
 
 class Tau2Runner:
-    """Runner for Tau2 environment using litellm acompletion via proxy."""
+    """Runner for Tau2 environment using AsyncOpenAI clients."""
 
     def __init__(
         self,
         econfig: Tau2EnvConfig,
         gen_args: dict,
-        base_url: str,
+        agent_client: AsyncOpenAI,
+        user_client: AsyncOpenAI | None = None,
     ):
         self.econfig = econfig
         self.gen_args = gen_args
-        self.base_url = base_url
+        self.agent_client = agent_client
+        self.user_client = user_client
         self.domain = econfig.domain
         self.solo_mode = econfig.solo_mode
 
     def _get_environment(self) -> Environment:
         environment_constructor = registry.get_env_constructor(self.domain)
         return environment_constructor(solo_mode=self.solo_mode)
+
+    @staticmethod
+    def _convert_to_model_response(completion: ChatCompletion) -> ModelResponse:
+        """Convert OpenAI ChatCompletion to LiteLLM ModelResponse format.
+
+        tau2-bench expects ModelResponse format from litellm, so we need to convert.
+        """
+        return ModelResponse(**completion.model_dump())
+
+    @staticmethod
+    def _clean_messages(messages: list[dict]) -> list[dict]:
+        """Clean messages for OpenAI API compatibility.
+
+        - Remove tool_calls=None (OpenAI API doesn't accept None)
+        - Ensure proper message format
+        """
+        cleaned = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                msg = msg.copy()
+                # Remove tool_calls if it's None
+                if msg.get("tool_calls") is None:
+                    msg = {k: v for k, v in msg.items() if k != "tool_calls"}
+            cleaned.append(msg)
+        return cleaned
 
     def _get_agent_and_user(self, task: Task, env: Environment, run_info: Tau2RunInfo):
         agent_policy_doc = env.get_policy()
@@ -84,26 +114,67 @@ class Tau2Runner:
             tools.append(Tool(think))
 
         async def _acompletion_via_proxy(*args, **kwargs):
-            """Completion function that uses litellm acompletion via proxy."""
+            """Completion function that uses AsyncOpenAI client via proxy."""
             start_time = time.perf_counter()
-            kwargs.update(
-                extra_body={"chat_template_kwargs": {"enable_thinking": True}},
-            )
+
+            # Remove litellm-specific arguments not supported by OpenAI
+            kwargs.pop("num_retries", None)
+
+            # Add extra_body for chat template kwargs
+            extra_body = kwargs.pop("extra_body", {})
+            extra_body["chat_template_kwargs"] = {"enable_thinking": True}
+            kwargs["extra_body"] = extra_body
+
+            # Clean messages
+            if "messages" in kwargs:
+                kwargs["messages"] = self._clean_messages(kwargs["messages"])
+
             try:
-                return await acompletion(*args, base_url=self.base_url, **kwargs)
-            except ValueError as e:
-                logger.warning(f"ValueError in _acompletion_via_proxy: {e}")
+                completion = await self.agent_client.chat.completions.create(**kwargs)
+                # Convert to ModelResponse for tau2 compatibility
+                return self._convert_to_model_response(completion)
+            except Exception as e:
+                logger.error(f"Agent LLM error: {type(e).__name__}: {e}")
                 raise
             finally:
                 run_info.agent_time.append(time.perf_counter() - start_time)
 
-        async def _acompletion_with_base_url(*args, **kwargs):
-            """Completion function for user simulator using external LLM."""
+        async def _acompletion_with_user_client(*args, **kwargs):
+            """Completion function for user simulator using AsyncOpenAI client."""
             start_time = time.perf_counter()
+
+            # Remove litellm-specific arguments
+            kwargs.pop("num_retries", None)
+
+            # Set default top_p if not provided
+            if "top_p" not in kwargs:
+                kwargs["top_p"] = 1.0
+
+            # Clean messages for user simulator
+            if "messages" in kwargs:
+                cleaned = []
+                for msg in kwargs["messages"]:
+                    if isinstance(msg, dict):
+                        msg = msg.copy()
+                        # Remove tool_calls if it's None
+                        if msg.get("tool_calls") is None:
+                            msg = {k: v for k, v in msg.items() if k != "tool_calls"}
+                        # Skip tool messages for user simulator
+                        if msg.get("role") == "tool":
+                            continue
+                        # Remove tool_calls from assistant messages for user simulator
+                        if msg.get("role") == "assistant" and "tool_calls" in msg:
+                            msg = {k: v for k, v in msg.items() if k != "tool_calls"}
+                    cleaned.append(msg)
+                kwargs["messages"] = cleaned
+
             try:
-                return await acompletion(
-                    *args, base_url=self.econfig.user_llm_base_url, **kwargs
-                )
+                completion = await self.user_client.chat.completions.create(**kwargs)
+                # Convert to ModelResponse for tau2 compatibility
+                return self._convert_to_model_response(completion)
+            except Exception as e:
+                logger.error(f"User LLM error: {type(e).__name__}: {e}")
+                raise
             finally:
                 run_info.user_time.append(time.perf_counter() - start_time)
 
@@ -130,7 +201,7 @@ class Tau2Runner:
                 instructions=str(task.user_scenario),
                 llm=self.econfig.user_llm,
                 llm_args=self.econfig.user_llm_args,
-                completion_fn=_acompletion_with_base_url,
+                completion_fn=_acompletion_with_user_client,
             )
         return agent, user
 
@@ -225,14 +296,14 @@ class Tau2AgentWorkflow:
     Args:
         econfig: Tau2 environment configuration
         gen_args: Generation arguments (temperature, max_tokens, etc.)
-        timeout: Maximum time allowed for a single episode (default: 7200s)
+        timeout: Maximum time allowed for a single episode (default: 600s)
     """
 
     def __init__(
         self,
         econfig: Tau2EnvConfig | dict | None = None,
         gen_args: dict | None = None,
-        timeout: float = 7200.0,
+        timeout: float = 600.0,
     ):
         if econfig is None:
             econfig = Tau2EnvConfig()
@@ -248,15 +319,19 @@ class Tau2AgentWorkflow:
         """Run a Tau2 simulation episode.
 
         Args:
-            data: Input data containing ask_id, split, and optional econfig/gconfig
+            data: Input data containing task_id, split, and optional econfig/gconfig
             **extra_kwargs: Additional kwargs including:
-                - base_url: Proxy server URL
+                - base_url: Proxy server URL for agent LLM
+                - http_client: Optional httpx.AsyncClient for requests
 
         Returns:
             float: The reward from the simulation
         """
+        import httpx
+
         # Get proxy URL from workflow context
         base_url: str | None = extra_kwargs.get("base_url", None)
+        http_client: httpx.AsyncClient | None = extra_kwargs.get("http_client", None)
 
         if base_url is None:
             raise ValueError("base_url is required for Tau2AgentWorkflow")
@@ -277,11 +352,30 @@ class Tau2AgentWorkflow:
         task_id = data["task_id"]
         task = _get_task(domain=domain, task_id=task_id, split=split)
 
+        # Create AsyncOpenAI client for agent (pointing to proxy server)
+        agent_client = AsyncOpenAI(
+            base_url=base_url,
+            http_client=http_client,
+            api_key="dummy",  # Not used by proxy
+            max_retries=0,
+        )
+
+        # Create AsyncOpenAI client for user simulator (pointing to user LLM server)
+        user_client = None
+        if not econfig.solo_mode and econfig.user_llm_base_url:
+            user_client = AsyncOpenAI(
+                base_url=econfig.user_llm_base_url,
+                api_key="dummy",  # Not used by self-hosted server
+                max_retries=3,
+                timeout=120.0,
+            )
+
         # Create runner and execute
         runner = Tau2Runner(
             econfig=econfig,
             gen_args=gen_args,
-            base_url=base_url,
+            agent_client=agent_client,
+            user_client=user_client,
         )
 
         try:
