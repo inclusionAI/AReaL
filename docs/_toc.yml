@@ -44,4 +44,5 @@ parts:
     - file: reference/metrics_tracking
     - file: reference/alloc_mode
     - file: reference/rollout_workflow
+    - file: reference/agent_workflow
     - file: reference/ai_assisted_dev
