@@ -133,6 +133,11 @@ class Tau2Runner:
                 extra_body = kwargs.pop("extra_body", {})
                 extra_body["chat_template_kwargs"] = {"enable_thinking": True}
                 kwargs["extra_body"] = extra_body
+            else:
+                # User-specific: disable thinking
+                extra_body = kwargs.pop("extra_body", {})
+                extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+                kwargs["extra_body"] = extra_body
 
             # User-specific: set default top_p
             if not is_agent and "top_p" not in kwargs:

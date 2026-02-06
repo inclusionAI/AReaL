@@ -1,6 +1,8 @@
-# CLAUDE.md - AReaL
+# CLAUDE.md
 
-## WHAT: Project Overview
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
 
 AReaL is a distributed RL training framework for LLM alignment via reinforcement
 learning.
@@ -11,7 +13,7 @@ learning.
 
 - `areal/` - Core package
   - `api/` - Config dataclasses, workflow/engine contracts
-  - `engine/` - FSDP2, Megatron, SGLang/vLLM adapters
+  - `engine/` - FSDP2, Megatron, SGLang/vLLM training adapters
   - `workflow/` - RolloutWorkflow implementations
   - `reward/` - Reward functions
   - `dataset/` - Dataset loaders
@@ -19,13 +21,26 @@ learning.
 - `examples/` - Training scripts and configs
 - `docs/` - Jupyter Book source
 
-## WHY: Purpose
+## Architecture
 
-- Enable efficient RL training for LLM alignment at scale
-- Async rollout + distributed training for high throughput
-- Modular design: workflows, engines, rewards, and datasets are independently extensible
+AReaL follows a 4-layer architecture (see `areal/README.md` for details):
 
-## HOW: Core Commands
+1. **API Layer** (`api/`) - Abstract interfaces and dataclasses
+   - `TrainEngine`: SPMD distributed training backend interface
+   - `InferenceEngine`: Streaming LLM inference interface
+   - `RolloutWorkflow`: RL trajectory collection interface
+2. **Backend Layer** (`engine/`) - Adapters for PyTorch FSDP2, Megatron, SGLang, vLLM
+3. **Customization Layer** (`engine/ppo/`, `workflow/`) - Algorithm implementations (PPO,
+   GRPO) and agentic workflows
+4. **Entry Point Layer** (`examples/`) - Training scripts composing components
+
+**Key Abstractions**:
+
+- `RolloutWorkflow.arun_episode(engine, data)` → Async trajectory collection
+- `TrainEngine.train_batch(input_, loss_fn, ...)` → Distributed model update
+- `InferenceEngine.agenerate(req)` → Async generation request
+
+## Core Commands
 
 ```bash
 # Check environment
@@ -48,7 +63,24 @@ uv run pytest areal/tests/test_<topic>.py
 
 # Generate CLI docs
 uv run python docs/generate_cli_docs.py
+
+# Quick start: Single-node GRPO training (downloads GSM8K and Qwen2-1.5B automatically)
+python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml scheduler.type=local
 ```
+
+## GPU Allocation Pattern
+
+The `allocation_mode` parameter controls GPU distribution between inference and training:
+
+```
+allocation_mode=sglang:d<inf_gpus>p1t1+d<train_gpus>p<pp_size>t<tp_size>
+```
+
+Examples:
+
+- `sglang:d12p1t1+d4p1t1` - 12 GPUs inference, 4 GPUs training (DP=4, PP=1, TP=1)
+- `sglang:d96p1t1+d32p1t1` - 96 GPUs inference, 32 GPUs training
+- `megatron:d4p1t2+d4p2t2` - For Megatron backend with tensor/pipeline parallelism
 
 ## Boundaries
 

@@ -380,6 +380,10 @@ def grpo_loss_fn(
     prox_logp_gt = input_data.get("prox_logp")  # Could be None if skipped
 
     entropy = entropy.detach()
+    
+    # Early return if loss_mask is empty (e.g., in PP stages that don't have data)
+    if loss_mask.numel() == 0:
+        return torch.tensor(0.0, device=logprobs.device, requires_grad=True)
 
     # Resolve proximal log-probabilities based on method
     prox_logp = _resolve_proximal_logp(
