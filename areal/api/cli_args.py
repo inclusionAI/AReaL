@@ -456,6 +456,10 @@ class ArchonEngineConfig:
             "choices": ["1F1B", "Interleaved1F1B"],
         },
     )
+    # NOTE: The following three PP layer distribution parameters are advanced options
+    # that most users do not need to configure. The defaults work well for typical cases.
+    # TODO: Consider simplifying or refactoring these parameters in the future.
+    # Currently kept for consistency with Megatron's pipeline parallel configuration.
     pp_layers_per_stage: int | None = field(
         default=None,
         metadata={
