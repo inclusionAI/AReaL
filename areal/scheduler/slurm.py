@@ -33,6 +33,7 @@ from areal.scheduler.exceptions import (
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging, name_resolve, names
 from areal.utils.concurrent import run_async_task
+from areal.utils.fs import validate_shared_path
 from areal.utils.http import get_default_connector
 from areal.utils.launcher import (
     JobState,
@@ -110,6 +111,14 @@ class SlurmScheduler(Scheduler):
         )
         if exp_config is not None:
             self.name_resolve_config = exp_config.cluster.name_resolve
+
+        if self.fileroot:
+            validate_shared_path(self.fileroot, "cluster.fileroot")
+        if self.name_resolve_config.type == "nfs":
+            validate_shared_path(
+                self.name_resolve_config.nfs_record_root,
+                "name_resolve.nfs_record_root",
+            )
 
         # Reconfigure name_resolve and clear old entries
         if self.experiment_name and self.trial_name:

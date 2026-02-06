@@ -8,6 +8,7 @@ import time
 
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names
+from areal.utils.fs import validate_shared_path
 
 logger = logging.getLogger("LauncherUtils")
 
@@ -225,6 +226,13 @@ def validate_config_for_launcher(config):
                 "You should use a yaml config for RL rather than SFT, or "
                 "remove the inference part from `allocation_mode`."
             )
+
+    validate_shared_path(config.cluster.fileroot, "cluster.fileroot")
+    if config.cluster.name_resolve.type == "nfs":
+        validate_shared_path(
+            config.cluster.name_resolve.nfs_record_root,
+            "name_resolve.nfs_record_root",
+        )
 
 
 def validate_config_for_distributed_launcher(config):
