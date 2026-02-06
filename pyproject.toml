@@ -28,7 +28,7 @@ classifiers = [
     #   4 - Beta
     #   5 - Production/Stable
     "Development Status :: 2 - Pre-Alpha",
-    "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.9",
+    "Environment :: GPU :: NVIDIA CUDA :: 12",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
