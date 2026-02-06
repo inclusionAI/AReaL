@@ -85,6 +85,8 @@ helping with code reviews. This guide will help you get started.
 
 1. **Submit a Pull Request**
 
+We suggest applying our provided claude command `/create-pr` whenever possible.
+
 ## Ways to Contribute
 
 ### 🐛 Bug Reports
@@ -133,71 +135,11 @@ issue or open a draft PR to discuss with the core developers before making any c
 changes. Directly opening a PR that conflicts with our future [roadmap](ROADMAP.md) may
 waste your effort.
 
-When opening a PR:
-
-- Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md) and complete the checklist
-- Link to the related issue using `Fixes #123` or `Closes #456`
-- Describe what changed and why (you can use GitHub Copilot summarization)
-- Prefix "wip:" in the PR title or mark it as a draft if it's still work-in-progress
-- List the testing you performed
-- Let AI review first before requesting human reviewers
-
-### 📝 Logging Convention
-
-AReaL uses colored logging to help distinguish log messages from different components.
-When adding new loggers, please follow these conventions:
-
-**Logger Naming:**
-
-- Use **PascalCase** with no spaces or hyphens (e.g., `TrainController`, not
-  `train_controller` or `Train Controller`)
-- Use descriptive names that indicate the component type
-- Use category suffixes: `Scheduler`, `Launcher`, `Workflow`, `Controller`, `Engine`,
-  etc.
-- For per-rank loggers, use the format `[{Component} Rank {N}]` (e.g.,
-  `[FSDPEngine Rank 0]`)
-
-**Example:**
-
-```python
-import logging
-
-# Good - PascalCase, descriptive
-logger = logging.getLogger("TrainController")
-logger = logging.getLogger("RLVRWorkflow")
-logger = logging.getLogger("[FSDPEngine Rank 0]")
-
-# Bad - avoid these patterns
-logger = logging.getLogger(__name__)  # Not descriptive in logs
-logger = logging.getLogger("train controller")  # Has spaces
-logger = logging.getLogger("train_controller")  # Snake case
-```
-
-**Color Scheme by Category:**
-
-| Color           | Category                                    | Examples                                 |
-| --------------- | ------------------------------------------- | ---------------------------------------- |
-| blue            | Infrastructure (Schedulers, Launchers)      | `LocalScheduler`, `RayLauncher`          |
-| white           | Orchestration (Controllers, RPC, Inference) | `TrainController`, `SGLangWrapper`       |
-| light_purple    | RL-specific (Workflows, Rewards, OpenAI)    | `RLVRWorkflow`, `GSM8KReward`            |
-| light_green     | Data/Metrics (Stats, Dataset, Trainers)     | `StatsLogger`, `Dataset`, `RLTrainer`    |
-| light_cyan/cyan | Compute backends (Engines, Platforms)       | `FSDPEngine`, `CUDAPlatform`, `PPOActor` |
-| yellow/red      | Warning/Error levels (always override)      | Any logger at WARNING+ level             |
-
-When adding a new logger, register it in `areal/utils/logging.py` under
-`LOGGER_COLORS_EXACT` or `LOGGER_PATTERNS` to ensure consistent coloring.
-
-Test your logger colors with: `python -m areal.utils.logging`
-
 ## Tips for Using AI-Assisted Coding
 
-- [AGENTS.md](AGENTS.md) is a reference guide for AI coding agents working on AReaL.
-  Before letting AI make any changes, ensure it understands the codebase using
-  `AGENTS.md`.
-
-- You can use the plan mode of coding agents to generate a plan for refactoring or new
-  features. Submit it as a draft PR before making any actual code changes and discuss
-  with the core developers.
+See the full
+[AI-Assisted Development Guide](https://inclusionai.github.io/AReaL/reference/ai_assisted_dev.html)
+for detailed documentation.
 
 ## CI/CD
 
@@ -271,36 +213,49 @@ def test_some_multi_gpu_functionality():
 
 > **NOTE:** The image building CI workflow is experimental and subject to change.
 
-The image building CI runs on the `build-docker-image` branch. Only project members with
-write permissions can push to this branch and open a PR.
+The image building workflow can be triggered manually from any branch by users with
+write permissions to the repository.
 
 **Triggering the Workflow:**
 
-The workflow is triggered when:
+You can trigger the workflow from any branch using either method:
 
-1. A PR from `build-docker-image` to `main` is opened **AND**
-1. The PR is tagged with `new-image`
+1. **Via GitHub UI:**
 
-The workflow will wake up a pinned CPU GCP compute engine instance with 64 vCPUs and 512
-GB memory, run the build job with the code and Dockerfile from the current commit, and
-push the image as `ghcr.io/inclusionai/areal-runtime:dev`. Building the image from
-scratch takes approximately 1-2 hours.
+   - Go to **Actions** → **"Build and Test Docker Image"**
+   - Click **"Run workflow"** dropdown
+   - Select the branch you want to build from
+   - Click **"Run workflow"**
 
-**Testing with the New Image:**
+1. **Via GitHub CLI:**
 
-After successfully building the image:
+   ```bash
+   # Build from main
+   gh workflow run build-docker-image.yml --ref main
 
-1. Remove the `new-image` tag
-1. Add the `safe-to-test` tag to trigger CI tests using the same procedure described
-   above
+   # Build from a feature branch
+   gh workflow run build-docker-image.yml --ref feature/my-changes
 
-Note that our test suite detects the branch name that triggers the workflow. When the
-branch name is `build-docker-image`, it will pull the dev image instead of the stable
-image for testing.
+   # Build from current branch
+   gh workflow run build-docker-image.yml --ref $(git branch --show-current)
+   ```
 
-**Important:** If you add the `safe-to-test` tag without removing `new-image` first,
-both image building and testing workflows will run simultaneously, which is usually
-undesired.
+**Pipeline Stages:**
+
+The workflow executes the following stages sequentially:
+
+1. **Build**: Builds the Docker image and pushes it with `:test` tag
+1. **Test**: Automatically runs the full test suite using the `:test` image
+1. **Promote**: If tests pass, promotes the image by retagging `:test` → `:dev`
+1. **Cleanup**: Always deletes the `:test` image from the registry (success or failure)
+
+Building the image from scratch takes approximately 1-2 hours, plus additional time for
+running the test suite.
+
+**Normal PR Testing:**
+
+The PR-based test workflow (triggered by the `safe-to-test` label) remains unchanged and
+uses the `:dev` image. This allows testing PRs against the last known-good image.
 
 ______________________________________________________________________
 
