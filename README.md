@@ -23,18 +23,22 @@ as much as you'd enjoy real milk tea. Cheers!
 
 - ⚡ **Flexibility**: Seamless customization for
   [multi-turn agentic rollout](https://inclusionai.github.io/AReaL/customization/agent.html)
-  workflows within a single file, and smooth integration with
-  [other agentic tooling frameworks](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html).
-- 📈 **Scalability**: Through algorithm-system co-design, AReaL delivers **stable** fully
-  asynchronous RL training with **industry-leading speed**. AReaL seamlessly adapts to
-  diverse computational environments, scaling from a single node to 1,000+ GPUs.
-- ✨ **Cutting-Edge Performance**: AReaL produces state-of-the-art
-  [math](/blog/AReaL_v0_2.md), [coding](/blog/AReaL_v0_3.md),
-  [search agent](https://github.com/inclusionAI/ASearcher), and
-  [customer service agent](https://arxiv.org/abs/2601.22607) with exceptional
-  capabilities.
+  and integration with
+  [other agentic frameworks](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html).
+- 📈 **Scalability**: **Stable** fully asynchronous RL training with **industry-leading
+  speed**.
+- ✨ **Cutting-Edge Performance**: State-of-the-art [math](/blog/AReaL_v0_2.md),
+  [coding](/blog/AReaL_v0_3.md), [search](https://github.com/inclusionAI/ASearcher), and
+  [customer service agent](https://arxiv.org/abs/2601.22607).
 
 ## 📰 News
+
+**\[2026/02/06\]** Delighted to introduce **EigenData** - a self-evolving data synthesis
+engine. Combined with AReaL's agentic RL training, the 235B MoE model surpasses Gemini
+3.0 Pro and GPT 5.2 on $\\tau^2$-bench! Check out
+[paper](https://arxiv.org/pdf/2601.22607),
+[code](https://github.com/inclusionAI/AReaL/tree/main/examples/tau2), and the
+[announcement on X](https://x.com/Eigen_AI_Labs/status/2018561648022130805?s=20).
 
 **\[2026/01/15\]** Congrats to our friends at [CAMEL-AI](https://www.camel-ai.org/) for
 open-sourcing [SETA](https://github.com/camel-ai/seta), their terminal agent RL project
@@ -49,12 +53,12 @@ and the [announcement on X](https://x.com/guohao_li/status/2009678513574408636).
 [our documentation](https://inclusionai.github.io/AReaL/tutorial/installation_npu.html)
 to get started, and feel free to report any issues!
 
+<details>
+<summary><b>📋 Previous Releases</b></summary>
+
 **\[2025/08/30\]** Introducing ASearcher, a state-of-the-art search agent built with
 AReaL's end-to-end asynchronous RL training. Check out the [paper](assets/paper.pdf) and
 the [open-source repository](https://github.com/inclusionAI/ASearcher)!
-
-<details>
-<summary><b>📋 Previous Releases</b></summary>
 
 **\[2025/07/31\] (AReaL-lite)** We introduce AReaL-lite, a **lightweight** version of
 AReaL designed specifically for AI researchers and rapid prototyping. AReaL-lite
