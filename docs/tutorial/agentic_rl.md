@@ -147,12 +147,12 @@ if __name__ == "__main__":
 ```
 
 The full working OpenAI Agents training example is located in
-[**`examples/experimental/proxy/`**](https://github.com/inclusionAI/AReaL/blob/main/examples/experimental/proxy/).
+[**`examples/agent_workflow/`**](https://github.com/inclusionAI/AReaL/blob/main/examples/agent_workflow/).
 To run the example on a single node:
 
 ```bash
-python3 examples/experimental/proxy/train.py \
-    --config examples/experimental/proxy/config.yaml \
+python3 examples/agent_workflow/train.py \
+    --config examples/agent_workflow/config.yaml \
     scheduler.type=local workflow=my_agent.MathAgent
 ```
 

@@ -23,17 +23,22 @@ as much as you'd enjoy real milk tea. Cheers!
 
 - ⚡ **Flexibility**: Seamless customization for
   [multi-turn agentic rollout](https://inclusionai.github.io/AReaL/customization/agent.html)
-  workflows within a single file, and smooth integration with
-  [other agentic tooling frameworks](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html).
-- 📈 **Scalability**: Through algorithm-system co-design, AReaL delivers **stable** fully
-  asynchronous RL training with **industry-leading speed**. AReaL seamlessly adapts to
-  diverse computational environments, scaling from a single node to 1,000+ GPUs.
-- ✨ **Cutting-Edge Performance**: AReaL produces state-of-the-art
-  [math](/blog/AReaL_v0_2.md), [coding](/blog/AReaL_v0_3.md), and
-  [search agents](https://github.com/inclusionAI/ASearcher) with exceptional
-  capabilities.
+  with
+  [other agentic frameworks](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html).
+- 📈 **Scalability**: **Stable** fully asynchronous RL training with **industry-leading
+  speed**.
+- ✨ **Cutting-Edge Performance**: State-of-the-art [math](/blog/AReaL_v0_2.md),
+  [coding](/blog/AReaL_v0_3.md), [search](https://github.com/inclusionAI/ASearcher), and
+  [customer service](https://arxiv.org/abs/2601.22607) agents.
 
 ## 📰 News
+
+**\[2026/02/06\]** We are delighted to introduce **EigenData**, a self-evolving data
+synthesis engine. Combined with RL training on AReaL, the 235B MoE model surpasses
+Gemini 3.0 Pro and GPT 5.2 on $\\tau^2$-bench! Check out the
+[paper](https://arxiv.org/pdf/2601.22607),
+[code](https://github.com/inclusionAI/AReaL/tree/main/examples/tau2), and
+[announcement on X](https://x.com/Eigen_AI_Labs/status/2018561648022130805?s=20).
 
 **\[2026/01/15\]** Congrats to our friends at [CAMEL-AI](https://www.camel-ai.org/) for
 open-sourcing [SETA](https://github.com/camel-ai/seta), their terminal agent RL project
@@ -48,12 +53,12 @@ and the [announcement on X](https://x.com/guohao_li/status/2009678513574408636).
 [our documentation](https://inclusionai.github.io/AReaL/tutorial/installation_npu.html)
 to get started, and feel free to report any issues!
 
+<details>
+<summary><b>📋 Previous Releases</b></summary>
+
 **\[2025/08/30\]** Introducing ASearcher, a state-of-the-art search agent built with
 AReaL's end-to-end asynchronous RL training. Check out the [paper](assets/paper.pdf) and
 the [open-source repository](https://github.com/inclusionAI/ASearcher)!
-
-<details>
-<summary><b>📋 Previous Releases</b></summary>
 
 **\[2025/07/31\] (AReaL-lite)** We introduce AReaL-lite, a **lightweight** version of
 AReaL designed specifically for AI researchers and rapid prototyping. AReaL-lite
@@ -82,62 +87,16 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 
 </details>
 
-## 📚 Examples
-
-| Task                                             | Description                                                                          | Performance                                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| **[Math](examples/math/)**                       | Mathematical problem solving (SFT, GRPO, or PPO)                                     | TBA                                                                               |
-| **[Multi-Turn Math](examples/multi_turn_math/)** | Iterative mathematical problem solving with self-correction                          | [Training Curve](examples/multi_turn_math/reward_curve.png)                       |
-| **[LoRA Math](examples/lora/)**                  | Math Agent Trained With LoRA                                                         | TBA                                                                               |
-| **[VLM Math](examples/vlm/)**                    | CLEVR visual counting tasks                                                          | TBA                                                                               |
-| **[Reasoning](examples/countdown/)**             | Countdown numbers game with custom rewards                                           | [Training Curve](/examples/countdown/countdown_training_curve.png)                |
-| **[Search Agent](examples/search_agent/)**       | An agent with end-to-end reasoning, search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)                        |
-| **[Tool-Integrated Reasoning](examples/tir/)**   | An agent that can invoke tools during reasoning                                      | [TIR Example](https://github.com/inclusionAI/AReaL/tree/main/examples/tir)        |
-| **[RLHF](examples/alignment/)**                  | RLHF for LLM Alignment                                                               | [RLHF Example](https://github.com/inclusionAI/AReaL/tree/main/examples/alignment) |
-
-## 🔧 Support Matrix
-
-### 🧠 Algorithms
-
-| Algorithm                | Documentation                         | Paper                                          | Configuration                                                |
-| ------------------------ | ------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
-| **GRPO**                 | [📖 Docs](docs/algorithms/grpo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)            |
-| **GSPO**                 | [📖 Docs](docs/algorithms/gspo.md)    | [📄 Paper](https://arxiv.org/abs/2507.18071)   | [🔗 GSM8K Example](examples/math/gsm8k_gspo.yaml)            |
-| **PPO**                  | -                                     | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)             |
-| **DAPO**                 | [📖 Docs](docs/algorithms/dapo.md)    | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/math/gsm8k_dapo_dynamic_bs.yaml) |
-| **LitePPO**              | [📖 Docs](docs/algorithms/litePPO.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | [🔗 GSM8K Example](examples/math/gsm8k_liteppo.yaml)         |
-| **Dr.GRPO**              | [📖 Docs](docs/algorithms/dr.GRPO.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | [🔗 GSM8K Example](examples/math/gsm8k_drgrpo.yaml)          |
-| **REINFORCE++**          | -                                     | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)       |
-| **RLOO**                 | [📖 Docs](docs/algorithms/rloo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)            |
-| **RLHF Reward Modeling** | -                                     | -                                              | [🔗 RLHF Example](examples/alignment/)                       |
-| **SFT**                  | -                                     | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)               |
-
-### Models
-
-| Model Family               | Megatron | PyTorch FSDP | Notes                                                    |
-| -------------------------- | -------- | ------------ | -------------------------------------------------------- |
-| **Qwen2/3**                | ✅       | ✅           | -                                                        |
-| **Qwen3-MoE**              | ✅       | ✅           | -                                                        |
-| **Qwen2.5-VL**             | ❌       | ✅           | Vision-language model                                    |
-| **Qwen3-VL**               | ❌       | ✅           | Vision-language model                                    |
-| **Gemma 3**                | ❌       | ✅           | Vision-language model                                    |
-| **Other Hugging Face LLM** | ❌       | ✅           | Compatibility depending on the version of `transformers` |
-
-### Training Backends
-
-| Backend          | DP          | Tensor Parallel | Sequence Parallel within TP | Context Parallel | Pipeline Parallel | Expert Parallel | 1D Sequence Packing | LoRA |
-| ---------------- | ----------- | --------------- | --------------------------- | ---------------- | ----------------- | --------------- | ------------------- | ---- |
-| **Megatron**     | ✅ (ZeRO-1) | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
-| **PyTorch FSDP** | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ❌                | ❌              | ✅                  | ✅   |
-
-### Inference Backends
-
-| Backend    | Tensor Parallel | Context Parallel | Pipeline Parallel | Data Parallel Attention | Expert Parallel |
-| ---------- | --------------- | ---------------- | ----------------- | ----------------------- | --------------- |
-| **vLLM**   | ✅              | ❓               | ✅                | ❓                      | ❓              |
-| **SGLang** | ✅              | ❌               | ❌                | ✅                      | ✅              |
-
 ## 🚀 Getting Started
+
+First, install the package:
+
+```bash
+git clone https://github.com/inclusionAI/AReaL
+cd AReaL
+pip install uv
+uv sync --extra cuda
+```
 
 Our training scripts automatically download the required dataset (openai/gsm8k) and
 model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
@@ -158,26 +117,136 @@ python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
 For comprehensive setup instructions, see
 [our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html).
 
+## 📚 Examples
+
+### Math & Reasoning
+
+| Task                                             | Description                                                                                  | Performance                                                       |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **[Math](examples/math/)**                       | GSM8K math reasoning with GRPO, PPO, DAPO, REINFORCE, RLOO, LitePPO, DR-GRPO, GSPO, and more | -                                                                 |
+| **[Multi-Turn Math](examples/multi_turn_math/)** | Multi-turn math agent with reward discounting across turns                                   | [Training Curve](examples/multi_turn_math/reward_curve.png)       |
+| **[LoRA Math](examples/lora/)**                  | Parameter-efficient math training with LoRA (SGLang/vLLM backends)                           | -                                                                 |
+| **[Countdown](examples/countdown/)**             | Countdown numbers game with custom rewards                                                   | [Training Curve](examples/countdown/countdown_training_curve.png) |
+
+### Agentic RL
+
+| Task                                                     | Description                                                            | Performance                                                                  |
+| -------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **[General Agent](examples/agent_workflow/)**            | General agentic training with any agentic frameworks                   | [Guide](docs/tutorial/agentic_rl.md)                                         |
+| **[Tau2 Customer Service](examples/tau2/)**              | Customer service agent on Tau2-Bench (retail, airline, telecom)        | [Paper](https://arxiv.org/abs/2601.22607)                                    |
+| **[Search Agent](examples/search_agent/)**               | End-to-end search agent with Tongyi-DeepResearch workflow              | [Training Curve](examples/search_agent/tongyi_deepresearch/reward_curve.png) |
+| **[Tool-Integrated Reasoning](examples/tir/)**           | Multi-turn tool calling during reasoning (Python executor, calculator) | [Training Curve](examples/tir/figures/task_reward.png)                       |
+| **[OpenAI Agents Integration](examples/openai_agents/)** | Integration with OpenAI Agents SDK for agentic workflows               | -                                                                            |
+| **[CAMEL-AI Integration](examples/camel/)**              | Integration with CAMEL-AI framework for agentic RL                     | -                                                                            |
+
+### Vision-Language Models
+
+| Task                                | Description                                               | Performance                                     |
+| ----------------------------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| **[VLM](examples/vlm/)**            | Geometry3K and CLEVR Count 70K visual reasoning with GRPO | -                                               |
+| **[VLM on NPU](examples/vlm_npu/)** | VLM training on Huawei NPU hardware                       | [Benchmark Results](examples/vlm_npu/README.md) |
+
+### Alignment & Infrastructure
+
+| Task                                            | Description                                           | Performance                                       |
+| ----------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------- |
+| **[RLHF Reward Modeling](examples/alignment/)** | Bradley-Terry reward modeling on Anthropic HH-RLHF    | [Training Curve](examples/alignment/rw_curve.png) |
+| **[SkyPilot Deployment](examples/skypilot/)**   | Cloud deployment with SkyPilot (GCP, AWS, Kubernetes) | [Screenshots](examples/skypilot/README.md)        |
+
+## 🔧 Support Matrix
+
+### 🧠 Algorithms
+
+All RL algorithms support both asynchronous and synchronous versions by setting
+`max_head_offpolicyness=0`. See [Asynchronous RL Guide](docs/algorithms/async.md).
+
+| Algorithm                | Documentation                             | Paper                                          | Configuration                                                |
+| ------------------------ | ----------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| **GRPO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)            |
+| **GSPO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2507.18071)   | [🔗 GSM8K Example](examples/math/gsm8k_gspo.yaml)            |
+| **PPO**                  | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)             |
+| **DAPO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/math/gsm8k_dapo_dynamic_bs.yaml) |
+| **LitePPO**              | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | [🔗 GSM8K Example](examples/math/gsm8k_liteppo.yaml)         |
+| **Dr.GRPO**              | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | [🔗 GSM8K Example](examples/math/gsm8k_drgrpo.yaml)          |
+| **REINFORCE++**          | -                                         | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)       |
+| **RLOO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)            |
+| **SAPO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2511.20347)   | [🔗 GSM8K Example](examples/math/gsm8k_sapo.yaml)            |
+| **M2PO**                 | [📖 Docs](docs/algorithms/m2po.md)        | [📄 Paper](https://arxiv.org/abs/2510.01161)   | [🔗 GSM8K Example](examples/math/gsm8k_m2po.yaml)            |
+| **RLHF Reward Modeling** | -                                         | -                                              | [🔗 RLHF Example](examples/alignment/)                       |
+| **SFT**                  | -                                         | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)               |
+
+### Models
+
+| Model Family               | Megatron | PyTorch FSDP | PyTorch Archon | Notes                                                    |
+| -------------------------- | -------- | ------------ | -------------- | -------------------------------------------------------- |
+| **Qwen2/3**                | ✅       | ✅           | ✅             | -                                                        |
+| **Qwen3-MoE**              | ✅       | ✅           | ✅             | -                                                        |
+| **Qwen2.5-VL**             | ❌       | ✅           | ❌             | Vision-language model                                    |
+| **Qwen3-VL**               | ❌       | ✅           | ❌             | Vision-language model                                    |
+| **Gemma 3**                | ❌       | ✅           | ❌             | Vision-language model                                    |
+| **Other Hugging Face LLM** | ❌       | ✅           | ❌             | Compatibility depending on the version of `transformers` |
+
+Check the [AI Coding Assistant Guide](docs/reference/ai_assisted_dev.md) and
+[Archon Reference](docs/tutorial/archon.md) for how to integrate new models into AReaL.
+
+### Training Backends
+
+| Backend            | DP          | Tensor Parallel | Sequence Parallel within TP | Context Parallel | Pipeline Parallel | Expert Parallel | 1D Sequence Packing | LoRA |
+| ------------------ | ----------- | --------------- | --------------------------- | ---------------- | ----------------- | --------------- | ------------------- | ---- |
+| **Megatron**       | ✅ (ZeRO-1) | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
+| **PyTorch FSDP**   | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ❌                | ❌              | ✅                  | ✅   |
+| **PyTorch Archon** | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
+
+### Inference Backends
+
+| Backend    | Tensor Parallel | Context Parallel | Pipeline Parallel | Data Parallel Attention | Expert Parallel |
+| ---------- | --------------- | ---------------- | ----------------- | ----------------------- | --------------- |
+| **vLLM**   | ✅              | ❓               | ✅                | ❓                      | ❓              |
+| **SGLang** | ✅              | ❌               | ❌                | ✅                      | ✅              |
+
 ## 📖 Resources
+
+### Tutorial
 
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
 - [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
-- [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
-- [Asynchronous RL Explained](https://inclusionai.github.io/AReaL/algorithms/async.html)
-- [Fine-Tuning Large MoE](https://inclusionai.github.io/AReaL/tutorial/megatron.html)
 - [Agentic RL](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html)
-- [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
-- [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
+- [Evaluation](https://inclusionai.github.io/AReaL/tutorial/eval.html)
+- [Large MoE with Megatron](https://inclusionai.github.io/AReaL/tutorial/megatron.html)
+- [Large MoE with PyTorch Archon](https://inclusionai.github.io/AReaL/tutorial/archon.html)
 
 ### Code Walkthrough
 
-- [Running GRPO on GSM8K dataset with AReaL-lite](https://inclusionai.github.io/AReaL/tutorial/gsm8k_grpo.html)
+- [Running GRPO on GSM8K dataset](https://inclusionai.github.io/AReaL/tutorial/gsm8k_grpo.html)
+
+### Best Practices
+
+- [Improving Algorithm Performance](https://inclusionai.github.io/AReaL/best_practices/algo_perf.html)
+- [Agent Workflow Best Practices](https://inclusionai.github.io/AReaL/best_practices/workflow.html)
+- [Debugging](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
+- [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
+- [Performance Profiling](https://inclusionai.github.io/AReaL/best_practices/perf_profiling.html)
 
 ### Customization
 
-- [Customize dataset with AReaL-lite](https://inclusionai.github.io/AReaL/customization/dataset.html)
-- [Customize Agentic/RVLR rollout workflows with AReaL-lite](https://inclusionai.github.io/AReaL/customization/agent.html)
-- [Customize algorithms with AReaL-lite](https://inclusionai.github.io/AReaL/customization/algorithm.html)
+- [Customize Dataset](https://inclusionai.github.io/AReaL/customization/dataset.html)
+- [Customize Agentic/RVLR Rollout Workflows](https://inclusionai.github.io/AReaL/customization/agent.html)
+
+### Algorithms
+
+- [Asynchronous RL Explained](https://inclusionai.github.io/AReaL/algorithms/async.html)
+- [PPO, GRPO, and Related Algorithms](https://inclusionai.github.io/AReaL/algorithms/grpo_series.html)
+- [M2PO](https://inclusionai.github.io/AReaL/algorithms/m2po.html)
+
+### Reference
+
+- [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
+- [Checkpointing](https://inclusionai.github.io/AReaL/reference/checkpointing.html)
+- [Metrics Tracking](https://inclusionai.github.io/AReaL/reference/metrics_tracking.html)
+- [Allocation Mode](https://inclusionai.github.io/AReaL/reference/alloc_mode.html)
+- [Rollout Workflow](https://inclusionai.github.io/AReaL/reference/rollout_workflow.html)
+- [Agent Workflow](https://inclusionai.github.io/AReaL/reference/agent_workflow.html)
+- [AI-Assisted Development](https://inclusionai.github.io/AReaL/reference/ai_assisted_dev.html)
 
 ## 🤝 Contributing
 
@@ -193,10 +262,8 @@ cd AReaL
 # Install uv and sync dependencies
 pip install uv
 # Use `--extra cuda` on Linux with CUDA for full functionality
-uv sync --extra cuda
+uv sync --extra cuda --group dev
 # Or without CUDA support
-# uv sync
-# Or with additional packages for development and testing
 # uv sync --group dev
 
 # Set up pre-commit hooks for automatic formatting
@@ -210,13 +277,6 @@ git commit -m "Implement gpt-o5 training loop"
 git push
 ```
 
-### 💬 Community & Support
-
-- **[GitHub Discussions](https://github.com/inclusionAI/AReaL/discussions)** - Ask
-  questions, share ideas, and connect with the community
-- **[WeChat Group](./assets/wechat_qrcode.png)** - Join our WeChat community (微信群)
-- **[Project Roadmap](ROADMAP.md)** - See what we're working on and what's planned
-
 ## 🗺️ Future Roadmap
 
 - **[Full Roadmap](ROADMAP.md)**
@@ -229,8 +289,9 @@ and China.
 
 ## 🙏 Acknowledgments
 
-We gratefully acknowledge that major contributors are from the AReaL Team at Ant Group
-and the Institute for Interdisciplinary Information Sciences, Tsinghua University.
+We gratefully acknowledge that major contributors are from the AReaL Team at the
+Institute for Interdisciplinary Information Sciences (IIIS), Tsinghua University and Ant
+Group.
 
 We have also received invaluable assistance from the following groups (listed
 alphabetically):
@@ -248,8 +309,8 @@ alphabetically):
 - The Super Computing Technology (SCT) team at Ant Group for their expertise in
   large-scale cluster operations and maintenance
 
-- Special thanks to @Lyken17 for providing valuable suggestions throughout the
-  development process
+- Special thanks to @Lyken17 for providing valuable suggestions throughout the API
+  design process
 
 We also deeply appreciate all pioneering work from the community, particularly the
 [ReaLHF](https://github.com/openpsi-project/ReaLHF) project from OpenPsi Inc. and other

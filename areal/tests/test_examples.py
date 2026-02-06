@@ -678,8 +678,8 @@ def test_openai_proxy(tmp_path_factory):
         "Qwen/Qwen2.5-1.5B-Instruct",
     )
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
-    example_file = "examples/experimental/proxy/train.py"
-    config_name = "examples/experimental/proxy/config.yaml"
+    example_file = "examples/agent_workflow/train.py"
+    config_name = "examples/agent_workflow/config.yaml"
     success = run_async_task(
         run_example,
         example_file,
