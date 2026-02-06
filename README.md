@@ -127,36 +127,46 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 
 ### 🧠 Algorithms
 
-| Algorithm                | Documentation                         | Paper                                          | Configuration                                                |
-| ------------------------ | ------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
-| **GRPO**                 | [📖 Docs](docs/algorithms/grpo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)            |
-| **GSPO**                 | [📖 Docs](docs/algorithms/gspo.md)    | [📄 Paper](https://arxiv.org/abs/2507.18071)   | [🔗 GSM8K Example](examples/math/gsm8k_gspo.yaml)            |
-| **PPO**                  | -                                     | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)             |
-| **DAPO**                 | [📖 Docs](docs/algorithms/dapo.md)    | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/math/gsm8k_dapo_dynamic_bs.yaml) |
-| **LitePPO**              | [📖 Docs](docs/algorithms/litePPO.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | [🔗 GSM8K Example](examples/math/gsm8k_liteppo.yaml)         |
-| **Dr.GRPO**              | [📖 Docs](docs/algorithms/dr.GRPO.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | [🔗 GSM8K Example](examples/math/gsm8k_drgrpo.yaml)          |
-| **REINFORCE++**          | -                                     | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)       |
-| **RLOO**                 | [📖 Docs](docs/algorithms/rloo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)            |
-| **RLHF Reward Modeling** | -                                     | -                                              | [🔗 RLHF Example](examples/alignment/)                       |
-| **SFT**                  | -                                     | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)               |
+All RL algorithms support both asynchronous and synchronous versions by setting
+`max_head_offpolicyness=0`. See [Asynchronous RL Guide](docs/algorithms/async.md).
+
+| Algorithm                | Documentation                             | Paper                                          | Configuration                                                |
+| ------------------------ | ----------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| **GRPO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)            |
+| **GSPO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2507.18071)   | [🔗 GSM8K Example](examples/math/gsm8k_gspo.yaml)            |
+| **PPO**                  | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)             |
+| **DAPO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/math/gsm8k_dapo_dynamic_bs.yaml) |
+| **LitePPO**              | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | [🔗 GSM8K Example](examples/math/gsm8k_liteppo.yaml)         |
+| **Dr.GRPO**              | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | [🔗 GSM8K Example](examples/math/gsm8k_drgrpo.yaml)          |
+| **REINFORCE++**          | -                                         | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)       |
+| **RLOO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)            |
+| **SAPO**                 | [📖 Docs](docs/algorithms/grpo_series.md) | [📄 Paper](https://arxiv.org/abs/2511.20347)   | [🔗 GSM8K Example](examples/math/gsm8k_sapo.yaml)            |
+| **M2PO**                 | [📖 Docs](docs/algorithms/m2po.md)        | [📄 Paper](https://arxiv.org/abs/2510.01161)   | [🔗 GSM8K Example](examples/math/gsm8k_m2po.yaml)            |
+| **RLHF Reward Modeling** | -                                         | -                                              | [🔗 RLHF Example](examples/alignment/)                       |
+| **SFT**                  | -                                         | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)               |
 
 ### Models
 
-| Model Family               | Megatron | PyTorch FSDP | Notes                                                    |
-| -------------------------- | -------- | ------------ | -------------------------------------------------------- |
-| **Qwen2/3**                | ✅       | ✅           | -                                                        |
-| **Qwen3-MoE**              | ✅       | ✅           | -                                                        |
-| **Qwen2.5-VL**             | ❌       | ✅           | Vision-language model                                    |
-| **Qwen3-VL**               | ❌       | ✅           | Vision-language model                                    |
-| **Gemma 3**                | ❌       | ✅           | Vision-language model                                    |
-| **Other Hugging Face LLM** | ❌       | ✅           | Compatibility depending on the version of `transformers` |
+| Model Family               | Megatron | PyTorch FSDP | PyTorch Archon | Notes                                                    |
+| -------------------------- | -------- | ------------ | -------------- | -------------------------------------------------------- |
+| **Qwen2/3**                | ✅       | ✅           | ✅             | -                                                        |
+| **Qwen3-MoE**              | ✅       | ✅           | ✅             | -                                                        |
+| **Qwen2.5-VL**             | ❌       | ✅           | ❌             | Vision-language model                                    |
+| **Qwen3-VL**               | ❌       | ✅           | ❌             | Vision-language model                                    |
+| **Gemma 3**                | ❌       | ✅           | ❌             | Vision-language model                                    |
+| **Other Hugging Face LLM** | ❌       | ✅           | ❌             | Compatibility depending on the version of `transformers` |
+
+Check [AI coding assistant Guide](docs/reference/ai_assisted_dev.md) and
+[Archon refernece](docs/tutorial/archon.md) for how to integrating new models inside
+AReaL.
 
 ### Training Backends
 
-| Backend          | DP          | Tensor Parallel | Sequence Parallel within TP | Context Parallel | Pipeline Parallel | Expert Parallel | 1D Sequence Packing | LoRA |
-| ---------------- | ----------- | --------------- | --------------------------- | ---------------- | ----------------- | --------------- | ------------------- | ---- |
-| **Megatron**     | ✅ (ZeRO-1) | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
-| **PyTorch FSDP** | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ❌                | ❌              | ✅                  | ✅   |
+| Backend            | DP          | Tensor Parallel | Sequence Parallel within TP | Context Parallel | Pipeline Parallel | Expert Parallel | 1D Sequence Packing | LoRA |
+| ------------------ | ----------- | --------------- | --------------------------- | ---------------- | ----------------- | --------------- | ------------------- | ---- |
+| **Megatron**       | ✅ (ZeRO-1) | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
+| **PyTorch FSDP**   | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ❌                | ❌              | ✅                  | ✅   |
+| **PyTorch Archon** | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
 
 ### Inference Backends
 
@@ -188,24 +198,48 @@ For comprehensive setup instructions, see
 
 ## 📖 Resources
 
+### Tutorial
+
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
 - [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
 - [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
-- [Asynchronous RL Explained](https://inclusionai.github.io/AReaL/algorithms/async.html)
-- [Fine-Tuning Large MoE](https://inclusionai.github.io/AReaL/tutorial/megatron.html)
 - [Agentic RL](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html)
-- [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
-- [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
+- [Evaluation](https://inclusionai.github.io/AReaL/tutorial/eval.html)
+- [Fine-Tuning Large MoE with Megatron](https://inclusionai.github.io/AReaL/tutorial/megatron.html)
+- [PyTorch Archon Engine](https://inclusionai.github.io/AReaL/tutorial/archon.html)
 
 ### Code Walkthrough
 
-- [Running GRPO on GSM8K dataset with AReaL-lite](https://inclusionai.github.io/AReaL/tutorial/gsm8k_grpo.html)
+- [Running GRPO on GSM8K dataset](https://inclusionai.github.io/AReaL/tutorial/gsm8k_grpo.html)
+
+### Best Practices
+
+- [Improving Algorithm Performance](https://inclusionai.github.io/AReaL/best_practices/algo_perf.html)
+- [Workflow Best Practices](https://inclusionai.github.io/AReaL/best_practices/workflow.html)
+- [Debugging](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
+- [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
+- [Performance Profiling](https://inclusionai.github.io/AReaL/best_practices/perf_profiling.html)
 
 ### Customization
 
-- [Customize dataset with AReaL-lite](https://inclusionai.github.io/AReaL/customization/dataset.html)
-- [Customize Agentic/RVLR rollout workflows with AReaL-lite](https://inclusionai.github.io/AReaL/customization/agent.html)
-- [Customize algorithms with AReaL-lite](https://inclusionai.github.io/AReaL/customization/algorithm.html)
+- [Customize Dataset](https://inclusionai.github.io/AReaL/customization/dataset.html)
+- [Customize Agentic/RVLR Rollout Workflows](https://inclusionai.github.io/AReaL/customization/agent.html)
+- [Customize Algorithms](https://inclusionai.github.io/AReaL/customization/algorithm.html)
+
+### Algorithms
+
+- [Asynchronous RL Explained](https://inclusionai.github.io/AReaL/algorithms/async.html)
+- [PPO, GRPO, and Related Algorithms](https://inclusionai.github.io/AReaL/algorithms/grpo_series.html)
+- [M2PO](https://inclusionai.github.io/AReaL/algorithms/m2po.html)
+- [Proximal Approximation](https://inclusionai.github.io/AReaL/algorithms/prox_approx.html)
+
+### Reference
+
+- [Checkpointing](https://inclusionai.github.io/AReaL/reference/checkpointing.html)
+- [Metrics Tracking](https://inclusionai.github.io/AReaL/reference/metrics_tracking.html)
+- [Allocation Mode](https://inclusionai.github.io/AReaL/reference/alloc_mode.html)
+- [Rollout Workflow](https://inclusionai.github.io/AReaL/reference/rollout_workflow.html)
+- [AI-Assisted Development](https://inclusionai.github.io/AReaL/reference/ai_assisted_dev.html)
 
 ## 🤝 Contributing
 
