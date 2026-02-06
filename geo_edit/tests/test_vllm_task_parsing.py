@@ -92,6 +92,9 @@ def test_vllm_task_parses_tool_calls(tmp_path):
         if message.get("type") == "function_call_output"
     ]
     assert tool_result_messages
+    tool_output = tool_result_messages[-1]["output"]
+    tool_image_part = next(part for part in tool_output if part.get("type") == "input_image")
+    assert tool_image_part["detail"] == "auto"
 
     final_content = "<think>Done.</think><answer>Final answer.</answer>"
     final_response = _make_response(final_content, tokens_used=7)

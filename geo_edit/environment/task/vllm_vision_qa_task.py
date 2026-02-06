@@ -196,7 +196,7 @@ class VLLMVisionQATask(VisionQATask):
         self.image_url_map[image_url] = image_path
         output = [
             {"type": "input_text", "text": f"Observation {image_index}:"},
-            {"type": "input_image", "image_url": image_url},
+            {"type": "input_image", "image_url": image_url, "detail": "auto"},
         ]
         for call in tool_calls:
             self._append_tool_result(call.call_id, output)

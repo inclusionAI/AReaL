@@ -33,7 +33,7 @@ class OpenAIVisionQATask(VisionQATask):
             content = [
                 {"type": "input_text", "text": self.task_prompt},
                 {"type": "input_text", "text": "Observation 0:"},
-                {"type": "input_image", "image_url": image_url},
+                {"type": "input_image", "image_url": image_url, "detail": "auto"},
             ]
         input_items.append({"role": "user", "content": content})
         self.contents = {"input": input_items, "previous_response_id": None}
@@ -145,7 +145,7 @@ class OpenAIVisionQATask(VisionQATask):
         self.image_url_map[image_url] = image_path
         output = [
             {"type": "input_text", "text": f"Observation {image_index}:"},
-            {"type": "input_image", "image_url": image_url},
+            {"type": "input_image", "image_url": image_url, "detail": "auto"},
         ]
         for call in tool_calls:
             self._append_tool_message(call.call_id, output)
