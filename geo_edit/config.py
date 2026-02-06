@@ -183,27 +183,35 @@ def build_vllm_agent_configs(
         })
 
     if tool_mode == "direct":
-        tool_mode = None
+        normalized_tool_choice = None
         tools = None
     elif tool_mode == "force":
-        tool_mode = "required"
+        normalized_tool_choice = "required"
     elif tool_mode == "auto":
-        tool_mode = "auto"
+        normalized_tool_choice = "auto"
     else:
         raise ValueError(f"Invalid tool_mode: {tool_mode}")
 
-    generate_config = {
-        "tools": tools, "tool_choice": tool_mode,
-        "temperature": temperature, "max_output_tokens": max_output_tokens,
+    generate_config: Dict[str, Any] = {
+        "temperature": temperature,
     }
+    if max_output_tokens is not None:
+        generate_config["max_output_tokens"] = max_output_tokens
+    if tools is not None:
+        generate_config["tools"] = tools
+        generate_config["tool_choice"] = normalized_tool_choice
 
-    force_final_generate_config = {
-        "tools": tools, "tool_choice": "none",
-        "temperature": temperature, "max_output_tokens": max_output_tokens,
+    force_final_generate_config: Dict[str, Any] = {
+        "temperature": temperature,
     }
+    if max_output_tokens is not None:
+        force_final_generate_config["max_output_tokens"] = max_output_tokens
+    if tools is not None:
+        force_final_generate_config["tools"] = tools
+        force_final_generate_config["tool_choice"] = "none"
     return VLLMAgentConfigs(
         tools=tools,
-        tool_choice=tool_mode,
+        tool_choice=normalized_tool_choice,
         generate_config=generate_config,
         force_final_generate_config=force_final_generate_config,
         system_prompt=system_prompt,

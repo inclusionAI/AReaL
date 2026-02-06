@@ -31,7 +31,6 @@ class VLLMVisionQATask(VisionQATask):
             task_image_path=task_image_path,
             save_dir=save_dir,
             tool_functions=tool_functions,
-            model_type="vllm",
             **kwargs,
         )
         self.system_prompt = system_prompt
