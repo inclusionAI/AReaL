@@ -23,21 +23,21 @@ as much as you'd enjoy real milk tea. Cheers!
 
 - ⚡ **Flexibility**: Seamless customization for
   [multi-turn agentic rollout](https://inclusionai.github.io/AReaL/customization/agent.html)
-  and integration with
+  with
   [other agentic frameworks](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html).
 - 📈 **Scalability**: **Stable** fully asynchronous RL training with **industry-leading
   speed**.
 - ✨ **Cutting-Edge Performance**: State-of-the-art [math](/blog/AReaL_v0_2.md),
   [coding](/blog/AReaL_v0_3.md), [search](https://github.com/inclusionAI/ASearcher), and
-  [customer service agent](https://arxiv.org/abs/2601.22607).
+  [customer service](https://arxiv.org/abs/2601.22607) agents.
 
 ## 📰 News
 
-**\[2026/02/06\]** Delighted to introduce **EigenData** - a self-evolving data synthesis
-engine. Combined with AReaL's agentic RL training, the 235B MoE model surpasses Gemini
-3.0 Pro and GPT 5.2 on $\\tau^2$-bench! Check out
+**\[2026/02/06\]** We are delighted to introduce **EigenData**, a self-evolving data
+synthesis engine. Combined with AReaL's agentic RL training, the 235B MoE model
+surpasses Gemini 3.0 Pro and GPT 5.2 on $\\tau^2$-bench! Check out the
 [paper](https://arxiv.org/pdf/2601.22607),
-[code](https://github.com/inclusionAI/AReaL/tree/main/examples/tau2), and the
+[code](https://github.com/inclusionAI/AReaL/tree/main/examples/tau2), and
 [announcement on X](https://x.com/Eigen_AI_Labs/status/2018561648022130805?s=20).
 
 **\[2026/01/15\]** Congrats to our friends at [CAMEL-AI](https://www.camel-ai.org/) for
@@ -86,6 +86,36 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 [v0.1 technical blog](/blog/AReaL_v0_1.md).
 
 </details>
+
+## 🚀 Getting Started
+
+First, install the package:
+
+```bash
+git clone https://github.com/inclusionAI/AReaL
+cd AReaL
+pip install uv
+uv sync --extra cuda
+```
+
+Our training scripts automatically download the required dataset (openai/gsm8k) and
+model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
+
+```bash
+python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml scheduler.type=local
+```
+
+To run on a Ray cluster with 2 nodes and 8 GPUs per node (remember to update paths in
+the YAML file to point to your shared storage):
+
+```bash
+python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
+  cluster.n_nodes=2 cluster.n_gpus_per_node=8 \
+  scheduler.type=ray
+```
+
+For comprehensive setup instructions, see
+[our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html).
 
 ## 📚 Examples
 
@@ -156,9 +186,8 @@ All RL algorithms support both asynchronous and synchronous versions by setting
 | **Gemma 3**                | ❌       | ✅           | ❌             | Vision-language model                                    |
 | **Other Hugging Face LLM** | ❌       | ✅           | ❌             | Compatibility depending on the version of `transformers` |
 
-Check [AI coding assistant Guide](docs/reference/ai_assisted_dev.md) and
-[Archon refernece](docs/tutorial/archon.md) for how to integrating new models inside
-AReaL.
+Check the [AI Coding Assistant Guide](docs/reference/ai_assisted_dev.md) and
+[Archon Reference](docs/tutorial/archon.md) for how to integrate new models into AReaL.
 
 ### Training Backends
 
@@ -174,27 +203,6 @@ AReaL.
 | ---------- | --------------- | ---------------- | ----------------- | ----------------------- | --------------- |
 | **vLLM**   | ✅              | ❓               | ✅                | ❓                      | ❓              |
 | **SGLang** | ✅              | ❌               | ❌                | ✅                      | ✅              |
-
-## 🚀 Getting Started
-
-Our training scripts automatically download the required dataset (openai/gsm8k) and
-model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
-
-```bash
-python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml scheduler.type=local
-```
-
-To run on a Ray cluster with 2 nodes and 8 GPUs per node (remember to update paths in
-the YAML file to point to your shared storage):
-
-```bash
-python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
-  cluster.n_nodes=2 cluster.n_gpus_per_node=8 \
-  scheduler.type=ray
-```
-
-For comprehensive setup instructions, see
-[our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html).
 
 ## 📖 Resources
 
@@ -224,7 +232,6 @@ For comprehensive setup instructions, see
 
 - [Customize Dataset](https://inclusionai.github.io/AReaL/customization/dataset.html)
 - [Customize Agentic/RVLR Rollout Workflows](https://inclusionai.github.io/AReaL/customization/agent.html)
-- [Customize Algorithms](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 
 ### Algorithms
 
@@ -255,10 +262,8 @@ cd AReaL
 # Install uv and sync dependencies
 pip install uv
 # Use `--extra cuda` on Linux with CUDA for full functionality
-uv sync --extra cuda
+uv sync --extra cuda --group dev
 # Or without CUDA support
-# uv sync
-# Or with additional packages for development and testing
 # uv sync --group dev
 
 # Set up pre-commit hooks for automatic formatting
