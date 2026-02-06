@@ -29,7 +29,7 @@ Before applying fixes, understand which parameters affect memory usage:
 ### Engine-Specific Parameters
 
 - **Inference Engine**: `sglang.mem_fraction_static` controls how much GPU memory SGLang
-  uses. Check the [SGLang docs](https://docs.sglang.ai/) for more tuning options.
+  uses. Check the [SGLang docs](https://docs.sglang.io/) for more tuning options.
 
 - **Training Engine**: FSDP sharding and other PyTorch settings also impact memory
   usage. The [FSDP docs](https://docs.pytorch.org/docs/stable/fsdp.html) have more
@@ -74,7 +74,7 @@ sglang:
   mem_fraction_static: 0.8  # Reduce from 0.9 to leave more memory headroom
 ```
 
-See the [SGLang docs](https://docs.sglang.ai/) for additional tuning options.
+See the [SGLang docs](https://docs.sglang.io/) for additional tuning options.
 
 ## Resolving Training OOM Errors
 
@@ -137,7 +137,7 @@ parallelism:
 
 ```yaml
 # Before: sglang:d4+fsdp:d4 (4 data parallel processes)
-# After: sglang:d4+archon:d2p2e2 (2 data parallel with 2 overlayed expert parallel, 2 pipeline parallel, still 4 GPUs)
+# After: sglang:d4+archon:d2p2e2 (2 data parallel with 2 overlaid expert parallel, 2 pipeline parallel, still 4 GPUs)
 allocation_mode: sglang:d4+archon:d2p2e2
 ```
 
