@@ -4,14 +4,17 @@ from PIL import Image
 import argparse
 from geo_edit.agents.api_agent import APIBasedAgent, AgentConfig
 from geo_edit.agents.vllm_agent import VLLMBasedAgent
+from geo_edit.agents.sglang_agent import SGLangBasedAgent
 from geo_edit.environment.action import TOOL_FUNCTIONS
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
 from geo_edit.environment.task.openai_vision_qa_task import OpenAIVisionQATask
 from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
+from geo_edit.environment.task.sglang_vision_qa_task import SGLangVisionQATask
 from geo_edit.config import (
     build_google_agent_configs,
     build_openai_agent_configs,
     build_vllm_agent_configs,
+    build_sglang_agent_configs,
 )
 from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
@@ -33,8 +36,8 @@ def main():
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()), help="Dataset adapter name.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
-    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM"], help="Model provider.")
-    parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM OpenAI-compatible server.")
+    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM", "SGLang"], help="Model provider.")
+    parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM/SGLang OpenAI-compatible server.")
     parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=32, help="Maximum number of concurrent requests.")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
@@ -78,6 +81,12 @@ def main():
             reasoning_level="medium",
             system_prompt=system_prompt,
         )
+    elif args.model_type == "SGLang":
+        agent_configs = build_sglang_agent_configs(
+            max_output_tokens=max_output_tokens,
+            temperature=1.0,
+            tool_mode=tool_mode,
+        )
     else:
         agent_configs = build_vllm_agent_configs(
             max_output_tokens=max_output_tokens,
@@ -95,7 +104,12 @@ def main():
         generate_config=agent_configs.generate_config,
         n_retry=3,
     )
-    agent_cls = VLLMBasedAgent if args.model_type == "vLLM" else APIBasedAgent
+    if args.model_type == "vLLM":
+        agent_cls = VLLMBasedAgent
+    elif args.model_type == "SGLang":
+        agent_cls = SGLangBasedAgent
+    else:
+        agent_cls = APIBasedAgent
     api_agent=agent_cls(config)
     
     meta_info_list= []
@@ -129,13 +143,16 @@ def main():
             task_cls = GoogleVisionQATask
         elif args.model_type == "OpenAI":
             task_cls = OpenAIVisionQATask
+        elif args.model_type == "SGLang":
+            task_cls = SGLangVisionQATask
         else:
             task_cls = VLLMVisionQATask
         task_kwargs = {}
         if text_only:
             task_kwargs["text_only"] = True
-        if args.model_type == "vLLM":
+        if args.model_type in {"vLLM", "SGLang"}:
             task_kwargs["system_prompt"] = system_prompt
+        task_kwargs.update(dataset_spec.build_task_kwargs(item))
         task= task_cls(
             task_id=id,
             task_prompt=text_prompt,

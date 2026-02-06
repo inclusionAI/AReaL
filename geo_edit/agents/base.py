@@ -48,7 +48,7 @@ class AgentConfig:
 
     def __post_init__(self):
         """Validate configuration after initialization"""
-        valid_model_types = ["HuggingFace", "vLLM", "OpenAI", "Azure", "Google"]
+        valid_model_types = ["HuggingFace", "vLLM", "OpenAI", "Azure", "Google", "SGLang"]
         if self.model_type not in valid_model_types:
             raise ValueError(f"model_type must be one of {valid_model_types}, got {self.model_type}")
 

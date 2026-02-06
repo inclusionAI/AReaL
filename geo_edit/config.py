@@ -30,6 +30,14 @@ class VLLMAgentConfigs:
     force_final_generate_config: Dict[str, Any]
     system_prompt: Optional[str] = None
 
+
+@dataclass(frozen=True, slots=True)
+class SGLangAgentConfigs:
+    tools: List[Dict[str, Any]]
+    tool_choice: Union[str, Dict[str, Any]]
+    generate_config: Dict[str, Any]
+    force_final_generate_config: Dict[str, Any]
+
 def build_google_agent_configs(
     *,
     max_output_tokens: Optional[int] = None,
@@ -201,6 +209,56 @@ def build_vllm_agent_configs(
         system_prompt=system_prompt,
     )
 
+
+def build_sglang_agent_configs(
+    *,
+    max_output_tokens: Optional[int] = None,
+    temperature: float = 1.0,
+    tool_mode: Optional[str] = None,
+) -> SGLangAgentConfigs:
+    tools = []
+    for tool in TOOL_FUNCTIONS_DECLARE:
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"],
+                },
+            }
+        )
+
+    if tool_mode == "direct":
+        tool_mode = None
+        tools = None
+    elif tool_mode == "force":
+        tool_mode = "required"
+    elif tool_mode == "auto":
+        tool_mode = "auto"
+    else:
+        raise ValueError(f"Invalid tool_mode: {tool_mode}")
+
+    generate_config = {
+        "tools": tools,
+        "tool_choice": tool_mode,
+        "temperature": temperature,
+        "max_tokens": max_output_tokens,
+    }
+
+    force_final_generate_config = {
+        "tools": tools,
+        "tool_choice": "none",
+        "temperature": temperature,
+        "max_tokens": max_output_tokens,
+    }
+    return SGLangAgentConfigs(
+        tools=tools,
+        tool_choice=tool_mode,
+        generate_config=generate_config,
+        force_final_generate_config=force_final_generate_config,
+    )
+
 __all__ = [
     "API_KEY",
     "MAX_TOOL_CALLS",
@@ -208,7 +266,9 @@ __all__ = [
     "AgentConfigs",
     "OpenAIAgentConfigs",
     "VLLMAgentConfigs",
+    "SGLangAgentConfigs",
     "build_agent_configs",
     "build_openai_agent_configs",
     "build_vllm_agent_configs",
+    "build_sglang_agent_configs",
 ]

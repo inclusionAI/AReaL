@@ -12,14 +12,17 @@ from datasets import load_dataset
 
 from geo_edit.agents.api_agent import APIBasedAgent, AgentConfig
 from geo_edit.agents.vllm_agent import VLLMBasedAgent
+from geo_edit.agents.sglang_agent import SGLangBasedAgent
 from geo_edit.environment.action import TOOL_FUNCTIONS
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
 from geo_edit.environment.task.openai_vision_qa_task import OpenAIVisionQATask
 from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
+from geo_edit.environment.task.sglang_vision_qa_task import SGLangVisionQATask
 from geo_edit.config import (
     build_google_agent_configs,
     build_openai_agent_configs,
     build_vllm_agent_configs,
+    build_sglang_agent_configs,
 )
 from geo_edit.scripts.script_utils import save_global_meta_info
 from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
@@ -58,7 +61,7 @@ def _init_worker(
     if model_type == "Google":
         agent_configs = build_google_agent_configs(
             max_output_tokens=max_output_tokens,
-            thinking_level="high",
+            thinking_level="low",
             include_thoughts=True,
             temperature=1.0,
             system_prompt=system_prompt,
@@ -74,6 +77,13 @@ def _init_worker(
             system_prompt=system_prompt,
         )
         _WORKER_TASK_CLASS = OpenAIVisionQATask
+    elif model_type == "SGLang":
+        agent_configs = build_sglang_agent_configs(
+            max_output_tokens=max_output_tokens,
+            temperature=1.0,
+            tool_mode=use_tools,
+        )
+        _WORKER_TASK_CLASS = SGLangVisionQATask
     else:
         agent_configs = build_vllm_agent_configs(
             max_output_tokens=max_output_tokens,
@@ -93,7 +103,12 @@ def _init_worker(
         n_retry=3,
     )
     _WORKER_AGENT_CONFIGS = agent_configs
-    agent_cls = VLLMBasedAgent if model_type == "vLLM" else APIBasedAgent
+    if model_type == "vLLM":
+        agent_cls = VLLMBasedAgent
+    elif model_type == "SGLang":
+        agent_cls = SGLangBasedAgent
+    else:
+        agent_cls = APIBasedAgent
     _WORKER_AGENT = agent_cls(config)
     _WORKER_OUTPUT_PATH = output_path
     _WORKER_MAX_TOOL_CALLS = max_tool_calls
@@ -124,14 +139,17 @@ def _run_one_task(task_payload: dict):
         return True, meta_info
 
     # Map model_type to lowercase for VisionQATask
-    model_type_map = {"Google": "google", "OpenAI": "openai", "vLLM": "vllm"}
+    model_type_map = {"Google": "google", "OpenAI": "openai", "vLLM": "vllm", "SGLang": "sglang"}
     model_type = model_type_map.get(_WORKER_MODEL_TYPE, "openai")
 
     task_kwargs = {"model_type": model_type}
+    extra_kwargs = task_payload.get("task_kwargs")
+    if isinstance(extra_kwargs, dict):
+        task_kwargs.update(extra_kwargs)
     if text_only:
         logger.info(f"[{task_id}] running text-only task.")
         task_kwargs["text_only"] = True
-    if _WORKER_MODEL_TYPE == "vLLM":
+    if _WORKER_MODEL_TYPE in {"vLLM", "SGLang"}:
         task_kwargs["system_prompt"] = _WORKER_SYSTEM_PROMPT
     task = _WORKER_TASK_CLASS(
         task_id=task_id,
@@ -184,9 +202,9 @@ def main():
     parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()), help="Dataset adapter name.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
-    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM"], help="Model provider.")
+    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM", "SGLang"], help="Model provider.")
     parser.add_argument("--use_tools", type=str, default="auto", choices=["direct", "auto", "force"])
-    parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM OpenAI-compatible server.")
+    parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM/SGLang OpenAI-compatible server.")
     parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
@@ -312,6 +330,7 @@ def main():
                     "answer": item[dataset_spec.answer_key],
                     "image_path": image_path,
                     "text_only": text_only,
+                    "task_kwargs": dataset_spec.build_task_kwargs(item),
                 }
 
                 ar = pool.apply_async(_run_one_task, (payload,))

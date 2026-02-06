@@ -5,6 +5,7 @@
 from geo_edit.agents.base import BaseAgent, AgentConfig
 from geo_edit.agents.api_agent import APIBasedAgent
 from geo_edit.agents.vllm_agent import VLLMBasedAgent
+from geo_edit.agents.sglang_agent import SGLangBasedAgent
 
 from geo_edit.agents.utils import (
     load_image_safely,
@@ -23,6 +24,7 @@ __all__ = [
     # Concrete implementations
     "APIBasedAgent",
     "VLLMBasedAgent",
+    "SGLangBasedAgent",
     
     # Utility functions
     'load_image_safely',

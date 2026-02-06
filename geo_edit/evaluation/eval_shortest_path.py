@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from typing import Optional
 
 from geo_edit.evaluation.utils import (
@@ -20,7 +21,12 @@ logger = setup_logger(__name__)
 
 
 def parse_path(text: str) -> Optional[str]:
-    if not text or "," not in text:
+    if not text:
+        return None
+    m = re.search(r"<answer>(.*?)</answer>", text, flags=re.IGNORECASE | re.DOTALL)
+    if m:
+        text = m.group(1)
+    if "," not in text:
         return None
     parts = [p.strip().upper() for p in text.strip().split(",") if p.strip()]
     if len(parts) < 2:
@@ -55,6 +61,8 @@ def main() -> None:
     eval_results = []
     output_tokens_sum = input_tokens_sum = total_tokens_sum = 0.0
     output_tokens_count = input_tokens_count = total_tokens_count = 0
+    level_stats = {}
+    level_token_stats = {}
 
     with open(eval_output_path, "w", encoding="utf-8") as out_f:
         for meta_path in iter_meta_info_files(args.result_path):
@@ -75,6 +83,26 @@ def main() -> None:
                     result = 1.0 if parsed_pred == gt_value else 0.0
                     if result == 1.0:
                         correct += 1
+                    level = record.get("level_nodes")
+                    if level is not None:
+                        level = int(level)
+                        if level not in level_stats:
+                            level_stats[level] = [0, 0]
+                        level_stats[level][0] += 1
+                        if result == 1.0:
+                            level_stats[level][1] += 1
+                level = record.get("level_nodes")
+                if level is not None:
+                    level = int(level)
+                    if level not in level_token_stats:
+                        level_token_stats[level] = {
+                            "output_sum": 0.0,
+                            "output_count": 0,
+                            "input_sum": 0.0,
+                            "input_count": 0,
+                            "total_sum": 0.0,
+                            "total_count": 0,
+                        }
 
                 eval_item = {
                     "id": record_id,
@@ -102,14 +130,23 @@ def main() -> None:
                 if output_total is not None:
                     output_tokens_sum += output_total
                     output_tokens_count += 1
+                    if level is not None:
+                        level_token_stats[level]["output_sum"] += output_total
+                        level_token_stats[level]["output_count"] += 1
                 input_total = get_input_tokens_total(eval_item)
                 if input_total is not None:
                     input_tokens_sum += input_total
                     input_tokens_count += 1
+                    if level is not None:
+                        level_token_stats[level]["input_sum"] += input_total
+                        level_token_stats[level]["input_count"] += 1
                 total_total = get_total_tokens(eval_item)
                 if total_total is not None:
                     total_tokens_sum += float(total_total)
                     total_tokens_count += 1
+                    if level is not None:
+                        level_token_stats[level]["total_sum"] += float(total_total)
+                        level_token_stats[level]["total_count"] += 1
 
     tool_stats_text = compute_tool_combination_statistics(eval_results)
 
@@ -127,6 +164,19 @@ def main() -> None:
         f.write(f"avg_output_tokens={avg_output:.2f}\n")
         f.write(f"avg_input_tokens={avg_input:.2f}\n")
         f.write(f"avg_total_tokens={avg_total:.2f}\n")
+        for level in sorted(level_stats.keys()):
+            cnt, cor = level_stats[level]
+            acc = cor / cnt if cnt else 0.0
+            f.write(f"level_nodes_{level}_count={cnt}\n")
+            f.write(f"level_nodes_{level}_accuracy={acc:.6f}\n")
+            if level in level_token_stats:
+                s = level_token_stats[level]
+                avg_out = s["output_sum"] / s["output_count"] if s["output_count"] else 0.0
+                avg_in = s["input_sum"] / s["input_count"] if s["input_count"] else 0.0
+                avg_tot = s["total_sum"] / s["total_count"] if s["total_count"] else 0.0
+                f.write(f"level_nodes_{level}_avg_output_tokens={avg_out:.2f}\n")
+                f.write(f"level_nodes_{level}_avg_input_tokens={avg_in:.2f}\n")
+                f.write(f"level_nodes_{level}_avg_total_tokens={avg_tot:.2f}\n")
         f.write(tool_stats_text)
 
 

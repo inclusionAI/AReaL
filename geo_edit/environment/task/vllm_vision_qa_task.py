@@ -58,7 +58,7 @@ class VLLMVisionQATask(VisionQATask):
             )
         self.contents["input"].append({"role": "user", "content": content})
 
-    def _stringify_observation_item(self, item: object) -> object:
+    def _stringify_observation_item(self, item: Any) -> Any:
         if not isinstance(item, dict):
             return item
 
@@ -100,7 +100,7 @@ class VLLMVisionQATask(VisionQATask):
         output["content"] = content
         return output
 
-    def parse_action(self, step: int, action: object, extra_info: Dict[str, int | float | str | None]):
+    def parse_action(self, step: int, action: Any, extra_info: Dict[str, int | float | str | None]):
         contents_for_save = [
             self._stringify_observation_item(item) for item in self.contents["input"]
         ]

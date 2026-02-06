@@ -35,7 +35,7 @@ class VisionQATask(AbstractVLMTask):
         task_answer: str,
         task_image_path: str | None,
         save_dir: Path | str,
-        model_type: Literal["google", "openai", "vllm"] = "openai",
+        model_type: Literal["google", "openai", "vllm", "sglang"] = "openai",
         tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
         **kwargs,
     ):
@@ -48,6 +48,7 @@ class VisionQATask(AbstractVLMTask):
         self.state = True
         self.single_message_mode= kwargs.get("single_message_mode", False) # single message mode: only maintain one message, convert each action and new observation into original message.
         self.options = kwargs["options"] if "options" in kwargs else None
+        self.meta_info_extra = kwargs.get("meta_info_extra")
 
         self.image_path_map: Dict[int, str] = {}
         self.image_url_map: Dict[str, str] = {}  # For OpenAI/VLLM: maps data URL to file path
@@ -337,6 +338,13 @@ class VisionQATask(AbstractVLMTask):
             tokens_input_total = tokens_used_total - tokens_output_total
             if tokens_input_total < 0:
                 raise ValueError("Calculated tokens_input_total is negative.")
+        elif self.model_type == "sglang":
+            # OpenAI-compatible chat completions
+            tokens_output_total = sum(
+                t for t in tokens_output_per_step if isinstance(t, (int, float))
+            )
+            tokens_input_total = tokens_input_per_step[-1]
+            tokens_used_total = tokens_output_total + tokens_input_total
         elif self.model_type == "google":
             tokens_output_total = sum(
                 t for t in tokens_output_per_step if isinstance(t, (int, float))
@@ -367,6 +375,8 @@ class VisionQATask(AbstractVLMTask):
             "tokens_total_per_step": tokens_total_per_step,
             "output_text": self.conversation_history[-1]["output_text"]
         }
+        if isinstance(self.meta_info_extra, dict):
+            meta_info.update(self.meta_info_extra)
 
         last_step_index = len(self.conversation_history) - 1
         for idx, record in enumerate(self.conversation_history):

@@ -67,7 +67,7 @@ Force tool-call mode:
 - Only after tool results are returned should you output <answer>...</answer>.
 '''
 
-NO_TOOL_SYSTEM_PROMPT = '''
+VLLM_NO_TOOL_SYSTEM_PROMPT = '''
 You are an advanced AI assistant capable of complex reasoning.
 You must strictly adhere to the following protocol:
 
@@ -75,6 +75,14 @@ You must strictly adhere to the following protocol:
 problem step by step. Output your reasoning inside <think> and </think> tags.
 
 2. Final Output: When you have formulated your conclusion,
+wrap your final answer in <answer> and </answer> tags.
+'''
+
+API_NO_TOOL_SYSTEM_PROMPT = '''
+You are an advanced AI assistant capable of complex reasoning.
+You must strictly adhere to the following protocol:
+
+1. Final Output: When you have formulated your conclusion,
 wrap your final answer in <answer> and </answer> tags.
 '''
 
@@ -116,14 +124,14 @@ def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
     """Select system prompt based on model type."""
     model_type_normalized = model_type.strip().lower()
     tool_mode_normalized = tool_mode.strip().lower() if tool_mode else None
-    if model_type_normalized == "vllm":
+    if model_type_normalized in {"vllm", "sglang"}:
         if tool_mode_normalized == "force":
             return f"{VLLM_SYSTEM_PROMPT}\n\n{VLLM_FORCE_TOOL_CALL_PROMPT}"
         elif tool_mode_normalized == "notool":
-            return NO_TOOL_SYSTEM_PROMPT
+            return VLLM_NO_TOOL_SYSTEM_PROMPT
         return VLLM_SYSTEM_PROMPT
     else:
         if tool_mode_normalized == "notool":
-            return NO_TOOL_SYSTEM_PROMPT
+            return API_NO_TOOL_SYSTEM_PROMPT
         else:
             return API_CALL_SYSTEM_PROMPT

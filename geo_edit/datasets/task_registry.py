@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional
 
 from geo_edit.datasets.input_template import (
@@ -15,7 +15,7 @@ from geo_edit.datasets.input_template import (
     SUDOKU_TOOL_CALL_INPUT_TEMPLATE,
 )
 
-FieldSource = str | Callable[[Mapping[str, Any]], str | int | float]
+FieldSource = str | Callable[[Mapping[str, Any]], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,11 +25,12 @@ class DatasetSpec:
     answer_key: str
     prompt_template: str
     template_fields: Dict[str, FieldSource]
+    task_kwargs_fields: Dict[str, FieldSource] = field(default_factory=dict)
     notool_prompt_template: Optional[str] = None
     image_key: Optional[str] = None
 
     def build_prompt(self, item: Mapping[str, Any], use_tools: bool) -> str:
-        values: Dict[str, str | int | float] = {}
+        values: Dict[str, Any] = {}
         for template_key, source in self.template_fields.items():
             if callable(source):
                 values[template_key] = source(item)
@@ -39,6 +40,15 @@ class DatasetSpec:
         if not use_tools and self.notool_prompt_template:
             template = self.notool_prompt_template
         return template.format(**values)
+
+    def build_task_kwargs(self, item: Mapping[str, Any]) -> Dict[str, Any]:
+        values: Dict[str, Any] = {}
+        for key, source in self.task_kwargs_fields.items():
+            if callable(source):
+                values[key] = source(item)
+            else:
+                values[key] = item[source] if source in item else None
+        return values
 
 def _sudoku_total_cells(item: Mapping[str, Any]) -> int:
     return int(item["rows"]) * int(item["cols"])
@@ -134,6 +144,9 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         template_fields={
             "prompt": "prompt",
         },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])} if "level_nodes" in item else {},
+        },
     ),
     "shortest_path_image": DatasetSpec(
         name="shortest_path_image",
@@ -145,6 +158,9 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         template_fields={
             "prompt": "prompt",
         },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])} if "level_nodes" in item else {},
+        },
     ),
     "shortest_path_image_text": DatasetSpec(
         name="shortest_path_image_text",
@@ -155,6 +171,9 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template="{prompt}",
         template_fields={
             "prompt": "prompt",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])} if "level_nodes" in item else {},
         },
     ),
 }

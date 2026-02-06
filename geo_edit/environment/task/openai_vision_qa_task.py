@@ -53,7 +53,7 @@ class OpenAIVisionQATask(VisionQATask):
             {"role": "user", "content": [{"type": "input_text", "text": text}]}
         )
 
-    def _stringify_observation_item(self, item: object) -> object:
+    def _stringify_observation_item(self, item: Any) -> Any:
         if not isinstance(item, dict):
             return item
 
@@ -84,7 +84,7 @@ class OpenAIVisionQATask(VisionQATask):
                 output["content"].append(part)
         return output
 
-    def parse_action(self, step: int, action: object, extra_info: Dict[str, int | float | str | None]):
+    def parse_action(self, step: int, action: Any, extra_info: Dict[str, int | float | str | None]):
         """update task contents from action"""
         output_text = ""
         thinking_process = ""
