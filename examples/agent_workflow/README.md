@@ -1,20 +1,19 @@
-# AReaL with Proxy Mode
+# Agent Workflow Training
+
+Train custom agents using the OpenAI Python SDK or high-level agent frameworks.
 
 ## Quick Start
 
 ```bash
-# Set PYTHONPATH to AReaL root directory
-export PYTHONPATH=/path/to/AReaL:$PYTHONPATH
-
-python3 examples/experimental/proxy/train.py \
-    --config examples/experimental/proxy/config.yaml \
-    scheduler.type=local \
+python3 examples/agent_workflow/train.py \
+    --config examples/agent_workflow/config.yaml \
+    scheduler.type=local
 ```
 
 This script will run the example agent in
-[`areal/workflow/openai/math_agent.py`](../../../areal/workflow/openai/math_agent.py).
-You can also modify the `workflow` parameter in `trainer.train` to run other example
-agents defined in the same file.
+[`areal/workflow/openai/math_agent.py`](../../areal/workflow/openai/math_agent.py). You
+can also modify the `workflow` parameter in `trainer.train` to run other example agents
+defined in the same file.
 
 ## Write Your Own Agent
 
@@ -26,9 +25,8 @@ agents defined in the same file.
    final reward, or a dict where the reward of each interaction is keyed by the
    completion or response ID.
 
-1. Wrap the function within AReaL's
-   [`AgentWorkflow`](../../../areal/api/workflow_api.py). This class is for pure typing
-   and API regulation usage.
+1. Wrap the function within AReaL's [`AgentWorkflow`](../../areal/api/workflow_api.py).
+   This class is for pure typing and API regulation usage.
 
 ```python
 async def my_agent(data: dict) -> float:
