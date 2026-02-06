@@ -128,11 +128,15 @@ class Tau2Runner:
             # Remove litellm-specific arguments
             kwargs.pop("num_retries", None)
 
-            # Agent-specific: add thinking template
+            # Set up extra_body with chat_template_kwargs
+            extra_body = kwargs.pop("extra_body", {})
             if is_agent:
-                extra_body = kwargs.pop("extra_body", {})
+                # Agent: enable thinking
                 extra_body["chat_template_kwargs"] = {"enable_thinking": True}
-                kwargs["extra_body"] = extra_body
+            else:
+                # User: disable thinking
+                extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+            kwargs["extra_body"] = extra_body
 
             # User-specific: set default top_p
             if not is_agent and "top_p" not in kwargs:
