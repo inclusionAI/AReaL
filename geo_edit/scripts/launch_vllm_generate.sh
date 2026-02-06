@@ -16,7 +16,7 @@ nohup python -m vllm.entrypoints.openai.api_server \
   --gpu-memory-utilization 0.8 \
   --enable-auto-tool-choice \
   --tool-call-parser hermes \
-  --enable-prompt-tokens-details \
+  --enable-prefix-caching \
   > /tmp/log/vllm_api.log 2>&1 &
 
 

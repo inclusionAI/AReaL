@@ -183,7 +183,7 @@ def build_vllm_agent_configs(
         })
 
     if tool_mode == "direct":
-        normalized_tool_choice = None
+        normalized_tool_choice = "none"
         tools = None
     elif tool_mode == "force":
         normalized_tool_choice = "required"
@@ -199,7 +199,7 @@ def build_vllm_agent_configs(
         generate_config["max_output_tokens"] = max_output_tokens
     if tools is not None:
         generate_config["tools"] = tools
-        generate_config["tool_choice"] = normalized_tool_choice
+    generate_config["tool_choice"] = normalized_tool_choice
 
     force_final_generate_config: Dict[str, Any] = {
         "temperature": temperature,
