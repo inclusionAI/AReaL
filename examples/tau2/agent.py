@@ -131,11 +131,15 @@ class Tau2Runner:
             # Remove litellm-specific arguments
             kwargs.pop("num_retries", None)
 
-            # Agent-specific: add thinking template
+            # Set up extra_body with chat_template_kwargs
+            extra_body = kwargs.pop("extra_body", {})
             if is_agent:
-                extra_body = kwargs.pop("extra_body", {})
+                # Agent: enable thinking
                 extra_body["chat_template_kwargs"] = {"enable_thinking": True}
-                kwargs["extra_body"] = extra_body
+            else:
+                # User: disable thinking
+                extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+            kwargs["extra_body"] = extra_body
 
             # User-specific: set default top_p
             if not is_agent and "top_p" not in kwargs:
@@ -149,20 +153,7 @@ class Tau2Runner:
 
             try:
                 completion = await client.chat.completions.create(**kwargs)
-                response = self._convert_to_model_response(completion)
-                # Clean up thinking content from user simulator response
-                # User simulator (GPT-4 etc) may output <think>...</think> tags
-                # which should not appear in conversation history
-                if not is_agent and response and hasattr(response, "choices") and response.choices:
-                    for choice in response.choices:
-                        if hasattr(choice, "message") and choice.message:
-                            content = getattr(choice.message, "content", None)
-                            if content and "</think>" in content:
-                                # Remove thinking content from user simulator response
-                                parts = content.split("</think>", 1)
-                                if len(parts) > 1:
-                                    choice.message.content = parts[1].lstrip("\n")
-                return response
+                return self._convert_to_model_response(completion)
             except Exception as e:
                 role = "Agent" if is_agent else "User"
                 logger.error(f"{role} LLM error: {type(e).__name__}: {e}")

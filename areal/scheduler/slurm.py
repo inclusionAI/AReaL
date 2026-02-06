@@ -1468,9 +1468,11 @@ class SlurmScheduler(Scheduler):
                 last_error = f"Connection error: {e}"
                 logger.warning(f"Connection error on attempt {attempt}/{max_retries}")
             except Exception as e:
+                import traceback
                 last_error = f"Unexpected error: {e}"
                 logger.warning(
-                    f"Unexpected error on attempt {attempt}/{max_retries}: {e}"
+                    f"Unexpected error on attempt {attempt}/{max_retries}: {e}\n"
+                    f"Traceback: {traceback.format_exc()}"
                 )
 
             if attempt < max_retries:
@@ -1613,9 +1615,11 @@ class SlurmScheduler(Scheduler):
                 last_error = f"Connection error: {e}"
                 logger.warning(f"Connection error on attempt {attempt}/{max_retries}")
             except Exception as e:
+                import traceback
                 last_error = f"Unexpected error: {e}"
                 logger.warning(
-                    f"Unexpected error on attempt {attempt}/{max_retries}: {e}"
+                    f"Unexpected error on attempt {attempt}/{max_retries}: {e}\n"
+                    f"Traceback: {traceback.format_exc()}"
                 )
 
             if attempt < max_retries:

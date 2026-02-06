@@ -98,13 +98,6 @@ def main(args):
         timeout=600.0,  # 10 minute timeout
     )
 
-    # Eval workflow with lower temperature
-    eval_workflow_kwargs = workflow_kwargs.copy()
-    eval_workflow_kwargs["gen_args"] = dict(
-        temperature=0.6,
-        max_completion_tokens=config.gconfig.max_new_tokens,
-    )
-
     with PPOTrainer(
         config,
         train_dataset=train_dataset,
@@ -113,8 +106,8 @@ def main(args):
         trainer.train(
             workflow="examples.tau2.agent.Tau2AgentWorkflow",
             workflow_kwargs=workflow_kwargs,
-            eval_workflow="examples.tau2.agent.Tau2AgentWorkflow",
-            eval_workflow_kwargs=eval_workflow_kwargs,
+            eval_workflow=None,
+            eval_workflow_kwargs=None,
             dynamic_filter_fn="examples.tau2.train.group_filter",
         )
 

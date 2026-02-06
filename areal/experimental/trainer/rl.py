@@ -452,11 +452,11 @@ class PPOTrainer:
     def _init_scheduler(self) -> Scheduler:
         cfg = self.config.scheduler
         if cfg.type == "local":
-            return LocalScheduler(exp_config=self.config)
+            return LocalScheduler(exp_config=self.config, startup_timeout=600.0)
         elif cfg.type == "ray":
-            return RayScheduler(exp_config=self.config)
+            return RayScheduler(exp_config=self.config, startup_timeout=600.0)
         elif cfg.type == "slurm":
-            return SlurmScheduler(exp_config=self.config)
+            return SlurmScheduler(exp_config=self.config, startup_timeout=600.0)
         raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
 
     def _create_dataloader(
