@@ -3,5 +3,5 @@ export USE_OPTIMIZED_MODEL=0
 # the optimized model may not be suitable. In this case, set this value to 0 to disable the optimized model.
 
 python examples/vlm_npu/geometry3k_grpo.py \
-    --config examples/vlm_npu/geometry3k_grpo.yaml \
+    --config examples/vlm_npu/qwen3_vl_2b_geometry3k_grpo.yaml \
     scheduler.type=local
