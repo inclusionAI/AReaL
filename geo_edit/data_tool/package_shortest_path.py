@@ -16,6 +16,83 @@ def _load_jsonl(path: Path):
             yield json.loads(line)
 
 
+def _path_to_annotated(image_path: str) -> str:
+    p = image_path.replace("images_original", "images_annotated")
+    p = p.replace("_orig.png", "_ann.png")
+    return p
+
+
+def _path_to_original(image_path: str) -> str:
+    p = image_path.replace("images_annotated", "images_original")
+    p = p.replace("_ann.png", "_orig.png")
+    return p
+
+
+def _answer_str(rec: dict) -> str:
+    path = rec.get("ground_truth", {}).get("path", [])
+    if isinstance(path, list):
+        return ",".join(str(x) for x in path)
+    return str(path)
+
+
+def _connectivity_text(rec: dict) -> str:
+    edges = rec.get("edges", [])
+    pairs = []
+    for e in edges:
+        u = e.get("u")
+        v = e.get("v")
+        if u is None or v is None:
+            continue
+        a, b = (u, v) if u < v else (v, u)
+        pairs.append((a, b))
+    pairs = sorted(set(pairs))
+    return ", ".join([f"({u},{v})" for u, v in pairs])
+
+
+def _prompt_text(rec: dict) -> str:
+    q = rec.get("query", {})
+    s = q.get("source", "")
+    t = q.get("target", "")
+    edge_text = rec.get("edge_list_text", "")
+    conn_text = _connectivity_text(rec)
+    return (
+        f"You are given a graph image with node labels. "
+        f"Connected node pairs (undirected) are: {conn_text}. "
+        f"The edge distances are provided as text in the format d(U,V)=W: {edge_text}. "
+        f"Find the shortest path from {s} to {t}. "
+        f"Output only the node sequence separated by ','."
+    )
+
+
+def _prompt_image(rec: dict) -> str:
+    q = rec.get("query", {})
+    s = q.get("source", "")
+    t = q.get("target", "")
+    conn_text = _connectivity_text(rec)
+    return (
+        f"You are given an annotated graph image. "
+        f"Connected node pairs (undirected) are: {conn_text}. "
+        f"Read edge distances from the image labels. "
+        f"Find the shortest path from {s} to {t}. "
+        f"Output only the node sequence separated by ','."
+    )
+
+
+def _prompt_image_text(rec: dict) -> str:
+    q = rec.get("query", {})
+    s = q.get("source", "")
+    t = q.get("target", "")
+    edge_text = rec.get("edge_list_text", "")
+    conn_text = _connectivity_text(rec)
+    return (
+        f"You are given an annotated graph image and additional edge-distance text. "
+        f"Connected node pairs (undirected) are: {conn_text}. "
+        f"The distance text uses format d(U,V)=W: {edge_text}. "
+        f"Find the shortest path from {s} to {t}. "
+        f"Output only the node sequence separated by ','."
+    )
+
+
 def package_shortest_path(dataset_dir: Path, out_dir: Path) -> None:
     dataset_jsonl = dataset_dir / "dataset.jsonl"
     if not dataset_jsonl.exists():
@@ -33,26 +110,67 @@ def package_shortest_path(dataset_dir: Path, out_dir: Path) -> None:
 
     for rec in _load_jsonl(dataset_jsonl):
         cond = rec.get("condition")
-        if cond not in records_by_cond:
+        if cond not in ("text", "image"):
             continue
-        image_rel = rec.get("image_path")
-        if not image_rel:
-            continue
-        image_path = dataset_dir / image_rel
-        with image_path.open("rb") as imf:
-            b = imf.read()
+        case_id = int(rec.get("case_id", 0))
+        base_graph_id = int(rec.get("base_graph_id", 0))
+        level_nodes = int(rec.get("level_nodes", 0))
+        answer = _answer_str(rec)
 
-        answer = rec.get("ground_truth", {}).get("path", "")
-        records_by_cond[cond].append(
-            {
-                "case_id": int(rec.get("case_id", 0)),
-                "base_graph_id": int(rec.get("base_graph_id", 0)),
-                "level_nodes": int(rec.get("level_nodes", 0)),
-                "prompt": rec.get("prompt", ""),
-                "answer": str(answer),
-                "image": {"bytes": b, "path": None},
-            }
-        )
+        if cond == "text":
+            image_rel = _path_to_original(rec.get("image_path", ""))
+            if image_rel:
+                image_path = dataset_dir / image_rel
+                if image_path.exists():
+                    with image_path.open("rb") as imf:
+                        b = imf.read()
+                    records_by_cond["text"].append(
+                        {
+                            "case_id": case_id,
+                            "base_graph_id": base_graph_id,
+                            "level_nodes": level_nodes,
+                            "prompt": _prompt_text(rec),
+                            "answer": answer,
+                            "image": {"bytes": b, "path": None},
+                        }
+                    )
+
+            ann_rel = _path_to_annotated(rec.get("image_path", ""))
+            if ann_rel:
+                ann_path = dataset_dir / ann_rel
+                if ann_path.exists():
+                    with ann_path.open("rb") as imf:
+                        b = imf.read()
+                    records_by_cond["image_text"].append(
+                        {
+                            "case_id": case_id,
+                            "base_graph_id": base_graph_id,
+                            "level_nodes": level_nodes,
+                            "prompt": _prompt_image_text(rec),
+                            "answer": answer,
+                            "image": {"bytes": b, "path": None},
+                        }
+                    )
+
+        if cond == "image":
+            image_rel = _path_to_annotated(rec.get("image_path", ""))
+            if not image_rel:
+                continue
+            image_path = dataset_dir / image_rel
+            if not image_path.exists():
+                continue
+            with image_path.open("rb") as imf:
+                b = imf.read()
+            records_by_cond["image"].append(
+                {
+                    "case_id": case_id,
+                    "base_graph_id": base_graph_id,
+                    "level_nodes": level_nodes,
+                    "prompt": _prompt_image(rec),
+                    "answer": answer,
+                    "image": {"bytes": b, "path": None},
+                }
+            )
 
     features = Features(
         {

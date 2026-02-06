@@ -79,11 +79,7 @@ wrap your final answer in <answer> and </answer> tags.
 '''
 
 API_NO_TOOL_SYSTEM_PROMPT = '''
-You are an advanced AI assistant capable of complex reasoning.
-You must strictly adhere to the following protocol:
-
-1. Final Output: When you have formulated your conclusion,
-wrap your final answer in <answer> and </answer> tags.
+You are an advanced AI assistant capable of complex reasoning. When you have formulated your conclusion, wrap your final answer in <answer> and </answer> tags.
 '''
 
 TOOL_EXECUTION_SUCCESS_PROMPT="All your tool calls were executed successfully. The new image is now available as the latest Observation. Please compare this new Observation with previous Observations (especially Observation 0, the original image) to analyze changes and verify your actions. Based on your analysis of ALL available images, decide your next action or provide the final answer."
@@ -127,11 +123,11 @@ def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
     if model_type_normalized in {"vllm", "sglang"}:
         if tool_mode_normalized == "force":
             return f"{VLLM_SYSTEM_PROMPT}\n\n{VLLM_FORCE_TOOL_CALL_PROMPT}"
-        elif tool_mode_normalized == "notool":
+        elif tool_mode_normalized == "direct":
             return VLLM_NO_TOOL_SYSTEM_PROMPT
         return VLLM_SYSTEM_PROMPT
     else:
-        if tool_mode_normalized == "notool":
+        if tool_mode_normalized == "direct":
             return API_NO_TOOL_SYSTEM_PROMPT
         else:
             return API_CALL_SYSTEM_PROMPT
