@@ -2,6 +2,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from openai.types.responses.response_create_params import ResponseCreateParamsNonStreaming
+from pydantic import TypeAdapter
+
 from geo_edit.environment.action.image_edition_tool import draw_line_function
 from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
 
@@ -99,3 +102,30 @@ def test_vllm_task_parses_tool_calls(tmp_path):
     assert final_tool_calls == []
     assert task.conversation_history[1]["output_text"] == "Final answer."
     assert task.conversation_history[1]["function_call"] is None
+
+
+def test_vllm_direct_initial_input_matches_responses_schema(tmp_path):
+    image_path = Path(__file__).resolve().parents[1] / "images" / "input_image.png"
+    task = VLLMVisionQATask(
+        task_id="task-direct-1",
+        task_prompt="Question?",
+        task_answer="A",
+        task_image_path=str(image_path),
+        save_dir=tmp_path / "out",
+        tool_functions={},
+        system_prompt="sys",
+    )
+
+    user_message = next(item for item in task.contents["input"] if item.get("role") == "user")
+    image_part = next(part for part in user_message["content"] if part.get("type") == "input_image")
+    assert image_part["detail"] == "auto"
+
+    assert not any(
+        item.get("type") in {"function_call", "function_call_output"}
+        for item in task.contents["input"]
+        if isinstance(item, dict)
+    )
+
+    TypeAdapter(ResponseCreateParamsNonStreaming).validate_python(
+        {"model": "dummy-model", "input": task.contents["input"]}
+    )

@@ -53,7 +53,7 @@ class VLLMVisionQATask(VisionQATask):
             content.extend(
                 [
                     {"type": "input_text", "text": "Observation 0:"},
-                    {"type": "input_image", "image_url": image_url},
+                    {"type": "input_image", "image_url": image_url, "detail": "auto"},
                 ]
             )
         self.contents["input"].append({"role": "user", "content": content})
