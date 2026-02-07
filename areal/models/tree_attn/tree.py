@@ -548,14 +548,23 @@ def _pack_input_ids(
     return input_ids.unsqueeze(0)
 
 
+# Block size for memory-efficient attention mask building.
+# tril_indices for a block of this size uses ~32MB (2048*2048/2 * 2 tensors * 4 bytes).
+_ATTN_MASK_BLOCK_SIZE = 2048
+
+
 def _build_attention_mask(
     trie: TrieNode,
     max_tokens: int,
     device: torch.device,
 ) -> torch.Tensor:
-    """Build 2D attention mask from trie structure."""
+    """Build 2D attention mask from trie structure.
+
+    Uses blockwise processing for large sequences to limit memory usage.
+    For a sequence of length N, instead of creating tril_indices(N, N) which
+    uses O(N^2) memory, we process in blocks of size B, each using O(B^2) memory.
+    """
     mask = torch.zeros((max_tokens, max_tokens), dtype=torch.bool, device=device)
-    tril_cache: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
 
     for seq_id in trie.all_sequence_ids:
         # Get all tree index ranges for this sequence
@@ -577,18 +586,74 @@ def _build_attention_mask(
         if seq_len == 0:
             continue
 
-        # Get or create lower triangular indices
-        rows_cols = tril_cache.get(seq_len)
-        if rows_cols is None:
-            rows_cols = torch.tril_indices(
-                seq_len, seq_len, device=device, dtype=torch.int32
-            )
-            tril_cache[seq_len] = rows_cols
-        rows, cols = rows_cols
+        # Apply causal mask in blocks to limit memory usage
+        _apply_causal_mask_blockwise(mask, positions, seq_len, device)
 
-        # Set causal mask entries
-        mask[positions[rows], positions[cols]] = True
     return mask
+
+
+def _apply_causal_mask_blockwise(
+    mask: torch.Tensor,
+    positions: torch.Tensor,
+    seq_len: int,
+    device: torch.device,
+) -> None:
+    """Apply causal mask entries blockwise to limit memory usage.
+
+    Instead of creating one huge tril_indices(seq_len, seq_len), we process
+    the lower triangular matrix in blocks. For each block, we compute the
+    valid (row, col) pairs where row >= col (causal) and set mask entries.
+
+    The lower triangular matrix is divided into:
+    1. Diagonal blocks: square blocks along the diagonal
+    2. Off-diagonal blocks: rectangular blocks below the diagonal
+
+    For a 6x6 matrix with block_size=2:
+        [D0  .   . ]
+        [B10 D1  . ]
+        [B20 B21 D2]
+
+    Where D0, D1, D2 are diagonal blocks (lower triangular within)
+    and B10, B20, B21 are fully dense blocks.
+    """
+    block_size = _ATTN_MASK_BLOCK_SIZE
+    num_blocks = (seq_len + block_size - 1) // block_size
+
+    for block_row in range(num_blocks):
+        row_start = block_row * block_size
+        row_end = min((block_row + 1) * block_size, seq_len)
+        row_len = row_end - row_start
+
+        # Process diagonal block (lower triangular within block)
+        # These are positions where block_row == block_col
+        tril = torch.tril_indices(row_len, row_len, device=device, dtype=torch.int32)
+        local_rows, local_cols = tril
+        global_rows = row_start + local_rows
+        global_cols = row_start + local_cols
+        mask[positions[global_rows], positions[global_cols]] = True
+        del tril, local_rows, local_cols, global_rows, global_cols
+
+        # Process off-diagonal blocks (fully dense, all entries valid)
+        # These are positions where block_row > block_col
+        for block_col in range(block_row):
+            col_start = block_col * block_size
+            col_end = min((block_col + 1) * block_size, seq_len)
+
+            # Create meshgrid for this block - all (row, col) pairs are valid
+            # since row >= row_start > col_end > col for off-diagonal blocks
+            block_rows = torch.arange(
+                row_start, row_end, device=device, dtype=torch.int32
+            )
+            block_cols = torch.arange(
+                col_start, col_end, device=device, dtype=torch.int32
+            )
+
+            # Use broadcasting to set all entries in this block
+            # positions[block_rows] gives row indices, positions[block_cols] gives col indices
+            row_positions = positions[block_rows].unsqueeze(1)  # [row_len, 1]
+            col_positions = positions[block_cols].unsqueeze(0)  # [1, col_len]
+            mask[row_positions, col_positions] = True
+            del block_rows, block_cols, row_positions, col_positions
 
 
 def _pack_extra_data(

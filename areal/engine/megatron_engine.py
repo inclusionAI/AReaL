@@ -1476,16 +1476,24 @@ class MegatronEngine(TrainEngine):
             )
         if not self.config.is_critic:
             if self.enable_tree_training:
+                # Handle dummy trie (empty tree for DP synchronization)
+                # When trie has no sequences, return zero loss with grad connection
+                trie_node = inputs.get("trie_node")
+                if trie_node is None or not trie_node.all_sequence_ids:
+                    # Return zero loss that maintains gradient connection to output
+                    # This ensures backward() works correctly for distributed synchronization
+                    return output.sum() * 0.0
+
                 # For tree training, use gather_packed_tree_vocab_stats to properly
                 # unpack vocab stats from tree structure back to per-sequence format.
                 # This is necessary because the logits are in packed tree format where
                 # multiple sequences share prefix positions.
                 vocab_min_logits, vocab_max_logits = gather_packed_tree_vocab_stats(
-                    output, inputs["trie_node"]
+                    output, trie_node
                 )
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
                     output,
-                    inputs["trie_node"],
+                    trie_node,
                     inputs["input_ids"],
                     temperature=self.config.temperature,
                     tp_group=mpu.get_tensor_model_parallel_group()
