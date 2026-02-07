@@ -5,6 +5,13 @@ on:
     branches: [main]
     types: [labeled]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to use for testing'
+        required: false
+        type: string
+        default: 'dev'
 
 concurrency:
   group: areal-unit-tests-${{ github.ref }}
@@ -15,11 +22,14 @@ env:
   RUNNER_LABELS: gcp-a2-highgpu-2g
   RUNNER_VERSION: '2.317.0'
   GCP_OS_IMAGE: areal-cicd-test-202602030
-  CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:dev
+  CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:${{ inputs.image_tag || 'dev' }}
 
 jobs:
   provision-runner:
-    if: contains(github.event.pull_request.labels.*.name, 'safe-to-test') || github.event_name == 'workflow_dispatch'
+    if: |
+      github.event_name == 'workflow_call' ||
+      contains(github.event.pull_request.labels.*.name, 'safe-to-test') ||
+      github.event_name == 'workflow_dispatch'
     name: Provision GCP runner with 2 A100 GPUs
     runs-on: ubuntu-latest
     outputs:
@@ -228,7 +238,10 @@ jobs:
             throw new Error(`Timed out waiting for runner ${instanceName} to come online.`);
 
   unit-tests:
-    if: contains(github.event.pull_request.labels.*.name, 'safe-to-test') || github.event_name == 'workflow_dispatch'
+    if: |
+      github.event_name == 'workflow_call' ||
+      contains(github.event.pull_request.labels.*.name, 'safe-to-test') ||
+      github.event_name == 'workflow_dispatch'
     needs:
       - provision-runner
     name: Run AReaL tests
