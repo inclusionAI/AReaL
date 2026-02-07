@@ -30,14 +30,14 @@ Rules beyond pre-commit (ruff format/lint).
 
 **Color Scheme:**
 
-| Color        | Category                               | Examples                           |
-| ------------ | -------------------------------------- | ---------------------------------- |
-| blue         | Infrastructure (Schedulers, Launchers) | `LocalScheduler`, `RayLauncher`    |
-| white        | Orchestration (Controllers, RPC)       | `TrainController`, `SGLangWrapper` |
-| light_purple | RL-specific (Workflows, Rewards)       | `RLVRWorkflow`, `GSM8KReward`      |
-| light_green  | Data/Metrics (Stats, Dataset)          | `StatsLogger`, `RLTrainer`         |
-| light_cyan   | Compute backends (Engines, Platforms)  | `FSDPEngine`, `CUDAPlatform`       |
-| yellow/red   | Warning/Error levels (override)        | Any logger at WARNING+             |
+| Color      | Category                               | Examples                           |
+| ---------- | -------------------------------------- | ---------------------------------- |
+| blue       | Infrastructure (Schedulers, Launchers) | `LocalScheduler`, `RayLauncher`    |
+| white      | Orchestration (Controllers, RPC)       | `TrainController`, `SGLangWrapper` |
+| purple     | RL-specific (Workflows, Rewards)       | `RLVRWorkflow`, `GSM8KReward`      |
+| green      | Data/Metrics (Stats, Dataset)          | `StatsLogger`, `RLTrainer`         |
+| cyan       | Compute backends (Engines, Platforms)  | `FSDPEngine`, `CUDAPlatform`       |
+| yellow/red | Warning/Error levels (override)        | Any logger at WARNING+             |
 
 ## Performance Patterns
 
