@@ -1,5 +1,5 @@
-from math_verify.metric import math_metric
-from math_verify.parser import ExprExtractionConfig, LatexExtractionConfig
+from math_verify.grader import verify as math_verify_verify
+from math_verify.parser import ExprExtractionConfig, LatexExtractionConfig, parse
 
 from areal.utils import logging
 
@@ -27,6 +27,11 @@ def get_custom_reward_fn(path: str, **kwargs):
 class MathVerifyWorker:
     """Thin wrapper over math_verify with configurable extraction/precision.
 
+    Uses ``parse()`` + ``verify()`` directly instead of ``math_metric()``
+    so that signal-based timeouts can be disabled (``parsing_timeout=None``,
+    ``timeout_seconds=None``). This avoids ``signal.alarm()`` which only
+    works in the main thread.
+
     Args:
         try_extract_without_anchor: When False, only answers with explicit anchors
             (e.g., "answer = 1", "final answer = 1") are matched. When True,
@@ -38,27 +43,41 @@ class MathVerifyWorker:
     """
 
     def __init__(self, try_extract_without_anchor=True, precision: int = 6):
-        self.verify_func = math_metric(
-            gold_extraction_target=(
-                ExprExtractionConfig(
-                    try_extract_without_anchor=try_extract_without_anchor
-                ),
-                LatexExtractionConfig(),
+        self.gold_extraction_target = (
+            ExprExtractionConfig(
+                try_extract_without_anchor=try_extract_without_anchor
             ),
-            pred_extraction_target=(
-                ExprExtractionConfig(
-                    try_extract_without_anchor=try_extract_without_anchor
-                ),
-                LatexExtractionConfig(),
-            ),
-            precision=precision,
+            LatexExtractionConfig(),
         )
+        self.pred_extraction_target = (
+            ExprExtractionConfig(
+                try_extract_without_anchor=try_extract_without_anchor
+            ),
+            LatexExtractionConfig(),
+        )
+        self.precision = precision
 
     def verify(self, response: str, ground_truth: str) -> float:
-        # ground_truth_parsable = "\\boxed{" + ground_truth + "}"
         try:
-            ret_score, _ = self.verify_func([ground_truth], [response])
-            return float(ret_score)
+            gold_parsed = parse(
+                ground_truth,
+                extraction_config=self.gold_extraction_target,
+                parsing_timeout=None,
+            )
+            pred_parsed = parse(
+                response,
+                extraction_config=self.pred_extraction_target,
+                parsing_timeout=None,
+            )
+            if not gold_parsed or not pred_parsed:
+                return 0.0
+            result = math_verify_verify(
+                gold_parsed,
+                pred_parsed,
+                float_rounding=self.precision,
+                timeout_seconds=None,
+            )
+            return 1.0 if result else 0.0
         except Exception:
             logger.warning(
                 f"Exception in MathVerifyWorker.verify for response={response} and ground_truth={ground_truth}",
