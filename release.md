@@ -1,18 +1,32 @@
-# AReaL v1.0.0：统一智体 RL、PyTorch 原生引擎、AI 辅助开发三箭齐发，通用为本，原生致简
+# AReaL v1.0.0：统一智能体 RL × AI 辅助编程，通用为本，原生致简
+
+**💻 ASystem 核心技术解析系列 | 每周四硬核解密**
+
+欢迎回到「ASystem 系统开源」核心技术解析系列！
+
+ASystem 是支撑万亿级思考模型 **Ring-1T** 等大规模 RL 训练的完整技术底座。在超大规模 RL 训练中，系统工程的复杂性极易反噬算法开发效率和灵活性。
 
 **本期聚焦：AReaL v1.0.0 正式发布**
 
-经过数月的迭代优化，AReaL 迎来了里程碑式的 v1.0.0 版本。在支持稳定、高效异步强化学习训练的基础上，本次发布带来了**三大核心特性**：
+经过数月的迭代优化，AReaL 迎来了里程碑式的 v1.0.0 版本。如果说 v0.5.0 的核心是"解耦"——让 Agent 与训练逻辑分离，那么 v1.0.0
+的核心则是\*\*"统一"与"原生"\*\*：
 
-1. **Unified Agentic RL（统一智能体强化学习）**：通过 OpenAI/Anthropic API 代理，任意 Agent 框架只需修改一个
-   `base_url` 即可接入训练，真正实现"协议统一，框架无关"，同时保证训推 Token 一致性。
+- **统一**：通过标准 API 代理，将千差万别的 Agent 框架统一到同一套训练范式中
+- **原生**：用 PyTorch 原生 API 构建分布式训练引擎，告别 Megatron 的层层依赖
 
-1. **Archon 引擎**：PyTorch 原生 5D 并行训练引擎，支持 DP、TP、PP、CP、EP 全维度并行，`uv sync`
-   即装即用，`torch.compile` 默认开启。在 0.5.0 训练万亿参数模型 Ring-1T 的基础上，1.0.0 还能在 **仅仅6 台机器（48 卡
-   H200）** 上成功训练 **235B MoE** 模型，并在 Tau2-bench 上取得 **SOTA** 表现。
+更令人兴奋的是，我们在构建这些能力的过程中，探索出了一条**大规模 AI 辅助编程**的可行路径。我们将这套方法论完全开源，让每位开发者都能站在"AI
+专家团队"的肩膀上加速开发。
 
-1. **大规模 AI 辅助编程**：得益于大规模 AI 编程工具的可靠使用，Archon 引擎的开发仅用了 **1 人·月的工作量**。更令人兴奋的是，我们已将这些驾驭AI
-   coding"武功秘籍"完全开源，让每位开发者都能借助“专家团队”，在AReaL中加速自己的 Agent RL 应用开发。
+> **AReaL v1.0.0 两大核心特性：**
+>
+> 1. **Unified Agentic RL**：一个 `base_url` 连接万千 Agent 框架，训推 Token 100% 一致，Tree Attention
+>    带来最高 8x 吞吐提升
+> 1. **大规模 AI 辅助编程**：开源"武功秘籍"，1 人·月打造 PyTorch 原生 5D 并行引擎，48 卡训练 235B MoE 模型
+
+我们希望通过 AReaL 的架构设计与实践，推动将强化学习框架从"完整应用"转化为\*\*"高性能运行时服务"\*\*，为业界大规模 Agentic RL
+训练提供社区友好的思路。
+
+硬核解密持续放送！锁定我们，每周四不见不散！
 
 # 核心特性一：Unified Agentic RL（统一智能体强化学习）
 
@@ -28,8 +42,8 @@
 1. **Token 一致性难保证**：Agent 框架通过高层 API 与 LLM 交互，无法直接获取 token 级别的信息。如果在训练时重新
    tokenize，可能导致训推 token 不一致，影响算法正确性。
 
-v1.0.0 通过 **Proxy Worker 架构** 彻底解决了这两个问题：任意支持 OpenAI/Anthropic 协议的 Agent 框架，只需修改一个
-`base_url` 即可接入训练，同时 token 级信息在推理时直接捕获，完全避免 tokenization mismatch。
+v1.0.0 通过 **Proxy Worker 架构** 彻底解决了这两个问题：**我们将"协议"而非"框架"作为统一标准**，任意支持 OpenAI/Anthropic
+协议的 Agent 框架，只需修改一个 `base_url` 即可接入训练，同时 token 级信息在推理时直接捕获，完全避免 tokenization mismatch。
 
 ## Proxy Worker 架构
 
@@ -165,8 +179,8 @@ token 信息，GPU Process 执行实际推理。
 
 #### 训练数据导出
 
-换存在 `InteractionCache` 中的数据如何被用于训练呢？在实际的 Agentic 场景中，一次任务执行往往包含多轮 LLM
-交互，并且这些交互**很可能不是线性的**，例如，一个智能体可能在读代码阶段启动多个子智能体探索代码仓库，这些子智能体和主智能体使用同样的模型，因此探索的过程同样可以被用于训练。在这种模式下，我们不能简单将多个请求按照时间顺序“拼起来”作为一条完整的智能体轨迹。
+缓存在 `InteractionCache` 中的数据如何被用于训练呢？在实际的 Agentic 场景中，一次任务执行往往包含多轮 LLM
+交互，并且这些交互**很可能不是线性的**。例如，一个智能体可能在读代码阶段启动多个子智能体探索代码仓库，这些子智能体和主智能体使用同样的模型，因此探索的过程同样可以被用于训练。在这种模式下，我们不能简单地将多个请求按照时间顺序"拼起来"作为一条完整的智能体轨迹。
 
 为了兼容非线性的智能体轨迹，AReaL 采用 **Individual Mode** 将每轮交互**独立导出**为训练样本，并通过折扣因子将最终 reward
 反向传播到每一轮：
@@ -200,419 +214,152 @@ AReaL 引入了基于 Trie（前缀树）的序列打包方案：
 
 ______________________________________________________________________
 
-# 核心特性二：Archon 训练引擎
+# 核心特性二：大规模 AI 辅助编程
 
-## 背景与动机
+## Archon 引擎的诞生
 
-在大规模 RL 训练中，Megatron-LM 是业界标杆级的训练框架。然而，在实际使用过程中，我们遇到了以下痛点：
+在大规模 RL 训练领域，Megatron-LM 是业界标杆。然而，它的安装需要 Docker 环境和繁琐的 C++
+编译，代码层层嵌套，难以调试和扩展。我们一直在思考：**能否用 PyTorch 原生 API 实现同等能力的分布式训练引擎？**
 
-1. **安装复杂**：需要 Docker 环境，`transformer_engine` `apex` 等组件需要 C++ 编译，环境配置耗时
-1. **调试困难**：代码层层嵌套，调用栈深，出现问题时难以定位
+答案是 **Archon 引擎**——一个支持完整 5D 并行（DP、TP、PP、CP、EP）的 PyTorch 原生训练引擎。
 
-与此同时，PyTorch 生态在分布式训练方面已经非常成熟：
+令人惊讶的是，这样一个复杂的分布式系统，从零开始实现到验证正确性，**仅用了 1 人·月的工作量**。
 
-- **DTensor**：分布式张量抽象，支持声明式并行
-- **DeviceMesh**：灵活的设备拓扑管理
-- **torch.distributed.pipelining**：原生流水线并行支持
+这背后的秘密是 AReaL 中**大规模、可靠地使用 AI 编程专家**。
 
-基于 PyTorch 官方大模型训练参考实现 **torchtitan**，我们开发了 **Archon 引擎**——一个 PyTorch 原生的 5D 并行训练引擎。
+更令人兴奋的是，我们也将这些驾驭AI coding"武功秘籍"**完全开源**，让每位开发者都能借助“专业团队”，在AReaL中加速自己的 Agent RL 应用开发。
 
-## 引擎对比
+## Archon 引擎：AI 辅助编程的硬核成果
 
-| 特性            | MegatronEngine | ArchonEngine                     |
-| --------------- | -------------- | -------------------------------- |
-| 后端            | Megatron-Core  | PyTorch 原生                     |
-| 模型来源        | Megatron 模型  | AReaL中自定义 Archon 模型        |
-| torch.compile   | 不支持         | **默认开启**                     |
-| 数据并行 (DP)   | Megatron DP    | FSDP2                            |
-| 张量并行 (TP)   | Megatron TP    | PyTorch DTensor                  |
-| 流水线并行 (PP) | 支持 (VPP)     | **支持** (1F1B, Interleaved1F1B) |
-| 专家并行 (EP)   | 完整 EP/ETP    | **完整 EP/ETP**                  |
-| 上下文并行 (CP) | Megatron CP    | Ulysses SP                       |
-| 安装方式        | Docker + 编译  | **`uv sync` 即用**               |
+### 为什么需要 Archon？
 
-## 5D 并行实现详解
+| 痛点     | Megatron-LM                           | Archon 解决方案      |
+| -------- | ------------------------------------- | -------------------- |
+| 安装复杂 | Docker + transformer_engine/apex 编译 | **只需要安装torch**  |
+| 调试困难 | 调用栈深，难以定位                    | PyTorch 原生，栈清晰 |
+| 编译优化 | 不支持 torch.compile                  | **默认开启**         |
 
-Archon 的核心价值在于：**使用 PyTorch 原生 API 实现完整的 5D 并行**。下面我们逐一介绍每种并行的实现方式。
+### 5D 并行能力一览
 
-### 张量并行（Tensor Parallel, TP）
+Archon 使用 PyTorch 原生 API 实现了与 Megatron 同等的并行能力：
 
-**使用 API**：`torch.distributed.tensor.parallel` 模块
+- **数据并行 (DP)**：基于 FSDP2 `fully_shard`，相比 Megatron 默认的数据并行进一步拆分了模型参数
+- **流水线并行 (PP)**：基于 `torch.distributed.pipelining`，支持 1F1B 和 Interleaved1F1B 调度
+- **张量并行 (TP)**：基于 DTensor，使用 `ColwiseParallel` / `RowwiseParallel` 切分权重
+- **上下文并行 (CP)**：基于 Ulysses Sequence Parallelism，通过 all-to-all 分布式处理长序列
+- **专家并行 (EP)**：基于 all-to-all + `grouped_mm`，支持 EP + ETP 2D 分片
 
-张量并行将模型参数在张量维度上切分到多个 GPU：
+Archon 引擎已经过实战检验。我们在 **6 台机器（48 卡 H200）** 上成功训练了 **Qwen3-235B-A22B MoE** 模型，并在
+**Tau2-bench** 上取得了 **SOTA**
+表现。详细实验结果请参考论文：[From Self-Evolving Synthetic Data to Verifiable-Reward RL: Post-Training Multi-turn Interactive Tool-Using Agents](https://www.arxiv.org/abs/2601.22607)
 
-- `ColwiseParallel`：列切分，用于 Q/K/V 投影、FFN 的 w1/w3
-- `RowwiseParallel`：行切分，用于 wo 输出投影、FFN 的 w2
-- `SequenceParallel`：序列维度切分，用于 LayerNorm
+## AI 辅助开发的"武功秘籍"
 
-**核心代码示例**（来自 `areal/experimental/models/archon/qwen3/infra/parallelize.py`）：
+Archon 引擎能在 1 人·月内完成，得益于我们在 AReaL 中构建的一套完整 AI 辅助开发体系。这套体系现已完全开源，包含三类核心工具：
 
-```python
-layer_plan = {
-    # Attention 层
-    "attention.wq": ColwiseParallel(use_local_output=False),  # Q投影列切分
-    "attention.wk": ColwiseParallel(use_local_output=False),  # K投影列切分
-    "attention.wv": ColwiseParallel(use_local_output=True),   # V投影列切分
-    "attention.wo": RowwiseParallel(output_layouts=Shard(1)), # 输出投影行切分
+### 领域专家 Agents
 
-    # FFN 层
-    "feed_forward.w1": ColwiseParallel(),   # gate
-    "feed_forward.w2": RowwiseParallel(output_layouts=Shard(1)),  # down
-    "feed_forward.w3": ColwiseParallel(),   # up
-
-    # LayerNorm
-    "attention_norm": SequenceParallel(),
-    "ffn_norm": SequenceParallel(),
-}
-parallelize_module(block, tp_mesh, layer_plan)
-```
-
-### 上下文并行（Context Parallel, CP）
-
-**实现方式**：Ulysses Sequence Parallelism
-
-**使用 API**：`torch.distributed._functional_collectives.all_to_all_single_autograd`
-
-Ulysses SP 通过 All-to-All 通信实现长序列的分布式处理：
-
-1. **Attention 前**：gather sequence, scatter heads
-1. **Attention 计算**：每个 rank 处理完整序列的部分 head
-1. **Attention 后**：gather heads, scatter sequence
-
-**核心代码**（来自 `areal/models/fsdp/ulysses.py`）：
-
-```python
-# 进入 attention 前
-xq = gather_seq_scatter_heads(xq, seq_dim=1, head_dim=2, group=cp_group)
-xk = gather_seq_scatter_heads(xk, seq_dim=1, head_dim=2, group=cp_group)
-xv = gather_seq_scatter_heads(xv, seq_dim=1, head_dim=2, group=cp_group)
-
-# ... attention 计算 ...
-
-# attention 后
-output = gather_heads_scatter_seq(output, head_dim=2, seq_dim=1, group=cp_group)
-```
-
-### 流水线并行（Pipeline Parallel, PP）
-
-**使用 API**：`torch.distributed.pipelining` 模块
-
-- `PipelineStage`：流水线阶段封装
-- `get_schedule_class`：获取调度策略
-
-**支持的调度策略**：
-
-- `1F1B`：单虚拟阶段，内存效率高
-- `Interleaved1F1B`：多虚拟阶段，通信效率更高
-
-**阶段划分**：
-
-- 第一阶段：`tok_embeddings` + 前几层 transformer blocks
-- 中间阶段：若干层 transformer blocks
-- 最后阶段：后几层 transformer blocks + `norm` + `output`
-
-### 专家并行（Expert Parallel, EP）
-
-**使用 API**：
-
-- `torch.distributed._functional_collectives.all_to_all_single`：Token dispatch/combine
-- `torch.distributed.tensor.distribute_tensor`：权重分片
-- `torch._grouped_mm`：分组矩阵乘法
-
-**工作流程**（来自 `areal/experimental/models/archon/expert_parallel.py`）：
-
-```python
-class ExpertParallel(BaseExpertParallel):
-    """Expert Parallelism with ETP=1"""
-
-    def _partition_fn(self, name, module, device_mesh):
-        """Shard expert weights on expert dimension (dim 0)"""
-        for param_name, param in module.named_parameters(recurse=False):
-            dist_param = nn.Parameter(distribute_tensor(param, device_mesh, [Shard(0)]))
-            module.register_parameter(param_name, dist_param)
-
-    def _token_dispatch(self, module, inputs, device_mesh):
-        """Dispatch tokens to EP ranks via all-to-all"""
-        routed_input, num_tokens_per_expert = inputs
-        group = device_mesh.get_group()
-
-        # Step 1: Exchange token counts via all-to-all
-        num_tokens_per_expert_received = all_to_all_single(
-            num_tokens_per_expert, None, None, group=group
-        )
-
-        # Step 2: All-to-all to dispatch tokens
-        routed_input = all_to_all_single_autograd(
-            routed_input, self.output_splits, self.input_splits, group
-        )
-
-        return routed_input, aligned_num_tokens
-
-    def _token_combine(self, module, output, device_mesh):
-        """Combine expert outputs via all-to-all back"""
-        return all_to_all_single_autograd(
-            output, self.input_splits, self.output_splits, group
-        )
-```
-
-**2D 分片（ETP）**：支持 Expert + Tensor 双维度切分
-
-```python
-class ExpertTensorParallel(ExpertParallel):
-    """Expert Parallelism with Tensor Parallelism (EP + ETP)"""
-
-    def _partition_fn(self, name, module, device_mesh):
-        # w1: [num_experts, dim, hidden_dim] -> [Shard(0), Shard(1)]
-        module.register_parameter(
-            "w1",
-            nn.Parameter(distribute_tensor(module.w1, device_mesh, [Shard(0), Shard(1)]))
-        )
-        # w2: [num_experts, hidden_dim, dim] -> [Shard(0), Shard(2)]
-        module.register_parameter(
-            "w2",
-            nn.Parameter(distribute_tensor(module.w2, device_mesh, [Shard(0), Shard(2)]))
-        )
-```
-
-### 数据并行（Data Parallel, DP）
-
-**使用 API**：`torch.distributed.fsdp.fully_shard`（FSDP2）
-
-```python
-def apply_fsdp(model, dp_mesh, param_dtype, reduce_dtype, ...):
-    mp_policy = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=reduce_dtype)
-    fsdp_config = {"mesh": dp_mesh, "mp_policy": mp_policy}
-
-    if cpu_offload:
-        fsdp_config["offload_policy"] = CPUOffloadPolicy()
-
-    # 逐层应用 FSDP
-    for transformer_block in model.layers.values():
-        fully_shard(transformer_block, **fsdp_config, reshard_after_forward=True)
-
-    fully_shard(model, **fsdp_config)
-```
-
-### 并行化应用顺序
-
-Archon 按照以下顺序应用各种并行：
+AI 编程最大的挑战是**让 AI 理解你的代码库**。我们为 AReaL 的每个核心模块配备了专业化的 AI 助手：
 
 ```
-TP → EP → CP → Activation Checkpointing → torch.compile → FSDP
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        AReaL AI 专家团队                                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐          │
+│  │    planner      │  │  code-verifier  │  │ simple-reviewer │          │
+│  │   架构规划专家   │  │   质量检查专家   │  │   代码审查专家   │          │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘          │
+│                                                                         │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐          │
+│  │ archon-expert   │  │  fsdp-expert    │  │ megatron-expert │          │
+│  │  MoE/专家并行   │  │  FSDP2/内存优化  │  │   流水线并行     │          │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘          │
+│                                                                         │
+│  ┌─────────────────┐  ┌─────────────────┐                               │
+│  │ algorithm-expert│  │ launcher-expert │                               │
+│  │ GRPO/PPO/DAPO   │  │ Slurm/Ray/K8s  │                               │
+│  └─────────────────┘  └─────────────────┘                               │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-这个顺序确保各种并行策略正确组合，避免冲突。
+每个专家 Agent 都内置了对应模块的架构知识、代码约定和常见陷阱。当你修改相关代码时，对应的专家会自动激活，提供精准指导。
 
-## 实战案例：48 卡训练 235B MoE
+### 从"写代码"到"说需求"
 
-基于 Archon 引擎，我们在 **6 台机器（48 卡 H200）** 上成功训练了 **Qwen3-235B-A22B MoE** 模型，并在
-**Tau2-bench** 上取得了 **SOTA** 表现。
+除了领域专家，我们还为常见的开发任务设计了**引导式工作流**。想添加一个新的数据集加载器？只需说一句 `/add-dataset`，AI
+会引导你完成文件创建、接口实现、模块注册、测试生成的全流程。想实现一个奖励函数？`/add-reward` 会确保你遵循 AReaL 的约定，避开常见的坑。遇到分布式训练
+hang 住或 OOM？`/debug-distributed` 提供系统化的排查路径，从 NCCL 超时到显存泄漏，逐一定位。
 
-### 配置示例
+日常开发中那些重复性的工作，同样可以交给 AI 来完成。`/create-pr` 会自动帮你 rebase 最新代码、squash 零散的 commits、生成清晰的 PR
+描述；`/gen-commit-msg` 能从你 staged 的改动中智能提炼出 commit 信息；`/pr-review` 则提供多维度的代码审查，自动识别潜在风险。
 
-```yaml
-# Archon config for Qwen3-235B MoE on 6 nodes (48 GPUs)
-# SGLang: 4 replicas × 4 TP = 16 GPUs
-# Archon: 1 DP × 4 PP × (attn: TP2×CP2, ffn: TP1×EP4) = 32 GPUs
+### 一个真实的开发场景
 
-experiment_name: archon-tau2-grpo
-trial_name: trial-0
+假设你想为 AReaL 添加一个代码执行奖励函数。在传统的开发模式下，你需要先阅读现有奖励函数的实现，理解接口约定，手动创建文件，实现逻辑，注册到模块，编写测试，最后提交
+PR。这个过程可能需要来回翻阅文档、查看示例代码、处理各种细节。
 
-cluster:
-  n_nodes: 6
-  n_gpus_per_node: 8
+而在 AI 辅助开发模式下，你只需要告诉 AI"我想添加一个代码执行奖励函数"。**planner agent** 会自动分析任务，制定实现计划。然后你调用
+`/add-reward code_execution`，AI 会引导你逐步完成文件结构创建、奖励逻辑实现、模块注册和测试生成。完成后，**code-verifier
+agent** 自动运行格式检查和测试。最后一句 `/create-pr`，一个规范的 Pull Request 就创建好了。
 
-allocation_mode: "sglang:d4t4+archon:(attn:d1p4t2c2|ffn:d1p4t1e4)"
+**整个过程，你专注于"做什么"，AI 负责"怎么做"。**
 
-actor:
-  path: Qwen/Qwen3-235B-A22B
-  gradient_checkpointing: true
-  archon:
-    pp_schedule: Interleaved1F1B
-    enable_compile: true
-    ac_mode: selective
-```
+### 你也可以用起来
 
-详细实验结果请参考论文：**arXiv:2601.22607v1**
+这套 AI 辅助开发配置不仅用于 AReaL 自身的开发，**你也可以直接使用它来加速自己的 Agent RL 应用开发**。想快速搭建一个自定义 Agent
+工作流？`/add-workflow` 可以帮你。需要实现特定领域的奖励函数？`/add-reward`
+遵循最佳实践。遇到分布式训练的疑难杂症？`/debug-distributed` 提供系统化的排查思路。对 GRPO、PPO、DAPO
+等算法有疑问？`algorithm-expert` 随时待命。
+
+所有配置文件都在 `.claude/` 目录下，欢迎参考和复用。
 
 ______________________________________________________________________
 
-# 核心特性三：AI 辅助编程实践
+# 未来展望
 
-## 引入：Archon 的开发效率奇迹
+回顾 AReaL 的发展历程，我们看到了一条清晰的从”解耦“到”统一“演进路线。
 
-前面介绍的 Archon 引擎，实现了完整的 5D 并行（DP、TP、PP、CP、EP），支持 235B 规模的 MoE
-模型训练。这样一个复杂的分布式训练引擎，从实现到验证正确性，仅用了 **1 人 1 个多月** 的时间。
+在1.0.0版本之前，AReaL的核心理念是”解耦“
+——不论是训推分离，Agent逻辑分离，还是controller-worker分离，都让每个系统组件变得更模块化、功能化和好维护。
 
-这归功于我们在开发过程中大规模、可靠地使用了 AI 编程工具。
+而从1.0.0版本开始，AReaL希望基于完善的子模块，在应用层外拓，在引擎层内修，既能在容纳万千生态，又能追求极致性能，走在agentic
+RL框架易用性、可靠性和扩展型的山脊之上。
 
-更令人兴奋的是，**AReaL 已经将这些使用 AI 工具的"武功秘籍"完全开源**，让每位开发者都能借助同样的方法论加速自己的 Agent RL 应用开发。
+AReaL 的愿景是成为 **Agentic AI 时代的高性能 RL 运行时服务**。展望未来，我们将持续推进：
 
-## AI 辅助开发配置
+- **Archon 引擎生产级稳定性完善**：更完善的故障恢复、更高效的通信优化
+- **更丰富的 Agent 生态**：LangGraph、CrewAI 等更多框架的开箱即用示例
+- **AI 辅助开发能力持续进化**：让 AI 专家团队更懂你的代码库
 
-AReaL 在 `.claude/` 目录下提供了完整的 AI 辅助开发配置，支持 Claude Code 等 LLM 编程工具：
+我们坚信，**当训练框架足够简单、当 Agent 接入足够统一、当 AI 能够辅助系统开发**，Agentic RL 的大规模落地将不再是少数团队的专属能力。
 
-```
-AReaL/
-├── CLAUDE.md              # 项目上下文与约束
-└── .claude/
-    ├── agents/            # 专业化 AI 助手
-    │   ├── planner.md
-    │   ├── code-verifier.md
-    │   ├── fsdp-engine-expert.md
-    │   ├── archon-engine-expert.md
-    │   ├── megatron-engine-expert.md
-    │   ├── algorithm-expert.md
-    │   └── launcher-scheduler-expert.md
-    ├── skills/            # 引导式开发工作流
-    │   ├── add-dataset/
-    │   ├── add-workflow/
-    │   ├── add-reward/
-    │   ├── add-unit-tests/
-    │   └── debug-distributed/
-    ├── commands/          # 自动化操作
-    │   ├── create-pr.md
-    │   ├── gen-commit-msg.md
-    │   └── pr-review.md
-    └── rules/             # 代码质量标准
-        ├── api-config.md
-        ├── code-style.md
-        ├── distributed.md
-        └── testing.md
-```
-
-## 三类开发工具
-
-### Agents（智能助手）
-
-Agents 是专业化的 AI 助手，根据上下文自动激活，提供领域专业知识：
-
-**通用 Agents**：
-
-| Agent                  | 专长领域           | 激活时机                           |
-| ---------------------- | ------------------ | ---------------------------------- |
-| `planner`              | 复杂任务实现规划   | 多文件修改、新功能开发、架构决策前 |
-| `code-verifier`        | 代码格式检查与测试 | 代码修改后，commit 前              |
-| `simple-code-reviewer` | 快速代码质量检查   | 代码修改后，commit 前              |
-
-**领域专家 Agents**：
-
-| Agent                       | 专长领域             | 激活时机                          |
-| --------------------------- | -------------------- | --------------------------------- |
-| `fsdp-engine-expert`        | FSDP2 配置与内存优化 | FSDPEngine 代码修改或问题咨询     |
-| `archon-engine-expert`      | MoE 训练与专家并行   | ArchonEngine 代码修改或问题咨询   |
-| `megatron-engine-expert`    | 流水线并行与大模型   | MegatronEngine 代码修改或问题咨询 |
-| `algorithm-expert`          | GRPO/PPO/DAPO 算法   | RL 算法相关问题                   |
-| `launcher-scheduler-expert` | Slurm/Ray/K8s 配置   | 集群配置与调度问题                |
-
-### Skills（引导式工作流）
-
-Skills 提供分步骤的引导式开发工作流，确保遵循 AReaL 的约定：
-
-| 技能                 | 用途                                       | 触发方式                   |
-| -------------------- | ------------------------------------------ | -------------------------- |
-| `/add-dataset`       | 添加新数据集加载器到 `areal/dataset/`      | 用户请求添加数据集时       |
-| `/add-workflow`      | 创建新 RolloutWorkflow 实现                | 用户请求创建新 workflow 时 |
-| `/add-reward`        | 实现新奖励函数                             | 用户请求添加奖励函数时     |
-| `/add-unit-tests`    | 为新功能添加单元测试                       | 用户请求添加测试时         |
-| `/debug-distributed` | 排查分布式训练问题（hang、OOM、NCCL 错误） | 遇到分布式训练问题时       |
-
-每个 Skill 都会引导完成整个流程：文件创建、注册、测试，以及常见陷阱的规避。
-
-### Commands（自动化命令）
-
-Commands 是自动化工作流，通过 `/` 前缀调用：
-
-| 命令              | 功能                                  | 使用场景          |
-| ----------------- | ------------------------------------- | ----------------- |
-| `/create-pr`      | 自动 rebase、squash commits 并创建 PR | 开发完成后提交 PR |
-| `/gen-commit-msg` | 从 staged changes 生成 commit 信息    | 准备 commit 时    |
-| `/pr-review`      | 智能代码审查与风险分析                | Review PR 时      |
-
-`/pr-review` 特别强大：它使用动态模板分析 PR 变更，检测风险等级（CRITICAL/HIGH/MEDIUM/LOW），并按需启动针对性的子 Agent
-进行审查。
-
-## 典型开发流程
-
-```
-用户: 我想添加一个新的代码执行奖励函数
-
-Claude: [planner agent 激活，创建实现计划]
-        让我分析一下这个任务...
-        计划如下：
-        1. 创建 areal/reward/code_execution.py
-        2. 实现 CodeExecutionReward 类
-        3. 在 __init__.py 注册
-        4. 添加单元测试
-
-用户: /add-reward code_execution
-
-Claude: [引导创建奖励函数]
-        步骤 1/4: 创建文件结构...
-        步骤 2/4: 实现奖励计算逻辑...
-        步骤 3/4: 注册到模块导出...
-        步骤 4/4: 生成测试用例...
-
-用户: 帮我验证一下修改
-
-Claude: [code-verifier agent 激活]
-        运行 pre-commit...
-        运行测试...
-        ✓ 所有检查通过
-
-用户: /create-pr
-
-Claude: [执行 create-pr command]
-        Rebasing from origin/main...
-        Squashing commits...
-        Creating PR...
-        ✓ PR created: https://github.com/inclusionAI/AReaL/pull/xxx
-```
-
-## 赋能 Agent RL 开发
-
-这套 AI 辅助开发配置不仅用于 AReaL 自身的开发，**用户也可以直接使用这些配置来加速自己的 Agent RL 应用开发**：
-
-- 使用 `/add-workflow` 快速创建自定义 Agent 工作流
-- 使用 `/add-reward` 实现特定领域的奖励函数
-- 使用 `/debug-distributed` 排查分布式训练问题
-- 借助领域专家 Agent（如 `algorithm-expert`）获取 GRPO/PPO/DAPO 算法指导
-
-## 阶段性 Agent 使用建议
-
-我们建议按以下阶段使用不同的 Agent：
-
-1. **规划阶段**（编码前）：使用 `planner` 进行架构设计和实现规划
-1. **格式检查阶段**（编码后）：使用 `code-verifier` 自动运行 formatting、linting 和测试，快速捕获语法错误和风格问题
-1. **质量检查阶段**（格式化后）：使用 `simple-code-reviewer` 进行快速代码质量检查，关注逻辑问题和代码异味
-
-______________________________________________________________________
-
-# 总结与展望
-
-## v1.0.0 三大核心价值
-
-1. **Unified Agentic RL**：一个 `base_url` 连接万千 Agent 框架，在保障训推 Token 一致、减轻前端开发负担的同时，利用 Tree
-   Attention 优化带来最高 8x 吞吐提升
-
-1. **Archon 引擎**：PyTorch 原生 5D 并行，`uv sync` 即用，`torch.compile` 默认开启，48 卡训练 235B MoE 达
-   SOTA
-
-1. **AI 辅助开发**：开源"武功秘籍"，1 人月打造复杂分布式引擎的实践方法论
-
-## 未来方向
-
-- Archon 引擎生产级稳定性完善
-- 更多 Agent 框架的开箱即用示例
-- AI 辅助开发配置的持续优化
+欢迎每一位对强化学习和大语言模型感兴趣的开发者使用 AReaL，并提供宝贵的反馈与建议，一起推动强化学习系统持续创新！
 
 ______________________________________________________________________
 
 # 资源链接
 
-- **GitHub**: https://github.com/inclusionAI/AReaL
-- **Tree Attention 论文**: https://www.arxiv.org/abs/2602.00482
-- **Tau2 训练论文**: https://www.alphaxiv.org/overview/2601.22607v1
-- **AI 辅助开发文档**: `docs/reference/ai_assisted_dev.md`
+📦 **GitHub 仓库**：https://github.com/inclusionAI/AReaL
+
+⭐ 欢迎 Star 和 Fork，也期待您的 PR！
+
+📄 **相关论文**：
+
+- Dynamic Tree Attention：https://www.arxiv.org/abs/2602.00482
+- Tau² 235B MoE 训练：https://www.arxiv.org/abs/2601.22607
+
+📚 **文档资源**：
+
+- AI 辅助开发指南：`docs/reference/ai_assisted_dev.md`
+- Archon 引擎教程：`docs/tutorial/archon.md`
+- Agentic RL 教程：`docs/tutorial/agentic_rl.md`
+
+也欢迎持续关注蚂蚁百灵模型的新发布：
+
+🤗 Hugging Face：https://huggingface.co/inclusionAI
+
+🤖 魔搭社区：https://www.modelscope.cn/organization/inclusionAI
 
 ______________________________________________________________________
