@@ -14,10 +14,11 @@ MODEL_NAME = "gemini-3-pro-preview"
 CONCURRENCY_LIMIT = 32
 DATASET_PATH = r"..\..\data\MathVision\data\test-00000-of-00001-3532b8d3f1b4047a.parquet"
 INPUT_TEMPLATE = f"Please solve the problem step by step and put your answer in one '\\boxed{{}}'. If it is a multiple choice question, only one letter is allowed in the '\\boxed{{}}'.\n{{question}}\n{{options}}"
-OUTPUT_JSONL_PATH = "MathVision_gemini_clean.jsonl"  
-OUTPUT_JSON_PATH = "MathVision_gemini_clean.json"    
+OUTPUT_JSONL_PATH = "MathVision_gemini_clean.jsonl"
+OUTPUT_JSON_PATH = "MathVision_gemini_clean.json"
 
 client = genai.Client(api_key=API_KEY)
+
 
 def construct_prompt(row):
     question = row["question"]
@@ -27,9 +28,7 @@ def construct_prompt(row):
         if len(options) == 5:
             options_str = "".join(options)
             if options_str != "ABCDE":
-                formatted_options = (
-                    f"(A) {options[0]}\n(B) {options[1]}\n(C) {options[2]}\n(D) {options[3]}\n(E) {options[4]}\n"
-                )
+                formatted_options = f"(A) {options[0]}\n(B) {options[1]}\n(C) {options[2]}\n(D) {options[3]}\n(E) {options[4]}\n"
             else:
                 formatted_options = ""
         else:
@@ -39,6 +38,7 @@ def construct_prompt(row):
 
     input_text = INPUT_TEMPLATE.format(question=question, options=formatted_options)
     return input_text
+
 
 async def call_model_async(row, semaphore):
     async with semaphore:
@@ -62,10 +62,7 @@ async def call_model_async(row, semaphore):
                     model=MODEL_NAME,
                     contents=contents,
                     config=types.GenerateContentConfig(
-                        thinking_config=types.ThinkingConfig(
-                            thinkingLevel="high",
-                            include_thoughts=True
-                        ),
+                        thinking_config=types.ThinkingConfig(thinkingLevel="high", include_thoughts=True),
                         temperature=0.0,
                     ),
                 )
@@ -107,12 +104,13 @@ async def call_model_async(row, semaphore):
                     }
                 await asyncio.sleep(2 * (attempt + 1))
 
+
 async def process_and_save(row, semaphore, fp, write_lock):
 
     result = await call_model_async(row, semaphore)
 
     record = dict(row)
-    record.pop("decoded_image", None)  
+    record.pop("decoded_image", None)
     record.update(result)
 
     line = json.dumps(record, ensure_ascii=False) + "\n"
@@ -121,6 +119,7 @@ async def process_and_save(row, semaphore, fp, write_lock):
         fp.flush()
 
     return result
+
 
 async def main():
     print("Loading dataset...")
@@ -133,8 +132,7 @@ async def main():
         print(f"Skipped {len(processed_ids)} already processed examples.")
     except FileNotFoundError:
         pass
-    
-    
+
     total = len(ds)
     print(f"Total examples: {total}")
 
@@ -148,10 +146,7 @@ async def main():
 
     print("Starting concurrent generation (immediate saving to JSONL)...")
     with open(OUTPUT_JSONL_PATH, "a", encoding="utf-8") as fp:
-        tasks = [
-            asyncio.create_task(process_and_save(row, semaphore, fp, write_lock))
-            for row in ds
-        ]
+        tasks = [asyncio.create_task(process_and_save(row, semaphore, fp, write_lock)) for row in ds]
 
         for fut in tqdm(asyncio.as_completed(tasks), total=total):
             r = await fut
@@ -180,6 +175,7 @@ async def main():
         json.dump(records, f, ensure_ascii=False, indent=4)
 
     print("Done.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

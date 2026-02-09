@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 from PIL import Image
 
 from geo_edit.environment.task.vision_qa_task import ToolCall, VisionQATask
-from geo_edit.utils.vision_task_utils import image_to_data_url
+from geo_edit.utils.image_utils import image_to_data_url
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -20,10 +20,17 @@ class VLLMVisionQATask(VisionQATask):
     _THINK_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
     _ANSWER_PATTERN = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
 
-    def __init__(self, task_id: str, task_prompt: str, task_answer: str,
-                 task_image_path: str | None, save_dir: Path | str,
-                 tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
-                 system_prompt: Optional[str] = None, **kwargs):
+    def __init__(
+        self,
+        task_id: str,
+        task_prompt: str,
+        task_answer: str,
+        task_image_path: str | None,
+        save_dir: Path | str,
+        tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ):
         super().__init__(
             task_id=task_id,
             task_prompt=task_prompt,
@@ -36,10 +43,12 @@ class VLLMVisionQATask(VisionQATask):
         self.system_prompt = system_prompt
         self.contents: Dict[str, List[Dict[str, Any]]] = {"input": []}
         if self.system_prompt:
-            self.contents["input"].append({
-                "role": "system",
-                "content": [{"type": "input_text", "text": self.system_prompt}],
-            })
+            self.contents["input"].append(
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": self.system_prompt}],
+                }
+            )
         self._append_initial_observation()
 
     def _append_initial_observation(self) -> None:
@@ -49,12 +58,10 @@ class VLLMVisionQATask(VisionQATask):
             image_url = image_to_data_url(image)
             if self.task_image_path:
                 self.image_url_map[image_url] = self.task_image_path
-            content.extend(
-                [
+            content.extend([
                     {"type": "input_text", "text": "Observation 0:"},
                     {"type": "input_image", "image_url": image_url, "detail": "auto"},
-                ]
-            )
+                ])
         self.contents["input"].append({"role": "user", "content": content})
 
     def _stringify_observation_item(self, item: Any) -> Any:
@@ -76,8 +83,10 @@ class VLLMVisionQATask(VisionQATask):
             return {"type": "function_call_output", "call_id": item.get("call_id"), "output": output}
         if item.get("type") == "function_call":
             return {
-                "type": "function_call", "call_id": item.get("call_id"),
-                "name": item.get("name"), "arguments": item.get("arguments"),
+                "type": "function_call",
+                "call_id": item.get("call_id"),
+                "name": item.get("name"),
+                "arguments": item.get("arguments"),
             }
 
         output: Dict[str, Any] = {"role": item.get("role"), "content": []}
@@ -100,9 +109,7 @@ class VLLMVisionQATask(VisionQATask):
         return output
 
     def parse_action(self, step: int, action: Any, extra_info: Dict[str, int | float | str | None]):
-        contents_for_save = [
-            self._stringify_observation_item(item) for item in self.contents["input"]
-        ]
+        contents_for_save = [self._stringify_observation_item(item) for item in self.contents["input"]]
 
         if not action.output:
             raise ValueError("vLLM response contained no output.")
@@ -136,10 +143,14 @@ class VLLMVisionQATask(VisionQATask):
                     call_id = item.id
                 tool_calls.append(ToolCall(name=item.name, args=arguments, call_id=call_id))
                 tool_call_records.append({"id": call_id, "name": item.name, "args": arguments})
-                tool_call_items.append({
-                    "type": "function_call", "name": item.name,
-                    "arguments": arguments_payload, "call_id": call_id,
-                })
+                tool_call_items.append(
+                    {
+                        "type": "function_call",
+                        "name": item.name,
+                        "arguments": arguments_payload,
+                        "call_id": call_id,
+                    }
+                )
 
         # Extract thinking from content
         thinking_parts = [m.group(1).strip() for m in self._THINK_PATTERN.finditer(raw_text)]
@@ -154,10 +165,7 @@ class VLLMVisionQATask(VisionQATask):
             raise ValueError("vLLM response contained no tool call or final answer.")
 
         if tool_calls and output_text:
-            logger.warning(
-                "vLLM response contained tool call and final answer; "
-                "keeping the answer and ignoring tool calls."
-            )
+            logger.warning("vLLM response contained tool call and final answer; keeping the answer and ignoring tool calls.")
             tool_calls = []
             tool_call_records = []
             tool_call_items = []
@@ -166,9 +174,7 @@ class VLLMVisionQATask(VisionQATask):
             self.contents["input"].extend(tool_call_items)
 
         action_record = {"text": output_text, "tool_calls": tool_call_records}
-        self._record_conversation_history(
-            step, contents_for_save, action_record, thinking_process, output_text, tool_calls, extra_info
-        )
+        self._record_conversation_history(step, contents_for_save, action_record, thinking_process, output_text, tool_calls, extra_info)
         return list(tool_calls)
 
     def _append_tool_result(
@@ -200,6 +206,11 @@ class VLLMVisionQATask(VisionQATask):
         ]
         for call in tool_calls:
             self._append_tool_result(call.call_id, output)
+
+    def _append_tool_text_for_calls(self, tool_calls: List[ToolCall], text: str) -> None:
+        payload = {"analysis": text}
+        for call in tool_calls:
+            self._append_tool_result(call.call_id, payload)
 
     def append_prompt(self, prompt: str) -> None:
         self.contents["input"].append({"role": "user", "content": [{"type": "input_text", "text": prompt}]})

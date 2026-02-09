@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """Base Agent class for VLM Gym"""
 
@@ -15,6 +14,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentConfig:
     """Configuration for VLM agents"""
+
     # Model configuration
     model_type: str = "HuggingFace"  # HuggingFace, vLLM, OpenAI, Azure
     model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"
@@ -127,11 +127,13 @@ class BaseAgent(ABC):
                 content, extra_info = self._generate_response(observation)
                 self._validate_response(content)
 
-                extra_info.update({
-                    "model_name": self.config.model_name,
-                    "attempt": attempt + 1,
-                    "step_count": self.step_count,
-                })
+                extra_info.update(
+                    {
+                        "model_name": self.config.model_name,
+                        "attempt": attempt + 1,
+                        "step_count": self.step_count,
+                    }
+                )
 
                 self.step_count += 1
                 if "tokens_used" in extra_info:
@@ -171,4 +173,3 @@ class BaseAgent(ABC):
             "total_cost": sum(self.cost),
             "config": self.config.__dict__,
         }
-

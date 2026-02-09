@@ -27,29 +27,18 @@ def capture_board_pil(driver, url: str, inset: int = 16) -> Image.Image:
 
     # 获取 board 在整页坐标系中的位置，并做 inset 裁剪
     info = driver.execute_script(
-        "const el = arguments[0];"
-        "const r = el.getBoundingClientRect();"
-        "return {"
-        "  x: r.left + window.scrollX,"
-        "  y: r.top + window.scrollY,"
-        "  w: r.width,"
-        "  h: r.height,"
-        "  dpr: window.devicePixelRatio"
-        "};",
-        board
+        "const el = arguments[0];const r = el.getBoundingClientRect();return {  x: r.left + window.scrollX,  y: r.top + window.scrollY,  w: r.width,  h: r.height,  dpr: window.devicePixelRatio};",
+        board,
     )
 
-    x = max(info["x"] -inset, 0)
-    y = max(info["y"] -inset, 0)
-    w = max(info["w"]+inset*2, 1)
-    h = max(info["h"]+inset*2, 1)
+    x = max(info["x"] - inset, 0)
+    y = max(info["y"] - inset, 0)
+    w = max(info["w"] + inset * 2, 1)
+    h = max(info["h"] + inset * 2, 1)
     dpr = info["dpr"]
 
     # 全页截图（包含视口外）
-    shot = driver.execute_cdp_cmd("Page.captureScreenshot", {
-        "format": "png",
-        "captureBeyondViewport": True
-    })
+    shot = driver.execute_cdp_cmd("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": True})
     full_png = base64.b64decode(shot["data"])
     img = Image.open(BytesIO(full_png))
 
@@ -89,10 +78,10 @@ def main(
     image_paths = []
     images = []
     from tqdm import tqdm
-    
+
     for i, ex in enumerate(tqdm(ds)):
         url = ex[url_key]
-        puzzle_id=ex["puzzle_id"]
+        puzzle_id = ex["puzzle_id"]
         filename = f"{puzzle_id}.png"
         path = os.path.join(image_dir, filename)
         if os.path.exists(path):
@@ -101,7 +90,7 @@ def main(
             images.append({"bytes": pil_to_png_bytes(board_im)})
             continue
         board_im = capture_board_pil(driver, url, inset=inset)
-        
+
         board_im.save(path, format="PNG")
 
         image_paths.append(path)
@@ -122,4 +111,3 @@ if __name__ == "__main__":
         url_key="sudokupad_url",
         inset=16,
     )
-

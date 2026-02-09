@@ -50,18 +50,21 @@ class DatasetSpec:
                 values[key] = item[source] if source in item else None
         return values
 
+
 def _sudoku_total_cells(item: Mapping[str, Any]) -> int:
     return int(item["rows"]) * int(item["cols"])
 
+
 def _sudoku_initial_board(item: Mapping[str, Any]) -> str:
-    board=item["initial_board"]
-    rows=int(item["rows"])
-    cols=int(item["cols"])
-    lines=[]
+    board = item["initial_board"]
+    rows = int(item["rows"])
+    cols = int(item["cols"])
+    lines = []
     for r in range(rows):
-        line=" ".join(str(board[r*cols + c]) for c in range(cols))
+        line = " ".join(str(board[r * cols + c]) for c in range(cols))
         lines.append(line)
     return "\n".join(lines)
+
 
 DATASET_SPECS: Dict[str, DatasetSpec] = {
     "sudoku": DatasetSpec(
@@ -85,8 +88,8 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         id_key="id",
         answer_key="route_directions",
         image_key="image",
-        prompt_template=CARTOMAPQA_INPUT_TEMPLATE+ CARTOMAPQA_SRN_INPUT_TEMPLATE,
-        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+ CARTOMAPQA_SRN_INPUT_TEMPLATE,
+        prompt_template=CARTOMAPQA_INPUT_TEMPLATE + CARTOMAPQA_SRN_INPUT_TEMPLATE,
+        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE + CARTOMAPQA_SRN_INPUT_TEMPLATE,
         template_fields={},
     ),
     "mathvisionqa": DatasetSpec(
@@ -106,8 +109,8 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         id_key="id",
         answer_key="correct_answer",
         image_key="image",
-        prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
-        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
+        prompt_template=CARTOMAPQA_INPUT_TEMPLATE + CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
+        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE + CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
         template_fields={
             "mf_type": "mf_type",
         },
@@ -117,8 +120,8 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         id_key="id",
         answer_key="correct_answer",
         image_key="image",
-        prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_COUNTING_TEMPLATE,
-        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_COUNTING_TEMPLATE,
+        prompt_template=CARTOMAPQA_INPUT_TEMPLATE + CARTOMAPQA_STMF_COUNTING_TEMPLATE,
+        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE + CARTOMAPQA_STMF_COUNTING_TEMPLATE,
         template_fields={
             "mf_type": "mf_type",
         },
@@ -128,8 +131,8 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         id_key="id",
         answer_key="correct_answer",
         image_key="image",
-        prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
-        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
+        prompt_template=CARTOMAPQA_INPUT_TEMPLATE + CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
+        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE + CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
         template_fields={
             "mf_type": "mf_type",
         },
@@ -177,6 +180,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
     ),
 }
+
 
 def get_dataset_spec(name: str) -> DatasetSpec:
     try:

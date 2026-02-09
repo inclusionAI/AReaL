@@ -29,9 +29,12 @@ class VLLMBasedAgent(BaseAgent):
         extra_info = {"original_response": str(response)}
         usage = response.usage
         if usage is not None:
-            if hasattr(usage, "total_tokens"): extra_info["tokens_used"] = usage.total_tokens
-            if hasattr(usage, "input_tokens"): extra_info["tokens_input"] = usage.input_tokens
-            if hasattr(usage, "output_tokens"): extra_info["tokens_output"] = usage.output_tokens
+            if hasattr(usage, "total_tokens"):
+                extra_info["tokens_used"] = usage.total_tokens
+            if hasattr(usage, "input_tokens"):
+                extra_info["tokens_input"] = usage.input_tokens
+            if hasattr(usage, "output_tokens"):
+                extra_info["tokens_output"] = usage.output_tokens
         return response, extra_info
 
     def _validate_response(self, response: Any) -> None:

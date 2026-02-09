@@ -6,15 +6,9 @@ import os
 import re
 from typing import Optional
 
-from geo_edit.evaluation.utils import (
-    compute_tool_combination_statistics,
-    get_final_prediction,
-    get_input_tokens_total,
-    get_output_tokens_total,
-    get_total_tokens,
-    iter_meta_info_files,
-    load_records,
-)
+from geo_edit.utils.io_utils import iter_meta_info_files, load_records
+from geo_edit.utils.stats import compute_tool_combination_statistics, get_input_tokens_total, get_output_tokens_total, get_total_tokens
+from geo_edit.utils.text_utils import get_final_prediction
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)

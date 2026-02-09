@@ -1,12 +1,12 @@
-MATHVISION_INPUT_TEMPLATE = '''
+MATHVISION_INPUT_TEMPLATE = """
 Please solve the problem with provided tools. After you confirm the final answer, put your answer in one '<answer>\\boxed{{}}</answer>'. If it is a multiple choice question, only one letter is allowed in the '<answer>\\boxed{{}}</answer>'.\n{question}\n{options}
-'''
+"""
 
-MATHVISION_NOTOOL_INPUT_TEMPLATE = '''
+MATHVISION_NOTOOL_INPUT_TEMPLATE = """
 Please solve the problem step by step. After you confirm the final answer, put your answer in one '<answer>\\boxed{{}}</answer>'. If it is a multiple choice question, only one letter is allowed in the '<answer>\\boxed{{}}</answer>'.\n{question}\n{options}
-'''
+"""
 
-SUDOKU_TOOL_CALL_INPUT_TEMPLATE = '''
+SUDOKU_TOOL_CALL_INPUT_TEMPLATE = """
 You are a professional Sudoku puzzle solver. Please solve the following Sudoku variant.
 
 ## Format Explanation ##
@@ -46,9 +46,9 @@ For example, the format should look like
 <ANSWER>
 1234567...
 </ANSWER>
-'''
+"""
 
-SUDOKU_TEXT_INPUT_TEMPLATE='''
+SUDOKU_TEXT_INPUT_TEMPLATE = """
 You are a professional Sudoku puzzle solver. Please solve the following Sudoku variant.
 
 ## Format Explanation ##
@@ -85,13 +85,13 @@ For example, the format should look like
 <ANSWER>
 1234567...
 </ANSWER>
-'''
+"""
 
 CARTOMAPQA_INPUT_TEMPLATE = f"""You are a highly skilled cartography assistant with expertise in interpreting cartographic maps. \
 You can identify and analyze visual elements, such as paths, labels, symbols, and features, and extract structured information such as object counts, names, types, and measurements. \
 You respond clearly, accurately, and concisely, following the specific output format requested in the user’s prompt."""
 
-CARTOMAPQA_SRN_INPUT_TEMPLATE="""You are provided with a cartographic map sourced from OpenStreetMap. Two colored map markers are shown: the blue marker indicates the starting location, and the red one marks the destination.\n\
+CARTOMAPQA_SRN_INPUT_TEMPLATE = """You are provided with a cartographic map sourced from OpenStreetMap. Two colored map markers are shown: the blue marker indicates the starting location, and the red one marks the destination.\n\
 Assume the user is located at the blue marker, seated in a vehicle, and initially facing toward the top of the map. Your task is to determine the shortest drivable route from the blue marker to the red marker, and describe all required driving actions to reach the destination.\n\
 Output your answer using the following strict format: <answerAnswer: [blue, <action_1>, road_1, <action_2>, road_2, ..., <action_N>, road_N, red]</answer>\n\
 Each <action> must be one of the following:\n\

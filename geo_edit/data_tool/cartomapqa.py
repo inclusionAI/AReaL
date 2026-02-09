@@ -150,11 +150,7 @@ def main() -> None:
     parser.add_argument("--out_dir", type=str, default=None)
     args = parser.parse_args()
 
-    cartomapqa_root = (
-        Path(args.cartomapqa_root).resolve()
-        if args.cartomapqa_root
-        else _default_cartomapqa_root()
-    )
+    cartomapqa_root = Path(args.cartomapqa_root).resolve() if args.cartomapqa_root else _default_cartomapqa_root()
     if not cartomapqa_root.exists():
         raise FileNotFoundError(f"CartoMapQA root not found: {cartomapqa_root}")
 

@@ -7,20 +7,26 @@ from typing import Any, Callable, Dict, List, Optional
 from PIL import Image
 
 from geo_edit.environment.task.vision_qa_task import ToolCall, VisionQATask
-from geo_edit.utils.vision_task_utils import image_to_data_url
+from geo_edit.utils.image_utils import image_to_data_url
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+
 class OpenAIVisionQATask(VisionQATask):
     """vision qa task for OpenAI Responses API"""
 
-    def __init__(self, task_id: str, task_prompt: str, task_answer: str,
-                 task_image_path: str | None, save_dir: Path | str,
-                 tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None, **kwargs):
-        super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer,
-                         task_image_path=task_image_path, save_dir=save_dir,
-                         tool_functions=tool_functions, **kwargs)
+    def __init__(
+        self,
+        task_id: str,
+        task_prompt: str,
+        task_answer: str,
+        task_image_path: str | None,
+        save_dir: Path | str,
+        tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
+        **kwargs,
+    ):
+        super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer, task_image_path=task_image_path, save_dir=save_dir, tool_functions=tool_functions, **kwargs)
 
         input_items: List[Dict[str, Any]] = []
         if self.text_only:
@@ -44,14 +50,16 @@ class OpenAIVisionQATask(VisionQATask):
         payload: Dict[str, str | Dict[str, str]] | List[Dict[str, str]],
     ) -> None:
         output = payload if isinstance(payload, list) else json.dumps(payload, ensure_ascii=True)
-        self.contents["input"].append({
-            "type": "function_call_output", "call_id": tool_call_id, "output": output,
-        })
+        self.contents["input"].append(
+            {
+                "type": "function_call_output",
+                "call_id": tool_call_id,
+                "output": output,
+            }
+        )
 
     def append_prompt(self, text: str) -> None:
-        self.contents["input"].append(
-            {"role": "user", "content": [{"type": "input_text", "text": text}]}
-        )
+        self.contents["input"].append({"role": "user", "content": [{"type": "input_text", "text": text}]})
 
     def _stringify_observation_item(self, item: Any) -> Any:
         if not isinstance(item, dict):
@@ -64,7 +72,7 @@ class OpenAIVisionQATask(VisionQATask):
                 for part in output:
                     if part.get("type") == "input_image":
                         image_url = part["image_url"]
-                        image_path = self.image_url_map[image_url] 
+                        image_path = self.image_url_map[image_url]
                         parts.append({"type": "input_image", "image_path": image_path or "<omitted>"})
                     else:
                         parts.append(part)
@@ -123,9 +131,7 @@ class OpenAIVisionQATask(VisionQATask):
             "text": output_text,
             "tool_calls": [{"id": c.call_id, "name": c.name, "args": c.args} for c in tool_calls],
         }
-        self._record_conversation_history(
-            step, contents_for_save, action_record, thinking_process, output_text, tool_calls, extra_info
-        )
+        self._record_conversation_history(step, contents_for_save, action_record, thinking_process, output_text, tool_calls, extra_info)
         self.contents["previous_response_id"] = action.id
         return list(tool_calls)
 
@@ -149,3 +155,8 @@ class OpenAIVisionQATask(VisionQATask):
         ]
         for call in tool_calls:
             self._append_tool_message(call.call_id, output)
+
+    def _append_tool_text_for_calls(self, tool_calls: List[ToolCall], text: str) -> None:
+        payload = {"analysis": text}
+        for call in tool_calls:
+            self._append_tool_message(call.call_id, payload)

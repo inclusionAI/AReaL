@@ -27,7 +27,6 @@ option[
 """
 
 
-
 @dataclass(frozen=True, slots=True)
 class Args:
     api_base: str
@@ -39,6 +38,7 @@ class Args:
     temperature: float
     max_tokens: int
     max_steps: int
+
 
 def test_vllm_task() -> None:
     args = Args(
@@ -67,10 +67,7 @@ def test_vllm_task() -> None:
     elif use_tools:
         system_prompt = get_system_prompt("vLLM", args.tool_mode)
     else:
-        system_prompt = (
-            "You are a helpful assistant. Think step by step in <think> tags and "
-            "provide the final answer in <answer>...</answer>."
-        )
+        system_prompt = "You are a helpful assistant. Think step by step in <think> tags and provide the final answer in <answer>...</answer>."
 
     prompt = args.prompt
 

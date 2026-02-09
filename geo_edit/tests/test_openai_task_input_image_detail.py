@@ -25,9 +25,7 @@ def test_openai_initial_input_image_has_detail_and_matches_schema(tmp_path):
     user_message = next(item for item in task.contents["input"] if item.get("role") == "user")
     image_part = next(part for part in user_message["content"] if part.get("type") == "input_image")
     assert image_part["detail"] == "auto"
-    TypeAdapter(ResponseCreateParamsNonStreaming).validate_python(
-        {"model": "dummy-model", "input": task.contents["input"]}
-    )
+    TypeAdapter(ResponseCreateParamsNonStreaming).validate_python({"model": "dummy-model", "input": task.contents["input"]})
 
 
 def test_openai_tool_observation_image_has_detail(tmp_path):
@@ -40,11 +38,7 @@ def test_openai_tool_observation_image_has_detail(tmp_path):
         )
     ]
     task.update_observation_from_action(tool_calls)
-    tool_result_messages = [
-        message
-        for message in task.contents["input"]
-        if message.get("type") == "function_call_output"
-    ]
+    tool_result_messages = [message for message in task.contents["input"] if message.get("type") == "function_call_output"]
     assert tool_result_messages
     tool_output = tool_result_messages[-1]["output"]
     image_part = next(part for part in tool_output if part.get("type") == "input_image")

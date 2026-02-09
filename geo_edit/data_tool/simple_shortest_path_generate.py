@@ -3,6 +3,7 @@ import json
 import random
 import math
 import heapq
+import argparse
 from typing import Dict, List, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
@@ -10,9 +11,9 @@ from PIL import Image, ImageDraw, ImageFont
 # Config
 # ---------------------------
 OUT_DIR = "vlm_sp_unique_dataset"
-IMG_ORIG_DIR = os.path.join(OUT_DIR, "images_original")      # 200 张原始图（无权重）
-IMG_ANN_DIR = os.path.join(OUT_DIR, "images_annotated")      # 200 张标注图（有权重）
-JSONL_PATH = os.path.join(OUT_DIR, "dataset.jsonl")          # 400 行 case
+IMG_ORIG_DIR = os.path.join(OUT_DIR, "images_original")  # 200 张原始图（无权重）
+IMG_ANN_DIR = os.path.join(OUT_DIR, "images_annotated")  # 200 张标注图（有权重）
+JSONL_PATH = os.path.join(OUT_DIR, "dataset.jsonl")  # 400 行 case
 EDGE_INFO_DIR = os.path.join(OUT_DIR, "edge_info")
 
 SEED = 7
@@ -23,6 +24,7 @@ LEVEL_COUNTS = {32: 20, 48: 20}  # 总计 40 张原始图
 # 是否生成最短路问题（每图 5 个）；当前先生成清晰图片并保存边权信息
 GENERATE_QUERIES = False
 NUM_QUERIES_PER_IMAGE = 5
+QUERIES_PER_LEVEL = {32: 5, 48: 10}
 
 # 仅追加多中心额外样本，不重生成已存在样本
 APPEND_EXTRA_MULTICENTER_ONLY = True
@@ -31,7 +33,7 @@ EXTRA_MULTICENTER_LEVEL = 48
 EXTRA_MULTICENTER_QUERY_COUNT = 10
 
 WEIGHT_MIN = 1
-WEIGHT_MAX = 50                   # 拉大权重范围，有助于减少最短路并列
+WEIGHT_MAX = 50  # 拉大权重范围，有助于减少最短路并列
 
 # 按节点数动态设置画布尺寸
 CANVAS_MAP = {
@@ -68,7 +70,7 @@ NODE_OUTLINE = (0, 145, 200)
 NODE_TEXT_COLOR = (0, 0, 0)
 WEIGHT_TEXT_COLOR = (220, 0, 0)
 
-FONT_PATH = None                  # 可改成你的 ttf 路径
+FONT_PATH = None  # 可改成你的 ttf 路径
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\arialbd.ttf",
     r"C:\Windows\Fonts\arial.ttf",
@@ -96,6 +98,7 @@ MIN_TRIANGLE_AREA = {32: 6000.0, 48: 9000.0}
 
 MAX_GRAPH_TRIES = 12000
 MAX_QUERY_TRIES = 2000
+MIN_EDGES_FOR_N4 = 5
 
 
 # ---------------------------
@@ -156,7 +159,7 @@ def get_next_base_id() -> int:
         for name in os.listdir(folder):
             if not name.startswith("g") or "_n" not in name:
                 continue
-            part = name[1:name.find("_n")]
+            part = name[1 : name.find("_n")]
             if part.isdigit():
                 best = max(best, int(part))
     return best + 1
@@ -184,8 +187,7 @@ def get_next_case_id() -> int:
 # ---------------------------
 # Geometry helpers
 # ---------------------------
-def dist_point_to_seg(px: float, py: float,
-                      x1: float, y1: float, x2: float, y2: float) -> float:
+def dist_point_to_seg(px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
     dx = x2 - x1
     dy = y2 - y1
     seg_len_sq = dx * dx + dy * dy
@@ -198,8 +200,7 @@ def dist_point_to_seg(px: float, py: float,
     return math.hypot(px - proj_x, py - proj_y)
 
 
-def seg_intersect(a1: Tuple[float, float], a2: Tuple[float, float],
-                  b1: Tuple[float, float], b2: Tuple[float, float]) -> bool:
+def seg_intersect(a1: Tuple[float, float], a2: Tuple[float, float], b1: Tuple[float, float], b2: Tuple[float, float]) -> bool:
     def orient(p, q, r) -> float:
         return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
 
@@ -223,8 +224,7 @@ def seg_intersect(a1: Tuple[float, float], a2: Tuple[float, float],
     return (o1 > 0) != (o2 > 0) and (o3 > 0) != (o4 > 0)
 
 
-def segment_distance(a1: Tuple[float, float], a2: Tuple[float, float],
-                     b1: Tuple[float, float], b2: Tuple[float, float]) -> float:
+def segment_distance(a1: Tuple[float, float], a2: Tuple[float, float], b1: Tuple[float, float], b2: Tuple[float, float]) -> float:
     if seg_intersect(a1, a2, b1, b2):
         return 0.0
     return min(
@@ -235,23 +235,18 @@ def segment_distance(a1: Tuple[float, float], a2: Tuple[float, float],
     )
 
 
-def rects_overlap(a: Tuple[float, float, float, float],
-                  b: Tuple[float, float, float, float],
-                  pad: float = 0.0) -> bool:
+def rects_overlap(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float], pad: float = 0.0) -> bool:
     return not (a[2] + pad < b[0] - pad or b[2] + pad < a[0] - pad or a[3] + pad < b[1] - pad or b[3] + pad < a[1] - pad)
 
 
-def rect_circle_overlap(rect: Tuple[float, float, float, float],
-                        cx: float, cy: float, r: float) -> bool:
+def rect_circle_overlap(rect: Tuple[float, float, float, float], cx: float, cy: float, r: float) -> bool:
     x1, y1, x2, y2 = rect
     px = min(max(cx, x1), x2)
     py = min(max(cy, y1), y2)
     return (px - cx) ** 2 + (py - cy) ** 2 <= r * r
 
 
-def seg_intersects_rect(a: Tuple[float, float], b: Tuple[float, float],
-                        rect: Tuple[float, float, float, float],
-                        pad: float = 0.0) -> bool:
+def seg_intersects_rect(a: Tuple[float, float], b: Tuple[float, float], rect: Tuple[float, float, float, float], pad: float = 0.0) -> bool:
     x1, y1, x2, y2 = rect
     x1 -= pad
     y1 -= pad
@@ -283,13 +278,9 @@ def ring_positions(labels: List[str], rng: random.Random, canvas: int, margin: i
     return layout_ordered_ring_positions(labels, rng, canvas, margin, node_radius)
 
 
-def layout_multicenter_positions(labels: List[str],
-                                 rng: random.Random,
-                                 canvas: int,
-                                 margin: int,
-                                 node_radius: int,
-                                 min_centers: int = 2,
-                                 max_centers: int = 5) -> Tuple[Dict[str, Tuple[int, int]], Dict[str, int], List[int]]:
+def layout_multicenter_positions(
+    labels: List[str], rng: random.Random, canvas: int, margin: int, node_radius: int, min_centers: int = 2, max_centers: int = 5
+) -> Tuple[Dict[str, Tuple[int, int]], Dict[str, int], List[int]]:
     n = len(labels)
     span = canvas - 2 * margin
     min_node_dist = node_radius * 2.15
@@ -466,20 +457,22 @@ def assign_weights_by_length(edges: List[Tuple[str, str]], pos: Dict[str, Tuple[
     return weighted
 
 
-def generate_graph(labels: List[str],
-                   pos: Dict[str, Tuple[int, int]],
-                   extra_edges: int,
-                   rng: random.Random,
-                   min_triangle_area: float = 0.0,
-                   long_edge_count: int = 0,
-                   min_midpoint_dist: float = 0.0,
-                   node_radius: float = 0.0,
-                   midpoint_exempt_len: float = 0.0) -> List[Tuple[str, str, int]]:
+def generate_graph(
+    labels: List[str],
+    pos: Dict[str, Tuple[int, int]],
+    extra_edges: int,
+    rng: random.Random,
+    min_triangle_area: float = 0.0,
+    long_edge_count: int = 0,
+    min_midpoint_dist: float = 0.0,
+    node_radius: float = 0.0,
+    midpoint_exempt_len: float = 0.0,
+) -> List[Tuple[str, str, int]]:
     def crosses_existing(u: str, v: str, segs: List[Tuple[Tuple[float, float], Tuple[float, float]]]) -> bool:
         p1 = (pos[u][0], pos[u][1])
         p2 = (pos[v][0], pos[v][1])
-        for (a, b) in segs:
-            if (a == p1 or a == p2 or b == p1 or b == p2):
+        for a, b in segs:
+            if a == p1 or a == p2 or b == p1 or b == p2:
                 continue
             if seg_intersect(p1, p2, a, b):
                 return True
@@ -784,13 +777,15 @@ def generate_graph(labels: List[str],
     return assign_weights_by_length(edges, pos)
 
 
-def generate_multicenter_graph(labels: List[str],
-                               pos: Dict[str, Tuple[int, int]],
-                               cluster_of: Dict[str, int],
-                               rng: random.Random,
-                               node_radius: float = 0.0,
-                               min_midpoint_dist: float = 0.0,
-                               midpoint_exempt_len: float = 0.0) -> List[Tuple[str, str, int]]:
+def generate_multicenter_graph(
+    labels: List[str],
+    pos: Dict[str, Tuple[int, int]],
+    cluster_of: Dict[str, int],
+    rng: random.Random,
+    node_radius: float = 0.0,
+    min_midpoint_dist: float = 0.0,
+    midpoint_exempt_len: float = 0.0,
+) -> List[Tuple[str, str, int]]:
     nodes = labels[:]
     clusters: Dict[int, List[str]] = {}
     for lab in nodes:
@@ -1107,7 +1102,7 @@ def layout_ordered_ring_positions(labels: List[str], rng: random.Random, canvas:
                 aa = rng.uniform(0, 2 * math.pi)
                 cx0 = rr * math.cos(aa)
                 cy0 = rr * math.sin(aa)
-                if all((cx0 - x) ** 2 + (cy0 - y) ** 2 >= center_min_dist ** 2 for x, y in centers):
+                if all((cx0 - x) ** 2 + (cy0 - y) ** 2 >= center_min_dist**2 for x, y in centers):
                     centers.append((cx0, cy0))
             if len(centers) < k_centers:
                 centers = [(0.0, 0.0)]
@@ -1190,12 +1185,7 @@ def edge_list_text(edges: List[Tuple[str, str, int]]) -> str:
 # ---------------------------
 # Rendering
 # ---------------------------
-def draw_graph_base(draw: ImageDraw.ImageDraw,
-                    labels: List[str],
-                    pos: Dict[str, Tuple[int, int]],
-                    edges: List[Tuple[str, str, int]],
-                    font_node: ImageFont.FreeTypeFont,
-                    node_radius: int):
+def draw_graph_base(draw: ImageDraw.ImageDraw, labels: List[str], pos: Dict[str, Tuple[int, int]], edges: List[Tuple[str, str, int]], font_node: ImageFont.FreeTypeFont, node_radius: int):
     for u, v, _w in edges:
         x1, y1 = pos[u]
         x2, y2 = pos[v]
@@ -1210,12 +1200,9 @@ def draw_graph_base(draw: ImageDraw.ImageDraw,
         draw.text((x - tw / 2, y - th / 2), lab, fill=NODE_TEXT_COLOR, font=font_node)
 
 
-def weight_label_boxes(draw: ImageDraw.ImageDraw,
-                       pos: Dict[str, Tuple[int, int]],
-                       edges: List[Tuple[str, str, int]],
-                       font_w: ImageFont.FreeTypeFont,
-                       node_radius: int,
-                       canvas: int) -> List[Tuple[str, str, int, Tuple[float, float, float, float]]]:
+def weight_label_boxes(
+    draw: ImageDraw.ImageDraw, pos: Dict[str, Tuple[int, int]], edges: List[Tuple[str, str, int]], font_w: ImageFont.FreeTypeFont, node_radius: int, canvas: int
+) -> List[Tuple[str, str, int, Tuple[float, float, float, float]]]:
     boxes = []
     for u, v, w in edges:
         x1, y1 = pos[u]
@@ -1253,13 +1240,7 @@ def weight_label_boxes(draw: ImageDraw.ImageDraw,
     return boxes
 
 
-def is_graph_clear(labels: List[str],
-                   pos: Dict[str, Tuple[int, int]],
-                   edges: List[Tuple[str, str, int]],
-                   node_radius: int,
-                   canvas: int,
-                   draw: ImageDraw.ImageDraw,
-                   font_w: ImageFont.FreeTypeFont) -> bool:
+def is_graph_clear(labels: List[str], pos: Dict[str, Tuple[int, int]], edges: List[Tuple[str, str, int]], node_radius: int, canvas: int, draw: ImageDraw.ImageDraw, font_w: ImageFont.FreeTypeFont) -> bool:
     # node overlap
     min_node_dist = node_radius * 2.0
     for i in range(len(labels)):
@@ -1312,26 +1293,14 @@ def is_graph_clear(labels: List[str],
     return True
 
 
-def draw_weights(draw: ImageDraw.ImageDraw,
-                 pos: Dict[str, Tuple[int, int]],
-                 edges: List[Tuple[str, str, int]],
-                 font_w: ImageFont.FreeTypeFont,
-                 rng: random.Random,
-                 node_radius: int,
-                 canvas: int):
+def draw_weights(draw: ImageDraw.ImageDraw, pos: Dict[str, Tuple[int, int]], edges: List[Tuple[str, str, int]], font_w: ImageFont.FreeTypeFont, rng: random.Random, node_radius: int, canvas: int):
     boxes = weight_label_boxes(draw, pos, edges, font_w, node_radius, canvas)
     for _u, _v, w, box in boxes:
         x1, y1, _x2, _y2 = box
         draw.text((x1, y1), str(w), fill=WEIGHT_TEXT_COLOR, font=font_w)
 
 
-def render_image(labels: List[str],
-                 pos: Dict[str, Tuple[int, int]],
-                 edges: List[Tuple[str, str, int]],
-                 annotate_weights: bool,
-                 rng: random.Random,
-                 canvas: int,
-                 node_radius: int) -> Image.Image:
+def render_image(labels: List[str], pos: Dict[str, Tuple[int, int]], edges: List[Tuple[str, str, int]], annotate_weights: bool, rng: random.Random, canvas: int, node_radius: int) -> Image.Image:
     img = Image.new("RGB", (canvas, canvas), BG_COLOR)
     draw = ImageDraw.Draw(img)
     font_node = load_font(FONT_NODE_SIZE)
@@ -1346,10 +1315,7 @@ def render_image(labels: List[str],
 # ---------------------------
 # Choose source-target with unique shortest path
 # ---------------------------
-def pick_unique_queries(labels: List[str],
-                        edges: List[Tuple[str, str, int]],
-                        rng: random.Random,
-                        count: int) -> List[Tuple[str, str, List[str], int]]:
+def pick_unique_queries(labels: List[str], edges: List[Tuple[str, str, int]], rng: random.Random, count: int) -> List[Tuple[str, str, List[str], int]]:
     results: List[Tuple[str, str, List[str], int]] = []
     seen = set()
     max_tries = MAX_QUERY_TRIES * max(1, count)
@@ -1467,9 +1433,7 @@ def append_extra_multicenter_samples():
         img_ann = None
 
         for _try in range(MAX_GRAPH_TRIES):
-            pos, cluster_of, cluster_ids = layout_multicenter_positions(
-                labels, rng, canvas=canvas, margin=margin, node_radius=node_radius, min_centers=2, max_centers=4
-            )
+            pos, cluster_of, cluster_ids = layout_multicenter_positions(labels, rng, canvas=canvas, margin=margin, node_radius=node_radius, min_centers=2, max_centers=4)
             if not pos:
                 continue
             edges = generate_multicenter_graph(
@@ -1532,7 +1496,7 @@ def append_extra_multicenter_samples():
                 "query": {"source": s, "target": t},
                 "ground_truth": {"path": gt_path},
                 "edge_list_text": edge_list_text(edges),
-                "edges": [{"u": u, "v": v, "w": w} for (u, v, w) in edges]
+                "edges": [{"u": u, "v": v, "w": w} for (u, v, w) in edges],
             }
             records.append(rec_text)
             case_id += 1
@@ -1547,7 +1511,7 @@ def append_extra_multicenter_samples():
                 "query": {"source": s, "target": t},
                 "ground_truth": {"path": gt_path},
                 "edge_list_text": "",
-                "edges": [{"u": u, "v": v, "w": w} for (u, v, w) in edges]
+                "edges": [{"u": u, "v": v, "w": w} for (u, v, w) in edges],
             }
             records.append(rec_image)
             case_id += 1
@@ -1564,10 +1528,80 @@ def append_extra_multicenter_samples():
     print(f"Added JSONL lines: {len(records)}")
 
 
+def configure_output_dir(out_dir: str):
+    global OUT_DIR, IMG_ORIG_DIR, IMG_ANN_DIR, JSONL_PATH, EDGE_INFO_DIR
+    OUT_DIR = out_dir
+    IMG_ORIG_DIR = os.path.join(OUT_DIR, "images_original")
+    IMG_ANN_DIR = os.path.join(OUT_DIR, "images_annotated")
+    JSONL_PATH = os.path.join(OUT_DIR, "dataset.jsonl")
+    EDGE_INFO_DIR = os.path.join(OUT_DIR, "edge_info")
+
+
+def apply_profile(profile: str):
+    global LEVELS, LEVEL_COUNTS, QUERIES_PER_LEVEL
+    global CANVAS_MAP, MARGIN_MAP, NODE_RADIUS_MAP
+    global EXTRA_EDGE_COUNT, LONG_EDGE_COUNT, MIN_MIDPOINT_DIST, MIDPOINT_EXEMPT_LEN, MIN_TRIANGLE_AREA
+    global GENERATE_QUERIES, APPEND_EXTRA_MULTICENTER_ONLY, MIN_EDGES_FOR_N4
+
+    if profile == "small":
+        LEVELS = [4, 8, 12, 16]
+        LEVEL_COUNTS = {4: 10, 8: 20, 12: 50, 16: 70}
+        QUERIES_PER_LEVEL = {4: 1, 8: 1, 12: 2, 16: 2}
+        CANVAS_MAP.update({4: 720, 8: 900, 12: 1120, 16: 1320})
+        MARGIN_MAP.update({4: 80, 8: 100, 12: 120, 16: 140})
+        NODE_RADIUS_MAP.update({4: 30, 8: 30, 12: 30, 16: 30})
+        EXTRA_EDGE_COUNT.update({4: 2, 8: 3, 12: 4, 16: 5})
+        LONG_EDGE_COUNT.update({4: 0, 8: 0, 12: 0, 16: 0})
+        MIN_MIDPOINT_DIST.update({4: 16.0, 8: 18.0, 12: 18.0, 16: 18.0})
+        MIDPOINT_EXEMPT_LEN.update({4: 0.0, 8: 0.0, 12: 0.0, 16: 0.0})
+        MIN_TRIANGLE_AREA.update({4: 0.0, 8: 0.0, 12: 0.0, 16: 0.0})
+        GENERATE_QUERIES = True
+        APPEND_EXTRA_MULTICENTER_ONLY = False
+        MIN_EDGES_FOR_N4 = 0
+        return
+
+    if profile == "complex":
+        LEVELS = [32, 48]
+        LEVEL_COUNTS = {32: 20, 48: 20}
+        QUERIES_PER_LEVEL = {32: 5, 48: 10}
+        GENERATE_QUERIES = True
+        APPEND_EXTRA_MULTICENTER_ONLY = False
+        MIN_EDGES_FOR_N4 = 5
+        return
+
+    raise ValueError(f"Unknown profile: {profile}")
+
+
 # ---------------------------
 # Main
 # ---------------------------
 def main():
+    parser = argparse.ArgumentParser(description="Generate shortest-path graph dataset.")
+    parser.add_argument("--profile", choices=["small", "complex"], default=None, help="Generation profile.")
+    parser.add_argument("--out_dir", type=str, default=None, help="Output dataset directory.")
+    parser.add_argument(
+        "--append_extra_multicenter_only",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Only append extra multicenter 48-node samples.",
+    )
+    parser.add_argument(
+        "--generate_queries",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Whether to generate query-answer records into dataset.jsonl.",
+    )
+    args = parser.parse_args()
+
+    if args.profile is not None:
+        apply_profile(args.profile)
+    if args.out_dir:
+        configure_output_dir(args.out_dir)
+    if args.append_extra_multicenter_only is not None:
+        globals()["APPEND_EXTRA_MULTICENTER_ONLY"] = args.append_extra_multicenter_only
+    if args.generate_queries is not None:
+        globals()["GENERATE_QUERIES"] = args.generate_queries
+
     if APPEND_EXTRA_MULTICENTER_ONLY:
         append_extra_multicenter_samples()
         return
@@ -1601,6 +1635,7 @@ def main():
             pos = {}
             img_ann = None
             queries: List[Tuple[str, str, List[str], int]] = []
+            q_need = QUERIES_PER_LEVEL.get(n, NUM_QUERIES_PER_IMAGE)
 
             for _try in range(MAX_GRAPH_TRIES):
                 pos = ring_positions(labels, rng, canvas=canvas, margin=margin, node_radius=node_radius)
@@ -1618,7 +1653,7 @@ def main():
                 if not edges:
                     continue
 
-                if n == 4 and len(edges) < 5:
+                if n == 4 and len(edges) < MIN_EDGES_FOR_N4:
                     continue
 
                 if not is_connected(labels, edges):
@@ -1628,8 +1663,8 @@ def main():
                     continue
 
                 if GENERATE_QUERIES:
-                    queries = pick_unique_queries(labels, edges, rng, count=NUM_QUERIES_PER_IMAGE)
-                    if len(queries) < NUM_QUERIES_PER_IMAGE:
+                    queries = pick_unique_queries(labels, edges, rng, count=q_need)
+                    if len(queries) < q_need:
                         continue
 
                 # Ensure weight labels can be placed without overlap; otherwise retry a new graph/layout
@@ -1681,7 +1716,7 @@ def main():
                         "query": {"source": s, "target": t},
                         "ground_truth": {"path": gt_path},
                         "edge_list_text": edge_list_text(edges),
-                        "edges": [{"u": u, "v": v, "w": w} for (u, v, w) in edges]
+                        "edges": [{"u": u, "v": v, "w": w} for (u, v, w) in edges],
                     }
                     records.append(rec_text)
                     case_id += 1
@@ -1696,7 +1731,7 @@ def main():
                         "query": {"source": s, "target": t},
                         "ground_truth": {"path": gt_path},
                         "edge_list_text": "",
-                        "edges": [{"u": u, "v": v, "w": w} for (u, v, w) in edges]
+                        "edges": [{"u": u, "v": v, "w": w} for (u, v, w) in edges],
                     }
                     records.append(rec_image)
                     case_id += 1
@@ -1710,10 +1745,11 @@ def main():
 
     print("Done.")
     total_images = sum(LEVEL_COUNTS.values())
+    total_queries = sum(LEVEL_COUNTS[n] * QUERIES_PER_LEVEL.get(n, NUM_QUERIES_PER_IMAGE) for n in LEVELS)
     print(f"Original images:   {IMG_ORIG_DIR} (should be {total_images})")
     print(f"Annotated images:  {IMG_ANN_DIR} (should be {total_images})")
     if GENERATE_QUERIES:
-        print(f"JSONL cases:       {JSONL_PATH} (should be {total_images * 10} lines)")
+        print(f"JSONL cases:       {JSONL_PATH} (should be {total_queries * 2} lines)")
     else:
         print(f"Edge info files:   {EDGE_INFO_DIR} (should be {total_images} files)")
     print("Levels:", {n: LEVEL_COUNTS[n] for n in LEVELS})

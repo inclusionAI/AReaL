@@ -3,18 +3,11 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 from geo_edit.constants import EVAL_QUERY_PROMPT, EVAL_SYSTEM_PROMPT
-from geo_edit.evaluation.utils import (
-    compute_tool_combination_statistics,
-    get_final_prediction,
-    get_input_tokens_total,
-    get_output_tokens_total,
-    get_total_tokens,
-    iter_meta_info_files,
-    load_records,
-    parse_score,
-)
+from geo_edit.utils.io_utils import iter_meta_info_files, load_records
+from geo_edit.utils.stats import compute_tool_combination_statistics, get_input_tokens_total, get_output_tokens_total, get_total_tokens
+from geo_edit.utils.text_utils import get_final_prediction, parse_score
 from openai import OpenAI
 
 
@@ -22,14 +15,26 @@ from openai import OpenAI
 class EvalConfig:
     model: str = "gpt-5-mini"
     extract_answer_tags: Optional[str] = "split"
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+
 
 class OpenAIJudge:
-    """
-    使用 OpenAI 官方 SDK + Responses API 做 0/1 判分。
-    """
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-5-mini"):
-        self.client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
+    """Judge using OpenAI-compatible API."""
+
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-5-mini", api_base: Optional[str] = None):
+        client_kwargs = {"api_key": api_key or os.environ.get("OPENAI_API_KEY")}
+        if api_base is not None:
+            client_kwargs["base_url"] = api_base
+        self.client = OpenAI(**client_kwargs)
         self.model = model
+        self.api_mode = self._resolve_api_mode(api_base)
+
+    @staticmethod
+    def _resolve_api_mode(api_base: Optional[str]) -> str:
+        if api_base and "matrixllm.alipay.com" in api_base.lower():
+            return "chat"
+        return "responses"
 
     def judge_correctness(self, question: str, ground_truth: str, prediction: str) -> str:
         prompt = EVAL_QUERY_PROMPT.format(
@@ -37,15 +42,20 @@ class OpenAIJudge:
             ground_truth=ground_truth,
             prediction=prediction,
         )
+        if self.api_mode == "chat":
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": EVAL_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            output_text = resp.choices[0].message.content if resp.choices else ""
+            return parse_score(output_text or "")
         resp = self.client.responses.create(
             model=self.model,
             instructions=EVAL_SYSTEM_PROMPT,
-            input=[
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": prompt}],
-                }
-            ],
+            input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
         )
         return parse_score(resp.output_text or "")
 
@@ -54,7 +64,7 @@ def evaluate_final_answer(
     question: str,
     predict_str_list: List[str],
     ground_truth: str,
-    cfg: Optional[dict] = None,
+    cfg: EvalConfig,
 ) -> Union[float, dict]:
     """
     只评价最终答案正确性：
@@ -64,7 +74,7 @@ def evaluate_final_answer(
 
     final_pred = get_final_prediction(predict_str_list, cfg.extract_answer_tags)
 
-    judge = OpenAIJudge(model=cfg.model)
+    judge = OpenAIJudge(api_key=cfg.api_key, model=cfg.model, api_base=cfg.api_base)
     score_str = judge.judge_correctness(question, ground_truth, final_pred)
     print(f"Question: {question}, Ground Truth: {ground_truth}, Prediction: {final_pred}, Score: {score_str}")
     if score_str == "":
@@ -92,7 +102,8 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
         "function_call_total_count": record.get("function_call_total_count"),
         "function_call_per_step": record.get("function_call_per_step"),
         "tokens_used_total": record.get("tokens_used_total"),
-        "tokens_used_per_step": record.get("tokens_used_per_step"),
+        "tokens_used_per_step": record.get("tokens_used_per_step", record.get("tokens_output_per_step")),
+        "tokens_output_per_step": record.get("tokens_output_per_step", record.get("tokens_used_per_step")),
         "tokens_output_total": record.get("tokens_output_total"),
         "tokens_input_total": record.get("tokens_input_total"),
         "tokens_input_per_step": record.get("tokens_input_per_step"),
@@ -103,8 +114,14 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
         "result": result,
     }
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Batch evaluate results with OpenAI judge.")
+
+def main(
+    *,
+    default_model: str = "gpt-5-mini",
+    default_api_base: Optional[str] = None,
+    description: str = "Batch evaluate results with OpenAI judge.",
+) -> None:
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--api_key", type=str, required=True, help="OpenAI API key.")
     parser.add_argument(
         "--result_path",
@@ -118,6 +135,13 @@ def main() -> None:
         required=True,
         help="Path to write eval_result.jsonl and summary.txt.",
     )
+    parser.add_argument("--model", type=str, default=default_model, help="Model name used for evaluation.")
+    parser.add_argument(
+        "--api_base",
+        type=str,
+        default=default_api_base,
+        help="Optional OpenAI-compatible base URL, e.g. https://matrixllm.alipay.com/v1 or https://llm-proxy.perflab.nvidia.com/openai/v1.",
+    )
     parser.add_argument(
         "--additional_prompt",
         type=str,
@@ -128,13 +152,13 @@ def main() -> None:
 
     os.environ["OPENAI_API_KEY"] = args.api_key
     os.makedirs(args.output_path, exist_ok=True)
-    
+
     additional_prompt = args.additional_prompt.strip()
     if additional_prompt:
         global EVAL_QUERY_PROMPT
         EVAL_QUERY_PROMPT += "\n" + additional_prompt + "\n"
 
-    cfg = EvalConfig()
+    cfg = EvalConfig(model=args.model, api_key=args.api_key, api_base=args.api_base)
     eval_output_path = os.path.join(args.output_path, "eval_result.jsonl")
     summary_path = os.path.join(args.output_path, "summary.txt")
 
@@ -151,14 +175,13 @@ def main() -> None:
 
     max_workers = 32
     futures = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor, open(
-        eval_output_path, "w", encoding="utf-8"
-    ) as out_f:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor, open(eval_output_path, "w", encoding="utf-8") as out_f:
         for meta_path in iter_meta_info_files(args.result_path):
             record_id = os.path.basename(os.path.dirname(meta_path))
             for record in load_records(meta_path):
                 from time import sleep
-                sleep(1)  
+
+                sleep(1)
                 futures.append(executor.submit(evaluate_record, record, cfg, record_id))
 
         for future in as_completed(futures):

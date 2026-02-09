@@ -18,7 +18,7 @@ from geo_edit.config import (
 )
 from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
-from geo_edit.scripts.script_utils import save_global_meta_info
+from geo_edit.utils.stats import save_global_meta_info
 
 from datasets import load_dataset
 import logging
@@ -28,8 +28,9 @@ from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+
 def main():
-    # argparse 
+    # argparse
     parser = argparse.ArgumentParser(description="Generate content with tool calls using API models.")
     parser.add_argument("--api_key", type=str, default=None, help="API key for the selected provider.")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
@@ -37,28 +38,28 @@ def main():
     parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()), help="Dataset adapter name.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
     parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM", "SGLang"], help="Model provider.")
-    parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM/SGLang OpenAI-compatible server.")
+    parser.add_argument("--api_base", type=str, default=None, help="Base URL for OpenAI/vLLM/SGLang OpenAI-compatible server.")
     parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=32, help="Maximum number of concurrent requests.")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
     parser.add_argument("--use_tools", action=argparse.BooleanOptionalAction, default=True, help="Enable tool calling for the agent.")
     args = parser.parse_args()
-    seed=42
-    api_key= args.api_key
+    seed = 42
+    api_key = args.api_key
     if args.model_type in {"Google", "OpenAI"} and not api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
-    dataset_path= args.dataset_path
-    dataset= load_dataset("parquet", data_files=dataset_path)["train"]
+    dataset_path = args.dataset_path
+    dataset = load_dataset("parquet", data_files=dataset_path)["train"]
 
     dataset_spec = get_dataset_spec(args.dataset_name)
-    max_output_tokens= None
+    max_output_tokens = None
 
-    if args.sample_rate<1.0:
-        sample_size= int(len(dataset)* args.sample_rate)
-        dataset= dataset.shuffle(seed=seed).select(range(sample_size))
+    if args.sample_rate < 1.0:
+        sample_size = int(len(dataset) * args.sample_rate)
+        dataset = dataset.shuffle(seed=seed).select(range(sample_size))
         logger.info(f"Sampled {sample_size} examples from the dataset.")
-    
-    output_path= args.output_dir
+
+    output_path = args.output_dir
     if not args.use_tools and dataset_spec.notool_prompt_template is None:
         logger.warning("Dataset %s has no no-tool template; using tool template.", dataset_spec.name)
     system_prompt = get_system_prompt(args.model_type) if args.use_tools else ""
@@ -110,25 +111,25 @@ def main():
         agent_cls = SGLangBasedAgent
     else:
         agent_cls = APIBasedAgent
-    api_agent=agent_cls(config)
-    
-    meta_info_list= []
-    
+    api_agent = agent_cls(config)
+
+    meta_info_list = []
+
     for item in tqdm(dataset):
         api_agent.reset()
-        id= str(item[dataset_spec.id_key])
+        id = str(item[dataset_spec.id_key])
         if os.path.exists(os.path.join(output_path, id)) and os.path.exists(os.path.join(output_path, id, "meta_info.jsonl")):
             # Add meta info loading
             with open(os.path.join(output_path, id, "meta_info.jsonl"), "r", encoding="utf-8") as f:
-                meta_info= json.loads(f.readline().strip())
+                meta_info = json.loads(f.readline().strip())
                 meta_info_list.append(meta_info)
             logging.info(f"Example id: {id} already processed, skipping.")
             continue
         logging.info(f"Processing example id: {id}")
-        
-        task_save_dir= os.path.join(output_path, id)
+
+        task_save_dir = os.path.join(output_path, id)
         os.makedirs(task_save_dir, exist_ok=True)
-        answer= item[dataset_spec.answer_key]
+        answer = item[dataset_spec.answer_key]
         image_url = None
         text_only = dataset_spec.image_key is None
         if dataset_spec.image_key:
@@ -138,7 +139,7 @@ def main():
             image.save(image_url)
 
         text_prompt = dataset_spec.build_prompt(item, args.use_tools)
-        
+
         if args.model_type == "Google":
             task_cls = GoogleVisionQATask
         elif args.model_type == "OpenAI":
@@ -153,7 +154,7 @@ def main():
         if args.model_type in {"vLLM", "SGLang"}:
             task_kwargs["system_prompt"] = system_prompt
         task_kwargs.update(dataset_spec.build_task_kwargs(item))
-        task= task_cls(
+        task = task_cls(
             task_id=id,
             task_prompt=text_prompt,
             task_answer=answer,
@@ -166,17 +167,17 @@ def main():
         for i in range(max_tool_calls):
             try:
                 action, extra_info = api_agent.act(task.contents)
-                function_call_part_list = task.parse_action(step=i+1, action=action, extra_info=extra_info)
+                function_call_part_list = task.parse_action(step=i + 1, action=action, extra_info=extra_info)
             except Exception as e:
                 task.state = False
-                logging.error(f"Error during agent action for example id: {id} at step {i+1}: {e}", exc_info=True)
+                logging.error(f"Error during agent action for example id: {id} at step {i + 1}: {e}", exc_info=True)
                 break
-        
+
             if not function_call_part_list:
                 logging.info("Final response generated without further tool calls.")
                 break
-            
-            task.update_observation_from_action(function_call_part_list)   
+
+            task.update_observation_from_action(function_call_part_list)
         else:
             logging.info("Max tool calls reached; forcing final answer without tool calls.")
             FORCE_ANSWER_PROMPT = "Max tool calls reached. Please provide the final answer without further tool calls."
@@ -185,7 +186,7 @@ def main():
             api_agent.config.generate_config = agent_configs.force_generate_config
             action, extra_info = api_agent.act(task.contents)
             api_agent.config.generate_config = original_generate_config
-            
+
             _ = task.parse_action(step=max_tool_calls + 1, action=action, extra_info=extra_info)
 
         if task.state:
@@ -195,6 +196,7 @@ def main():
             continue
 
     save_global_meta_info(output_path, meta_info_list)
+
 
 if __name__ == "__main__":
     main()

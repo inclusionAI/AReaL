@@ -54,15 +54,8 @@ def _extract_tokens(
     tokens_total = extra_info.get("tokens_used")
     tokens_thoughts = extra_info.get("tokens_thoughts")
 
-    if (
-        tokens_input is None
-        or tokens_output is None
-        or tokens_total is None
-        or tokens_thoughts is None
-    ):
-        parsed_input, parsed_output, parsed_total, parsed_thoughts = _parse_tokens_from_response(
-            str(extra_info.get("original_response") or "")
-        )
+    if tokens_input is None or tokens_output is None or tokens_total is None or tokens_thoughts is None:
+        parsed_input, parsed_output, parsed_total, parsed_thoughts = _parse_tokens_from_response(str(extra_info.get("original_response") or ""))
         if tokens_input is None:
             tokens_input = parsed_input
         if tokens_output is None:
@@ -150,11 +143,7 @@ def _recompute_tokens(meta_info: Dict[str, Any], extra_info_records: List[Dict[s
         elif isinstance(tokens_output, (int, float)):
             output_no_thoughts = tokens_output
             output_with_thoughts = tokens_output
-        elif (
-            isinstance(tokens_total, (int, float))
-            and isinstance(tokens_input, (int, float))
-            and isinstance(tokens_thoughts, (int, float))
-        ):
+        elif isinstance(tokens_total, (int, float)) and isinstance(tokens_input, (int, float)) and isinstance(tokens_thoughts, (int, float)):
             output_no_thoughts = tokens_total - tokens_input - tokens_thoughts
             output_with_thoughts = tokens_total - tokens_input
         elif isinstance(tokens_total, (int, float)) and isinstance(tokens_input, (int, float)):
@@ -167,9 +156,7 @@ def _recompute_tokens(meta_info: Dict[str, Any], extra_info_records: List[Dict[s
 
         tokens_output_per_step[idx] = output_with_thoughts if isinstance(output_with_thoughts, (int, float)) else None
 
-    tokens_output_total = sum(
-        float(v) for v in tokens_output_per_step if isinstance(v, (int, float))
-    )
+    tokens_output_total = sum(float(v) for v in tokens_output_per_step if isinstance(v, (int, float)))
 
     last_total = _last_numeric(tokens_total_per_step)
     if last_total is not None:
@@ -245,9 +232,7 @@ def _aggregate_meta_info(meta_info_list: List[Dict[str, Any]]) -> Dict[str, Any]
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Fix meta_info token statistics from extra_info.jsonl for a parent directory."
-    )
+    parser = argparse.ArgumentParser(description="Fix meta_info token statistics from extra_info.jsonl for a parent directory.")
     parser.add_argument("parent_dir", type=str, help="Parent directory containing task subfolders.")
     parser.add_argument("--dry_run", action="store_true", help="Scan and report without writing files.")
     args = parser.parse_args()

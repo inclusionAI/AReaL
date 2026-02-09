@@ -10,15 +10,21 @@ from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+
 class GoogleVisionQATask(VisionQATask):
     """vision qa task for Google GenAI"""
 
-    def __init__(self, task_id: str, task_prompt: str, task_answer: str,
-                 task_image_path: str | None, save_dir: Path | str,
-                 tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None, **kwargs):
-        super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer,
-                         task_image_path=task_image_path, save_dir=save_dir,
-                         tool_functions=tool_functions, **kwargs)
+    def __init__(
+        self,
+        task_id: str,
+        task_prompt: str,
+        task_answer: str,
+        task_image_path: str | None,
+        save_dir: Path | str,
+        tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
+        **kwargs,
+    ):
+        super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer, task_image_path=task_image_path, save_dir=save_dir, tool_functions=tool_functions, **kwargs)
         if self.text_only:
             logger.info("Initializing GoogleVisionQATask in text only mode.")
             self.contents = [self.task_prompt]
@@ -62,7 +68,7 @@ class GoogleVisionQATask(VisionQATask):
             if role_part.startswith("'") and role_part.endswith("'"):
                 role_part = role_part[1:-1]
             return {
-                "parts": parts_str[len("parts="):],
+                "parts": parts_str[len("parts=") :],
                 "role": role_part,
             }
         return item
@@ -81,18 +87,13 @@ class GoogleVisionQATask(VisionQATask):
             elif part.text:
                 output_text += part.text
         contents_for_save = [self._stringify_observation_item(item) for item in self.contents]
-        self._record_conversation_history(
-            step, contents_for_save, self._stringify_observation_item(action),
-            thinking_process, output_text, tool_calls, extra_info
-        )
+        self._record_conversation_history(step, contents_for_save, self._stringify_observation_item(action), thinking_process, output_text, tool_calls, extra_info)
         return tool_calls
 
     def _append_tool_error(self, tool_call: ToolCall, error_msg: str) -> None:
         from google.genai import types
 
-        self.contents.append(
-            types.Content(role="tool", parts=[types.Part.from_function_response(name=tool_call.name, response={"error": error_msg})])
-        )
+        self.contents.append(types.Content(role="tool", parts=[types.Part.from_function_response(name=tool_call.name, response={"error": error_msg})]))
 
     def _append_tool_image_for_calls(
         self,
@@ -131,6 +132,22 @@ class GoogleVisionQATask(VisionQATask):
                 ],
             )
         )
+
+    def _append_tool_text_for_calls(self, tool_calls: List[ToolCall], text: str) -> None:
+        from google.genai import types
+
+        for call in tool_calls:
+            self.contents.append(
+                types.Content(
+                    role="tool",
+                    parts=[
+                        types.Part.from_function_response(
+                            name=call.name,
+                            response={"analysis": text},
+                        )
+                    ],
+                )
+            )
 
     def append_prompt(self, prompt: str) -> None:
         self.contents.append(prompt)

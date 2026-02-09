@@ -1,6 +1,6 @@
 MAX_TOOL_CALLS = 4
 
-API_CALL_SYSTEM_PROMPT = '''
+API_CALL_SYSTEM_PROMPT = """
 You are an advanced AI agent capable of complex
 reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
@@ -27,9 +27,9 @@ conclusion, you must wrap your final answer in
 - When analyzing results, compare the new image with previous Observations to verify your actions.
 - Reference specific Observation indices (e.g., "In Observation 0... while in Observation 1...") in your reasoning.
 - Before giving the final answer, review ALL available Observations to ensure comprehensive analysis.
-'''
+"""
 
-VLLM_SYSTEM_PROMPT = '''
+VLLM_SYSTEM_PROMPT = """
 You are an advanced AI agent capable of complex
 reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
@@ -55,19 +55,18 @@ conclusion, you must wrap your final answer in
 - When analyzing results, compare the new image with previous Observations to verify your actions.
 - Reference specific Observation indices (e.g., "In Observation 0... while in Observation 1...") in your reasoning.
 - Before giving the final answer, review ALL available Observations to ensure comprehensive analysis.
-'''
+"""
 
 
-
-VLLM_FORCE_TOOL_CALL_PROMPT = '''
+VLLM_FORCE_TOOL_CALL_PROMPT = """
 Force tool-call mode:
 - You MUST call a tool in your response.
 - Do NOT output <answer> in the same response as a tool call.
 - If you already know the final answer, you must still call a tool first.
 - Only after tool results are returned should you output <answer>...</answer>.
-'''
+"""
 
-VLLM_NO_TOOL_SYSTEM_PROMPT = '''
+VLLM_NO_TOOL_SYSTEM_PROMPT = """
 You are an advanced AI assistant capable of complex reasoning.
 You must strictly adhere to the following protocol:
 
@@ -76,15 +75,15 @@ problem step by step. Output your reasoning inside <think> and </think> tags.
 
 2. Final Output: When you have formulated your conclusion,
 wrap your final answer in <answer> and </answer> tags.
-'''
+"""
 
-API_NO_TOOL_SYSTEM_PROMPT = '''
+API_NO_TOOL_SYSTEM_PROMPT = """
 You are an advanced AI assistant capable of complex reasoning. When you have formulated your conclusion, wrap your final answer in <answer> and </answer> tags.
-'''
+"""
 
-TOOL_EXECUTION_SUCCESS_PROMPT="All your tool calls were executed successfully. The new image is now available as the latest Observation. Please compare this new Observation with previous Observations (especially Observation 0, the original image) to analyze changes and verify your actions. Based on your analysis of ALL available images, decide your next action or provide the final answer."
+TOOL_EXECUTION_SUCCESS_PROMPT = "All your tool calls were executed successfully. The new image is now available as the latest Observation. Please compare this new Observation with previous Observations (especially Observation 0, the original image) to analyze changes and verify your actions. Based on your analysis of ALL available images, decide your next action or provide the final answer."
 
-TOOL_EXECUTION_FAILURE_PROMPT="Some of your tool calls failed. Please carefully check the tool execution results, identify the failed tool calls, and decide your next action accordingly. Remember to reference previous Observations when planning your next steps."
+TOOL_EXECUTION_FAILURE_PROMPT = "Some of your tool calls failed. Please carefully check the tool execution results, identify the failed tool calls, and decide your next action accordingly. Remember to reference previous Observations when planning your next steps."
 
 EVAL_SYSTEM_PROMPT = (
     "You are an intelligent chatbot designed for evaluating the correctness of generative outputs "
@@ -112,9 +111,10 @@ EVAL_QUERY_PROMPT = (
     "Pay attention to unit conversions such as length and angle, etc. As long as the results are consistent, the model's "
     "prediction should be deemed correct.\n\n"
     "**Output Format**:\n"
-    'Your response should include an integer score indicating the correctness of the prediction: 1 for correct and 0 for incorrect.\n'
+    "Your response should include an integer score indicating the correctness of the prediction: 1 for correct and 0 for incorrect.\n"
     'The format should be "Score: 0 or 1"'
 )
+
 
 def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
     """Select system prompt based on model type."""

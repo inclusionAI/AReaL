@@ -22,7 +22,13 @@ from geo_edit.config import (
 )
 from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
-from geo_edit.environment.action import TOOL_AGENTS, TOOL_AGENT_DECLARE, TOOL_FUNCTIONS
+from geo_edit.environment.action import TOOL_AGENTS, TOOL_AGENT_DECLARE, get_tool_functions
+from geo_edit.environment.action.tool_agent import (
+    initialize_tool_agent_registry,
+    initialize_tool_agent_registry_from_env,
+    launch_tool_agent_servers,
+    shutdown_tool_agent,
+)
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
 from geo_edit.environment.task.openai_vision_qa_task import OpenAIVisionQATask
 from geo_edit.environment.task.sglang_vision_qa_task import SGLangVisionQATask
@@ -52,8 +58,15 @@ def _init_worker(
     output_path: str,
     max_tool_calls: int,
     use_tools: str,
+    tool_agent_enable: bool,
 ):
     global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT
+
+    if tool_agent_enable:
+        initialize_tool_agent_registry_from_env()
+    else:
+        TOOL_AGENT_DECLARE.clear()
+        TOOL_AGENTS.clear()
 
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
@@ -158,7 +171,7 @@ def _run_one_task(task_payload: dict):
         task_prompt=text_prompt,
         task_answer=answer,
         task_image_path=image_path,
-        tool_functions=TOOL_FUNCTIONS,
+        tool_functions=get_tool_functions(),
         save_dir=task_save_dir,
         **task_kwargs,
     )
@@ -211,6 +224,36 @@ def main():
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
     parser.add_argument("--n_trajectories", type=int, default=1, help="Number of trajectories to generate per task.")
+    parser.add_argument(
+        "--tool_agent_enable",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable Ray-based ToolAgent that preloads declared tool models with vLLM at startup.",
+    )
+    parser.add_argument(
+        "--tool_agent_ray_address",
+        type=str,
+        default="auto",
+        help="Ray cluster address for ToolAgent (supports cross-node model serving).",
+    )
+    parser.add_argument(
+        "--tool_agent_namespace",
+        type=str,
+        default="geo_edit_tool_agent",
+        help="Ray namespace used by ToolAgent actors.",
+    )
+    parser.add_argument(
+        "--tool_agent_config_path",
+        type=str,
+        default=None,
+        help="Path to ToolAgent JSON config mapping each tool to model/GPU/node/runtime options.",
+    )
+    parser.add_argument(
+        "--tool_agent_shutdown_on_exit",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Shutdown ToolAgent vLLM servers when this dataset run finishes.",
+    )
     args = parser.parse_args()
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
@@ -218,6 +261,40 @@ def main():
     seed = 42
     output_path = args.output_dir
     os.makedirs(output_path, exist_ok=True)
+
+    if not args.tool_agent_enable:
+        TOOL_AGENT_DECLARE.clear()
+        TOOL_AGENTS.clear()
+
+    if args.tool_agent_config_path:
+        os.environ["GEO_EDIT_TOOL_AGENT_CONFIG_PATH"] = args.tool_agent_config_path
+    if args.tool_agent_enable:
+        os.environ["GEO_EDIT_TOOL_AGENT_RAY_ADDRESS"] = args.tool_agent_ray_address
+        os.environ["GEO_EDIT_TOOL_AGENT_NAMESPACE"] = args.tool_agent_namespace
+        try:
+            import ray
+        except ImportError as exc:
+            raise ImportError("ray is required when --tool_agent_enable is set.") from exc
+
+        if not ray.is_initialized():
+            ray.init(address=args.tool_agent_ray_address, namespace=args.tool_agent_namespace, ignore_reinit_error=True)
+        node_ip = ray.get_node_ip_address()
+        os.environ["GEO_EDIT_TOOL_AGENT_NODE_IP"] = node_ip
+
+        declared_tool_names = [tool["name"] for tool in TOOL_AGENT_DECLARE]
+        if declared_tool_names:
+            tool_agent_servers = launch_tool_agent_servers(declared_tool_names, node_ip=node_ip, config_path=args.tool_agent_config_path)
+            initialize_tool_agent_registry(tool_agent_servers)
+            logger.info(
+                "ToolAgent enabled and preloaded: ray_address=%s namespace=%s node_ip=%s tools=%s config=%s",
+                args.tool_agent_ray_address,
+                args.tool_agent_namespace,
+                node_ip,
+                declared_tool_names,
+                args.tool_agent_config_path,
+            )
+        else:
+            logger.warning("ToolAgent enabled but TOOL_AGENT_DECLARE is empty; no tool-agent servers were launched.")
 
     dataset = load_dataset("parquet", data_files=args.dataset_path)["train"]
     logger.info(f"Dataset size after filtering: {len(dataset)}")
@@ -275,6 +352,7 @@ def main():
             output_path,
             MAX_TOOL_CALLS,
             tool_mode,
+            args.tool_agent_enable,
         ),
     ) as pool:
         inflight = []  # list[(task_id, AsyncResult)]
@@ -357,6 +435,9 @@ def main():
         pbar.close()
 
     save_global_meta_info(output_path, meta_info_list)
+
+    if args.tool_agent_enable and args.tool_agent_shutdown_on_exit:
+        shutdown_tool_agent()
 
 
 if __name__ == "__main__":

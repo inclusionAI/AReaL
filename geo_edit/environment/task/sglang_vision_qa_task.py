@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 from PIL import Image
 
 from geo_edit.environment.task.vision_qa_task import ToolCall, VisionQATask
-from geo_edit.utils.vision_task_utils import image_to_data_url
+from geo_edit.utils.image_utils import image_to_data_url
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -54,12 +54,10 @@ class SGLangVisionQATask(VisionQATask):
             image_url = image_to_data_url(image)
             if self.task_image_path:
                 self.image_url_map[image_url] = self.task_image_path
-            content.extend(
-                [
+            content.extend([
                     {"type": "text", "text": "Observation 0:"},
                     {"type": "image_url", "image_url": {"url": image_url}},
-                ]
-            )
+                ])
         self.contents.append({"role": "user", "content": content})
 
     def _stringify_observation_item(self, item: Any) -> Any:
@@ -122,10 +120,7 @@ class SGLangVisionQATask(VisionQATask):
             raise ValueError("SGLang response contained no tool call or final answer.")
 
         if tool_calls and output_text:
-            logger.warning(
-                "SGLang response contained tool call and final answer; "
-                "keeping the answer and ignoring tool calls."
-            )
+            logger.warning("SGLang response contained tool call and final answer; keeping the answer and ignoring tool calls.")
             tool_calls = []
             tool_call_records = []
 
@@ -142,9 +137,7 @@ class SGLangVisionQATask(VisionQATask):
         self.contents.append(assistant_message)
 
         action_record = {"text": output_text, "tool_calls": tool_call_records}
-        self._record_conversation_history(
-            step, contents_for_save, action_record, thinking_process, output_text, tool_calls, extra_info
-        )
+        self._record_conversation_history(step, contents_for_save, action_record, thinking_process, output_text, tool_calls, extra_info)
         return list(tool_calls)
 
     def _append_tool_result(self, call_id: str, payload: Dict[str, str | Dict[str, str]]) -> None:
@@ -174,6 +167,11 @@ class SGLangVisionQATask(VisionQATask):
             {"type": "image_url", "image_url": {"url": image_url}},
         ]
         self.contents.append({"role": "user", "content": content})
+
+    def _append_tool_text_for_calls(self, tool_calls: List[ToolCall], text: str) -> None:
+        payload = {"analysis": text}
+        for call in tool_calls:
+            self._append_tool_result(call.call_id, payload)
 
     def append_prompt(self, prompt: str) -> None:
         self.contents.append({"role": "user", "content": [{"type": "text", "text": prompt}]})

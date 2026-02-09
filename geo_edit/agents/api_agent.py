@@ -21,13 +21,18 @@ class APIBasedAgent(BaseAgent):
 
         if self.config.model_type == "Google":
             from google import genai
+
             self.client = genai.Client(api_key=self.config.api_key)
             self.model = self.config.model_name
             self._model_loaded = True
             logger.info("API-based model %s loaded successfully.", self.config.model_name)
         elif self.config.model_type == "OpenAI":
             from openai import OpenAI
-            self.client = OpenAI(api_key=self.config.api_key)
+
+            client_kwargs = {"api_key": self.config.api_key}
+            if self.config.api_base is not None:
+                client_kwargs["base_url"] = self.config.api_base
+            self.client = OpenAI(**client_kwargs)
             self.model = self.config.model_name
             self._model_loaded = True
             logger.info("API-based model %s loaded successfully.", self.config.model_name)

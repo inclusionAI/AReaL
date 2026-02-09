@@ -55,9 +55,7 @@ def _is_valid_tool_call(response: str, step_tool_call_format: str) -> bool:
     return True
 
 
-def tool_format_reward(
-    predict_str_list: List[str], extra_info: Optional[Dict[str, Any]] = None
-) -> tuple[float, int]:
+def tool_format_reward(predict_str_list: List[str], extra_info: Optional[Dict[str, Any]] = None) -> tuple[float, int]:
     conv_rounds = len(predict_str_list)
     format_score = 0.0
     tool_call_count = 0
@@ -80,17 +78,13 @@ def tool_format_reward(
             if not _is_valid_tool_call(response, step_tool_call_format):
                 tool_call_match_flag = False
                 break
-        final_answer_match_flag = _is_valid_direct_answer(
-            predict_str_list[-1].strip(), direct_answer_format
-        )
+        final_answer_match_flag = _is_valid_direct_answer(predict_str_list[-1].strip(), direct_answer_format)
         if tool_call_match_flag and final_answer_match_flag:
             format_score = 1.0
     return format_score, tool_call_count
 
 
-def _judge_with_openai(
-    question: str, ground_truth: str, prediction: str, model: str
-) -> str:
+def _judge_with_openai(question: str, ground_truth: str, prediction: str, model: str) -> str:
     try:
         from openai import OpenAI
     except Exception:
@@ -134,11 +128,7 @@ def _inner_acc_reward(
             return 0.0
         predict_str = extracted
 
-    model = (
-        extra_info.get("judge_model", "gpt-5-mini")
-        if extra_info is not None
-        else "gpt-5-mini"
-    )
+    model = extra_info.get("judge_model", "gpt-5-mini") if extra_info is not None else "gpt-5-mini"
     score_str = _judge_with_openai(prompt, original_answer, predict_str, model)
     if not score_str:
         return 0.0
@@ -152,9 +142,7 @@ def compute_score(
     extra_info: Optional[Dict[str, Any]] = None,
 ) -> float:
     acc_reward_weight = extra_info.get("acc_reward_weight", 1.0) if extra_info else 1.0
-    format_reward_weight = (
-        extra_info.get("format_reward_weight", 1.0) if extra_info else 1.0
-    )
+    format_reward_weight = extra_info.get("format_reward_weight", 1.0) if extra_info else 1.0
     tool_call_penalty = 0.1
     if extra_info is not None and "tool_call_penalty" in extra_info:
         tool_call_penalty = extra_info.get("tool_call_penalty", 0.1)
@@ -166,11 +154,7 @@ def compute_score(
     format_score = format_reward_weight * format_score
 
     tool_penalty_factor = (1 - tool_call_penalty) if tool_call_count > 0 else 1.0
-    tool_reward = (
-        extra_info.get("use_tool_reward_weight", 0.0)
-        if tool_call_count > 0 and extra_info is not None
-        else 0.0
-    )
+    tool_reward = extra_info.get("use_tool_reward_weight", 0.0) if tool_call_count > 0 and extra_info is not None else 0.0
     score = tool_penalty_factor * acc_score + format_score + tool_reward
     return float(score)
 

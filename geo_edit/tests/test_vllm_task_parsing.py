@@ -56,9 +56,7 @@ def test_vllm_task_parses_tool_calls(tmp_path):
     )
 
     arguments = {"image_index": 0, "coordinates": "\\boxed{10,20,30,40}"}
-    native_tool_calls = [
-        _make_tool_call("call_abc123", "draw_line", arguments)
-    ]
+    native_tool_calls = [_make_tool_call("call_abc123", "draw_line", arguments)]
     content = "<think>Need to draw a line.</think>"
     response = _make_response(content, tool_calls=native_tool_calls)
     tool_calls = task.parse_action(
@@ -79,18 +77,12 @@ def test_vllm_task_parses_tool_calls(tmp_path):
 
     observation = task.conversation_history[0]["observation"]
     user_message = next(item for item in observation if item.get("role") == "user")
-    image_part = next(
-        part for part in user_message["content"] if part.get("type") == "input_image"
-    )
+    image_part = next(part for part in user_message["content"] if part.get("type") == "input_image")
     assert image_part["image_path"] == str(image_path)
 
     task.update_observation_from_action(tool_calls)
     assert len(task.image_list) == 2
-    tool_result_messages = [
-        message
-        for message in task.contents["input"]
-        if message.get("type") == "function_call_output"
-    ]
+    tool_result_messages = [message for message in task.contents["input"] if message.get("type") == "function_call_output"]
     assert tool_result_messages
     tool_output = tool_result_messages[-1]["output"]
     tool_image_part = next(part for part in tool_output if part.get("type") == "input_image")
@@ -124,15 +116,9 @@ def test_vllm_direct_initial_input_matches_responses_schema(tmp_path):
     image_part = next(part for part in user_message["content"] if part.get("type") == "input_image")
     assert image_part["detail"] == "auto"
 
-    assert not any(
-        item.get("type") in {"function_call", "function_call_output"}
-        for item in task.contents["input"]
-        if isinstance(item, dict)
-    )
+    assert not any(item.get("type") in {"function_call", "function_call_output"} for item in task.contents["input"] if isinstance(item, dict))
 
-    TypeAdapter(ResponseCreateParamsNonStreaming).validate_python(
-        {"model": "dummy-model", "input": task.contents["input"]}
-    )
+    TypeAdapter(ResponseCreateParamsNonStreaming).validate_python({"model": "dummy-model", "input": task.contents["input"]})
 
 
 def test_vllm_direct_mode_omits_tool_fields_in_generate_config():
