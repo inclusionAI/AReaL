@@ -1019,7 +1019,7 @@ class ArchonEngine(TrainEngine):
                 attn_type = "tree"
         elif attn_type == "tree":
             self.logger.warning(
-                f"attn_type is 'tree' but tree training is disabled. Overriding to 'varlen'."
+                "attn_type is 'tree' but tree training is disabled. Overriding to 'varlen'."
             )
             attn_type = "varlen"
 
