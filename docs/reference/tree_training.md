@@ -13,25 +13,17 @@ This is particularly beneficial for agentic RL training where:
 
 - Multiple responses are sampled from the same prompt (e.g., `n_samples > 1`)
 - Prompts share common system prompts or few-shot examples
-- Reference model log probabilities need to be computed for the same prefix multiple
-  times
+- Multi-turn interactions share conversation history prefixes
 
-### Key Benefits
-
-| Benefit                  | Description                                                |
-| ------------------------ | ---------------------------------------------------------- |
-| **Reduced FLOPs**        | Shared prefixes are computed once instead of N times       |
-| **Memory Efficiency**    | Trie compression reduces peak memory for attention masks   |
-| **Maintained Accuracy**  | Mathematically equivalent to standard sequence processing  |
-| **Automatic Packing**    | Greedy algorithm packs sequences into trees automatically  |
+By computing shared prefixes only once, tree training reduces FLOPs and improves compute efficiency. In the tau2 example (see `examples/tau2/`), tree training reduces overall FLOPs by up to **10x** and achieves up to **7x** acceleration.
 
 ### Supported Backends
 
-| Backend  | Status                   | Notes                                  |
-| -------- | ------------------------ | -------------------------------------- |
-| FSDP     | Supported                | Via FlexAttention with block masks     |
-| Megatron | Supported                | Via PytorchFlexAttention module        |
-| Archon   | Supported (Experimental) | Via TreeAttentionWrapper               |
+| Backend  | Status    | Notes                                  |
+| -------- | --------- | -------------------------------------- |
+| FSDP     | Supported | Via FlexAttention with block masks     |
+| Megatron | Supported | Via PytorchFlexAttention module        |
+| Archon   | Supported | Via TreeAttentionWrapper               |
 
 ## Configuration
 
@@ -42,7 +34,7 @@ Enable tree training via the `enable_tree_training` option in `TrainEngineConfig
 ```yaml
 actor:
   enable_tree_training: true
-  pad_to_maximum: true
+  pad_to_maximum: true # Must be set to true for tree training
   mb_spec:
     max_tokens_per_mb: 8192  # Must be set for tree training
 ```
@@ -55,26 +47,9 @@ actor:
 | `pad_to_maximum`           | bool | Yes      | Must be `true` for tree training     |
 | `mb_spec.max_tokens_per_mb`| int  | Yes      | Max tokens per tree (must be set)    |
 
-Additionally, when tree training is enabled `max_tokens_per_mb` must be a multiple of `BLOCK_SIZE` (128).
+NOTE: When tree training is enabled `max_tokens_per_mb` must be a multiple of `BLOCK_SIZE` (128).
 
-### Attention Type Selection
-
-For Archon engine, the attention type is configured via `archon.attn_type`:
-
-```yaml
-actor:
-  enable_tree_training: true
-  archon:
-    attn_type: tree  # Automatically set when enable_tree_training=true
-```
-
-| Attention Type | Description                                     |
-| -------------- | ----------------------------------------------- |
-| `varlen`       | Variable-length attention (default, no sharing) |
-| `sdpa`         | Scaled dot-product attention                    |
-| `tree`         | Tree attention with prefix sharing              |
-
-## Architecture
+## Implementation
 
 ### Tree Building Process
 
@@ -141,7 +116,7 @@ The `gather_packed_tree_logprobs_entropy` function:
 
 ### Attention Mechanisms
 
-Tree training uses two attention implementations depending on hardware support:
+Tree training has two choices for attention implementation:
 
 #### FlexAttention with Block Masks (Default)
 
@@ -151,13 +126,9 @@ Uses PyTorch's `torch.nn.attention.flex_attention` with `BlockMask`:
 - Efficient for GPU computation with sparse attention patterns
 - Requires sequences padded to block size multiples
 
-#### Triton Tree Attention (Optional)
+#### Triton Tree Attention (Experimental)
 
-When Triton is available and `USE_TRITON_TREE_ATTN=True`:
-
-- Custom Triton kernels for tree-structured attention
-- Parent array representation for efficient tree traversal
-- Precomputed sparse block indices for kernel dispatch
+An experimental Triton implementation for tree attention that is more memory and computationally efficient. Enable via the `AREAL_USE_TRITON_TREE_ATTN=1` environment variable. Note that this implementation is not thoroughly tested.
 
 ## Engine Integration
 
@@ -237,19 +208,11 @@ For example, a ratio of 0.6 means 40% of tokens were saved through prefix sharin
 
 ### Current Limitations
 
-| Constraint              | Description                                              |
-| ----------------------- | -------------------------------------------------------- |
-| No PP with FSDP         | Pipeline parallelism not supported with FSDP tree mode   |
-| No CP with tree         | Context parallelism (CP > 1) incompatible with tree mode |
-| No SP with tree (FSDP)  | Sequence parallelism (SP > 1) incompatible with tree     |
-| Critic not supported    | Tree training with critic models not yet implemented     |
-| Block size alignment    | `max_tokens_per_mb` must be multiple of 128              |
-
-### Sequence Length Constraints
-
-- Each sequence must fit within `max_tokens_per_mb`
-- Sequences exceeding this limit will raise a `ValueError`
-- Consider increasing `max_tokens_per_mb` or truncating long sequences
+| Constraint              | Description                                                        |
+| ----------------------- | ------------------------------------------------------------------ |
+| No PP with FSDP/Archon  | Pipeline parallelism not supported with tree mode (FSDP and Archon)|
+| No CP with tree         | Context parallelism (CP > 1) incompatible with tree mode (all engines) |
+| Critic not supported    | Tree training with critic models not yet implemented               |
 
 ### Numerical Accuracy
 
@@ -257,63 +220,3 @@ FlexAttention may introduce numerical precision differences compared to standard
 implementations. This can cause training instability with Mixture of Experts (MoE) models
 when tree training is enabled. If you experience unstable training with MoE architectures,
 consider disabling tree training.
-
-## Example Configuration
-
-Complete example for GRPO training with tree training enabled:
-
-```yaml
-experiment_name: grpo_tree_training
-trial_name: run1
-
-actor:
-  path: Qwen/Qwen2.5-7B-Instruct
-  enable_tree_training: true
-  mb_spec:
-    max_tokens_per_mb: 16384  # Must be multiple of 128
-
-gconfig:
-  n_samples: 8  # Multiple samples benefit most from tree training
-  max_new_tokens: 1024
-
-train_dataset:
-  batch_size: 64
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**"max_tokens_per_tree must be a multiple of BLOCK_SIZE"**
-
-Ensure `mb_spec.max_tokens_per_mb` is divisible by 128:
-
-```yaml
-mb_spec:
-  max_tokens_per_mb: 8192  # 8192 / 128 = 64 blocks
-```
-
-**"Sequence length exceeds max_tokens_per_tree"**
-
-Either increase `max_tokens_per_mb` or reduce `max_new_tokens`:
-
-```yaml
-mb_spec:
-  max_tokens_per_mb: 32768  # Increase limit
-gconfig:
-  max_new_tokens: 512       # Or reduce generation length
-```
-
-**"Tree training cannot be enabled with context parallelism"**
-
-Disable context parallelism when using tree training:
-
-```yaml
-allocation_mode: "sglang:d4t4 + fsdp:d8"  # No 'c' dimension
-```
-
-## See Also
-
-- [Allocation Mode](alloc_mode.md) - GPU allocation and parallelism configuration
-- [Algorithm Performance](../best_practices/algo_perf.md) - Performance optimization tips
-- [Handling OOM](../best_practices/handling_oom.md) - Memory management strategies
