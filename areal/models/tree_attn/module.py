@@ -33,10 +33,7 @@ except ImportError:
     patch_bridge_for_tree_training = None
 
 # Archon functionality
-from areal.models.tree_attn.module_archon import (
-    FLEX_ATTENTION_AVAILABLE,
-    TreeAttentionWrapper,
-)
+from areal.models.tree_attn.module_archon import TreeAttentionWrapper
 
 __all__ = [
     # Shared constants
@@ -58,5 +55,4 @@ __all__ = [
     "patch_bridge_for_tree_training",
     # Archon exports
     "TreeAttentionWrapper",
-    "FLEX_ATTENTION_AVAILABLE",
 ]

@@ -9,16 +9,12 @@ from areal.experimental.models.archon.varlen_attention import (
     VarlenAttentionWrapper,
     varlen_attn,
 )
-from areal.models.tree_attn.module_archon import (
-    FLEX_ATTENTION_AVAILABLE,
-    TreeAttentionWrapper,
-)
+from areal.models.tree_attn.module_archon import TreeAttentionWrapper
 
 __all__ = [
     "SDPAWrapper",
     "VarlenAttentionWrapper",
     "TreeAttentionWrapper",
-    "FLEX_ATTENTION_AVAILABLE",
     "create_block_causal_mask_2d",
     "varlen_attn",
 ]

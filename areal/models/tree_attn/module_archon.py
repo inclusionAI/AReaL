@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from torch.nn.attention.flex_attention import BlockMask, flex_attention
 
 from areal.models.tree_attn.constants import USE_TRITON_TREE_ATTN
 from areal.models.tree_attn.triton_kernel import TRITON_AVAILABLE, TreeAttentionData
@@ -19,19 +20,8 @@ from areal.utils import logging
 
 logger = logging.getLogger("TreeAttnArchon")
 
-# Try importing flex attention
-try:
-    from torch.nn.attention.flex_attention import BlockMask, flex_attention
-
-    FLEX_ATTENTION_AVAILABLE = True
-except ImportError:
-    FLEX_ATTENTION_AVAILABLE = False
-    BlockMask = None
-    flex_attention = None
-
 __all__ = [
     "TreeAttentionWrapper",
-    "FLEX_ATTENTION_AVAILABLE",
 ]
 
 
@@ -115,7 +105,7 @@ class TreeAttentionWrapper(nn.Module):
             return output
 
         # Flex attention path
-        if block_mask is not None and FLEX_ATTENTION_AVAILABLE:
+        if block_mask is not None:
             enable_gqa = q.shape[1] != k.shape[1]
             output = flex_attention(
                 q,
@@ -130,7 +120,6 @@ class TreeAttentionWrapper(nn.Module):
         raise ValueError(
             "Tree attention requested but no valid backend available. "
             f"Triton available: {TRITON_AVAILABLE}, "
-            f"Flex attention available: {FLEX_ATTENTION_AVAILABLE}, "
             f"USE_TRITON_TREE_ATTN: {USE_TRITON_TREE_ATTN}, "
             f"block_mask provided: {block_mask is not None}, "
             f"triton_attn_data provided: {triton_attn_data is not None}"

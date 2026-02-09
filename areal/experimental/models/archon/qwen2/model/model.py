@@ -7,6 +7,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
 from torch.distributed import ProcessGroup
+from torch.nn.attention.flex_attention import BlockMask
 
 from areal.experimental.models.archon.attention import (
     SDPAWrapper,
@@ -24,14 +25,7 @@ from areal.experimental.models.archon.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
 )
-from areal.models.tree_attn.module_archon import FLEX_ATTENTION_AVAILABLE
 from areal.models.tree_attn.triton_kernel import TreeAttentionData
-
-# Import BlockMask if available
-if FLEX_ATTENTION_AVAILABLE:
-    from torch.nn.attention.flex_attention import BlockMask
-else:
-    BlockMask = None
 
 
 class RMSNorm(nn.Module):
@@ -254,7 +248,7 @@ class TransformerBlock(nn.Module):
         max_seqlen: int,
         block_mask: BlockMask | None = None,
         triton_attn_data: TreeAttentionData | None = None,
-        **kwargs,  # Accept additional kwargs from checkpoint_wrapper (e.g., early_stop)
+        **kwargs,
     ) -> torch.Tensor:
         x = x + self.attention(
             self.attention_norm(x),

@@ -1013,7 +1013,7 @@ class ArchonEngine(TrainEngine):
         attn_type = self.config.archon.attn_type
         if self.enable_tree_training:
             if attn_type != "tree":
-                self.logger.info(
+                self.logger.warning(
                     f"Tree training enabled, overriding attn_type '{self.config.archon.attn_type}' -> 'tree'"
                 )
                 attn_type = "tree"
