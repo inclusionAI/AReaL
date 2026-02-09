@@ -36,7 +36,7 @@ class ForwardBackwardRunner(ABC):
             [torch.Tensor, dict[str, Any]], torch.Tensor | None
         ],
         forward_only: bool,
-    ) -> list[torch.Tensor] | None:
+    ) -> list[torch.Tensor | dict[int, torch.Tensor]] | None:
         """Run forward (and optionally backward) pass over microbatches.
 
         Args:
@@ -46,6 +46,7 @@ class ForwardBackwardRunner(ABC):
 
         Returns:
             List of results from process_output_fn, or None if not applicable.
+            Results can be tensors or dicts (for tree training).
         """
         ...
 
@@ -69,8 +70,8 @@ class SequentialRunner(ForwardBackwardRunner):
             [torch.Tensor, dict[str, Any]], torch.Tensor | None
         ],
         forward_only: bool,
-    ) -> list[torch.Tensor]:
-        results: list[torch.Tensor] = []
+    ) -> list[torch.Tensor | dict[int, torch.Tensor]]:
+        results: list[torch.Tensor | dict[int, torch.Tensor]] = []
 
         for mb_item in mb_list:
             inputs, ctx = self.prepare_inputs_fn(mb_item)

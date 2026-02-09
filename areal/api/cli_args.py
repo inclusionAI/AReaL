@@ -877,7 +877,7 @@ class TrainEngineConfig:
     enable_tree_training: bool = field(
         default=False,
         metadata={
-            "help": "Enable tree training with flex attention module. Not supported for Archon engine yet."
+            "help": "Enable tree training with flex attention module."
         },
     )
 
