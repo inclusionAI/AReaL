@@ -371,9 +371,6 @@ class SlurmScheduler(Scheduler):
                 worker_ports += list(map(str, resp.json()["ports"]))
 
             logger.debug(f"Discovered {worker_info.worker.id} at {addr}")
-            # NOTE: CUDA_VISIBLE_DEVICES is now set in the sbatch script before
-            # Python starts (using SLURM_LOCALID). Setting it here via /set_env
-            # would be too late - CUDA runtime ignores env var changes after init.
 
     def _prepare_worker_specs(
         self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
