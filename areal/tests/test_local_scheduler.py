@@ -32,7 +32,6 @@ from areal.scheduler.exceptions import (
 from areal.scheduler.local import LocalScheduler, WorkerInfo
 from areal.utils.proc import kill_process_tree
 
-
 # Skip all tests in this module by default - run manually only
 pytestmark = pytest.mark.skip(
     reason="LocalScheduler tests have unexpected behavior on GCP CI machines. "
