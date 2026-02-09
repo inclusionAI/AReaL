@@ -94,7 +94,8 @@ from areal.experimental.models.archon.your_model import spec  # noqa: F401
 ```
 
 > **Tip**: AI-powered coding tools (e.g., Claude Code, OpenCode) can help accelerate the
-> process by referencing existing implementations like `qwen3/` as examples. See the
+> process. Use the `/add-archon-model` skill for a semi-automated guide that analyzes
+> HuggingFace source code and generates implementation scaffolding. See the
 > [AI-Assisted Development Guide](../reference/ai_assisted_dev.md) for setup and usage.
 
 ## Parallelism Configuration

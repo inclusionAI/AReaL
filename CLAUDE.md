@@ -88,6 +88,7 @@ uv run python docs/generate_cli_docs.py
 | Add Workflow           | `docs/customization/agent.md`, `areal/workflow/multi_turn.py` |
 | Add Dataset            | `docs/customization/`, `areal/dataset/gsm8k.py`               |
 | Add Reward             | `areal/api/reward_api.py`, `areal/reward/geometry3k.py`       |
+| Add Archon Model       | `areal/experimental/models/archon/qwen2/`, `qwen3/`           |
 | Algorithm Details      | `docs/algorithms/*.md`                                        |
 | Quickstart             | `docs/tutorial/quickstart.md`                                 |
 | Architecture Deep Dive | `docs/tutorial/gsm8k_grpo.md`                                 |
@@ -134,6 +135,7 @@ Skills provide step-by-step guides for common development tasks:
 - `/add-dataset` - Dataset loader creation guide
 - `/add-workflow` - Workflow implementation guide
 - `/add-reward` - Reward function guide
+- `/add-archon-model` - Archon engine model architecture guide
 - `/debug-distributed` - Distributed debugging guide
 - `/add-unit-tests` - Test development guide (NEW)
 

@@ -22,6 +22,7 @@ Use this agent for **ArchonEngine interface and integration guidance**:
 - Integrating ArchonEngine with AReaL workflows
 - Understanding capabilities and choosing between engines
 - Debugging integration issues with other components
+- **Adding support for new model architectures** in ArchonEngine
 
 **Not for** implementation details, distributed training theory, or deep debugging
 (refer to code).
@@ -98,7 +99,32 @@ supporting RLVRWorkflow, MultiTurnWorkflow, and other workflow implementations.
 
 ## Common Usage Patterns
 
-### 1. MoE Training with Expert Parallelism
+### 1. Adding a New Model Architecture
+
+To add support for a new HuggingFace model in ArchonEngine, use the `/add-archon-model`
+skill which provides a semi-automated guide. The process involves:
+
+1. **Analyze** the target model's HF source code (config.json, modeling files)
+1. **Select reference**: `qwen2` (dense) or `qwen3` (dense + MoE + QK norm)
+1. **Implement** model files under `areal/experimental/models/archon/<model>/`
+1. **Register** via `ModelSpec` in `spec.py` and import in `__init__.py`
+1. **Test** with staged verification (args, state dict adapter, weight loading, forward)
+
+**Key files for model support**:
+
+- `model_spec.py` -- `ModelSpec` dataclass and registry (`register_model_spec`)
+- `base.py` -- Base classes: `BaseModelArgs`, `BaseArchonModel`, `BaseStateDictAdapter`
+- `__init__.py` -- Auto-registration via import
+
+**Currently supported model types**: Check `get_supported_model_types()` from
+`areal.experimental.models.archon.model_spec`.
+
+**Model discovery flow**: ArchonEngine reads `model_type` from HuggingFace `config.json`
+via `AutoConfig.from_pretrained()`, then looks up the corresponding `ModelSpec` from the
+global registry to determine which model class, args class, state dict adapter, and
+parallelization function to use.
+
+### 2. MoE Training with Expert Parallelism
 
 **Configuration Approach**: Use `ParallelStrategy` with significant
 `expert_parallel_size` and `expert_tensor_parallel_size` settings, combined with
@@ -114,7 +140,7 @@ supporting RLVRWorkflow, MultiTurnWorkflow, and other workflow implementations.
 **Capabilities**: Expert weight sharding, token dispatch, and load balancing for
 efficient MoE training.
 
-### 2. Pipeline + Expert Parallelism
+### 3. Pipeline + Expert Parallelism
 
 **Configuration Approach**: Combine `pipeline_parallel_size` with `expert_parallel_size`
 in `ParallelStrategy` for hybrid parallel training.
@@ -128,7 +154,7 @@ in `ParallelStrategy` for hybrid parallel training.
 **Capabilities**: Pipeline stage management with intra-stage expert parallelism for
 ultra-deep MoE models.
 
-### 3. Large-scale Checkpointing
+### 4. Large-scale Checkpointing
 
 **Configuration Approach**: Use `TrainEngineConfig` with DCP checkpoint format and
 appropriate checkpoint intervals.
@@ -150,6 +176,9 @@ large-scale training.
 - Poor performance -> Adjust TP/EP/PP balance
 - Checkpoint loading fails -> Verify format consistency
 - Weight sync timeout -> Switch to disk-based updates
+- Unknown model_type error -> Model not registered; check `__init__.py` import and
+  `spec.py`
+- Weight mismatch after loading -> Check `state_dict_adapter.py` key mappings
 
 **Diagnostic Steps**:
 
@@ -249,6 +278,11 @@ Activation: When ArchonEngine interface, configuration, or integration topics de
 1. Add to "Core Concepts" characteristics
 2. Include in relevant usage patterns
 3. Update troubleshooting guide if needed
+
+### When New Models Are Added
+1. No changes needed here -- the `/add-archon-model` skill handles the guided workflow
+2. Update "Adding a New Model Architecture" section only if the registration pattern changes
+3. The model discovery flow description should stay current with `model_spec.py`
 
 ### When Integration Patterns Change
 1. Update "Workflow Integration" section

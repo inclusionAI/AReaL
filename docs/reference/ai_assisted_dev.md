@@ -101,6 +101,7 @@ you follow AReaL's conventions and don't miss required steps.
 | `/add-dataset`       | Adding a new dataset loader to `areal/dataset/`                      |
 | `/add-workflow`      | Creating a new RolloutWorkflow implementation                        |
 | `/add-reward`        | Implementing a new reward function                                   |
+| `/add-archon-model`  | Adding a new model architecture to the Archon engine                 |
 | `/add-unit-tests`    | Adding tests for new or existing functionality                       |
 | `/debug-distributed` | Troubleshooting distributed training issues (hang, OOM, NCCL errors) |
 
