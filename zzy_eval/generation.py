@@ -106,7 +106,7 @@ def generate_path(s, problem: str, context: str, path_prefix: str, max_tokens: i
         max_tokens=max_tokens,
         temperature=0.7,
         top_p=0.9,
-        stop=["</Path>", "<|im_end|>", "<|endoftext|>", "</s>"]
+        stop=["</Path>", "<|im_end|>", "<|endoftext|>", "</s>", "<Parallel>"]
     )
 
 
