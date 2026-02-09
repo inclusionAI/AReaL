@@ -1011,11 +1011,17 @@ class ArchonEngine(TrainEngine):
         """Create model structure on meta device without loading weights."""
         # Use tree attention type when tree training is enabled
         attn_type = self.config.archon.attn_type
-        if self.enable_tree_training and attn_type != "tree":
-            attn_type = "tree"
-            self.logger.info(
-                f"Tree training enabled, overriding attn_type '{self.config.archon.attn_type}' -> 'tree'"
+        if self.enable_tree_training:
+            if attn_type != "tree":
+                self.logger.info(
+                    f"Tree training enabled, overriding attn_type '{self.config.archon.attn_type}' -> 'tree'"
+                )
+                attn_type = "tree"
+        elif attn_type == "tree":
+            self.logger.warning(
+                f"attn_type is 'tree' but tree training is disabled. Overriding to 'varlen'."
             )
+            attn_type = "varlen"
 
         model_args = self.spec.model_args_class.from_hf_config(
             self.model_config,
