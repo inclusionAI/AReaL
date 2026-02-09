@@ -371,33 +371,6 @@ class SlurmScheduler(Scheduler):
                 worker_ports += list(map(str, resp.json()["ports"]))
 
             logger.debug(f"Discovered {worker_info.worker.id} at {addr}")
-            if worker_info.spec.gpu == 0:
-                continue
-
-            # Set CUDA_VISIBLE_DEVICES
-            n_workers_per_node = max(1, self.n_gpus_per_node // worker_info.spec.gpu)
-            local_idx = worker_info.task_index % n_workers_per_node
-            gpus_per_task = min(worker_info.spec.gpu, self.n_gpus_per_node)
-            visible_deivces = list(
-                map(
-                    str,
-                    list(
-                        range(
-                            local_idx * gpus_per_task, (local_idx + 1) * gpus_per_task
-                        )
-                    ),
-                )
-            )
-            resp = requests.post(
-                f"http://{addr}/set_env",
-                json=dict(
-                    env=dict(
-                        CUDA_VISIBLE_DEVICES=",".join(visible_deivces),
-                        ASCEND_RT_VISIBLE_DEVICES=",".join(visible_deivces),
-                    )
-                ),
-            )
-            resp.raise_for_status()
 
     def _prepare_worker_specs(
         self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
@@ -805,6 +778,28 @@ class SlurmScheduler(Scheduler):
         env_vars_dict = spec.env_vars.copy() if spec.env_vars else {}
 
         bash_cmds = (spec.additional_bash_cmds or []).copy()
+
+        # Set CUDA_VISIBLE_DEVICES based on SLURM_LOCALID before any Python imports.
+        # This MUST happen before Python starts, otherwise CUDA runtime ignores the
+        # env var change once it's initialized.
+        # We use bash commands instead of env_vars_dict because SLURM_LOCALID is only
+        # available at runtime and each task needs a different value.
+        if total_gpus > 0:
+            gpus_per_task = spec.gpu
+            if gpus_per_task == 1:
+                cuda_setup_cmd = (
+                    f"export CUDA_VISIBLE_DEVICES=$((SLURM_LOCALID * {gpus_per_task}))"
+                )
+            else:
+                cuda_setup_cmd = (
+                    f"export CUDA_VISIBLE_DEVICES=$(seq -s, $((SLURM_LOCALID * {gpus_per_task})) "
+                    f"$((SLURM_LOCALID * {gpus_per_task} + {gpus_per_task} - 1)))"
+                )
+            # Also set ASCEND_RT_VISIBLE_DEVICES for Ascend NPU compatibility
+            ascend_setup_cmd = "export ASCEND_RT_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+            bash_cmds.insert(0, cuda_setup_cmd)
+            bash_cmds.insert(1, ascend_setup_cmd)
+
         bash_cmds.append(rpc_cmd)
         bash_cmds_str = ";\n".join(bash_cmds)
         cmd = f"bash -c {shlex.quote(bash_cmds_str)}"

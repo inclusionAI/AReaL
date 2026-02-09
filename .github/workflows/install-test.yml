@@ -116,6 +116,9 @@ jobs:
   install-test-docker:
     # Test editable installation in Docker runtime image
     # This mirrors the installation method documented for Docker users
+    # Only runs on manual dispatch due to large image pull time
+    # and `no space on device left` errors on busy runners
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     name: Install test (Docker runtime image)
     container:

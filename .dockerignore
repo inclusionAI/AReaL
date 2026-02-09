@@ -5,7 +5,6 @@
 
 # Documentation (not needed in runtime image)
 docs/
-README.md
 CONTRIBUTING.md
 
 # Legacy codes

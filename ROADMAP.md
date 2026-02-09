@@ -7,11 +7,11 @@ direction of the project.
 **Latest Release:** Check [releases](https://github.com/inclusionAI/AReaL/releases) for
 the most recent version.
 
-## 2025 Q4 Roadmap (due January 31, 2026)
+## 2026 Q1 Roadmap (due April 30, 2026)
 
-[GitHub Issue #542](https://github.com/inclusionAI/AReaL/issues/542).
+[GitHub Issue #907](https://github.com/inclusionAI/AReaL/issues/907).
 
-This roadmap tracks major planned enhancements through January 31, 2026. Items are
+This roadmap tracks major planned enhancements through April 30, 2026. Items are
 organized into two categories:
 
 - **On-going:** Features currently under active development by the core AReaL team
@@ -22,41 +22,100 @@ organized into two categories:
 
 **On-going**
 
-- [ ] Single-controller mode: https://github.com/inclusionAI/AReaL/issues/260
-- [ ] Detailed profiling for optimal performance across different scales
-- [ ] RL training with cross-node vLLM pipeline/context parallelism
+- [ ] ZBPP & ZBPP-V support for the Archon backend
+- [ ] FP8 training for Archon
 
 **Planned but not in progress**
 
+- [ ] Support for agentic training with large VLM MoE models (Archon backend)
+- [ ] Omni model RL support with FSDP/Archon backend
+- [ ] Decoupling agent service from the inference service
+- [ ] Online RL training with the proxy server
+- [ ] LoRA support for the Archon backend
+- [ ] Colocation mode with `awex` as the weight sync engine
 - [ ] Multi-LLM training (different agents with different parameters)
-- [ ] Data transfer optimization in single-controller mode
 - [ ] Auto-scaling inference engines in single-controller mode
 - [ ] Elastic weight update setup and acceleration
-- [ ] Low-precision RL training
+- [ ] RL training with cross-node vLLM pipeline/context parallelism
 
 ### Usability
 
+**On-going**
+
+- [ ] Flatten the import structure of areal modules
+
 **Planned but not in progress**
 
-- [ ] Wrap training scripts into trainers
-- [ ] Fully respect allocation mode in trainers/training scripts
+- [ ] Publishing PyPI packages
 - [ ] Support distributed training and debugging in Jupyter notebooks
-- [ ] Refactor FSDP/Megatron engine/controller APIs to finer granularity
-- [ ] Add CI pipeline to build Docker images upon release
 - [ ] Example of using a generative or critic-like reward model
+- [ ] Support directly constructing inference/training engines without config objects
+- [ ] Add router in rollout controller for simpler proxy server usage
+- [ ] Integrate `aenvironment` for environment handling
 
 ### Documentation
 
 **Planned but not in progress**
 
-- [ ] Tutorial on how to write efficient async rollout workflows
-- [ ] Benchmarking and profiling guide
-- [ ] Use case guides: offline inference, offline evaluation, multi-agent training
-- [ ] AReaL performance tuning guide
-  - [ ] Device allocation strategies for training and inference
-  - [ ] Parallelism strategy configuration for training and inference
+- [ ] Use case guides: multi-agent training
+- [ ] Guide for online proxy mode training
 
 ## Historical Roadmaps
+
+### 2025 Q4
+
+[GitHub Issue #542](https://github.com/inclusionAI/AReaL/issues/542).
+
+**Backends**
+
+Completed:
+
+- Single-controller mode
+- Detailed profiling for optimal performance across different scales
+- Low-precision RL training (Megatron FP8)
+- Data transfer optimization in single-controller mode
+- New PyTorch-native backend: Archon
+
+Carried over to Q1 2026:
+
+- Multi-LLM training (different agents with different parameters)
+- Auto-scaling inference engines in single-controller mode
+- Elastic weight update setup and acceleration
+- RL training with cross-node vLLM pipeline/context parallelism
+
+**Usability**
+
+Completed:
+
+- Add CI pipeline to build Docker images upon release
+- Wrap training scripts into trainers
+- Refactor FSDP/Megatron engine/controller APIs to finer granularity
+- Fully respect allocation mode in trainers/training scripts
+
+Carried over to Q1 2026:
+
+- Flatten the import structure of areal modules
+- Support distributed training and debugging in Jupyter notebooks
+- Example of using a generative or critic-like reward model
+
+Canceled:
+
+- Rename `RemoteSGLang/vLLMEngine` as `SGLang/vLLMEngine`
+
+**Documentation**
+
+Completed:
+
+- Tutorial on how to write efficient async rollout workflows
+- Benchmarking and profiling guide
+- Use case guides: offline inference, offline evaluation
+- AReaL performance tuning guide
+  - Device allocation strategies for training and inference
+  - Parallelism strategy configuration for training and inference
+
+Carried over to Q1 2026:
+
+- Use case guides: multi-agent training
 
 ### 2025 Q3
 
@@ -148,7 +207,7 @@ agentic AI systems** that is:
 
 ______________________________________________________________________
 
-**Last Updated:** 2025-11-06
+**Last Updated:** 2026-02-06
 
 **Questions about the roadmap?** Open a discussion in
 [GitHub Discussions](https://github.com/inclusionAI/AReaL/discussions) or ask in our

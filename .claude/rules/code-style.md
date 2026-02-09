@@ -18,11 +18,26 @@ Rules beyond pre-commit (ruff format/lint).
   - Good: `getLogger("RLVRWorkflow")`, `getLogger("ArchonEngine")`,
     `getLogger("GSM8KReward")`
   - Avoid: `getLogger(__name__)` or dotted paths like `getLogger("areal.engine.fsdp")`
+- For per-rank loggers: `[{Component} Rank {N}]` (e.g., `[FSDPEngine Rank 0]`)
 - Log levels:
   - DEBUG: Detailed tracing (avoid in hot paths)
   - INFO: Milestones (training start, checkpoint saved)
   - WARNING: Recoverable issues
   - ERROR: Failures requiring attention
+- Register new loggers in `areal/utils/logging.py` (`LOGGER_COLORS_EXACT` or
+  `LOGGER_PATTERNS`)
+- Test colors: `python -m areal.utils.logging`
+
+**Color Scheme:**
+
+| Color      | Category                               | Examples                           |
+| ---------- | -------------------------------------- | ---------------------------------- |
+| blue       | Infrastructure (Schedulers, Launchers) | `LocalScheduler`, `RayLauncher`    |
+| white      | Orchestration (Controllers, RPC)       | `TrainController`, `SGLangWrapper` |
+| purple     | RL-specific (Workflows, Rewards)       | `RLVRWorkflow`, `GSM8KReward`      |
+| green      | Data/Metrics (Stats, Dataset)          | `StatsLogger`, `RLTrainer`         |
+| cyan       | Compute backends (Engines, Platforms)  | `FSDPEngine`, `CUDAPlatform`       |
+| yellow/red | Warning/Error levels (override)        | Any logger at WARNING+             |
 
 ## Performance Patterns
 

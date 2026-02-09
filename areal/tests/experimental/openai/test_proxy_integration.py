@@ -118,11 +118,17 @@ def local_scheduler(tmp_path):
     if not has_gpu():
         pytest.skip("GPU required for LocalScheduler")
 
+    fileroot = tmp_path / "fileroot"
+    fileroot.mkdir()
+    name_resolve_root = tmp_path / "name_resolve"
+    name_resolve_root.mkdir()
     scheduler = LocalScheduler(
         gpu_devices=[0],
         log_dir=str(tmp_path),
         experiment_name=EXPR_NAME,
         trial_name=TRIAL_NAME,
+        fileroot=str(fileroot),
+        nfs_record_root=str(name_resolve_root),
     )
     yield scheduler
     scheduler.delete_workers(None)

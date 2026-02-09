@@ -1,9 +1,6 @@
 name: Build and Test Docker Image
 
 on:
-  pull_request:
-    branches: [main]
-    types: [labeled]
   workflow_dispatch:
 
 concurrency:
@@ -13,23 +10,16 @@ concurrency:
 permissions:
   contents: read
   packages: write
-  pull-requests: write
 
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   VALIDATOR_LABELS: gcp-docker-validator
   RUNNER_VERSION: '2.317.0'
   IMAGE_NAME: ghcr.io/inclusionai/areal-runtime
-  IMAGE_TAG: dev
+  IMAGE_TAG: test
 
 jobs:
   start-builder:
-    if: |
-      (github.event_name == 'pull_request' &&
-       github.head_ref == 'build-docker-image' &&
-       contains(github.event.pull_request.labels.*.name, 'new-image')) ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.ref_name == 'build-docker-image')
     name: Start areal-docker-builder instance
     runs-on: ubuntu-latest
     outputs:
@@ -122,12 +112,6 @@ jobs:
             throw new Error(`Timed out waiting for builder runner ${instanceName} to come online.`);
 
   build-and-push-image:
-    if: |
-      (github.event_name == 'pull_request' &&
-       github.head_ref == 'build-docker-image' &&
-       contains(github.event.pull_request.labels.*.name, 'new-image')) ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.ref_name == 'build-docker-image')
     needs:
       - start-builder
     name: Build and push Docker image
@@ -163,11 +147,71 @@ jobs:
           echo "Commit: ${{ github.sha }}"
           echo "Branch: ${{ github.head_ref || github.ref_name }}"
 
+  run-tests:
+    name: Run tests with test image
+    needs:
+      - build-and-push-image
+    uses: ./.github/workflows/test-areal.yml
+    with:
+      image_tag: test
+    secrets: inherit
+
+  promote-image:
+    name: Promote test image to dev
+    needs:
+      - run-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: inclusionai
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Pull test image and push as dev
+        env:
+          IMAGE_NAME: ghcr.io/inclusionai/areal-runtime
+        run: |
+          docker pull $IMAGE_NAME:test
+          docker tag $IMAGE_NAME:test $IMAGE_NAME:dev
+          docker push $IMAGE_NAME:dev
+          echo "✅ Image promoted from :test to :dev"
+
+  cleanup-test-image:
+    name: Delete test image from registry
+    needs:
+      - build-and-push-image
+      - run-tests
+      - promote-image
+    if: always() && needs.build-and-push-image.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete test image from GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          # Get the package version ID for the test tag
+          PACKAGE_VERSION_ID=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/orgs/inclusionai/packages/container/areal-runtime/versions" \
+            | jq -r '.[] | select(.metadata.container.tags[] == "test") | .id')
+
+          if [ -n "$PACKAGE_VERSION_ID" ] && [ "$PACKAGE_VERSION_ID" != "null" ]; then
+            curl -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/orgs/inclusionai/packages/container/areal-runtime/versions/$PACKAGE_VERSION_ID"
+            echo "✅ Deleted test image from registry"
+          else
+            echo "⚠️ Test image not found or already deleted"
+          fi
+
   stop-builder:
     name: Stop areal-docker-builder instance
     needs:
-      - build-and-push-image
       - start-builder
+      - build-and-push-image
+      - run-tests
+      - promote-image
+      - cleanup-test-image
     if: always() && needs.start-builder.outputs.was_running != 'true'
     runs-on: ubuntu-latest
     env:
