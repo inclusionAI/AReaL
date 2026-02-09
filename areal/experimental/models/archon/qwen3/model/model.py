@@ -1,5 +1,7 @@
 # Adapted from torchtitan: torchtitan/models/qwen3/model/model.py
 
+from __future__ import annotations
+
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -9,6 +11,7 @@ from torch.distributed.tensor import DTensor
 
 from areal.experimental.models.archon.attention import (
     SDPAWrapper,
+    TreeAttentionWrapper,
     VarlenAttentionWrapper,
 )
 from areal.experimental.models.archon.base import BaseArchonModel
@@ -23,6 +26,14 @@ from areal.experimental.models.archon.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
 )
+from areal.models.tree_attn.module_archon import FLEX_ATTENTION_AVAILABLE
+from areal.models.tree_attn.triton_kernel import TreeAttentionData
+
+# Import BlockMask if available
+if FLEX_ATTENTION_AVAILABLE:
+    from torch.nn.attention.flex_attention import BlockMask
+else:
+    BlockMask = None
 
 
 def maybe_to_local(x: torch.Tensor) -> torch.Tensor:
@@ -140,7 +151,9 @@ class Attention(nn.Module):
         )
 
         # Select attention backend
-        if model_args.attn_type == "varlen":
+        if model_args.attn_type == "tree":
+            self.packed_attn = TreeAttentionWrapper()
+        elif model_args.attn_type == "varlen":
             self.packed_attn = VarlenAttentionWrapper()
         else:
             self.packed_attn = SDPAWrapper()
@@ -186,6 +199,8 @@ class Attention(nn.Module):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        block_mask: BlockMask | None = None,
+        triton_attn_data: TreeAttentionData | None = None,
     ) -> torch.Tensor:
         bs, seqlen, _ = x.shape
 
@@ -249,6 +264,8 @@ class Attention(nn.Module):
             scale=self.scaling,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
+            block_mask=block_mask,
+            triton_attn_data=triton_attn_data,
         )
 
         output = output.transpose(1, 2).contiguous()
@@ -323,6 +340,9 @@ class TransformerBlock(nn.Module):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        block_mask: BlockMask | None = None,
+        triton_attn_data: TreeAttentionData | None = None,
+        **kwargs,  # Accept additional kwargs from checkpoint_wrapper (e.g., early_stop)
     ) -> torch.Tensor:
         x = x + self.attention(
             self.attention_norm(x),
@@ -330,6 +350,8 @@ class TransformerBlock(nn.Module):
             positions,
             cu_seqlens,
             max_seqlen,
+            block_mask=block_mask,
+            triton_attn_data=triton_attn_data,
         )
         if self.moe_enabled:
             x = x + self.moe(self.ffn_norm(x))
@@ -447,6 +469,8 @@ class Qwen3Model(BaseArchonModel):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int | torch.Tensor,
+        block_mask: BlockMask | None = None,
+        triton_attn_data: TreeAttentionData | None = None,
     ) -> torch.Tensor:
         # When pipeline parallelism enabled, cu_seqlens is [1, B+1]
         if cu_seqlens.ndim == 2:
@@ -459,7 +483,15 @@ class Qwen3Model(BaseArchonModel):
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
         for layer in self.layers.values():
-            h = layer(h, self.rope_cache, positions, cu_seqlens, max_seqlen)
+            h = layer(
+                h,
+                self.rope_cache,
+                positions,
+                cu_seqlens,
+                max_seqlen,
+                block_mask=block_mask,
+                triton_attn_data=triton_attn_data,
+            )
 
         h = self.norm(h) if self.norm else h
 

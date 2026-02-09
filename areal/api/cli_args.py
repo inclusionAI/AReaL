@@ -394,8 +394,8 @@ class ArchonEngineConfig:
     attn_type: str = field(
         default="varlen",
         metadata={
-            "help": "Attention backend type.",
-            "choices": ["varlen", "sdpa"],
+            "help": "Attention backend type. Use 'tree' for tree training.",
+            "choices": ["varlen", "sdpa", "tree"],
         },
     )
 

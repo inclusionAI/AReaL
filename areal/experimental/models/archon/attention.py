@@ -9,10 +9,16 @@ from areal.experimental.models.archon.varlen_attention import (
     VarlenAttentionWrapper,
     varlen_attn,
 )
+from areal.models.tree_attn.module_archon import (
+    FLEX_ATTENTION_AVAILABLE,
+    TreeAttentionWrapper,
+)
 
 __all__ = [
     "SDPAWrapper",
     "VarlenAttentionWrapper",
+    "TreeAttentionWrapper",
+    "FLEX_ATTENTION_AVAILABLE",
     "create_block_causal_mask_2d",
     "varlen_attn",
 ]
@@ -94,6 +100,7 @@ class SDPAWrapper(nn.Module):
         scale: float | None = None,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        **kwargs,  # Accept and ignore block_mask, triton_attn_data for API compatibility
     ) -> torch.Tensor:
         """Compute attention with block-diagonal causal mask.
 
@@ -104,6 +111,7 @@ class SDPAWrapper(nn.Module):
             scale: Optional scale factor for attention scores.
             cu_seqlens: Cumulative sequence lengths, shape [num_seqs + 1].
             max_seqlen: Maximum sequence length (unused, for API compatibility).
+            **kwargs: Additional arguments (block_mask, triton_attn_data) ignored.
 
         Returns:
             Attention output, shape [batch, heads, seq_len, head_dim]
