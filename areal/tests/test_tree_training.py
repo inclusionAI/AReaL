@@ -13,6 +13,7 @@ from areal.api.cli_args import (
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
+from areal.experimental.engine.archon_engine import ArchonEngine
 from areal.infra.platforms import current_platform
 from areal.models.tree_attn.module import restore_patch_fsdp_for_tree_training
 from areal.models.tree_attn.triton_kernel import TRITON_AVAILABLE
@@ -104,13 +105,20 @@ def mock_tree_input(
     }
 
 
-def _collect_gradients(engine: FSDPEngine | MegatronEngine) -> dict[str, torch.Tensor]:
-    """Collect gradients from engine (supports both FSDP and Megatron)."""
+def _collect_gradients(
+    engine: FSDPEngine | MegatronEngine | ArchonEngine,
+) -> dict[str, torch.Tensor]:
+    """Collect gradients from engine (supports FSDP, Megatron, and Archon)."""
     grads = {}
     if isinstance(engine, FSDPEngine):
         for name, param in engine.model.named_parameters():
             if param.grad is not None:
                 grads[name] = param.grad.clone()
+    elif isinstance(engine, ArchonEngine):
+        for model in engine.model_parts:
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    grads[name] = param.grad.clone()
     else:
         # Megatron engine
         for model in engine.model:
@@ -123,12 +131,18 @@ def _collect_gradients(engine: FSDPEngine | MegatronEngine) -> dict[str, torch.T
     return grads
 
 
-def _collect_parameters(engine: FSDPEngine | MegatronEngine) -> dict[str, torch.Tensor]:
-    """Collect parameters from engine (supports both FSDP and Megatron)."""
+def _collect_parameters(
+    engine: FSDPEngine | MegatronEngine | ArchonEngine,
+) -> dict[str, torch.Tensor]:
+    """Collect parameters from engine (supports FSDP, Megatron, and Archon)."""
     params = {}
     if isinstance(engine, FSDPEngine):
         for name, param in engine.model.named_parameters():
             params[name] = param.data.clone()
+    elif isinstance(engine, ArchonEngine):
+        for model in engine.model_parts:
+            for name, param in model.named_parameters():
+                params[name] = param.data.clone()
     else:
         # Megatron engine
         for model in engine.model:
@@ -157,7 +171,7 @@ def _create_engine(
     experiment_name: str = "test",
     max_tokens_per_mb: int = 256,
     n_mbs: int | None = None,
-) -> FSDPEngine | MegatronEngine:
+) -> FSDPEngine | MegatronEngine | ArchonEngine:
     """Create and initialize an engine of the specified type."""
     os.environ.update(
         {
@@ -185,6 +199,8 @@ def _create_engine(
 
     if engine_type == "fsdp":
         engine = FSDPEngine(config)
+    elif engine_type == "archon":
+        engine = ArchonEngine(config)
     else:  # megatron
         engine = MegatronEngine(config)
 
@@ -200,7 +216,7 @@ def _create_engine(
 # ===================== Forward Test =====================
 
 
-@pytest.mark.parametrize("engine_type", ["megatron", "fsdp"])
+@pytest.mark.parametrize("engine_type", ["megatron", "fsdp", "archon"])
 @pytest.mark.parametrize("tree_attn_backend", ["flex", "triton"])
 def test_tree_training_forward(engine_type, tree_attn_backend):
     """Test tree training forward pass produces correct logprobs."""
@@ -213,6 +229,7 @@ def test_tree_training_forward(engine_type, tree_attn_backend):
     areal.models.tree_attn.tree.USE_TRITON_TREE_ATTN = use_triton
     areal.models.tree_attn.module_fsdp.USE_TRITON_TREE_ATTN = use_triton
     areal.models.tree_attn.module_megatron.USE_TRITON_TREE_ATTN = use_triton
+    areal.models.tree_attn.module_archon.USE_TRITON_TREE_ATTN = use_triton
     # Create baseline engine
     inputs = mock_tree_input()
     baseline_engine = _create_engine(engine_type, port="7777")
@@ -285,7 +302,7 @@ def test_tree_training_forward(engine_type, tree_attn_backend):
 # ===================== Forward-Backward Test =====================
 
 
-@pytest.mark.parametrize("engine_type", ["megatron", "fsdp"])
+@pytest.mark.parametrize("engine_type", ["megatron", "fsdp", "archon"])
 @pytest.mark.parametrize("tree_attn_backend", ["flex", "triton"])
 def test_tree_training_forward_backward(engine_type, tree_attn_backend):
     """Test tree training forward-backward pass produces correct gradients."""
@@ -303,6 +320,7 @@ def test_tree_training_forward_backward(engine_type, tree_attn_backend):
     areal.models.tree_attn.tree.USE_TRITON_TREE_ATTN = use_triton
     areal.models.tree_attn.module_fsdp.USE_TRITON_TREE_ATTN = use_triton
     areal.models.tree_attn.module_megatron.USE_TRITON_TREE_ATTN = use_triton
+    areal.models.tree_attn.module_archon.USE_TRITON_TREE_ATTN = use_triton
     inputs = mock_tree_input()
     # Create baseline engine
     baseline_engine = _create_engine(engine_type, port="7777")

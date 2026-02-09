@@ -66,6 +66,16 @@ from areal.experimental.models.archon.ulysses import (
 )
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
+from areal.models.tree_attn.functional import (
+    _gather_packed_tree_logprobs,
+    gather_packed_tree_logprobs_entropy,
+    gather_packed_tree_vocab_stats,
+    merge_packed_tree_results,
+)
+from areal.models.tree_attn.module import (
+    BLOCK_SIZE,
+)
+from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
 from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.constants import DEFAULT_PAGE_SIZE_BYTES, DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
@@ -108,11 +118,29 @@ class ArchonTrainContext:
         mb_input: Original microbatch input.
         labels: Target token ids for loss computation (rolled from input_ids).
         pad_length: Batch-level padding added by pad_mb_list.
+        trie_node: The root TrieNode for tree training (if applicable).
     """
 
     mb_input: dict[str, Any]
     labels: torch.Tensor
     pad_length: int = 0
+    trie_node: TrieNode | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict without recursive serialization of trie_node.
+
+        Note: We cannot use dataclasses.asdict() here because it recursively
+        converts all nested objects. The trie_node field contains a TrieNode
+        with recursive parent/child references, which causes
+        "RecursionError: maximum recursion depth exceeded" when asdict()
+        attempts to serialize the entire tree structure.
+        """
+        return {
+            "mb_input": self.mb_input,
+            "labels": self.labels,
+            "pad_length": self.pad_length,
+            "trie_node": self.trie_node,
+        }
 
 
 class ArchonEngine(TrainEngine):
@@ -286,7 +314,17 @@ class ArchonEngine(TrainEngine):
             self.config.pad_to_maximum = True
 
         if self.enable_tree_training:
-            self.logger.warning("Tree training is not supported for Archon engine yet.")
+            if self.parallel_dims.pp_enabled or self.parallel_dims.cp_enabled:
+                raise ValueError(
+                    "Tree training with pipeline parallelism (pp > 1) or context parallelism (cp > 1) is currently not supported."
+                )
+            # Force pad_to_maximum for tree training
+            if not self.config.pad_to_maximum:
+                self.logger.info(
+                    "Tree training enabled: forcing pad_to_maximum=True for "
+                    "block mask alignment. Original pad_to_maximum=False."
+                )
+                self.config.pad_to_maximum = True
 
         if self.parallel_dims.pp_enabled:
             tie_word_embeddings = getattr(
@@ -540,6 +578,7 @@ class ArchonEngine(TrainEngine):
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
         assert output_seqlens is not None
+        batch_size = len(output_seqlens)
 
         mb_list = self._prepare_mb_list(input_).to(self.device)
 
@@ -555,9 +594,12 @@ class ArchonEngine(TrainEngine):
 
         if self.pp_has_last_stage:
             assert outputs is not None
-            res = reorder_and_pad_outputs(
-                outputs, output_seqlens, mb_list, aggregate_fn
-            )
+            if self.enable_tree_training:
+                res = merge_packed_tree_results(outputs, batch_size)
+            else:
+                res = reorder_and_pad_outputs(
+                    outputs, output_seqlens, mb_list, aggregate_fn
+                )
         else:
             res = None
         if self.parallel_dims.pp_enabled:
@@ -820,24 +862,33 @@ class ArchonEngine(TrainEngine):
     ) -> tuple[dict[str, Any], ArchonTrainContext]:
         inputs = dict(mb_item.padded_mb)
 
-        labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+        # Extract trie_node for tree training (if present)
+        trie_node = inputs.pop("trie_node", None)
 
-        if self.parallel_dims.cp_enabled:
-            cp_mesh = self.parallel_dims.get_mesh("cp")
-            inputs, labels = ulysses_slice_inputs(
-                inputs,
-                labels,
-                cp_mesh.get_local_rank(),
-                self.parallel_dims.cp,
-            )
+        # For tree training, labels are computed via trie structure, not via roll
+        # Tree training input_ids is 1D (packed format), so torch.roll would fail
+        if trie_node is not None:
+            labels = None
+        else:
+            labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
 
-        if labels.ndim == 2 and labels.shape[0] == 1:
-            labels = labels.squeeze(0)
+            if self.parallel_dims.cp_enabled:
+                cp_mesh = self.parallel_dims.get_mesh("cp")
+                inputs, labels = ulysses_slice_inputs(
+                    inputs,
+                    labels,
+                    cp_mesh.get_local_rank(),
+                    self.parallel_dims.cp,
+                )
+
+            if labels.ndim == 2 and labels.shape[0] == 1:
+                labels = labels.squeeze(0)
 
         ctx = ArchonTrainContext(
             mb_input=mb_item.orig_mb,
             labels=labels,
             pad_length=mb_item.padding_length,
+            trie_node=trie_node,
         )
         return inputs, ctx
 
@@ -865,7 +916,8 @@ class ArchonEngine(TrainEngine):
             cu_seqlens_list.append(ensure_2d(inputs["cu_seqlens"]))
             max_seqlen_list.append(int(inputs["max_seqlen"]))
 
-            if self.pp_has_last_stage:
+            # For tree training, labels are None (computed via trie structure)
+            if self.pp_has_last_stage and ctx.labels is not None:
                 target_list.append(ensure_2d(ctx.labels))
 
         # Pad cu_seqlens to same length using last value to create zero-length sequences
@@ -885,8 +937,11 @@ class ArchonEngine(TrainEngine):
             "cu_seqlens": torch.cat(padded_cu_seqlens, dim=0),
             "max_seqlen": torch.tensor(max_seqlen_list),
         }
+        # For tree training, target_list is empty (labels computed via trie)
         batched_target = (
-            torch.cat(target_list, dim=0) if self.pp_has_last_stage else None
+            torch.cat(target_list, dim=0)
+            if self.pp_has_last_stage and target_list
+            else None
         )
 
         return batched_args, batched_kwargs, batched_target, contexts
@@ -954,10 +1009,18 @@ class ArchonEngine(TrainEngine):
 
     def _create_model_structure(self) -> nn.Module:
         """Create model structure on meta device without loading weights."""
+        # Use tree attention type when tree training is enabled
+        attn_type = self.config.archon.attn_type
+        if self.enable_tree_training and attn_type != "tree":
+            attn_type = "tree"
+            self.logger.info(
+                f"Tree training enabled, overriding attn_type '{self.config.archon.attn_type}' -> 'tree'"
+            )
+
         model_args = self.spec.model_args_class.from_hf_config(
             self.model_config,
             is_critic=self.config.is_critic,
-            attn_type=self.config.archon.attn_type,
+            attn_type=attn_type,
         )
         model = self.spec.model_class(model_args)
         return model
@@ -1060,6 +1123,34 @@ class ArchonEngine(TrainEngine):
     def _prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
         input_ = input_.copy()
+
+        # Tree training path
+        if self.enable_tree_training:
+            # Tree training cannot work with CP because CP slices sequences
+            if self.parallel_dims.cp_enabled:
+                raise ValueError(
+                    "Tree training cannot be enabled with context parallelism (cp > 1). "
+                    "Tree training requires full sequences on each rank."
+                )
+
+            tp_size = self.parallel_dims.tp
+            # Build tree inputs
+            assert BLOCK_SIZE % tp_size == 0, (
+                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by "
+                f"tensor parallel size ({tp_size})."
+            )
+            mb_list = build_packed_tree_batch(
+                input_,
+                mb_spec=self.config.mb_spec,
+                pad_to_maximum=self.config.pad_to_maximum,
+                dp_group=self.data_parallel_group,
+            )
+            self.logger.info(
+                f"Packed tree #microbatch: {len(mb_list)}, microbatch #tokens: {mb_list.group_lens}, "
+                f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}."
+            )
+            return mb_list
+
         input_ = amend_position_ids(input_)
 
         # Pipeline parallelism requires n_microbatches >= pp_stages
@@ -1117,19 +1208,58 @@ class ArchonEngine(TrainEngine):
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
+        if self.config.is_critic and self.enable_tree_training:
+            raise NotImplementedError(
+                "Tree training with critic model is not supported yet."
+            )
+
         if not self.config.is_critic:
-            logprobs, entropy = self._compute_logprobs_entropy(logits, ctx.labels)
+            if self.enable_tree_training:
+                # Handle dummy trie (empty tree for DP synchronization)
+                # When trie has no sequences, return zero loss with grad connection
+                if ctx.trie_node is None or not ctx.trie_node.all_sequence_ids:
+                    # Return zero loss that maintains gradient connection to logits
+                    # This ensures backward() works correctly for FSDP synchronization
+                    return logits.sum() * 0.0
 
-            if self.parallel_dims.cp_enabled:
-                cp_group = self.parallel_dims.get_group("cp")
-                logprobs = ulysses_gather_output(logprobs, cp_group)
-                entropy = ulysses_gather_output(entropy, cp_group)
+                # For tree training, use gather_packed_tree_vocab_stats to properly
+                # unpack vocab stats from tree structure back to per-sequence format.
+                vocab_min_logits, vocab_max_logits = gather_packed_tree_vocab_stats(
+                    logits, ctx.trie_node
+                )
+                logprobs, entropy = gather_packed_tree_logprobs_entropy(
+                    logits,
+                    ctx.trie_node,
+                    ctx.mb_input["input_ids"],
+                    temperature=self.config.temperature,
+                    tp_group=self.parallel_dims.get_group("tp")
+                    if self.parallel_dims.tp_enabled
+                    else None,
+                )
+            else:
+                logprobs, entropy = self._compute_logprobs_entropy(logits, ctx.labels)
+                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
+                    logits
+                )
 
-            if ctx.pad_length > 0:
-                logprobs = logprobs[: -ctx.pad_length]
-                entropy = entropy[: -ctx.pad_length]
+                if self.parallel_dims.cp_enabled:
+                    cp_group = self.parallel_dims.get_group("cp")
+                    logprobs = ulysses_gather_output(logprobs, cp_group)
+                    entropy = ulysses_gather_output(entropy, cp_group)
 
-            loss = loss_fn(logprobs, entropy, ctx.mb_input)
+                if ctx.pad_length > 0:
+                    logprobs = logprobs[: -ctx.pad_length]
+                    entropy = entropy[: -ctx.pad_length]
+                    vocab_min_logits = vocab_min_logits[: -ctx.pad_length]
+                    vocab_max_logits = vocab_max_logits[: -ctx.pad_length]
+
+            loss = loss_fn(
+                logprobs,
+                entropy,
+                ctx.mb_input,
+                vocab_min_logits=vocab_min_logits,
+                vocab_max_logits=vocab_max_logits,
+            )
         else:
             values = logits.squeeze(-1)
 
@@ -1145,6 +1275,15 @@ class ArchonEngine(TrainEngine):
 
         loss_scale = loss_weight_fn(ctx.mb_input) / total_loss_weight * loss_multiplier
         return loss * loss_scale
+
+    def _get_vocab_min_max_logits(
+        self,
+        logits: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Get vocab min/max logits for non-tree training path."""
+        vocab_min_logits = logits.detach().min(-1).values.float()
+        vocab_max_logits = logits.detach().max(-1).values.float()
+        return vocab_min_logits, vocab_max_logits
 
     def _compute_logprobs_entropy(
         self,
@@ -1166,9 +1305,25 @@ class ArchonEngine(TrainEngine):
         self,
         logits: torch.Tensor,
         ctx: ArchonTrainContext,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | dict[int, torch.Tensor]:
         """Compute forward output (logprobs or values)."""
+        if self.config.is_critic and self.enable_tree_training:
+            raise NotImplementedError(
+                "Tree training with critic model is not supported yet."
+            )
+
         if not self.config.is_critic:
+            if self.enable_tree_training:
+                result = _gather_packed_tree_logprobs(
+                    logits,
+                    ctx.trie_node,
+                    ctx.mb_input["input_ids"],
+                    temperature=self.config.temperature,
+                    tp_group=self.parallel_dims.get_group("tp")
+                    if self.parallel_dims.tp_enabled
+                    else None,
+                )
+                return result
             result = self._compute_logprobs(logits, ctx.labels)
         else:
             result = logits.squeeze(-1)

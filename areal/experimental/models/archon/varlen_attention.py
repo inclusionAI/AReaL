@@ -273,6 +273,7 @@ class VarlenAttentionWrapper(nn.Module):
         scale: float | None = None,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        **kwargs,  # Accept and ignore block_mask, triton_attn_data for API compatibility
     ) -> torch.Tensor:
         """Compute attention with varlen_attn.
 
@@ -283,6 +284,7 @@ class VarlenAttentionWrapper(nn.Module):
             scale: Optional scale factor for attention scores
             cu_seqlens: Cumulative sequence lengths, shape [num_seqs + 1]
             max_seqlen: Maximum sequence length
+            **kwargs: Additional arguments (block_mask, triton_attn_data) ignored.
 
         Returns:
             Attention output, shape [batch, heads, seq_len, head_dim]

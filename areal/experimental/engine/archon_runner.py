@@ -7,6 +7,12 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from areal.experimental.models.archon.pipeline_parallel import build_pipeline_schedule
+from areal.models.tree_attn.module import (
+    TRITON_AVAILABLE,
+    USE_TRITON_TREE_ATTN,
+    build_block_mask_from_trie,
+    build_triton_attn_data_from_trie,
+)
 from areal.utils import logging
 
 if TYPE_CHECKING:
@@ -69,20 +75,66 @@ class SequentialRunner(ForwardBackwardRunner):
         for mb_item in mb_list:
             inputs, ctx = self.prepare_inputs_fn(mb_item)
 
+            # Build tree attention data if trie_node is present
+            block_mask = None
+            triton_attn_data = None
+            if ctx.trie_node is not None:
+                padded_size = mb_item.padded_to_length
+                if padded_size is None:
+                    raise ValueError(
+                        "padded_size must be set for tree training with Archon."
+                    )
+                if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
+                    triton_attn_data = build_triton_attn_data_from_trie(
+                        ctx.trie_node, padded_size
+                    )
+                else:
+                    device = inputs["input_ids"].device
+                    block_mask = build_block_mask_from_trie(
+                        ctx.trie_node, padded_size, device
+                    )
+
+            # For tree training, cu_seqlens is not used (tree attention uses block_mask)
+            # Create dummy cu_seqlens for model compatibility
+            if ctx.trie_node is not None:
+                seq_len = inputs["input_ids"].shape[-1]
+                cu_seqlens = torch.tensor(
+                    [0, seq_len], dtype=torch.int32, device=inputs["input_ids"].device
+                )
+                max_seqlen = seq_len
+            else:
+                cu_seqlens = inputs["cu_seqlens"]
+                max_seqlen = int(inputs["max_seqlen"])
+
+            # Pass tree attention data to model (model uses TreeAttentionWrapper
+            # when attn_type="tree", which uses block_mask/triton_attn_data)
             logits = self.model(
                 inputs["input_ids"],
                 inputs["position_ids"],
-                cu_seqlens=inputs["cu_seqlens"],
-                max_seqlen=int(inputs["max_seqlen"]),
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                block_mask=block_mask,
+                triton_attn_data=triton_attn_data,
             )
             logits = logits.squeeze(0)
 
-            ctx_dict = ctx.__dict__.copy()
+            # Release tree attention metadata after forward pass
+            if ctx.trie_node is not None:
+                if block_mask is not None:
+                    del block_mask
+                if triton_attn_data is not None:
+                    del triton_attn_data
+
+            ctx_dict = ctx.to_dict()
             result = process_output_fn(logits, ctx_dict)
 
             if result is not None:
                 if forward_only:
-                    results.append(result.detach())
+                    # Result can be a tensor or dict (for tree training)
+                    if isinstance(result, dict):
+                        results.append({k: v.detach() for k, v in result.items()})
+                    else:
+                        results.append(result.detach())
                 else:
                     result.backward()
 
