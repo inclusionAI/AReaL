@@ -43,10 +43,10 @@ TOOL_FUNCTIONS = {
 
 # Model-based analysis tools (must call tool-agent servers).
 TOOL_AGENT_DECLARE = [
-    multimath_function_declaration,
-    gllava_function_declaration,
-    chartmoe_function_declaration,
-    bbox_agent_function_declaration,
+    # multimath_function_declaration,
+    # gllava_function_declaration,
+    # chartmoe_function_declaration,
+    # bbox_agent_function_declaration,
 ]
 TOOL_AGENTS = {
     "multimath": multimath_function,

@@ -112,7 +112,7 @@ def main() -> None:
                     total_tokens_sum += float(total_total)
                     total_tokens_count += 1
 
-    rmse = root_mean_squared_error(gt_values, pred_values, squared=False) if gt_values else 0.0
+    rmse = root_mean_squared_error(gt_values, pred_values) if gt_values else 0.0
     r2 = r2_score(gt_values, pred_values) if gt_values else 0.0
     tool_stats_text = compute_tool_combination_statistics(eval_results)
 
