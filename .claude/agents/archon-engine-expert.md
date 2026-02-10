@@ -239,8 +239,9 @@ patterns (refer to source code).
   constraints
 - `areal/experimental/models/archon/activation_checkpoint.py` - Activation checkpointing
 - `areal/experimental/models/archon/compile.py` - torch.compile integration
-- `areal/experimental/models/archon/varlen_attention.py` - Variable-length attention
-- `areal/experimental/models/archon/attention.py` - Attention mechanism implementations
+- `areal/experimental/models/archon/attention/` - Attention package
+  - `attention/sdpa.py` - Scaled dot-product attention
+  - `attention/varlen.py` - Variable-length attention (custom op registration)
 
 ## Resources
 

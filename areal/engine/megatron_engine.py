@@ -60,11 +60,7 @@ from areal.models.tree_attn.functional import (
     merge_packed_tree_results,
 )
 from areal.models.tree_attn.module import (
-    BLOCK_SIZE,
-    TRITON_AVAILABLE,
-    USE_TRITON_TREE_ATTN,
-    build_attention_mask_from_trie,
-    build_triton_attn_data_from_trie,
+    build_tree_attn_kwargs,
     patch_bridge_for_tree_training,
 )
 from areal.models.tree_attn.tree import build_packed_tree_batch
@@ -573,42 +569,33 @@ class MegatronEngine(TrainEngine):
 
             cu_seqlens = mb_input.padded_mb.get("cu_seqlens", None)
 
-            # Lazily create tree attention metadata just before forward
+            # Lazily create tree attention metadata just before forward.
+            # dense_mask=True because Megatron's gradient checkpointing uses
+            # save_for_backward() which can only save torch.Tensor objects;
+            # BlockMask is recreated inside PytorchFlexAttention.forward().
+            tree_attn_keys: list[str] = []
             if self.enable_tree_training:
                 trie_node = mb_input.padded_mb.get("trie_node", None)
                 # Ensure trie_node is also in orig_mb for _compute_logprobs_and_loss
                 if trie_node is not None and "trie_node" not in mb_input.orig_mb:
                     mb_input.orig_mb["trie_node"] = trie_node
                 padded_size = mb_input.padded_to_length
-                if trie_node is not None and padded_size is not None:
-                    if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
-                        triton_attn_data = build_triton_attn_data_from_trie(
-                            trie_node, padded_size
-                        )
-                        mb_input.padded_mb["triton_attn_data"] = triton_attn_data
-                    else:
-                        # FIX: Use dense attention mask tensor instead of BlockMask.
-                        # Megatron's gradient checkpointing (tensor_parallel.checkpoint)
-                        # uses save_for_backward() which can only save torch.Tensor objects.
-                        # BlockMask is a custom data structure that cannot be serialized.
-                        # By passing a dense tensor, the checkpoint mechanism can save it,
-                        # and the BlockMask will be created inside PytorchFlexAttention.forward()
-                        # during both forward and recompute (backward) passes.
-                        attention_mask = build_attention_mask_from_trie(
-                            trie_node,
-                            padded_size,
-                            mb_input.padded_mb["input_ids"].device,
-                        )
-                        mb_input.padded_mb["attention_mask"] = attention_mask
+                if trie_node is not None:
+                    assert padded_size is not None
+                    tree_kwargs = build_tree_attn_kwargs(
+                        trie_node,
+                        padded_size,
+                        mb_input.padded_mb["input_ids"].device,
+                        dense_mask=True,
+                    )
+                    mb_input.padded_mb.update(tree_kwargs)
+                    tree_attn_keys = list(tree_kwargs.keys())
 
             output = packed_context_parallel_forward(model, mb_input.padded_mb)
 
             # Release tree attention metadata after forward pass
-            if self.enable_tree_training:
-                if "attention_mask" in mb_input.padded_mb:
-                    del mb_input.padded_mb["attention_mask"]
-                if "triton_attn_data" in mb_input.padded_mb:
-                    del mb_input.padded_mb["triton_attn_data"]
+            for key in tree_attn_keys:
+                del mb_input.padded_mb[key]
 
             def _process_output(input_, output_):
                 loss = process_output_fn(output_, input_)
@@ -1383,14 +1370,12 @@ class MegatronEngine(TrainEngine):
             assert cp_size == 1, (
                 "Context parallelism is not supported in tree training."
             )
-            # Build tree inputs
-            assert BLOCK_SIZE % tp_size == 0, (
-                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by tensor parallel size ({tp_size})."
-            )
             mb_list = build_packed_tree_batch(
                 input_,
                 mb_spec=self.config.mb_spec,
                 pad_to_maximum=self.config.pad_to_maximum,
+                dp_group=self.data_parallel_group,
+                parallel_size=tp_size,
             )
             recommended_min_n_mbs = 2 * pp_size if pp_size > 1 else 1
             self.logger.info(

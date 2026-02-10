@@ -17,7 +17,6 @@ from torch.utils.checkpoint import (
     create_selective_checkpoint_contexts,
 )
 
-from areal.experimental.models.archon import varlen_attention as _  # noqa: F401
 from areal.utils import logging
 
 

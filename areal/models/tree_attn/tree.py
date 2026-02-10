@@ -7,6 +7,7 @@ prefix computation.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,9 +16,10 @@ import torch.distributed as dist
 from torch.nn.attention.flex_attention import BlockMask
 
 from areal.api.cli_args import MicroBatchSpec
-from areal.models.tree_attn.constants import BLOCK_SIZE
+from areal.models.tree_attn.constants import BLOCK_SIZE, USE_TRITON_TREE_ATTN
 from areal.models.tree_attn.module_fsdp import create_block_mask_from_dense
 from areal.models.tree_attn.triton_kernel import (
+    TRITON_AVAILABLE,
     TreeAttentionData,
     precompute_tree_attention_data,
 )
@@ -271,6 +273,7 @@ def build_packed_tree_batch(
     mb_spec: MicroBatchSpec,
     pad_to_maximum: bool = True,
     dp_group: dist.ProcessGroup | None = None,
+    parallel_size: int = 1,
 ) -> MicroBatchList:
     """Build a MicroBatchList from input data using greedy trie packing.
 
@@ -293,6 +296,10 @@ def build_packed_tree_batch(
         If torch.distributed is initialized, synchronizes the number of
         trees across all ranks by appending dummy trees to ranks with fewer
         trees.
+    parallel_size : int, default=1
+        Product of parallelism dimensions (e.g. TP, SP) that require
+        BLOCK_SIZE alignment. The actual alignment is
+        ``math.lcm(BLOCK_SIZE, parallel_size)``.
 
     Returns
     -------
@@ -324,10 +331,17 @@ def build_packed_tree_batch(
             "Block masks require padded sequences for efficient computation. "
             "Please set pad_to_maximum=True."
         )
-    if pad_to_maximum and max_tokens_per_tree % BLOCK_SIZE != 0:
+    # Block masks operate at BLOCK_SIZE granularity. parallel_size comes from
+    # TP/SP dimensions that may impose additional alignment requirements.
+    # Currently parallel_size always divides BLOCK_SIZE (e.g. TP=1,2,4,8 vs
+    # BLOCK_SIZE=128), so lcm == BLOCK_SIZE. If a future parallel_size doesn't
+    # divide BLOCK_SIZE, lcm will enforce the stricter alignment automatically.
+    block_align = math.lcm(BLOCK_SIZE, parallel_size)
+    if pad_to_maximum and max_tokens_per_tree % block_align != 0:
         raise ValueError(
-            f"max_tokens_per_tree must be a multiple of BLOCK_SIZE ({BLOCK_SIZE}) "
-            f"when pad_to_maximum=True."
+            f"max_tokens_per_tree ({max_tokens_per_tree}) must be a multiple of "
+            f"{block_align} (lcm of BLOCK_SIZE={BLOCK_SIZE} and "
+            f"parallel_size={parallel_size}) when pad_to_maximum=True."
         )
 
     # Build tries using greedy packing
@@ -845,3 +859,37 @@ def build_triton_attn_data_from_trie(
         fa = trie_to_parent_array(trie, padded_size)
         triton_attn_data = precompute_tree_attention_data(fa)
     return triton_attn_data
+
+
+def build_tree_attn_kwargs(
+    trie: TrieNode,
+    padded_size: int,
+    device: torch.device,
+    *,
+    dense_mask: bool = False,
+) -> dict[str, Any]:
+    """Build tree attention kwargs dict for HF model forwarding.
+
+    Selects Triton or flex attention backend automatically.
+    Returns a dict to be merged into model ``**kwargs``.
+
+    Parameters
+    ----------
+    trie : TrieNode
+        The root trie node.
+    padded_size : int
+        Padded sequence length.
+    device : torch.device
+        Device for mask tensors.
+    dense_mask : bool, default=False
+        If True, the non-Triton path returns a dense ``attention_mask`` tensor
+        (for Megatron, which needs tensors for gradient checkpointing).
+        If False, returns a ``tree_block_mask`` BlockMask (for FSDP).
+    """
+    if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE and not dense_mask:
+        return {"tree_triton_data": build_triton_attn_data_from_trie(trie, padded_size)}
+    if dense_mask:
+        return {
+            "attention_mask": build_attention_mask_from_trie(trie, padded_size, device)
+        }
+    return {"tree_block_mask": build_block_mask_from_trie(trie, padded_size, device)}

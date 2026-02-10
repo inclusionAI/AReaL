@@ -127,16 +127,15 @@ def packed_context_parallel_forward(
     input_ids = input_["input_ids"]
     position_ids = input_["position_ids"]
     cu_seqlens = input_.get("cu_seqlens", None)
-    # `attention_mask` can be:
-    # - A dense torch.Tensor (for flex attention with Megatron)
-    # - triton_attn_data (for Triton tree attention)
-    # - None (for standard attention)
+    # `attention_mask`: dense torch.Tensor (flex attention with Megatron) or None.
+    # `tree_triton_data`: read from a separate key; takes priority over
+    # attention_mask when forwarded as the final attention mask argument.
     attention_mask = input_.get("attention_mask", None)
-    triton_attn_data = input_.get("triton_attn_data", None)
+    tree_triton_data = input_.get("tree_triton_data", None)
     packed_seq_params = None
 
     if cu_seqlens is not None:
-        if attention_mask is not None or triton_attn_data is not None:
+        if attention_mask is not None or tree_triton_data is not None:
             raise ValueError(
                 "Attention mask should be None when using packed sequences."
             )
@@ -145,10 +144,10 @@ def packed_context_parallel_forward(
         )
         input_ids = input_ids.contiguous()
 
-    # Pass triton_attn_data as attention_mask if present (for Triton tree attention)
+    # Pass tree_triton_data as attention_mask if present (for Triton tree attention)
     # Otherwise use the attention_mask from input (could be dense tensor for flex attention)
     final_attention_mask = (
-        triton_attn_data if triton_attn_data is not None else attention_mask
+        tree_triton_data if tree_triton_data is not None else attention_mask
     )
 
     try:

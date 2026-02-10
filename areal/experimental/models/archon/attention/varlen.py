@@ -1,14 +1,19 @@
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
 
+if TYPE_CHECKING:
+    from areal.models.tree_attn.module_archon import TreeAttentionMeta
+
 __all__ = ["varlen_attn", "VarlenAttentionWrapper"]
 
 
-# ============================================================
-# Custom Op: Forward
-# ============================================================
+# ── Custom Op: Forward ───────────────────────────────────────────────
+
+
 @torch.library.custom_op("areal::_varlen_attn", mutates_args={})
 def _varlen_attn(
     query: torch.Tensor,
@@ -69,11 +74,7 @@ def _varlen_attn_fake(
     is_causal: bool = False,
     scale: float | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Fake implementation for meta tensor computation and tracing.
-
-    Required for torch.compile and other tracing mechanisms.
-    """
-    # Output has same shape as query
+    """Fake implementation for meta tensor computation and tracing."""
     output = torch.empty_like(query)
 
     # For varlen path: logsumexp shape is (num_heads, total_q)
@@ -88,9 +89,9 @@ def _varlen_attn_fake(
     return output, logsumexp, rng_state
 
 
-# ============================================================
-# Custom Op: Backward
-# ============================================================
+# ── Custom Op: Backward ──────────────────────────────────────────────
+
+
 @torch.library.custom_op("areal::_varlen_attn_backward", mutates_args={})
 def _varlen_attn_backward(
     grad_out: torch.Tensor,
@@ -153,9 +154,9 @@ def _varlen_attn_backward_fake(
     return grad_query, grad_key, grad_value
 
 
-# ============================================================
-# Autograd Context Setup and Backward
-# ============================================================
+# ── Autograd Registration ────────────────────────────────────────────
+
+
 def _setup_context(ctx: Any, inputs: tuple[Any, ...], output: Any) -> None:
     """Save tensors for backward pass."""
     query, key, value, cu_seq_q, cu_seq_k, max_q, max_k, is_causal, scale = inputs
@@ -199,13 +200,12 @@ def _backward(
     return dq, dk, dv, None, None, None, None, None, None
 
 
-# Register autograd for the forward custom op
 _varlen_attn.register_autograd(_backward, setup_context=_setup_context)
 
 
-# ============================================================
-# Public API
-# ============================================================
+# ── Public API ────────────────────────────────────────────────────────
+
+
 def varlen_attn(
     query: torch.Tensor,
     key: torch.Tensor,
@@ -251,9 +251,9 @@ def varlen_attn(
     return out
 
 
-# ============================================================
-# Wrapper for Archon Engine
-# ============================================================
+# ── Wrapper for Archon Engine ─────────────────────────────────────────
+
+
 class VarlenAttentionWrapper(nn.Module):
     """Wrapper adapting varlen_attn for Archon Engine's 4D tensor format.
 
@@ -273,7 +273,7 @@ class VarlenAttentionWrapper(nn.Module):
         scale: float | None = None,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        **kwargs,  # Accept and ignore block_mask, triton_attn_data for API compatibility
+        tree_attn_meta: TreeAttentionMeta | None = None,
     ) -> torch.Tensor:
         """Compute attention with varlen_attn.
 
@@ -284,7 +284,8 @@ class VarlenAttentionWrapper(nn.Module):
             scale: Optional scale factor for attention scores
             cu_seqlens: Cumulative sequence lengths, shape [num_seqs + 1]
             max_seqlen: Maximum sequence length
-            **kwargs: Additional arguments (block_mask, triton_attn_data) ignored.
+            tree_attn_meta: Unused. Accepted for interface compatibility with
+                TreeAttentionWrapper.
 
         Returns:
             Attention output, shape [batch, heads, seq_len, head_dim]

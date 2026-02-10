@@ -45,7 +45,7 @@ ______________________________________________________________________
 | **REWARD**              | `areal/reward/`                                                                    | `reward_fn`, `AsyncRewardWrapper`, `MathVerifyWorker`                    |
 | **DATASET**             | `areal/dataset/`                                                                   | `get_*_dataset`, `DataLoader`, `IterableDataset`                         |
 | **LAUNCHER_SCHEDULER**  | `areal/infra/launcher/`, `areal/infra/scheduler/`, `areal/infra/rpc/`              | `LaunchConfig`, `Scheduler`, `RayLauncher`, `SlurmLauncher`              |
-| **ATTENTION**           | `attention.py`, `varlen_attention.py`                                              | `flash_attn`, `sdpa`, `varlen`, `causal_mask`                            |
+| **ATTENTION**           | `attention/`, `attention/sdpa.py`, `attention/varlen.py`                           | `flash_attn`, `sdpa`, `varlen`, `causal_mask`                            |
 
 ## LOW Level (Use Haiku)
 
