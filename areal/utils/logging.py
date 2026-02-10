@@ -45,8 +45,6 @@ LOGGER_COLORS_EXACT = {
     # Workflows - purple
     "RLVRWorkflow": "light_purple",
     "VisionRLVRWorkflow": "light_purple",
-    "MultiTurnWorkflow": "light_purple",
-    "MultiTurnV2Workflow": "light_purple",
     # Controllers - white
     "TrainController": "white",
     "RolloutController": "white",
@@ -435,7 +433,6 @@ if __name__ == "__main__":
         ("[FSDPEngine Rank 0]", "Initializing FSDP..."),
         ("[MegatronEngine Rank 1]", "Loading model weights..."),
         ("RLVRWorkflow", "Starting episode 1..."),
-        ("MultiTurnWorkflow", "Processing turn 3..."),
         ("TrainController", "Creating workers..."),
         ("RolloutController", "Starting rollout..."),
         ("SGLangWrapper", "Server ready on port 8000"),

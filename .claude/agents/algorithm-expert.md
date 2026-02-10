@@ -22,7 +22,7 @@ Use this agent when:
 - Reward function design or debugging
 - Advantage estimation and normalization
 - Loss computation and clipping strategies
-- Workflow implementation (RLVRWorkflow, MultiTurnWorkflow)
+- Workflow implementation (RLVRWorkflow)
 
 ## Expertise Areas
 
@@ -62,11 +62,10 @@ std_level: str = "global"      # global, group, sample, null
 
 Location: `areal/workflow/`
 
-| Workflow             | Use Case            | Key Method     |
-| -------------------- | ------------------- | -------------- |
-| `RLVRWorkflow`       | Single-turn RL      | `arun_episode` |
-| `MultiTurnWorkflow`  | Multi-turn dialogue | `arun_episode` |
-| `VisionRLVRWorkflow` | Vision-language RL  | `arun_episode` |
+| Workflow             | Use Case           | Key Method     |
+| -------------------- | ------------------ | -------------- |
+| `RLVRWorkflow`       | Single-turn RL     | `arun_episode` |
+| `VisionRLVRWorkflow` | Vision-language RL | `arun_episode` |
 
 **Workflow Pattern:**
 

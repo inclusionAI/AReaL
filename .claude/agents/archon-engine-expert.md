@@ -81,7 +81,7 @@ and `ParallelStrategy` for model parallelism.
 ## Workflow Integration
 
 ArchonEngine integrates with AReaL workflows through the `WorkflowLike` interface,
-supporting RLVRWorkflow, MultiTurnWorkflow, and other workflow implementations.
+supporting RLVRWorkflow or other workflow implementations.
 
 **Integration Pattern**:
 
