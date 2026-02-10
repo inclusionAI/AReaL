@@ -48,6 +48,9 @@ class OpenAIProxyClient:
         Base URL of the proxy server
     task_id : str
         Unique identifier for this task
+    api_key : str, optional
+        API key for proxy server authentication. If provided, will be sent
+        as X-API-Key header on all requests.
 
     Example
     -------
@@ -57,6 +60,7 @@ class OpenAIProxyClient:
             session=http_session,
             base_url="http://localhost:8000",
             task_id="task-1",
+            api_key="your-api-key",
         )
         async with proxy_client:
             # Make OpenAI API calls using proxy_client.session_url
@@ -72,11 +76,18 @@ class OpenAIProxyClient:
         session: aiohttp.ClientSession,
         base_url: str,
         task_id: str,
+        api_key: str | None = None,
     ):
         self._session = session
         self.base_url = ensure_end_with_slash(base_url)
         self.task_id = task_id
         self.session_id: str | None = None
+        self._api_key = api_key
+
+    @property
+    def _auth_headers(self) -> dict[str, str]:
+        """Return authentication headers for HTTP requests."""
+        return {"X-API-Key": self._api_key} if self._api_key else {}
 
     @property
     def session_url(self) -> str:
@@ -94,6 +105,7 @@ class OpenAIProxyClient:
             interaction_id=completion_id,
             reward=reward,
             url=f"{self.base_url}{self.session_id}/{RL_SET_REWARD_PATHNAME}",
+            headers=self._auth_headers,
         )
 
     async def set_last_reward(self, reward: float):
@@ -104,6 +116,7 @@ class OpenAIProxyClient:
             self._session,
             reward=reward,
             url=f"{self.base_url}{self.session_id}/{RL_SET_REWARD_PATHNAME}",
+            headers=self._auth_headers,
         )
 
     async def export_interactions(
@@ -139,7 +152,9 @@ class OpenAIProxyClient:
             "discount": discount,
             "style": style,
         }
-        async with self._session.post(url, json=payload) as resp:
+        async with self._session.post(
+            url, json=payload, headers=self._auth_headers
+        ) as resp:
             resp.raise_for_status()
             data = await resp.json()
             return deserialize_interactions(data["interactions"])
@@ -150,6 +165,7 @@ class OpenAIProxyClient:
             self._session,
             url=f"{self.base_url}{RL_START_SESSION_PATHNAME}",
             payload=StartSessionRequest(task_id=self.task_id),
+            headers=self._auth_headers,
         )
         self.session_id = data["session_id"]
         return self
@@ -173,6 +189,7 @@ class OpenAIProxyClient:
             await post_json_with_retry(
                 self._session,
                 url=f"{self.base_url}{self.session_id}/{RL_END_SESSION_PATHNAME}",
+                headers=self._auth_headers,
             )
         except Exception as e:
             # Raised errors will be properly handled by OpenAIProxyWorkflow
@@ -185,6 +202,7 @@ async def post_json(
     url: str,
     payload: dict | BaseModel | None = None,
     total_timeout: int = 10,
+    headers: dict[str, str] | None = None,
 ) -> dict:
     timeout = aiohttp.ClientTimeout(total=total_timeout)
 
@@ -193,7 +211,9 @@ async def post_json(
     elif isinstance(payload, BaseModel):
         payload = payload.model_dump()
 
-    async with session.post(url, json=payload, timeout=timeout) as response:
+    async with session.post(
+        url, json=payload, timeout=timeout, headers=headers
+    ) as response:
         response.raise_for_status()
         return await response.json()
 
@@ -237,8 +257,9 @@ async def post_json_with_retry(
     url: str,
     payload: dict | BaseModel | None = None,
     total_timeout: float = 10,
+    headers: dict[str, str] | None = None,
 ) -> dict:
-    return await post_json(session, url, payload, total_timeout)
+    return await post_json(session, url, payload, total_timeout, headers)
 
 
 async def _set_reward(
@@ -246,10 +267,13 @@ async def _set_reward(
     interaction_id: str | None,
     reward: float,
     url: str = RL_SET_REWARD_PATHNAME,
+    headers: dict[str, str] | None = None,
 ):
     payload = SetRewardRequest(interaction_id=interaction_id, reward=reward)
     try:
-        await post_json_with_retry(http_session, url=url, payload=payload)
+        await post_json_with_retry(
+            http_session, url=url, payload=payload, headers=headers
+        )
     except aiohttp.ClientResponseError as e:
         if e.status == 400:
             logger.error(f"[error code {e.status}] Error setting reward: {e.message}")
@@ -262,9 +286,14 @@ async def set_interaction_reward(
     interaction_id: str,
     reward: float,
     url: str = RL_SET_REWARD_PATHNAME,
+    headers: dict[str, str] | None = None,
 ):
     await _set_reward(
-        http_session, interaction_id=interaction_id, reward=reward, url=url
+        http_session,
+        interaction_id=interaction_id,
+        reward=reward,
+        url=url,
+        headers=headers,
     )
 
 
@@ -272,10 +301,18 @@ async def set_last_interaction_reward(
     http_session: aiohttp.ClientSession,
     reward: float,
     url: str = RL_SET_REWARD_PATHNAME,
+    headers: dict[str, str] | None = None,
 ):
-    await _set_reward(http_session, interaction_id=None, reward=reward, url=url)
+    await _set_reward(
+        http_session, interaction_id=None, reward=reward, url=url, headers=headers
+    )
 
 
 @get_retry_strategy(allowed_attempt=-1)
-async def _start_session(*args, **kwargs):
-    return await post_json(*args, **kwargs)
+async def _start_session(
+    session: aiohttp.ClientSession,
+    url: str,
+    payload: dict | BaseModel | None = None,
+    headers: dict[str, str] | None = None,
+):
+    return await post_json(session, url, payload, headers=headers)

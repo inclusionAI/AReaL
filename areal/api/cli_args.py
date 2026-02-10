@@ -1374,6 +1374,17 @@ class SGLangConfig:
 class OpenAIProxyConfig:
     """Configuration for OpenAI proxy when using agent workflows."""
 
+    api_key: str = field(
+        default="",
+        metadata={
+            "help": (
+                "API key for authenticating requests to proxy and callback servers. "
+                "When set, all requests must include this key in the X-API-Key header. "
+                "If empty, a random key is generated at runtime for internal communication. "
+                "SECURITY: Always set this in production environments."
+            ),
+        },
+    )
     mode: str = field(
         default="inline",
         metadata={
