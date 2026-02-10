@@ -221,3 +221,30 @@ class TestGenerateLLMFqnPerModelPart:
         assert result[2] == ["layers.3", "layers.4"]
         # Stage 3: 1 layer + norm + output (1) = 2
         assert result[3] == ["layers.5", "norm", "output"]
+
+
+class TestZBVFqnGeneration:
+    """Test FQN generation for ZBV pipeline configurations."""
+
+    def test_zbv_fqn_generation(self):
+        """Verify FQN distribution for a typical ZBV config (pp_degree=2, 8 layers)."""
+        result = generate_llm_fqn_per_model_part(num_stages=4, num_layers=8)
+        assert len(result) == 4
+
+        # Rank 0 gets stages (0, 3), rank 1 gets stages (1, 2)
+        rank0_modules = result[0] + result[3]
+        rank1_modules = result[1] + result[2]
+
+        # Rank 0 has first and last stages
+        assert "tok_embeddings" in rank0_modules
+        assert "norm" in rank0_modules
+        assert "output" in rank0_modules
+
+        # Rank 1 has only middle layers (no embeddings or output head)
+        assert all(m.startswith("layers.") for m in rank1_modules)
+
+        # All layers covered exactly once
+        all_layers = []
+        for stage in result:
+            all_layers.extend([m for m in stage if m.startswith("layers.")])
+        assert all_layers == [f"layers.{i}" for i in range(8)]

@@ -6,14 +6,18 @@ Run tests:
     pytest areal/tests/experimental/archon/test_distributed_pp.py -v -m multi_gpu
 
 Test configuration:
-    2 GPU Tests (Core PP):
-        - test_pp_forward_2gpu: PP=2, tests forward pass matches golden model
-        - test_pp_backward_2gpu: PP=2, tests gradient flow through stages
+    2 GPU Tests (Core PP - manual P2P):
+        - test_pp_forward_2gpu: PP=2, manual activation passing (1F1B)
+        - test_pp_backward_2gpu: PP=2, manual gradient passing (1F1B)
         - test_pp_gradient_correctness_2gpu: PP=2, tests PP gradients match non-PP
 
-    4 GPU Tests (Extended PP):
-        - test_pp_forward_4gpu: PP=4, tests forward with more stages
-        - test_pp_backward_4gpu: PP=4, tests backward with more stages
+    4 GPU Tests (Extended PP - manual P2P):
+        - test_pp_forward_4gpu: PP=4, manual activation passing (1F1B)
+        - test_pp_backward_4gpu: PP=4, manual gradient passing (1F1B)
+
+    Schedule API Tests (2 GPU):
+        - test_pp_zbv_forward_2gpu: PP=2, schedule.eval() with ZBVZeroBubble
+        - test_pp_zbv_backward_2gpu: PP=2, schedule.step() with ZBVZeroBubble
 
     PP Combination Tests (4 GPU):
         - test_pp_tp_forward_4gpu: PP=2, TP=2, tests PP+TP combination
@@ -107,9 +111,10 @@ def _run_pp_test_with_torchrun(
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 def test_pp_forward_2gpu():
-    """Test PP forward pass with 2 GPUs (pp=2).
+    """Test PP forward pass with 2 GPUs (pp=2) via manual P2P.
 
-    Validates that PP model output matches golden (non-PP) model output.
+    Validates that PP model output matches golden (non-PP) model output
+    using manual activation passing between stages (1F1B only).
     """
     if current_platform.device_count() < 2:
         pytest.skip("This test requires 2 GPUs")
@@ -117,16 +122,17 @@ def test_pp_forward_2gpu():
     _run_pp_test_with_torchrun(
         "areal/tests/experimental/archon/torchrun/run_pp_tests.py",
         n_gpus=2,
-        extra_args=["--test_type=forward", "--pp_size=2"],
+        extra_args=["--test_type=forward_p2p", "--pp_size=2"],
     )
 
 
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 def test_pp_backward_2gpu():
-    """Test PP backward pass with 2 GPUs (pp=2).
+    """Test PP backward pass with 2 GPUs (pp=2) via manual P2P.
 
-    Validates that gradients flow correctly through all PP stages.
+    Validates that gradients flow correctly through all PP stages
+    using manual gradient passing between stages (1F1B only).
     """
     if current_platform.device_count() < 2:
         pytest.skip("This test requires 2 GPUs")
@@ -134,7 +140,7 @@ def test_pp_backward_2gpu():
     _run_pp_test_with_torchrun(
         "areal/tests/experimental/archon/torchrun/run_pp_tests.py",
         n_gpus=2,
-        extra_args=["--test_type=backward", "--pp_size=2"],
+        extra_args=["--test_type=backward_p2p", "--pp_size=2"],
     )
 
 
@@ -162,6 +168,55 @@ def test_pp_gradient_correctness_2gpu():
 
 
 # =============================================================================
+# Schedule API Tests (2 GPU)
+# =============================================================================
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+def test_pp_zbv_forward_2gpu():
+    """Test ZBVZeroBubble forward pass with 2 GPUs (pp=2) via schedule API.
+
+    Validates that PP model with ZBVZeroBubble schedule produces correct output
+    using schedule.eval() API with V-style stage assignment.
+    """
+    if current_platform.device_count() < 2:
+        pytest.skip("This test requires 2 GPUs")
+
+    _run_pp_test_with_torchrun(
+        "areal/tests/experimental/archon/torchrun/run_pp_tests.py",
+        n_gpus=2,
+        extra_args=[
+            "--test_type=forward_schedule",
+            "--pp_size=2",
+            "--pp_schedule=ZBVZeroBubble",
+        ],
+    )
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+def test_pp_zbv_backward_2gpu():
+    """Test ZBVZeroBubble backward pass with 2 GPUs (pp=2) via schedule API.
+
+    Validates that gradients flow correctly through all PP stages
+    using schedule.step() API with ZBVZeroBubble V-style stage assignment.
+    """
+    if current_platform.device_count() < 2:
+        pytest.skip("This test requires 2 GPUs")
+
+    _run_pp_test_with_torchrun(
+        "areal/tests/experimental/archon/torchrun/run_pp_tests.py",
+        n_gpus=2,
+        extra_args=[
+            "--test_type=backward_schedule",
+            "--pp_size=2",
+            "--pp_schedule=ZBVZeroBubble",
+        ],
+    )
+
+
+# =============================================================================
 # 4 GPU Tests (Extended PP tests)
 # =============================================================================
 
@@ -169,9 +224,10 @@ def test_pp_gradient_correctness_2gpu():
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 def test_pp_forward_4gpu():
-    """Test PP forward pass with 4 GPUs (pp=4).
+    """Test PP forward pass with 4 GPUs (pp=4) via manual P2P.
 
-    Validates PP with more stages (4 stages instead of 2).
+    Validates PP with more stages (4 stages instead of 2) using
+    manual activation passing (1F1B only).
     """
     if current_platform.device_count() < 4:
         pytest.skip("This test requires 4 GPUs")
@@ -179,16 +235,17 @@ def test_pp_forward_4gpu():
     _run_pp_test_with_torchrun(
         "areal/tests/experimental/archon/torchrun/run_pp_tests.py",
         n_gpus=4,
-        extra_args=["--test_type=forward", "--pp_size=4"],
+        extra_args=["--test_type=forward_p2p", "--pp_size=4"],
     )
 
 
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 def test_pp_backward_4gpu():
-    """Test PP backward pass with 4 GPUs (pp=4).
+    """Test PP backward pass with 4 GPUs (pp=4) via manual P2P.
 
-    Validates gradient flow with more stages.
+    Validates gradient flow with more stages using manual gradient
+    passing (1F1B only).
     """
     if current_platform.device_count() < 4:
         pytest.skip("This test requires 4 GPUs")
@@ -196,7 +253,7 @@ def test_pp_backward_4gpu():
     _run_pp_test_with_torchrun(
         "areal/tests/experimental/archon/torchrun/run_pp_tests.py",
         n_gpus=4,
-        extra_args=["--test_type=backward", "--pp_size=4"],
+        extra_args=["--test_type=backward_p2p", "--pp_size=4"],
     )
 
 

@@ -453,7 +453,7 @@ class ArchonEngineConfig:
         default="Interleaved1F1B",
         metadata={
             "help": "Pipeline parallel schedule type.",
-            "choices": ["1F1B", "Interleaved1F1B"],
+            "choices": ["1F1B", "Interleaved1F1B", "ZBVZeroBubble"],
         },
     )
     # NOTE: The following three PP layer distribution parameters are advanced options
@@ -466,7 +466,7 @@ class ArchonEngineConfig:
             "help": "Number of transformer layers per (virtual) pipeline stage. "
             "If set, num_virtual_stages is calculated from num_layers. "
             "If None, stages are inferred from schedule type "
-            "(1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B).",
+            "(1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B/ZBVZeroBubble).",
         },
     )
     pp_first_stage_less_layers: int = field(

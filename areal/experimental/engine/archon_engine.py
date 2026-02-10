@@ -12,6 +12,11 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.distributed as dist
 from torch import nn
+from torch.distributed.pipelining.schedules import (
+    ScheduleDualPipeV,
+    ScheduleZBVZeroBubble,
+    get_schedule_class,
+)
 from transformers import (
     AutoConfig,
     PretrainedConfig,
@@ -239,9 +244,9 @@ class ArchonEngine(TrainEngine):
 
         # Pipeline parallel rank
         if self.parallel_dims.pp_enabled:
-            pp_group = self.parallel_dims.get_group("pp")
             self._pp_rank = self.parallel_dims.get_mesh("pp").get_local_rank()
-            self._pp_last_stage_rank = dist.get_process_group_ranks(pp_group)[-1]
+            # Set in _apply_pipeline_parallelism() after pipeline setup
+            self._pp_last_stage_rank = None
         else:
             self._pp_rank = 0
             self._pp_last_stage_rank = None
@@ -296,6 +301,39 @@ class ArchonEngine(TrainEngine):
 
         ac_config = self._build_ac_config()
         enable_compile = self.config.archon.enable_compile
+
+        # V-style schedules (ZBVZeroBubble, DualPipeV) split backward into
+        # I (input grad) and W (weight grad) steps. This is incompatible with:
+        # 1. torch.compile — its donated buffer optimization assumes a single
+        #    backward pass (retain_graph=False).
+        # 2. Op-level selective AC — its per-op cache (storage.pop) is consumed
+        #    by the I step, leaving nothing for the W step recompute.
+        # 3. memory_budget AC — it depends on torch.compile.
+        # Full AC / layer-level selective AC use standard checkpoint_wrapper
+        # whose gid-based recompute supports multiple backward passes.
+        schedule_class = get_schedule_class(self.config.archon.pp_schedule)
+        v_style_schedules = (ScheduleZBVZeroBubble, ScheduleDualPipeV)
+        if schedule_class in v_style_schedules:
+            schedule_name = self.config.archon.pp_schedule
+            if enable_compile:
+                self.logger.warning(
+                    f"{schedule_name} is incompatible with torch.compile. "
+                    "Disabling torch.compile."
+                )
+                enable_compile = False
+
+            if ac_config is not None and (
+                (
+                    ac_config.mode == "selective"
+                    and ac_config.selective_ac_option == "op"
+                )
+                or ac_config.mode == "memory_budget"
+            ):
+                self.logger.warning(
+                    f"{schedule_name} is incompatible with {ac_config.mode} AC. "
+                    "Falling back to full AC."
+                )
+                ac_config.mode = "full"
 
         # Force pad_to_maximum when compile is enabled to avoid dynamic shape issues
         if enable_compile and not self.config.pad_to_maximum:
@@ -742,6 +780,7 @@ class ArchonEngine(TrainEngine):
         self.is_offload = False
 
     def export_stats(self) -> dict[str, float]:
+        assert self._initialized
         data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
         if self.parallel_dims.pp_enabled:
             data_list = [data]
@@ -831,6 +870,18 @@ class ArchonEngine(TrainEngine):
 
         # Delete original model to free memory
         del self.model
+
+        # Determine which rank holds the last pipeline stage
+        pp_group = self.parallel_dims.get_group("pp")
+        pp_ranks = dist.get_process_group_ranks(pp_group)
+        schedule_class = get_schedule_class(self.config.archon.pp_schedule)
+        v_style_schedules = (ScheduleZBVZeroBubble, ScheduleDualPipeV)
+        if schedule_class in v_style_schedules:
+            # V-style: rank 0 holds stages (0, num_stages-1)
+            self._pp_last_stage_rank = pp_ranks[0]
+        else:
+            # Loop-style: last rank has last stage
+            self._pp_last_stage_rank = pp_ranks[-1]
 
         self.logger.info(
             f"PP enabled: has_first={self.pp_has_first_stage}, "

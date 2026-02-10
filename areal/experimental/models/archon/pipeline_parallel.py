@@ -14,6 +14,8 @@ from torch.distributed.pipelining import PipelineStage
 from torch.distributed.pipelining.schedules import (
     PipelineScheduleMulti,
     PipelineScheduleSingle,
+    ScheduleDualPipeV,
+    ScheduleZBVZeroBubble,
     get_schedule_class,
 )
 
@@ -210,7 +212,7 @@ def pipeline_module_split(
     Args:
         whole_model: The complete model to split
         pp_mesh: Pipeline parallel device mesh
-        pp_schedule: Schedule type ("1F1B" or "Interleaved1F1B")
+        pp_schedule: Schedule type ("1F1B", "Interleaved1F1B", or "ZBVZeroBubble")
         device: Target device for stages
         module_names_per_stage: Module FQNs for each stage
 
@@ -297,29 +299,31 @@ def pipeline_module_split(
         Examples (pp_degree=4, num_stages=8):
             1F1B:            Rank 0->(0,), Rank 1->(1,), ...
             Interleaved1F1B: Rank 0->(0,4), Rank 1->(1,5), Rank 2->(2,6), Rank 3->(3,7)
+            ZBVZeroBubble:   Rank 0->(0,7), Rank 1->(1,6), Rank 2->(2,5), Rank 3->(3,4)
         """
         if num_stages % pp_degree != 0:
             raise ValueError(
-                f"num_stages ({num_stages}) must be divisible by pp_degree ({pp_degree})"
+                f"num_stages ({num_stages}) must be evenly divisible by "
+                f"pp_degree ({pp_degree})"
             )
         stages_per_rank = num_stages // pp_degree
 
-        if pp_schedule == "1F1B":
-            if stages_per_rank != 1:
+        schedule_class = get_schedule_class(pp_schedule)
+        v_style_schedules = (ScheduleZBVZeroBubble, ScheduleDualPipeV)
+        style = "v" if schedule_class in v_style_schedules else "loop"
+
+        if style == "v":
+            if stages_per_rank != 2:
                 raise ValueError(
-                    f"1F1B schedule requires exactly 1 stage per rank, "
-                    f"got {stages_per_rank} ({num_stages} stages / {pp_degree} ranks)"
+                    f"V-style schedules require exactly 2 stages per rank, "
+                    f"got {stages_per_rank}"
                 )
-            return (pp_rank,)
-        elif pp_schedule == "Interleaved1F1B":
-            if stages_per_rank < 2:
-                raise ValueError(
-                    f"Interleaved1F1B schedule requires >= 2 stages per rank, "
-                    f"got {stages_per_rank} ({num_stages} stages / {pp_degree} ranks)"
-                )
-            return tuple(pp_rank + s * pp_degree for s in range(stages_per_rank))
+            stage_v_pairs = list(
+                zip(range(pp_degree), range(num_stages - 1, pp_degree - 1, -1))
+            )
+            return stage_v_pairs[pp_rank]
         else:
-            raise ValueError(f"Unknown pp_schedule: {pp_schedule}")
+            return tuple(pp_rank + s * pp_degree for s in range(stages_per_rank))
 
     stages: list[PipelineStage] = []
     model_parts: list[nn.Module] = []
@@ -351,7 +355,7 @@ def pipeline_llm(
 
     Workflow:
     1. Generate module names for each virtual stage
-    2. Split model into stages (multiple per rank for Interleaved1F1B)
+    2. Split model into stages (multiple per rank for Interleaved1F1B/ZBVZeroBubble)
     3. Apply parallelization (TP, FSDP) to each model part
 
     Args:
@@ -364,7 +368,7 @@ def pipeline_llm(
 
     Returns:
         Tuple of:
-        - stages: List of PipelineStage (1 for 1F1B, 2+ for Interleaved1F1B)
+        - stages: List of PipelineStage (1 for 1F1B, 2+ for Interleaved1F1B/ZBVZeroBubble)
         - model_parts: List of model parts
         - has_first_stage: Whether this rank has the first stage
         - has_last_stage: Whether this rank has the last stage
@@ -428,6 +432,15 @@ def pipeline_llm(
                 f"{pp_schedule} schedule requires >= 2 stages per rank, "
                 f"but got {stages_per_rank} (from layers_per_stage={layers_per_stage}). "
                 f"Use 1F1B schedule for single stage per rank."
+            )
+        # V-style schedules require exactly 2 stages per rank
+        v_style_schedules = (ScheduleZBVZeroBubble, ScheduleDualPipeV)
+        if schedule_class in v_style_schedules and stages_per_rank != 2:
+            raise ValueError(
+                f"{pp_schedule} requires exactly 2 stages per rank, "
+                f"but got {stages_per_rank}. "
+                f"Set pp_layers_per_stage to achieve 2 stages per rank, "
+                f"or let it default (None)."
             )
     else:
         # Default: 1 for single-stage schedules, 2 for multi-stage schedules
