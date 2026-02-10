@@ -14,13 +14,12 @@ from tqdm import tqdm
 from geo_edit.agents.api_agent import AgentConfig, APIBasedAgent
 from geo_edit.config import (
     build_google_agent_configs,
-    build_openai_agent_configs,
-    build_sglang_agent_configs,
-    build_vllm_agent_configs,
+    build_api_agent_configs,
 )
-from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
+from geo_edit.constants import MAX_TOOL_CALLS
+from geo_edit.prompts import get_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
-from geo_edit.environment.action import TOOL_AGENTS, TOOL_AGENT_DECLARE, TOOL_FUNCTIONS
+from geo_edit.tool_definitions import ToolRouter
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.utils.logger import setup_logger
@@ -38,6 +37,7 @@ _WORKER_TASK_CLASS = None
 _WORKER_MODEL_TYPE = None
 _WORKER_SYSTEM_PROMPT = None
 _WORKER_API_MODE = None
+_WORKER_TOOL_ROUTER = None
 
 
 def _init_worker(
@@ -48,14 +48,23 @@ def _init_worker(
     port: int,
     output_path: str,
     max_tool_calls: int,
-    use_tools: str,
+    use_tools: str,  # "auto", "force", or "direct"
 ):
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_API_MODE
+    from typing import cast, Literal
+    tool_mode = cast(Literal["auto", "force", "direct"], use_tools)
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_API_MODE, _WORKER_TOOL_ROUTER
+
+    # Initialize tool router with tool_mode
+    # ToolRouter reads config.yaml to determine which tools are enabled
+    # use_tools controls: "auto"/"force" = use tools, "direct" = no tools
+    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode=tool_mode)
 
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
-    system_prompt = get_system_prompt(model_type, use_tools)
+
+    # get_system_prompt returns tool/no-tool prompt based on use_tools mode
+    system_prompt = get_system_prompt(model_type, tool_mode)
 
     if model_type == "Google":
         agent_configs = build_google_agent_configs(
@@ -64,38 +73,22 @@ def _init_worker(
             include_thoughts=True,
             temperature=1.0,
             system_prompt=system_prompt,
-            tool_mode=use_tools,
+            tool_mode=tool_mode,
         )
         _WORKER_TASK_CLASS = GoogleVisionQATask
-    elif model_type == "OpenAI":
-        agent_configs = build_openai_agent_configs(
-            max_output_tokens=max_output_tokens,
-            temperature=1.0,
-            tool_mode=use_tools,
-            reasoning_level="low",
-            system_prompt=system_prompt,
-        )
-        _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
-    elif model_type == "SGLang":
-        agent_configs = build_sglang_agent_configs(
-            max_output_tokens=max_output_tokens,
-            temperature=1.0,
-            tool_mode=use_tools,
-        )
-        _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
+        api_mode = None  # Google uses native API
     else:
-        agent_configs = build_vllm_agent_configs(
+        # Set api_mode based on model_type
+        api_mode = "chat_completions" if model_type == "SGLang" else "responses"
+        agent_configs = build_api_agent_configs(
+            api_mode=api_mode,
             max_output_tokens=max_output_tokens,
             temperature=1.0,
+            tool_mode=tool_mode,
+            reasoning_level="low" if model_type == "OpenAI" else None,
             system_prompt=system_prompt,
-            tool_mode=use_tools,
         )
         _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
-
-    # Set api_mode based on model_type
-    api_mode = "responses"  # default
-    if model_type == "SGLang":
-        api_mode = "chat_completions"  # SGLang only supports chat_completions
 
     config = AgentConfig(
         model_type=model_type,
@@ -123,7 +116,7 @@ def _run_one_task(task_payload: dict):
     Returns:
       (ok: bool, meta_info: dict|None)
     """
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE, _WORKER_API_MODE
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE, _WORKER_API_MODE, _WORKER_TOOL_ROUTER
 
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
@@ -152,12 +145,16 @@ def _run_one_task(task_payload: dict):
     if text_only:
         logger.info(f"[{task_id}] running text-only task.")
         task_kwargs["text_only"] = True
+
+    # Get available tools from router (controlled by config.yaml and use_tools mode)
+    tool_functions = _WORKER_TOOL_ROUTER.get_available_functions()
+
     task = _WORKER_TASK_CLASS(
         task_id=task_id,
         task_prompt=text_prompt,
         task_answer=answer,
         task_image_path=image_path,
-        tool_functions=TOOL_FUNCTIONS,
+        tool_functions=tool_functions,
         save_dir=task_save_dir,
         **task_kwargs,
     )
@@ -204,7 +201,7 @@ def main():
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
     parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM", "SGLang"], help="Model provider.")
-    parser.add_argument("--use_tools", type=str, default="auto", choices=["direct", "auto", "force"])
+    parser.add_argument("--use_tools", type=str, default="auto", choices=["direct", "auto", "force"], help="Tool mode: 'auto' = optional tool use, 'force' = require tool call, 'direct' = no tools")
     parser.add_argument("--api_base", type=str, default=None, help="Base URL for OpenAI/vLLM/SGLang OpenAI-compatible server.")
     parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
@@ -258,7 +255,7 @@ def main():
     logger.info(f"Already done: {len(meta_info_list)}")
     logger.info(f"Pending: {len(pending_items)} (tasks x trajectories)")
 
-    # 2multiprocessing pool, create folder+save image ONLY when submitting task
+    # 2 multiprocessing pool, create folder+save image ONLY when submitting task
     ctx = mp.get_context("spawn")
     n_workers = max(1, int(args.max_concurrent_requests))
 

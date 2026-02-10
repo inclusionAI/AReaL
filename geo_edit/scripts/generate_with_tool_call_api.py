@@ -8,11 +8,10 @@ from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.config import (
     build_google_agent_configs,
-    build_openai_agent_configs,
-    build_vllm_agent_configs,
-    build_sglang_agent_configs,
+    build_api_agent_configs,
 )
-from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
+from geo_edit.constants import MAX_TOOL_CALLS
+from geo_edit.prompts import get_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.utils.stats import save_global_meta_info
 
@@ -70,32 +69,18 @@ def main():
             candidate_count=1,
             tool_mode=tool_mode,
         )
-    elif args.model_type == "OpenAI":
-        agent_configs = build_openai_agent_configs(
-            max_output_tokens=max_output_tokens,
-            temperature=1.0,
-            tool_mode=tool_mode,
-            reasoning_level="medium",
-            system_prompt=system_prompt,
-        )
-    elif args.model_type == "SGLang":
-        agent_configs = build_sglang_agent_configs(
-            max_output_tokens=max_output_tokens,
-            temperature=1.0,
-            tool_mode=tool_mode,
-        )
+        api_mode = None  # Google uses native API
     else:
-        agent_configs = build_vllm_agent_configs(
+        # Set api_mode based on model_type
+        api_mode = "chat_completions" if args.model_type == "SGLang" else "responses"
+        agent_configs = build_api_agent_configs(
+            api_mode=api_mode,
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            system_prompt=system_prompt,
             tool_mode=tool_mode,
+            reasoning_level="medium" if args.model_type == "OpenAI" else None,
+            system_prompt=system_prompt,
         )
-
-    # Set api_mode based on model_type
-    api_mode = "responses"  # default
-    if args.model_type == "SGLang":
-        api_mode = "chat_completions"  # SGLang only supports chat_completions
 
     config = AgentConfig(
         model_type=args.model_type,

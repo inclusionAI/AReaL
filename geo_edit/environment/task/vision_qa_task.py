@@ -11,7 +11,7 @@ from PIL import Image
 
 from geo_edit.environment.action import TOOL_RETURN_TYPES
 from geo_edit.environment.task.base import AbstractVLMTask
-from geo_edit.constants import TOOL_EXECUTION_FAILURE_PROMPT, TOOL_EXECUTION_SUCCESS_PROMPT
+from geo_edit.prompts import TOOL_EXECUTION_FAILURE_PROMPT, TOOL_EXECUTION_SUCCESS_PROMPT
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)

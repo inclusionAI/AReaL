@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from openai.types.responses.response_create_params import ResponseCreateParamsNonStreaming
 from pydantic import TypeAdapter
 
-from geo_edit.config import build_vllm_agent_configs
+from geo_edit.config import build_api_agent_configs
 from geo_edit.environment.action.image_edition_tool import draw_line_function
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.environment.task.vision_qa_task import ToolCall
@@ -399,7 +399,8 @@ class TestDirectMode:
 
     def test_vllm_direct_mode_omits_tool_fields_in_generate_config(self):
         """vLLM direct mode: generate config should not include tool fields."""
-        direct_configs = build_vllm_agent_configs(
+        direct_configs = build_api_agent_configs(
+            api_mode="responses",
             max_output_tokens=None,
             temperature=0.7,
             tool_mode="direct",
@@ -410,7 +411,8 @@ class TestDirectMode:
         assert "tools" not in direct_configs.force_final_generate_config
         assert "tool_choice" not in direct_configs.force_final_generate_config
 
-        auto_configs = build_vllm_agent_configs(
+        auto_configs = build_api_agent_configs(
+            api_mode="responses",
             max_output_tokens=128,
             temperature=0.7,
             tool_mode="auto",

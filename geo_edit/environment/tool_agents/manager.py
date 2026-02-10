@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 import ray
 from PIL import Image
 
-from geo_edit.environment.action.model_analysis_tool import get_agent_prompt
+from geo_edit.prompts import get_tool_agent_prompt
 from geo_edit.environment.tool_agents.actor import ToolModelActor
 from geo_edit.utils.logger import setup_logger
 
@@ -77,7 +77,7 @@ class ToolAgentManager:
                 actor_options["resources"] = resources
 
             # Get system prompt from registry
-            system_prompt = get_agent_prompt(name)
+            system_prompt = get_tool_agent_prompt(name)
 
             actor = ToolModelActor.options(**actor_options).remote(
                 model_name=cfg["model_name_or_path"],

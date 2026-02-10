@@ -2,9 +2,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 from google.genai import types
-from geo_edit.constants import (
-    MAX_TOOL_CALLS,
-)
 from geo_edit.environment.action import get_tool_declarations, get_tool_functions
 
 
@@ -17,28 +14,16 @@ class GoogleAgentConfigs:
 
 
 @dataclass(frozen=True, slots=True)
-class OpenAIAgentConfigs:
-    tools: List[Dict[str, Any]]
-    tool_choice: Union[str, Dict[str, Any]]
-    generate_config: Dict[str, Any]
-    force_final_generate_config: Dict[str, Any]
+class APIAgentConfigs:
+    """Unified config for OpenAI-compatible APIs (OpenAI, vLLM, SGLang).
 
-
-@dataclass(frozen=True, slots=True)
-class VLLMAgentConfigs:
-    tools: List[Dict[str, Any]]
-    tool_choice: Union[str, Dict[str, Any]]
+    Works with both responses API and chat_completions API.
+    """
+    tools: Optional[List[Dict[str, Any]]]
+    tool_choice: Optional[Union[str, Dict[str, Any]]]
     generate_config: Dict[str, Any]
     force_final_generate_config: Dict[str, Any]
     system_prompt: Optional[str] = None
-
-
-@dataclass(frozen=True, slots=True)
-class SGLangAgentConfigs:
-    tools: List[Dict[str, Any]]
-    tool_choice: Union[str, Dict[str, Any]]
-    generate_config: Dict[str, Any]
-    force_final_generate_config: Dict[str, Any]
 
 
 def build_google_agent_configs(
@@ -108,174 +93,96 @@ def build_google_agent_configs(
     )
 
 
-def build_openai_agent_configs(
-    *,
-    max_output_tokens: Optional[int] = None,
-    temperature: float = 1.0,
-    tool_mode: Optional[str] = None,
-    reasoning_level: Optional[str] = None,
-    system_prompt: Optional[str] = None,
-) -> OpenAIAgentConfigs:
+def _build_tools_list(api_mode: str) -> List[Dict[str, Any]]:
+    """Build tools list in the correct format based on API mode.
+
+    - responses API: flat format {"type": "function", "name": ..., "parameters": ...}
+    - chat_completions API: nested format {"type": "function", "function": {"name": ..., "parameters": ...}}
+    """
     tool_declarations = get_tool_declarations()
     tools = []
+
     for tool in tool_declarations:
-        tools.append(
-            {
+        if api_mode == "responses":
+            # Responses API: flat format
+            tools.append({
                 "type": "function",
                 "name": tool["name"],
                 "description": tool["description"],
                 "parameters": tool["parameters"],
-            }
-        )
-
-    if tool_mode == "direct":
-        tool_mode = None
-        tools = None
-    elif tool_mode == "force":
-        tool_mode = "required"
-    elif tool_mode == "auto":
-        tool_mode = "auto"
-    else:
-        raise ValueError(f"Invalid tool_mode: {tool_mode}")
-
-    generate_config = {"tools": tools, "tool_choice": tool_mode, "temperature": temperature, "max_output_tokens": max_output_tokens, "reasoning": {"effort": reasoning_level}}
-    if system_prompt is not None:
-        generate_config["instructions"] = system_prompt
-
-    force_final_generate_config = {
-        "tools": tools,
-        "tool_choice": "none",
-        "temperature": temperature,
-        "max_output_tokens": max_output_tokens,
-        "reasoning": {"effort": reasoning_level},
-    }
-    if system_prompt is not None:
-        force_final_generate_config["instructions"] = system_prompt
-
-    return OpenAIAgentConfigs(
-        tools=tools,
-        tool_choice=tool_mode,
-        generate_config=generate_config,
-        force_final_generate_config=force_final_generate_config,
-    )
-
-
-def build_vllm_agent_configs(
-    *,
-    max_output_tokens: Optional[int] = None,
-    temperature: float = 1.0,
-    tool_mode: Optional[str] = None,
-    system_prompt: Optional[str] = None,
-) -> VLLMAgentConfigs:
-    tool_declarations = get_tool_declarations()
-    tools = []
-    for tool in tool_declarations:
-        tools.append(
-            {
-                "type": "function",
-                "name": tool["name"],
-                "description": tool["description"],
-                "parameters": tool["parameters"],
-            }
-        )
-
-    if tool_mode == "direct":
-        normalized_tool_choice = "none"
-        tools = None
-    elif tool_mode == "force":
-        normalized_tool_choice = "required"
-    elif tool_mode == "auto":
-        normalized_tool_choice = "auto"
-    else:
-        raise ValueError(f"Invalid tool_mode: {tool_mode}")
-
-    generate_config: Dict[str, Any] = {
-        "temperature": temperature,
-    }
-    if max_output_tokens is not None:
-        generate_config["max_output_tokens"] = max_output_tokens
-    if tools is not None:
-        generate_config["tools"] = tools
-    generate_config["tool_choice"] = normalized_tool_choice
-
-    force_final_generate_config: Dict[str, Any] = {
-        "temperature": temperature,
-    }
-    if max_output_tokens is not None:
-        force_final_generate_config["max_output_tokens"] = max_output_tokens
-    if tools is not None:
-        force_final_generate_config["tools"] = tools
-        force_final_generate_config["tool_choice"] = "none"
-    return VLLMAgentConfigs(
-        tools=tools,
-        tool_choice=normalized_tool_choice,
-        generate_config=generate_config,
-        force_final_generate_config=force_final_generate_config,
-        system_prompt=system_prompt,
-    )
-
-
-def build_sglang_agent_configs(
-    *,
-    max_output_tokens: Optional[int] = None,
-    temperature: float = 1.0,
-    tool_mode: Optional[str] = None,
-) -> SGLangAgentConfigs:
-    tool_declarations = get_tool_declarations()
-    tools = []
-    for tool in tool_declarations:
-        tools.append(
-            {
+            })
+        elif api_mode == "chat_completions":
+            # Chat Completions API: nested format
+            tools.append({
                 "type": "function",
                 "function": {
                     "name": tool["name"],
                     "description": tool["description"],
                     "parameters": tool["parameters"],
                 },
-            }
-        )
+            })
 
+    return tools
+
+
+def build_api_agent_configs(
+    *,
+    api_mode: str = "responses",
+    max_output_tokens: Optional[int] = None,
+    temperature: float = 1.0,
+    tool_mode: Optional[str] = None,
+    reasoning_level: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+) -> APIAgentConfigs:
+    """Build unified config for OpenAI-compatible APIs."""
+    if api_mode not in ("responses", "chat_completions"):
+        raise ValueError(f"Invalid api_mode: {api_mode}. Must be 'responses' or 'chat_completions'.")
+
+    # Build tools and normalize tool_choice
+    tools = _build_tools_list(api_mode)
     if tool_mode == "direct":
-        tool_mode = None
+        tool_choice = "none" if api_mode == "chat_completions" else None
         tools = None
     elif tool_mode == "force":
-        tool_mode = "required"
+        tool_choice = "required"
     elif tool_mode == "auto":
-        tool_mode = "auto"
+        tool_choice = "auto"
     else:
         raise ValueError(f"Invalid tool_mode: {tool_mode}")
 
-    generate_config = {
-        "tools": tools,
-        "tool_choice": tool_mode,
-        "temperature": temperature,
-        "max_tokens": max_output_tokens,
-    }
+    # Field name differs by API mode
+    max_tokens_key = "max_output_tokens" if api_mode == "responses" else "max_tokens"
 
-    force_final_generate_config = {
-        "tools": tools,
-        "tool_choice": "none",
-        "temperature": temperature,
-        "max_tokens": max_output_tokens,
-    }
-    return SGLangAgentConfigs(
+    # Build base config
+    generate_config: Dict[str, Any] = {"temperature": temperature}
+    if max_output_tokens is not None:
+        generate_config[max_tokens_key] = max_output_tokens
+    if tools is not None:
+        generate_config["tools"] = tools
+        generate_config["tool_choice"] = tool_choice
+    if api_mode == "responses":
+        if reasoning_level is not None:
+            generate_config["reasoning"] = {"effort": reasoning_level}
+        if system_prompt is not None:
+            generate_config["instructions"] = system_prompt
+
+    # Build force_final config (copy and override tool_choice)
+    force_final_generate_config = generate_config.copy()
+    if tools is not None:
+        force_final_generate_config["tool_choice"] = "none"
+
+    return APIAgentConfigs(
         tools=tools,
-        tool_choice=tool_mode,
+        tool_choice=tool_choice,
         generate_config=generate_config,
         force_final_generate_config=force_final_generate_config,
+        system_prompt=system_prompt,
     )
 
 
 __all__ = [
-    "API_KEY",
-    "MAX_TOOL_CALLS",
-    "SYSTEM_PROMPT",
-    "AgentConfigs",
-    "OpenAIAgentConfigs",
-    "VLLMAgentConfigs",
-    "SGLangAgentConfigs",
-    "build_agent_configs",
-    "build_openai_agent_configs",
-    "build_vllm_agent_configs",
-    "build_sglang_agent_configs",
+    "GoogleAgentConfigs",
+    "APIAgentConfigs",
+    "build_google_agent_configs",
+    "build_api_agent_configs",
 ]

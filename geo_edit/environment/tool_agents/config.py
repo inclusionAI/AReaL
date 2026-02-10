@@ -1,12 +1,13 @@
-"""Tool Agent Configuration - following agents/base.py AgentConfig pattern."""
+"""Tool Agent Configuration - Ray Actor common settings."""
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
-# Default config path constant
-DEFAULT_CONFIG_PATH = "tool_agent_config.json"
+# Common default settings for all agents
+DEFAULT_MAX_MODEL_LEN = 8192
+DEFAULT_GPU_MEMORY_UTILIZATION = 0.8
+DEFAULT_TEMPERATURE = 0.0
+DEFAULT_NUM_GPUS = 1
 
 
 @dataclass
@@ -14,41 +15,31 @@ class ToolAgentConfig:
     """Configuration for a single Tool Agent.
 
     Attributes:
-        model_name_or_path: Model name or path to load.
+        model_path: Model name or path to load.
+        max_tokens: Maximum tokens to generate (from tool definition).
         max_model_len: Maximum model length for vLLM.
         gpu_memory_utilization: GPU memory utilization (0-1).
         temperature: Sampling temperature.
-        max_tokens: Maximum tokens to generate.
         num_gpus: Number of GPUs required.
         resources: Custom Ray resource labels for node scheduling.
-            Example: {"tool_agent_gpu": 1} to run on nodes with this label.
-            Start worker nodes with: ray start --resources='{"tool_agent_gpu": 1}'
     """
-
-    model_name_or_path: str
-    max_model_len: int = 8192
-    gpu_memory_utilization: float = 0.8
-    temperature: float = 0.0
-    max_tokens: int = 1024
-    num_gpus: int = 1
+    model_path: str
+    max_tokens: int
+    max_model_len: int = DEFAULT_MAX_MODEL_LEN
+    gpu_memory_utilization: float = DEFAULT_GPU_MEMORY_UTILIZATION
+    temperature: float = DEFAULT_TEMPERATURE
+    num_gpus: int = DEFAULT_NUM_GPUS
     resources: Optional[Dict[str, float]] = None
 
 
-def load_configs_from_json(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Dict[str, Any]]:
-    """Load tool agent configurations from JSON file.
+def build_agent_configs() -> Dict[str, ToolAgentConfig]:
+    """Build agent configs from tool_definitions/agents/ definitions."""
+    from geo_edit.tool_definitions.agents import AGENT_CONFIGS
 
-    Args:
-        config_path: Path to the config file.
-
-    Returns:
-        Dict mapping tool names to their configurations.
-    """
-    with config_path.open("r", encoding="utf-8") as f:
-        payload = json.load(f)
-    return payload["tool_agents"] if "tool_agents" in payload else payload
-
-
-def load_configs(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, ToolAgentConfig]:
-    """Load configurations from JSON file as ToolAgentConfig objects."""
-    raw_configs = load_configs_from_json(config_path)
-    return {name: ToolAgentConfig(**cfg) for name, cfg in raw_configs.items()}
+    return {
+        name: ToolAgentConfig(
+            model_path=cfg["model_path"],
+            max_tokens=cfg["max_tokens"],
+        )
+        for name, cfg in AGENT_CONFIGS.items()
+    }
