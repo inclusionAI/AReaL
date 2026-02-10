@@ -46,6 +46,7 @@ ______________________________________________________________________
 | **DATASET**             | `areal/dataset/`                                                                   | `get_*_dataset`, `DataLoader`, `IterableDataset`                         |
 | **LAUNCHER_SCHEDULER**  | `areal/infra/launcher/`, `areal/infra/scheduler/`, `areal/infra/rpc/`              | `LaunchConfig`, `Scheduler`, `RayLauncher`, `SlurmLauncher`              |
 | **ATTENTION**           | `attention.py`, `varlen_attention.py`                                              | `flash_attn`, `sdpa`, `varlen`, `causal_mask`                            |
+| **AI_REFERENCES**       | `.claude/`, `AGENTS.md`, `CLAUDE.md`                                               | -                                                                        |
 
 ## LOW Level (Use Haiku)
 
@@ -100,24 +101,64 @@ ______________________________________________________________________
 - **Storage backend compatibility**: ensure storage backend (filesystem, S3, etc.) is
   compatible
 
+### AI Reference Risks (When AI_REFERENCES type detected or auto-linked)
+
+**Auto-trigger conditions**: AI_REFERENCES review is automatically triggered when ANY of
+the following change types are detected, even if `.claude/` files are not modified:
+
+- WORKFLOW_ENGINE, API_CONFIG, REWARD, DATASET, TRAINER_CORE, ASYNC_CONCURRENT,
+  DISTRIBUTED_COMM, ARCHON_CORE, FSDP_CORE, MEGATRON_CORE changes
+- Any file, class, or function rename/removal in documented modules
+- New features added to workflows, engines, datasets, or rewards
+
+**Risks to check**:
+
+- **Stale path references**: References in `.claude/`, `CLAUDE.md`, or `AGENTS.md` point
+  to deleted or moved Python/Markdown files or directories
+- **Outdated usage patterns**: Documented patterns no longer match actual
+  implementations or recommended practices (e.g., function signatures changed, classes
+  renamed or removed)
+- **Missing feature documentation**: Refactoring or new runtime architecture not
+  reflected in AI references
+- **Outdated or untracked rules**: Rules in `.claude/rules/*.md` describe conventions
+  the codebase no longer follows, or new conventions exist that are not yet documented
+- **Example code drift**: Code examples in AI references no longer compile or produce
+  expected results
+- **Progressive disclosure gaps**: New major features not added to "Progressive
+  Disclosure" tables in CLAUDE.md
+- **Agent trigger mismatches**: Agent descriptions do not match their actual activation
+  scenarios in the codebase
+
 ______________________________________________________________________
 
 ## Risk Linkage Rules
 
-| Detected Change             | Auto-Linked Review                                     |
-| --------------------------- | ------------------------------------------------------ |
-| EP changes                  | FSDP interaction check, dp_shard_mod_ep mesh check     |
-| ETP changes                 | TP + EP combination check, mesh dimension check        |
-| Megatron changes            | Pipeline + AC check                                    |
-| Distributed comm changes    | Process group + sync check                             |
-| SEQUENCE_PARALLEL changes   | TP combination + Attention mask check, Ulysses check   |
-| CHECKPOINT_RECOVERY changes | FSDP state dict check, DCP compatibility check         |
-| DCP_CHECKPOINT changes      | FSDP2 integration check, distributed consistency check |
-| COMPILE changes             | Performance regression + FSDP/TP interaction check     |
-| REWARD changes              | Workflow interaction check, AsyncRewardWrapper check   |
-| LAUNCHER_SCHEDULER changes  | Resource config + parallel strategy match check        |
-| TRAINER_CORE changes        | Engine lifecycle + workflow integration check          |
-| ARCHON_ENGINE changes       | DCP checkpoint + parallel dims check                   |
+| Detected Change             | Auto-Linked Review                                                    |
+| --------------------------- | --------------------------------------------------------------------- |
+| EP changes                  | FSDP interaction check, dp_shard_mod_ep mesh check                    |
+| ETP changes                 | TP + EP combination check, mesh dimension check                       |
+| Megatron changes            | Pipeline + AC check                                                   |
+| Distributed comm changes    | Process group + sync check                                            |
+| SEQUENCE_PARALLEL changes   | TP combination + Attention mask check, Ulysses check                  |
+| CHECKPOINT_RECOVERY changes | FSDP state dict check, DCP compatibility check                        |
+| DCP_CHECKPOINT changes      | FSDP2 integration check, distributed consistency check                |
+| COMPILE changes             | Performance regression + FSDP/TP interaction check                    |
+| REWARD changes              | Workflow interaction check, AsyncRewardWrapper check                  |
+| LAUNCHER_SCHEDULER changes  | Resource config + parallel strategy match check                       |
+| TRAINER_CORE changes        | Engine lifecycle + workflow integration check                         |
+| ARCHON_ENGINE changes       | DCP checkpoint + parallel dims check                                  |
+| WORKFLOW_ENGINE changes     | **AI_REFERENCES check** (workflow patterns in AI docs)                |
+| API_CONFIG changes          | **AI_REFERENCES check** (config examples in AI docs)                  |
+| REWARD changes              | **AI_REFERENCES check** (reward patterns in AI docs)                  |
+| DATASET changes             | **AI_REFERENCES check** (dataset patterns in AI docs)                 |
+| TRAINER_CORE changes        | **AI_REFERENCES check** (trainer examples in AI docs)                 |
+| ASYNC_CONCURRENT changes    | **AI_REFERENCES check** (async utility and thread-based architecture) |
+| DISTRIBUTED_COMM changes    | **AI_REFERENCES check** (torch.distributed usage)                     |
+| ARCHON_CORE changes         | **AI_REFERENCES check** (Archon engine design)                        |
+| FSDP_CORE changes           | **AI_REFERENCES check** (FSDP engine design)                          |
+| MEGATRON_CORE changes       | **AI_REFERENCES check** (Megatron engine design)                      |
+| Any file/class/fn rename    | **AI_REFERENCES check** (references may become stale)                 |
+| New feature added           | **AI_REFERENCES check** (feature coverage gaps)                       |
 
 ______________________________________________________________________
 

@@ -134,6 +134,31 @@ Checklist:
 - Distributed training coordination
 ```
 
+### AI Reference Tasks \[Sonnet\]
+
+**Task: AI Reference Path Validity**
+
+```
+Applicable: .claude/, CLAUDE.md, or AGENTS.md modified, OR code paths referenced in AI
+docs changed during refactoring
+Checklist:
+- Python code examples have correct syntax and exactly match the source files
+- All file/directory references in .claude/, CLAUDE.md, and AGENTS.md point to
+  existing paths
+- Rules in .claude/rules/ align with actual code conventions
+- Table of contents and sections are complete and accurate
+```
+
+**Task: AI Reference Feature Coverage**
+
+```
+Applicable: New features added (workflows, engines, datasets, rewards, configs)
+Checklist:
+- .claude/, CLAUDE.md, or AGENTS.md is updated to document the new feature
+- If the new feature enriches usage patterns for workflows, datasets, rewards, or
+  engines, update the corresponding commands, skills, or agent definitions
+```
+
 ______________________________________________________________________
 
 ## General Review Task Templates
@@ -421,4 +446,14 @@ Checklist:
 - Sensitive info not committed to repo
 - API endpoints configurable
 - Error messages don't leak sensitive details
+```
+
+### AI Reference Quick Check \[Haiku\]
+
+```
+Applicable: Any .claude/, CLAUDE.md, or AGENTS.md changes
+Checklist:
+- Modified AI reference files have valid Markdown format
+- No obvious broken links (e.g., references to files deleted in the same PR)
+- Code blocks match the corresponding source files
 ```
