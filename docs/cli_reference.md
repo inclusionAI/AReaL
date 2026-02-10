@@ -9,13 +9,13 @@ can be specified in YAML configuration files or overridden via command line argu
 Configuration files are specified using the `--config` parameter:
 
 ```bash
-python -m areal.infra.launcher --config path/to/config.yaml
+python3 train.py --config path/to/config.yaml
 ```
 
 You can override specific parameters from the command line:
 
 ```bash
-python -m areal.infra.launcher --config path/to/config.yaml actor.lr=1e-4 seed=42
+python3 train.py --config path/to/config.yaml actor.lr=1e-4 seed=42
 ```
 
 For detailed examples, see the experiment configurations in the `examples/` directory.
