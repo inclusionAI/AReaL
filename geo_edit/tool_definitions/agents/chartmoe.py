@@ -5,8 +5,15 @@ from PIL import Image
 
 from geo_edit.environment.tool_agents import call_agent
 
-MODEL_PATH = "/storage/openpsi/models/Qwen3-VL-235B-A22B-Thinking"
-MAX_TOKENS = 1024
+# Model configuration
+agent_config = {
+    "model_name_or_path": "/storage/openpsi/models/Qwen3-VL-235B-A22B-Thinking",
+    "max_model_len": 8192,
+    "gpu_memory_utilization": 0.8,
+    "temperature": 0.0,
+    "max_tokens": 1024,
+    "num_gpus": 1,
+}
 
 DECLARATION = {
     "name": "chartmoe",

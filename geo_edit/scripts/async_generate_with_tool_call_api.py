@@ -147,7 +147,7 @@ def _run_one_task(task_payload: dict):
         task_kwargs["text_only"] = True
 
     # Get available tools from router (controlled by config.yaml and use_tools mode)
-    tool_functions = _WORKER_TOOL_ROUTER.get_available_functions()
+    tool_functions = _WORKER_TOOL_ROUTER.get_available_tools()
 
     task = _WORKER_TASK_CLASS(
         task_id=task_id,
@@ -207,6 +207,7 @@ def main():
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
     parser.add_argument("--n_trajectories", type=int, default=1, help="Number of trajectories to generate per task.")
+    parser.add_argument("--node_resource", type=str, default=None, help="Ray custom resource name to schedule Tool Agents on specific nodes (e.g., 'tool_agent').")
     args = parser.parse_args()
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
@@ -254,6 +255,12 @@ def main():
 
     logger.info(f"Already done: {len(meta_info_list)}")
     logger.info(f"Pending: {len(pending_items)} (tasks x trajectories)")
+
+    # Initialize ToolRouter - automatically creates Ray Tool Agents if enabled
+    tool_router = ToolRouter(
+        tool_mode=tool_mode,
+        node_resource=args.node_resource,
+    )
 
     # 2 multiprocessing pool, create folder+save image ONLY when submitting task
     ctx = mp.get_context("spawn")
@@ -353,6 +360,9 @@ def main():
         pbar.close()
 
     save_global_meta_info(output_path, meta_info_list)
+
+    # Shutdown Ray Tool Agents
+    tool_router.shutdown_agents()
 
 
 if __name__ == "__main__":

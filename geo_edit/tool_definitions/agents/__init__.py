@@ -13,7 +13,7 @@ AGENT_TOOLS: Dict[str, tuple] = {
 
 # Export model configs for tool_agents manager
 AGENT_CONFIGS: Dict[str, dict] = {
-    "multimath": {"model_path": multimath.MODEL_PATH, "max_tokens": multimath.MAX_TOKENS},
-    "gllava": {"model_path": gllava.MODEL_PATH, "max_tokens": gllava.MAX_TOKENS},
-    "chartmoe": {"model_path": chartmoe.MODEL_PATH, "max_tokens": chartmoe.MAX_TOKENS},
+    "multimath": multimath.agent_config,
+    "gllava": gllava.agent_config,
+    "chartmoe": chartmoe.agent_config,
 }

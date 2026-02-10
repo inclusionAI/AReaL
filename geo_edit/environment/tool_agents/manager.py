@@ -65,7 +65,7 @@ class ToolAgentManager:
             self._configs[name] = cfg
 
             # Build actor options
-            num_gpus = cfg.get("num_gpus", 1)
+            num_gpus = cfg.get("num_gpus")
             resources = cfg.get("resources")
 
             actor_options = {
