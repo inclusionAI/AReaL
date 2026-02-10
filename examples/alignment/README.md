@@ -18,7 +18,7 @@ The Bradley-Terry reward modeling loss can be expressed as
 Launch the reward model training process using the provided configuration.
 
 ```bash
-python3 -m areal.launcher.local hhrlhf_rw.py \
+python3 -m areal.infra.launcher.local hhrlhf_rw.py \
     --config hhrlhf_rw.yaml \
     experiment_name=hhrlhf-rw \
     trial_name=trial1 \

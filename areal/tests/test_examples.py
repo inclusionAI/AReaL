@@ -59,7 +59,7 @@ async def run_example(
         cmd = [
             "python3",
             "-m",
-            "areal.launcher.local",
+            "areal.infra.launcher.local",
             example_file,
             "--config",
             config_name,
@@ -560,7 +560,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
             [
                 "python3",
                 "-m",
-                "areal.launcher.local",
+                "areal.infra.launcher.local",
                 example_file,
                 "--config",
                 config_name,

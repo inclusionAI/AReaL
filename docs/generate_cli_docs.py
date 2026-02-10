@@ -302,13 +302,13 @@ This page provides a comprehensive reference for all configuration parameters av
 Configuration files are specified using the `--config` parameter:
 
 ```bash
-python -m areal.launcher --config path/to/config.yaml
+python -m areal.infra.launcher --config path/to/config.yaml
 ```
 
 You can override specific parameters from the command line:
 
 ```bash
-python -m areal.launcher --config path/to/config.yaml actor.lr=1e-4 seed=42
+python -m areal.infra.launcher --config path/to/config.yaml actor.lr=1e-4 seed=42
 ```
 
 For detailed examples, see the experiment configurations in the `examples/` directory.

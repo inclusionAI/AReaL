@@ -44,7 +44,7 @@ ______________________________________________________________________
 | **CHECKPOINT_RECOVERY** | `areal/utils/saver.py`, `areal/utils/recover.py`, `areal/utils/fsdp/checkpoint.py` | `state_dict`, `load_state_dict`, `checkpoint`                            |
 | **REWARD**              | `areal/reward/`                                                                    | `reward_fn`, `AsyncRewardWrapper`, `MathVerifyWorker`                    |
 | **DATASET**             | `areal/dataset/`                                                                   | `get_*_dataset`, `DataLoader`, `IterableDataset`                         |
-| **LAUNCHER_SCHEDULER**  | `areal/launcher/`, `areal/infra/scheduler/`, `areal/infra/rpc`                     | `LaunchConfig`, `Scheduler`, `RayLauncher`, `SlurmLauncher`              |
+| **LAUNCHER_SCHEDULER**  | `areal/infra/launcher/`, `areal/infra/scheduler/`, `areal/infra/rpc/`              | `LaunchConfig`, `Scheduler`, `RayLauncher`, `SlurmLauncher`              |
 | **ATTENTION**           | `attention.py`, `varlen_attention.py`                                              | `flash_attn`, `sdpa`, `varlen`, `causal_mask`                            |
 
 ## LOW Level (Use Haiku)

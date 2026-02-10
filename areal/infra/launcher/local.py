@@ -306,12 +306,12 @@ def local_main(config, run_id: int = 0):
 
         backend_spec = {
             "sglang": {
-                "module": "areal.launcher.sglang_server",
+                "module": "areal.infra.launcher.sglang_server",
                 "seed_arg": "sglang.random_seed",
                 "set_device_env": False,
             },
             "vllm": {
-                "module": "areal.launcher.vllm_server",
+                "module": "areal.infra.launcher.vllm_server",
                 "seed_arg": "vllm.seed",
                 "set_device_env": True,  # vLLM needs `device_control_env_var` to control GPU allocation
             },

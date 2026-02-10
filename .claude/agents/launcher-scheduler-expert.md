@@ -22,8 +22,8 @@ allocation correctness.
 
 Use this agent **when requested** when:
 
-- **Code modifications**: User edits files in `areal/launcher/`, `areal/infra/rpc`, or
-  `areal/infra/scheduler/`
+- **Code modifications**: User edits files in `areal/infra/launcher/`,
+  `areal/infra/rpc/`, or `areal/infra/scheduler/`
 - **Configuration changes**: User modifies `ClusterSpecConfig`, `SchedulerConfig`, or
   related dataclasses
 - **Deployment issues**: User encounters job launch failures, port conflicts, GPU
@@ -133,17 +133,17 @@ Critical utilities in `areal/utils/launcher.py`:
 
 ## Resources & Reference Implementations
 
-| File                              | Purpose                            | Key Patterns                                              |
-| --------------------------------- | ---------------------------------- | --------------------------------------------------------- |
-| `areal/launcher/local.py`         | Single-node process management     | Environment variable propagation, process tree management |
-| `areal/launcher/slurm.py`         | Slurm cluster job submission       | Slurm directive generation, multi-node coordination       |
-| `areal/launcher/ray.py`           | Ray cluster deployment             | Ray actor management, placement group allocation          |
-| `areal/launcher/sglang_server.py` | SGLang inference server deployment | SGLang server process management, cache isolation         |
-| `areal/launcher/vllm_server.py`   | vLLM inference server deployment   | vLLM server process management, cache isolation           |
-| `areal/infra/scheduler/local.py`  | Local worker scheduling            | GPU round-robin, port allocation, health monitoring       |
-| `areal/infra/scheduler/slurm.py`  | Slurm-integrated scheduling        | Job array coordination, resource reservation              |
-| `areal/infra/scheduler/ray.py`    | Ray cluster scheduling             | Ray placement groups, actor-based worker management       |
-| `areal/utils/launcher.py`         | Shared utilities                   | Environment variable management, configuration validation |
+| File                                    | Purpose                            | Key Patterns                                              |
+| --------------------------------------- | ---------------------------------- | --------------------------------------------------------- |
+| `areal/infra/launcher/local.py`         | Single-node process management     | Environment variable propagation, process tree management |
+| `areal/infra/launcher/slurm.py`         | Slurm cluster job submission       | Slurm directive generation, multi-node coordination       |
+| `areal/infra/launcher/ray.py`           | Ray cluster deployment             | Ray actor management, placement group allocation          |
+| `areal/infra/launcher/sglang_server.py` | SGLang inference server deployment | SGLang server process management, cache isolation         |
+| `areal/infra/launcher/vllm_server.py`   | vLLM inference server deployment   | vLLM server process management, cache isolation           |
+| `areal/infra/scheduler/local.py`        | Local worker scheduling            | GPU round-robin, port allocation, health monitoring       |
+| `areal/infra/scheduler/slurm.py`        | Slurm-integrated scheduling        | Job array coordination, resource reservation              |
+| `areal/infra/scheduler/ray.py`          | Ray cluster scheduling             | Ray placement groups, actor-based worker management       |
+| `areal/utils/launcher.py`               | Shared utilities                   | Environment variable management, configuration validation |
 
 ______________________________________________________________________
 

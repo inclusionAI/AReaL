@@ -46,7 +46,7 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
     inference adapters (SGLang, vLLM remote engines).
   - `areal/experimental/` - Prototype engines/workflows that evolve quickly; expect
     breaking changes.
-  - `areal/launcher/` - Launch specs for local, Ray, and Slurm clusters, plus
+  - `areal/infra/launcher/` - Launch specs for local, Ray, and Slurm clusters, plus
     SGLang/vLLM inference server launchers and container guidance.
   - `areal/models/` - Model-specific adapters (Megatron-Core layers, Transformers
     wrappers, custom heads).
@@ -73,9 +73,9 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 
 ## Distributed operations & tooling
 
-- **Clusters & containers**: Launch configurations live under `areal/launcher/` (local,
-  Ray, Slurm). Each entrypoint documents the scheduler expectations; reuse those specs
-  instead of inventing ad-hoc run scripts.
+- **Clusters & containers**: Launch configurations live under `areal/infra/launcher/`
+  (local, Ray, Slurm). Each entrypoint documents the scheduler expectations; reuse those
+  specs instead of inventing ad-hoc run scripts.
 - **Shared images**: Platform-specific container images and startup scripts are defined
   alongside launcher configs. Reference them or note when they are missing—do not
   attempt to rebuild CUDA/driver stacks inline.
@@ -201,7 +201,7 @@ Reference docs:
 ### Launch training / evaluation
 
 - Choose an existing script in `examples/**` (math, multi-turn, VLM, etc.) that mirrors
-  your use case, then replicate its launcher pairing (`areal/launcher/local.py`,
+  your use case, then replicate its launcher pairing (`areal/infra/launcher/local.py`,
   `ray.py`, `slurm.py`, or `sglang_server.py`).
 - Read the example README to collect scheduler requirements, container images,
   environment variables, and any dataset preparation steps before running.

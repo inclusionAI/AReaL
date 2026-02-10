@@ -461,13 +461,13 @@ def slurm_main(config, run_id: int = 0):
 
         backend_spec = {
             "sglang": {
-                "module": "areal.launcher.sglang_server",
+                "module": "areal.infra.launcher.sglang_server",
                 "seed_arg": "sglang.random_seed",
                 "prefix": "AREAL_SGLANG",
                 "set_device_env": False,
             },
             "vllm": {
-                "module": "areal.launcher.vllm_server",
+                "module": "areal.infra.launcher.vllm_server",
                 "seed_arg": "vllm.seed",
                 "prefix": "AREAL_VLLM",
                 "set_device_env": True,  # vLLM needs `device_control_env_var` to control GPU allocation
@@ -677,6 +677,6 @@ def slurm_main(config, run_id: int = 0):
 
 
 if __name__ == "__main__":
-    # usage: python -m areal.launcher.slurm <entry_point> \
+    # usage: python -m areal.infra.launcher.slurm <entry_point> \
     #  --config <config_path> [<additional_args>]
     main()

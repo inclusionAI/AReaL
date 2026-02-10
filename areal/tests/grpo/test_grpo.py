@@ -50,7 +50,7 @@ def test_grpo(tmp_path: str, backend: str) -> None:
 
     cmd = (
         Command("python")
-        .bake(m="areal.launcher.local")
+        .bake(m="areal.infra.launcher.local")
         .bake(os.path.join(base_dir, "entrypoint.py"))
     )
 

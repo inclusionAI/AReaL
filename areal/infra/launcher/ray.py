@@ -628,6 +628,6 @@ def ray_main(config, run_id: int = 0):
 
 
 if __name__ == "__main__":
-    # usage: python -m areal.launcher.ray \
+    # usage: python -m areal.infra.launcher.ray \
     #   <entry_point> --config <config_path> [<additional_args>]
     main()
