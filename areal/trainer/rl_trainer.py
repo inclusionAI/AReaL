@@ -29,9 +29,13 @@ from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.infra import RolloutController
-from areal.infra.platforms import current_platform
-from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
+from areal.infra import (
+    LocalScheduler,
+    RayScheduler,
+    RolloutController,
+    SlurmScheduler,
+    current_platform,
+)
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller

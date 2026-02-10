@@ -5,7 +5,7 @@ from areal.api.cli_args import GRPOConfig, SGLangConfig, load_expr_config, vLLMC
 from areal.dataset import get_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
+from areal.infra import LocalScheduler, RayScheduler, SlurmScheduler
 from areal.utils import logging, seeding
 from areal.utils.dataloader import create_dataloader
 from areal.utils.hf_utils import load_hf_tokenizer

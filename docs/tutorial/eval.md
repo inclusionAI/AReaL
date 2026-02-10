@@ -119,7 +119,7 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, SGLangConfig, load_expr_config, vLLMConfig
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
+from areal.infra import LocalScheduler, RayScheduler, SlurmScheduler
 
 # Load config and parse allocation mode
 config, _ = load_expr_config(args, GRPOConfig)
@@ -216,7 +216,7 @@ actor:
     - task_type: worker
       port_count: 2
       gpu: 1
-      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      cmd: python3 -m areal.infra.rpc.rpc_server
 
 valid_dataset:
   name: gsm8k

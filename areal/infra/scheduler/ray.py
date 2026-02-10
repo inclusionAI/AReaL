@@ -22,14 +22,14 @@ from areal.api.cli_args import (
     SchedulingStrategyType,
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
-from areal.scheduler.exceptions import (
+from areal.infra.rpc.ray_rpc_server import RayRPCServer
+from areal.infra.scheduler.exceptions import (
     EngineCallError,
     WorkerCreationError,
     WorkerFailedError,
     WorkerNotFoundError,
     WorkerTimeoutError,
 )
-from areal.scheduler.rpc.ray_rpc_server import RayRPCServer
 from areal.utils import logging
 from areal.utils.launcher import get_env_vars, get_thread_env_vars
 from areal.utils.ray import get_placement_group_master_ip_and_port

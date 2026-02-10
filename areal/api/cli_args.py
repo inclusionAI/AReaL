@@ -882,7 +882,7 @@ class TrainEngineConfig:
     # Scheduling
     scheduling_spec: tuple[SchedulingSpec, ...] = field(
         default_factory=lambda: (
-            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+            SchedulingSpec(cmd="python -m areal.infra.rpc.rpc_server"),
         ),
         metadata={
             "help": "Train engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
@@ -1512,7 +1512,7 @@ class InferenceEngineConfig:
     )
     scheduling_spec: tuple[SchedulingSpec, ...] = field(
         default_factory=lambda: (
-            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+            SchedulingSpec(cmd="python -m areal.infra.rpc.rpc_server"),
         ),
         metadata={
             "help": "inference engine schedule specs. Can accept 1 or 2 SchedulingSpec: "

@@ -325,7 +325,7 @@ As such, **rollout and training happen simultaneously** in AReaL, even though th
 looks like a synchronous orchestration.
 
 **Level 2 - Worker RPC Server**: Each rollout worker runs a Flask HTTP server
-([`rpc_server.py`](https://github.com/inclusionAI/AReaL/blob/main/areal/scheduler/rpc/rpc_server.py))
+([`rpc_server.py`](https://github.com/inclusionAI/AReaL/blob/main/areal/infra/rpc/rpc_server.py))
 on **CPU**:
 
 - Accepts concurrent HTTP requests (multi-threaded Flask)

@@ -18,7 +18,8 @@ from areal.api.cli_args import (
     SchedulingStrategyType,
 )
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
-from areal.scheduler.exceptions import (
+from areal.infra.rpc.serialization import deserialize_value, serialize_value
+from areal.infra.scheduler.exceptions import (
     EngineCallError,
     EngineCreationError,
     EngineImportError,
@@ -30,7 +31,6 @@ from areal.scheduler.exceptions import (
     WorkerNotFoundError,
     WorkerTimeoutError,
 )
-from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging, name_resolve, names
 from areal.utils.concurrent import run_async_task
 from areal.utils.fs import validate_shared_path
@@ -755,7 +755,7 @@ class SlurmScheduler(Scheduler):
         )
 
         # Build RPC command (port will be auto-assigned by server)
-        rpc_cmd = spec.cmd or "python -m areal.scheduler.rpc.rpc_server"
+        rpc_cmd = spec.cmd or "python -m areal.infra.rpc.rpc_server"
         rpc_cmd_flags = [
             "--experiment-name",
             self.experiment_name,

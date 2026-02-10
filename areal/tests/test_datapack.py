@@ -10,7 +10,7 @@ from areal.api.cli_args import SchedulingSpec, TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import AllocationMode
 from areal.infra import TrainController
-from areal.scheduler.rpc.rtensor import RTensor, TensorShardInfo
+from areal.infra.rpc.rtensor import RTensor, TensorShardInfo
 from areal.utils.datapack import balanced_greedy_partition, ffd_allocate
 
 # =============================================================================

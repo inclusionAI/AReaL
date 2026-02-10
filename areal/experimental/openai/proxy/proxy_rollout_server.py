@@ -27,7 +27,7 @@ from openai.types.responses.response_create_params import ResponseCreateParams
 
 from areal.api.cli_args import NameResolveConfig, OpenAIProxyConfig
 from areal.experimental.openai.client import ArealOpenAI
-from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
+from areal.infra.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import name_resolve, names, seeding
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer

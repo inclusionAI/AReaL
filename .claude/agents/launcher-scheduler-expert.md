@@ -22,7 +22,8 @@ allocation correctness.
 
 Use this agent **when requested** when:
 
-- **Code modifications**: User edits files in `areal/launcher/` or `areal/scheduler/`
+- **Code modifications**: User edits files in `areal/launcher/`, `areal/infra/rpc`, or
+  `areal/infra/scheduler/`
 - **Configuration changes**: User modifies `ClusterSpecConfig`, `SchedulerConfig`, or
   related dataclasses
 - **Deployment issues**: User encounters job launch failures, port conflicts, GPU
@@ -99,8 +100,8 @@ Critical utilities in `areal/utils/launcher.py`:
   hard-coded GPU indices or direct `torch.cuda` calls
 - Use `areal.utils.name_resolve` for multi-node service discovery -> not direct
   IP/hostname assumptions
-- Raise specific exceptions from `areal.scheduler.exceptions` -> not generic exception
-  types
+- Raise specific exceptions from `areal.infra.scheduler.exceptions` -> not generic
+  exception types
 - Use `areal.utils.proc.kill_process_tree()` for process termination -> not leaving
   zombie processes
 - Propagate all `BASE_ENVIRONS` variables and thread control variables -> not missing
@@ -139,9 +140,9 @@ Critical utilities in `areal/utils/launcher.py`:
 | `areal/launcher/ray.py`           | Ray cluster deployment             | Ray actor management, placement group allocation          |
 | `areal/launcher/sglang_server.py` | SGLang inference server deployment | SGLang server process management, cache isolation         |
 | `areal/launcher/vllm_server.py`   | vLLM inference server deployment   | vLLM server process management, cache isolation           |
-| `areal/scheduler/local.py`        | Local worker scheduling            | GPU round-robin, port allocation, health monitoring       |
-| `areal/scheduler/slurm.py`        | Slurm-integrated scheduling        | Job array coordination, resource reservation              |
-| `areal/scheduler/ray.py`          | Ray cluster scheduling             | Ray placement groups, actor-based worker management       |
+| `areal/infra/scheduler/local.py`  | Local worker scheduling            | GPU round-robin, port allocation, health monitoring       |
+| `areal/infra/scheduler/slurm.py`  | Slurm-integrated scheduling        | Job array coordination, resource reservation              |
+| `areal/infra/scheduler/ray.py`    | Ray cluster scheduling             | Ray placement groups, actor-based worker management       |
 | `areal/utils/launcher.py`         | Shared utilities                   | Environment variable management, configuration validation |
 
 ______________________________________________________________________

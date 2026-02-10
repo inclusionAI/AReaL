@@ -17,7 +17,7 @@ from areal.api.scheduler_api import (
     Job,
     Worker,
 )
-from areal.scheduler.exceptions import (
+from areal.infra.scheduler.exceptions import (
     EngineCallError,
     EngineCreationError,
     EngineImportError,
@@ -29,7 +29,7 @@ from areal.scheduler.exceptions import (
     WorkerNotFoundError,
     WorkerTimeoutError,
 )
-from areal.scheduler.local import LocalScheduler, WorkerInfo
+from areal.infra.scheduler.local import LocalScheduler, WorkerInfo
 from areal.utils.proc import kill_process_tree
 
 # Skip all tests in this module by default - run manually only
@@ -80,7 +80,7 @@ def multi_gpu_scheduler(tmp_path):
 @pytest.fixture(autouse=True)
 def mock_kill_process_tree():
     """Automatically mock kill_process_tree to prevent LocalScheduler.__del__ from killing fake PIDs."""
-    with patch("areal.scheduler.local.kill_process_tree") as mock_kill:
+    with patch("areal.infra.scheduler.local.kill_process_tree") as mock_kill:
         yield mock_kill
 
 
@@ -223,7 +223,7 @@ class TestLocalSchedulerInitialization:
         name_resolve_root.mkdir()
 
         with (
-            patch("areal.scheduler.local.current_platform", mock_platform),
+            patch("areal.infra.scheduler.local.current_platform", mock_platform),
             patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1,3"}),
         ):
             # Don't use create_scheduler helper here as it defaults gpu_devices to [0]
@@ -327,7 +327,7 @@ class TestPortAllocation:
 
     def test_allocate_ports_success(self, tmp_path):
         """Should allocate requested number of free ports."""
-        with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
+        with patch("areal.infra.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.return_value = [8000, 8001, 8002]
 
             scheduler = create_scheduler(tmp_path)
@@ -339,7 +339,7 @@ class TestPortAllocation:
 
     def test_allocate_ports_excludes_already_allocated(self, tmp_path):
         """Should exclude already allocated ports from search."""
-        with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
+        with patch("areal.infra.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.side_effect = [
                 [8000, 8001],
                 [8002, 8003],
@@ -363,7 +363,7 @@ class TestPortAllocation:
 
     def test_allocate_ports_failure(self, tmp_path):
         """Should raise PortAllocationError when port allocation fails."""
-        with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
+        with patch("areal.infra.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.side_effect = ValueError("No free ports available")
 
             scheduler = create_scheduler(tmp_path)
@@ -377,9 +377,9 @@ class TestPortAllocation:
 class TestWorkerCreation:
     """Test worker creation with various configurations."""
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_create_workers_with_default_spec(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -412,9 +412,9 @@ class TestWorkerCreation:
         # Clean up workers while mock is still active
         scheduler.delete_workers(None)
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_create_workers_with_single_spec_for_all(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -442,7 +442,7 @@ class TestWorkerCreation:
                     mem=1024,
                     gpu=2,
                     port_count=3,
-                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                    cmd="python -m areal.infra.rpc.rpc_server",
                 )
             ],
         )
@@ -459,9 +459,9 @@ class TestWorkerCreation:
         # Clean up workers while mock is still active
         scheduler.delete_workers(None)
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_create_workers_with_per_worker_specs(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -489,14 +489,14 @@ class TestWorkerCreation:
                     mem=1024,
                     gpu=1,
                     port_count=1,
-                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                    cmd="python -m areal.infra.rpc.rpc_server",
                 ),
                 SchedulingSpec(
                     cpu=1,
                     mem=1024,
                     gpu=1,
                     port_count=2,
-                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                    cmd="python -m areal.infra.rpc.rpc_server",
                 ),
             ],
         )
@@ -510,9 +510,9 @@ class TestWorkerCreation:
         # Clean up workers while mock is still active
         scheduler.delete_workers(None)
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_create_workers_with_custom_command(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -559,9 +559,9 @@ class TestWorkerCreation:
         # Clean up workers while mock is still active
         scheduler.delete_workers(None)
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_create_workers_with_environment_variables(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -578,7 +578,7 @@ class TestWorkerCreation:
         mock_platform = Mock()
         mock_platform.device_control_env_var = "CUDA_VISIBLE_DEVICES"
 
-        with patch("areal.scheduler.local.current_platform", mock_platform):
+        with patch("areal.infra.scheduler.local.current_platform", mock_platform):
             scheduler = create_scheduler(tmp_path)
 
             job = Job(
@@ -591,7 +591,7 @@ class TestWorkerCreation:
                         gpu=1,
                         port_count=2,
                         env_vars={"CUSTOM_VAR": "custom_value", "ANOTHER_VAR": "123"},
-                        cmd="python -m areal.scheduler.rpc.rpc_server",
+                        cmd="python -m areal.infra.rpc.rpc_server",
                     )
                 ],
             )
@@ -616,9 +616,9 @@ class TestWorkerCreation:
             # Clean up workers while mock is still active
             scheduler.delete_workers(None)
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_create_workers_with_colocate_strategy(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -646,7 +646,7 @@ class TestWorkerCreation:
                     mem=1024,
                     gpu=2,
                     port_count=2,
-                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                    cmd="python -m areal.infra.rpc.rpc_server",
                 )
             ],
         )
@@ -667,7 +667,7 @@ class TestWorkerCreation:
                     mem=1024,
                     gpu=2,
                     port_count=2,
-                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                    cmd="python -m areal.infra.rpc.rpc_server",
                 )
             ],
             scheduling_strategy=SchedulingStrategy(
@@ -694,9 +694,9 @@ class TestWorkerCreation:
         scheduler = create_scheduler(tmp_path)
 
         with (
-            patch("areal.scheduler.local.subprocess.Popen") as mock_popen,
-            patch("areal.scheduler.local.find_free_ports") as mock_find_ports,
-            patch("areal.scheduler.local.gethostip") as mock_gethostip,
+            patch("areal.infra.scheduler.local.subprocess.Popen") as mock_popen,
+            patch("areal.infra.scheduler.local.find_free_ports") as mock_find_ports,
+            patch("areal.infra.scheduler.local.gethostip") as mock_gethostip,
         ):
             mock_gethostip.return_value = "127.0.0.1"
             mock_find_ports.return_value = [8000, 8001]
@@ -743,7 +743,7 @@ class TestWorkerCreation:
                     mem=1024,
                     gpu=1,
                     port_count=2,
-                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                    cmd="python -m areal.infra.rpc.rpc_server",
                 ),
                 SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2),
             ],  # 2 tasks for 3 replicas
@@ -756,9 +756,9 @@ class TestWorkerCreation:
             exc_info.value
         )
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_create_workers_subprocess_fails_immediately(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -789,9 +789,9 @@ class TestWorkerCreation:
 
             assert "exited immediately with code 1" in str(exc_info.value)
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_create_workers_cleanup_on_partial_failure(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -833,7 +833,7 @@ class TestWorkerCreation:
                     mem=1024,
                     gpu=1,
                     port_count=2,
-                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                    cmd="python -m areal.infra.rpc.rpc_server",
                 )
             ],
             scheduling_strategy=SchedulingStrategy(
@@ -857,7 +857,7 @@ class TestGetWorkers:
 
         assert exc_info.value.worker_id == "nonexistent"
 
-    @patch("areal.scheduler.local.time.sleep")
+    @patch("areal.infra.scheduler.local.time.sleep")
     def test_get_workers_success(self, mock_sleep, scheduler, tmp_path):
         """Should return workers when all are ready."""
         # Create mock workers
@@ -877,8 +877,8 @@ class TestGetWorkers:
             assert workers[0].id == "test/0"
             assert workers[1].id == "test/1"
 
-    @patch("areal.scheduler.local.time.time")
-    @patch("areal.scheduler.local.time.sleep")
+    @patch("areal.infra.scheduler.local.time.time")
+    @patch("areal.infra.scheduler.local.time.sleep")
     def test_get_workers_timeout(self, mock_sleep, mock_time, scheduler, tmp_path):
         """Should raise WorkerTimeoutError when timeout is exceeded."""
         # Mock time progression - provide enough values
@@ -917,7 +917,7 @@ class TestGetWorkers:
             assert exc_info.value.worker_id == "test/0"
             assert exc_info.value.exit_code == 1
 
-    @patch("areal.scheduler.local.time.sleep")
+    @patch("areal.infra.scheduler.local.time.sleep")
     def test_get_workers_gradual_readiness(self, mock_sleep, scheduler, tmp_path):
         """Should wait for all workers to become ready gradually."""
         worker1 = create_worker_info(
@@ -1225,7 +1225,8 @@ class TestSetEnv:
         mock_session.post = Mock(return_value=mock_response)
 
         with patch(
-            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+            "areal.infra.scheduler.local.aiohttp.ClientSession",
+            return_value=mock_session,
         ):
             asyncio.run(
                 scheduler.set_worker_env("test/0", {"RANK": "0", "WORLD_SIZE": "1"})
@@ -1263,7 +1264,8 @@ class TestEngineCreation:
         mock_session.post = Mock(return_value=mock_response)
 
         with patch(
-            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+            "areal.infra.scheduler.local.aiohttp.ClientSession",
+            return_value=mock_session,
         ):
             result = asyncio.run(
                 scheduler.create_engine(
@@ -1327,7 +1329,8 @@ class TestEngineCreation:
         mock_session.post = Mock(return_value=mock_response)
 
         with patch(
-            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+            "areal.infra.scheduler.local.aiohttp.ClientSession",
+            return_value=mock_session,
         ):
             with pytest.raises(EngineImportError) as exc_info:
                 asyncio.run(scheduler.create_engine("test/0", "nonexistent.Engine"))
@@ -1354,7 +1357,8 @@ class TestEngineCreation:
         mock_session.post = Mock(return_value=mock_response)
 
         with patch(
-            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+            "areal.infra.scheduler.local.aiohttp.ClientSession",
+            return_value=mock_session,
         ):
             with pytest.raises(EngineCreationError) as exc_info:
                 asyncio.run(
@@ -1386,7 +1390,8 @@ class TestEngineCreation:
         )
 
         with patch(
-            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+            "areal.infra.scheduler.local.aiohttp.ClientSession",
+            return_value=mock_session,
         ):
             with pytest.raises(WorkerFailedError) as exc_info:
                 asyncio.run(
@@ -1409,7 +1414,8 @@ class TestEngineCreation:
         )
 
         with patch(
-            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+            "areal.infra.scheduler.local.aiohttp.ClientSession",
+            return_value=mock_session,
         ):
             with pytest.raises(RPCConnectionError) as exc_info:
                 asyncio.run(
@@ -1432,7 +1438,8 @@ class TestEngineCreation:
         mock_session.post = Mock(side_effect=TimeoutError("Request timeout"))
 
         with patch(
-            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+            "areal.infra.scheduler.local.aiohttp.ClientSession",
+            return_value=mock_session,
         ):
             with pytest.raises(EngineCreationError) as exc_info:
                 asyncio.run(
@@ -1491,7 +1498,7 @@ class TestEngineMethodCalls:
 
             assert "Method 'nonexistent' not found" in str(exc_info.value)
 
-    @patch("areal.scheduler.local.time.sleep")
+    @patch("areal.infra.scheduler.local.time.sleep")
     def test_call_engine_retry_on_503(self, mock_sleep, scheduler, tmp_path):
         """Should retry on 503 Service Unavailable."""
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
@@ -1513,7 +1520,7 @@ class TestEngineMethodCalls:
             assert result == "success"
             assert mock_sleep.called
 
-    @patch("areal.scheduler.local.time.sleep")
+    @patch("areal.infra.scheduler.local.time.sleep")
     def test_call_engine_max_retries_exhausted(self, mock_sleep, scheduler, tmp_path):
         """Should raise EngineCallError after max retries."""
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
@@ -1530,7 +1537,7 @@ class TestEngineMethodCalls:
             ) or "Service unavailable" in str(exc_info.value)
             assert exc_info.value.attempt == 3
 
-    @patch("areal.scheduler.local.time.sleep")
+    @patch("areal.infra.scheduler.local.time.sleep")
     def test_call_engine_exponential_backoff(self, mock_sleep, scheduler, tmp_path):
         """Should use exponential backoff for retries."""
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
@@ -1569,7 +1576,8 @@ class TestEngineMethodCalls:
         mock_session.post = Mock(return_value=mock_response)
 
         with patch(
-            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+            "areal.infra.scheduler.local.aiohttp.ClientSession",
+            return_value=mock_session,
         ):
             result = asyncio.run(
                 scheduler.async_call_engine("test/0", "compute", arg1=10, arg2=20)
@@ -1606,7 +1614,8 @@ class TestEngineMethodCalls:
         mock_session.post = Mock(side_effect=[mock_response_503, mock_response_200])
 
         with patch(
-            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+            "areal.infra.scheduler.local.aiohttp.ClientSession",
+            return_value=mock_session,
         ):
             with patch("asyncio.sleep") as mock_async_sleep:
                 result = asyncio.run(
@@ -1690,7 +1699,7 @@ class TestEdgeCases:
 
     def test_port_allocation_accumulates_correctly(self, tmp_path):
         """Should correctly accumulate allocated ports over multiple allocations."""
-        with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
+        with patch("areal.infra.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.side_effect = [
                 [8000, 8001],
                 [8002, 8003],
@@ -1713,9 +1722,9 @@ class TestEdgeCases:
                 8006,
             }
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_worker_id_format(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -1786,9 +1795,9 @@ class TestEdgeCases:
 class TestColocationBehavior:
     """Test colocation-specific behavior for worker reuse."""
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_get_workers_for_colocated_role_delegates_to_target(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -1828,9 +1837,9 @@ class TestColocationBehavior:
         # Clean up workers while mock is still active
         scheduler.delete_workers(None)
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_delete_colocated_role_does_not_kill_processes(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -1880,9 +1889,9 @@ class TestColocationBehavior:
         # Clean up workers while mock is still active
         scheduler.delete_workers(None)
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_colocation_replica_mismatch_raises_error(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -1921,9 +1930,9 @@ class TestColocationBehavior:
         # Clean up workers while mock is still active
         scheduler.delete_workers(None)
 
-    @patch("areal.scheduler.local.gethostip")
-    @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local.find_free_ports")
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
     def test_colocation_target_not_found_raises_error(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -1977,7 +1986,7 @@ class TestForkColocationBehavior:
             cmd = [
                 "python",
                 "-m",
-                "areal.scheduler.rpc.rpc_server",
+                "areal.infra.rpc.rpc_server",
                 "--host",
                 host,
                 "--port",
@@ -2112,7 +2121,7 @@ class TestForkColocationBehavior:
         cmd = [
             "python",
             "-m",
-            "areal.scheduler.rpc.rpc_server",
+            "areal.infra.rpc.rpc_server",
             "--host",
             host,
             "--port",
@@ -2236,7 +2245,7 @@ class TestForkColocationBehavior:
                 cmd = [
                     "python",
                     "-m",
-                    "areal.scheduler.rpc.rpc_server",
+                    "areal.infra.rpc.rpc_server",
                     "--host",
                     host,
                     "--port",
@@ -2358,7 +2367,7 @@ class TestForkColocationBehavior:
         cmd = [
             "python",
             "-m",
-            "areal.scheduler.rpc.rpc_server",
+            "areal.infra.rpc.rpc_server",
             "--host",
             host,
             "--port",

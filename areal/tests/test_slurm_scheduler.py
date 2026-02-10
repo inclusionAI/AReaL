@@ -12,13 +12,13 @@ from areal.api.cli_args import (
     SchedulingStrategyType,
 )
 from areal.api.scheduler_api import Job
-from areal.scheduler.exceptions import (
+from areal.infra.scheduler.exceptions import (
     EngineCreationError,
     WorkerCreationError,
     WorkerNotFoundError,
     WorkerTimeoutError,
 )
-from areal.scheduler.slurm import SlurmScheduler
+from areal.infra.scheduler.slurm import SlurmScheduler
 
 # Check if 'srun' exists in the system PATH
 if shutil.which("srun") is None:

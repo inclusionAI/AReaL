@@ -7,7 +7,7 @@ import pytest
 import torch
 from transformers import AutoTokenizer
 
-from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
+from areal.infra.rpc.serialization import deserialize_value, serialize_value
 from areal.tests.utils import get_model_path
 
 

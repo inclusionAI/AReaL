@@ -7,7 +7,7 @@ from ray.util.state import summarize_actors
 
 from areal.api.cli_args import BaseExperimentConfig, SchedulingStrategy
 from areal.api.scheduler_api import Job, SchedulingSpec, Worker
-from areal.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
+from areal.infra.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
 
 pytestmark = pytest.mark.skip(
     reason=(
@@ -119,7 +119,7 @@ class TestWorkerCallEngine:
 
         # sync
         ray_actor_handle.call.remote = sync_none
-        with patch("areal.scheduler.ray.ray.get", return_value=None):
+        with patch("areal.infra.scheduler.ray.ray.get", return_value=None):
             result = scheduler.call_engine(
                 worker.worker.id, "test_fn", engine_name="test/0"
             )

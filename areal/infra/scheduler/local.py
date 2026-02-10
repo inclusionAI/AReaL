@@ -20,7 +20,8 @@ from areal.api.cli_args import (
 )
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
 from areal.infra.platforms import current_platform
-from areal.scheduler.exceptions import (
+from areal.infra.rpc.serialization import deserialize_value, serialize_value
+from areal.infra.scheduler.exceptions import (
     EngineCallError,
     EngineCreationError,
     EngineImportError,
@@ -34,7 +35,6 @@ from areal.scheduler.exceptions import (
     WorkerNotFoundError,
     WorkerTimeoutError,
 )
-from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging, name_resolve, names
 from areal.utils.concurrent import run_async_task
 from areal.utils.fs import validate_shared_path
@@ -233,7 +233,7 @@ class LocalScheduler(Scheduler):
                     mem=1024,
                     gpu=0,
                     port_count=2,
-                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                    cmd="python -m areal.infra.rpc.rpc_server",
                 )
             ] * num_workers
 
@@ -650,7 +650,7 @@ class LocalScheduler(Scheduler):
                     raise WorkerCreationError(
                         role,
                         f"SchedulingSpec.cmd is required but not set for worker {worker_id}",
-                        "Specify 'python -m areal.scheduler.rpc.rpc_server' in your config.",
+                        "Specify 'python -m areal.infra.rpc.rpc_server' in your config.",
                     )
 
                 if "--port" in scheduling.cmd:

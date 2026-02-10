@@ -16,8 +16,12 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.api.scheduler_api import Scheduler
-from areal.infra.platforms import current_platform
-from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
+from areal.infra import (
+    LocalScheduler,
+    RayScheduler,
+    SlurmScheduler,
+    current_platform,
+)
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,

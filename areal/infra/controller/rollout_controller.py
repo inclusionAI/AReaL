@@ -29,7 +29,7 @@ from areal.api.io_struct import (
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
-from areal.scheduler.rpc.serialization import deserialize_value
+from areal.infra.rpc.serialization import deserialize_value
 from areal.utils import logging, perf_tracer
 from areal.utils.concurrent import run_async_task
 from areal.utils.data import concat_padded_tensors, cycle_dataloader

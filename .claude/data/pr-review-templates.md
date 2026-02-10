@@ -349,7 +349,7 @@ Checklist:
 ### Launcher and Scheduler Configuration \[Sonnet\]
 
 ```
-Applicable: areal/launcher/, areal/scheduler/ directories
+Applicable: areal/launcher/, areal/infra/scheduler/, areal/infra/rpc directories
 Checklist:
 - Resource config reasonableness (GPU count, memory)
 - Process group config matches parallel strategy

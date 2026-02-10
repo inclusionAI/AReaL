@@ -16,7 +16,7 @@ from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Worker
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.infra import RolloutController
-from areal.scheduler.local import LocalScheduler
+from areal.infra.scheduler.local import LocalScheduler
 from areal.tests.utils import get_model_path
 from areal.utils.hf_utils import load_hf_tokenizer
 
@@ -500,7 +500,7 @@ class TestRolloutControllerBatchOperations:
         Unlike TrainController which uses RTensors for distributed batch storage,
         RolloutController uses task-based round-robin and returns regular Python dicts.
         """
-        from areal.scheduler.rpc.rtensor import RTensor
+        from areal.infra.rpc.rtensor import RTensor
 
         config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
         scheduler = MockScheduler()
@@ -1027,7 +1027,7 @@ def test_rollout_controller_integration(tmp_path, model_path):
             enable_rollout_tracing=True,
             scheduling_spec=(
                 SchedulingSpec(
-                    cpu=4, gpu=1, cmd="python -m areal.scheduler.rpc.rpc_server"
+                    cpu=4, gpu=1, cmd="python -m areal.infra.rpc.rpc_server"
                 ),
             ),
         ),

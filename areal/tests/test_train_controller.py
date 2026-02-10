@@ -122,7 +122,7 @@ def train_config():
                 gpu=1,
                 mem=16000,
                 port_count=2,
-                cmd="python -m areal.scheduler.rpc.rpc_server",
+                cmd="python -m areal.infra.rpc.rpc_server",
             ),
         )
     )

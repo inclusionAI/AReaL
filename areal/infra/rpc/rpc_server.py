@@ -21,9 +21,9 @@ from werkzeug.serving import make_server
 from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.infra.platforms import current_platform
-from areal.scheduler.rpc import rtensor
-from areal.scheduler.rpc.rtensor import RTensor
-from areal.scheduler.rpc.serialization import (
+from areal.infra.rpc import rtensor
+from areal.infra.rpc.rtensor import RTensor
+from areal.infra.rpc.serialization import (
     deserialize_value,
     serialize_value,
 )
@@ -209,7 +209,7 @@ def fork_worker():
     {
         "role": "ref",           # Role name for the forked worker
         "worker_index": 0,       # Worker index
-        "command": "areal.scheduler.rpc.rpc_server"  # Optional: custom module to run
+        "command": "areal.infra.rpc.rpc_server"  # Optional: custom module to run
     }
 
     Returns:
@@ -243,7 +243,7 @@ def fork_worker():
 
         # Build command for child process
         # Use custom module if specified, otherwise default to rpc_server
-        module = command if command else "areal.scheduler.rpc.rpc_server"
+        module = command if command else "areal.infra.rpc.rpc_server"
         cmd = [
             sys.executable,
             "-m",

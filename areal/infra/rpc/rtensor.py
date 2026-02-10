@@ -105,7 +105,7 @@ class HttpTensorBackend:
         self, session: aiohttp.ClientSession, shard_id: str, node_addr: str
     ) -> torch.Tensor:
         # Avoid circular import
-        from areal.scheduler.rpc.serialization import deserialize_value
+        from areal.infra.rpc.serialization import deserialize_value
 
         url = f"http://{node_addr}/data/{shard_id}"
         async with session.get(url) as resp:

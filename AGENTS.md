@@ -37,8 +37,9 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
   shared utilities:
   - `areal/api/` - Contracts for workflows, engines, schedulers, IO structs, and
     CLI/config dataclasses.
-  - `areal/infra/` - Single controller implementation, async orchestration primitives,
-    and hardware/platform abstractions for CPU/GPU/NPU runtimes.
+  - `areal/infra/` - Core infrastructure including single controller implementation,
+    placement and allocation policies, async orchestration primitives, and
+    hardware/platform abstractions for CPU/GPU/NPU runtimes.
   - `areal/dataset/` - Stateful dataset loaders (GSM8K, Geometry3K, CLEVR, HH-RLHF,
     TORL, etc.) and utilities that feed rollout jobs safely.
   - `areal/engine/` - Training backends (FSDP2, Megatron, PPO, SFT, reward modeling) and
@@ -51,8 +52,6 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
     wrappers, custom heads).
   - `areal/reward/` - Built-in reward functions (GSM8K, Geometry3K, CLEVR, etc.), math
     parsers, and helpers; wrap slow logic with `AsyncRewardWrapper`.
-  - `areal/scheduler/` - Placement and allocation policies aligned with launcher
-    configs.
   - `areal/tests/` - Focused unit/integration suites (many require GPUs or mocked
     distributed backends).
   - `areal/tools/` - Developer utilities and maintenance scripts tied to the core

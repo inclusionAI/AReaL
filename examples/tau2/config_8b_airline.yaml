@@ -90,7 +90,7 @@ actor:
       gpu: 1
       cpu: 4
       mem: 32
-      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      cmd: python3 -m areal.infra.rpc.rpc_server
       # image: /path/to/container.sif  # Optional: specify container image for Slurm
       env_vars:
         # NCCL settings - adjust based on your cluster network configuration

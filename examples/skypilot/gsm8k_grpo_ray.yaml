@@ -78,7 +78,7 @@ actor:
       port_count: 2
       gpu: 1
       mem: 32
-      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars: {}
 
 ref:
