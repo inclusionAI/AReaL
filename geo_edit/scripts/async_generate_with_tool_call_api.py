@@ -12,8 +12,6 @@ from PIL import Image
 from tqdm import tqdm
 
 from geo_edit.agents.api_agent import AgentConfig, APIBasedAgent
-from geo_edit.agents.sglang_agent import SGLangBasedAgent
-from geo_edit.agents.vllm_agent import VLLMBasedAgent
 from geo_edit.config import (
     build_google_agent_configs,
     build_openai_agent_configs,
@@ -24,9 +22,7 @@ from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.environment.action import TOOL_AGENTS, TOOL_AGENT_DECLARE, TOOL_FUNCTIONS
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
-from geo_edit.environment.task.openai_vision_qa_task import OpenAIVisionQATask
-from geo_edit.environment.task.sglang_vision_qa_task import SGLangVisionQATask
-from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
+from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.utils.logger import setup_logger
 from geo_edit.utils.stats import save_global_meta_info
 
@@ -41,6 +37,7 @@ _WORKER_MAX_TOOL_CALLS = None
 _WORKER_TASK_CLASS = None
 _WORKER_MODEL_TYPE = None
 _WORKER_SYSTEM_PROMPT = None
+_WORKER_API_MODE = None
 
 
 def _init_worker(
@@ -53,7 +50,7 @@ def _init_worker(
     max_tool_calls: int,
     use_tools: str,
 ):
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_API_MODE
 
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
@@ -78,14 +75,14 @@ def _init_worker(
             reasoning_level="low",
             system_prompt=system_prompt,
         )
-        _WORKER_TASK_CLASS = OpenAIVisionQATask
+        _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
     elif model_type == "SGLang":
         agent_configs = build_sglang_agent_configs(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
             tool_mode=use_tools,
         )
-        _WORKER_TASK_CLASS = SGLangVisionQATask
+        _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
     else:
         agent_configs = build_vllm_agent_configs(
             max_output_tokens=max_output_tokens,
@@ -93,7 +90,12 @@ def _init_worker(
             system_prompt=system_prompt,
             tool_mode=use_tools,
         )
-        _WORKER_TASK_CLASS = VLLMVisionQATask
+        _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
+
+    # Set api_mode based on model_type
+    api_mode = "responses"  # default
+    if model_type == "SGLang":
+        api_mode = "chat_completions"  # SGLang only supports chat_completions
 
     config = AgentConfig(
         model_type=model_type,
@@ -103,19 +105,15 @@ def _init_worker(
         port=port,
         generate_config=agent_configs.generate_config,
         n_retry=3,
+        api_mode=api_mode,
     )
     _WORKER_AGENT_CONFIGS = agent_configs
-    if model_type == "vLLM":
-        agent_cls = VLLMBasedAgent
-    elif model_type == "SGLang":
-        agent_cls = SGLangBasedAgent
-    else:
-        agent_cls = APIBasedAgent
-    _WORKER_AGENT = agent_cls(config)
+    _WORKER_AGENT = APIBasedAgent(config)
     _WORKER_OUTPUT_PATH = output_path
     _WORKER_MAX_TOOL_CALLS = max_tool_calls
     _WORKER_MODEL_TYPE = model_type
     _WORKER_SYSTEM_PROMPT = system_prompt
+    _WORKER_API_MODE = api_mode
 
 
 def _run_one_task(task_payload: dict):
@@ -125,7 +123,7 @@ def _run_one_task(task_payload: dict):
     Returns:
       (ok: bool, meta_info: dict|None)
     """
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE, _WORKER_API_MODE
 
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
@@ -145,14 +143,15 @@ def _run_one_task(task_payload: dict):
     model_type = model_type_map.get(_WORKER_MODEL_TYPE, "openai")
 
     task_kwargs = {"model_type": model_type}
+    # Add api_mode for non-Google tasks
+    if _WORKER_MODEL_TYPE != "Google":
+        task_kwargs["api_mode"] = _WORKER_API_MODE
     extra_kwargs = task_payload.get("task_kwargs")
     if isinstance(extra_kwargs, dict):
         task_kwargs.update(extra_kwargs)
     if text_only:
         logger.info(f"[{task_id}] running text-only task.")
         task_kwargs["text_only"] = True
-    if _WORKER_MODEL_TYPE in {"vLLM", "SGLang"}:
-        task_kwargs["system_prompt"] = _WORKER_SYSTEM_PROMPT
     task = _WORKER_TASK_CLASS(
         task_id=task_id,
         task_prompt=text_prompt,

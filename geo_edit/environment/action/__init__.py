@@ -15,13 +15,11 @@ from geo_edit.environment.action.image_edition_tool import (
     image_label_function_declaration,
 )
 from geo_edit.environment.action.model_analysis_tool import (
-    bbox_agent_function,
-    bbox_agent_function_declaration,
     chartmoe_function,
-    chartmoe_function_declaration,
     gllava_function,
-    gllava_function_declaration,
     multimath_function,
+    chartmoe_function_declaration,
+    gllava_function_declaration,
     multimath_function_declaration,
 )
 
@@ -46,13 +44,11 @@ TOOL_AGENT_DECLARE = [
     # multimath_function_declaration,
     # gllava_function_declaration,
     # chartmoe_function_declaration,
-    # bbox_agent_function_declaration,
 ]
 TOOL_AGENTS = {
     "multimath": multimath_function,
     "gllava": gllava_function,
     "chartmoe": chartmoe_function,
-    "bbox_agent": bbox_agent_function,
 }
 
 TOOL_RETURN_TYPES = {
@@ -64,7 +60,6 @@ TOOL_RETURN_TYPES = {
     "multimath": "text",
     "gllava": "text",
     "chartmoe": "text",
-    "bbox_agent": "text",
 }
 
 
@@ -73,14 +68,11 @@ def is_tool_agent_enabled() -> bool:
 
 
 def get_tool_declarations() -> List[Dict[str, object]]:
-    declarations = list(TOOL_FUNCTIONS_DECLARE)
-    if is_tool_agent_enabled():
-        declarations.extend(TOOL_AGENT_DECLARE)
+    declarations = TOOL_FUNCTIONS_DECLARE + TOOL_AGENT_DECLARE
     return declarations
 
 
 def get_tool_functions() -> Dict[str, Callable[..., Image.Image | str]]:
-    tool_functions = dict(TOOL_FUNCTIONS)
-    if is_tool_agent_enabled():
-        tool_functions.update(TOOL_AGENTS)
+    tool_functions = TOOL_FUNCTIONS.copy()
+    tool_functions.update(TOOL_AGENTS)
     return tool_functions

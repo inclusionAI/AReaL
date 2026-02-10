@@ -131,10 +131,3 @@ def calculate_confidence_score(logprobs: List[float]) -> float:
     avg_logprob = sum(logprobs) / len(logprobs)
     confidence = 1 / (1 + math.exp(-(avg_logprob + 2.5)))
     return max(0.0, min(1.0, confidence))
-#根据以下要求构建geo_edit中的tool agent代码，忽略所有原先的tool agent逻辑： 0.构建跨节点ray header worker,假设只有一个header一个worker，下面所有操作在header完成，这一步不需要你完成
-# 1.在async_generate_with_tool_call_api读取被选择启动的tool agent: environment/_init__.py TOOL_FUNCTIONS_DECLARE
-# 2. 调用launch_vllm_tool_agent.sh 分别启动各个类型的tool agent server,参数事先写定在tool_agent_config.json,在worker节点启动，占用一个gpu，监听一个端口。ray的node ip在async_generate_with_tool_call_api.py中获取，通过ray.get_node_ip_address()
-# 3.在async_generate_with_tool_call_api.py中初始化创建ToolAgent实例，传入tool agent server的ip和port，其他参数不需要传入，因为加载部分在第二步完成
-# 4.在ToolAgent中维护一个OpenAI客户端实例，用于发送请求到tool agent server，使用response api
-# 5.在ToolAgent的generate方法中，构造请求负载，调用OpenAI客户端的chat.completions.create方法，获取响应，并解析返回结果
-# 6.在程序退出时，调用shutdown_tool_agent函数，发送关闭请求到tool agent server

@@ -4,13 +4,9 @@ import logging
 import os
 import shutil
 from geo_edit.agents.api_agent import APIBasedAgent, AgentConfig
-from geo_edit.agents.vllm_agent import VLLMBasedAgent
-from geo_edit.agents.sglang_agent import SGLangBasedAgent
 from geo_edit.environment.action import TOOL_FUNCTIONS
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
-from geo_edit.environment.task.openai_vision_qa_task import OpenAIVisionQATask
-from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
-from geo_edit.environment.task.sglang_vision_qa_task import SGLangVisionQATask
+from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.config import (
     NOTOOL_INPUT_TEMPLATE,
     MATHVISION_INPUT_TEMPLATE,
@@ -78,6 +74,11 @@ def main():
             tool_mode="ANY",
         )
 
+    # Set api_mode based on model_type
+    api_mode = "responses"  # default
+    if args.model_type == "SGLang":
+        api_mode = "chat_completions"  # SGLang only supports chat_completions
+
     config = AgentConfig(
         model_type=args.model_type,
         model_name=args.model_name_or_path,
@@ -86,14 +87,9 @@ def main():
         port=args.port,
         generate_config=agent_configs.generate_config,
         n_retry=3,
+        api_mode=api_mode,
     )
-    if args.model_type == "vLLM":
-        agent_cls = VLLMBasedAgent
-    elif args.model_type == "SGLang":
-        agent_cls = SGLangBasedAgent
-    else:
-        agent_cls = APIBasedAgent
-    api_agent = agent_cls(config)
+    api_agent = APIBasedAgent(config)
 
     meta_info_list = []
 
@@ -118,15 +114,13 @@ def main():
 
         if args.model_type == "Google":
             task_cls = GoogleVisionQATask
-        elif args.model_type == "OpenAI":
-            task_cls = OpenAIVisionQATask
-        elif args.model_type == "SGLang":
-            task_cls = SGLangVisionQATask
+            task_kwargs = {}
         else:
-            task_cls = VLLMVisionQATask
-        task_kwargs = {}
-        if args.model_type in {"vLLM", "SGLang"}:
-            task_kwargs["system_prompt"] = system_prompt
+            task_cls = OpenAICompatibleVisionQATask
+            task_kwargs = {
+                "model_type": args.model_type.lower(),
+                "api_mode": api_mode,
+            }
         task = task_cls(
             task_id=test_id,
             task_prompt=text_prompt,

@@ -3,8 +3,6 @@
 
 from geo_edit.agents.api_agent import APIBasedAgent
 from geo_edit.agents.base import AgentConfig, BaseAgent
-from geo_edit.agents.sglang_agent import SGLangBasedAgent
-from geo_edit.agents.vllm_agent import VLLMBasedAgent
 from geo_edit.environment.action.tool_agent import ToolAgent
 from geo_edit.utils.image_utils import load_image_safely
 from geo_edit.utils.text_utils import (
@@ -21,8 +19,6 @@ __all__ = [
     "AgentConfig",
     # Concrete implementations
     "APIBasedAgent",
-    "VLLMBasedAgent",
-    "SGLangBasedAgent",
     "ToolAgent",
     # Utility functions
     "load_image_safely",

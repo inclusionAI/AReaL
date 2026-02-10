@@ -24,7 +24,17 @@ class GoogleVisionQATask(VisionQATask):
         tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
         **kwargs,
     ):
-        super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer, task_image_path=task_image_path, save_dir=save_dir, tool_functions=tool_functions, **kwargs)
+        super().__init__(
+            task_id=task_id,
+            task_prompt=task_prompt,
+            task_answer=task_answer,
+            task_image_path=task_image_path,
+            save_dir=save_dir,
+            tool_functions=tool_functions,
+            model_type="google",
+            api_mode="responses",  # Google uses its own native API, api_mode is ignored
+            **kwargs,
+        )
         if self.text_only:
             logger.info("Initializing GoogleVisionQATask in text only mode.")
             self.contents = [self.task_prompt]

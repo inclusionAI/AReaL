@@ -35,6 +35,7 @@ class VisionQATask(AbstractVLMTask):
         task_image_path: str | None,
         save_dir: Path | str,
         model_type: Literal["google", "openai", "vllm", "sglang"] = "openai",
+        api_mode: Literal["responses", "chat_completions"] = "responses",
         tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
         **kwargs,
     ):
@@ -43,6 +44,7 @@ class VisionQATask(AbstractVLMTask):
         self.task_answer = task_answer
         self.task_image_path = task_image_path
         self.model_type = model_type
+        self.api_mode = api_mode
         self.tool_functions = tool_functions or {}
         self.tool_return_types = TOOL_RETURN_TYPES
         self.state = True
@@ -360,35 +362,29 @@ class VisionQATask(AbstractVLMTask):
 
         tokens_used_total = tokens_total_per_step[-1]
 
-        if self.model_type == "openai":
-            # openai response api
-            tokens_output_total = sum(t for t in tokens_output_per_step if isinstance(t, (int, float)))
-            tokens_used_total = tokens_total_per_step[-1]
-            tokens_input_total = tokens_used_total - tokens_output_total
-            if tokens_input_total < 0:
-                raise ValueError("Calculated tokens_input_total is negative.")
-        elif self.model_type == "vllm":
-            # vLLM OpenAI-compatible Responses API
-            tokens_output_total = sum(t for t in tokens_output_per_step if isinstance(t, (int, float)))
-            tokens_used_total = tokens_total_per_step[-1]
-            tokens_input_total = None
-            tokens_input_total = tokens_used_total - tokens_output_total
-            if tokens_input_total < 0:
-                raise ValueError("Calculated tokens_input_total is negative.")
-        elif self.model_type == "sglang":
-            # OpenAI-compatible chat completions
-            tokens_output_total = sum(t for t in tokens_output_per_step if isinstance(t, (int, float)))
-            tokens_input_total = tokens_input_per_step[-1]
-            tokens_used_total = tokens_output_total + tokens_input_total
-        elif self.model_type == "google":
+        # Token calculation based on api_mode
+        # - responses API: total_tokens is cumulative, input = total - output
+        # - chat_completions API: prompt_tokens is cumulative input, total = input + output
+        if self.model_type == "google":
+            # Google uses its own native API
             tokens_output_total = sum(t for t in tokens_output_per_step if isinstance(t, (int, float)))
             tokens_input_total = None
             if isinstance(tokens_used_total, (int, float)) and isinstance(tokens_output_total, (int, float)):
                 tokens_input_total = float(tokens_used_total) - float(tokens_output_total)
                 if tokens_input_total < 0:
                     raise ValueError("Calculated tokens_input_total is negative.")
-        else:
-            raise ValueError(f"Unknown model type: {self.model_type}")
+        elif self.api_mode == "chat_completions":
+            # Chat Completions API: prompt_tokens is cumulative input tokens
+            tokens_output_total = sum(t for t in tokens_output_per_step if isinstance(t, (int, float)))
+            tokens_input_total = tokens_input_per_step[-1]
+            tokens_used_total = tokens_output_total + tokens_input_total
+        elif self.api_mode == "responses":
+            # Responses API: total_tokens is cumulative
+            tokens_output_total = sum(t for t in tokens_output_per_step if isinstance(t, (int, float)))
+            tokens_used_total = tokens_total_per_step[-1]
+            tokens_input_total = tokens_used_total - tokens_output_total
+            if tokens_input_total < 0:
+                raise ValueError("Calculated tokens_input_total is negative.")
 
         meta_info = {
             "id": self.task_id,

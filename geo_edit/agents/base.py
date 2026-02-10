@@ -16,7 +16,7 @@ class AgentConfig:
     """Configuration for VLM agents"""
 
     # Model configuration
-    model_type: str = "HuggingFace"  # HuggingFace, vLLM, OpenAI, Azure
+    model_type: str = "HuggingFace"  # HuggingFace, vLLM, OpenAI, Azure, Google, SGLang
     model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"
     model_path: Optional[str] = None  # For local models
 
@@ -39,12 +39,15 @@ class AgentConfig:
     return_logprobs: bool = False  # For external RL training
     return_attention: bool = False  # For analysis
 
-    # API specific (for OpenAI/Azure/vLLM)
+    # API specific (for OpenAI/Azure/vLLM/SGLang)
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     deployment_name: Optional[str] = None
     port: Optional[int] = None  # For vLLM
     generate_config: Optional[Dict[str, Any]] = field(default_factory=dict)
+
+    # API mode: "responses" or "chat_completions" (only for OpenAI/vLLM/SGLang, not Google)
+    api_mode: str = "responses"
 
     def __post_init__(self):
         """Validate configuration after initialization"""
@@ -52,9 +55,17 @@ class AgentConfig:
         if self.model_type not in valid_model_types:
             raise ValueError(f"model_type must be one of {valid_model_types}, got {self.model_type}")
 
+        valid_api_modes = ["responses", "chat_completions"]
+        if self.api_mode not in valid_api_modes:
+            raise ValueError(f"api_mode must be one of {valid_api_modes}, got {self.api_mode}")
+
         valid_dtypes = ["float16", "bfloat16", "float32"]
         if self.torch_dtype not in valid_dtypes:
             raise ValueError(f"torch_dtype must be one of {valid_dtypes}, got {self.torch_dtype}")
+
+        # Google API does not support api_mode switching
+        if self.model_type == "Google" and self.api_mode != "responses":
+            raise ValueError("Google API only supports 'responses' mode (native API). Cannot use 'chat_completions'.")
 
 
 class BaseAgent(ABC):

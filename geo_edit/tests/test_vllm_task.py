@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from geo_edit.agents.base import AgentConfig
-from geo_edit.agents.vllm_agent import VLLMBasedAgent
+from geo_edit.agents.api_agent import APIBasedAgent
 from geo_edit.config import build_vllm_agent_configs
 from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
 from geo_edit.environment.action import TOOL_FUNCTIONS
-from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
+from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -84,19 +84,21 @@ def test_vllm_task() -> None:
         api_base=api_base,
         generate_config=agent_configs.generate_config,
         n_retry=3,
+        api_mode="responses",  # vLLM supports both, default to responses
     )
 
-    agent = VLLMBasedAgent(config)
+    agent = APIBasedAgent(config)
     agent.reset()
 
-    task = VLLMVisionQATask(
+    task = OpenAICompatibleVisionQATask(
         task_id="vllm_task_test",
         task_prompt=prompt,
         task_answer="",
         task_image_path=str(args.image_path),
         save_dir=save_dir,
         tool_functions=tool_functions,
-        system_prompt=system_prompt,
+        model_type="vllm",
+        api_mode="responses",
     )
 
     logger.info("Model: %s", model_name)
