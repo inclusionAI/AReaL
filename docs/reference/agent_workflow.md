@@ -114,7 +114,7 @@ to the inference engine. This approach requires the workflow to inherit
 `RolloutWorkflow` and use the engine from `arun_episode`.
 
 ```python
-from areal.experimental.openai import ArealOpenAI
+from areal.infra.openai import ArealOpenAI
 
 class MyWorkflow(RolloutWorkflow):
     async def arun_episode(self, engine, data):
@@ -227,7 +227,7 @@ that implement OpenAI-compatible endpoints.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Key file:** `areal/experimental/openai/proxy/proxy_rollout_server.py`
+**Key file:** `areal/infra/proxy/proxy_rollout_server.py`
 
 ### Four-Process Architecture (Proxy)
 
@@ -380,7 +380,7 @@ Each agent execution follows this lifecycle:
 The `InteractionCache` (extends `OrderedDict`) stores `InteractionWithTokenLogpReward`
 objects keyed by completion ID.
 
-**Key file:** `areal/experimental/openai/cache.py`
+**Key file:** `areal/infra/openai/cache.py`
 
 **Parent-child resolution**: When a new interaction is added, the cache finds its parent
 by checking if any existing interaction's messages are a prefix of the new one:
@@ -406,7 +406,7 @@ class InteractionWithTokenLogpReward:
     completion: ChatCompletion | None     # OpenAI response object
 ```
 
-**Key file:** `areal/experimental/openai/types.py`
+**Key file:** `areal/infra/openai/types.py`
 
 The `to_tensor_dict()` method converts to training format:
 
@@ -500,7 +500,7 @@ def _resolve_workflow(workflow, workflow_kwargs, group_size, proxy_addr):
 
 The `OpenAIProxyWorkflow` wraps user agents into `RolloutWorkflow`:
 
-**Key file:** `areal/experimental/openai/proxy/workflow.py`
+**Key file:** `areal/infra/proxy/workflow.py`
 
 ```python
 class OpenAIProxyWorkflow(RolloutWorkflow):
@@ -539,7 +539,7 @@ The `_run_agent` method handles both execution modes:
 
 The `ArealOpenAI` class extends `AsyncOpenAI` for direct engine integration:
 
-**Key file:** `areal/experimental/openai/client.py`
+**Key file:** `areal/infra/openai/client.py`
 
 ### Key Methods
 
@@ -562,7 +562,7 @@ The `ArealOpenAI` class extends `AsyncOpenAI` for direct engine integration:
 ## Public API
 
 ```python
-from areal.experimental.openai import (
+from areal.infra.openai import (
     ArealOpenAI,                     # Direct approach client
     InteractionWithTokenLogpReward,  # Token-level data structure
     OpenAIProxyClient,               # HTTP client for proxy sessions

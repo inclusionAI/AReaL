@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any
 import torch
 from pydantic import BaseModel
 
-from areal.experimental.openai.cache import InteractionCache
+from areal.infra.openai.cache import InteractionCache
 
 if TYPE_CHECKING:
-    from areal.experimental.openai.types import InteractionWithTokenLogpReward
+    from areal.infra.openai.types import InteractionWithTokenLogpReward
 
 # Session timeout for cleanup (1 hour)
 SESSION_TIMEOUT_SECONDS = 3600
@@ -138,7 +138,7 @@ def deserialize_interactions(
     data: dict[str, Any],
 ) -> dict[str, InteractionWithTokenLogpReward]:
     """Deserialize interactions from HTTP response."""
-    from areal.experimental.openai.types import InteractionWithTokenLogpReward
+    from areal.infra.openai.types import InteractionWithTokenLogpReward
 
     result = {}
     for key, item in data.items():

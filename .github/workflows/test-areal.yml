@@ -272,7 +272,7 @@ jobs:
           VIRTUAL_ENV: /AReaL/.venv
         run: |
           export PATH="/AReaL/.venv/bin:$PATH"
-          pytest -m "not slow or ci" --durations=20 -s -vv areal/tests/test_*.py areal/tests/experimental/
+          pytest -m "not slow or ci" --durations=20 -s -vv areal/tests/test_*.py areal/tests/experimental/ areal/tests/openai_client/
 
       - name: Run SFT integration tests
         env:

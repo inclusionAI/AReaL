@@ -18,16 +18,15 @@ from litellm.llms.anthropic.experimental_pass_through.adapters.transformation im
     AnthropicAdapter,
 )
 from litellm.types.utils import ModelResponse as LitellmModelResponse
-from pydantic import BaseModel
-
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from openai.types.responses import Response
 from openai.types.responses.response_create_params import ResponseCreateParams
+from pydantic import BaseModel
 
 from areal.api.cli_args import NameResolveConfig, OpenAIProxyConfig
-from areal.experimental.openai.client import ArealOpenAI
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
+from areal.infra.openai.client import ArealOpenAI
 from areal.utils import name_resolve, names, seeding
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer

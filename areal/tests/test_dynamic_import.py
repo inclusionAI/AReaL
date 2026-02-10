@@ -54,9 +54,7 @@ class TestImportFromString:
         assert callable(obj)
 
         # Another valid nested path
-        workflow_class = import_from_string(
-            "areal.workflow.multi_turn.MultiTurnWorkflow"
-        )
+        workflow_class = import_from_string("areal.workflow.rlvr.RLVRWorkflow")
         assert isinstance(workflow_class, type)
 
     def test_import_with_circular_import(self):

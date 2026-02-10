@@ -17,8 +17,8 @@ from areal.utils.perf_tracer import session_context, trace_session
 from .client_session import OpenAIProxyClient
 
 if TYPE_CHECKING:
-    from ..client import TRolloutEngine
-    from ..types import InteractionWithTokenLogpReward
+    from areal.infra.openai.client import TRolloutEngine
+    from areal.infra.openai.types import InteractionWithTokenLogpReward
 
 logger = logging.getLogger("OpenAIProxyWorkflow")
 

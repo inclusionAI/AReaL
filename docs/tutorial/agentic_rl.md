@@ -191,8 +191,8 @@ OpenAI-compatible model:
 
 ```python
 from camel.agents import ChatAgent
-from areal.experimental.camel.openai_model import AReaLOpenAICompatibleModel
-from areal.experimental.openai import ArealOpenAI
+from areal.infra.camel.openai_model import AReaLOpenAICompatibleModel
+from areal.infra.openai import ArealOpenAI
 
 # Create AReaL's OpenAI-compatible client
 client = ArealOpenAI(engine=engine, tokenizer=tokenizer)

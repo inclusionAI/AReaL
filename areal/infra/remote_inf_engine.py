@@ -49,7 +49,7 @@ from areal.utils.proc import kill_process_tree
 from .workflow_executor import WorkflowExecutor
 
 if TYPE_CHECKING:
-    from areal.experimental.openai import InteractionWithTokenLogpReward
+    from areal.infra.openai import InteractionWithTokenLogpReward
 
 RID_CACHE_SIZE = 128
 
@@ -72,7 +72,7 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, Any] | None:
-        from areal.experimental.openai import InteractionWithTokenLogpReward
+        from areal.infra.openai import InteractionWithTokenLogpReward
 
         results = await asyncio.gather(
             *[self.workflow.arun_episode(engine, data) for _ in range(self.group_size)]
@@ -496,7 +496,7 @@ class RemoteInfEngine(InferenceEngine):
         proxy_addr : str
             HTTP address of the proxy server (required)
         """
-        from areal.experimental.openai import OpenAIProxyWorkflow
+        from areal.infra.proxy import OpenAIProxyWorkflow
 
         openai_cfg = self.config.openai or OpenAIProxyConfig()
 

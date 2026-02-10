@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
-    from areal.experimental.openai.types import InteractionWithTokenLogpReward
+    from areal.infra.openai.types import InteractionWithTokenLogpReward
 
 
 class RolloutWorkflow(ABC):

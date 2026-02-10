@@ -5,8 +5,8 @@ from openai.types.responses.response import Response
 from openai.types.responses.response_output_message import ResponseOutputMessage
 from openai.types.responses.response_output_text import ResponseOutputText
 
-from areal.experimental.openai.cache import InteractionCache
-from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.infra.openai.cache import InteractionCache
+from areal.infra.openai.types import InteractionWithTokenLogpReward
 from areal.tests.utils import get_model_path
 from areal.utils.hf_utils import load_hf_tokenizer
 

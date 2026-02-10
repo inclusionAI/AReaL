@@ -2,7 +2,7 @@ import threading
 from collections import OrderedDict
 from typing import Any
 
-from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.infra.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
 
 logger = logging.getLogger("OpenAICache")

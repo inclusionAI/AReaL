@@ -145,7 +145,7 @@ class Scheduler(abc.ABC):
         command : str, optional
             Custom module path to run instead of the default rpc_server.
             If specified, the forked process runs this module (e.g.,
-            "areal.experimental.openai.proxy.proxy_rollout_server").
+            "areal.infra.proxy.proxy_rollout_server").
 
         Returns
         -------

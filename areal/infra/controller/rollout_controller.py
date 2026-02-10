@@ -317,7 +317,7 @@ class RolloutController:
 
     async def _async_start_proxy(self) -> None:
         """Async implementation of proxy worker initialization."""
-        command = "areal.experimental.openai.proxy.proxy_rollout_server"
+        command = "areal.infra.proxy.proxy_rollout_server"
         worker_ids = self.scheduler.fork_workers(
             role="proxy",
             target_role=self._worker_role,

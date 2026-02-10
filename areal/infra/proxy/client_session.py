@@ -28,7 +28,7 @@ from .server import (
 )
 
 if TYPE_CHECKING:
-    from ..types import InteractionWithTokenLogpReward
+    from areal.infra.openai.types import InteractionWithTokenLogpReward
 
 logger = getLogger("OpenAIProxyClient")
 

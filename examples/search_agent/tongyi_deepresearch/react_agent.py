@@ -11,7 +11,7 @@ from qwen_agent.agents.fncall_agent import FnCallAgent
 from qwen_agent.llm.schema import Message
 from transformers import PreTrainedTokenizer
 
-from areal.experimental.openai import ArealOpenAI
+from areal.infra.openai import ArealOpenAI
 from areal.utils import logging
 
 try:
