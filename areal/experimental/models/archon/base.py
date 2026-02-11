@@ -16,6 +16,8 @@ from areal.utils import logging
 if TYPE_CHECKING:
     from transformers import PretrainedConfig
 
+    from areal.models.tree_attn.module_archon import TreeAttentionMeta
+
 logger = logging.getLogger("ArchonModelBase")
 
 
@@ -124,6 +126,7 @@ class BaseArchonModel(nn.Module, ABC):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        tree_attn_meta: TreeAttentionMeta | None = None,
     ) -> torch.Tensor: ...
 
     @abstractmethod

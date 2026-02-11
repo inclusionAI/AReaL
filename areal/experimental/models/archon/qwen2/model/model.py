@@ -7,10 +7,10 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
 from torch.distributed import ProcessGroup
-from torch.nn.attention.flex_attention import BlockMask
 
 from areal.experimental.models.archon.attention import (
     SDPAWrapper,
+    TreeAttentionMeta,
     TreeAttentionWrapper,
     VarlenAttentionWrapper,
 )
@@ -25,7 +25,6 @@ from areal.experimental.models.archon.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
 )
-from areal.models.tree_attn.triton_kernel import TreeAttentionData
 
 
 class RMSNorm(nn.Module):
@@ -129,8 +128,7 @@ class Attention(nn.Module):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        block_mask: BlockMask | None = None,
-        triton_attn_data: TreeAttentionData | None = None,
+        tree_attn_meta: TreeAttentionMeta | None = None,
     ) -> torch.Tensor:
         bs, seqlen, _ = x.shape
 
@@ -184,8 +182,7 @@ class Attention(nn.Module):
             scale=self.scaling,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
-            block_mask=block_mask,
-            triton_attn_data=triton_attn_data,
+            tree_attn_meta=tree_attn_meta,
         )
 
         output = output.transpose(1, 2).contiguous()
@@ -246,9 +243,7 @@ class TransformerBlock(nn.Module):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        block_mask: BlockMask | None = None,
-        triton_attn_data: TreeAttentionData | None = None,
-        **kwargs,
+        tree_attn_meta: TreeAttentionMeta | None = None,
     ) -> torch.Tensor:
         x = x + self.attention(
             self.attention_norm(x),
@@ -256,8 +251,7 @@ class TransformerBlock(nn.Module):
             positions,
             cu_seqlens,
             max_seqlen,
-            block_mask=block_mask,
-            triton_attn_data=triton_attn_data,
+            tree_attn_meta=tree_attn_meta,
         )
         x = x + self.feed_forward(self.ffn_norm(x))
         return x
@@ -349,8 +343,7 @@ class Qwen2Model(BaseArchonModel):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int | torch.Tensor,
-        block_mask: BlockMask | None = None,
-        triton_attn_data: TreeAttentionData | None = None,
+        tree_attn_meta: TreeAttentionMeta | None = None,
     ) -> torch.Tensor:
         # When pipeline parallelism enabled, cu_seqlens is [1, B+1]
         if cu_seqlens.ndim == 2:
@@ -369,8 +362,7 @@ class Qwen2Model(BaseArchonModel):
                 positions,
                 cu_seqlens,
                 max_seqlen,
-                block_mask=block_mask,
-                triton_attn_data=triton_attn_data,
+                tree_attn_meta=tree_attn_meta,
             )
 
         h = self.norm(h) if self.norm else h

@@ -25,3 +25,4 @@ class NPUPlatform(Platform):
     def clear_memory(self) -> None:
         self.synchronize()
         gc.collect()
+        torch.npu.empty_cache()

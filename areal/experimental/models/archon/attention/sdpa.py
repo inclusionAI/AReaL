@@ -1,23 +1,16 @@
-# Adapted from torchtitan: torchtitan/models/archon/attention.py
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from areal.experimental.models.archon.varlen_attention import (
-    VarlenAttentionWrapper,
-    varlen_attn,
-)
-from areal.models.tree_attn.module_archon import TreeAttentionWrapper
+if TYPE_CHECKING:
+    from areal.models.tree_attn.module_archon import TreeAttentionMeta
 
-__all__ = [
-    "SDPAWrapper",
-    "VarlenAttentionWrapper",
-    "TreeAttentionWrapper",
-    "create_block_causal_mask_2d",
-    "varlen_attn",
-]
+__all__ = ["SDPAWrapper", "create_block_causal_mask_2d"]
 
 
 def create_block_causal_mask_2d(
@@ -43,7 +36,8 @@ def create_block_causal_mask_2d(
         Attention mask of shape [seq_len, seq_len].
         0.0 = attend, -inf = mask out.
 
-    Example for cu_seqlens=[0, 3, 5, 7]:
+    Example for cu_seqlens=[0, 3, 5, 7]::
+
         [  0, -inf, -inf, | -inf, -inf, | -inf, -inf]
         [  0,   0 , -inf, | -inf, -inf, | -inf, -inf]
         [  0,   0 ,   0 , | -inf, -inf, | -inf, -inf]
@@ -96,7 +90,7 @@ class SDPAWrapper(nn.Module):
         scale: float | None = None,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        **kwargs,  # Accept and ignore block_mask, triton_attn_data for API compatibility
+        tree_attn_meta: TreeAttentionMeta | None = None,
     ) -> torch.Tensor:
         """Compute attention with block-diagonal causal mask.
 
@@ -107,7 +101,8 @@ class SDPAWrapper(nn.Module):
             scale: Optional scale factor for attention scores.
             cu_seqlens: Cumulative sequence lengths, shape [num_seqs + 1].
             max_seqlen: Maximum sequence length (unused, for API compatibility).
-            **kwargs: Additional arguments (block_mask, triton_attn_data) ignored.
+            tree_attn_meta: Unused. Accepted for interface compatibility with
+                TreeAttentionWrapper.
 
         Returns:
             Attention output, shape [batch, heads, seq_len, head_dim]
