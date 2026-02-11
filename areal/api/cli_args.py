@@ -1383,13 +1383,15 @@ class OpenAIProxyConfig:
         default="inline",
         metadata={
             "help": (
-                "OpenAI proxy mode: 'inline' (in-process) or 'subproc' (subprocess). "
+                "OpenAI proxy mode: 'inline' (in-process), 'subproc' (subprocess), or 'service' (remote Agent Service). "
                 "`inline` mode runs the provided agent workflow directly in the same process. "
                 "It can use the provided `base_url` and `http_client` to reduce overhead. "
                 "`subproc` mode launches a separate process to run the agent with `OPENAI_BASE_URL` environment variable, "
-                "which offers more flexible deployment options at the cost of larger overhead."
+                "which offers more flexible deployment options at the cost of larger overhead. "
+                "`service` mode delegates agent execution to an external Agent Service via HTTP. "
+                "Requires `agent_service_addr` to be set."
             ),
-            "choices": ["inline", "subproc"],
+            "choices": ["inline", "subproc", "service"],
         },
     )
     tool_call_parser: str = field(
@@ -1432,12 +1434,71 @@ class OpenAIProxyConfig:
             "help": "Maximum number of worker processes for subprocess mode execution pool."
         },
     )
+    agent_service_addr: str | None = field(
+        default=None,
+        metadata={
+            "help": "HTTP address of an external Agent Service (e.g., 'http://host:8300'). "
+            "Required when mode='service'. Start the service with: "
+            "python -m areal.experimental.agent_service --port 8300 --agent-import-path your.Agent"
+        },
+    )
+
     session_timeout_seconds: int = field(
         default=3600,
         metadata={
             "help": "Session timeout in seconds. Sessions inactive longer than this will be garbage collected."
         },
     )
+
+
+@dataclass
+class AgentServiceSpec:
+    """Configuration for Agent Service (managed deployment mode).
+
+    When configured, the training framework manages the Agent Service lifecycle.
+    The Agent Service runs agent workflows in independent processes, enabling
+    decoupled scaling of agent logic from inference.
+
+    Attributes:
+        agent_import_path: Fully qualified import path to the agent class.
+        agent_reuse: If True, reuse a single agent instance across requests.
+        agent_init_kwargs: Keyword arguments passed to agent's __init__.
+        workers: Number of worker processes per Agent Service instance.
+    """
+
+    agent_import_path: str = field(
+        default="",
+        metadata={
+            "help": "Fully qualified import path to the agent class (e.g., 'mymodule.MyAgent')."
+        },
+    )
+    agent_reuse: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, reuse a single agent instance across requests (shared mode). "
+            "If False, create a new agent instance for each request (per-request mode)."
+        },
+    )
+    agent_init_kwargs: dict = field(
+        default_factory=dict,
+        metadata={
+            "help": "Keyword arguments passed to agent's __init__ when agent_reuse=True."
+        },
+    )
+    workers: int = field(
+        default=1,
+        metadata={
+            "help": "Number of worker processes per Agent Service instance. "
+            "Use multiple workers for high-concurrency scenarios."
+        },
+    )
+
+    def __post_init__(self):
+        """Validate configuration values."""
+        if not self.agent_import_path:
+            raise ValueError("agent_import_path must be provided")
+        if self.workers < 1:
+            raise ValueError(f"workers must be at least 1, got {self.workers}")
 
 
 @dataclass
@@ -1541,6 +1602,14 @@ class InferenceEngineConfig:
         default=None,
         metadata={
             "help": "OpenAI proxy configuration (used when workflow is an agent workflow)."
+        },
+    )
+    agent_service: AgentServiceSpec | None = field(
+        default=None,
+        metadata={
+            "help": "Agent Service configuration for managed deployment mode. "
+            "If None, Agent Service is not started by the trainer. "
+            "External Agent Service can still be used via workflow_kwargs['agent_service_addr']."
         },
     )
 

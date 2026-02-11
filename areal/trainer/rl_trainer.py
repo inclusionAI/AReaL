@@ -118,6 +118,9 @@ class PPOTrainer:
         # Proxy worker initialization (lazy, for AgentWorkflow support)
         self._proxy_started = False
 
+        # Agent Service initialization (lazy, for managed deployment mode)
+        self._agent_service_started = False
+
         ft_spec = FinetuneSpec(
             total_train_epochs=config.total_train_epochs,
             dataset_size=len(self.train_dataloader) * config.train_dataset.batch_size,
@@ -228,6 +231,7 @@ class PPOTrainer:
         # Initialize proxy workers if not using RolloutWorkflow
         if self._requires_proxy_workflow(workflow):
             self._ensure_proxy_started()
+            self._ensure_agent_service_started()
 
         for global_step in range(start_step, max_steps):
             if (
@@ -770,6 +774,51 @@ class PPOTrainer:
         if self.eval_rollout is not None:
             self.eval_rollout.start_proxy()
         self._proxy_started = True
+
+    def _ensure_agent_service_started(self) -> None:
+        """Lazily initialize Agent Service workers when configured.
+
+        This method is called before training when agent_service configuration is
+        provided in rollout config. It creates Agent Service workers as independent
+        CPU-only processes to run agent workflows.
+
+        Requires proxy workers to be started first.
+        """
+        if self._agent_service_started:
+            return
+
+        agent_config = self.config.rollout.agent_service
+        if agent_config is None:
+            return  # Not configured, user may use external Agent Service
+
+        # Agent Service requires proxy workers
+        self._ensure_proxy_started()
+
+        if not is_single_controller():
+            raise NotImplementedError("Agent Service not supported in SPMD mode")
+
+        assert isinstance(self.rollout, RolloutController)
+
+        logger.info(
+            f"Starting Agent Service with agent: {agent_config.agent_import_path}, "
+            f"workers: {agent_config.workers}"
+        )
+        self.rollout.start_agent_service(
+            agent_import_path=agent_config.agent_import_path,
+            agent_reuse=agent_config.agent_reuse,
+            agent_init_kwargs=agent_config.agent_init_kwargs,
+            workers=agent_config.workers,
+        )
+
+        if self.eval_rollout is not None:
+            self.eval_rollout.start_agent_service(
+                agent_import_path=agent_config.agent_import_path,
+                agent_reuse=agent_config.agent_reuse,
+                agent_init_kwargs=agent_config.agent_init_kwargs,
+                workers=agent_config.workers,
+            )
+
+        self._agent_service_started = True
 
     def __enter__(self):
         return self

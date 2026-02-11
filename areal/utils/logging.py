@@ -59,6 +59,9 @@ LOGGER_COLORS_EXACT = {
     "SyncRPCServer": "white",
     "RayRPCServer": "white",
     "RPCSerialization": "white",
+    # Agent Service - cyan (compute backend)
+    "AgentService": "light_cyan",
+    "AgentRPCServer": "light_cyan",
     # Inference wrappers - white
     "SGLangWrapper": "white",
     "VLLMWrapper": "white",

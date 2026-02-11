@@ -486,7 +486,13 @@ class RemoteInfEngine(InferenceEngine):
         with self.lock:
             return self._version
 
-    def _wrap_openai_agent(self, agent, proxy_addr: str) -> RolloutWorkflow:
+    def _wrap_openai_agent(
+        self,
+        agent,
+        proxy_addr: str,
+        agent_service_addr: str | None = None,
+        agent_kwargs: dict[str, Any] | None = None,
+    ) -> RolloutWorkflow:
         """Wrap an agent workflow in OpenAIProxyWorkflow (HTTP mode only).
 
         Parameters
@@ -495,6 +501,10 @@ class RemoteInfEngine(InferenceEngine):
             The agent workflow to wrap (any class with async run() method)
         proxy_addr : str
             HTTP address of the proxy server (required)
+        agent_service_addr : str | None
+            Agent Service address. Required when mode='service'.
+        agent_kwargs : dict | None
+            Agent construction kwargs forwarded to Agent Service in 'service' mode.
         """
         from areal.experimental.openai import OpenAIProxyWorkflow
 
@@ -507,7 +517,47 @@ class RemoteInfEngine(InferenceEngine):
             discount=openai_cfg.turn_discount,
             export_style=openai_cfg.export_style,
             subproc_max_workers=openai_cfg.subproc_max_workers,
+            agent_service_addr=agent_service_addr,
+            agent_kwargs=agent_kwargs,
         )
+
+    def _extract_service_addr(
+        self, workflow_kwargs: dict[str, Any] | None
+    ) -> tuple[str | None, dict[str, Any] | None, bool]:
+        """Extract agent_service_addr and openai service mode from workflow_kwargs.
+
+        This helper extracts agent_service_addr from workflow_kwargs (injected by the
+        controller) so it doesn't leak into agent constructors. It also determines
+        whether we're in service mode based on OpenAI proxy config.
+
+        Parameters
+        ----------
+        workflow_kwargs : dict[str, Any] | None
+            The workflow kwargs that may contain agent_service_addr
+
+        Returns
+        -------
+        tuple[str | None, dict[str, Any] | None, bool]
+            A tuple of (agent_service_addr, cleaned_agent_kwargs, is_service_mode)
+        """
+        # Extract agent_service_addr from workflow_kwargs (injected by controller)
+        # so it doesn't leak into agent constructors.
+        agent_service_addr: str | None = None
+        agent_kwargs = workflow_kwargs
+        if workflow_kwargs is not None and "agent_service_addr" in workflow_kwargs:
+            agent_kwargs = {
+                k: v for k, v in workflow_kwargs.items() if k != "agent_service_addr"
+            }
+            agent_service_addr = workflow_kwargs["agent_service_addr"]
+
+        # Determine openai mode and resolve agent_service_addr
+        openai_cfg = self.config.openai or OpenAIProxyConfig()
+        is_service_mode = openai_cfg.mode == "service"
+        # Fall back to config agent_service_addr for standalone Agent Service
+        if agent_service_addr is None and openai_cfg.agent_service_addr:
+            agent_service_addr = openai_cfg.agent_service_addr
+
+        return agent_service_addr, agent_kwargs, is_service_mode
 
     def _resolve_workflow(
         self,
@@ -516,8 +566,12 @@ class RemoteInfEngine(InferenceEngine):
         group_size: int = 1,
         proxy_addr: str | None = None,
     ) -> RolloutWorkflow:
-        resolved: RolloutWorkflow
+        # Extract service mode and agent_service_addr from workflow_kwargs
+        agent_service_addr, agent_kwargs, is_service_mode = self._extract_service_addr(
+            workflow_kwargs
+        )
 
+        resolved: RolloutWorkflow
         # 1. Already a RolloutWorkflow instance
         if isinstance(workflow, RolloutWorkflow):
             if workflow_kwargs is not None:
@@ -572,14 +626,21 @@ class RemoteInfEngine(InferenceEngine):
                         f"Got workflow={workflow!r}"
                     )
 
-                # Instantiate if it's a class
-                if isinstance(imported_obj, type):
-                    agent = imported_obj(**(workflow_kwargs or {}))
+                # In service mode, agent runs remotely — skip local instantiation
+                if is_service_mode:
+                    agent = None
+                elif isinstance(imported_obj, type):
+                    agent = imported_obj(**(agent_kwargs or {}))
                 else:
                     # Already an instance
                     agent = imported_obj
 
-                resolved = self._wrap_openai_agent(agent, proxy_addr=proxy_addr)
+                resolved = self._wrap_openai_agent(
+                    agent,
+                    proxy_addr=proxy_addr,
+                    agent_service_addr=agent_service_addr,
+                    agent_kwargs=agent_kwargs,
+                )
 
         # 4. Callable class (agent-like workflow)
         elif isinstance(workflow, type):
@@ -588,8 +649,13 @@ class RemoteInfEngine(InferenceEngine):
                     "proxy_addr is required for agent workflows (non-RolloutWorkflow). "
                     "Ensure proxy workers are initialized via RolloutController.start_proxy()."
                 )
-            agent = workflow(**(workflow_kwargs or {}))
-            resolved = self._wrap_openai_agent(agent, proxy_addr=proxy_addr)
+            agent = None if is_service_mode else workflow(**(agent_kwargs or {}))
+            resolved = self._wrap_openai_agent(
+                agent,
+                proxy_addr=proxy_addr,
+                agent_service_addr=agent_service_addr,
+                agent_kwargs=agent_kwargs,
+            )
 
         # 5. Instance of agent-like workflow
         else:
@@ -602,7 +668,12 @@ class RemoteInfEngine(InferenceEngine):
                 self.logger.warning(
                     "workflow_kwargs is ignored when workflow is already an instance"
                 )
-            resolved = self._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
+            resolved = self._wrap_openai_agent(
+                workflow,
+                proxy_addr=proxy_addr,
+                agent_service_addr=agent_service_addr,
+                agent_kwargs=agent_kwargs,
+            )
 
         # Wrap with GroupedRolloutWorkflow if group_size > 1
         if group_size > 1:

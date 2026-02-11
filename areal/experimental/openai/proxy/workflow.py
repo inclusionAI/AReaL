@@ -69,26 +69,65 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
     def __init__(
         self,
         mode: str,
-        agent: Any,
-        proxy_addr: str,
+        agent: Any = None,
+        proxy_addr: str = "",
         discount: float = 1.0,
         export_style: str = "individual",
         subproc_max_workers: int = 4,
+        agent_service_addr: str | None = None,
+        agent_kwargs: dict[str, Any] | None = None,
+        agent_service_timeout: float = 300.0,
     ):
-        if mode not in ("inline", "subproc"):
-            raise ValueError(f"Invalid mode: {mode}. Must be 'inline' or 'subproc'")
+        """Initialize OpenAIProxyWorkflow.
 
-        # Validate that agent has an async 'run' method
-        if not hasattr(agent, "run") or not callable(getattr(agent, "run")):
-            raise TypeError(
-                f"Agent must have a callable 'run' method. "
-                f"Got agent of type {type(agent).__name__} without a callable 'run' attribute."
+        Parameters
+        ----------
+        mode : str
+            Execution mode: "inline", "subproc", or "service".
+            - "inline": Run agent.run() in current process (default)
+            - "subproc": Run agent.run() in subprocess
+            - "service": Call Agent Service via HTTP
+        agent : Any, optional
+            Agent instance with async run() method. Required for "inline"/"subproc".
+        proxy_addr : str
+            Address of the Proxy Server (e.g., "http://localhost:8000").
+        discount : float
+            Discount factor for rewards.
+        export_style : str
+            Style for exporting interactions.
+        subproc_max_workers : int
+            Max workers for subprocess mode.
+        agent_service_addr : str | None
+            Agent Service address. Required when mode="service".
+        agent_kwargs : dict | None
+            Agent initialization kwargs. Passed to Agent Service when mode="service".
+        agent_service_timeout : float
+            Timeout in seconds for Agent Service HTTP calls. Default is 300 (5 minutes).
+        """
+        if mode not in ("inline", "subproc", "service"):
+            raise ValueError(
+                f"Invalid mode: {mode}. Must be 'inline', 'subproc', or 'service'"
             )
-        if not asyncio.iscoroutinefunction(agent.run):
-            raise TypeError(
-                f"Agent's 'run' method must be an async function. "
-                f"Got {type(agent).__name__}.run which is not a coroutine function."
-            )
+
+        # Validate mode-specific requirements
+        if mode == "service":
+            if not agent_service_addr:
+                raise ValueError("agent_service_addr is required when mode='service'")
+        else:
+            # inline or subproc mode requires agent
+            if agent is None:
+                raise ValueError(f"agent is required when mode='{mode}'")
+            # Validate that agent has an async 'run' method
+            if not hasattr(agent, "run") or not callable(getattr(agent, "run")):
+                raise TypeError(
+                    f"Agent must have a callable 'run' method. "
+                    f"Got agent of type {type(agent).__name__} without a callable 'run' attribute."
+                )
+            if not asyncio.iscoroutinefunction(agent.run):
+                raise TypeError(
+                    f"Agent's 'run' method must be an async function. "
+                    f"Got {type(agent).__name__}.run which is not a coroutine function."
+                )
 
         self.mode = mode
         self.agent = agent
@@ -96,6 +135,9 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         self.discount = discount
         self.export_style = export_style
         self.subproc_max_workers = subproc_max_workers
+        self.agent_service_addr = agent_service_addr
+        self.agent_kwargs = agent_kwargs or {}
+        self.agent_service_timeout = agent_service_timeout
 
     @trace_session("run_agent")
     async def _run_agent(self, base_url: str, data: dict):
@@ -119,7 +161,48 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 data,
                 extra_envs,
             )
+        if self.mode == "service":
+            return await self._run_in_service(base_url, data)
         raise ValueError(f"Unsupported mode: {self.mode}")
+
+    async def _run_in_service(self, session_url: str, data: dict) -> Any:
+        """Execute agent via Agent Service HTTP call.
+
+        Parameters
+        ----------
+        session_url : str
+            The Proxy Server session URL for this episode.
+        data : dict
+            Input data for the agent.
+
+        Returns
+        -------
+        Any
+            The result from agent.run() (typically rewards dict or float).
+        """
+        http_session = await workflow_context.get_aiohttp_session()
+        try:
+            async with http_session.post(
+                f"{self.agent_service_addr}/run_episode",
+                json={
+                    "data": data,
+                    "session_url": session_url,
+                    "agent_kwargs": self.agent_kwargs,
+                },
+                timeout=aiohttp.ClientTimeout(total=self.agent_service_timeout),
+            ) as resp:
+                resp.raise_for_status()
+                result = await resp.json()
+                if result.get("status") == "error":
+                    raise RuntimeError(
+                        f"Agent Service error at {self.agent_service_addr}: "
+                        f"{result.get('error', 'Unknown error')}"
+                    )
+                return result.get("result")
+        except aiohttp.ClientError as e:
+            raise RuntimeError(
+                f"Agent Service communication error at {self.agent_service_addr}: {e}"
+            ) from e
 
     async def _grant_capacity(self, session: aiohttp.ClientSession) -> None:
         """Grant capacity via HTTP."""
