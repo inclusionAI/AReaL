@@ -1,6 +1,6 @@
 from .client import ArealOpenAI  # noqa
 from .types import InteractionWithTokenLogpReward  # noqa
-from .proxy import (
+from areal.infra.proxy import (
     OpenAIProxyClient,
     OpenAIProxyWorkflow,
 )  # noqa

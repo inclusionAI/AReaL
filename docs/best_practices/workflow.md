@@ -82,10 +82,12 @@ class MyAgentWorkflow:
         # Get pre-configured client from extra_kwargs
         http_client = extra_kwargs.get("http_client")
         base_url = extra_kwargs.get("base_url")
+        api_key = extra_kwargs.get("api_key")
 
         # Pass to SDK constructor
         client = AsyncOpenAI(
             base_url=base_url,
+            api_key=api_key,
             http_client=http_client,
             max_retries=0,
         )

@@ -47,12 +47,12 @@ Rules beyond pre-commit (ruff format/lint).
 
 ## Naming Conventions
 
-| Type             | Pattern       | Example                             |
-| ---------------- | ------------- | ----------------------------------- |
-| Config dataclass | `XxxConfig`   | `GRPOConfig`, `FSDPConfig`          |
-| Engine class     | `XxxEngine`   | `FSDPEngine`, `ArchonEngine`        |
-| Workflow class   | `XxxWorkflow` | `RLVRWorkflow`, `MultiTurnWorkflow` |
-| Reward function  | `xxx_reward`  | `math_reward`, `code_reward`        |
+| Type             | Pattern       | Example                      |
+| ---------------- | ------------- | ---------------------------- |
+| Config dataclass | `XxxConfig`   | `GRPOConfig`, `FSDPConfig`   |
+| Engine class     | `XxxEngine`   | `FSDPEngine`, `ArchonEngine` |
+| Workflow class   | `XxxWorkflow` | `RLVRWorkflow`               |
+| Reward function  | `xxx_reward`  | `math_reward`, `code_reward` |
 
 ## Tensor Conventions
 

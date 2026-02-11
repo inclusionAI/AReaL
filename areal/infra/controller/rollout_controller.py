@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import shutil
 import threading
 from collections import defaultdict
@@ -16,6 +17,7 @@ from werkzeug.serving import make_server
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     InferenceEngineConfig,
+    OpenAIProxyConfig,
     PerfTracerConfig,
     SchedulingSpec,
 )
@@ -55,6 +57,7 @@ class _RemoteRolloutTaskInput:
     is_eval: bool = False
     group_size: int = 1
     proxy_addr: str | None = None
+    api_key: str | None = None
 
 
 @dataclass
@@ -114,6 +117,7 @@ class RolloutController:
         self.proxy_workers: list[Worker] = []
         self.proxy_addrs: list[str] = []
         self._proxy_started = False
+        self._proxy_api_key: str | None = None
 
     def _engine_name(self, rank: int) -> str:
         """Generate engine name for a worker rank.
@@ -317,7 +321,7 @@ class RolloutController:
 
     async def _async_start_proxy(self) -> None:
         """Async implementation of proxy worker initialization."""
-        command = "areal.experimental.openai.proxy.proxy_rollout_server"
+        command = "areal.infra.proxy.proxy_rollout_server"
         worker_ids = self.scheduler.fork_workers(
             role="proxy",
             target_role=self._worker_role,
@@ -327,6 +331,24 @@ class RolloutController:
 
         self.proxy_workers = self.scheduler.get_workers(role="proxy")
         logger.info(f"Proxy workers: {[w.id for w in self.proxy_workers]}")
+
+        # Generate or retrieve API key for proxy authentication
+        openai_cfg = self.config.openai or OpenAIProxyConfig()
+        if openai_cfg.api_key:
+            self._proxy_api_key = openai_cfg.api_key
+        else:
+            self._proxy_api_key = secrets.token_urlsafe(32)
+        logger.info("Generated API key for proxy authentication")
+
+        # Set API key on all proxy workers BEFORE create_engine
+        env_tasks = [
+            self.scheduler.set_worker_env(
+                worker.id, {"AREAL_PROXY_API_KEY": self._proxy_api_key}
+            )
+            for worker in self.proxy_workers
+        ]
+        await asyncio.gather(*env_tasks)
+        logger.info("API key set on all proxy workers")
 
         engine_class = f"{self.inf_engine.__module__}.{self.inf_engine.__name__}"
 
@@ -382,6 +404,27 @@ class RolloutController:
                 f"Invalid rank {rank}, only {len(self.proxy_addrs)} proxy workers"
             )
         return self.proxy_addrs[rank]
+
+    def get_proxy_api_key(self) -> str:
+        """Get the API key for proxy authentication.
+
+        Returns
+        -------
+        str
+            The API key for authenticating requests to proxy servers
+
+        Raises
+        ------
+        RuntimeError
+            If proxy workers are not initialized
+        """
+        if not self._proxy_started:
+            raise RuntimeError(
+                "Proxy workers not initialized. Call start_proxy() first."
+            )
+        if self._proxy_api_key is None:
+            raise RuntimeError("Proxy API key not set")
+        return self._proxy_api_key
 
     def _start_callback_server(self):
         """Start Flask HTTP server to receive callbacks from RolloutCallback."""
@@ -603,8 +646,10 @@ class RolloutController:
                     self._pending_futures[task_id] = future
 
                 proxy_addr = pending_task.proxy_addr
+                api_key = pending_task.api_key
                 if self._proxy_started and proxy_addr is None:
                     proxy_addr = self.get_proxy_addr(rank)
+                    api_key = self.get_proxy_api_key()
                 engine_task_id = await self.scheduler.async_call_engine(
                     worker.id,
                     "submit",
@@ -619,6 +664,7 @@ class RolloutController:
                     task_id=task_id,
                     callback_addr=f"http://{self.callback_addr}/callback/rollout_complete",
                     proxy_addr=proxy_addr,
+                    api_key=api_key,
                 )
 
                 assert task_id == engine_task_id, (task_id, engine_task_id)
@@ -681,6 +727,7 @@ class RolloutController:
         is_eval: bool = False,
         group_size: int = 1,
         proxy_addr: str | None = None,
+        api_key: str | None = None,
     ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -701,6 +748,7 @@ class RolloutController:
             is_eval=is_eval,
             group_size=group_size,
             proxy_addr=proxy_addr,
+            api_key=api_key,
         )
 
         # Delegate to dispatcher

@@ -150,12 +150,12 @@ Reference docs:
 
 ### Add or adjust a rollout workflow
 
-- Start from the existing patterns in `areal/workflow/multi_turn.py`, `rlvr.py`, or
-  `vision_rlvr.py`, then add a sibling module under `areal/workflow/` that subclasses
-  `RolloutWorkflow`.
+- Start from the existing patterns in `areal/workflow/openai` or
+  `areal/workflow/anthropic`, then add a sibling module under `areal/workflow/` that
+  subclasses `RolloutWorkflow`.
 - In `__init__`, thread through `GenerationHyperparameters`, the tokenizer, reward
   callable, stat scope, and optional `dump_dir`; wrap the reward via
-  `AsyncRewardWrapper` exactly like `MultiTurnWorkflow` does.
+  `AsyncRewardWrapper`.
 - Keep `arun_episode` async-only, drive generation through `InferenceEngine.agenerate`,
   and emit tensors using `concat_padded_tensors` so outputs stay
   `[batch, seq_len, ...]`.
@@ -177,8 +177,7 @@ Reference docs:
 - Add the identifier to `VALID_REWARD_FN` and branch selection logic in
   `areal/reward/__init__.py` so configs like `reward.path=...` resolve automatically.
 - When rewards rely on slow models or external services, keep the heavy code inside the
-  reward module but let workflows wrap it with `AsyncRewardWrapper` (as in
-  `MultiTurnWorkflow`).
+  reward module but let workflows wrap it with `AsyncRewardWrapper`.
 - Document required dataset fields or endpoints in the module docstring/README so launch
   scripts can provision secrets or caches.
 
@@ -231,9 +230,8 @@ Reference docs:
 - Emit rollout/training metrics through `areal/utils/stats_tracker.py`; grab a scoped
   tracker (`stats_tracker.get("rollout")`) and log scalars so downstream `StatsLogger`
   backends (W&B/SwanLab) pick them up automatically.
-- When debugging, pass `dump_dir` into workflows so transcripts persist under
-  `{dump_dir}/{engine.get_version()}/` like `areal/workflow/multi_turn.py`; scrub
-  sensitive data before committing artifacts.
+- When debugging, pass `rollout.dump_to_file=True` so transcripts persist under
+  `cluster.fileroot`; scrub sensitive data before committing artifacts.
 - Checkpoint via `areal/utils/saver.py` and resume with `areal/utils/recover.py`; note
   the checkpoint path and version in your PR/test notes so others can reproduce the
   exact state.

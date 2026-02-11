@@ -202,7 +202,7 @@ class TestProxyIntegration:
             # Run workflow
             result = rollout.rollout_batch(
                 data=test_data,
-                workflow="areal.tests.experimental.openai.utils.SimpleAgent",
+                workflow="areal.tests.openai_client.utils.SimpleAgent",
             )
 
             # Verify result structure
@@ -222,11 +222,11 @@ class TestProxyServerEndpoints:
 
     def test_session_timeout_cleanup(self):
         """Test that stale sessions are cleaned up."""
-        from areal.experimental.openai.proxy.proxy_rollout_server import (
+        from areal.infra.proxy.proxy_rollout_server import (
             SessionData,
             _session_cache,
         )
-        from areal.experimental.openai.proxy.server import SESSION_TIMEOUT_SECONDS
+        from areal.infra.proxy.server import SESSION_TIMEOUT_SECONDS
 
         # Create a session
         session = SessionData(session_id="test-session-1")
@@ -249,7 +249,7 @@ class TestProxyServerEndpoints:
     @pytest.mark.asyncio
     async def test_session_data_lifecycle(self):
         """Test SessionData class methods."""
-        from areal.experimental.openai.proxy.proxy_rollout_server import SessionData
+        from areal.infra.proxy.proxy_rollout_server import SessionData
 
         session = SessionData(session_id="test-lifecycle")
 

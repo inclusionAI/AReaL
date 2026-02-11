@@ -105,7 +105,7 @@ class TestWorkflowDetection:
         Note: SimpleAgent is a duck-typed agent (no AgentWorkflow inheritance),
         demonstrating that any class with a compatible run() method works.
         """
-        workflow = "areal.tests.experimental.openai.utils.SimpleAgent"
+        workflow = "areal.tests.openai_client.utils.SimpleAgent"
         assert trainer_with_detection._requires_proxy_workflow(workflow)
 
 

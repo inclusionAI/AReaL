@@ -28,7 +28,10 @@ class MathAgent:
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
         base_url = extra_kwargs.get("base_url", None)
-        client = AsyncOpenAI(base_url=base_url, http_client=http_client, max_retries=0)
+        api_key = extra_kwargs.get("api_key", "DUMMY")
+        client = AsyncOpenAI(
+            base_url=base_url, api_key=api_key, http_client=http_client, max_retries=0
+        )
         comp: ChatCompletion = await client.chat.completions.create(
             messages=data["messages"], model="default", **self.kwargs
         )
@@ -48,9 +51,12 @@ class MultiTurnMathAgent:
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
         base_url = extra_kwargs.get("base_url", None)
+        api_key = extra_kwargs.get("api_key", "DUMMY")
         messages = data["messages"].copy()
         rewards = {}
-        client = AsyncOpenAI(base_url=base_url, http_client=http_client, max_retries=0)
+        client = AsyncOpenAI(
+            base_url=base_url, api_key=api_key, http_client=http_client, max_retries=0
+        )
         for _ in range(self.max_turns):
             response: ChatCompletion = await client.chat.completions.create(
                 messages=messages,
@@ -123,7 +129,10 @@ class MathToolAgent:
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
         base_url = extra_kwargs.get("base_url", None)
-        client = AsyncOpenAI(base_url=base_url, http_client=http_client, max_retries=0)
+        api_key = extra_kwargs.get("api_key", "DUMMY")
+        client = AsyncOpenAI(
+            base_url=base_url, api_key=api_key, http_client=http_client, max_retries=0
+        )
         content = data["messages"][-1]["content"]
         run_config = RunConfig(
             model_provider=OpenAIProvider(openai_client=client),

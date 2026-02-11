@@ -74,7 +74,7 @@ Analyze each file change, detecting change types by risk level.
 
 - CRITICAL level types (Archon, FSDP, Megatron, DCP)
 - HIGH level types (distributed comm, DTensor, MoE, TP/EP/CP)
-- MEDIUM level types (tensor ops, workflow, API, compile)
+- MEDIUM level types (tensor ops, workflow, API, compile, AI references)
 - LOW level types (tests, docs, config)
 
 ### 1.3 Framework-Specific Risk Identification
@@ -111,7 +111,7 @@ Based on detected change types, select appropriate review task templates.
 
 **Reference**: See `pr-review-templates.md` for complete task templates:
 
-- Framework-specific tasks (Archon, FSDP, Megatron, DCP, Trainer)
+- Framework-specific tasks (Archon, FSDP, Megatron, DCP, Trainer, AI References)
 - General tasks (Logic, Concurrency, Tensor, Numerical, TP, etc.)
 
 ### 2.3 Output Review Task List
@@ -213,13 +213,17 @@ ______________________________________________________________________
 
 ## Dynamic Generation Examples
 
-| PR Type        | Detected Types                        | Generated Tasks |
-| -------------- | ------------------------------------- | --------------- |
-| Docs only      | \[DOCS\]                              | 1 Haiku         |
-| Config only    | \[CONFIG_ONLY\]                       | 1-2 Haiku       |
-| Single bug fix | \[TENSOR_OPS\]                        | 2-4 Sonnet      |
-| Archon core    | \[ARCHON\_\*, EP_ETP, DTENSOR\]       | 4-8 Opus        |
-| Cross-domain   | \[WORKFLOW_ENGINE, FSDP_CORE, TESTS\] | 5-10 mixed      |
+| PR Type           | Detected Types                        | Generated Tasks                   |
+| ----------------- | ------------------------------------- | --------------------------------- |
+| Docs only         | \[DOCS\]                              | 1 Haiku                           |
+| Config only       | \[CONFIG_ONLY\]                       | 1-2 Haiku                         |
+| AI refs only      | \[AI_REFERENCES\]                     | 3-5 Sonnet                        |
+| Single bug fix    | \[TENSOR_OPS\]                        | 2-4 Sonnet                        |
+| Workflow change   | \[WORKFLOW_ENGINE\]                   | 2-4 Sonnet + AI_REFERENCES (auto) |
+| API/Config change | \[API_CONFIG\]                        | 2-4 Sonnet + AI_REFERENCES (auto) |
+| Archon core       | \[ARCHON\_\*, EP_ETP, DTENSOR\]       | 4-8 Opus + AI_REFERENCES (auto)   |
+| FSDP core         | \[FSDP_CORE\]                         | 4-8 Opus + AI_REFERENCES (auto)   |
+| Cross-domain      | \[WORKFLOW_ENGINE, FSDP_CORE, TESTS\] | 5-10 mixed + AI_REFERENCES (auto) |
 
 ______________________________________________________________________
 

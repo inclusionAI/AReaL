@@ -10,7 +10,7 @@ from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.dataset import get_custom_dataset
-from areal.experimental.openai import ArealOpenAI
+from areal.infra.openai import ArealOpenAI
 from areal.utils import stats_tracker
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer

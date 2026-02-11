@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import inspect
 import os
+import secrets
 import threading
 import time
 from collections.abc import AsyncGenerator
@@ -11,22 +12,22 @@ from typing import TYPE_CHECKING, Any
 
 import uvicorn
 from anthropic.types.message import Message
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
+from fastapi.security import APIKeyHeader
 from litellm.llms.anthropic.experimental_pass_through.adapters.transformation import (
     AnthropicAdapter,
 )
 from litellm.types.utils import ModelResponse as LitellmModelResponse
-from pydantic import BaseModel
-
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from openai.types.responses import Response
 from openai.types.responses.response_create_params import ResponseCreateParams
+from pydantic import BaseModel
 
 from areal.api.cli_args import NameResolveConfig, OpenAIProxyConfig
-from areal.experimental.openai.client import ArealOpenAI
+from areal.infra.openai.client import ArealOpenAI
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import name_resolve, names, seeding
 from areal.utils.dynamic_import import import_from_string
@@ -113,6 +114,42 @@ _etcd3_addr: str = "localhost:2379"
 
 # Adapter to convert Anthropic request to OpenAI format
 _adapter = AnthropicAdapter()
+
+# =============================================================================
+# Authentication
+# =============================================================================
+
+# FastAPI security header
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def _get_api_key() -> str:
+    """Get the API key from environment variable.
+
+    The API key is set by the RolloutController via set_worker_env before
+    any authenticated endpoints are called.
+    """
+    return os.environ.get("AREAL_PROXY_API_KEY", "")
+
+
+async def verify_api_key(api_key: str = Security(_api_key_header)):
+    """Verify the API key for authenticated endpoints.
+
+    The API key must be set via AREAL_PROXY_API_KEY environment variable
+    (typically set by RolloutController via set_worker_env).
+    """
+    expected_key = _get_api_key()
+    if not expected_key:
+        # No authentication configured - allow request
+        # This should not happen in production; controller always sets the key
+        return
+    if not api_key or not secrets.compare_digest(api_key, expected_key):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key",
+            headers={"WWW-Authenticate": "API-Key"},
+        )
+
 
 # =============================================================================
 # Request Validation
@@ -260,7 +297,7 @@ async def call_engine_method(raw_request: Request):
 # =============================================================================
 
 
-@app.post("/grant_capacity")
+@app.post("/grant_capacity", dependencies=[Depends(verify_api_key)])
 def grant_capacity():
     """Grant capacity for a new session."""
     global _capacity
@@ -302,7 +339,7 @@ def _cleanup_stale_sessions():
         logger.info(f"Cleaned up {len(stale_sessions)} stale sessions")
 
 
-@app.post(f"/{RL_START_SESSION_PATHNAME}")
+@app.post(f"/{RL_START_SESSION_PATHNAME}", dependencies=[Depends(verify_api_key)])
 def start_session(request: StartSessionRequest) -> StartSessionResponse:
     """Start a new RL session."""
     global _capacity
@@ -329,7 +366,9 @@ def start_session(request: StartSessionRequest) -> StartSessionResponse:
     return StartSessionResponse(session_id=session_id)
 
 
-@app.post("/{session_id}/" + RL_END_SESSION_PATHNAME)
+@app.post(
+    "/{session_id}/" + RL_END_SESSION_PATHNAME, dependencies=[Depends(verify_api_key)]
+)
 def end_session(session_id: str):
     """End an RL session."""
     with _lock:
@@ -341,7 +380,9 @@ def end_session(session_id: str):
     return {"message": "success"}
 
 
-@app.post("/{session_id}/" + RL_SET_REWARD_PATHNAME)
+@app.post(
+    "/{session_id}/" + RL_SET_REWARD_PATHNAME, dependencies=[Depends(verify_api_key)]
+)
 def set_reward(request: SetRewardRequest, session_id: str):
     """Set reward for an interaction in a session."""
     interaction_id = request.interaction_id
@@ -458,7 +499,7 @@ async def _call_client_create(
 
 @app.post(
     "/{session_id}/" + CHAT_COMPLETIONS_PATHNAME,
-    dependencies=[Depends(validate_json_request)],
+    dependencies=[Depends(validate_json_request), Depends(verify_api_key)],
 )
 async def chat_completions(
     request: CompletionCreateParams, session_id: str
@@ -478,7 +519,7 @@ async def chat_completions(
 
 @app.post(
     "/{session_id}/" + RESPONSES_PATHNAME,
-    dependencies=[Depends(validate_json_request)],
+    dependencies=[Depends(validate_json_request), Depends(verify_api_key)],
 )
 async def responses(request: ResponseCreateParams, session_id: str) -> Response:
     """OpenAI-compatible responses endpoint."""
@@ -548,7 +589,7 @@ async def _safe_stream_wrapper(
 
 @app.post(
     "/{session_id}/" + ANTHROPIC_MESSAGES_PATHNAME,
-    dependencies=[Depends(validate_json_request)],
+    dependencies=[Depends(validate_json_request), Depends(verify_api_key)],
     response_model=None,
 )
 async def anthropic_messages(
@@ -672,7 +713,7 @@ async def anthropic_messages(
 # =============================================================================
 
 
-@app.post("/export_trajectories")
+@app.post("/export_trajectories", dependencies=[Depends(verify_api_key)])
 async def export_trajectories(
     request: ExportTrajectoriesRequest,
 ) -> ExportTrajectoriesResponse:

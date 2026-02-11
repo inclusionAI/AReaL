@@ -9,7 +9,7 @@ import pytest
 import requests
 
 from areal.api.cli_args import SGLangConfig
-from areal.experimental.openai import ArealOpenAI
+from areal.infra.openai import ArealOpenAI
 from areal.tests.utils import get_model_path
 from areal.utils import network, seeding
 from areal.utils.hf_utils import load_hf_tokenizer

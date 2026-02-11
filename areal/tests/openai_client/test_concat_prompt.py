@@ -9,10 +9,10 @@ import pytest
 from openai.types.chat import ChatCompletionToolParam
 
 from areal.api.io_struct import ModelResponse
-from areal.experimental.openai.client import (
+from areal.infra.openai.client import (
     concat_prompt_token_ids_with_parent,
 )
-from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.infra.openai.types import InteractionWithTokenLogpReward
 from areal.tests.utils import get_model_path
 from areal.utils.hf_utils import load_hf_tokenizer
 
