@@ -338,6 +338,7 @@ class RemotevLLMEngine(InferenceEngine):
         callback_addr: str | None = None,
         is_eval: bool = False,
         proxy_addr: str | None = None,
+        api_key: str | None = None,
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
@@ -350,6 +351,7 @@ class RemotevLLMEngine(InferenceEngine):
             callback_addr=callback_addr,
             is_eval=is_eval,
             proxy_addr=proxy_addr,
+            api_key=api_key,
         )
 
     def wait(
