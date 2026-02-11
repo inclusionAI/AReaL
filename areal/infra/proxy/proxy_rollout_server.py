@@ -129,13 +129,13 @@ def _get_api_key() -> str:
     The API key is set by the RolloutController via set_worker_env before
     any authenticated endpoints are called.
     """
-    return os.environ.get("AREAL_API_KEY", "")
+    return os.environ.get("AREAL_PROXY_API_KEY", "")
 
 
 async def verify_api_key(api_key: str = Security(_api_key_header)):
     """Verify the API key for authenticated endpoints.
 
-    The API key must be set via AREAL_API_KEY environment variable
+    The API key must be set via AREAL_PROXY_API_KEY environment variable
     (typically set by RolloutController via set_worker_env).
     """
     expected_key = _get_api_key()

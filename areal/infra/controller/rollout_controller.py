@@ -343,7 +343,7 @@ class RolloutController:
         # Set API key on all proxy workers BEFORE create_engine
         env_tasks = [
             self.scheduler.set_worker_env(
-                worker.id, {"AREAL_API_KEY": self._proxy_api_key}
+                worker.id, {"AREAL_PROXY_API_KEY": self._proxy_api_key}
             )
             for worker in self.proxy_workers
         ]
