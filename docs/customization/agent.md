@@ -19,13 +19,15 @@ returns a reward. AReaL automatically wraps it for RL training.
 ```python
 class MyAgent:
     async def run(self, data, **extra_kwargs):
-        # Get injected client and URL
+        # Get injected client, URL, and API key
         http_client = extra_kwargs.get("http_client")
         base_url = extra_kwargs.get("base_url")
+        api_key = extra_kwargs.get("api_key")
 
         # Use standard OpenAI SDK
         client = AsyncOpenAI(
             base_url=base_url,
+            api_key=api_key,
             http_client=http_client,
             max_retries=0,
         )
@@ -67,6 +69,7 @@ AReaL injects these arguments via `extra_kwargs`:
 | Key           | Type                | Description                           |
 | ------------- | ------------------- | ------------------------------------- |
 | `base_url`    | `str`               | URL to AReaL's proxy server           |
+| `api_key`     | `str`               | API key for authentication            |
 | `http_client` | `httpx.AsyncClient` | Shared HTTP client (reduces overhead) |
 
 ## Execution Modes
@@ -87,7 +90,7 @@ rollout:
 **Requirements:**
 
 - The `run` method must be `async`
-- Use `extra_kwargs["base_url"]` for LLM calls
+- Use `extra_kwargs["base_url"]` and `extra_kwargs["api_key"]` for LLM calls
 - Optionally use `extra_kwargs["http_client"]` to reduce overhead
 
 **Advantages:**
@@ -111,7 +114,7 @@ rollout:
 **Requirements:**
 
 - The agent class must be picklable (serializable)
-- Read `OPENAI_BASE_URL` from environment instead of `extra_kwargs`
+- Read `OPENAI_BASE_URL` and `OPENAI_API_KEY` from environment instead of `extra_kwargs`
 
 **Example:**
 
@@ -121,10 +124,10 @@ from openai import OpenAI  # Sync client is OK
 
 class MySyncAgent:
     async def run(self, data, **extra_kwargs):
-        # In subproc mode, base_url comes from environment
+        # In subproc mode, base_url and api_key come from environment
         client = OpenAI(
             base_url=os.environ.get("OPENAI_BASE_URL"),
-            api_key="DUMMY",  # Not used by AReaL
+            api_key=os.environ.get("OPENAI_API_KEY"),
         )
 
         response = client.chat.completions.create(
