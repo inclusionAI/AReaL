@@ -110,6 +110,9 @@ class MathToolAgent:
         content = data["messages"][-1]["content"]
 
         base_url = extra_kwargs.get("base_url", None)
+        api_key = extra_kwargs.get("api_key") or os.environ.get(
+            "OPENAI_API_KEY", "placeholder"
+        )
 
         # Set SDK timeout in current process BEFORE creating ClaudeSDKClient
         # The SDK reads CLAUDE_CODE_STREAM_CLOSE_TIMEOUT from os.environ during __init__,
@@ -121,9 +124,7 @@ class MathToolAgent:
             env.update(
                 {
                     "ANTHROPIC_BASE_URL": base_url,
-                    "ANTHROPIC_API_KEY": os.environ.get(
-                        "OPENAI_API_KEY", "placeholder"
-                    ),
+                    "ANTHROPIC_API_KEY": api_key,
                     "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(
                         extra_kwargs.get("max_completion_tokens", 1024)
                     ),

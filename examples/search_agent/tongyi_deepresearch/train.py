@@ -17,7 +17,7 @@ from areal.api.cli_args import (
 )
 from areal.api.workflow_api import RolloutWorkflow
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.experimental.openai import ArealOpenAI
+from areal.infra.openai import ArealOpenAI
 from areal.utils import logging, stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
 

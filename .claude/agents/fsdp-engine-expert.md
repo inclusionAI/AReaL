@@ -85,7 +85,6 @@ groups, model wrapping, memory optimization, and weight-sync setup.
 FSDPEngine works with all `WorkflowLike` implementations, especially:
 
 - **RLVRWorkflow**: RLHF with PPO subclasses
-- **MultiTurnWorkflow**: Multi-turn conversation training
 - **SFTWorkflow**: Supervised fine-tuning
 
 ### Integration Pattern

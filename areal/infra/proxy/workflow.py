@@ -17,8 +17,8 @@ from areal.utils.perf_tracer import session_context, trace_session
 from .client_session import OpenAIProxyClient
 
 if TYPE_CHECKING:
-    from ..client import TRolloutEngine
-    from ..types import InteractionWithTokenLogpReward
+    from areal.infra.openai.client import TRolloutEngine
+    from areal.infra.openai.types import InteractionWithTokenLogpReward
 
 logger = logging.getLogger("OpenAIProxyWorkflow")
 
@@ -71,6 +71,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         mode: str,
         agent: Any,
         proxy_addr: str,
+        api_key: str,
         discount: float = 1.0,
         export_style: str = "individual",
         subproc_max_workers: int = 4,
@@ -93,6 +94,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         self.mode = mode
         self.agent = agent
         self.proxy_addr = proxy_addr
+        self.api_key = api_key
         self.discount = discount
         self.export_style = export_style
         self.subproc_max_workers = subproc_max_workers
@@ -103,13 +105,14 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             http_client = await workflow_context.get_httpx_client()
             extra_kwargs = {
                 "base_url": base_url,
+                "api_key": self.api_key,
                 "http_client": http_client,
             }
             return await self.agent.run(data, **extra_kwargs)
         if self.mode == "subproc":
             extra_envs = {
                 "OPENAI_BASE_URL": base_url,
-                "OPENAI_API_KEY": "DUMMY",
+                "OPENAI_API_KEY": self.api_key,
             }
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
@@ -124,7 +127,8 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
     async def _grant_capacity(self, session: aiohttp.ClientSession) -> None:
         """Grant capacity via HTTP."""
         url = f"{self.proxy_addr}/grant_capacity"
-        async with session.post(url) as resp:
+        headers = {"X-API-Key": self.api_key}
+        async with session.post(url, headers=headers) as resp:
             resp.raise_for_status()
 
     @session_context()
@@ -153,6 +157,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             session=http_session,
             base_url=self.proxy_addr,
             task_id=str(task_id),
+            api_key=self.api_key,
         )
         async with proxy_client:
             # Run the user code.

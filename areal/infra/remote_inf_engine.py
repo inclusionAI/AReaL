@@ -49,7 +49,7 @@ from areal.utils.proc import kill_process_tree
 from .workflow_executor import WorkflowExecutor
 
 if TYPE_CHECKING:
-    from areal.experimental.openai import InteractionWithTokenLogpReward
+    from areal.infra.openai import InteractionWithTokenLogpReward
 
 RID_CACHE_SIZE = 128
 
@@ -72,7 +72,7 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, Any] | None:
-        from areal.experimental.openai import InteractionWithTokenLogpReward
+        from areal.infra.openai import InteractionWithTokenLogpReward
 
         results = await asyncio.gather(
             *[self.workflow.arun_episode(engine, data) for _ in range(self.group_size)]
@@ -486,7 +486,9 @@ class RemoteInfEngine(InferenceEngine):
         with self.lock:
             return self._version
 
-    def _wrap_openai_agent(self, agent, proxy_addr: str) -> RolloutWorkflow:
+    def _wrap_openai_agent(
+        self, agent, proxy_addr: str, api_key: str
+    ) -> RolloutWorkflow:
         """Wrap an agent workflow in OpenAIProxyWorkflow (HTTP mode only).
 
         Parameters
@@ -495,8 +497,10 @@ class RemoteInfEngine(InferenceEngine):
             The agent workflow to wrap (any class with async run() method)
         proxy_addr : str
             HTTP address of the proxy server (required)
+        api_key : str
+            API key for authenticating with the proxy server
         """
-        from areal.experimental.openai import OpenAIProxyWorkflow
+        from areal.infra.proxy import OpenAIProxyWorkflow
 
         openai_cfg = self.config.openai or OpenAIProxyConfig()
 
@@ -504,6 +508,7 @@ class RemoteInfEngine(InferenceEngine):
             mode=openai_cfg.mode,
             agent=agent,
             proxy_addr=proxy_addr,
+            api_key=api_key,
             discount=openai_cfg.turn_discount,
             export_style=openai_cfg.export_style,
             subproc_max_workers=openai_cfg.subproc_max_workers,
@@ -515,6 +520,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow_kwargs: dict[str, Any] | None,
         group_size: int = 1,
         proxy_addr: str | None = None,
+        api_key: str | None = None,
     ) -> RolloutWorkflow:
         resolved: RolloutWorkflow
 
@@ -579,7 +585,9 @@ class RemoteInfEngine(InferenceEngine):
                     # Already an instance
                     agent = imported_obj
 
-                resolved = self._wrap_openai_agent(agent, proxy_addr=proxy_addr)
+                resolved = self._wrap_openai_agent(
+                    agent, proxy_addr=proxy_addr, api_key=api_key
+                )
 
         # 4. Callable class (agent-like workflow)
         elif isinstance(workflow, type):
@@ -589,7 +597,9 @@ class RemoteInfEngine(InferenceEngine):
                     "Ensure proxy workers are initialized via RolloutController.start_proxy()."
                 )
             agent = workflow(**(workflow_kwargs or {}))
-            resolved = self._wrap_openai_agent(agent, proxy_addr=proxy_addr)
+            resolved = self._wrap_openai_agent(
+                agent, proxy_addr=proxy_addr, api_key=api_key
+            )
 
         # 5. Instance of agent-like workflow
         else:
@@ -602,7 +612,9 @@ class RemoteInfEngine(InferenceEngine):
                 self.logger.warning(
                     "workflow_kwargs is ignored when workflow is already an instance"
                 )
-            resolved = self._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
+            resolved = self._wrap_openai_agent(
+                workflow, proxy_addr=proxy_addr, api_key=api_key
+            )
 
         # Wrap with GroupedRolloutWorkflow if group_size > 1
         if group_size > 1:
@@ -939,6 +951,7 @@ class RemoteInfEngine(InferenceEngine):
         callback_addr: str | None = None,
         is_eval: bool = False,
         proxy_addr: str | None = None,
+        api_key: str | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -963,6 +976,8 @@ class RemoteInfEngine(InferenceEngine):
         proxy_addr : str, optional
             HTTP address of the proxy server for AgentWorkflow. If provided,
             AgentWorkflow will use this proxy instead of a local one.
+        api_key : str, optional
+            API key for authenticating with the proxy server for AgentWorkflow.
         """
         assert workflow is not None, "Workflow must be specified for submit."
         if callback_addr:
@@ -970,7 +985,11 @@ class RemoteInfEngine(InferenceEngine):
 
         # Resolve workflow to a RolloutWorkflow instance
         resolved_workflow = self._resolve_workflow(
-            workflow, workflow_kwargs, group_size, proxy_addr=proxy_addr
+            workflow,
+            workflow_kwargs,
+            group_size,
+            proxy_addr=proxy_addr,
+            api_key=api_key,
         )
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
 

@@ -68,8 +68,8 @@ For Python changes, identify relevant tests:
 python -c "import torch; print('GPU available:', torch.cuda.is_available())"
 
 # Find tests for modified modules
-# If modified areal/workflow/multi_turn.py, run:
-uv run pytest areal/tests/test_workflow.py -v
+# If modified areal/infra/openai/cache.py, run:
+uv run pytest areal/tests/openai_client/test_cache.py -v
 
 # For quick smoke test
 uv run pytest areal/tests/test_utils.py -v
@@ -109,7 +109,7 @@ Output a clear summary:
 ## Verification Results
 
 ### Files Changed
-- `areal/workflow/multi_turn.py` (modified)
+- `areal/workflow/rlvr.py` (modified)
 - `areal/tests/test_workflow.py` (modified)
 
 ### Checks Performed

@@ -31,9 +31,10 @@ class MathAgent:
         """
         http_client = extra_kwargs.get("http_client", None)
         base_url = extra_kwargs.get("base_url", None)
+        api_key = extra_kwargs.get("api_key", "placeholder")
 
         client = anthropic.AsyncAnthropic(
-            api_key="placeholder",
+            api_key=api_key,
             base_url=base_url,
             http_client=http_client,
             max_retries=0,

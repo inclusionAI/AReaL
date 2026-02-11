@@ -8,8 +8,8 @@ from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.dataset import get_custom_dataset
-from areal.experimental.camel.openai_model import AReaLOpenAICompatibleModel
-from areal.experimental.openai import ArealOpenAI
+from areal.infra.camel.openai_model import AReaLOpenAICompatibleModel
+from areal.infra.openai import ArealOpenAI
 from areal.reward import get_math_verify_worker
 from areal.utils import stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer

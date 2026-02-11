@@ -8,7 +8,7 @@ from huggingface_hub import snapshot_download
 
 from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
-from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.infra.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
 
 logger = logging.getLogger("TestUtils")

@@ -88,12 +88,13 @@ class MathAgent:
         """
         http_client = extra_kwargs.get("http_client", None)
         base_url = extra_kwargs.get("base_url", None)
+        api_key = extra_kwargs.get("api_key", "placeholder")
 
         # Build LangChain ChatOpenAI with proxy settings
         llm = ChatOpenAI(
             model="default",
             base_url=base_url,
-            api_key="placeholder",
+            api_key=api_key,
             temperature=self.kwargs.get("temperature", 1.0),
             top_p=self.kwargs.get("top_p", 1.0),
             max_tokens=self.kwargs.get("max_completion_tokens", 1024),
@@ -133,10 +134,11 @@ class MathToolAgent:
         base_url = extra_kwargs.get("base_url", None)
 
         # Build LangChain ChatOpenAI with proxy settings
+        api_key = extra_kwargs.get("api_key", "placeholder")
         llm = ChatOpenAI(
             model="default",
             base_url=base_url,
-            api_key="placeholder",
+            api_key=api_key,
             temperature=self.kwargs.get("temperature", 1.0),
             top_p=self.kwargs.get("top_p", 1.0),
             max_tokens=self.kwargs.get("max_completion_tokens", 1024),

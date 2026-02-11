@@ -144,7 +144,6 @@ async def test_workflow_basic():
 
 | Workflow           | File                            | Description                |
 | ------------------ | ------------------------------- | -------------------------- |
-| MultiTurnWorkflow  | `areal/workflow/multi_turn.py`  | Multi-turn conversation    |
 | RLVRWorkflow       | `areal/workflow/rlvr.py`        | RL with verifiable rewards |
 | VisionRLVRWorkflow | `areal/workflow/vision_rlvr.py` | Vision + RLVR              |
 
