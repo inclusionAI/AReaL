@@ -13,6 +13,7 @@ from geo_edit.config import (
 from geo_edit.constants import MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
+from geo_edit.tool_definitions import ToolRouter
 from geo_edit.utils.stats import save_global_meta_info
 
 from datasets import load_dataset
@@ -59,25 +60,25 @@ def main():
         logger.warning("Dataset %s has no no-tool template; using tool template.", dataset_spec.name)
     system_prompt = get_system_prompt(args.model_type) if args.use_tools else ""
     tool_mode = "auto" if args.use_tools else "direct"
+    tool_router = ToolRouter(tool_mode=tool_mode)
     if args.model_type == "Google":
         agent_configs = build_google_agent_configs(
+            tool_router,
             max_output_tokens=max_output_tokens,
             thinking_level="low",
             include_thoughts=True,
             temperature=1.0,
             system_prompt=system_prompt,
-            candidate_count=1,
-            tool_mode=tool_mode,
         )
         api_mode = None  # Google uses native API
     else:
         # Set api_mode based on model_type
         api_mode = "chat_completions" if args.model_type == "SGLang" else "responses"
         agent_configs = build_api_agent_configs(
+            tool_router,
             api_mode=api_mode,
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            tool_mode=tool_mode,
             reasoning_level="medium" if args.model_type == "OpenAI" else None,
             system_prompt=system_prompt,
         )
@@ -138,7 +139,7 @@ def main():
             task_prompt=text_prompt,
             task_answer=answer,
             task_image_path=image_url,
-            tool_functions=TOOL_FUNCTIONS if args.use_tools else {},
+            tool_functions=tool_router.get_available_tools() if args.use_tools else {},
             save_dir=task_save_dir,
             **task_kwargs,
         )

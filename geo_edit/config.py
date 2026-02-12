@@ -2,8 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 from google.genai import types
-
-
+from geo_edit.tool_definitions.router import ToolRouter
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,29 +27,47 @@ class APIAgentConfigs:
 
 
 def build_google_agent_configs(
+    tool_router: "ToolRouter",
     *,
     max_output_tokens: Optional[int] = None,
     thinking_level: Optional[str] = "high",
     include_thoughts: Optional[bool] = True,
     temperature: float = 1.0,
     system_prompt: Optional[str | None] = None,
-    tool_mode: Optional[str] = None,
 ) -> GoogleAgentConfigs:
-    tool_declarations = get_tool_declarations()
-    tool_functions = get_tool_functions()
-    tools = types.Tool(function_declarations=tool_declarations)
+    """Build Google Gemini agent configs using ToolRouter.
 
-    if tool_mode == "force":
-        tool_config = types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=tool_functions.keys()),
-        )
-    elif tool_mode == "auto":
-        tool_config = types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode=tool_mode))
-    elif tool_mode == "direct":
-        tool_config = None
+    Args:
+        tool_router: Initialized ToolRouter instance.
+        max_output_tokens: Maximum output tokens.
+        thinking_level: Thinking level ("high", "medium", "low").
+        include_thoughts: Whether to include thinking in output.
+        temperature: Sampling temperature.
+        system_prompt: System instruction.
+
+    Returns:
+        GoogleAgentConfigs for the agent.
+    """
+    tool_mode = tool_router.tool_mode
+    tool_declarations = tool_router.get_available_declarations()
+    tool_names = list(tool_router.get_available_tools().keys())
+
+    if tool_mode == "direct":
         tools = None
+        tool_config = None
     else:
-        raise ValueError(f"Invalid tool_mode: {tool_mode}")
+        tools = types.Tool(function_declarations=tool_declarations) if tool_declarations else None
+        if tool_mode == "force":
+            tool_config = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(
+                    mode="ANY",
+                    allowed_function_names=tool_names
+                ),
+            )
+        else:  # auto
+            tool_config = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="AUTO")
+            )
 
     thinking_config = None
     if thinking_level is not None:
@@ -94,13 +111,13 @@ def build_google_agent_configs(
     )
 
 
-def _build_tools_list(api_mode: str) -> List[Dict[str, Any]]:
+def _build_tools_list(tool_router: "ToolRouter", api_mode: str) -> List[Dict[str, Any]]:
     """Build tools list in the correct format based on API mode.
 
     - responses API: flat format {"type": "function", "name": ..., "parameters": ...}
     - chat_completions API: nested format {"type": "function", "function": {"name": ..., "parameters": ...}}
     """
-    tool_declarations = get_tool_declarations()
+    tool_declarations = tool_router.get_available_declarations()
     tools = []
 
     for tool in tool_declarations:
@@ -127,20 +144,34 @@ def _build_tools_list(api_mode: str) -> List[Dict[str, Any]]:
 
 
 def build_api_agent_configs(
+    tool_router: "ToolRouter",
     *,
     api_mode: str = "responses",
     max_output_tokens: Optional[int] = None,
     temperature: float = 1.0,
-    tool_mode: Optional[str] = None,
     reasoning_level: Optional[str] = None,
     system_prompt: Optional[str] = None,
 ) -> APIAgentConfigs:
-    """Build unified config for OpenAI-compatible APIs."""
+    """Build unified config for OpenAI-compatible APIs.
+
+    Args:
+        tool_router: Initialized ToolRouter instance.
+        api_mode: "responses" or "chat_completions".
+        max_output_tokens: Maximum output tokens.
+        temperature: Sampling temperature.
+        reasoning_level: Reasoning effort level.
+        system_prompt: System instruction.
+
+    Returns:
+        APIAgentConfigs for the agent.
+    """
     if api_mode not in ("responses", "chat_completions"):
         raise ValueError(f"Invalid api_mode: {api_mode}. Must be 'responses' or 'chat_completions'.")
 
+    tool_mode = tool_router.tool_mode
+
     # Build tools and normalize tool_choice
-    tools = _build_tools_list(api_mode)
+    tools = _build_tools_list(tool_router, api_mode)
     if tool_mode == "direct":
         tool_choice = "none" if api_mode == "chat_completions" else None
         tools = None

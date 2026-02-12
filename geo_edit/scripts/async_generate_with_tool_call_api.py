@@ -68,12 +68,12 @@ def _init_worker(
 
     if model_type == "Google":
         agent_configs = build_google_agent_configs(
+            _WORKER_TOOL_ROUTER,
             max_output_tokens=max_output_tokens,
             thinking_level="low",
             include_thoughts=True,
             temperature=1.0,
             system_prompt=system_prompt,
-            tool_mode=tool_mode,
         )
         _WORKER_TASK_CLASS = GoogleVisionQATask
         api_mode = None  # Google uses native API
@@ -81,10 +81,10 @@ def _init_worker(
         # Set api_mode based on model_type
         api_mode = "chat_completions" if model_type == "SGLang" else "responses"
         agent_configs = build_api_agent_configs(
+            _WORKER_TOOL_ROUTER,
             api_mode=api_mode,
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            tool_mode=tool_mode,
             reasoning_level="low" if model_type == "OpenAI" else None,
             system_prompt=system_prompt,
         )

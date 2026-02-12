@@ -1,33 +1,40 @@
 """Tests for ToolRouter - tool_definitions/router.py"""
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 
 class TestToolRouterInit:
     """Test ToolRouter initialization."""
 
-    def test_init_with_auto_mode(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_init_with_auto_mode(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
         assert router.tool_mode == "auto"
 
-    def test_init_with_force_mode(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_init_with_force_mode(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="force")
         assert router.tool_mode == "force"
 
     def test_init_with_direct_mode(self):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        # direct mode doesn't create agents, no mock needed
         router = ToolRouter(tool_mode="direct")
         assert router.tool_mode == "direct"
 
-    def test_init_default_mode_is_auto(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_init_default_mode_is_auto(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter()
         assert router.tool_mode == "auto"
 
@@ -66,16 +73,20 @@ class TestToolRouterDirectMode:
 class TestToolRouterAutoMode:
     """Test ToolRouter behavior in auto mode."""
 
-    def test_get_available_declarations_returns_list(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_get_available_declarations_returns_list(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
         declarations = router.get_available_declarations()
         assert isinstance(declarations, list)
 
-    def test_declarations_have_required_fields(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_declarations_have_required_fields(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
         declarations = router.get_available_declarations()
         for decl in declarations:
@@ -83,16 +94,20 @@ class TestToolRouterAutoMode:
             assert "description" in decl
             assert "parameters" in decl
 
-    def test_get_available_tools_returns_dict(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_get_available_tools_returns_dict(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
         functions = router.get_available_tools()
         assert isinstance(functions, dict)
 
-    def test_tools_are_callable(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_tools_are_callable(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
         functions = router.get_available_tools()
         for name, func in functions.items():
@@ -134,17 +149,21 @@ class TestToolRouterToolRegistry:
 class TestToolRouterReturnTypes:
     """Test tool return type methods."""
 
-    def test_get_tool_return_type_for_image_tools(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_get_tool_return_type_for_image_tools(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
         image_tools = ["image_crop", "image_label", "draw_line", "bounding_box", "image_highlight"]
         for tool_name in image_tools:
             assert router.get_tool_return_type(tool_name) == "image"
 
-    def test_get_tool_return_type_for_agent_tools(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_get_tool_return_type_for_agent_tools(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
         agent_tools = ["multimath", "gllava", "chartmoe"]
         for tool_name in agent_tools:
@@ -154,9 +173,11 @@ class TestToolRouterReturnTypes:
 class TestToolRouterAgentMethods:
     """Test agent-specific methods."""
 
-    def test_get_enabled_agents_returns_agent_type_only(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_get_enabled_agents_returns_agent_type_only(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
         agents = router.get_enabled_agents()
         # Should only contain agent-type tools, not function-type
@@ -164,9 +185,11 @@ class TestToolRouterAgentMethods:
         for func_tool in function_tools:
             assert func_tool not in agents
 
-    def test_is_agent_enabled_returns_bool(self):
+    @patch("geo_edit.tool_definitions.router.get_manager")
+    def test_is_agent_enabled_returns_bool(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
+        mock_get_manager.return_value.create_agents.return_value = {"chartmoe": MagicMock()}
         router = ToolRouter(tool_mode="auto")
         result = router.is_agent_enabled()
         assert isinstance(result, bool)

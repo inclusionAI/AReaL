@@ -11,6 +11,7 @@ from geo_edit.constants import MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
 from geo_edit.environment.action import TOOL_FUNCTIONS
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
+from geo_edit.tool_definitions import ToolRouter
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -61,7 +62,8 @@ def test_vllm_task() -> None:
     save_dir.mkdir(parents=True, exist_ok=True)
 
     use_tools = args.tool_mode != "direct"
-    tool_functions = TOOL_FUNCTIONS if use_tools else {}
+    tool_router = ToolRouter(tool_mode=args.tool_mode)
+    tool_functions = tool_router.get_available_tools() if use_tools else {}
 
     if args.system_prompt is not None:
         system_prompt = args.system_prompt
@@ -73,10 +75,10 @@ def test_vllm_task() -> None:
     prompt = args.prompt
 
     agent_configs = build_api_agent_configs(
+        tool_router,
         api_mode="responses",
         max_output_tokens=args.max_tokens,
         temperature=args.temperature,
-        tool_mode=args.tool_mode,
         system_prompt=system_prompt,
     )
 
