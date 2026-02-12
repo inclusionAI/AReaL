@@ -46,7 +46,10 @@ class AgentConfig:
     port: Optional[int] = None  # For vLLM
     generate_config: Optional[Dict[str, Any]] = field(default_factory=dict)
 
-    # API mode: "responses" or "chat_completions" (only for OpenAI/vLLM/SGLang, not Google)
+    # API mode: "google", "responses", or "chat_completions"
+    # - "google": Google Gemini native API
+    # - "responses": OpenAI Responses API (client.responses.create)
+    # - "chat_completions": OpenAI Chat Completions API (client.chat.completions.create)
     api_mode: str = "responses"
 
     def __post_init__(self):
@@ -55,7 +58,7 @@ class AgentConfig:
         if self.model_type not in valid_model_types:
             raise ValueError(f"model_type must be one of {valid_model_types}, got {self.model_type}")
 
-        valid_api_modes = ["responses", "chat_completions"]
+        valid_api_modes = ["google", "responses", "chat_completions"]
         if self.api_mode not in valid_api_modes:
             raise ValueError(f"api_mode must be one of {valid_api_modes}, got {self.api_mode}")
 
@@ -63,9 +66,13 @@ class AgentConfig:
         if self.torch_dtype not in valid_dtypes:
             raise ValueError(f"torch_dtype must be one of {valid_dtypes}, got {self.torch_dtype}")
 
-        # Google API does not support api_mode switching
-        if self.model_type == "Google" and self.api_mode != "responses":
-            raise ValueError("Google API only supports 'responses' mode (native API). Cannot use 'chat_completions'.")
+        # Validate api_mode and model_type consistency
+        if self.model_type == "Google" and self.api_mode != "google":
+            raise ValueError("Google model_type requires api_mode='google'.")
+        if self.api_mode == "google" and self.model_type != "Google":
+            raise ValueError("api_mode='google' requires model_type='Google'.")
+        if self.model_type == "SGLang" and self.api_mode != "chat_completions":
+            raise ValueError("SGLang only supports api_mode='chat_completions'.")
 
 
 class BaseAgent(ABC):

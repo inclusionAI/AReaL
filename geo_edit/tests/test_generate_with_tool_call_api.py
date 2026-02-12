@@ -14,6 +14,7 @@ from geo_edit.config import (
 from geo_edit.datasets.input_template import MATHVISION_INPUT_TEMPLATE
 from geo_edit.constants import MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
+from geo_edit.tool_definitions import ToolRouter
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -40,24 +41,32 @@ def main():
     max_output_tokens = None
 
     system_prompt = get_system_prompt(args.model_type)
+    tool_router = ToolRouter(tool_mode="force")
+
+    # Determine api_mode based on model_type
     if args.model_type == "Google":
+        api_mode = "google"
+    elif args.model_type == "SGLang":
+        api_mode = "chat_completions"
+    else:
+        api_mode = "responses"
+
+    # Build agent configs based on api_mode
+    if api_mode == "google":
         agent_configs = build_google_agent_configs(
+            tool_router,
             max_output_tokens=max_output_tokens,
             thinking_level="low",
             include_thoughts=True,
             temperature=1.0,
             system_prompt=system_prompt,
-            tool_mode="force",
         )
-        api_mode = None  # Google uses native API
     else:
-        # Set api_mode based on model_type
-        api_mode = "chat_completions" if args.model_type == "SGLang" else "responses"
         agent_configs = build_api_agent_configs(
+            tool_router,
             api_mode=api_mode,
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            tool_mode="auto",
             system_prompt=system_prompt,
         )
 
@@ -94,7 +103,7 @@ def main():
 
         text_prompt = INPUT_TEMPLATE.format(question=question, options=options)
 
-        if args.model_type == "Google":
+        if api_mode == "google":
             task_cls = GoogleVisionQATask
             task_kwargs = {}
         else:
@@ -108,7 +117,7 @@ def main():
             task_prompt=text_prompt,
             task_answer=answer,
             task_image_path=image_url,
-            tool_functions=TOOL_FUNCTIONS,
+            tool_functions=tool_router.get_available_tools(),
             save_dir=task_save_dir,
             options=options,
             **task_kwargs,
@@ -132,7 +141,7 @@ def main():
         else:
             logging.info("Max tool calls reached; forcing final answer without tool calls.")
             FORCE_ANSWER_PROMPT = "Max tool calls reached. Please provide the final answer without further tool calls."
-            if args.model_type == "Google":
+            if api_mode == "google":
                 task.contents.append(FORCE_ANSWER_PROMPT)
             else:
                 task.append_prompt(FORCE_ANSWER_PROMPT)

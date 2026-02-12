@@ -66,7 +66,16 @@ def _init_worker(
     # get_system_prompt returns tool/no-tool prompt based on use_tools mode
     system_prompt = get_system_prompt(model_type, tool_mode)
 
+    # Determine api_mode based on model_type
     if model_type == "Google":
+        api_mode = "google"
+    elif model_type == "SGLang":
+        api_mode = "chat_completions"
+    else:
+        api_mode = "responses"
+
+    # Build agent configs based on api_mode
+    if api_mode == "google":
         agent_configs = build_google_agent_configs(
             _WORKER_TOOL_ROUTER,
             max_output_tokens=max_output_tokens,
@@ -76,10 +85,7 @@ def _init_worker(
             system_prompt=system_prompt,
         )
         _WORKER_TASK_CLASS = GoogleVisionQATask
-        api_mode = None  # Google uses native API
     else:
-        # Set api_mode based on model_type
-        api_mode = "chat_completions" if model_type == "SGLang" else "responses"
         agent_configs = build_api_agent_configs(
             _WORKER_TOOL_ROUTER,
             api_mode=api_mode,
@@ -137,7 +143,7 @@ def _run_one_task(task_payload: dict):
 
     task_kwargs = {"model_type": model_type}
     # Add api_mode for non-Google tasks
-    if _WORKER_MODEL_TYPE != "Google":
+    if _WORKER_API_MODE != "google":
         task_kwargs["api_mode"] = _WORKER_API_MODE
     extra_kwargs = task_payload.get("task_kwargs")
     if isinstance(extra_kwargs, dict):

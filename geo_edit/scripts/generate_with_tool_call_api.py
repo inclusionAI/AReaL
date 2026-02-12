@@ -61,7 +61,17 @@ def main():
     system_prompt = get_system_prompt(args.model_type) if args.use_tools else ""
     tool_mode = "auto" if args.use_tools else "direct"
     tool_router = ToolRouter(tool_mode=tool_mode)
+
+    # Determine api_mode based on model_type
     if args.model_type == "Google":
+        api_mode = "google"
+    elif args.model_type == "SGLang":
+        api_mode = "chat_completions"
+    else:
+        api_mode = "responses"
+
+    # Build agent configs based on api_mode
+    if api_mode == "google":
         agent_configs = build_google_agent_configs(
             tool_router,
             max_output_tokens=max_output_tokens,
@@ -70,10 +80,7 @@ def main():
             temperature=1.0,
             system_prompt=system_prompt,
         )
-        api_mode = None  # Google uses native API
     else:
-        # Set api_mode based on model_type
-        api_mode = "chat_completions" if args.model_type == "SGLang" else "responses"
         agent_configs = build_api_agent_configs(
             tool_router,
             api_mode=api_mode,
@@ -122,7 +129,7 @@ def main():
 
         text_prompt = dataset_spec.build_prompt(item, args.use_tools)
 
-        if args.model_type == "Google":
+        if api_mode == "google":
             task_cls = GoogleVisionQATask
             task_kwargs = {}
         else:

@@ -8,31 +8,25 @@ logger = setup_logger(__name__)
 class APIBasedAgent(BaseAgent):
     """Unified agent for all API-based backends.
 
-    Supports:
-    - Google (Gemini API) - uses native google.genai client
-    - OpenAI - uses OpenAI client with responses or chat_completions API
-    - vLLM - uses OpenAI-compatible client (local server, supports both API modes)
-    - SGLang - uses OpenAI-compatible client (local server, only supports chat_completions)
+    Supports three api_mode values:
+    - "google": Google Gemini native API (google.genai client)
+    - "responses": OpenAI Responses API (client.responses.create)
+    - "chat_completions": OpenAI Chat Completions API (client.chat.completions.create)
 
-    For OpenAI/vLLM, you can choose between two API modes via config.api_mode:
-    - "responses": Uses client.responses.create() (OpenAI Responses API)
-    - "chat_completions": Uses client.chat.completions.create() (Chat Completions API)
-
-    Google API always uses its native client and does not support api_mode switching.
-    SGLang only supports chat_completions mode.
+    Model type to api_mode mapping:
+    - Google -> api_mode="google" (required)
+    - OpenAI -> api_mode="responses" or "chat_completions"
+    - vLLM -> api_mode="responses" or "chat_completions"
+    - SGLang -> api_mode="chat_completions" (required)
     """
 
     def load_model(self):
         if self._model_loaded:
             return
-        
-        logger.info("Loading API-based model: %s (type=%s)", self.config.model_name, self.config.model_type)
 
-        # Validate api_mode for SGLang (only supports chat_completions)
-        if self.config.model_type == "SGLang" and self.config.api_mode != "chat_completions":
-            raise ValueError("SGLang only supports 'chat_completions' mode. Please set api_mode='chat_completions'.")
+        logger.info("Loading API-based model: %s (api_mode=%s)", self.config.model_name, self.config.api_mode)
 
-        if self.config.model_type == "Google":
+        if self.config.api_mode == "google":
             self._load_google_client()
         elif self.config.model_type == "OpenAI":
             self._load_openai_client()
@@ -83,14 +77,12 @@ class APIBasedAgent(BaseAgent):
         logger.info("Connected to local %s server at %s", self.config.model_type, self.config.api_base)
 
     def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, int | float | str | None]]:
-        if self.config.model_type == "Google":
+        if self.config.api_mode == "google":
             return self._generate_google_response(model_input)
-        elif self.config.model_type in ("OpenAI", "vLLM", "SGLang"):
-            # OpenAI, vLLM, SGLang all use OpenAI-compatible API
-            if self.config.api_mode == "responses":
-                return self._generate_responses_api(model_input)
-            elif self.config.api_mode == "chat_completions":
-                return self._generate_chat_completions_api(model_input)
+        elif self.config.api_mode == "responses":
+            return self._generate_responses_api(model_input)
+        elif self.config.api_mode == "chat_completions":
+            return self._generate_chat_completions_api(model_input)
 
     def _generate_google_response(self, model_input: Any) -> Tuple[Any, Dict[str, int | float | str | None]]:
         """Generate response using Google Gemini API."""
@@ -175,7 +167,7 @@ class APIBasedAgent(BaseAgent):
         return response, extra_info
 
     def _validate_response(self, response: Any) -> None:
-        if self.config.model_type == "Google":
+        if self.config.api_mode == "google":
             if response.parts is None:
                 logging.warning("Generated content parts is None: %s", response)
                 raise ValueError("Generated content is None.")
