@@ -3,7 +3,6 @@
 
 from geo_edit.agents.api_agent import APIBasedAgent
 from geo_edit.agents.base import AgentConfig, BaseAgent
-from geo_edit.environment.action.tool_agent import ToolAgent
 from geo_edit.utils.image_utils import load_image_safely
 from geo_edit.utils.text_utils import (
     calculate_confidence_score,
@@ -19,7 +18,6 @@ __all__ = [
     "AgentConfig",
     # Concrete implementations
     "APIBasedAgent",
-    "ToolAgent",
     # Utility functions
     "load_image_safely",
     "parse_vlm_response",
