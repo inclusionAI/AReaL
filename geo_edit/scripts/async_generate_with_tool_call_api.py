@@ -29,15 +29,15 @@ logger = setup_logger(__name__)
 # ---------------------------
 # Worker globals (one per process)
 # ----------------------------
-_WORKER_AGENT = None
+_WORKER_AGENT: "APIBasedAgent | None" = None
 _WORKER_AGENT_CONFIGS = None
-_WORKER_OUTPUT_PATH = None
-_WORKER_MAX_TOOL_CALLS = None
+_WORKER_OUTPUT_PATH: "str | None" = None
+_WORKER_MAX_TOOL_CALLS: "int | None" = None
 _WORKER_TASK_CLASS = None
-_WORKER_MODEL_TYPE = None
-_WORKER_SYSTEM_PROMPT = None
-_WORKER_API_MODE = None
-_WORKER_TOOL_ROUTER = None
+_WORKER_MODEL_TYPE: "str | None" = None
+_WORKER_SYSTEM_PROMPT: "str | None" = None
+_WORKER_API_MODE: "str | None" = None
+_WORKER_TOOL_ROUTER: "ToolRouter | None" = None
 
 
 def _init_worker(
@@ -122,7 +122,10 @@ def _run_one_task(task_payload: dict):
     Returns:
       (ok: bool, meta_info: dict|None)
     """
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE, _WORKER_API_MODE, _WORKER_TOOL_ROUTER
+    assert _WORKER_AGENT is not None, "Worker not initialized"
+    assert _WORKER_AGENT_CONFIGS is not None, "Worker not initialized"
+    assert _WORKER_MAX_TOOL_CALLS is not None, "Worker not initialized"
+    assert _WORKER_TOOL_ROUTER is not None, "Worker not initialized"
 
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
@@ -154,6 +157,7 @@ def _run_one_task(task_payload: dict):
 
     # Get available tools from router (controlled by config.yaml and use_tools mode)
     tool_functions = _WORKER_TOOL_ROUTER.get_available_tools()
+    tool_return_types = _WORKER_TOOL_ROUTER.get_tool_return_types()
 
     task = _WORKER_TASK_CLASS(
         task_id=task_id,
@@ -161,6 +165,7 @@ def _run_one_task(task_payload: dict):
         task_answer=answer,
         task_image_path=image_path,
         tool_functions=tool_functions,
+        tool_return_types=tool_return_types,
         save_dir=task_save_dir,
         **task_kwargs,
     )

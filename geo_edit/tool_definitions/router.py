@@ -55,17 +55,14 @@ class ToolRouter:
         self._agents: Dict[str, Any] = {}
 
         # Auto-initialize agents if any are enabled
-        if self._has_enabled_agents():
+        if self.get_enabled_agents():
             self._agents = self._create_agents(ray_address, node_resource)
 
-    def _has_enabled_agents(self) -> bool:
-        """Check if any agent tools are enabled (internal use before full init)."""
+    def _get_enabled_tool_names(self) -> List[str]:
+        """Get names of all enabled tools (respects tool_mode and config.yaml)."""
         if self.tool_mode == "direct":
-            return False
-        return any(
-            typ == "agent" and _TOOL_CONFIG.get(name, False)
-            for name, (_, _, typ, _) in _TOOL_REGISTRY.items()
-        )
+            return []
+        return [name for name in _TOOL_REGISTRY if _TOOL_CONFIG.get(name, False)]
 
     def _create_agents(
         self,
@@ -90,36 +87,21 @@ class ToolRouter:
 
     def get_available_declarations(self) -> List[Dict]:
         """Get tool declarations for available tools."""
-        if self.tool_mode == "direct":
-            return []
-        return [
-            _TOOL_REGISTRY[name][0]
-            for name in _TOOL_REGISTRY
-            if _TOOL_CONFIG.get(name, False)
-        ]
+        return [_TOOL_REGISTRY[name][0] for name in self._get_enabled_tool_names()]
 
     def get_available_tools(self) -> Dict[str, Callable[..., Image.Image | str]]:
         """Get tool functions for available tools."""
-        if self.tool_mode == "direct":
-            return {}
-        return {
-            name: _TOOL_REGISTRY[name][1]
-            for name in _TOOL_REGISTRY
-            if _TOOL_CONFIG.get(name, False)
-        }
+        return {name: _TOOL_REGISTRY[name][1] for name in self._get_enabled_tool_names()}
 
-    def get_tool_return_type(self, name: str) -> str:
-        """Get return type for a tool."""
-        return _TOOL_REGISTRY[name][3]
+    def get_tool_return_types(self) -> Dict[str, str]:
+        """Get return types for all available tools."""
+        return {name: _TOOL_REGISTRY[name][3] for name in self._get_enabled_tool_names()}
 
     def get_enabled_agents(self) -> List[str]:
         """Get list of enabled agent tool names (for Ray Actor initialization)."""
-        if self.tool_mode == "direct":
-            return []
         return [
-            name
-            for name, (_, _, typ, _) in _TOOL_REGISTRY.items()
-            if typ == "agent" and _TOOL_CONFIG.get(name, False)
+            name for name in self._get_enabled_tool_names()
+            if _TOOL_REGISTRY[name][2] == "agent"
         ]
 
     def get_enabled_agent_configs(self) -> Dict[str, dict]:
@@ -128,8 +110,6 @@ class ToolRouter:
         Returns:
             Dict mapping agent name to its config dict.
         """
-        if self.tool_mode == "direct":
-            return {}
         return {
             name: AGENT_CONFIGS[name]
             for name in self.get_enabled_agents()
@@ -138,13 +118,11 @@ class ToolRouter:
 
     def is_tool_enabled(self) -> bool:
         """Check if any tools are enabled."""
-        if self.tool_mode == "direct":
-            return False
-        return any(_TOOL_CONFIG.get(name, False) for name in _TOOL_REGISTRY)
+        return bool(self._get_enabled_tool_names())
 
     def is_agent_enabled(self) -> bool:
         """Check if any agent tools are enabled and initialized."""
-        return len(self._agents) > 0
+        return bool(self._agents)
 
     def shutdown_agents(self, tool_names: Optional[List[str]] = None):
         """Shutdown Tool Agents.

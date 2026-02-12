@@ -36,6 +36,7 @@ class VisionQATask(AbstractVLMTask):
         model_type: Literal["google", "openai", "vllm", "sglang"] = "openai",
         api_mode: Literal["responses", "chat_completions"] = "responses",
         tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
+        tool_return_types: Optional[Dict[str, str]] = None,
         **kwargs,
     ):
         super().__init__(task_id)
@@ -45,7 +46,7 @@ class VisionQATask(AbstractVLMTask):
         self.model_type = model_type
         self.api_mode = api_mode
         self.tool_functions = tool_functions or {}
-        self.tool_return_types = TOOL_RETURN_TYPES
+        self.tool_return_types = tool_return_types or {}
         self.state = True
         self.options = kwargs["options"] if "options" in kwargs else None
         self.meta_info_extra = kwargs.get("meta_info_extra")
