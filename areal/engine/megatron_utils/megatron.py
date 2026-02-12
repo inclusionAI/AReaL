@@ -9,7 +9,7 @@ from megatron.core.transformer.transformer_layer import get_transformer_layer_of
 from torch import Tensor
 from torch.nn.parameter import Parameter
 
-from areal.utils.fp8 import (
+from areal.engine.megatron_utils.fp8 import (
     FP8BlockwiseTensorHelper,
     convert_fp8_helper_to_pytorch_fp8,
     get_block_size_from_config,

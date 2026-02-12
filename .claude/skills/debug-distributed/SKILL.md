@@ -98,7 +98,7 @@ dist.barrier()
 **Timeout Adjustment** (for debugging only):
 
 ```python
-from areal.utils.distributed import patch_dist_group_timeout
+from areal.engine.core.distributed import patch_dist_group_timeout
 from datetime import timedelta
 patch_dist_group_timeout(timedelta(minutes=30))
 ```

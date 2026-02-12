@@ -18,13 +18,22 @@ PYTORCH_KERNEL_CACHE_PATH = (
 )
 VLLM_CACHE_ROOT = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/vllm/"
 TRITON_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/triton/"
+
+
+def _find_repo_root():
+    p = pathlib.Path(__file__).resolve()
+    while p != p.parent:
+        if (p / "pyproject.toml").exists():
+            return p
+        p = p.parent
+    return None  # installed environment, no repo checkout
+
+
+_repo_root = _find_repo_root()
 PYTHONPATH = os.pathsep.join(
     filter(
         None,
-        [
-            os.getenv("PYTHONPATH", None),
-            str(pathlib.Path(__file__).resolve().parent.parent.parent),
-        ],
+        [os.getenv("PYTHONPATH"), str(_repo_root) if _repo_root else None],
     )
 )
 os.makedirs(PYTORCH_KERNEL_CACHE_PATH, exist_ok=True)

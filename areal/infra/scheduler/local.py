@@ -35,16 +35,16 @@ from areal.infra.scheduler.exceptions import (
     WorkerNotFoundError,
     WorkerTimeoutError,
 )
-from areal.utils import logging, name_resolve, names
-from areal.utils.concurrent import run_async_task
-from areal.utils.fs import validate_shared_path
-from areal.utils.http import get_default_connector
-from areal.utils.launcher import (
+from areal.infra.utils.concurrent import run_async_task
+from areal.infra.utils.http import get_default_connector
+from areal.infra.utils.launcher import (
     get_env_vars,
     get_thread_env_vars,
 )
+from areal.infra.utils.proc import kill_process_tree, run_with_streaming_logs
+from areal.utils import logging, name_resolve, names
+from areal.utils.fs import validate_shared_path
 from areal.utils.network import find_free_ports, gethostip
-from areal.utils.proc import kill_process_tree, run_with_streaming_logs
 
 logger = logging.getLogger("LocalScheduler")
 

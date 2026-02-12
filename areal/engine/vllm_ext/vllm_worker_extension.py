@@ -8,9 +8,9 @@ from vllm.lora.peft_helper import PEFTHelper
 from vllm.lora.request import LoRARequest
 from vllm.model_executor.model_loader import get_model_loader
 
+from areal.engine.core.distributed import init_custom_process_group
 from areal.infra.platforms import current_platform
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
-from areal.utils.distributed import init_custom_process_group
 
 logger = init_logger("vllm_worker_extension")
 

@@ -5,10 +5,18 @@ import re
 
 import torch
 
-from areal.utils.fp8.config import get_block_size_from_config
-from areal.utils.fp8.deepgemm import should_deepgemm_weight_requant_ue8m0
-from areal.utils.fp8.kernels import blockwise_cast_to_fp8_triton, weight_dequant
-from areal.utils.fp8.ue8m0 import quant_weight_ue8m0, transform_scale_ue8m0
+from areal.engine.megatron_utils.fp8.config import get_block_size_from_config
+from areal.engine.megatron_utils.fp8.deepgemm import (
+    should_deepgemm_weight_requant_ue8m0,
+)
+from areal.engine.megatron_utils.fp8.kernels import (
+    blockwise_cast_to_fp8_triton,
+    weight_dequant,
+)
+from areal.engine.megatron_utils.fp8.ue8m0 import (
+    quant_weight_ue8m0,
+    transform_scale_ue8m0,
+)
 
 
 def _quantize_param(

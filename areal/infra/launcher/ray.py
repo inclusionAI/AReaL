@@ -23,9 +23,8 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.infra.platforms import current_platform, is_npu_available
-from areal.utils import name_resolve, names
-from areal.utils.exp_metadata import save_experiment_metadata
-from areal.utils.launcher import (
+from areal.infra.utils.exp_metadata import save_experiment_metadata
+from areal.infra.utils.launcher import (
     BASE_ENVIRONS,
     JobException,
     JobState,
@@ -34,8 +33,9 @@ from areal.utils.launcher import (
     validate_config_for_distributed_launcher,
     wait_llm_server_addrs,
 )
+from areal.infra.utils.ray import get_placement_group_master_ip_and_port
+from areal.utils import name_resolve, names
 from areal.utils.offload import get_tms_env_vars
-from areal.utils.ray import get_placement_group_master_ip_and_port
 from areal.utils.recover import check_if_recover
 
 logger = logging.getLogger("RayLauncher")

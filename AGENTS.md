@@ -40,10 +40,17 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
   - `areal/infra/` - Core infrastructure including single controller implementation,
     placement and allocation policies, async orchestration primitives, and
     hardware/platform abstractions for CPU/GPU/NPU runtimes.
+    - `areal/infra/utils/` - Infrastructure utilities (launcher, process management,
+      HTTP, concurrency, Slurm/Ray helpers).
   - `areal/dataset/` - Stateful dataset loaders (GSM8K, Geometry3K, CLEVR, HH-RLHF,
     TORL, etc.) and utilities that feed rollout jobs safely.
   - `areal/engine/` - Training backends (FSDP2, Megatron, PPO, SFT, reward modeling) and
     inference adapters (SGLang, vLLM remote engines).
+    - `areal/engine/fsdp_utils/` - FSDP2-specific utilities (checkpoint, gradient,
+      optimizer, parallel helpers).
+    - `areal/engine/megatron_utils/` - Megatron/FP8 utilities (checkpoint, pipeline,
+      quantization).
+    - `areal/engine/core/` - Engine-shared utilities (distributed, model helpers).
   - `areal/experimental/` - Prototype engines/workflows that evolve quickly; expect
     breaking changes.
   - `areal/infra/launcher/` - Launch specs for local, Ray, and Slurm clusters, plus
@@ -56,8 +63,8 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
     distributed backends).
   - `areal/tools/` - Developer utilities and maintenance scripts tied to the core
     package.
-  - `areal/utils/` - Cross-cutting helpers for logging, tensor ops, stats tracking,
-    checkpoints, and recovery.
+  - `areal/utils/` - Cross-cutting helpers for logging, data processing, stats tracking,
+    checkpoints, recovery, network, and RL functional ops.
   - `areal/workflow/` - Concrete rollout agents implementing `RolloutWorkflow`:
     multi-turn, RLVR, vision RLVR workflows, plus `openai_agent/` for OpenAI Agent-style
     implementations.

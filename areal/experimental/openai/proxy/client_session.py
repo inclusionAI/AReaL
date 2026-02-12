@@ -15,7 +15,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from areal.utils.http import ensure_end_with_slash
+from areal.infra.utils.http import ensure_end_with_slash
 from areal.utils.logging import getLogger
 
 from .server import (

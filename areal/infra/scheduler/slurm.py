@@ -31,22 +31,22 @@ from areal.infra.scheduler.exceptions import (
     WorkerNotFoundError,
     WorkerTimeoutError,
 )
-from areal.utils import logging, name_resolve, names
-from areal.utils.concurrent import run_async_task
-from areal.utils.fs import validate_shared_path
-from areal.utils.http import get_default_connector
-from areal.utils.launcher import (
+from areal.infra.utils.concurrent import run_async_task
+from areal.infra.utils.http import get_default_connector
+from areal.infra.utils.launcher import (
     JobState,
     get_env_vars,
     get_thread_env_vars,
 )
-from areal.utils.offload import get_tms_env_vars
-from areal.utils.proc import build_streaming_log_cmd
-from areal.utils.slurm import (
+from areal.infra.utils.proc import build_streaming_log_cmd
+from areal.infra.utils.slurm import (
     cancel_jobs,
     parse_slurm_nodelist,
     query_jobs,
 )
+from areal.utils import logging, name_resolve, names
+from areal.utils.fs import validate_shared_path
+from areal.utils.offload import get_tms_env_vars
 
 logger = logging.getLogger("SlurmScheduler")
 

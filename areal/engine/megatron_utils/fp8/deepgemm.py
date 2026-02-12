@@ -13,7 +13,7 @@ def _compute_enable_deep_gemm() -> bool:
     2. deep_gemm package installed
     """
     try:
-        from areal.utils.cuda import get_device_sm
+        from areal.engine.megatron_utils.fp8.cuda import get_device_sm
 
         sm_version = get_device_sm()
         if sm_version < 90:
@@ -35,7 +35,7 @@ def _is_deepgemm_blackwell() -> bool:
     if not _compute_enable_deep_gemm():
         return False
     try:
-        from areal.utils.cuda import is_blackwell
+        from areal.engine.megatron_utils.fp8.cuda import is_blackwell
 
         return is_blackwell()
     except Exception:

@@ -11,12 +11,12 @@ from megatron.core import parallel_state as mpu
 
 from areal.engine.core.train_engine import compute_total_loss_weight
 from areal.engine.megatron_engine import MegatronEngine
+from areal.engine.megatron_utils.megatron import get_named_parameters
 from areal.tests.fp8.engine_utils import (
     extract_gemm_kernels,
     print_gemm_profile,
 )
 from areal.utils import logging
-from areal.utils.megatron import get_named_parameters
 
 logger = logging.getLogger("FP8 BF16 Model Utils")
 

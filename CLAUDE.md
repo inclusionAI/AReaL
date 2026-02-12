@@ -12,10 +12,16 @@ learning.
 - `areal/` - Core package
   - `api/` - Config dataclasses, workflow/engine contracts
   - `engine/` - FSDP2, Megatron, SGLang/vLLM adapters
+    - `fsdp_utils/` - FSDP2-specific utilities (checkpoint, grad, optimizer, parallel)
+    - `megatron_utils/` - Megatron/FP8 utilities (checkpoint, pipeline, quantization)
+    - `core/` - Engine-shared utilities (distributed, lock, model, offload)
+  - `infra/` - Infrastructure (launcher, scheduler, RPC)
+    - `utils/` - Infrastructure utilities (launcher, proc, http, concurrent, slurm, ray)
   - `workflow/` - RolloutWorkflow implementations
   - `reward/` - Reward functions
   - `dataset/` - Dataset loaders
-  - `utils/` - Logging, tensor ops, checkpoints
+  - `utils/` - Cross-cutting utilities (logging, data, checkpoints, network, RL
+    functional)
 - `examples/` - Training scripts and configs
 - `docs/` - Jupyter Book source
 

@@ -2,7 +2,7 @@
 paths:
   - areal/engine/**
   - areal/experimental/**
-  - areal/utils/fsdp/**
+  - areal/engine/fsdp_utils/**
 ---
 
 # Distributed Code Rules

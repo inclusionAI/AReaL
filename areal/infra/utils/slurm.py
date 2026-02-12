@@ -1,11 +1,11 @@
 import subprocess
 from typing import Literal
 
-from areal.utils import logging
-from areal.utils.launcher import (
+from areal.infra.utils.launcher import (
     JobInfo,
     JobState,
 )
+from areal.utils import logging
 
 logger = logging.getLogger("SlurmUtils")
 

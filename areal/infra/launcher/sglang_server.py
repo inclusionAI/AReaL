@@ -18,13 +18,13 @@ from areal.api.cli_args import (
     to_structured_cfg,
 )
 from areal.infra.platforms import current_platform
-from areal.utils import logging, name_resolve, names
-from areal.utils.launcher import (
+from areal.infra.utils.launcher import (
     TRITON_CACHE_PATH,
     get_scheduling_spec,
 )
+from areal.infra.utils.proc import kill_process_tree
+from areal.utils import logging, name_resolve, names
 from areal.utils.network import find_free_ports, gethostip
-from areal.utils.proc import kill_process_tree
 
 logger = logging.getLogger("SGLangWrapper")
 

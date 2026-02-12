@@ -8,9 +8,9 @@ from dataclasses import dataclass
 import aiohttp
 import httpx
 
+from areal.infra.utils.concurrent import register_loop_cleanup
+from areal.infra.utils.http import DEFAULT_REQUEST_TIMEOUT, get_default_connector
 from areal.utils import logging
-from areal.utils.concurrent import register_loop_cleanup
-from areal.utils.http import DEFAULT_REQUEST_TIMEOUT, get_default_connector
 
 logger = logging.getLogger("WorkflowContext")
 

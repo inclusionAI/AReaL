@@ -13,7 +13,7 @@ import orjson
 import ray
 import torch
 
-from areal.utils.concurrent import run_async_task
+from areal.infra.utils.concurrent import run_async_task
 from areal.utils.datapack import balanced_greedy_partition, flat2d
 
 

@@ -1,4 +1,4 @@
-"""Unit tests for areal.utils.model module."""
+"""Unit tests for areal.engine.core.model module."""
 
 from dataclasses import dataclass
 
@@ -16,7 +16,7 @@ from areal.api.cli_args import (
     TrainEngineConfig,
 )
 from areal.api.io_struct import WeightUpdateMeta
-from areal.utils.model import get_model_update_meta
+from areal.engine.core.model import get_model_update_meta
 
 
 @dataclass

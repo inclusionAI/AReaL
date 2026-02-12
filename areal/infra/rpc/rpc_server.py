@@ -27,6 +27,7 @@ from areal.infra.rpc.serialization import (
     deserialize_value,
     serialize_value,
 )
+from areal.infra.utils.proc import kill_process_tree, run_with_streaming_logs
 from areal.utils import logging, name_resolve, names, perf_tracer, seeding
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -34,7 +35,6 @@ from areal.utils.data import (
 )
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, gethostip
-from areal.utils.proc import kill_process_tree, run_with_streaming_logs
 
 logger = logging.getLogger("SyncRPCServer")
 

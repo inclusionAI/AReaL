@@ -164,13 +164,13 @@ algorithm-specific subclasses
 
 - `areal/api/alloc_mode.py` - `FSDPParallelStrategy` (inherits from `ParallelStrategy`)
   for FSDP-specific parallel dimensions
-- `areal/utils/fsdp/parallel.py` - `ParallelHelper` class for mesh construction and
-  dimension validation
+- `areal/engine/fsdp_utils/parallel.py` - `ParallelHelper` class for mesh construction
+  and dimension validation
 
 **Model Parallelism Implementations**:
 
-- **Tensor Parallelism**: `areal/utils/fsdp/parallel.py` - `apply_non_moe_tp()` and
-  `parallelize_model()` for TP integration
+- **Tensor Parallelism**: `areal/engine/fsdp_utils/parallel.py` - `apply_non_moe_tp()`
+  and `parallelize_model()` for TP integration
 - **Sequence Parallelism (Ulysses)**: `areal/models/fsdp/ulysses.py` - Ulysses SP
   communication primitives and input preparation
 - **Context Parallelism**: Integrated via Ulysses sequence parallel groups
@@ -183,9 +183,9 @@ algorithm-specific subclasses
 
 **FSDP2 Wrapping and Sharding**:
 
-- `areal/utils/fsdp/__init__.py` - `apply_fsdp2()` for FSDP2 module wrapping with mixed
-  precision and offload policies
-- `areal/utils/fsdp/parallel.py` - `parallelize_model()` orchestrates TP + FSDP2
+- `areal/engine/fsdp_utils/__init__.py` - `apply_fsdp2()` for FSDP2 module wrapping with
+  mixed precision and offload policies
+- `areal/engine/fsdp_utils/parallel.py` - `parallelize_model()` orchestrates TP + FSDP2
   application
 
 **Model-Specific Components**:
@@ -198,15 +198,15 @@ algorithm-specific subclasses
 
 **Utilities**:
 
-- **Checkpointing**: `areal/utils/fsdp/checkpoint.py` - `DCPState` wrapper for
+- **Checkpointing**: `areal/engine/fsdp_utils/checkpoint.py` - `DCPState` wrapper for
   distributed checkpoint (DCP) integration
-- **Gradient Handling**: `areal/utils/fsdp/grad.py` - `fsdp2_clip_grad_norm()` with
-  TP/DP/PP-aware gradient norm computation
-- **Optimizer**: `areal/utils/fsdp/optimizer.py` - `AnyPrecisionAdamW` for
+- **Gradient Handling**: `areal/engine/fsdp_utils/grad.py` - `fsdp2_clip_grad_norm()`
+  with TP/DP/PP-aware gradient norm computation
+- **Optimizer**: `areal/engine/fsdp_utils/optimizer.py` - `AnyPrecisionAdamW` for
   mixed-precision training with Kahan summation
-- **Multi-Tensor Operations**: `areal/utils/fsdp/multi_tensor_apply.py` - Fallback
-  implementations when Transformer Engine/Apex unavailable
-- **State Dict Loading**: `areal/utils/fsdp/__init__.py` -
+- **Multi-Tensor Operations**: `areal/engine/fsdp_utils/multi_tensor_apply.py` -
+  Fallback implementations when Transformer Engine/Apex unavailable
+- **State Dict Loading**: `areal/engine/fsdp_utils/__init__.py` -
   `fsdp2_load_full_state_dict()` for broadcast loading from rank 0
 
 **Algorithm-Specific Subclasses** (in `areal/engine/fsdp_engine.py`):
@@ -249,7 +249,7 @@ algorithm-specific subclasses
 
 - **Main implementation**: `areal/engine/fsdp_engine.py`
 - **Configuration**: `areal/api/cli_args.py` (`TrainEngineConfig`)
-- **Utilities**: `areal/utils/fsdp/` directory for checkpointing, gradients,
+- **Utilities**: `areal/engine/fsdp_utils/` directory for checkpointing, gradients,
   optimization, and parallel helpers
 - **Model components**: `areal/models/fsdp/` for Ulysses sequence parallelism
 - **Examples**: YAML configuration files in `examples/` directory

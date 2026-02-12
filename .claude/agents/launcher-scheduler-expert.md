@@ -67,7 +67,7 @@ Located in `areal/api/cli_args.py`:
 ClusterSpecConfig -> Launcher -> BASE_ENVIRONS + thread vars -> Worker processes
 ```
 
-Critical utilities in `areal/utils/launcher.py`:
+Critical utilities in `areal/infra/utils/launcher.py`:
 
 - `BASE_ENVIRONS`: Essential runtime variables (PyTorch cache, Triton, tokenizers)
 - `get_thread_env_vars()`: CPU thread control based on allocated cores
@@ -102,8 +102,8 @@ Critical utilities in `areal/utils/launcher.py`:
   IP/hostname assumptions
 - Raise specific exceptions from `areal.infra.scheduler.exceptions` -> not generic
   exception types
-- Use `areal.utils.proc.kill_process_tree()` for process termination -> not leaving
-  zombie processes
+- Use `areal.infra.utils.proc.kill_process_tree()` for process termination -> not
+  leaving zombie processes
 - Propagate all `BASE_ENVIRONS` variables and thread control variables -> not missing
   environment variable propagation
 - Use `areal.utils.network.find_free_ports()` for port allocation -> not static port
@@ -143,7 +143,7 @@ Critical utilities in `areal/utils/launcher.py`:
 | `areal/infra/scheduler/local.py`        | Local worker scheduling            | GPU round-robin, port allocation, health monitoring       |
 | `areal/infra/scheduler/slurm.py`        | Slurm-integrated scheduling        | Job array coordination, resource reservation              |
 | `areal/infra/scheduler/ray.py`          | Ray cluster scheduling             | Ray placement groups, actor-based worker management       |
-| `areal/utils/launcher.py`               | Shared utilities                   | Environment variable management, configuration validation |
+| `areal/infra/utils/launcher.py`         | Shared utilities                   | Environment variable management, configuration validation |
 
 ______________________________________________________________________
 
@@ -175,7 +175,7 @@ Activation: Manual (when requested) for launcher/scheduler topics
 3. Document any new environment variables or configuration requirements
 
 ### When Utility Functions Change
-1. Update references to `areal/utils/launcher.py` functions
+1. Update references to `areal/infra/utils/launcher.py` functions
 2. Adjust "Environment Variable Propagation Pattern" if BASE_ENVIRONS changes
 3. Update diagnostic steps that rely on specific utility functions
 

@@ -19,9 +19,9 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.infra import RolloutController
 from areal.infra.rpc.rtensor import RTensor
 from areal.infra.scheduler.local import LocalScheduler
+from areal.infra.utils.proc import kill_process_tree
 from areal.tests.utils import get_model_path
 from areal.utils import network, seeding
-from areal.utils.proc import kill_process_tree
 
 # =============================================================================
 # Test Configuration

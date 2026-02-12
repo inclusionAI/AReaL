@@ -11,10 +11,10 @@ import uuid
 import pytest
 
 from areal.infra.platforms import current_platform
+from areal.infra.utils.concurrent import run_async_task
+from areal.infra.utils.proc import kill_process_tree
 from areal.tests.utils import get_dataset_path, get_model_path
 from areal.utils import logging
-from areal.utils.concurrent import run_async_task
-from areal.utils.proc import kill_process_tree
 
 logger = logging.getLogger("TestExamples")
 

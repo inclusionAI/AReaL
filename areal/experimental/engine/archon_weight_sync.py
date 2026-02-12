@@ -11,11 +11,11 @@ from torch import nn
 from torch.distributed.tensor import DTensor
 
 from areal.api.io_struct import ParamSpec, WeightUpdateMeta
+from areal.engine.core.distributed import init_custom_process_group
 from areal.experimental.engine.archon_checkpoint import save_model_to_hf
 from areal.infra.platforms import current_platform
 from areal.utils import name_resolve, names
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
-from areal.utils.distributed import init_custom_process_group
 from areal.utils.lock import DistributedLock
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf

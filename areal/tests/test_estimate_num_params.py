@@ -8,8 +8,10 @@ from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from transformers import AutoModelForCausalLM
 
+from areal.engine.megatron_utils.pipeline_parallel import (
+    estimate_stage_parameter_buckets,
+)
 from areal.models.mcore.registry import make_hf_and_mcore_config
-from areal.utils.mcore.pipeline_parallel import estimate_stage_parameter_buckets
 from areal.utils.network import find_free_ports
 
 

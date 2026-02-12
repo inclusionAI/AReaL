@@ -30,7 +30,7 @@ from areal.infra.scheduler.exceptions import (
     WorkerTimeoutError,
 )
 from areal.infra.scheduler.local import LocalScheduler, WorkerInfo
-from areal.utils.proc import kill_process_tree
+from areal.infra.utils.proc import kill_process_tree
 
 # Skip all tests in this module by default - run manually only
 pytestmark = pytest.mark.skip(
@@ -1099,8 +1099,8 @@ class TestDeleteWorkers:
 class TestProcessTermination:
     """Test process termination functionality."""
 
-    @patch("areal.utils.proc.psutil.Process")
-    @patch("areal.utils.proc.psutil.wait_procs")
+    @patch("areal.infra.utils.proc.psutil.Process")
+    @patch("areal.infra.utils.proc.psutil.wait_procs")
     def test_kill_process_tree_graceful(self, mock_wait_procs, mock_process_class):
         """Should gracefully terminate process tree."""
         # Mock parent process
@@ -1126,8 +1126,8 @@ class TestProcessTermination:
         mock_child2.kill.assert_not_called()
         mock_parent.kill.assert_not_called()
 
-    @patch("areal.utils.proc.psutil.Process")
-    @patch("areal.utils.proc.psutil.wait_procs")
+    @patch("areal.infra.utils.proc.psutil.Process")
+    @patch("areal.infra.utils.proc.psutil.wait_procs")
     def test_kill_process_tree_force_kill(self, mock_wait_procs, mock_process_class):
         """Should force kill processes that don't terminate gracefully."""
         mock_parent = Mock()
@@ -1145,7 +1145,7 @@ class TestProcessTermination:
         mock_child.terminate.assert_called_once()
         mock_child.kill.assert_called_once()
 
-    @patch("areal.utils.proc.psutil.Process")
+    @patch("areal.infra.utils.proc.psutil.Process")
     def test_kill_process_tree_no_such_process(self, mock_process_class):
         """Should handle gracefully when process doesn't exist."""
         mock_process_class.side_effect = psutil.NoSuchProcess(1234)
@@ -1153,7 +1153,7 @@ class TestProcessTermination:
         # Should not raise
         kill_process_tree(1234, timeout=3, graceful=True)
 
-    @patch("areal.utils.proc.psutil.Process")
+    @patch("areal.infra.utils.proc.psutil.Process")
     def test_kill_process_tree_handles_child_no_such_process(self, mock_process_class):
         """Should handle when child process disappears during termination."""
         mock_parent = Mock()

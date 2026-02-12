@@ -18,15 +18,15 @@ from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import FSDPParallelStrategy
 from areal.api.cli_args import FSDPWrapPolicy, TrainEngineConfig
-from areal.infra.platforms import current_platform
-from areal.models.parallel_styles import ReplicateParallel
-from areal.utils.fsdp import apply_fsdp2
-from areal.utils.model import (
+from areal.engine.core.model import (
     is_gemma3_model,
     is_moe_model,
     is_qwen3_vl_model,
     is_valid_vision_model,
 )
+from areal.engine.fsdp_utils import apply_fsdp2
+from areal.infra.platforms import current_platform
+from areal.models.parallel_styles import ReplicateParallel
 
 __all__ = ["ReplicateParallel", "ParallelHelper", "parallelize_model"]
 

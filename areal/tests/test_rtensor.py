@@ -12,8 +12,8 @@ import torch
 
 from areal.infra.rpc.rtensor import RTensor, TensorShardInfo
 from areal.infra.rpc.serialization import serialize_value
+from areal.infra.utils.proc import kill_process_tree
 from areal.utils.network import find_free_ports
-from areal.utils.proc import kill_process_tree
 
 
 @pytest.fixture(scope="module")

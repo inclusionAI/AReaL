@@ -11,26 +11,26 @@
 #   - tensor_helper.py: FP8 blockwise tensor helper class
 #   - config.py: Configuration utilities for extracting block size from quantization config
 
-from areal.utils.fp8.config import get_block_size_from_config
-from areal.utils.fp8.deepgemm import (
+from areal.engine.megatron_utils.fp8.config import get_block_size_from_config
+from areal.engine.megatron_utils.fp8.deepgemm import (
     DEEPGEMM_BLACKWELL,
     DEEPGEMM_SCALE_UE8M0,
     ENABLE_JIT_DEEPGEMM,
     should_deepgemm_weight_requant_ue8m0,
 )
-from areal.utils.fp8.kernels import (
+from areal.engine.megatron_utils.fp8.kernels import (
     blockwise_cast_to_fp8_triton,
     weight_dequant,
 )
-from areal.utils.fp8.quantize import (
+from areal.engine.megatron_utils.fp8.quantize import (
     dequantize_params,
     quantize_params,
 )
-from areal.utils.fp8.tensor_helper import (
+from areal.engine.megatron_utils.fp8.tensor_helper import (
     FP8BlockwiseTensorHelper,
     convert_fp8_helper_to_pytorch_fp8,
 )
-from areal.utils.fp8.ue8m0 import (
+from areal.engine.megatron_utils.fp8.ue8m0 import (
     ceil_to_ue8m0,
     get_tma_aligned_size,
     quant_weight_ue8m0,

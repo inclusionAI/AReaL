@@ -7,16 +7,16 @@ ______________________________________________________________________
 
 ## CRITICAL Level (Must use Opus)
 
-| Change Type            | File Path Pattern                                             | Code Pattern                                                |
-| ---------------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
-| **ARCHON_CORE**        | `areal/experimental/models/archon/`                           | -                                                           |
-| **ARCHON_PARALLEL**    | `parallel_dims.py`                                            | `ArchonParallelDims`, `_build_mesh`, `DeviceMesh`           |
-| **ARCHON_MOE**         | `archon/moe/`                                                 | `router`, `grouped_experts`, `TokenReorderer`, `grouped_mm` |
-| **ARCHON_PARALLELIZE** | `qwen*/infra/parallelize.py`                                  | `apply_moe_ep_tp`, `apply_tp`, `apply_cp`                   |
-| **ARCHON_ENGINE**      | `areal/experimental/engine/archon_engine.py`                  | `ArchonEngine`                                              |
-| **FSDP_CORE**          | `areal/utils/fsdp/`, `areal/engine/fsdp_engine.py`            | `FSDP`, `FullyShardedDataParallel`, `fully_shard`           |
-| **MEGATRON_CORE**      | `areal/engine/megatron_engine.py`, `areal/utils/megatron*.py` | `MegatronEngine`                                            |
-| **DCP_CHECKPOINT**     | -                                                             | `DCP`, `DistributedCheckpoint`, `dcp.save`, `dcp.load`      |
+| Change Type            | File Path Pattern                                                 | Code Pattern                                                |
+| ---------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------- |
+| **ARCHON_CORE**        | `areal/experimental/models/archon/`                               | -                                                           |
+| **ARCHON_PARALLEL**    | `parallel_dims.py`                                                | `ArchonParallelDims`, `_build_mesh`, `DeviceMesh`           |
+| **ARCHON_MOE**         | `archon/moe/`                                                     | `router`, `grouped_experts`, `TokenReorderer`, `grouped_mm` |
+| **ARCHON_PARALLELIZE** | `qwen*/infra/parallelize.py`                                      | `apply_moe_ep_tp`, `apply_tp`, `apply_cp`                   |
+| **ARCHON_ENGINE**      | `areal/experimental/engine/archon_engine.py`                      | `ArchonEngine`                                              |
+| **FSDP_CORE**          | `areal/engine/fsdp_utils/`, `areal/engine/fsdp_engine.py`         | `FSDP`, `FullyShardedDataParallel`, `fully_shard`           |
+| **MEGATRON_CORE**      | `areal/engine/megatron_engine.py`, `areal/engine/megatron_utils/` | `MegatronEngine`                                            |
+| **DCP_CHECKPOINT**     | -                                                                 | `DCP`, `DistributedCheckpoint`, `dcp.save`, `dcp.load`      |
 
 ## HIGH Level (Recommend Opus)
 
@@ -33,19 +33,19 @@ ______________________________________________________________________
 
 ## MEDIUM Level (Use Sonnet)
 
-| Change Type             | File Path Pattern                                                                  | Code Pattern                                                             |
-| ----------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| **TENSOR_OPS**          | -                                                                                  | `.view(`, `.reshape(`, `dtype=`, `.detach()`, `no_grad`, `.contiguous()` |
-| **NUMERICAL**           | -                                                                                  | `log(`, `softmax`, `cross_entropy`, `eps=`, `.clamp(`, `nan`, `inf`      |
-| **WORKFLOW_ENGINE**     | `areal/workflow/`, `areal/engine/`                                                 | `arun_episode`, `agenerate`, `RolloutWorkflow`                           |
-| **API_CONFIG**          | `areal/api/`                                                                       | `@dataclass`, `__post_init__`, `field(`                                  |
-| **COMPILE**             | -                                                                                  | `torch.compile`, `_dynamo`, `mark_dynamic`, `fullgraph`                  |
-| **ACTIVATION_CKPT**     | `activation_checkpoint.py`                                                         | `activation_checkpoint`, `checkpoint_wrapper`, `selective_checkpoint`    |
-| **CHECKPOINT_RECOVERY** | `areal/utils/saver.py`, `areal/utils/recover.py`, `areal/utils/fsdp/checkpoint.py` | `state_dict`, `load_state_dict`, `checkpoint`                            |
-| **REWARD**              | `areal/reward/`                                                                    | `reward_fn`, `AsyncRewardWrapper`, `MathVerifyWorker`                    |
-| **DATASET**             | `areal/dataset/`                                                                   | `get_*_dataset`, `DataLoader`, `IterableDataset`                         |
-| **LAUNCHER_SCHEDULER**  | `areal/infra/launcher/`, `areal/infra/scheduler/`, `areal/infra/rpc/`              | `LaunchConfig`, `Scheduler`, `RayLauncher`, `SlurmLauncher`              |
-| **ATTENTION**           | `attention/`, `attention/sdpa.py`, `attention/varlen.py`                           | `flash_attn`, `sdpa`, `varlen`, `causal_mask`                            |
+| Change Type             | File Path Pattern                                                                         | Code Pattern                                                             |
+| ----------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **TENSOR_OPS**          | -                                                                                         | `.view(`, `.reshape(`, `dtype=`, `.detach()`, `no_grad`, `.contiguous()` |
+| **NUMERICAL**           | -                                                                                         | `log(`, `softmax`, `cross_entropy`, `eps=`, `.clamp(`, `nan`, `inf`      |
+| **WORKFLOW_ENGINE**     | `areal/workflow/`, `areal/engine/`                                                        | `arun_episode`, `agenerate`, `RolloutWorkflow`                           |
+| **API_CONFIG**          | `areal/api/`                                                                              | `@dataclass`, `__post_init__`, `field(`                                  |
+| **COMPILE**             | -                                                                                         | `torch.compile`, `_dynamo`, `mark_dynamic`, `fullgraph`                  |
+| **ACTIVATION_CKPT**     | `activation_checkpoint.py`                                                                | `activation_checkpoint`, `checkpoint_wrapper`, `selective_checkpoint`    |
+| **CHECKPOINT_RECOVERY** | `areal/utils/saver.py`, `areal/utils/recover.py`, `areal/engine/fsdp_utils/checkpoint.py` | `state_dict`, `load_state_dict`, `checkpoint`                            |
+| **REWARD**              | `areal/reward/`                                                                           | `reward_fn`, `AsyncRewardWrapper`, `MathVerifyWorker`                    |
+| **DATASET**             | `areal/dataset/`                                                                          | `get_*_dataset`, `DataLoader`, `IterableDataset`                         |
+| **LAUNCHER_SCHEDULER**  | `areal/infra/launcher/`, `areal/infra/scheduler/`, `areal/infra/rpc/`                     | `LaunchConfig`, `Scheduler`, `RayLauncher`, `SlurmLauncher`              |
+| **ATTENTION**           | `attention/`, `attention/sdpa.py`, `attention/varlen.py`                                  | `flash_attn`, `sdpa`, `varlen`, `causal_mask`                            |
 
 ## LOW Level (Use Haiku)
 
@@ -131,14 +131,14 @@ ______________________________________________________________________
 
 **FSDP Core**:
 
-- `areal/utils/fsdp/`
+- `areal/engine/fsdp_utils/`
 - `areal/engine/fsdp_engine.py`
 
 **Megatron Core**:
 
 - `areal/engine/megatron_engine.py`
-- `areal/utils/megatron.py`
-- `areal/utils/megatron_checkpointer.py`
+- `areal/engine/megatron_utils/megatron.py`
+- `areal/engine/megatron_utils/checkpointer.py`
 
 **Trainer Core**:
 

@@ -30,7 +30,7 @@ from areal.infra import workflow_context
 from .workflow_context import WorkflowContext
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, perf_tracer, stats_tracker
-from areal.utils.concurrent import get_executor
+from areal.infra.utils.concurrent import get_executor
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.perf_tracer import trace_perf, trace_session_event
 from logging import Logger

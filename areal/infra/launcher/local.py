@@ -19,9 +19,8 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.infra.platforms import current_platform
-from areal.utils import logging, name_resolve, names
-from areal.utils.exp_metadata import save_experiment_metadata
-from areal.utils.launcher import (
+from areal.infra.utils.exp_metadata import save_experiment_metadata
+from areal.infra.utils.launcher import (
     BASE_ENVIRONS,
     JobException,
     JobInfo,
@@ -31,6 +30,7 @@ from areal.utils.launcher import (
     validate_config_for_launcher,
     wait_llm_server_addrs,
 )
+from areal.utils import logging, name_resolve, names
 from areal.utils.network import find_free_ports
 from areal.utils.offload import get_tms_env_vars
 from areal.utils.recover import check_if_recover

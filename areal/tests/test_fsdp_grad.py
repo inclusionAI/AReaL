@@ -7,7 +7,7 @@ import pytest
 import torch
 from torch import nn
 
-from areal.utils.fsdp.grad import (
+from areal.engine.fsdp_utils.grad import (
     clip_grad_by_total_norm_fp32,
     get_grad_norm_fp32,
     get_main_grads_for_grad_norm,

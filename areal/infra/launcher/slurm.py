@@ -17,9 +17,8 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.infra.platforms import current_platform
-from areal.utils import name_resolve, names
-from areal.utils.exp_metadata import save_experiment_metadata
-from areal.utils.launcher import (
+from areal.infra.utils.exp_metadata import save_experiment_metadata
+from areal.infra.utils.launcher import (
     BASE_ENVIRONS,
     JobException,
     JobInfo,
@@ -29,15 +28,16 @@ from areal.utils.launcher import (
     validate_config_for_distributed_launcher,
     wait_llm_server_addrs,
 )
-from areal.utils.offload import get_tms_env_vars
-from areal.utils.recover import check_if_recover
-from areal.utils.slurm import (
+from areal.infra.utils.slurm import (
     APPTAINER_CMD_TEMPLATE,
     SBATCH_SCRIPT_TEMPLATE,
     SRUN_CMD_TEMPLATE,
     cancel_jobs,
     query_jobs,
 )
+from areal.utils import name_resolve, names
+from areal.utils.offload import get_tms_env_vars
+from areal.utils.recover import check_if_recover
 
 logger = logging.getLogger("SlurmLauncher")
 
