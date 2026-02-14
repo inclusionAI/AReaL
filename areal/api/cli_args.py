@@ -173,7 +173,7 @@ class GenerationHyperparameters:
         },
     )
     lora_name: str = field(
-        default="",
+        default="default_lora",
         metadata={"help": "Lora name to be used for this generation."},
     )
     use_beam_search: bool = field(
@@ -1156,8 +1156,11 @@ class vLLMConfig:
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
+    # lora
     enable_lora: bool = False
-    lora_modules: str = ""
+    max_lora_rank: int = 16  # vllm's default
+    max_loras: int = 8  # override default
+    lora_modules: list[str] | None = None  # lora_modules is automatically filled
 
     @staticmethod
     def build_args(
@@ -1182,18 +1185,6 @@ class vLLMConfig:
             args["port"] = port
         if host is not None:
             args["host"] = host
-        # handle lora modules separately
-        lm = args.get("lora_modules")
-        if lm:
-            if isinstance(lm, str):
-                lm = [lm]
-            if isinstance(lm, (list, tuple)):
-                try:
-                    args["lora_modules"] = [
-                        json.dumps(json.loads(s), separators=(",", ":")) for s in lm
-                    ]
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"Invalid JSON string in lora_modules: {e}") from e
         return args
 
     @staticmethod
@@ -1271,10 +1262,8 @@ class SGLangConfig:
     # lora
     enable_lora: bool | None = None
     max_lora_rank: int | None = None
-    lora_target_modules: list[str] | None = None
-    lora_paths: list[str] | None = None
-    max_loaded_loras: int = 1
-    max_loras_per_batch: int = 1
+    max_loaded_loras: int = 8  # override default
+    lora_paths: list[str] | None = None  # lora_paths is automatically filled
     lora_backend: str = "triton"
     # logging
     log_level: str = "warning"
@@ -1341,11 +1330,6 @@ class SGLangConfig:
                 model_loader_extra_config, separators=(",", ":")
             )
         args.pop("enable_multithread_load", None)
-        # Map "all-linear" to "all"
-        if "lora_target_modules" in args and args["lora_target_modules"]:
-            args["lora_target_modules"] = [
-                x.replace("-linear", "") for x in args["lora_target_modules"]
-            ]
 
         args = dict(
             # Model and tokenizer
