@@ -8,6 +8,10 @@ from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.infra import TrainController
 from areal.utils import timeutil
+from areal.utils.async_checkpoint import AsyncCheckpointManager, AsyncMode
+from areal.utils.logging import getLogger
+
+logger = getLogger("Saver")
 
 
 class Saver:
@@ -19,6 +23,8 @@ class Saver:
             freq_step=config.freq_steps,
             freq_sec=config.freq_secs,
         )
+        self._async_mode = AsyncMode(config.mode)
+        self._managers: dict[str, AsyncCheckpointManager] = {}
 
     @staticmethod
     def get_save_root(
@@ -83,6 +89,30 @@ class Saver:
     def load_state_dict(self, state_dict):
         self.freq_ctl.load_state_dict(state_dict)
 
+    @property
+    def is_async(self) -> bool:
+        if self._async_mode in (AsyncMode.ASYNC, AsyncMode.AUTO):
+            # True if any manager is configured for async saves.
+            return any(mgr.is_async for mgr in self._managers.values())
+        return False
+
+    def _should_use_async(self, engine: TrainEngine | TrainController) -> bool:
+        """Decide whether to use async save for this engine."""
+        from areal.experimental.engine.archon_engine import ArchonEngine
+
+        if self._async_mode == AsyncMode.ASYNC:
+            if not isinstance(engine, ArchonEngine):
+                logger.warning(
+                    "Async checkpoint only supports ArchonEngine, "
+                    "got %s; falling back to sync",
+                    type(engine).__name__,
+                )
+                return False
+            return True
+        if self._async_mode == AsyncMode.AUTO:
+            return isinstance(engine, ArchonEngine)
+        return False
+
     def save(
         self,
         engine: TrainEngine | TrainController,
@@ -107,14 +137,49 @@ class Saver:
             global_step,
             name,
         )
-        weight_format = "hf"
-        with_optim = False
-        meta = SaveLoadMeta(
-            path=path,
-            weight_format=weight_format,
-            with_optim=with_optim,
-            tokenizer=tokenizer,
-            processor=processor,
-            base_model_path=base_model_path,
-        )
-        engine.save(meta)
+
+        if self._should_use_async(engine):
+            self._async_save(engine, path, name, tokenizer, processor)
+        else:
+            meta = SaveLoadMeta(
+                path=path,
+                weight_format="hf",
+                with_optim=False,
+                tokenizer=tokenizer,
+                processor=processor,
+                base_model_path=base_model_path,
+            )
+            engine.save(meta)
+
+    def _async_save(
+        self,
+        engine: TrainEngine | TrainController,
+        path: str,
+        name: str,
+        tokenizer: PreTrainedTokenizerFast | None,
+        processor: AutoProcessor | None,
+    ):
+        """Archon async save."""
+        from areal.experimental.engine.archon_engine import ArchonEngine
+
+        assert isinstance(engine, ArchonEngine)
+
+        mgr = self._managers.get(name)
+        if mgr is None:
+            mgr = AsyncCheckpointManager(AsyncMode.ASYNC)
+            self._managers[name] = mgr
+
+        from areal.experimental.engine.archon_checkpoint import save_model_to_hf
+
+        save_model_to_hf(engine, path, tokenizer, processor, async_mgr=mgr)
+
+    def maybe_wait_for_staging(self):
+        """Wait for all engines' staging to complete. Call before ppo_update."""
+        for mgr in self._managers.values():
+            mgr.maybe_wait_for_staging()
+
+    def finalize(self):
+        """Training end: wait for last upload + cleanup."""
+        for mgr in self._managers.values():
+            mgr.finalize()
+        self._managers.clear()

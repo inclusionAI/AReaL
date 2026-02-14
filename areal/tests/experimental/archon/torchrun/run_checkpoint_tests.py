@@ -1225,6 +1225,162 @@ def test_pp_forward_match(pp_size: int, out_file: str | None = None) -> bool:
 
 
 # =============================================================================
+# Async Checkpoint Tests
+# =============================================================================
+
+
+def test_async_save_hf_dense(model_path: str, output: str | None = None) -> bool:
+    """Test async HF save produces the same output as sync save.
+
+    Steps:
+    1. Initialize ArchonEngine
+    2. Save checkpoint synchronously (baseline)
+    3. Save checkpoint asynchronously (both ASYNC modes)
+    4. Compare output files for consistency
+    """
+    from safetensors.torch import load_file
+
+    from areal.experimental.engine.archon_checkpoint import save_model_to_hf
+    from areal.utils.async_checkpoint import AsyncCheckpointManager, AsyncMode
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+
+    print_rank0("\n=== Test: async_save_hf_dense ===")
+    print_rank0(f"Model path: {model_path}")
+    print_rank0(f"World size: {world_size}")
+
+    if rank == 0:
+        sync_dir = tempfile.mkdtemp(prefix="sync_hf_")
+        async_dir = tempfile.mkdtemp(prefix="async_hf_")
+    else:
+        sync_dir = None
+        async_dir = None
+
+    dirs = [sync_dir, async_dir]
+    dist.broadcast_object_list(dirs, src=0)
+    sync_dir, async_dir = dirs
+
+    success = True
+
+    try:
+        config = create_engine_config(model_path)
+        engine = ArchonLMEngine(config)
+
+        parallel_strategy = ParallelStrategy(
+            data_parallel_size=1,
+            tensor_parallel_size=world_size,
+        )
+        ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=4, train_batch_size=4)
+
+        engine.create_process_group(parallel_strategy=parallel_strategy)
+        engine.initialize(addr=None, ft_spec=ft_spec)
+
+        print_rank0(f"Engine initialized: {engine.model.__class__.__name__}")
+
+        # 1. Sync save (baseline)
+        print_rank0("Saving sync checkpoint...")
+        save_model_to_hf(engine, sync_dir, engine.tokenizer)
+
+        # 2. Async save (thread-based)
+        print_rank0("Saving async checkpoint...")
+        # Need a gloo PG for async - create manually since init used nccl
+        mgr = AsyncCheckpointManager(AsyncMode.ASYNC)
+        save_model_to_hf(engine, async_dir, engine.tokenizer, async_mgr=mgr)
+        mgr.finalize()
+
+        dist.barrier()
+
+        # 3. Compare outputs on rank 0
+        if rank == 0:
+            # Check async output has safetensors files
+            sync_files = sorted(
+                f for f in os.listdir(sync_dir) if f.endswith(".safetensors")
+            )
+            async_files = sorted(
+                f for f in os.listdir(async_dir) if f.endswith(".safetensors")
+            )
+
+            if len(async_files) == 0:
+                print_rank0("ERROR: No safetensors files in async output")
+                success = False
+            elif sync_files != async_files:
+                print_rank0(
+                    f"WARNING: Different file names: sync={sync_files}, "
+                    f"async={async_files}"
+                )
+                # File names may differ but content should be equivalent
+
+            # Compare tensor values
+            sync_state = {}
+            for f in sync_files:
+                sync_state.update(load_file(os.path.join(sync_dir, f)))
+
+            async_state = {}
+            for f in async_files:
+                async_state.update(load_file(os.path.join(async_dir, f)))
+
+            if set(sync_state.keys()) != set(async_state.keys()):
+                missing = set(sync_state.keys()) - set(async_state.keys())
+                extra = set(async_state.keys()) - set(sync_state.keys())
+                print_rank0(f"ERROR: Key mismatch. Missing: {missing}, Extra: {extra}")
+                success = False
+            else:
+                mismatches = 0
+                for key in sync_state:
+                    if not torch.equal(sync_state[key], async_state[key]):
+                        max_diff = (
+                            (sync_state[key].float() - async_state[key].float())
+                            .abs()
+                            .max()
+                            .item()
+                        )
+                        mismatches += 1
+                        if mismatches <= 3:
+                            print_rank0(f"  Mismatch: {key}, max_diff={max_diff:.6e}")
+
+                if mismatches > 0:
+                    print_rank0(f"ERROR: {mismatches} tensors don't match")
+                    success = False
+                else:
+                    print_rank0(
+                        f"All {len(sync_state)} tensors match between "
+                        "sync and async saves"
+                    )
+
+            # Check config.json exists
+            if not os.path.exists(os.path.join(async_dir, "config.json")):
+                print_rank0("ERROR: config.json not found in async output")
+                success = False
+
+        engine.destroy()
+
+    except Exception as e:
+        print_rank0(f"ERROR: {e}")
+        import traceback
+
+        traceback.print_exc()
+        success = False
+
+    finally:
+        dist.barrier()
+        if rank == 0:
+            for d in [sync_dir, async_dir]:
+                if d and os.path.exists(d):
+                    shutil.rmtree(d)
+
+    if success:
+        print_rank0("async_save_hf_dense: PASSED")
+    else:
+        print_rank0("async_save_hf_dense: FAILED")
+
+    if rank == 0 and output:
+        write_result(output, success)
+
+    return success
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -1237,6 +1393,8 @@ TEST_REGISTRY = {
     "pp_dcp_checkpoint": test_pp_dcp_checkpoint,
     "pp_dcp_with_optim": test_pp_dcp_with_optim,
     "pp_forward_match": test_pp_forward_match,
+    # Async checkpoint tests
+    "async_save_hf_dense": test_async_save_hf_dense,
 }
 
 # PP tests that require pp_size argument

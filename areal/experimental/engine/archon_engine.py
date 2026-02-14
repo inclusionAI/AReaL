@@ -293,11 +293,11 @@ class ArchonEngine(TrainEngine):
 
         # V-style schedules (ZBVZeroBubble, DualPipeV) split backward into
         # I (input grad) and W (weight grad) steps. This is incompatible with:
-        # 1. torch.compile — its donated buffer optimization assumes a single
+        # 1. torch.compile - its donated buffer optimization assumes a single
         #    backward pass (retain_graph=False).
-        # 2. Op-level selective AC — its per-op cache (storage.pop) is consumed
+        # 2. Op-level selective AC - its per-op cache (storage.pop) is consumed
         #    by the I step, leaving nothing for the W step recompute.
-        # 3. memory_budget AC — it depends on torch.compile.
+        # 3. memory_budget AC - it depends on torch.compile.
         # Full AC / layer-level selective AC use standard checkpoint_wrapper
         # whose gid-based recompute supports multiple backward passes.
         schedule_class = get_schedule_class(self.config.archon.pp_schedule)

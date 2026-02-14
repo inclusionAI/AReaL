@@ -84,7 +84,7 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
   (local, Ray, Slurm). Each entrypoint documents the scheduler expectations; reuse those
   specs instead of inventing ad-hoc run scripts.
 - **Shared images**: Platform-specific container images and startup scripts are defined
-  alongside launcher configs. Reference them or note when they are missing—do not
+  alongside launcher configs. Reference them or note when they are missing-do not
   attempt to rebuild CUDA/driver stacks inline.
 - **Secrets & endpoints**: Credentials for remote inference (SGLang, vLLM, Redis, etc.)
   are managed outside the repo. Flag their absence rather than hardcoding replacements.
@@ -107,18 +107,19 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 - **Imports**: Avoid wildcard imports; keep third-party vs internal groups consistent.
   Ruff enforces import ordering (isort rules) when hooks run. Place heavy optional deps
   inside functions to prevent import-time side effects.
-- **Logging**: Use `areal.utils.logging.getLogger(__name__)` rather than `print`. Emit
+- **Logging**: Use `areal.utils.logging.getLogger(name)` with PascalCase descriptive
+  names (e.g., `getLogger("RLVRWorkflow")`) rather than `print` or `__name__`. Emit
   structured metrics through `stats_tracker`/`StatsLogger` instead of ad-hoc counters.
-- **Async code**: Rollout workflows must stay non-blocking—prefer `await` with
+- **Async code**: Rollout workflows must stay non-blocking-prefer `await` with
   `aiofiles`, avoid synchronous file I/O inside `arun_episode`, and guard long-running
   CPU work with executors if needed.
 - **Tensor shapes**: Follow padded batch conventions; validate with
   `check_trajectory_format` while developing. Use helpers in `areal.utils.data` for
   padding/broadcasting.
-- **Config overrides**: Keep Hydra-friendly dotted names; don’t hardcode paths—expose
+- **Config overrides**: Keep Hydra-friendly dotted names; don't hardcode paths-expose
   options in config dataclasses and wire via YAML.
 - **Testing**: New features should ship with targeted pytest coverage (mark GPU-heavy
-  suites appropriately). Use `pytest.skip` with a clear reason when hardware isn’t
+  suites appropriately). Use `pytest.skip` with a clear reason when hardware isn't
   guaranteed.
 - **Docs & comments**: Document non-obvious behaviors inline; prefer short module-level
   docstrings summarizing workflows or engines you touch.

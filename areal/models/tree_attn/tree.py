@@ -27,7 +27,7 @@ from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TreeAttentionCore")
 
 
 # =============================================================================

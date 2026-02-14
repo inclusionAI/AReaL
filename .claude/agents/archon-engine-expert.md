@@ -36,7 +36,7 @@ Parallelism (EP), Expert Tensor Parallelism (ETP), and pipeline parallelism.
 
 - MoE-first design for efficient sparse model training
 - Unified TP/CP/PP/EP/ETP parallel strategies
-- Flexible checkpointing (HF or DCP formats)
+- Flexible checkpointing (HF or DCP formats) with async save support
 - Seamless weight sync with rollout engines
 
 **Engine Comparison**:
@@ -154,19 +154,14 @@ in `ParallelStrategy` for hybrid parallel training.
 **Capabilities**: Pipeline stage management with intra-stage expert parallelism for
 ultra-deep MoE models.
 
-### 4. Large-scale Checkpointing
+### 4. Checkpointing
 
-**Configuration Approach**: Use `TrainEngineConfig` with DCP checkpoint format and
-appropriate checkpoint intervals.
+ArchonEngine supports both DCP and HF checkpoint formats. HF saves default to async mode
+(`saver.mode: auto`), which stages state to pinned CPU memory and writes to disk in a
+background process. Override with `saver.mode: sync` if needed.
 
-**Key Settings**:
-
-- TrainEngineConfig: DCP format for distributed checkpoint coordination
-- Checkpoint interval configuration for regular saving
-- ArchonEngineConfig: Standard attention and compilation settings
-
-**Capabilities**: Distributed checkpoint coordination with expert-aware sharding for
-large-scale training.
+**Key files**: `areal/utils/async_checkpoint.py` (async manager), `areal/utils/saver.py`
+(auto-detection), `areal/experimental/engine/archon_checkpoint.py` (HF save path).
 
 ## Troubleshooting
 

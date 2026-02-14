@@ -33,19 +33,19 @@ ______________________________________________________________________
 
 ## MEDIUM Level (Use Sonnet)
 
-| Change Type             | File Path Pattern                                                                         | Code Pattern                                                             |
-| ----------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| **TENSOR_OPS**          | -                                                                                         | `.view(`, `.reshape(`, `dtype=`, `.detach()`, `no_grad`, `.contiguous()` |
-| **NUMERICAL**           | -                                                                                         | `log(`, `softmax`, `cross_entropy`, `eps=`, `.clamp(`, `nan`, `inf`      |
-| **WORKFLOW_ENGINE**     | `areal/workflow/`, `areal/engine/`                                                        | `arun_episode`, `agenerate`, `RolloutWorkflow`                           |
-| **API_CONFIG**          | `areal/api/`                                                                              | `@dataclass`, `__post_init__`, `field(`                                  |
-| **COMPILE**             | -                                                                                         | `torch.compile`, `_dynamo`, `mark_dynamic`, `fullgraph`                  |
-| **ACTIVATION_CKPT**     | `activation_checkpoint.py`                                                                | `activation_checkpoint`, `checkpoint_wrapper`, `selective_checkpoint`    |
-| **CHECKPOINT_RECOVERY** | `areal/utils/saver.py`, `areal/utils/recover.py`, `areal/engine/fsdp_utils/checkpoint.py` | `state_dict`, `load_state_dict`, `checkpoint`                            |
-| **REWARD**              | `areal/reward/`                                                                           | `reward_fn`, `AsyncRewardWrapper`, `MathVerifyWorker`                    |
-| **DATASET**             | `areal/dataset/`                                                                          | `get_*_dataset`, `DataLoader`, `IterableDataset`                         |
-| **LAUNCHER_SCHEDULER**  | `areal/infra/launcher/`, `areal/infra/scheduler/`, `areal/infra/rpc/`                     | `LaunchConfig`, `Scheduler`, `RayLauncher`, `SlurmLauncher`              |
-| **ATTENTION**           | `attention/`, `attention/sdpa.py`, `attention/varlen.py`                                  | `flash_attn`, `sdpa`, `varlen`, `causal_mask`                            |
+| Change Type             | File Path Pattern                                                                                                            | Code Pattern                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **TENSOR_OPS**          | -                                                                                                                            | `.view(`, `.reshape(`, `dtype=`, `.detach()`, `no_grad`, `.contiguous()` |
+| **NUMERICAL**           | -                                                                                                                            | `log(`, `softmax`, `cross_entropy`, `eps=`, `.clamp(`, `nan`, `inf`      |
+| **WORKFLOW_ENGINE**     | `areal/workflow/`, `areal/engine/`                                                                                           | `arun_episode`, `agenerate`, `RolloutWorkflow`                           |
+| **API_CONFIG**          | `areal/api/`                                                                                                                 | `@dataclass`, `__post_init__`, `field(`                                  |
+| **COMPILE**             | -                                                                                                                            | `torch.compile`, `_dynamo`, `mark_dynamic`, `fullgraph`                  |
+| **ACTIVATION_CKPT**     | `activation_checkpoint.py`                                                                                                   | `activation_checkpoint`, `checkpoint_wrapper`, `selective_checkpoint`    |
+| **CHECKPOINT_RECOVERY** | `areal/utils/saver.py`, `areal/utils/recover.py`, `areal/engine/fsdp_utils/checkpoint.py`, `areal/utils/async_checkpoint.py` | `state_dict`, `load_state_dict`, `checkpoint`, `AsyncCheckpointManager`  |
+| **REWARD**              | `areal/reward/`                                                                                                              | `reward_fn`, `AsyncRewardWrapper`, `MathVerifyWorker`                    |
+| **DATASET**             | `areal/dataset/`                                                                                                             | `get_*_dataset`, `DataLoader`, `IterableDataset`                         |
+| **LAUNCHER_SCHEDULER**  | `areal/infra/launcher/`, `areal/infra/scheduler/`, `areal/infra/rpc/`                                                        | `LaunchConfig`, `Scheduler`, `RayLauncher`, `SlurmLauncher`              |
+| **ATTENTION**           | `attention/`, `attention/sdpa.py`, `attention/varlen.py`                                                                     | `flash_attn`, `sdpa`, `varlen`, `causal_mask`                            |
 
 ## LOW Level (Use Haiku)
 

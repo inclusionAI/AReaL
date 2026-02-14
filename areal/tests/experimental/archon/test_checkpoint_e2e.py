@@ -287,6 +287,55 @@ class TestEngineCheckpointIntegration:
 
 
 # =============================================================================
+# Async Checkpoint Tests (Multi-GPU)
+# =============================================================================
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+class TestAsyncCheckpointIntegration:
+    """Tests for async HF checkpoint save with ArchonEngine.
+
+    Verifies that async save produces identical output to sync save.
+    """
+
+    @pytest.fixture
+    def dense_model_path(self):
+        path = DENSE_MODEL_PATHS.get("qwen3")
+        if path is None:
+            pytest.skip("Qwen3-0.6B model path not configured")
+        if not os.path.exists(path):
+            pytest.skip(f"Qwen3-0.6B model not found at {path}")
+        return path
+
+    def test_async_save_hf_dense_2gpu(self, dense_model_path, tmp_path_factory):
+        """Test async HF save matches sync save on 2 GPUs."""
+        if current_platform.device_count() < 2:
+            pytest.skip("This test requires 2 GPUs")
+
+        output = tmp_path_factory.mktemp("test_output") / "result.out"
+        _run_engine_checkpoint_test(
+            n_gpus=2,
+            test_type="async_save_hf_dense",
+            model_path=dense_model_path,
+            output_file=str(output),
+        )
+
+    def test_async_save_hf_dense_1gpu(self, dense_model_path, tmp_path_factory):
+        """Test async HF save matches sync save on 1 GPU."""
+        if current_platform.device_count() < 1:
+            pytest.skip("This test requires at least 1 GPU")
+
+        output = tmp_path_factory.mktemp("test_output") / "result.out"
+        _run_engine_checkpoint_test(
+            n_gpus=1,
+            test_type="async_save_hf_dense",
+            model_path=dense_model_path,
+            output_file=str(output),
+        )
+
+
+# =============================================================================
 # Weight Comparison Tests
 # =============================================================================
 

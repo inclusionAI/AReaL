@@ -78,6 +78,15 @@ LOGGER_COLORS_EXACT = {
     "RewardAPI": "purple",
     # Tree attention - cyan
     "TreeAttentionWrapper": "light_cyan",
+    "TreeAttentionFSDP": "light_cyan",
+    "TreeAttentionMegatron": "light_cyan",
+    "TreeAttentionCore": "light_cyan",
+    "TreeAttentionConstants": "light_cyan",
+    "TreeAttentionViz": "light_cyan",
+    # Checkpoint - blue (infrastructure)
+    "Saver": "blue",
+    "AsyncCheckpoint": "blue",
+    "ArchonCheckpoint": "blue",
     # Platforms - cyan
     "Platform": "light_cyan",
     "PlatformInit": "light_cyan",

@@ -11,7 +11,7 @@ from areal.models.tree_attn.constants import BLOCK_SIZE, USE_TRITON_TREE_ATTN
 from areal.models.tree_attn.triton_kernel import TRITON_AVAILABLE, tree_attention
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TreeAttentionFSDP")
 
 _TORCH_COMPILE_OPTIONS = {
     "epilogue_fusion": True,

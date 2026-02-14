@@ -65,15 +65,30 @@ PPOTrainer.train()
 The [`Saver`](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/saver.py)
 periodically exports model weights in HuggingFace format for evaluation or deployment.
 
+### Save Mode
+
+The `mode` parameter controls how checkpoints are written:
+
+| Mode    | Behavior                                                                                                                                                                                                                              |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto`  | Use async for Archon engine, sync for others (default). Zero-config optimal for all engines.                                                                                                                                          |
+| `sync`  | Always synchronous `dcp.save()`.                                                                                                                                                                                                      |
+| `async` | Always process-based async with pinned-memory staging. Archon engine only; other engines fall back to sync with a warning. Extra CPU pinned memory proportional to per-rank model shard size (e.g., ~17.5 GB/rank for 70B on 8 GPUs). |
+
+With the default `auto` mode, Archon engine users get async checkpoint saving
+automatically - the training loop blocks only while the checkpoint is staged to pinned
+CPU memory, and the actual disk I/O happens in a background process.
+
 ### Configuration
 
 Configure via `config.saver`:
 
-| Parameter     | Type        | Default | Description                          |
-| ------------- | ----------- | ------- | ------------------------------------ |
-| `freq_epochs` | int \| None | None    | Save every N epochs. None disables.  |
-| `freq_steps`  | int \| None | None    | Save every N steps. None disables.   |
-| `freq_secs`   | int \| None | None    | Save every N seconds. None disables. |
+| Parameter     | Type        | Default  | Description                          |
+| ------------- | ----------- | -------- | ------------------------------------ |
+| `mode`        | str         | `"auto"` | Save mode (see above).               |
+| `freq_epochs` | int \| None | None     | Save every N epochs. None disables.  |
+| `freq_steps`  | int \| None | None     | Save every N steps. None disables.   |
+| `freq_secs`   | int \| None | None     | Save every N seconds. None disables. |
 
 Example configuration:
 
@@ -82,6 +97,7 @@ saver:
   freq_epochs: 1      # Save at end of each epoch
   freq_steps: null    # Disabled
   freq_secs: null     # Disabled
+  # mode defaults to "auto" - Archon users get async automatically
 ```
 
 Saving is triggered when any of epoch/step/time condition is met.

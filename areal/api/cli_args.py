@@ -1582,6 +1582,26 @@ class EvaluatorConfig(_Timer):
 class SaverConfig(_Timer):
     """Configuration for model checkpoint saving scheduling and timing."""
 
+    mode: str = field(
+        default="auto",
+        metadata={
+            "help": "Checkpoint save mode for HF saves. "
+            "'auto': use async for Archon engine, sync for others (default). "
+            "'sync': always synchronous. "
+            "'async': always process-based async with pinned memory staging, "
+            "extra CPU pinned memory "
+            "proportional to per-rank model shard size "
+            "(e.g., ~17.5GB/rank for 70B model on 8 GPUs). "
+            "Non-Archon engines fall back to sync with a warning.",
+            "choices": ["auto", "sync", "async"],
+        },
+    )
+
+    def __post_init__(self):
+        valid_modes = {"auto", "sync", "async"}
+        if self.mode not in valid_modes:
+            raise ValueError(f"Invalid mode '{self.mode}'. Valid: {valid_modes}")
+
 
 @dataclass
 class RecoverConfig(_Timer):

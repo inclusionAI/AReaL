@@ -305,6 +305,9 @@ class PPOTrainer:
                 adv_batch = self.actor.compute_advantages(rollout_batch)
                 self.actor.get_device_stats().log("compute advantages")
 
+            # Wait for async checkpoint staging to complete before modifying parameters
+            self.saver.maybe_wait_for_staging()
+
             with (
                 stats_tracker.record_timing("train_step"),
                 perf_tracer.trace_scope(
@@ -414,6 +417,7 @@ class PPOTrainer:
             self._save_perf_tracer(step=global_step)
 
     def close(self):
+        self.saver.finalize()
         self.stats_logger.close()
         self.eval_rollout.destroy()
         self.rollout.destroy()
@@ -617,8 +621,10 @@ class PPOTrainer:
                 processor=self.processor,
                 name="critic",
             )
-        dist.barrier(group=self.actor.cpu_group)
-        current_platform.synchronize()
+        # Async mode: synchronization handled by AsyncCheckpointManager
+        if not self.saver.is_async:
+            dist.barrier(group=self.actor.cpu_group)
+            current_platform.synchronize()
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
         # Save recoverable checkpoints
