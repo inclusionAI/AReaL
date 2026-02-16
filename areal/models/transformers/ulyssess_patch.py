@@ -230,6 +230,11 @@ def apply_monkey_patch(
 
         patch_vlm_for_ulysses_input_slicing(model_class)
         logger.info(f"Patched {model_class_name}.forward")
+
+        # Apply Vision DP: distribute ViT computation across SP ranks
+        from areal.utils.vision_dp import apply_vision_dp_patch
+
+        apply_vision_dp_patch()
     else:
         from transformers.integrations import flash_attention
 
