@@ -22,7 +22,7 @@ from transformers import PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
-from areal.core import workflow_context
+from areal import workflow_context
 from areal.experimental.scaffolding._compat import (
     GenerationTask,
     NativeGenerationController,

@@ -82,7 +82,7 @@ actor:
       port_count: 2
       gpu: 1
       mem: 32
-      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars: {}
 
 ref:
@@ -107,8 +107,9 @@ sglang:
   skip_tokenizer_init: false
   dtype: ${actor.dtype}
   max_running_requests: null
-  context_length: 4096
-  mem_fraction_static: 0.65
+  context_length: 2048
+  mem_fraction_static: 0.5
+  attention_backend: flashinfer
 
 vllm:
   model: ${actor.path}

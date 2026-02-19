@@ -240,155 +240,6 @@ class RLVRRewardController(Controller):
         return float(reward)
 
 
-class PipelineTrajectoryMaker(Controller):
-    """Controller that composes generation and reward controllers into a pipeline.
-
-    This controller orchestrates the full RLVR pipeline:
-    1. Run generation via the generation controller
-    2. Compute rewards via the reward controller
-    3. Assemble results into InteractionWithTokenLogpReward objects
-
-    Parameters
-    ----------
-    generation_controller : Controller
-        The controller for text generation (e.g., NativeGenerationController).
-    reward_controller : RLVRRewardController
-        The controller for reward computation.
-    task_data : dict[str, Any]
-        Task data containing ground truth (e.g., "answer" field) for reward computation.
-    prompt_str : str
-        The prompt string used for generation.
-
-    Example
-    -------
-    ```python
-    from tensorrt_llm.scaffolding import NativeGenerationController
-
-    gen_controller = NativeGenerationController()
-    reward_controller = RLVRRewardController(gsm8k_reward_fn)
-    trajectory_maker = PipelineTrajectoryMaker(
-        gen_controller,
-        reward_controller,
-        task_data={"answer": "42"},
-        prompt_str="What is the answer?",
-    )
-    ```
-    """
-
-    def __init__(
-        self,
-        generation_controller: Controller,
-        reward_controller: RLVRRewardController,
-        task_data: dict[str, Any] | None = None,
-        prompt_str: str = "",
-    ):
-        """Initialize the pipeline trajectory maker.
-
-        Parameters
-        ----------
-        generation_controller : Controller
-            The generation controller.
-        reward_controller : RLVRRewardController
-            The reward controller.
-        task_data : dict[str, Any], optional
-            Task data containing ground truth for reward computation.
-        prompt_str : str, optional
-            The prompt string used for generation.
-        """
-        super().__init__()
-        self.generation_controller = generation_controller
-        self.reward_controller = reward_controller
-        self.task_data = task_data if task_data is not None else {}
-        self.prompt_str = prompt_str
-
-    def process(self, tasks: list[Task], **kwargs) -> Any:
-        """Process tasks through the generation and reward pipeline.
-
-        Parameters
-        ----------
-        tasks : list[Task]
-            List of generation tasks to process.
-        **kwargs
-            Additional keyword arguments.
-
-        Yields
-        ------
-        dict[str, InteractionWithTokenLogpReward]
-            Dictionary mapping task IDs to their interaction results.
-        """
-        # Step 1: Run generation
-        yield from self.generation_controller.process(tasks, **kwargs)
-
-        reward_tasks = []
-        interactions = {}
-
-        for i, task in enumerate(tasks):
-            if isinstance(task, GenerationTask):
-                # Create interaction object
-                interaction = self._create_interaction_from_task(task)
-                task_id = f"task_{i}"
-                interactions[task_id] = interaction
-
-                # Create reward task using constructor-provided task_data and prompt_str
-                reward_task = RLVRRewardTask.create_from_generation_task(
-                    gen_task=task,
-                    prompt_str=self.prompt_str or task.input_str or "",
-                    task_data=self.task_data,
-                    interaction=interaction,
-                )
-                reward_tasks.append(reward_task)
-
-        # Step 3: Process reward tasks
-        yield from self.reward_controller.process(reward_tasks, **kwargs)
-
-        # The interactions now have rewards set
-        # Return as the final result
-        yield interactions
-
-    def _create_interaction_from_task(
-        self, task: GenerationTask
-    ) -> InteractionWithTokenLogpReward:
-        """Create an InteractionWithTokenLogpReward from a generation task.
-
-        Parameters
-        ----------
-        task : GenerationTask
-            The completed generation task.
-
-        Returns
-        -------
-        InteractionWithTokenLogpReward
-            The interaction object with model response data.
-        """
-        from areal.api.io_struct import ModelResponse
-
-        # Build ModelResponse from task data
-        input_tokens = list(task.input_tokens or [])
-        output_tokens = list(task.output_tokens or [])
-        output_logprobs = task.customized_result_fields.get("output_logprobs", [])
-        output_versions = task.customized_result_fields.get("output_versions", [])
-
-        # Create ModelResponse
-        model_response = ModelResponse(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            output_logprobs=list(output_logprobs)
-            if output_logprobs
-            else [0.0] * len(output_tokens),
-            output_versions=list(output_versions)
-            if output_versions
-            else [-1] * len(output_tokens),
-        )
-
-        # Create interaction
-        interaction = InteractionWithTokenLogpReward(
-            model_response=model_response,
-            reward=None,  # Will be set by reward controller
-        )
-
-        return interaction
-
-
 class ChatTracer(TaskCollection):
     """TaskCollection for tracing multi-turn chat conversations.
 
@@ -536,6 +387,155 @@ class ChatTracer(TaskCollection):
     def clear(self) -> None:
         """Clear all traced data."""
         self._cache.clear()
+
+
+class PipelineTrajectoryMaker(Controller):
+    """Controller that composes generation and reward controllers into a pipeline.
+
+    This controller orchestrates the full RLVR pipeline:
+    1. Run generation via the generation controller
+    2. Compute rewards via the reward controller
+    3. Assemble results into InteractionWithTokenLogpReward objects
+
+    Parameters
+    ----------
+    generation_controller : Controller
+        The controller for text generation (e.g., NativeGenerationController).
+    reward_controller : RLVRRewardController
+        The controller for reward computation.
+    task_data : dict[str, Any]
+        Task data containing ground truth (e.g., "answer" field) for reward computation.
+    prompt_str : str
+        The prompt string used for generation.
+
+    Example
+    -------
+    ```python
+    from tensorrt_llm.scaffolding import NativeGenerationController
+
+    gen_controller = NativeGenerationController()
+    reward_controller = RLVRRewardController(gsm8k_reward_fn)
+    trajectory_maker = PipelineTrajectoryMaker(
+        gen_controller,
+        reward_controller,
+        task_data={"answer": "42"},
+        prompt_str="What is the answer?",
+    )
+    ```
+    """
+
+    def __init__(
+        self,
+        generation_controller: Controller,
+        reward_controller: RLVRRewardController,
+        task_data: dict[str, Any] | None = None,
+        prompt_str: str = "",
+    ):
+        """Initialize the pipeline trajectory maker.
+
+        Parameters
+        ----------
+        generation_controller : Controller
+            The generation controller.
+        reward_controller : RLVRRewardController
+            The reward controller.
+        task_data : dict[str, Any], optional
+            Task data containing ground truth for reward computation.
+        prompt_str : str, optional
+            The prompt string used for generation.
+        """
+        super().__init__()
+        self.generation_controller = generation_controller
+        self.reward_controller = reward_controller
+        self.task_data = task_data if task_data is not None else {}
+        self.prompt_str = prompt_str
+
+    def process(self, tasks: list[Task], **kwargs) -> Any:
+        """Process tasks through the generation and reward pipeline.
+
+        Parameters
+        ----------
+        tasks : list[Task]
+            List of generation tasks to process.
+        **kwargs
+            Additional keyword arguments.
+
+        Yields
+        ------
+        dict[str, InteractionWithTokenLogpReward]
+            Dictionary mapping task IDs to their interaction results.
+        """
+        # Step 1: Run generation
+        yield from self.generation_controller.process(tasks, **kwargs)
+
+        reward_tasks = []
+        interactions = {}
+
+        for i, task in enumerate(tasks):
+            if isinstance(task, GenerationTask):
+                # Create interaction object
+                interaction = self._create_interaction_from_task(task)
+                task_id = f"task_{i}"
+                interactions[task_id] = interaction
+
+                # Create reward task using constructor-provided task_data and prompt_str
+                reward_task = RLVRRewardTask.create_from_generation_task(
+                    gen_task=task,
+                    prompt_str=self.prompt_str or task.input_str or "",
+                    task_data=self.task_data,
+                    interaction=interaction,
+                )
+                reward_tasks.append(reward_task)
+
+        # Step 3: Process reward tasks
+        yield from self.reward_controller.process(reward_tasks, **kwargs)
+
+        # The interactions now have rewards set
+        # Return as the final result
+        yield interactions
+
+    def _create_interaction_from_task(
+        self, task: GenerationTask
+    ) -> InteractionWithTokenLogpReward:
+        """Create an InteractionWithTokenLogpReward from a generation task.
+
+        Parameters
+        ----------
+        task : GenerationTask
+            The completed generation task.
+
+        Returns
+        -------
+        InteractionWithTokenLogpReward
+            The interaction object with model response data.
+        """
+        from areal.api.io_struct import ModelResponse
+
+        # Build ModelResponse from task data
+        input_tokens = list(task.input_tokens or [])
+        output_tokens = list(task.output_tokens or [])
+        output_logprobs = task.customized_result_fields.get("output_logprobs", [])
+        output_versions = task.customized_result_fields.get("output_versions", [])
+
+        # Create ModelResponse
+        model_response = ModelResponse(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            output_logprobs=list(output_logprobs)
+            if output_logprobs
+            else [0.0] * len(output_tokens),
+            output_versions=list(output_versions)
+            if output_versions
+            else [-1] * len(output_tokens),
+        )
+
+        # Create interaction
+        interaction = InteractionWithTokenLogpReward(
+            model_response=model_response,
+            reward=None,  # Will be set by reward controller
+        )
+
+        return interaction
 
 
 @with_task_collection("chat_tracer", ChatTracer)
