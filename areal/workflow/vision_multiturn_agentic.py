@@ -229,8 +229,8 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
 
         # Ensure images is in the right format
         images = data.get("images")
-        if images is None:
-            raise ValueError("data must contain 'images' key for multi-modal workflow")
+        if images is None or (isinstance(images, list) and len(images) == 0):
+            raise ValueError("data must contain non-empty 'images' key for multi-modal workflow")
 
         messages = data.get("messages", [])
         messages_chat = data.get("messages_chat", None)
@@ -282,11 +282,12 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
             logprobs.extend(new_logprobs)
             loss_mask.extend([1] * len(new_tokens))
             versions.extend(new_versions)
-
-            # Decode output to check for tool calls
-            output_text = self.tokenizer.decode(new_tokens)
-            model_output = {"role":"assistant","content":[{"type":"text","text":output_text}]}
-            messages_chat = messages_chat + [model_output]
+             
+            if messages_chat:
+                # Decode output to check for tool calls
+                output_text = self.tokenizer.decode(new_tokens)
+                model_output = {"role":"assistant","content":[{"type":"text","text":output_text}]}
+                messages_chat = messages_chat + [model_output]
 
             # Track rewards with discounting
             if turn == 0:
@@ -299,12 +300,12 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
                 break
 
             feedback_str = {"role":"user","content":[{"type":"text","text":self.failure_feedback_msg}]}
-            
             feedback_str_ids = self.tokenizer.apply_chat_template([feedback_str], tokenize=True, add_generation_prompt=True)
-
             # Append failure feedback for next turn
             seq.extend(feedback_str_ids)
-            messages_chat = messages_chat + [feedback_str]
+
+            if messages_chat:
+                messages_chat = messages_chat + [feedback_str]
 
             logprobs.extend([0.0] * len(feedback_str_ids))
             loss_mask.extend([0] * len(feedback_str_ids))

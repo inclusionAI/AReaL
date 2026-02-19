@@ -1,26 +1,11 @@
-"""Multi-turn agentic multi-modal RL training example.
-
-This script demonstrates how to use the VisionMultiTurnAgenticWorkflow for training
-vision-language models with multi-turn interactions and agentic reasoning capabilities.
-
-Similar to verl's multi-turn agentic multi-modal training, this example:
-1. Uses a multi-modal dataset with images
-2. Trains with multiple turns for error recovery
-3. Supports custom reward functions
-4. Integrates with tool-aware reasoning
-
-Example usage:
-    python examples/vlm_multiturn/vlm_multiturn_grpo.py \
-        --config-path=conf --config-name=vlm_multiturn_grpo \
-        data.train_files=/path/to/train.parquet
+"""
+Multi-turn agentic multi-modal RL training example.
 """
 
-import os
 import re
 import sys
 from dataclasses import dataclass, field
 
-import yaml
 from mathruler.grader import extract_boxed_content, grade_answer
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
@@ -99,7 +84,7 @@ def main(args):
 
     # Setup workflow kwargs
     workflow_kwargs = dict(
-        reward_fn="examples.vlm_npu.geometry3k_grpo.geometry3k_reward_fn",
+        reward_fn="examples.vlm_multiturn.vlm_multiturn_grpo.geometry3k_reward_fn",
         gconfig=config.gconfig,
         tokenizer=config.tokenizer_path,
         processor=config.tokenizer_path,
@@ -108,18 +93,6 @@ def main(args):
         export_style=config.export_style,
         enable_thinking=False,
     )
-
-    # If a TOOL_CONFIG_PATH env var is provided (e.g., pointing to a Verl-style YAML),
-    # load it and pass the parsed dict into the workflow kwargs under 'tool_config'.
-    tool_config_path = os.environ.get("TOOL_CONFIG_PATH")
-    if tool_config_path:
-        try:
-            with open(tool_config_path, encoding="utf-8") as f:
-                parsed = yaml.safe_load(f)
-            # Pass parsed tool config to workflow; workflow will initialize tool manager
-            workflow_kwargs["tool_config"] = parsed
-        except Exception as e:
-            print(f"Warning: failed to load TOOL_CONFIG_PATH={tool_config_path}: {e}")
 
     eval_workflow_kwargs = workflow_kwargs.copy()
     eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6, n_samples=1)
