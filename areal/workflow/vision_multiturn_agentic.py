@@ -119,11 +119,7 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
         # Wrap reward function for async use
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
 
-        # Create messages for failure feedback
-        self.failure_feedback_msg = {
-                "role": "user",
-                "content": "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. Please carefully read the original question, check the previous errors, and try to answer it again.",
-            }
+        self.failure_feedback_msg = "Your answer is either wrong or not parsable to the reward function. Try to answer it again. The final answer MUST BE put in \\boxed{}."
 
     @trace_session("reward")
     async def _compute_rewards(
@@ -256,13 +252,8 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
         versions = [-1] * len(input_ids)
         reward = 0.0
         discount = 1.0
-
         # Multi-turn interaction loop
         for turn in range(self.max_turns):
-            # Prepare model request
-            import random
-            if random.random() > 0.9 :
-                print('[messages_chat]',messages_chat[2:],len(messages_chat))
             # Prepare model request
             req = ModelRequest(
                 rid=uuid.uuid4().hex,
@@ -287,7 +278,7 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
             new_versions = resp.output_versions
 
             # Update sequences
-            seq.extend(new_tokens)
+            seq.extend(resp.output_tokens)
             logprobs.extend(new_logprobs)
             loss_mask.extend([1] * len(new_tokens))
             versions.extend(new_versions)
@@ -303,32 +294,30 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
             else:
                 reward = max(reward, turn_reward * discount)
 
-            # Log stats for this turn
-            stats_tracker.get(workflow_context.stat_scope()).scalar(
-                turn=turn,
-                turn_reward=turn_reward,
-                accumulated_reward=reward,
-            )
-
             # If reward is positive or this is the last turn, stop
             if turn_reward > 0 or turn == self.max_turns - 1:
                 break
 
-            # Append failure feedback for next turn
-            feedback_str_ids = self.tokenizer.encode(
-                self.failure_feedback_msg["content"], add_special_tokens=False
-            )
-            seq.extend(feedback_str_ids)
+            feedback_str = {"role":"user","content":[{"type":"text","text":self.failure_feedback_msg}]}
+            
+            feedback_str_ids = self.tokenizer.apply_chat_template([feedback_str], tokenize=True, add_generation_prompt=True)
 
-            feedback_str = {"role":"user","content":[{"type":"text","text":self.failure_feedback_msg["content"]}]}
+            # Append failure feedback for next turn
+            seq.extend(feedback_str_ids)
             messages_chat = messages_chat + [feedback_str]
 
-            logprobs.extend([0.0] * len(feedback_str))
-            loss_mask.extend([0] * len(feedback_str))
-            versions.extend([-1] * len(feedback_str))
+            logprobs.extend([0.0] * len(feedback_str_ids))
+            loss_mask.extend([0] * len(feedback_str_ids))
+            versions.extend([-1] * len(feedback_str_ids))
 
             # Apply discount for next turn
             discount *= self.turn_discount
+
+        # Log stats
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
+            turn=turn,
+            reward=reward,
+        )
 
         # Build multi-modal input for training
         multi_modal_input = [
