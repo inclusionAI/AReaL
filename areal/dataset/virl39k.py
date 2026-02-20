@@ -1,6 +1,5 @@
 import math
 import os
-from typing import Any
 
 from datasets import load_dataset
 from mathruler.grader import extract_boxed_content
@@ -138,9 +137,9 @@ def get_virl39k_rl_dataset(
                 return_attention_mask=False,
             )
             return {"total_tokens": len(processed_input["input_ids"].squeeze(0))}
-        
+
         dataset = dataset.map(get_lengths, batched=True)
         dataset = dataset.filter(lambda x: x["total_tokens"] <= max_length)
         dataset = dataset.remove_columns("total_tokens")
-    
+
     return dataset
