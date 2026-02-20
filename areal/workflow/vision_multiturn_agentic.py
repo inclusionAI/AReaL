@@ -162,7 +162,6 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
         prompt_str: str,
         task_data: dict[str, Any],
     ) -> tuple[ModelResponse, float]:
-
         """Generate one sample and compute its reward.
 
         Parameters
@@ -223,14 +222,14 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
             - rewards: Final discounted reward
         """
         # Process images via vision processor
-        processor_callable = cast(
-            Callable[..., dict[str, Any]], self.processor
-        )
+        processor_callable = cast(Callable[..., dict[str, Any]], self.processor)
 
         # Ensure images is in the right format
         images = data.get("images")
         if images is None or (isinstance(images, list) and len(images) == 0):
-            raise ValueError("data must contain non-empty 'images' key for multi-modal workflow")
+            raise ValueError(
+                "data must contain non-empty 'images' key for multi-modal workflow"
+            )
 
         messages = data.get("messages", [])
         messages_chat = data.get("messages_chat", None)
@@ -286,7 +285,10 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
             if messages_chat:
                 # Decode output to check for tool calls
                 output_text = self.tokenizer.decode(new_tokens)
-                model_output = {"role":"assistant","content":[{"type":"text","text":output_text}]}
+                model_output = {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": output_text}],
+                }
                 messages_chat = messages_chat + [model_output]
 
             # Track rewards with discounting
@@ -299,8 +301,13 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
             if turn_reward > 0 or turn == self.max_turns - 1:
                 break
 
-            feedback_str = {"role":"user","content":[{"type":"text","text":self.failure_feedback_msg}]}
-            feedback_str_ids = self.tokenizer.apply_chat_template([feedback_str], tokenize=True, add_generation_prompt=True)
+            feedback_str = {
+                "role": "user",
+                "content": [{"type": "text", "text": self.failure_feedback_msg}],
+            }
+            feedback_str_ids = self.tokenizer.apply_chat_template(
+                [feedback_str], tokenize=True, add_generation_prompt=True
+            )
             # Append failure feedback for next turn
             seq.extend(feedback_str_ids)
 
