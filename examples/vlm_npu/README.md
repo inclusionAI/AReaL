@@ -70,7 +70,7 @@ The training was performed on both NPU and GPU and results are as follows:
 | GRPO-GPU   | 35.4       | 20.9            | 55.9           | **37.4** |
 | GRPO-NPU   | 35.3       | 20.5            | 54.7           | **36.8** |
 
-## AReal vs. verl: Multi-node Training Performance 
+## AReaL vs. verl: Multi-node Training Performance 
 
 We test performance of AReaL for large-scale multi-node training with long context generation and compare this performance with verl synchronous training with the same training settings. All training and evaluation is done on Ascend NPU.
 
@@ -89,7 +89,7 @@ We trained Qwen2.5-VL-3B following the settings in the above table:
 - **AReaL launcher**: `examples/vlm_npu/qwen2_5_vl_3b_virl39k_grpo_multinode.sh`
 - **Dataset**: [`TIGER-Lab/ViRL39K`](https://huggingface.co/datasets/TIGER-Lab/ViRL39K)
 
-### **Performance Comparison**
+### Performance Comparison
 
 We compare the training time and out-of-distribution (OOD) performance of both frameworks. For OOD evaluation, we use VLMEvalKit and report `Avg@8` accuracy to report the performance.
 

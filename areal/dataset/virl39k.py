@@ -9,7 +9,7 @@ from PIL.Image import Image as ImageObject
 
 
 def convert_image(
-    image: dict[str, Any] | ImageObject | str,
+    image: ImageObject,
     min_size: int | None = 28,
     max_pixels: int | None = 512,
 ) -> ImageObject:
@@ -128,19 +128,19 @@ def get_virl39k_rl_dataset(
     # Filter out sequences longer than max_length if max_length is provided
     if max_length is not None:
 
-        def filter_length(sample):
-            # Process the sample to get the total token count including image tokens
+        def get_lengths(samples):
             processed_input = processor(
-                text=[sample["messages"]],
-                images=sample["images"],
+                text=[samples["messages"]],
+                images=samples["images"],
                 padding=False,
                 return_tensors="pt",
                 return_length=True,
                 return_attention_mask=False,
             )
-            total_tokens = len(processed_input["input_ids"].squeeze(0))
-            return total_tokens <= max_length
-
-        dataset = dataset.filter(filter_length)
-
+            return {"total_tokens": len(processed_input["input_ids"].squeeze(0))}
+        
+        dataset = dataset.map(get_lengths, batched=True)
+        dataset = dataset.filter(lambda x: x["total_tokens"] <= max_length)
+        dataset = dataset.remove_columns("total_tokens")
+    
     return dataset

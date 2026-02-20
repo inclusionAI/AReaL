@@ -18,4 +18,4 @@ export USE_OPTIMIZED_MODEL=0
     gconfig.max_new_tokens=16384 \
     gconfig.n_samples=5 \
     saver.freq_epochs=1 \
-    total_train_epochs=5 \
+    total_train_epochs=5
