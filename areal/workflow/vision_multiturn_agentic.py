@@ -282,7 +282,7 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
             logprobs.extend(new_logprobs)
             loss_mask.extend([1] * len(new_tokens))
             versions.extend(new_versions)
-             
+
             if messages_chat:
                 # Decode output to check for tool calls
                 output_text = self.tokenizer.decode(new_tokens)
