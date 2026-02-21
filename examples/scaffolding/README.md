@@ -5,25 +5,26 @@ framework with AReaL for reinforcement learning training.
 
 ## Overview
 
-The scaffolding framework provides a modular and extensible way to compose inference-time
-compute methods with RL training. It decouples the inference logic (Controllers) from the
-execution backend (Workers), enabling flexible composition of different methods.
+The scaffolding framework provides a modular and extensible way to compose
+inference-time compute methods with RL training. It decouples the inference logic
+(Controllers) from the execution backend (Workers), enabling flexible composition of
+different methods.
 
 ### Key Components
 
 1. **Controller**: Defines the inference-time compute logic (e.g., generation, reward
    computation)
-2. **Worker**: Handles the actual execution of tasks (e.g., TRT-LLM, OpenAI API)
-3. **ScaffoldingLlm**: Orchestrates controllers and workers together
-4. **ScaffoldingWorkflow**: Wraps ScaffoldingLlm as a RolloutWorkflow for AReaL training
+1. **Worker**: Handles the actual execution of tasks (e.g., TRT-LLM, OpenAI API)
+1. **ScaffoldingLlm**: Orchestrates controllers and workers together
+1. **ScaffoldingWorkflow**: Wraps ScaffoldingLlm as a RolloutWorkflow for AReaL training
 
 ### AReaL-Specific Components
 
 The following components are implemented in `areal/experimental/scaffolding/`:
 
-- **`CreateWorkerFromEngine`**: Creates a scaffolding Worker from AReaL's InferenceEngine
-  (e.g., RemoteSGLangEngine). The returned Worker is similar to scaffolding's `OpenaiWorker`
-  but integrated with AReaL's engine.
+- **`CreateWorkerFromEngine`**: Creates a scaffolding Worker from AReaL's
+  InferenceEngine (e.g., RemoteSGLangEngine). The returned Worker is similar to
+  scaffolding's `OpenaiWorker` but integrated with AReaL's engine.
 
 - **`RLVRRewardController`**: A Controller that computes rewards for generated samples
   using verifiable reward functions (e.g., math answer verification).
@@ -31,8 +32,8 @@ The following components are implemented in `areal/experimental/scaffolding/`:
 - **`PipelineTrajectoryMaker`**: A Controller that composes generation and reward
   controllers into a pipeline that produces training trajectories.
 
-- **`ScaffoldingWorkflow`**: A `RolloutWorkflow` implementation that wraps ScaffoldingLlm
-  for integration with AReaL's training pipeline.
+- **`ScaffoldingWorkflow`**: A `RolloutWorkflow` implementation that wraps
+  ScaffoldingLlm for integration with AReaL's training pipeline.
 
 ## RLVR Example with GSM8K
 
@@ -116,25 +117,26 @@ Data ─────────────────────────
 1. **Engine Initialization**: `RemoteSGLangEngine` is initialized with the rollout
    configuration and connected to the model server.
 
-2. **Worker Creation**: `CreateWorkerFromEngine(engine)` wraps the engine into a
+1. **Worker Creation**: `CreateWorkerFromEngine(engine)` wraps the engine into a
    scaffolding-compatible Worker. This allows scaffolding controllers to use AReaL's
    inference backends.
 
-3. **Controller Pipeline**:
-   - `NativeGenerationController()`: Handles text generation by yielding `GenerationTask`
-     objects to the Worker.
-   - `RLVRRewardController(reward_fn)`: Computes rewards for generated samples using
-     the provided reward function.
-   - `PipelineTrajectoryMaker(gen_ctrl, reward_ctrl)`: Composes these controllers into
-     a pipeline that produces training trajectories.
+1. **Controller Pipeline**:
 
-4. **ScaffoldingLlm**: Orchestrates the trajectory maker with the worker, handling the
+   - `NativeGenerationController()`: Handles text generation by yielding
+     `GenerationTask` objects to the Worker.
+   - `RLVRRewardController(reward_fn)`: Computes rewards for generated samples using the
+     provided reward function.
+   - `PipelineTrajectoryMaker(gen_ctrl, reward_ctrl)`: Composes these controllers into a
+     pipeline that produces training trajectories.
+
+1. **ScaffoldingLlm**: Orchestrates the trajectory maker with the worker, handling the
    async execution of tasks.
 
-5. **ScaffoldingWorkflow**: Wraps the ScaffoldingLlm as a `RolloutWorkflow` that can be
+1. **ScaffoldingWorkflow**: Wraps the ScaffoldingLlm as a `RolloutWorkflow` that can be
    used directly with AReaL's `PPOTrainer`.
 
-6. **Training**: The trainer calls the workflow to generate trajectories, which are then
+1. **Training**: The trainer calls the workflow to generate trajectories, which are then
    used for GRPO/PPO training.
 
 ### Configuration
@@ -203,10 +205,10 @@ class CustomTrajectoryMaker(Controller):
     def process(self, tasks, **kwargs):
         # Run generation
         yield from self.generation_controller.process(tasks, **kwargs)
-        
+
         # Run reward computation
         yield from self.reward_controller.process(tasks, **kwargs)
-        
+
         # Build trajectories
         trajectories = []
         for task in tasks:

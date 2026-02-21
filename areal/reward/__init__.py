@@ -44,15 +44,11 @@ class MathVerifyWorker:
 
     def __init__(self, try_extract_without_anchor=True, precision: int = 6):
         self.gold_extraction_target = (
-            ExprExtractionConfig(
-                try_extract_without_anchor=try_extract_without_anchor
-            ),
+            ExprExtractionConfig(try_extract_without_anchor=try_extract_without_anchor),
             LatexExtractionConfig(),
         )
         self.pred_extraction_target = (
-            ExprExtractionConfig(
-                try_extract_without_anchor=try_extract_without_anchor
-            ),
+            ExprExtractionConfig(try_extract_without_anchor=try_extract_without_anchor),
             LatexExtractionConfig(),
         )
         self.precision = precision

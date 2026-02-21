@@ -151,9 +151,7 @@ class ScaffoldingWorkflow(RolloutWorkflow):
 
         output_str = response.choices[0].text
         # Tokenize to get output token IDs
-        output_token_ids = self.tokenizer.encode(
-            output_str, add_special_tokens=False
-        )
+        output_token_ids = self.tokenizer.encode(output_str, add_special_tokens=False)
 
         # Package as a GenerationTask (scaffolding data structure)
         gen_task = GenerationTask(
@@ -240,9 +238,7 @@ class ScaffoldingWorkflow(RolloutWorkflow):
         prompt_str = self.tokenizer.decode(input_ids)
 
         # Scaffolding pipeline: Worker (generate) + Controller (reward)
-        gen_task, reward = await self._collect_samples(
-            prompt_str, input_ids, data
-        )
+        gen_task, reward = await self._collect_samples(prompt_str, input_ids, data)
 
         # Build tensor dict for PPO training
         output_tokens = list(gen_task.output_tokens or [])
