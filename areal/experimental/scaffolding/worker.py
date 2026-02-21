@@ -122,6 +122,9 @@ class SGLangWorker(OpenaiWorker):
             The status of the task execution.
         """
         params = self.convert_task_params(task)
+        params["model"] = self.model
+        if task.input_str is not None:
+            params["prompt"] = task.input_str
 
         try:
             response = await self.async_client.completions.create(**params)
