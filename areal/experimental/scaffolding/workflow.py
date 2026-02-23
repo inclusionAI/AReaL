@@ -19,10 +19,10 @@ from typing import Any
 import torch
 from transformers import PreTrainedTokenizerFast
 
+from areal import workflow_context
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
-from areal import workflow_context
 from areal.experimental.scaffolding._compat import (
     GenerationTask,
     NativeGenerationController,
@@ -83,12 +83,10 @@ class ScaffoldingWorkflow(RolloutWorkflow):
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(self.tokenizer)
         self.enable_thinking = enable_thinking
 
-        # Scaffolding controllers
-        self.reward_controller = RLVRRewardController(self.reward_fn)
-        self.gen_controller = NativeGenerationController()
-
-        # Lazily created from engine server addresses
+        # Lazily created from engine server addresses via build_scaffolding_llm
         self.worker: SGLangWorker | None = None
+        self.gen_controller: NativeGenerationController | None = None
+        self.reward_controller: RLVRRewardController | None = None
         self.trajectory_maker: PipelineTrajectoryMaker | None = None
         self.scaffolding_llm: ScaffoldingLlm | None = None
 
@@ -106,15 +104,37 @@ class ScaffoldingWorkflow(RolloutWorkflow):
             async_client=async_client, model="default", engine=engine
         )
 
+        self.scaffolding_llm = self.build_scaffolding_llm(engine)
+        logger.info(f"Initialized scaffolding components with server at {addr}")
+
+    def build_scaffolding_llm(self, engine: InferenceEngine) -> ScaffoldingLlm:
+        """Build the ScaffoldingLlm instance.
+
+        Override this method in subclasses to use different scaffolding
+        controllers or worker configurations. Subclasses should set
+        ``self.gen_controller`` and ``self.reward_controller`` here.
+
+        When this method is called, ``self.worker`` is already initialized.
+
+        Parameters
+        ----------
+        engine : InferenceEngine
+            The inference engine (available for address lookup if needed).
+
+        Returns
+        -------
+        ScaffoldingLlm
+            The constructed ScaffoldingLlm instance.
+        """
+        self.gen_controller = NativeGenerationController()
+        self.reward_controller = RLVRRewardController(self.reward_fn)
         self.trajectory_maker = PipelineTrajectoryMaker(
             self.gen_controller, self.reward_controller
         )
-
-        self.scaffolding_llm = ScaffoldingLlm(
+        return ScaffoldingLlm(
             self.trajectory_maker,
             {NativeGenerationController.WorkerTag.GENERATION: self.worker},
         )
-        logger.info(f"Initialized scaffolding components with server at {addr}")
 
     async def _generate_via_worker(
         self, prompt_str: str, input_ids: list[int]

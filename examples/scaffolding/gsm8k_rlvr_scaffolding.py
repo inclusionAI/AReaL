@@ -14,9 +14,38 @@ Usage:
 import sys
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
+from areal.api.engine_api import InferenceEngine
 from areal.dataset import get_custom_dataset
+from areal.experimental.scaffolding._compat import (
+    NativeGenerationController,
+    ScaffoldingLlm,
+)
+from areal.experimental.scaffolding.controllers import (
+    PipelineTrajectoryMaker,
+    RLVRRewardController,
+)
+from areal.experimental.scaffolding.workflow import ScaffoldingWorkflow
 from areal.trainer import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
+
+
+class GSM8KScaffoldingWorkflow(ScaffoldingWorkflow):
+    """ScaffoldingWorkflow customized for GSM8K RLVR training.
+
+    Demonstrates overriding ``build_scaffolding_llm`` to control how the
+    ScaffoldingLlm is constructed (e.g., swap controllers or workers).
+    """
+
+    def build_scaffolding_llm(self, engine: InferenceEngine) -> ScaffoldingLlm:
+        self.gen_controller = NativeGenerationController()
+        self.reward_controller = RLVRRewardController(self.reward_fn)
+        self.trajectory_maker = PipelineTrajectoryMaker(
+            self.gen_controller, self.reward_controller
+        )
+        return ScaffoldingLlm(
+            self.trajectory_maker,
+            {NativeGenerationController.WorkerTag.GENERATION: self.worker},
+        )
 
 
 def main(args):
@@ -50,9 +79,9 @@ def main(args):
         valid_dataset=valid_dataset,
     ) as trainer:
         trainer.train(
-            workflow="areal.experimental.scaffolding.workflow.ScaffoldingWorkflow",
+            workflow=GSM8KScaffoldingWorkflow,
             workflow_kwargs=workflow_kwargs,
-            eval_workflow="areal.experimental.scaffolding.workflow.ScaffoldingWorkflow",
+            eval_workflow=GSM8KScaffoldingWorkflow,
             eval_workflow_kwargs=eval_workflow_kwargs,
         )
 
