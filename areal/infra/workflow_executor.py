@@ -201,10 +201,10 @@ def check_trajectory_format(
                 raise ValueError(
                     "multi_modal_input should be a non-empty list of dicts"
                 )
-            if not all("pixel_values" in v for v in value):
+            if not all("pixel_values" in v or "input_features" in v for v in value):
                 raise ValueError(
-                    "multi_modal_input should at least contain the "
-                    "`pixel_values` field."
+                    "multi_modal_input should contain at least one of "
+                    "`pixel_values` (vision) or `input_features` (audio) fields."
                 )
         else:
             logger.info(f"Encounter non-tensor data with key `{key}`: {value}")

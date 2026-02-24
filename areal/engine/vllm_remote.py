@@ -57,7 +57,8 @@ class VLLMBackend:
             payload["model"] = gconfig.lora_name
 
         if req.vision_msg_vllm:
-            images = iter(req.image_data)
+            images = iter(req.image_data) if req.image_data else iter([])
+            audios = iter(req.audio_data) if req.audio_data else iter([])
             parsed_input = req.vision_msg_vllm[0]
             for msg in parsed_input:
                 if isinstance(msg["content"], list):
@@ -71,6 +72,16 @@ class VLLMBackend:
                                 )
                             content["image_url"] = {
                                 "url": f"data:image/jpeg;base64,{base64_img}"
+                            }
+                        elif content.get("type") == "audio_url":
+                            try:
+                                base64_audio = next(audios)
+                            except StopIteration:
+                                raise ValueError(
+                                    "Not enough audios in req.audio_data to match audio_url entries."
+                                )
+                            content["audio_url"] = {
+                                "url": f"data:audio/wav;base64,{base64_audio}"
                             }
             payload["messages"] = parsed_input.copy()
             payload["logprobs"] = True

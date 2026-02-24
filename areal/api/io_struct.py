@@ -39,6 +39,9 @@ class ModelRequest:
     # vlm+vllm:
     vision_msg_vllm: list | None = None
 
+    # omni (audio): base64-encoded WAV strings
+    audio_data: list[str] | None = None
+
     def copy(self):
         return ModelRequest(
             rid=self.rid,
@@ -52,6 +55,9 @@ class ModelRequest:
                 self.vision_msg_vllm.copy()
                 if self.vision_msg_vllm is not None
                 else None
+            ),
+            audio_data=(
+                self.audio_data.copy() if self.audio_data is not None else None
             ),
         )
 

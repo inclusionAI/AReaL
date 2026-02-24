@@ -110,9 +110,12 @@ from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokeni
 from areal.utils.model import (
     disable_dropout_in_model,
     is_gemma3_model,
+    is_omni_model,
     is_qwen3_moe_model,
     is_qwen3_vl_model,
+    is_qwen_omni_model,
     is_qwen_vl_model,
+    is_qwen_vl_or_omni_model,
     is_valid_vision_model,
 )
 from areal.utils.network import find_free_ports, gethostip
@@ -186,6 +189,7 @@ class FSDPEngine(TrainEngine):
             trust_remote_code=True,
         )
         self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
+        self.is_omni_model = is_omni_model(self.model_config.model_type)
 
         # FSDP-specific initialization
         self.cpu_offload: CPUOffloadPolicy | None = None
@@ -821,6 +825,15 @@ class FSDPEngine(TrainEngine):
                 )
                 if self.config.disable_dropout:
                     disable_dropout_in_model(model)
+
+            if self.is_omni_model:
+                from areal.models.transformers.qwen_omni import (
+                    freeze_and_exclude_generator,
+                )
+
+                frozen = freeze_and_exclude_generator(model)
+                if frozen:
+                    self.logger.info(f"Froze Omni generator modules: {frozen}")
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
             self.processor = None
@@ -890,9 +903,11 @@ class FSDPEngine(TrainEngine):
         beta1 = self.optimizer_config.beta1
         beta2 = self.optimizer_config.beta2
         eps = self.optimizer_config.eps
+        # For Omni models, frozen generator params must be excluded from the optimizer.
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         if self.optimizer_config.type == "adam":
             self.optimizer = torch.optim.AdamW(
-                self.model.parameters(),
+                trainable_params,
                 lr=lr,
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
@@ -902,7 +917,7 @@ class FSDPEngine(TrainEngine):
             )
         elif self.optimizer_config.type == "adam_bf16":
             self.optimizer = AnyPrecisionAdamW(
-                self.model.parameters(),
+                trainable_params,
                 lr=lr,
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
@@ -912,7 +927,7 @@ class FSDPEngine(TrainEngine):
             )
         else:
             self.optimizer = torch.optim.SGD(
-                self.model.parameters(),
+                trainable_params,
                 lr=lr,
                 weight_decay=weight_decay,
             )
@@ -962,7 +977,23 @@ class FSDPEngine(TrainEngine):
 
     def _get_model_name_parameters(self) -> Iterator[tuple[str, nn.Parameter]]:
         name_params_iterator = self.model.named_parameters()
-        if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
+        if self.is_omni_model and is_qwen_omni_model(self.model_config.model_type):
+            for name, value in name_params_iterator:
+                if not value.requires_grad:
+                    continue
+                new_name = name.replace("model.", "", 1)
+                if new_name.startswith("thinker.language_model."):
+                    new_name = new_name.replace(
+                        "thinker.language_model.",
+                        "thinker.language_model.model.",
+                        1,
+                    )
+                elif new_name.startswith("thinker.lm_head."):
+                    new_name = new_name.replace(
+                        "thinker.lm_head.", "thinker.language_model.lm_head.", 1
+                    )
+                yield new_name, value
+        elif self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
             for name, value in name_params_iterator:
                 new_name = name.replace("model.", "", 1)
                 if new_name.startswith("language_model."):
@@ -1272,9 +1303,9 @@ class FSDPEngine(TrainEngine):
             sp_size = self.parallel_helper.sp_size
             tp_size = self.parallel_helper.tp_size
             # Build tree inputs
-            assert BLOCK_SIZE % (tp_size * sp_size) == 0, (
-                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by the product of tensor and sequence parallel sizes ({tp_size * sp_size})."
-            )
+            assert (
+                BLOCK_SIZE % (tp_size * sp_size) == 0
+            ), f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by the product of tensor and sequence parallel sizes ({tp_size * sp_size})."
             mb_list = build_packed_tree_batch(
                 input_,
                 mb_spec=self.config.mb_spec,
@@ -1287,7 +1318,7 @@ class FSDPEngine(TrainEngine):
             )
             return mb_list
 
-        if is_qwen_vl_model(self.model_config.model_type):
+        if is_qwen_vl_or_omni_model(self.model_config.model_type):
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
             image_grid_thw = None
@@ -1309,7 +1340,16 @@ class FSDPEngine(TrainEngine):
                 if video_grid_thw_list:
                     video_grid_thw = torch.cat(video_grid_thw_list)
 
-            position_ids, _ = self.model.model.get_rope_index(
+            if is_qwen_omni_model(self.model_config.model_type):
+                # Omni models: the Thinker wraps a VL-style text model.
+                # HF structure: model.thinker.model or model.model (depending
+                # on whether AutoModelForImageTextToText returns the full Omni
+                # wrapper or the Thinker directly).
+                thinker = getattr(self.model, "thinker", None)
+                rope_model = thinker.model if thinker is not None else self.model.model
+            else:
+                rope_model = self.model.model
+            position_ids, _ = rope_model.get_rope_index(
                 input_ids, image_grid_thw, video_grid_thw, attn_mask
             )
             position_ids = torch.einsum("ijk->jki", position_ids)
@@ -1329,7 +1369,7 @@ class FSDPEngine(TrainEngine):
             f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}"
         )
         mb_list = unsqueeze_mb_list(mb_list)
-        if is_qwen_vl_model(self.model_config.model_type):
+        if is_qwen_vl_or_omni_model(self.model_config.model_type):
             assert mb_list.padded_mbs is not None
             for mb in mb_list.padded_mbs:
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
@@ -1352,8 +1392,10 @@ class FSDPEngine(TrainEngine):
             ]
             mb["use_cache"] = False
             padded_mb["use_cache"] = False
-            if is_qwen3_moe_model(self.model_config.model_type) or is_qwen3_vl_model(
-                self.model_config.model_type
+            if (
+                is_qwen3_moe_model(self.model_config.model_type)
+                or is_qwen3_vl_model(self.model_config.model_type)
+                or is_qwen_omni_model(self.model_config.model_type)
             ):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
@@ -1387,6 +1429,27 @@ class FSDPEngine(TrainEngine):
                 if video_grid_thw_list:
                     mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
                     padded_mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+                # Audio fields for Omni models
+                input_features_list = [
+                    item["input_features"]
+                    for item in mb["multi_modal_input"]
+                    if "input_features" in item
+                ]
+                if input_features_list:
+                    mb["input_features"] = torch.cat(input_features_list, dim=0)
+                    padded_mb["input_features"] = torch.cat(input_features_list, dim=0)
+                feature_attention_mask_list = [
+                    item["feature_attention_mask"]
+                    for item in mb["multi_modal_input"]
+                    if "feature_attention_mask" in item
+                ]
+                if feature_attention_mask_list:
+                    mb["feature_attention_mask"] = torch.cat(
+                        feature_attention_mask_list, dim=0
+                    )
+                    padded_mb["feature_attention_mask"] = torch.cat(
+                        feature_attention_mask_list, dim=0
+                    )
         return mb_list
 
     def _prepare_mb_inputs(

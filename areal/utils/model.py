@@ -8,15 +8,33 @@ VALID_VISION_MODELS = [
     "qwen2_5_vl",
     "qwen3_vl",
     "gemma3",
+    "qwen2_5_omni",
+    "qwen3_omni",
 ]
 # This registry is used to check if a model is a vision model that we have checked it works with AReaL.
 # As different vision models vary in their image processing, special tokens and keys, etc.
 # We will add models to this registry as we test them.
 # If you want to add a new vision model, please make sure it works with AReaL.
 
+VALID_OMNI_MODELS = [
+    "qwen2_5_omni",
+    "qwen3_omni",
+]
+# Omni models accept text, image, audio, and video inputs.
+# Only the Thinker module is trained during RL; the Talker and Code2Wav
+# modules are frozen or excluded entirely.
+
 
 def is_valid_vision_model(model_type: str) -> bool:
     return model_type in VALID_VISION_MODELS
+
+
+def is_omni_model(model_type: str) -> bool:
+    return model_type in VALID_OMNI_MODELS
+
+
+def is_qwen_omni_model(model_type: str) -> bool:
+    return model_type in ["qwen2_5_omni", "qwen3_omni"]
 
 
 def is_qwen2_vl_model(model_type: str) -> bool:
@@ -31,12 +49,17 @@ def is_qwen_vl_model(model_type: str) -> bool:
     return is_qwen2_vl_model(model_type) or is_qwen3_vl_model(model_type)
 
 
+def is_qwen_vl_or_omni_model(model_type: str) -> bool:
+    return is_qwen_vl_model(model_type) or is_qwen_omni_model(model_type)
+
+
 def is_gemma3_model(model_type: str) -> bool:
     return model_type in ["gemma3"]
 
 
 VALID_MOE_MODELS = [
     "qwen3_moe",
+    "qwen3_omni",
 ]
 # This registry is used to check if a model is a MoE model that we have checked it works with AReaL.
 
