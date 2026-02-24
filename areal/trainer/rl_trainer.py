@@ -82,6 +82,9 @@ class PPOTrainer:
         # Parse allocation mode.
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
 
+        # Validate config before proceeding with weight initialization
+        self._validate_cfg()
+
         self._amend_xccl_weight_update_envvar()
 
         # Create models: actor, critic, etc.
@@ -707,6 +710,17 @@ class PPOTrainer:
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
+
+    def _validate_cfg(self):
+        """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
+        if (
+            self.allocation_mode.gen_backend == "vllm"
+            and self.config.gconfig.return_routed_experts
+        ):
+            raise ValueError(
+                "return_routed_experts is only supported with SGLang backend. "
+                "Please disable return_routed_experts or switch to SGLang backend."
+            )
 
     def _requires_proxy_workflow(self, workflow: WorkflowLike) -> bool:
         """Check if workflow requires proxy workers (i.e., not a RolloutWorkflow).

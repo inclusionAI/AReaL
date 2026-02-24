@@ -235,6 +235,7 @@ class GenerationHyperparameters:
         "lora_name",  # Not supported by OpenAI
         "use_beam_search",  # Not supported by OpenAI
         "max_tokens",  # deprecated by "completions", not used in "responses", should be `max_new_tokens` in "openai-agents"
+        "return_routed_experts",  # Not supported by OpenAI (MoE-specific)
     }
 
     def to_openai_args_dict(
@@ -2014,16 +2015,6 @@ class PPOConfig(BaseExperimentConfig):
         """Validate the eval generation config."""
         if self.eval_gconfig is None:
             self.eval_gconfig = self.gconfig.new()
-        # Parse allocation_mode to determine backend
-        backend = (
-            self.allocation_mode.split(":", 1)[0]
-            if ":" in self.allocation_mode
-            else "sglang"
-        )
-        if backend == "vllm" and self.gconfig.return_routed_experts:
-            raise ValueError(
-                "return_routed_experts is only supported with SGLang backend."
-            )
 
 
 @dataclass

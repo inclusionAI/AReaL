@@ -15,6 +15,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol
 
 import aiohttp
+import numpy as np
 import ray
 import requests
 import torch.distributed as dist
@@ -716,6 +717,7 @@ class RemoteInfEngine(InferenceEngine):
         accumulated_output_tokens = []
         accumulated_output_logprobs = []
         accumulated_versions = []
+        accumulated_routed_experts: list[np.ndarray] = []
 
         # A single "rid" shares the same server to allow KV cache reuse
         if req.rid in self.rid_to_address:
@@ -776,6 +778,9 @@ class RemoteInfEngine(InferenceEngine):
             accumulated_versions.extend(
                 [self.get_version()] * len(gen_result.output_tokens)
             )
+            # Accumulate routed_experts for MoE models
+            if gen_result.routed_experts is not None:
+                accumulated_routed_experts.append(gen_result.routed_experts)
 
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens
@@ -795,6 +800,12 @@ class RemoteInfEngine(InferenceEngine):
 
         latency = time.perf_counter() - start_time
 
+        accumulated_routed_experts = (
+            np.concatenate(accumulated_routed_experts)
+            if accumulated_routed_experts
+            else None
+        )
+
         response = ModelResponse(
             input_tokens=req.input_ids[
                 : len(req.input_ids) - len(accumulated_output_tokens)
@@ -808,6 +819,7 @@ class RemoteInfEngine(InferenceEngine):
             ttft=latency,  # Simplified for non-streaming
             tokenizer=req.tokenizer,
             processor=req.processor,
+            routed_experts=accumulated_routed_experts,
         )
         return response
 

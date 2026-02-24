@@ -76,6 +76,9 @@ class ModelResponse:
     ttft: float = float("inf")  # Time to first token
     itl: list[float] = field(default_factory=list)  # List of inter-token latencies
 
+    # MoE routing (only populated when return_routed_experts=True)
+    routed_experts: np.ndarray | None = None
+
     @property
     def input_len(self) -> int:
         return len(self.input_tokens)
