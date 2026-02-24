@@ -2,7 +2,7 @@
 RLVR Tasks for Scaffolding Framework.
 
 This module provides task definitions for RLVR (Reinforcement Learning with
-Verifiable Rewards) that integrate with TensorRT-LLM's scaffolding framework.
+Verifiable Rewards) that integrate with the scaffolding framework.
 """
 
 from __future__ import annotations

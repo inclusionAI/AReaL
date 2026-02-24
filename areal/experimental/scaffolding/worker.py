@@ -2,7 +2,7 @@
 Worker implementations for Scaffolding Framework.
 
 This module provides Worker implementations that wrap AReaL inference engines
-for use with TensorRT-LLM's scaffolding framework.
+for use with the scaffolding framework.
 """
 
 from __future__ import annotations
@@ -158,7 +158,7 @@ def CreateWorkerFromEngine(
     """Create a scaffolding Worker from an AReaL SGLang engine.
 
     This function creates a Worker that wraps the given SGLang engine,
-    allowing it to be used with TensorRT-LLM's scaffolding framework.
+    allowing it to be used with the scaffolding framework.
     The worker uses the SGLang server's OpenAI-compatible API.
 
     Parameters
@@ -187,7 +187,7 @@ def CreateWorkerFromEngine(
     worker = CreateWorkerFromEngine(engine)
 
     # Use with ScaffoldingLlm
-    from tensorrt_llm.scaffolding import ScaffoldingLlm, NativeGenerationController
+    from areal.experimental.scaffolding._compat import ScaffoldingLlm, NativeGenerationController
     llm = ScaffoldingLlm(
         controller,
         {NativeGenerationController.WorkerTag.GENERATION: worker},

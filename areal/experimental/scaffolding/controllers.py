@@ -2,7 +2,7 @@
 RLVR Controllers for Scaffolding Framework.
 
 This module provides controllers for RLVR (Reinforcement Learning with Verifiable
-Rewards) that integrate with TensorRT-LLM's scaffolding framework.
+Rewards) that integrate with the scaffolding framework.
 
 Key Components:
 - RLVRRewardController: Controller that processes reward computation
@@ -307,6 +307,10 @@ class ChatTracer(TaskCollection):
             if not isinstance(task, ChatTask):
                 continue
 
+            # Skip tasks without a completion (e.g. not yet processed by worker)
+            if not hasattr(task, "completion") or task.completion is None:
+                continue
+
             interaction = self._create_interaction_from_chat_task(task)
             # Use completion.id as the interaction key
             completion_id = task.completion.id
@@ -411,7 +415,7 @@ class PipelineTrajectoryMaker(Controller):
     Example
     -------
     ```python
-    from tensorrt_llm.scaffolding import NativeGenerationController
+    from areal.experimental.scaffolding._compat import NativeGenerationController
 
     gen_controller = NativeGenerationController()
     reward_controller = RLVRRewardController(gsm8k_reward_fn)
@@ -560,7 +564,7 @@ class TraceTrajectoryMaker(Controller):
     Example
     -------
     ```python
-    from tensorrt_llm.scaffolding import NativeGenerationController
+    from areal.experimental.scaffolding._compat import NativeGenerationController
 
     chat_controller = SomeChatController()
     reward_controller = RLVRRewardController(gsm8k_reward_fn)

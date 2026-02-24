@@ -1,8 +1,9 @@
 """
 Scaffolding Framework Integration for AReaL.
 
-This module provides integration between TensorRT-LLM's Scaffolding framework
-and AReaL's RL training pipeline.
+This module provides the Scaffolding framework for composing inference-time
+compute methods with AReaL's RL training pipeline. Core scaffolding primitives
+are vendored from TensorRT-LLM under ``areal.experimental.scaffolding.core``.
 
 Key Components:
 - ScaffoldingWorkflow: RolloutWorkflow implementation that wraps ScaffoldingLlm
@@ -15,11 +16,8 @@ Key Components:
 - ChatRewardTask: Task for computing rewards on traced interactions
 - CreateWorkerFromEngine: Creates a scaffolding Worker from AReaL's InferenceEngine
 - SGLangWorker: Worker implementation for SGLang engines
-
-Note: Requires tensorrt_llm to be installed for full functionality.
 """
 
-from areal.experimental.scaffolding._compat import HAS_TENSORRT_LLM
 from areal.experimental.scaffolding.controllers import (
     ChatTracer,
     PipelineTrajectoryMaker,
@@ -35,7 +33,6 @@ from areal.experimental.scaffolding.worker import CreateWorkerFromEngine, SGLang
 from areal.experimental.scaffolding.workflow import ScaffoldingWorkflow
 
 __all__ = [
-    "HAS_TENSORRT_LLM",
     "ScaffoldingWorkflow",
     "RLVRRewardTask",
     "RLVRRewardController",

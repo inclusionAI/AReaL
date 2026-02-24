@@ -1,7 +1,7 @@
 # Scaffolding Framework Examples for AReaL
 
-This directory contains examples demonstrating how to use the TensorRT-LLM Scaffolding
-framework with AReaL for reinforcement learning training.
+This directory contains examples demonstrating how to use the Scaffolding framework with
+AReaL for reinforcement learning training.
 
 ## Overview
 
@@ -83,7 +83,7 @@ scaffolding_workflow = ScaffoldingWorkflow(scaffolding_llm)
                               │  │  │                                     │  │  │
                               │  │  │  ┌───────────────────────────────┐  │  │  │
 Data ─────────────────────────┼──┼──┼──►  NativeGenerationController   │  │  │  │
-                              │  │  │  │  (from tensorrt_llm)          │  │  │  │
+                              │  │  │  │  (from scaffolding.core)       │  │  │  │
                               │  │  │  └───────────────┬───────────────┘  │  │  │
                               │  │  │                  │                  │  │  │
                               │  │  │                  ▼                  │  │  │
@@ -169,7 +169,7 @@ engine:
 You can create custom reward controllers by subclassing the base Controller:
 
 ```python
-from tensorrt_llm.scaffolding import Controller
+from areal.experimental.scaffolding._compat import Controller
 
 class CustomRewardController(Controller):
     def __init__(self, reward_fn):
@@ -193,7 +193,7 @@ class CustomRewardController(Controller):
 For different RL algorithms, you may need different trajectory formats:
 
 ```python
-from tensorrt_llm.scaffolding import Controller
+from areal.experimental.scaffolding._compat import Controller
 import torch
 
 class CustomTrajectoryMaker(Controller):
