@@ -97,11 +97,11 @@ def main(args):
     ) as trainer:
         trainer.train(
             workflow=(
-                "areal.workflow.vision_multiturn_agentic.VisionMultiTurnAgenticWorkflow"
+                "areal.workflow.vision_multiturn.VisionMultiTurnAgenticWorkflow"
             ),
             workflow_kwargs=workflow_kwargs,
             eval_workflow=(
-                "areal.workflow.vision_multiturn_agentic.VisionMultiTurnAgenticWorkflow"
+                "areal.workflow.vision_multiturn.VisionMultiTurnAgenticWorkflow"
             ),
             eval_workflow_kwargs=eval_workflow_kwargs,
         )
