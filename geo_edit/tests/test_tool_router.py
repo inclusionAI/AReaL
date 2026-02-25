@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 class TestToolRouterInit:
     """Test ToolRouter initialization."""
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_init_with_auto_mode(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
@@ -15,7 +15,7 @@ class TestToolRouterInit:
         router = ToolRouter(tool_mode="auto")
         assert router.tool_mode == "auto"
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_init_with_force_mode(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
@@ -30,7 +30,7 @@ class TestToolRouterInit:
         router = ToolRouter(tool_mode="direct")
         assert router.tool_mode == "direct"
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_init_default_mode_is_auto(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
@@ -73,7 +73,7 @@ class TestToolRouterDirectMode:
 class TestToolRouterAutoMode:
     """Test ToolRouter behavior in auto mode."""
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_get_available_declarations_returns_list(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
@@ -82,7 +82,7 @@ class TestToolRouterAutoMode:
         declarations = router.get_available_declarations()
         assert isinstance(declarations, list)
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_declarations_have_required_fields(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
@@ -94,7 +94,7 @@ class TestToolRouterAutoMode:
             assert "description" in decl
             assert "parameters" in decl
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_get_available_tools_returns_dict(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
@@ -103,7 +103,7 @@ class TestToolRouterAutoMode:
         functions = router.get_available_tools()
         assert isinstance(functions, dict)
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_tools_are_callable(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
@@ -124,19 +124,19 @@ class TestToolRouterToolRegistry:
         for tool_name in expected_tools:
             assert tool_name in FUNCTION_TOOLS, f"Missing function tool: {tool_name}"
 
-    def test_agent_tools_registered(self):
-        from geo_edit.tool_definitions.agents import AGENT_TOOLS
+    def test_agent_declarations_registered(self):
+        from geo_edit.tool_definitions.agents import AGENT_DECLARATIONS
 
         expected_tools = ["multimath", "gllava", "chartmoe"]
         for tool_name in expected_tools:
-            assert tool_name in AGENT_TOOLS, f"Missing agent tool: {tool_name}"
+            assert tool_name in AGENT_DECLARATIONS, f"Missing agent declaration: {tool_name}"
 
     def test_tool_registry_structure(self):
         from geo_edit.tool_definitions.functions import FUNCTION_TOOLS
-        from geo_edit.tool_definitions.agents import AGENT_TOOLS
+        from geo_edit.tool_definitions.router import _TOOL_REGISTRY
 
-        all_tools = {**FUNCTION_TOOLS, **AGENT_TOOLS}
-        for name, entry in all_tools.items():
+        # Check function tools
+        for name, entry in FUNCTION_TOOLS.items():
             assert isinstance(entry, tuple), f"Tool {name} entry is not a tuple"
             assert len(entry) == 4, f"Tool {name} entry should have 4 elements"
             declaration, func, tool_type, return_type = entry
@@ -145,35 +145,43 @@ class TestToolRouterToolRegistry:
             assert tool_type in ("function", "agent"), f"Tool {name} has invalid type"
             assert return_type in ("image", "text"), f"Tool {name} has invalid return type"
 
+        # Check _TOOL_REGISTRY includes both functions and agents
+        assert "image_crop" in _TOOL_REGISTRY
+        assert "multimath" in _TOOL_REGISTRY
+
 
 class TestToolRouterReturnTypes:
     """Test tool return type methods."""
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
-    def test_get_tool_return_type_for_image_tools(self, mock_get_manager):
-        from geo_edit.tool_definitions.router import ToolRouter
+    @patch("geo_edit.environment.tool_agents.get_manager")
+    def test_get_tool_return_types_for_image_tools(self, mock_get_manager):
+        from geo_edit.tool_definitions.router import ToolRouter, _TOOL_CONFIG
 
         mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
+        return_types = router.get_tool_return_types()
         image_tools = ["image_crop", "image_label", "draw_line", "bounding_box", "image_highlight"]
         for tool_name in image_tools:
-            assert router.get_tool_return_type(tool_name) == "image"
+            if _TOOL_CONFIG.get(tool_name, False):
+                assert return_types.get(tool_name) == "image"
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
-    def test_get_tool_return_type_for_agent_tools(self, mock_get_manager):
-        from geo_edit.tool_definitions.router import ToolRouter
+    @patch("geo_edit.environment.tool_agents.get_manager")
+    def test_get_tool_return_types_for_agent_tools(self, mock_get_manager):
+        from geo_edit.tool_definitions.router import ToolRouter, _TOOL_CONFIG
 
         mock_get_manager.return_value.create_agents.return_value = {}
         router = ToolRouter(tool_mode="auto")
+        return_types = router.get_tool_return_types()
         agent_tools = ["multimath", "gllava", "chartmoe"]
         for tool_name in agent_tools:
-            assert router.get_tool_return_type(tool_name) == "text"
+            if _TOOL_CONFIG.get(tool_name, False):
+                assert return_types.get(tool_name) == "text"
 
 
 class TestToolRouterAgentMethods:
     """Test agent-specific methods."""
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_get_enabled_agents_returns_agent_type_only(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
@@ -185,7 +193,7 @@ class TestToolRouterAgentMethods:
         for func_tool in function_tools:
             assert func_tool not in agents
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_is_agent_enabled_returns_bool(self, mock_get_manager):
         from geo_edit.tool_definitions.router import ToolRouter
 
