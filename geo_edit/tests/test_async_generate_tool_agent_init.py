@@ -14,7 +14,7 @@ from PIL import Image
 class TestToolRouterAgentInitialization:
     """Test that ToolRouter initializes agents on construction."""
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_agents_created_when_enabled(self, mock_get_manager):
         """Verify agents are created when agent tools are enabled."""
         from geo_edit.tool_definitions.router import ToolRouter, _TOOL_CONFIG
@@ -35,7 +35,7 @@ class TestToolRouterAgentInitialization:
             mock_manager.create_agents.assert_called_once()
             assert router.is_agent_enabled()
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_no_agents_created_in_direct_mode(self, mock_get_manager):
         """Verify no agents are created in direct mode."""
         from geo_edit.tool_definitions.router import ToolRouter
@@ -48,7 +48,7 @@ class TestToolRouterAgentInitialization:
         mock_manager.create_agents.assert_not_called()
         assert not router.is_agent_enabled()
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_node_resource_added_to_configs(self, mock_get_manager):
         """Verify node_resource is added to agent configs."""
         from geo_edit.tool_definitions.router import ToolRouter, _TOOL_CONFIG
@@ -78,7 +78,7 @@ class TestToolRouterAgentInitialization:
 class TestToolRouterAgentShutdown:
     """Test that ToolRouter properly shuts down agents."""
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_shutdown_agents_calls_manager(self, mock_get_manager):
         """Verify shutdown_agents delegates to manager."""
         from geo_edit.tool_definitions.router import ToolRouter
@@ -96,7 +96,7 @@ class TestToolRouterAgentShutdown:
         mock_manager.shutdown.assert_called_once_with(None)
         assert router._agents == {}
 
-    @patch("geo_edit.tool_definitions.router.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_shutdown_agents_noop_when_no_agents(self, mock_get_manager):
         """Verify shutdown_agents does nothing when no agents exist."""
         from geo_edit.tool_definitions.router import ToolRouter
@@ -145,7 +145,7 @@ class TestToolRouterConfigIntegration:
 class TestToolAgentCallFlow:
     """Test the complete call flow from agent tool to Ray Actor."""
 
-    @patch("geo_edit.environment.tool_agents.manager.get_manager")
+    @patch("geo_edit.environment.tool_agents.get_manager")
     def test_call_agent_delegates_to_manager(self, mock_get_manager):
         """Verify call_agent delegates to ToolAgentManager."""
         from geo_edit.environment.tool_agents import call_agent
