@@ -6,6 +6,10 @@ from typing import List, Optional, Union
 
 import ray
 
+from geo_edit.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
 
 class BaseToolModelActor(ABC):
     """Abstract base class for Tool Model Actors.
@@ -38,7 +42,14 @@ class BaseToolModelActor(ABC):
             - self.device_map: For transformers (GPU index or device string)
             - CUDA_VISIBLE_DEVICES: For vLLM and other frameworks
         """
-        self.gpu_ids = [int(g) for g in ray.get_gpu_ids()] or [0]
+        ray_gpu_ids = ray.get_gpu_ids()
+        self.gpu_ids = [int(g) for g in ray_gpu_ids] if ray_gpu_ids else [0]
+
+        logger.info(
+            "setup_gpu: Ray assigned GPUs: %s, setting CUDA_VISIBLE_DEVICES=%s",
+            ray_gpu_ids,
+            ",".join(str(g) for g in self.gpu_ids),
+        )
 
         # Set CUDA_VISIBLE_DEVICES for vLLM and other frameworks
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in self.gpu_ids)
