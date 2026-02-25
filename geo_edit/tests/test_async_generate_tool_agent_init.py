@@ -7,8 +7,16 @@ Validates that:
 """
 
 import pytest
+import ray
 from unittest.mock import MagicMock, patch
 from PIL import Image
+
+
+@pytest.fixture(scope="module", autouse=True)
+def connect_to_ray():
+    """Connect to existing Ray cluster before tests."""
+    ray.init(address="auto")
+    yield
 
 
 class TestToolRouterAgentInitialization:
