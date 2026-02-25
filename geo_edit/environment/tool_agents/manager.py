@@ -71,10 +71,7 @@ class ToolAgentManager:
             num_gpus = cfg.get("num_gpus", 1)
             resources = cfg.get("resources")
 
-            actor_options = {
-                "name": f"tool_agent_{name}",
-                "lifetime": "detached",
-            }
+            actor_options = {}
             if resources:
                 actor_options["resources"] = resources
 
@@ -112,15 +109,8 @@ class ToolAgentManager:
         return self._actors
 
     def get_actor(self, tool_name: str) -> Optional[ray.actor.ActorHandle]:
-        """Get actor handle by tool name, reconnecting if necessary."""
-        actor = self._actors.get(tool_name)
-        if actor is None:
-            try:
-                actor = ray.get_actor(f"tool_agent_{tool_name}")
-                self._actors[tool_name] = actor
-            except ValueError:
-                pass
-        return actor
+        """Get actor handle by tool name."""
+        return self._actors.get(tool_name)
 
     def call(
         self,
