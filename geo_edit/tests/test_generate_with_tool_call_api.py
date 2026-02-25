@@ -4,7 +4,6 @@ import logging
 import os
 import shutil
 from geo_edit.agents.api_agent import APIBasedAgent, AgentConfig
-from geo_edit.environment.action import TOOL_FUNCTIONS
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.config import (

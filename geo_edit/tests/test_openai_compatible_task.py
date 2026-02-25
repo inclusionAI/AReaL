@@ -14,7 +14,7 @@ from openai.types.responses.response_create_params import ResponseCreateParamsNo
 from pydantic import TypeAdapter
 
 from geo_edit.config import build_api_agent_configs
-from geo_edit.environment.action.image_edition_tool import draw_line_function
+from geo_edit.tool_definitions.functions.draw_line import execute as draw_line_function
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.environment.task.vision_qa_task import ToolCall
 from unittest.mock import MagicMock

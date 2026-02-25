@@ -9,7 +9,6 @@ from geo_edit.agents.api_agent import APIBasedAgent
 from geo_edit.config import build_api_agent_configs
 from geo_edit.constants import MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
-from geo_edit.environment.action import TOOL_FUNCTIONS
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.tool_definitions import ToolRouter
 from geo_edit.utils.logger import setup_logger
