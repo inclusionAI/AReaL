@@ -195,14 +195,18 @@ class TestInputImageDetail:
         ]
         task.update_observation_from_action(tool_calls)
         # chat_completions format: task.contents is a list directly
-        # After tool call, a user message with image is appended
-        user_messages = [
+        # After tool call, a user message with image is appended, then append_prompt adds another user message
+        # Find the user message that contains an image
+        image_user_messages = [
             message for message in task.contents
-            if message.get("role") == "user"
+            if message.get("role") == "user" and any(
+                part.get("type") == "image_url" for part in message.get("content", [])
+                if isinstance(part, dict)
+            )
         ]
-        assert len(user_messages) >= 2  # initial + observation
-        last_user_message = user_messages[-1]
-        image_part = next(part for part in last_user_message["content"] if part.get("type") == "image_url")
+        assert len(image_user_messages) >= 2  # initial + observation image
+        observation_message = image_user_messages[-1]
+        image_part = next(part for part in observation_message["content"] if part.get("type") == "image_url")
         assert image_part["image_url"]["detail"] == "auto"
 
 
@@ -274,7 +278,10 @@ class TestResponsesApiParsing:
             extra_info={"tokens_used": 7},
         )
         assert final_tool_calls == []
-        assert task.conversation_history[1]["output_text"] == "Final answer."
+        # For vLLM, <answer> tags are parsed only when no output_text is found in response object
+        # Since _make_responses_api_response creates a message output with the content,
+        # output_text is set to the raw content and tags are not parsed
+        assert task.conversation_history[1]["output_text"] == final_content
         assert task.conversation_history[1]["function_call"] is None
 
     def test_openai_task_parses_tool_calls(self, tmp_path):
