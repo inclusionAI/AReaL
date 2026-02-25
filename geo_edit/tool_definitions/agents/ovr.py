@@ -1,4 +1,4 @@
-"""ChartMoE VLM Agent Tool."""
+"""OVR-7B-RL Visual Reasoning Agent Tool (vLLM backend)."""
 
 import base64
 import json
@@ -10,12 +10,13 @@ from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# System prompt for this agent (empty string means no system prompt)
-SYSTEM_PROMPT = ""
+SYSTEM_PROMPT = (
+    "You are a math problem solving expert with visual reasoning capabilities. "
+    "Analyze the image carefully and provide your reasoning step by step, but do NOT give the final answer."
+)
 
-# Model configuration
 agent_config = {
-    "model_name_or_path": "/storage/openpsi/models/chartmoe",
+    "model_name_or_path": "/storage/openpsi/models/OVR-7B-RL",
     "max_model_len": 8192,
     "gpu_memory_utilization": 0.8,
     "temperature": 0.0,
@@ -24,8 +25,8 @@ agent_config = {
 }
 
 
-class ChartMoEActor(BaseToolModelActor):
-    """ChartMoE VLM Actor using transformers inference."""
+class OVRActor(BaseToolModelActor):
+    """OVR-7B-RL Visual Reasoning Actor using vLLM inference."""
 
     def __init__(
         self,
@@ -34,24 +35,24 @@ class ChartMoEActor(BaseToolModelActor):
         gpu_memory_utilization: float = 0.8,
         system_prompt: Optional[str] = None,
     ):
-        import torch
-        from transformers import AutoModelForCausalLM, AutoProcessor
+        from vllm import LLM
 
-        self.setup_gpu()  # Configure GPU based on Ray assignment
+        self.setup_gpu()  # Configure GPU based on Ray assignment (sets CUDA_VISIBLE_DEVICES)
 
         self.model_name = model_name
         self.system_prompt = system_prompt or ""
         self.max_model_len = max_model_len
 
-        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16,
-            device_map=self.device_map,
+        # Initialize vLLM engine (uses CUDA_VISIBLE_DEVICES set by setup_gpu)
+        self.llm = LLM(
+            model=model_name,
             trust_remote_code=True,
+            max_model_len=max_model_len,
+            gpu_memory_utilization=gpu_memory_utilization,
+            dtype="bfloat16",
         )
         self._initialized = True
-        logger.info("ChartMoEActor initialized on GPU %s: %s", self.gpu_ids, model_name)
+        logger.info("OVRActor (vLLM) initialized on GPU %s: %s", self.gpu_ids, model_name)
 
     def analyze(
         self,
@@ -60,44 +61,42 @@ class ChartMoEActor(BaseToolModelActor):
         temperature: float = 0.0,
         max_tokens: int = 1024,
     ) -> str:
-        """Analyze an image and answer the question."""
-        import torch
+        """Analyze an image and answer the question using vLLM."""
         from PIL import Image
+        from vllm import SamplingParams
 
         # Decode base64 image
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        # Build prompt - ChartMoE uses a specific format
+        # Build Qwen2-VL style messages
+        messages = []
         if self.system_prompt:
-            prompt = f"<image>\n{self.system_prompt}\n{question}"
-        else:
-            prompt = f"<image>\n{question}"
-
-        # Process inputs
-        inputs = self.processor(text=prompt, images=image, return_tensors="pt")
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-
-        # Generate
-        with torch.no_grad():
-            generate_kwargs = {
-                "max_new_tokens": max_tokens,
-                "do_sample": temperature > 0,
+            messages.append({"role": "system", "content": self.system_prompt})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": question},
+                ],
             }
-            if temperature > 0:
-                generate_kwargs["temperature"] = temperature
-            output_ids = self.model.generate(**inputs, **generate_kwargs)
-
-        # Decode output (skip input tokens)
-        input_len = inputs["input_ids"].shape[1]
-        generated_text = self.processor.decode(
-            output_ids[0][input_len:], skip_special_tokens=True
         )
+
+        # Set sampling parameters
+        sampling_params = SamplingParams(
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        # Generate with vLLM
+        outputs = self.llm.chat(messages, sampling_params=sampling_params)
+        generated_text = outputs[0].outputs[0].text
 
         return self._parse_output(generated_text)
 
     def _parse_output(self, text: str) -> str:
-        """Parse output (following ToolAgent._parse_response logic)."""
+        """Parse output."""
         try:
             payload = json.loads(text)
             if payload.get("error"):
@@ -114,11 +113,11 @@ class ChartMoEActor(BaseToolModelActor):
         return {"model": self.model_name, "initialized": self._initialized}
 
 
-ACTOR_CLASS = ChartMoEActor
+ACTOR_CLASS = OVRActor
 
 DECLARATION = {
-    "name": "chartmoe",
-    "description": "Use a chart-analysis VLM tool to read charts from images and return structured outputs (e.g., table/JSON) plus chart-grounded analysis. It can extract chart elements, visible values/relationships, trends, and key observations for downstream reasoning.",
+    "name": "ovr",
+    "description": "Use an RL-enhanced visual reasoning VLM to analyze math problem images with step-by-step reasoning capabilities.",
     "parameters": {
         "type": "object",
         "properties": {

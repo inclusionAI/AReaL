@@ -40,6 +40,8 @@ class GLLaVAActor(BaseToolModelActor):
         import torch
         from transformers import AutoProcessor, LlavaForConditionalGeneration
 
+        self.setup_gpu()  # Configure GPU based on Ray assignment
+
         self.model_name = model_name
         self.system_prompt = system_prompt or ""
         self.max_model_len = max_model_len
@@ -48,11 +50,11 @@ class GLLaVAActor(BaseToolModelActor):
         self.model = LlavaForConditionalGeneration.from_pretrained(
             model_name,
             torch_dtype=torch.float16,
-            device_map="auto",
+            device_map=self.device_map,
             trust_remote_code=True,
         )
         self._initialized = True
-        logger.info("GLLaVAActor initialized: %s", model_name)
+        logger.info("GLLaVAActor initialized on GPU %s: %s", self.gpu_ids, model_name)
 
     def analyze(
         self,
