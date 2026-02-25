@@ -1,13 +1,13 @@
 ---
-name: megatron-engine-expert
-description: MegatronEngine usage and integration expert. Use only when dealing with MegatronEngine configuration, workflows, and integration in AReaL.
+description: MegatronEngine usage and integration expert. Fire when working on pipeline-parallel training, Megatron configuration, or ultra-deep model training.
+mode: subagent
+temperature: 0.1
 tools:
-  - Read
-  - Grep
-  - Glob
-  - Task
-model: opus
+  write: false
+  edit: false
 ---
+
+______________________________________________________________________
 
 # MegatronEngine Usage Expert
 
@@ -191,16 +191,6 @@ models, combined with `tensor_parallel_size`. Configure `TrainEngineConfig` with
 | **Best For**         | Ultra-deep, MoE, hybrid parallelism | Large dense models            |
 | **Integration**      | Full AReaL workflow support         | Standard training workflows   |
 
-## Getting Started
-
-1. **Setup**: Install dependencies with `uv sync --extra cuda`
-1. **Configure**: Set up `ParallelStrategy` for model parallelism and
-   `TrainEngineConfig` with `MegatronEngineConfig` for training settings
-1. **Integrate**: Reference configuration examples in YAML files under `examples/`
-   directory
-1. **Optimize**: Monitor pipeline efficiency, adjust parallel dimensions, and use
-   profiling tools
-
 ## Implementation Structure
 
 **Core Engine**: `areal/engine/megatron_engine.py` - Main engine class implementing
@@ -262,52 +252,3 @@ distributed training coordination
 - **Utilities**: `areal/engine/megatron_utils/megatron.py` for core Megatron utilities
 - **Examples**: YAML configuration files in `examples/` and
   `areal/tests/sft/config_megatron.yaml`
-
-## Response Guidance
-
-When assisting with MegatronEngine queries:
-
-1. **Provide architectural context** - Explain how MegatronEngine fits into AReaL
-   workflows
-1. **Focus on interfaces and usage** - Reference public APIs and integration points
-1. **Offer practical guidance** - Suggest configuration patterns and troubleshooting
-   steps
-1. **Highlight workflow integration** - Emphasize connections to rollout, evaluation,
-   and checkpointing
-
-______________________________________________________________________
-
-<!--
-================================================================================
-                            MAINTAINER GUIDE
-================================================================================
-
-Location: .claude/agents/megatron-engine-expert.md
-Activation: When MegatronEngine implementation or parallel strategy topics detected
-
-## Design Philosophy
-
-- **Usage-Focused Guidance**: Emphasize interfaces, workflows, and integration points over implementation details
-- **AReaL-Specific Context**: Highlight MegatronEngine's role in AReaL training workflows
-- **Complementary Expertise**: fsdp-engine-expert handles FSDP2/DTensor implementation; megatron-engine-expert focuses on MegatronEngine usage and configuration
-- **Model**: Opus (complex distributed system reasoning)
-
-## How to Update
-
-### When MegatronEngine Interface Changes
-1. Update "Core Concepts" section with new APIs (Primary Classes and Key Methods)
-2. Update "Configuration" section with new examples
-3. Verify file paths and import statements
-
-### When New Configuration Options Added
-1. Update "Common Usage Patterns" with new patterns
-2. Add to "Parallel Strategy Selection" table if applicable
-3. Update usage examples in "Configuration" section
-
-### When Integration Points Change
-1. Update "Workflow Integration" section
-2. Review "Troubleshooting" section for new issues
-3. Update "Engine Selection Guide" if choice criteria change
-
-================================================================================
--->

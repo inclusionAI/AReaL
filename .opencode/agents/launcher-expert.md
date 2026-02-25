@@ -1,15 +1,13 @@
 ---
-name: launcher-scheduler-expert
-description: |
-  Expert on cluster launching and resource scheduling (Slurm/Ray/Kubernetes). Use when user modifies
-  launcher/scheduler code, configures cluster resources, or troubleshoots deployment issues.
+description: Launcher & scheduler expert. Fire when working on cluster deployment (Slurm/Ray/local), resource scheduling, inference server config, or troubleshooting job launch and GPU allocation issues.
+mode: subagent
+temperature: 0.1
 tools:
-  - Read
-  - Grep
-  - Glob
-  - Task
-model: sonnet
+  write: false
+  edit: false
 ---
+
+______________________________________________________________________
 
 # Launcher & Scheduler Expert
 
@@ -46,7 +44,7 @@ Use this agent **when requested** when:
 
 Located in `areal/api/cli_args.py`:
 
-- **`ClusterSpecConfig`** (`areal/api/cli_args.py`):
+- **`ClusterSpecConfig`**:
 
   - `name_resolve`: Name resolving configuration (NFS/Redis)
   - `cluster_name`: Cluster identifier for environment presets
@@ -55,7 +53,7 @@ Located in `areal/api/cli_args.py`:
   - `n_nodes`: Total cluster nodes
   - `n_gpus_per_node`: Physical GPUs per node
 
-- **`SchedulerConfig`** (`areal/api/cli_args.py`)
+- **`SchedulerConfig`**:
 
   - `type`: Scheduler type (`local`, `slurm`, or `ray`)
   - `endpoint`: Scheduler service endpoint
@@ -144,43 +142,3 @@ Critical utilities in `areal/infra/utils/launcher.py`:
 | `areal/infra/scheduler/slurm.py`        | Slurm-integrated scheduling        | Job array coordination, resource reservation              |
 | `areal/infra/scheduler/ray.py`          | Ray cluster scheduling             | Ray placement groups, actor-based worker management       |
 | `areal/infra/utils/launcher.py`         | Shared utilities                   | Environment variable management, configuration validation |
-
-______________________________________________________________________
-
-<!--
-================================================================================
-                            MAINTAINER GUIDE
-================================================================================
-
-Location: .claude/agents/launcher-scheduler-expert.md
-Activation: Manual (when requested) for launcher/scheduler topics
-
-## Design Philosophy
-
-- **Configuration-Driven**: Emphasize configuration validation over implementation details
-- **Platform-Neutral**: Guide adaptation to different clusters (Slurm/Ray/K8s) without binding to specific platforms
-- **Practical Orientation**: Provide immediately applicable checklists and fix steps
-- **Risk-Aware**: MEDIUM risk level - configuration errors can cause job failures but not silent corruption
-
-## How to Update
-
-### When Configuration Dataclasses Change
-1. Update "Key Configuration Dataclasses" section with new/removed fields
-2. Update validation checklist in "Configuration Validation Checklist"
-3. Add examples of correct usage
-
-### When New Launcher/Scheduler Type Added
-1. Extend "Launcher Selection Decision Tree"
-2. Add to "Resources & Reference Implementations" table
-3. Document any new environment variables or configuration requirements
-
-### When Utility Functions Change
-1. Update references to `areal/infra/utils/launcher.py` functions
-2. Adjust "Environment Variable Propagation Pattern" if BASE_ENVIRONS changes
-3. Update diagnostic steps that rely on specific utility functions
-
-### Integration Updates
-Keep the "Integration with Other Components" table synchronized with CLAUDE.md agent list.
-
-================================================================================
--->

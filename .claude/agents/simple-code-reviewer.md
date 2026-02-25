@@ -21,7 +21,7 @@ Use this agent PROACTIVELY when:
 - Before committing changes
 - User asks "can you review this?" or "is this correct?"
 
-**Note**: For comprehensive PR reviews, use `/pr-review` command instead. This agent is
+**Note**: For comprehensive PR reviews, use `/review-pr` command instead. This agent is
 for quick, lightweight checks.
 
 ## Review Focus Areas
@@ -98,7 +98,7 @@ Activation: Automatic (PROACTIVE) after code changes
 
 ## Design Philosophy
 
-- **Lightweight**: Quick checks, not comprehensive PR review (use /pr-review for full analysis)
+- **Lightweight**: Quick checks, not comprehensive PR review (use /review-pr for full analysis)
 - **Read-Only**: Tools limited to Read, Grep, Glob; identifies issues but doesn't fix them
 - **Model**: Sonnet (fast, cost-effective for frequent invocations)
 

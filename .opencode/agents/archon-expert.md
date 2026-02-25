@@ -1,13 +1,13 @@
 ---
-name: archon-engine-expert
-description: ArchonEngine usage and configuration expert. Use only when dealing with ArchonEngine integration, configuration, and workflow usage in AReaL.
+description: ArchonEngine configuration and usage expert. Fire when working on MoE model training, expert/pipeline parallelism, adding new model architectures, or troubleshooting Archon-related issues.
+mode: subagent
+temperature: 0.1
 tools:
-  - Read
-  - Grep
-  - Glob
-  - Task
-model: opus
+  write: false
+  edit: false
 ---
+
+______________________________________________________________________
 
 # ArchonEngine Usage Expert
 
@@ -183,16 +183,6 @@ background process. Override with `saver.mode: sync` if needed.
 **For deeper issues**: examine parallel constraints, MoE routing, or communication
 patterns (refer to source code).
 
-## Getting Started
-
-1. **Setup**: Install dependencies with `uv sync --extra experimental`
-1. **Configure**: Set up `ParallelStrategy` for model parallelism and
-   `TrainEngineConfig` with `ArchonEngineConfig` for training settings
-1. **Integrate**: Reference test files in `areal/tests/experimental/archon/torchrun/`
-   for working examples
-1. **Monitor**: Track expert utilization, parallel dimensions, and use profiling tools
-   for optimization
-
 ## Implementation Structure
 
 **Core Engine**: `areal/experimental/engine/archon_engine.py` - Main engine class
@@ -243,54 +233,3 @@ patterns (refer to source code).
 - Parallel: `areal/experimental/models/archon/parallel_dims.py`
 - MoE: `areal/experimental/models/archon/moe/`
 - Tests: `areal/tests/experimental/archon/torchrun/` (working examples)
-
-______________________________________________________________________
-
-<!--
-================================================================================
-                            MAINTAINER GUIDE
-================================================================================
-
-Location: .claude/agents/archon-engine-expert.md
-Activation: When ArchonEngine interface, configuration, or integration topics detected
-
-## Design Philosophy
-
-- **Interface-Focused**: Emphasize ArchonEngine's public API, configuration, and integration patterns
-- **Usage Guidance**: Provide roadmap and structural guidance rather than implementation details
-- **Workflow-Centric**: Focus on how ArchonEngine integrates with AReaL workflows
-- **Practical Orientation**: Include common usage patterns and troubleshooting guidance
-- **Model**: Opus (complex integration and configuration reasoning)
-
-## How to Update
-
-### When ArchonEngine Public API Changes
-1. Update "Configuration" section with new config options
-2. Update "Workflow Integration" section with new integration patterns
-3. Update "Common Usage Patterns" with new use cases
-
-### When New Features Added
-1. Add to "Core Concepts" characteristics
-2. Include in relevant usage patterns
-3. Update troubleshooting guide if needed
-
-### When New Models Are Added
-1. No changes needed here -- the `/add-archon-model` skill handles the guided workflow
-2. Update "Adding a New Model Architecture" section only if the registration pattern changes
-3. The model discovery flow description should stay current with `model_spec.py`
-
-### When Integration Patterns Change
-1. Update "Workflow Integration" section
-2. Update examples and Getting Started guide
-3. Review common usage patterns for relevance
-
-### Important Boundary Maintenance
-Always ensure this agent stays focused on interface and usage guidance:
-- Do NOT add low-level implementation details
-- Do NOT add deep technical details of parallel algorithms
-- Do NOT add internal class hierarchies
-- Refer users to source code for implementation details
-- Maintain practical, user-focused orientation
-
-================================================================================
--->
