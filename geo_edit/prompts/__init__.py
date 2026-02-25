@@ -7,9 +7,7 @@ This module centralizes all prompt definitions:
 """
 
 from geo_edit.prompts.system_prompts import (
-    API_CALL_SYSTEM_PROMPT,
     API_NO_TOOL_SYSTEM_PROMPT,
-    VLLM_SYSTEM_PROMPT,
     VLLM_NO_TOOL_SYSTEM_PROMPT,
     VLLM_FORCE_TOOL_CALL_PROMPT,
     TOOL_EXECUTION_SUCCESS_PROMPT,
@@ -30,9 +28,7 @@ from geo_edit.prompts.tool_agent_prompts import (
 
 __all__ = [
     # System prompts
-    "API_CALL_SYSTEM_PROMPT",
     "API_NO_TOOL_SYSTEM_PROMPT",
-    "VLLM_SYSTEM_PROMPT",
     "VLLM_NO_TOOL_SYSTEM_PROMPT",
     "VLLM_FORCE_TOOL_CALL_PROMPT",
     "TOOL_EXECUTION_SUCCESS_PROMPT",
