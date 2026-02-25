@@ -35,6 +35,7 @@ class ToolAgentManager:
         self,
         configs: Dict[str, Dict[str, Any]],
         ray_address: str = "auto",
+        wait_for_ready: bool = True,
     ) -> Dict[str, ray.actor.ActorHandle]:
         """Create Tool Agents from configuration dict.
 
@@ -50,6 +51,7 @@ class ToolAgentManager:
                 - num_gpus: int (default 1)
                 - resources: Dict[str, float] for Ray scheduling
             ray_address: Ray cluster address.
+            wait_for_ready: If True, wait for all agents to finish loading models.
 
         Returns:
             Dict mapping tool names to their actor handles.
@@ -57,6 +59,7 @@ class ToolAgentManager:
         if not ray.is_initialized():
             ray.init(address=ray_address, namespace="geo_edit_tool_agents", ignore_reinit_error=True)
 
+        new_actors = []
         for name, cfg in configs.items():
             if name in self._actors:
                 logger.info("Agent %s already exists, skipping", name)
@@ -91,7 +94,20 @@ class ToolAgentManager:
             )
 
             self._actors[name] = actor
+            new_actors.append((name, actor))
             logger.info("Created tool agent: %s -> %s", name, cfg["model_name_or_path"])
+
+        # Wait for all new agents to finish initialization
+        if wait_for_ready and new_actors:
+            logger.info("Waiting for %d tool agents to load models...", len(new_actors))
+            health_refs = [(name, actor.health_check.remote()) for name, actor in new_actors]
+            for name, ref in health_refs:
+                try:
+                    ray.get(ref)
+                    logger.info("Tool agent %s is ready", name)
+                except Exception as e:
+                    logger.error("Tool agent %s failed to initialize: %s", name, e)
+            logger.info("All tool agents are ready")
 
         return self._actors
 
