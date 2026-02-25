@@ -273,7 +273,6 @@ class VisionMultiTurnWorkflow(RolloutWorkflow):
             versions.extend(new_versions)
 
             if messages_chat:
-                
                 output_text = self.tokenizer.decode(new_tokens)
                 model_output = {
                     "role": "assistant",
