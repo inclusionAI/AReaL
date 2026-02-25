@@ -121,8 +121,9 @@ class TestCreateAgents:
         mock_ray.is_initialized.return_value = True
         mock_actor_class = MagicMock()
         mock_get_actor_class.return_value = mock_actor_class
+        # ray.remote(num_gpus=X) returns a decorator, calling it with ActorClass returns RemoteActorClass
         mock_remote_class = MagicMock()
-        mock_ray.remote.return_value = mock_remote_class
+        mock_ray.remote.return_value.return_value = mock_remote_class
 
         manager = ToolAgentManager()
         configs = {
@@ -150,8 +151,9 @@ class TestCreateAgents:
         mock_ray.is_initialized.return_value = True
         mock_actor_class = MagicMock()
         mock_get_actor_class.return_value = mock_actor_class
+        # ray.remote(num_gpus=X) returns a decorator, calling it with ActorClass returns RemoteActorClass
         mock_remote_class = MagicMock()
-        mock_ray.remote.return_value = mock_remote_class
+        mock_ray.remote.return_value.return_value = mock_remote_class
 
         manager = ToolAgentManager()
         configs = {
