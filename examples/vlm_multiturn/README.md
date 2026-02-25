@@ -84,7 +84,7 @@ The `turn_discount` parameter controls how much less valuable later-turn success
 
 ## Architecture
 
-### VisionMultiTurnAgenticWorkflow
+### VisionMultiTurnWorkflow
 
 Located in `areal/workflow/vision_multiturn.py`, this workflow:
 
