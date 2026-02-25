@@ -7,11 +7,8 @@ from pathlib import Path
 import pytest
 from openai import OpenAI
 
-# To avoid accidental paid API calls in normal test runs, this test is disabled by default.
-RUN_ENV_FLAG = "RUN_GEO_EDIT_IMAGE_API_TEST"
-
 DEFAULT_API_BASE = "https://matrixllm.alipay.com/v1"
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5-2025-08-07"
 DEFAULT_PROMPT = "Please describe this image briefly."
 
 REPO_RELATIVE_IMAGE_PATH = Path("images/input_image.png")
@@ -30,19 +27,14 @@ def _to_data_url(image_path: Path) -> str:
     encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
     return f"data:{mime};base64,{encoded}"
 
-
 @pytest.mark.slow
-@pytest.mark.skipif(
-    os.getenv(RUN_ENV_FLAG, "0") != "1",
-    reason=(
-        "Live API test is disabled by default. "
-        f"Set {RUN_ENV_FLAG}=1 to run."
-    ),
-)
 def test_describe_single_image_via_chat_completions() -> None:
-    api_key =os.getenv("MATRIX_API_KEY")
+    api_key = os.getenv("MATRIX_API_KEY")
+    if not api_key:
+        raise ValueError("Please set MATRIX_API_KEY before running this test.")
+
     api_base = DEFAULT_API_BASE.rstrip("/")
-    model =DEFAULT_MODEL
+    model = DEFAULT_MODEL
     prompt = DEFAULT_PROMPT
     image_path = REPO_RELATIVE_IMAGE_PATH
 
