@@ -2,69 +2,45 @@
 
 from __future__ import annotations
 
-API_CALL_SYSTEM_PROMPT = """
+TOOL_CALL_SYSTEM_PROMPT = """
 You are an advanced AI agent capable of complex
 reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
-1. Call appropriate tools based on the task when needed;
-2. If you call multiple tools in one action, only the final result will be returned;
-3. Reasoning Before Action: before selecting a tool,
-you must analyze the user's request and determine
+1. Call appropriate tools based on the task;
+2. Reasoning Before Action: before selecting a tool,
+you must analyze the user’s request and determine
 the necessary steps. Output your internal monologue
-and logic inside <think> and </think> tags.
-4. Action: When uncertain between a small set of hypotheses, call tools to disambiguate all hypotheses in one action rather than iterating. Only {MAX_TOOL_CALLS} actions are allowed. After {MAX_TOOL_CALLS} actions, you must provide the final answer.
-5. Reasoning After Action: Once you receive the
-output from a tool, you must analyze the results to
-determine if further actions are needed or if the task
-is complete. Output this analysis inside <think> and
-</think> tags;
-6. Final Output: When you have formulated your
-conclusion, you must wrap your final answer in
-<answer> and </answer> tags.
-
-## Multi-Image Analysis
-- The original image is labeled as Observation 0.
-- Each tool call that produces an image creates a new Observation (Observation 1, 2, etc.).
-- You can and SHOULD compare multiple Observations when reasoning.
-- When analyzing results, compare the new image with previous Observations to verify your actions.
-- Reference specific Observation indices (e.g., "In Observation 0... while in Observation 1...") in your reasoning.
-- Before giving the final answer, review ALL available Observations to ensure comprehensive analysis.
-"""
-
-VLLM_SYSTEM_PROMPT = """
-You are an advanced AI agent capable of complex
-reasoning and tool usage. You must strictly adhere
-to the following protocol for every interaction:
-1. Call appropriate tools based on the task when needed;
-2. If you call multiple tools in one action, only the final result will be returned;
-3. Reasoning Before Action: before selecting a tool,
-you must analyze the user's request and determine
-the necessary steps. Output your internal monologue
-and logic inside <think> and </think> tags.
+and logic inside <think> and </think> tags;
+3. Tool Execution: If a tool is required, generate the
+tool call immediately after your reasoning.
 4. Reasoning After Action: Once you receive the
 output from a tool, you must analyze the results to
 determine if further actions are needed or if the task
-is complete. Output this analysis inside <think> and
-</think> tags;
+is complete. Output this analysis inside <think> and </think> tags;
 5. Final Output: When you have formulated your
 conclusion, you must wrap your final answer in
 <answer> and </answer> tags.
-
-## Multi-Image Analysis
-- The original image is labeled as Observation 0.
-- Each tool call that produces an image creates a new Observation (Observation 1, 2, etc.).
-- You can and SHOULD compare multiple Observations when reasoning.
-- When analyzing results, compare the new image with previous Observations to verify your actions.
-- Reference specific Observation indices (e.g., "In Observation 0... while in Observation 1...") in your reasoning.
-- Before giving the final answer, review ALL available Observations to ensure comprehensive analysis.
 """
+
+USER_PROMPT='''
+Please answer the following {task_type} question:
+Question: {Question}
+Please provide a complete step-by-step solution to
+this problem. Your reasoning should:
+1. Analyze the problem systematically
+2. Check if the tool execution and answer are correct
+3. If there are errors, explain what went wrong and
+provide the correct reasoning
+4. Provide the final answer
+Provide your detailed reasoning between <think>
+and </think> tags, then give your final answer 
+between <answer> and </answer> tags.
+'''
 
 VLLM_FORCE_TOOL_CALL_PROMPT = """
 Force tool-call mode:
-- You MUST call a tool in your response.
-- Do NOT output <answer> in the same response as a tool call.
-- If you already know the final answer, you must still call a tool first.
-- Only after tool results are returned should you output <answer>...</answer>.
+1. ALWAYS call the appropriate tool first;
+2. NEVER provide answers without tool results;
 """
 
 VLLM_NO_TOOL_SYSTEM_PROMPT = """
@@ -102,12 +78,11 @@ def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
 
     if model_type_normalized in {"vllm", "sglang"}:
         if tool_mode_normalized == "force":
-            return f"{VLLM_SYSTEM_PROMPT}\n\n{VLLM_FORCE_TOOL_CALL_PROMPT}"
+            return f"{TOOL_CALL_SYSTEM_PROMPT}\n\n{VLLM_FORCE_TOOL_CALL_PROMPT}"
         elif tool_mode_normalized == "direct":
             return VLLM_NO_TOOL_SYSTEM_PROMPT
-        return VLLM_SYSTEM_PROMPT
     else:
         if tool_mode_normalized == "direct":
             return API_NO_TOOL_SYSTEM_PROMPT
         else:
-            return API_CALL_SYSTEM_PROMPT
+            return TOOL_CALL_SYSTEM_PROMPT

@@ -142,13 +142,20 @@ class APIBasedAgent(BaseAgent):
         gen_kwargs = dict(self.config.generate_config)
         extra_info = {}
 
+        # Extract system_prompt from config (not a valid API parameter)
+        system_prompt = gen_kwargs.pop("_system_prompt", None)
+
         # Extract messages
         if isinstance(model_input, dict) and "messages" in model_input:
-            messages = model_input["messages"]
+            messages = list(model_input["messages"])
         elif isinstance(model_input, list):
-            messages = model_input
+            messages = list(model_input)
         else:
             raise ValueError(f"Invalid model_input format for chat_completions API: {type(model_input)}")
+
+        # Inject system message at the beginning if provided
+        if system_prompt:
+            messages.insert(0, {"role": "system", "content": system_prompt})
 
         response = self.client.chat.completions.create(
             model=self.model,

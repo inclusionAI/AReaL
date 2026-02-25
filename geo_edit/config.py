@@ -197,6 +197,10 @@ def build_api_agent_configs(
             generate_config["reasoning"] = {"effort": reasoning_level}
         if system_prompt is not None:
             generate_config["instructions"] = system_prompt
+    elif api_mode == "chat_completions":
+        # Store system_prompt in config for injection in api_agent
+        if system_prompt is not None:
+            generate_config["_system_prompt"] = system_prompt
 
     # Build force_final config (copy and override tool_choice)
     force_final_generate_config = generate_config.copy()
