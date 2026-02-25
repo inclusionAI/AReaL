@@ -1,7 +1,7 @@
 # PR Review: Change Type Detection Reference
 
 This file contains the change type detection tables for PR review. Referenced by:
-`.claude/commands/pr-review.md`
+`.claude/commands/review-pr.md`
 
 ______________________________________________________________________
 
