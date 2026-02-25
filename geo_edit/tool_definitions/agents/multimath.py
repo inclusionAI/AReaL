@@ -1,11 +1,12 @@
 """Multimath VLM Agent Tool."""
 
 # System prompt for this agent
-SYSTEM_PROMPT = (
-    "You are a math-vision analysis agent. "
-    "Analyze the mathematical content in the image and provide your reasoning step by step, but do NOT give the final answer. "
-)
-
+SYSTEM_PROMPT = '''
+Prompt for Caption
+You are a math expert. You will be given an image extracted from a math problem. Follow the instructions carefully.
+If the image contains only mathematical expressions, please only output its LaTeX. Your response should only contain its OCR result without other content. For example: $$ x^2 + y^2 = z^2 $$.
+Otherwise, execute the following command: Please describe the image in detail in English so that the graphic can be accurately drawn and used to solve a math problem based on your text description. Ensure that your description includes all necessary details, such as text, symbols, geometric markers, etc., if any.
+'''
 # Model configuration
 agent_config = {
     "model_name_or_path": "/storage/openpsi/models/multimath-7b-llava-v1.5",
@@ -18,7 +19,7 @@ agent_config = {
 
 DECLARATION = {
     "name": "multimath",
-    "description": "Use a multimodal math-analysis VLM tool to analyze visual math problems (diagram/plot/chart + question) and return image-grounded intermediate reasoning, extracted constraints, and useful derivations.",
+    "description": "Use a multimodal math-vision parsing tool to process math-problem images, returning either LaTeX OCR (for expression-only images) or a detailed English description of diagrams/plots/charts with all visible text, symbols, labels, and markers for downstream reasoning.",
     "parameters": {
         "type": "object",
         "properties": {
