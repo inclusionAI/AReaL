@@ -3,7 +3,6 @@
 This workflow combines:
 1. Multi-modal image processing (via VisionRLVRWorkflow)
 2. Multi-turn agentic interactions (via MultiTurnWorkflow)
-3. Tool calling capabilities for agentic reasoning
 
 Designed for scenarios like visual question answering with tool use, visual reasoning
 with multi-step agentic interactions, and multi-turn visual problem solving.
@@ -31,16 +30,15 @@ from areal.utils.perf_tracer import (
     trace_session,
 )
 
-logger = logging.getLogger("VisionMultiTurnAgenticWorkflow")
+logger = logging.getLogger("VisionMultiTurnWorkflow")
 
 
-class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
+class VisionMultiTurnWorkflow(RolloutWorkflow):
     """Multi-turn agentic workflow for vision-language models.
 
     This workflow enables:
     - Multi-modal image inputs processed via a vision processor
     - Multi-turn conversations with retry on failure
-    - Agentic reasoning with tool calling support
     - Configurable turn limits and turn discounting
 
     The workflow follows these steps for each episode:
@@ -275,7 +273,7 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
             versions.extend(new_versions)
 
             if messages_chat:
-                # Decode output to check for tool calls
+                
                 output_text = self.tokenizer.decode(new_tokens)
                 model_output = {
                     "role": "assistant",
