@@ -7,11 +7,11 @@ from geo_edit.environment.tool_agents import call_agent
 
 # Model configuration
 agent_config = {
-    "model_name_or_path": "/storage/openpsi/models/Qwen3-VL-235B-A22B-Thinking",
+    "model_name_or_path": "/storage/openpsi/models/multimath-7b-llava-v1.5",
     "max_model_len": 8192,
     "gpu_memory_utilization": 0.8,
     "temperature": 0.0,
-    "max_tokens": 1024,
+    "max_tokens": 4096,
     "num_gpus": 1,
 }
 
