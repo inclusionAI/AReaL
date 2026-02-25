@@ -68,7 +68,7 @@ class SGLangBackend:
         }
 
         # Add return_routed_experts to payload if set
-        if req.gconfig.return_routed_experts:
+        if req.metadata.get("return_routed_experts", False):
             payload["return_routed_experts"] = True
         # Add LoRA if initialized
         if with_lora:

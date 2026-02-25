@@ -565,15 +565,19 @@ class PPOTrainer:
 
         # Determine engine class and server args based on backend
         if self.allocation_mode.gen_backend == "sglang":
-            engine_cls = RemoteSGLangEngine
-            if self.config.gconfig.return_routed_experts:
+            if self.config.rollout.return_routed_experts:
                 self.config.sglang.enable_return_routed_experts = True
+            engine_cls = RemoteSGLangEngine
             server_args = SGLangConfig.build_args(
                 sglang_config=self.config.sglang,
                 tp_size=self.allocation_mode.gen.tp_size,
                 base_gpu_id=0,
             )
         elif self.allocation_mode.gen_backend == "vllm":
+            if self.config.rollout.return_routed_experts:
+                raise ValueError(
+                    "return_routed_experts is not supported with vLLM backend. Please disable return_routed_experts or switch to SGLang backend."
+                )
             engine_cls = RemotevLLMEngine
             server_args = vLLMConfig.build_args(
                 vllm_config=self.config.vllm,
@@ -715,7 +719,7 @@ class PPOTrainer:
         """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
         if (
             self.allocation_mode.gen_backend == "vllm"
-            and self.config.gconfig.return_routed_experts
+            and self.config.rollout.return_routed_experts
         ):
             raise ValueError(
                 "return_routed_experts is only supported with SGLang backend. "
