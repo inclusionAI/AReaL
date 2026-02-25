@@ -55,7 +55,7 @@ class ToolAgentManager:
             Dict mapping tool names to their actor handles.
         """
         if not ray.is_initialized():
-            ray.init(address=ray_address, ignore_reinit_error=True)
+            ray.init(address=ray_address, namespace="geo_edit_tool_agents", ignore_reinit_error=True)
 
         for name, cfg in configs.items():
             if name in self._actors:
