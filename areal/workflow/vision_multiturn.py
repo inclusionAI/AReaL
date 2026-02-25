@@ -16,12 +16,12 @@ from typing import Any, cast
 import torch
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
+from areal import workflow_context
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.image import image2base64
@@ -60,8 +60,6 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
         processor: AutoProcessor | str,
         max_turns: int = 2,
         turn_discount: float = 0.95,
-        enable_thinking: bool = False,
-        export_style: str = "concat",
     ):
         """Initialize the vision multi-turn agentic workflow.
 
@@ -80,10 +78,6 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
             Maximum number of turns for multi-turn interaction. Default: 2.
         turn_discount : float, optional
             Discount factor applied to reward at each turn. Default: 0.95.
-        enable_thinking : bool, optional
-            Whether to enable thinking tokens (extended thinking). Default: False.
-        export_style : str, optional
-            Export style for completions: "concat" or "individual". Default: "concat".
         """
         if max_turns <= 0:
             raise ValueError("max_turns must be positive")
@@ -111,10 +105,8 @@ class VisionMultiTurnAgenticWorkflow(RolloutWorkflow):
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer).new(
             n_samples=1
         )
-        self.enable_thinking = enable_thinking
         self.max_turns = max_turns
         self.turn_discount = turn_discount
-        self.export_style = export_style
 
         # Wrap reward function for async use
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
