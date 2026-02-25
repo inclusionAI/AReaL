@@ -77,6 +77,7 @@ class VisionMultiTurnWorkflow(RolloutWorkflow):
         turn_discount : float, optional
             Discount factor applied to reward at each turn. Default: 0.95.
         """
+
         if max_turns <= 0:
             raise ValueError("max_turns must be positive")
         if not (0.0 < turn_discount <= 1.0):
@@ -95,9 +96,9 @@ class VisionMultiTurnWorkflow(RolloutWorkflow):
         self.processor = processor
 
         # Load reward function
-        if isinstance(reward_fn, str):
-            reward_fn = import_from_string(reward_fn)
         self.reward_fn = reward_fn
+        if not isinstance(reward_fn, str):
+            self.async_reward_fn = AsyncRewardWrapper(reward_fn)
 
         # Setup generation config
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer).new(
@@ -106,10 +107,28 @@ class VisionMultiTurnWorkflow(RolloutWorkflow):
         self.max_turns = max_turns
         self.turn_discount = turn_discount
 
-        # Wrap reward function for async use
-        self.async_reward_fn = AsyncRewardWrapper(reward_fn)
-
-        self.failure_feedback_msg = "Your answer is either wrong or not parsable to the reward function. Try to answer it again. The final answer MUST BE put in \\boxed{}."
+        # Create tokens that should be amended if the answer is incorrect.
+        # This method eliminates the encode-decode inconsistency issue and cancels system prompts.
+        messages = [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "some random message."}],
+            }
+        ]
+        s1 = list(self.tokenizer.apply_chat_template(messages, tokenize=True))
+        self.feedback_str = "Your answer is either wrong or not parsable to the reward function. Try to answer it again. The final answer MUST BE put in \\boxed{}."
+        messages += [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": self.feedback_str}],
+            }
+        ]
+        s2 = list(
+            self.tokenizer.apply_chat_template(
+                messages, tokenize=True, add_generation_prompt=True
+            )
+        )
+        self.feedback_str_ids = s2[len(s1) :]
 
     @trace_session("reward")
     async def _compute_rewards(
@@ -211,6 +230,10 @@ class VisionMultiTurnWorkflow(RolloutWorkflow):
             - versions: Token version tracking
             - rewards: Final discounted reward
         """
+        # NOTE: load reward function dynamically if given as string
+        if isinstance(self.reward_fn, str):
+            self.reward_fn = import_from_string(self.reward_fn)
+            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
         # Process images via vision processor
         processor_callable = cast(Callable[..., dict[str, Any]], self.processor)
 
@@ -261,24 +284,18 @@ class VisionMultiTurnWorkflow(RolloutWorkflow):
                 engine, req, prompt_str, data
             )
 
-            # Track this turn's generation
-            new_tokens = resp.output_tokens
-            new_logprobs = resp.output_logprobs
-            new_versions = resp.output_versions
-
-            # Update sequences
-            seq.extend(resp.output_tokens)
-            logprobs.extend(new_logprobs)
-            loss_mask.extend([1] * len(new_tokens))
-            versions.extend(new_versions)
-
-            if messages_chat:
-                output_text = self.tokenizer.decode(new_tokens)
-                model_output = {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": output_text}],
-                }
-                messages_chat = messages_chat + [model_output]
+            # Amend results
+            input_len = len(resp.input_tokens) - len(seq)
+            assert len(seq) == 0 or resp.input_tokens[:-input_len] == seq, (
+                seq,
+                resp.input_tokens[:-input_len],
+                len(seq),
+                len(resp.input_tokens[:-input_len]),
+            )
+            seq += resp.input_tokens[-input_len:] + resp.output_tokens
+            logprobs += resp.output_logprobs
+            loss_mask += [1] * len(resp.output_tokens)
+            versions += resp.output_versions
 
             # Track rewards with discounting
             if turn == 0:
@@ -287,25 +304,37 @@ class VisionMultiTurnWorkflow(RolloutWorkflow):
                 reward = max(reward, turn_reward * discount)
 
             # If reward is positive or this is the last turn, stop
-            if turn_reward > 0 or turn == self.max_turns - 1:
+            if turn_reward >= 1.0 or turn == self.max_turns - 1:
                 break
 
-            feedback_str = {
-                "role": "user",
-                "content": [{"type": "text", "text": self.failure_feedback_msg}],
-            }
-            feedback_str_ids = self.tokenizer.apply_chat_template(
-                [feedback_str], tokenize=True, add_generation_prompt=True
-            )
-            # Append failure feedback for next turn
-            seq.extend(feedback_str_ids)
+            # Handling missing EOS token before appending feedback
+            if (
+                resp.output_tokens
+                and resp.output_tokens[-1] != self.tokenizer.eos_token_id
+            ):
+                resp.output_tokens.append(self.tokenizer.eos_token_id)
+                seq.append(self.tokenizer.eos_token_id)
+                logprobs += [0.0]
+                loss_mask += [0]
+                versions += [-1]
 
             if messages_chat:
-                messages_chat = messages_chat + [feedback_str]
+                output_text = self.tokenizer.decode(resp.output_tokens)
+                model_output = {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": output_text}],
+                }
+                messages_chat = messages_chat + [model_output]
 
-            logprobs.extend([0.0] * len(feedback_str_ids))
-            loss_mask.extend([0] * len(feedback_str_ids))
-            versions.extend([-1] * len(feedback_str_ids))
+            # Append failure feedback for next turn
+            seq.extend(self.feedback_str_ids)
+
+            if messages_chat:
+                messages_chat = messages_chat + [self.feedback_str]
+
+            logprobs += [0.0] * len(self.feedback_str_ids)
+            loss_mask += [0] * len(self.feedback_str_ids)
+            versions += [-1] * len(self.feedback_str_ids)
 
             # Apply discount for next turn
             discount *= self.turn_discount

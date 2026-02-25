@@ -13,7 +13,7 @@ The multi-turn agentic workflow enables VLMs to:
 ## Key Features
 
 ### Multi-Turn Interaction with Error Recovery
-When a model generates an incorrect response (reward == 0), the workflow automatically:
+When a model generates an incorrect response (reward < 1), the workflow automatically:
 1. Appends failure feedback to the conversation
 2. Prompts the model to retry with the context of its previous error
 3. Continues up to `max_turns` iterations until success or exhaustion
