@@ -32,7 +32,6 @@ mkdir -p "${CKPTS_DIR}"
 
 MAX_TURNS=4
 TURN_DISCOUNT=0.95
-EXPORT_STYLE="concat"
 
 # ============================================================================
 # Training Execution

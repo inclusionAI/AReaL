@@ -13,7 +13,7 @@ The multi-turn agentic workflow enables VLMs to:
 ## Key Features
 
 ### Multi-Turn Interaction with Error Recovery
-When a model generates an incorrect response (reward < 1.0), the workflow automatically:
+When a model generates an incorrect response (reward == 0), the workflow automatically:
 1. Appends failure feedback to the conversation
 2. Prompts the model to retry with the context of its previous error
 3. Continues up to `max_turns` iterations until success or exhaustion
@@ -66,14 +66,12 @@ The workflow adds the following key parameters to standard GRPO training:
 |-----------|---------|-------------|
 | `max_turns` | 2 | Maximum number of turns for error recovery |
 | `turn_discount` | 0.95 | Discount factor applied to rewards at each subsequent turn |
-| `export_style` | "concat" | How to export training data ("concat" or "individual") |
 
 **Example configuration:**
 
 ```yaml
 max_turns: 4
 turn_discount: 0.95
-export_style: "concat"
 ```
 
 #### Understanding Turn Discount
@@ -88,7 +86,7 @@ The `turn_discount` parameter controls how much less valuable later-turn success
 
 ### VisionMultiTurnAgenticWorkflow
 
-Located in `areal/workflow/vision_multiturn_agentic.py`, this workflow:
+Located in `areal/workflow/vision_multiturn.py`, this workflow:
 
 1. **Processes Images**: Uses HuggingFace processor to prepare multi-modal inputs
 2. **Iterates Through Turns**:

@@ -10,7 +10,6 @@ tokenizer_path: ${actor.path}
 # Multi-turn specific configuration
 max_turns: 2
 turn_discount: 0.95
-export_style: "concat"
 
 cluster:
   n_nodes: 1

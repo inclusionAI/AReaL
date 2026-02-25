@@ -52,12 +52,6 @@ class VisionMultiTurnGRPOConfig(GRPOConfig):
             "faster correct answers."
         },
     )
-    export_style: str = field(
-        default="concat",
-        metadata={
-            "help": "Export style for completions. Options: 'concat', 'individual'."
-        },
-    )
 
 
 def main(args):
@@ -76,7 +70,7 @@ def main(args):
     )
 
     valid_dataset = get_custom_dataset(
-        split="train",
+        split="test",
         dataset_config=config.valid_dataset,
         tokenizer=tokenizer,
         processor=processor,
@@ -90,8 +84,6 @@ def main(args):
         processor=config.tokenizer_path,
         max_turns=config.max_turns,
         turn_discount=config.turn_discount,
-        export_style=config.export_style,
-        enable_thinking=False,
     )
 
     eval_workflow_kwargs = workflow_kwargs.copy()
