@@ -89,7 +89,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
                     self.image_url_map[image_url] = self.task_image_path
                 content.extend([
                     {"type": "text", "text": "Observation 0:"},
-                    {"type": "image_url", "image_url": {"url": image_url}},
+                    {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}},
                 ])
             self.contents.append({"role": "user", "content": content})
 
@@ -352,7 +352,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
                 self._append_tool_result(call.call_id, payload)
             content = [
                 {"type": "text", "text": f"Observation {image_index}:"},
-                {"type": "image_url", "image_url": {"url": image_url}},
+                {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}},
             ]
             self.contents.append({"role": "user", "content": content})
 

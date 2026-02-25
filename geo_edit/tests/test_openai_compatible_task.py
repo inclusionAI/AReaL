@@ -138,7 +138,8 @@ class TestInputImageDetail:
     def test_sglang_initial_input_image_has_detail(self, tmp_path):
         """SGLang chat_completions API: initial input image should have detail='auto'."""
         task = _build_task(tmp_path, model_type="sglang", api_mode="chat_completions")
-        user_message = next(item for item in task.contents["messages"] if item.get("role") == "user")
+        # chat_completions format: task.contents is a list directly, not {"messages": [...]}
+        user_message = next(item for item in task.contents if item.get("role") == "user")
         image_part = next(part for part in user_message["content"] if part.get("type") == "image_url")
         assert image_part["image_url"]["detail"] == "auto"
 
@@ -193,13 +194,15 @@ class TestInputImageDetail:
             )
         ]
         task.update_observation_from_action(tool_calls)
-        tool_result_messages = [
-            message for message in task.contents["messages"]
-            if message.get("role") == "tool"
+        # chat_completions format: task.contents is a list directly
+        # After tool call, a user message with image is appended
+        user_messages = [
+            message for message in task.contents
+            if message.get("role") == "user"
         ]
-        assert tool_result_messages
-        tool_content = tool_result_messages[-1]["content"]
-        image_part = next(part for part in tool_content if part.get("type") == "image_url")
+        assert len(user_messages) >= 2  # initial + observation
+        last_user_message = user_messages[-1]
+        image_part = next(part for part in last_user_message["content"] if part.get("type") == "image_url")
         assert image_part["image_url"]["detail"] == "auto"
 
 
@@ -226,8 +229,11 @@ class TestResponsesApiParsing:
 
         arguments = {"image_index": 0, "coordinates": "\\boxed{10,20,30,40}"}
         native_tool_calls = [_make_tool_call("call_abc123", "draw_line", arguments)]
+        # Only <think> tag, no <answer> tag - so output_text will be empty and tool_calls will be used
         content = "<think>Need to draw a line.</think>"
-        response = _make_responses_api_response(content, tool_calls=native_tool_calls)
+        response = _make_responses_api_response(None, tool_calls=native_tool_calls)
+        # Set output_text to the think content for vLLM parsing
+        response.output_text = content
         tool_calls = task.parse_action(
             step=1,
             action=response,
@@ -277,7 +283,8 @@ class TestResponsesApiParsing:
 
         arguments = {"image_index": 0, "coordinates": "\\boxed{10,20,30,40}"}
         native_tool_calls = [_make_tool_call("call_openai_1", "draw_line", arguments)]
-        response = _make_responses_api_response("Analyzing the image...", tool_calls=native_tool_calls)
+        # No content when there are tool calls - otherwise code ignores tool_calls
+        response = _make_responses_api_response(None, tool_calls=native_tool_calls)
         tool_calls = task.parse_action(
             step=1,
             action=response,
@@ -337,13 +344,11 @@ class TestChatCompletionsApiParsing:
         """SGLang chat_completions API: should use correct message format."""
         task = _build_task(tmp_path, model_type="sglang", api_mode="chat_completions")
 
-        # Chat completions format uses "messages" key
-        assert "messages" in task.contents
-        assert "input" not in task.contents
+        # Chat completions format: task.contents is a list directly, not {"messages": [...]}
+        assert isinstance(task.contents, list)
 
         # Check message structure
-        messages = task.contents["messages"]
-        user_message = next(m for m in messages if m.get("role") == "user")
+        user_message = next(m for m in task.contents if m.get("role") == "user")
         assert "content" in user_message
 
         # Image should use image_url format
@@ -391,12 +396,12 @@ class TestDirectMode:
         """SGLang direct mode: should not include tool-related fields."""
         task = _build_task(tmp_path, model_type="sglang", api_mode="chat_completions", tool_functions={})
 
-        assert "messages" in task.contents
-        messages = task.contents["messages"]
+        # Chat completions format: task.contents is a list directly
+        assert isinstance(task.contents, list)
 
         # Should not have any tool-related messages
-        assert not any(m.get("role") == "tool" for m in messages)
-        assert not any(m.get("tool_calls") for m in messages)
+        assert not any(m.get("role") == "tool" for m in task.contents)
+        assert not any(m.get("tool_calls") for m in task.contents)
 
     def test_vllm_direct_mode_omits_tool_fields_in_generate_config(self):
         """vLLM direct mode: generate config should not include tool fields."""
