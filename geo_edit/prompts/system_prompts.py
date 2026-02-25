@@ -1,6 +1,10 @@
 """System prompts for main agents."""
 
 from __future__ import annotations
+from geo_edit.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
 
 TOOL_CALL_SYSTEM_PROMPT = """
 You are an advanced AI agent capable of complex

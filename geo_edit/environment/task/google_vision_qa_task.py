@@ -31,7 +31,6 @@ class GoogleVisionQATask(VisionQATask):
             task_image_path=task_image_path,
             save_dir=save_dir,
             tool_functions=tool_functions,
-            model_type="google",
             api_mode="responses",  # Google uses its own native API, api_mode is ignored
             **kwargs,
         )
