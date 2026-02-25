@@ -12,7 +12,7 @@ reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
 1. Call appropriate tools based on the task;
 2. Reasoning Before Action: before selecting a tool,
-you must analyze the user’s request and determine
+you must analyze the user's request and determine
 the necessary steps. Output your internal monologue
 and logic inside <think> and </think> tags;
 3. Tool Execution: If a tool is required, generate the
@@ -62,9 +62,20 @@ API_NO_TOOL_SYSTEM_PROMPT = """
 You are an advanced AI assistant capable of complex reasoning. When you have formulated your conclusion, wrap your final answer in <answer> and </answer> tags.
 """
 
-TOOL_EXECUTION_SUCCESS_PROMPT = "All your tool calls were executed successfully. The new image is now available as the latest Observation. Please compare this new Observation with previous Observations (especially Observation 0, the original image) to analyze changes and verify your actions. Based on your analysis of ALL available images, decide your next action or provide the final answer."
+TOOL_EXECUTION_SUCCESS_PROMPT = (
+    "All your tool calls were executed successfully. "
+    "Tool outputs may include a new Observation image or text analysis results. "
+    "Please review the latest tool execution results, compare new Observations with previous Observations "
+    ", and incorporate any text outputs "
+    "into your reasoning. Based on all available evidence, decide your next action or provide the final answer."
+)
 
-TOOL_EXECUTION_FAILURE_PROMPT = "Some of your tool calls failed. Please carefully check the tool execution results, identify the failed tool calls, and decide your next action accordingly. Remember to reference previous Observations when planning your next steps."
+TOOL_EXECUTION_FAILURE_PROMPT = (
+    "Some of your tool calls failed or returned invalid outputs. "
+    "Please carefully inspect each tool execution result (including text error messages and any partial outputs), "
+    "identify which tool calls failed, and decide your recovery strategy. "
+    "When planning next steps, reuse previous Observations and any successful text outputs."
+)
 
 
 def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:

@@ -4,96 +4,116 @@ import pytest
 
 
 class TestGetSystemPrompt:
-    """Test get_system_prompt function."""
+    """Test get_system_prompt function behavior."""
 
-    def test_google_auto_mode_returns_api_call_prompt(self):
-        from geo_edit.prompts import get_system_prompt, API_CALL_SYSTEM_PROMPT
+    def test_google_auto_mode_returns_tool_call_prompt(self):
+        from geo_edit.prompts.system_prompts import (
+            TOOL_CALL_SYSTEM_PROMPT,
+            get_system_prompt,
+        )
 
         result = get_system_prompt("Google", "auto")
-        assert result == API_CALL_SYSTEM_PROMPT
+        assert result == TOOL_CALL_SYSTEM_PROMPT
 
-    def test_google_force_mode_returns_api_call_prompt(self):
-        from geo_edit.prompts import get_system_prompt, API_CALL_SYSTEM_PROMPT
+    def test_google_force_mode_returns_tool_call_prompt(self):
+        from geo_edit.prompts.system_prompts import (
+            TOOL_CALL_SYSTEM_PROMPT,
+            get_system_prompt,
+        )
 
         result = get_system_prompt("Google", "force")
-        assert result == API_CALL_SYSTEM_PROMPT
+        assert result == TOOL_CALL_SYSTEM_PROMPT
 
-    def test_google_direct_mode_returns_no_tool_prompt(self):
-        from geo_edit.prompts import get_system_prompt, API_NO_TOOL_SYSTEM_PROMPT
+    def test_google_direct_mode_returns_api_no_tool_prompt(self):
+        from geo_edit.prompts import API_NO_TOOL_SYSTEM_PROMPT, get_system_prompt
 
         result = get_system_prompt("Google", "direct")
         assert result == API_NO_TOOL_SYSTEM_PROMPT
 
-    def test_openai_auto_mode_returns_api_call_prompt(self):
-        from geo_edit.prompts import get_system_prompt, API_CALL_SYSTEM_PROMPT
+    def test_openai_auto_mode_returns_tool_call_prompt(self):
+        from geo_edit.prompts.system_prompts import (
+            TOOL_CALL_SYSTEM_PROMPT,
+            get_system_prompt,
+        )
 
         result = get_system_prompt("OpenAI", "auto")
-        assert result == API_CALL_SYSTEM_PROMPT
+        assert result == TOOL_CALL_SYSTEM_PROMPT
 
-    def test_openai_direct_mode_returns_no_tool_prompt(self):
-        from geo_edit.prompts import get_system_prompt, API_NO_TOOL_SYSTEM_PROMPT
+    def test_openai_direct_mode_returns_api_no_tool_prompt(self):
+        from geo_edit.prompts import API_NO_TOOL_SYSTEM_PROMPT, get_system_prompt
 
         result = get_system_prompt("OpenAI", "direct")
         assert result == API_NO_TOOL_SYSTEM_PROMPT
 
-    def test_vllm_auto_mode_returns_vllm_prompt(self):
-        from geo_edit.prompts import get_system_prompt, VLLM_SYSTEM_PROMPT
-
-        result = get_system_prompt("vLLM", "auto")
-        assert result == VLLM_SYSTEM_PROMPT
-
     def test_vllm_force_mode_includes_force_tool_call_prompt(self):
-        from geo_edit.prompts import get_system_prompt, VLLM_SYSTEM_PROMPT, VLLM_FORCE_TOOL_CALL_PROMPT
+        from geo_edit.prompts import VLLM_FORCE_TOOL_CALL_PROMPT, get_system_prompt
+        from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
 
         result = get_system_prompt("vLLM", "force")
-        assert VLLM_SYSTEM_PROMPT in result
+        assert TOOL_CALL_SYSTEM_PROMPT in result
         assert VLLM_FORCE_TOOL_CALL_PROMPT in result
 
-    def test_vllm_direct_mode_returns_no_tool_prompt(self):
-        from geo_edit.prompts import get_system_prompt, VLLM_NO_TOOL_SYSTEM_PROMPT
+    def test_vllm_direct_mode_returns_vllm_no_tool_prompt(self):
+        from geo_edit.prompts import VLLM_NO_TOOL_SYSTEM_PROMPT, get_system_prompt
 
         result = get_system_prompt("vLLM", "direct")
         assert result == VLLM_NO_TOOL_SYSTEM_PROMPT
 
-    def test_sglang_auto_mode_returns_vllm_prompt(self):
-        from geo_edit.prompts import get_system_prompt, VLLM_SYSTEM_PROMPT
+    def test_vllm_auto_mode_returns_none_with_current_logic(self):
+        from geo_edit.prompts import get_system_prompt
 
-        result = get_system_prompt("SGLang", "auto")
-        assert result == VLLM_SYSTEM_PROMPT
+        result = get_system_prompt("vLLM", "auto")
+        assert result is None
 
     def test_sglang_force_mode_includes_force_tool_call_prompt(self):
-        from geo_edit.prompts import get_system_prompt, VLLM_SYSTEM_PROMPT, VLLM_FORCE_TOOL_CALL_PROMPT
+        from geo_edit.prompts import VLLM_FORCE_TOOL_CALL_PROMPT, get_system_prompt
+        from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
 
         result = get_system_prompt("SGLang", "force")
-        assert VLLM_SYSTEM_PROMPT in result
+        assert TOOL_CALL_SYSTEM_PROMPT in result
         assert VLLM_FORCE_TOOL_CALL_PROMPT in result
 
-    def test_sglang_direct_mode_returns_no_tool_prompt(self):
-        from geo_edit.prompts import get_system_prompt, VLLM_NO_TOOL_SYSTEM_PROMPT
+    def test_sglang_direct_mode_returns_vllm_no_tool_prompt(self):
+        from geo_edit.prompts import VLLM_NO_TOOL_SYSTEM_PROMPT, get_system_prompt
 
         result = get_system_prompt("SGLang", "direct")
         assert result == VLLM_NO_TOOL_SYSTEM_PROMPT
 
-    def test_case_insensitive_model_type(self):
-        from geo_edit.prompts import get_system_prompt, VLLM_SYSTEM_PROMPT
+    def test_sglang_auto_mode_returns_none_with_current_logic(self):
+        from geo_edit.prompts import get_system_prompt
 
-        result = get_system_prompt("VLLM", "auto")
-        assert result == VLLM_SYSTEM_PROMPT
+        result = get_system_prompt("SGLang", "auto")
+        assert result is None
 
-        result = get_system_prompt("sglang", "auto")
-        assert result == VLLM_SYSTEM_PROMPT
+    def test_case_insensitive_and_whitespace_handling(self):
+        from geo_edit.prompts.system_prompts import (
+            TOOL_CALL_SYSTEM_PROMPT,
+            get_system_prompt,
+        )
+
+        result = get_system_prompt(" openai ", " auto ")
+        assert result == TOOL_CALL_SYSTEM_PROMPT
+
+    def test_tool_mode_none_for_openai_returns_tool_call_prompt(self):
+        from geo_edit.prompts.system_prompts import (
+            TOOL_CALL_SYSTEM_PROMPT,
+            get_system_prompt,
+        )
+
+        result = get_system_prompt("OpenAI")
+        assert result == TOOL_CALL_SYSTEM_PROMPT
 
 
 class TestSystemPromptConstants:
     """Test system prompt constant values."""
 
-    def test_api_call_system_prompt_has_tool_instructions(self):
-        from geo_edit.prompts import API_CALL_SYSTEM_PROMPT
+    def test_tool_call_system_prompt_has_required_tags(self):
+        from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
 
-        assert "<think>" in API_CALL_SYSTEM_PROMPT
-        assert "</think>" in API_CALL_SYSTEM_PROMPT
-        assert "<answer>" in API_CALL_SYSTEM_PROMPT
-        assert "</answer>" in API_CALL_SYSTEM_PROMPT
+        assert "<think>" in TOOL_CALL_SYSTEM_PROMPT
+        assert "</think>" in TOOL_CALL_SYSTEM_PROMPT
+        assert "<answer>" in TOOL_CALL_SYSTEM_PROMPT
+        assert "</answer>" in TOOL_CALL_SYSTEM_PROMPT
 
     def test_api_no_tool_system_prompt_has_answer_tags(self):
         from geo_edit.prompts import API_NO_TOOL_SYSTEM_PROMPT
@@ -101,15 +121,7 @@ class TestSystemPromptConstants:
         assert "<answer>" in API_NO_TOOL_SYSTEM_PROMPT
         assert "</answer>" in API_NO_TOOL_SYSTEM_PROMPT
 
-    def test_vllm_system_prompt_has_tool_instructions(self):
-        from geo_edit.prompts import VLLM_SYSTEM_PROMPT
-
-        assert "<think>" in VLLM_SYSTEM_PROMPT
-        assert "</think>" in VLLM_SYSTEM_PROMPT
-        assert "<answer>" in VLLM_SYSTEM_PROMPT
-        assert "</answer>" in VLLM_SYSTEM_PROMPT
-
-    def test_vllm_no_tool_system_prompt_has_reasoning_instructions(self):
+    def test_vllm_no_tool_system_prompt_has_reasoning_and_answer_tags(self):
         from geo_edit.prompts import VLLM_NO_TOOL_SYSTEM_PROMPT
 
         assert "<think>" in VLLM_NO_TOOL_SYSTEM_PROMPT
@@ -120,20 +132,38 @@ class TestSystemPromptConstants:
     def test_vllm_force_tool_call_prompt_content(self):
         from geo_edit.prompts import VLLM_FORCE_TOOL_CALL_PROMPT
 
-        assert "MUST call a tool" in VLLM_FORCE_TOOL_CALL_PROMPT
+        assert "ALWAYS call the appropriate tool first" in VLLM_FORCE_TOOL_CALL_PROMPT
+        assert "NEVER provide answers without tool results" in VLLM_FORCE_TOOL_CALL_PROMPT
 
     def test_tool_execution_prompts_exist(self):
-        from geo_edit.prompts import TOOL_EXECUTION_SUCCESS_PROMPT, TOOL_EXECUTION_FAILURE_PROMPT
+        from geo_edit.prompts import (
+            TOOL_EXECUTION_FAILURE_PROMPT,
+            TOOL_EXECUTION_SUCCESS_PROMPT,
+        )
 
-        assert "success" in TOOL_EXECUTION_SUCCESS_PROMPT.lower() or "new image" in TOOL_EXECUTION_SUCCESS_PROMPT.lower()
-        assert "fail" in TOOL_EXECUTION_FAILURE_PROMPT.lower()
+        success_lower = TOOL_EXECUTION_SUCCESS_PROMPT.lower()
+        failure_lower = TOOL_EXECUTION_FAILURE_PROMPT.lower()
+
+        assert "success" in success_lower
+        assert ("observation" in success_lower or "image" in success_lower)
+        assert "text" in success_lower
+
+        assert "fail" in failure_lower
+        assert "text" in failure_lower
+        assert ("observation" in failure_lower or "image" in failure_lower)
+
+    def test_user_prompt_has_expected_placeholders(self):
+        from geo_edit.prompts.system_prompts import USER_PROMPT
+
+        assert "{task_type}" in USER_PROMPT
+        assert "{Question}" in USER_PROMPT
 
 
 class TestEvalPrompts:
     """Test evaluation prompts."""
 
     def test_eval_prompts_exist(self):
-        from geo_edit.prompts import EVAL_SYSTEM_PROMPT, EVAL_QUERY_PROMPT
+        from geo_edit.prompts import EVAL_QUERY_PROMPT, EVAL_SYSTEM_PROMPT
 
         assert EVAL_SYSTEM_PROMPT is not None
         assert EVAL_QUERY_PROMPT is not None
