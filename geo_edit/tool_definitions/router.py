@@ -75,7 +75,7 @@ class ToolRouter:
     def __init__(
         self,
         tool_mode: Literal["auto", "force", "direct"] = "auto",
-        node_resource: Optional[str] = None,
+        node_resource: str = "tool_agent",
         ray_address: str = "auto",
     ):
         self.tool_mode = tool_mode

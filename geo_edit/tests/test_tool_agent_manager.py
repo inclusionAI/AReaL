@@ -36,13 +36,14 @@ class TestCreateAgents:
     """Test create_agents method."""
 
     @patch("geo_edit.environment.tool_agents.manager.ray")
-    @patch("geo_edit.environment.tool_agents.manager.ToolModelActor")
-    def test_create_agents_initializes_ray_when_not_initialized(self, mock_actor_class, mock_ray):
+    @patch("geo_edit.environment.tool_agents.manager.get_actor_class")
+    def test_create_agents_initializes_ray_when_not_initialized(self, mock_get_actor_class, mock_ray):
         from geo_edit.environment.tool_agents.manager import ToolAgentManager
 
         mock_ray.is_initialized.return_value = False
-        mock_actor = MagicMock()
-        mock_actor_class.options.return_value.remote.return_value = mock_actor
+        mock_actor_class = MagicMock()
+        mock_get_actor_class.return_value = mock_actor_class
+        mock_ray.remote.return_value = MagicMock(options=MagicMock(return_value=MagicMock(remote=MagicMock(return_value=MagicMock()))))
 
         manager = ToolAgentManager()
         configs = {
@@ -60,13 +61,14 @@ class TestCreateAgents:
         mock_ray.init.assert_called_once_with(address="auto", ignore_reinit_error=True)
 
     @patch("geo_edit.environment.tool_agents.manager.ray")
-    @patch("geo_edit.environment.tool_agents.manager.ToolModelActor")
-    def test_create_agents_skips_ray_init_when_already_initialized(self, mock_actor_class, mock_ray):
+    @patch("geo_edit.environment.tool_agents.manager.get_actor_class")
+    def test_create_agents_skips_ray_init_when_already_initialized(self, mock_get_actor_class, mock_ray):
         from geo_edit.environment.tool_agents.manager import ToolAgentManager
 
         mock_ray.is_initialized.return_value = True
-        mock_actor = MagicMock()
-        mock_actor_class.options.return_value.remote.return_value = mock_actor
+        mock_actor_class = MagicMock()
+        mock_get_actor_class.return_value = mock_actor_class
+        mock_ray.remote.return_value = MagicMock(options=MagicMock(return_value=MagicMock(remote=MagicMock(return_value=MagicMock()))))
 
         manager = ToolAgentManager()
         configs = {
@@ -84,13 +86,15 @@ class TestCreateAgents:
         mock_ray.init.assert_not_called()
 
     @patch("geo_edit.environment.tool_agents.manager.ray")
-    @patch("geo_edit.environment.tool_agents.manager.ToolModelActor")
-    def test_create_agents_builds_actor_with_num_gpus(self, mock_actor_class, mock_ray):
+    @patch("geo_edit.environment.tool_agents.manager.get_actor_class")
+    def test_create_agents_builds_actor_with_num_gpus(self, mock_get_actor_class, mock_ray):
         from geo_edit.environment.tool_agents.manager import ToolAgentManager
 
         mock_ray.is_initialized.return_value = True
-        mock_actor = MagicMock()
-        mock_actor_class.options.return_value.remote.return_value = mock_actor
+        mock_actor_class = MagicMock()
+        mock_get_actor_class.return_value = mock_actor_class
+        mock_remote_class = MagicMock()
+        mock_ray.remote.return_value = mock_remote_class
 
         manager = ToolAgentManager()
         configs = {
@@ -106,18 +110,19 @@ class TestCreateAgents:
 
         manager.create_agents(configs)
 
-        # Verify options were called with num_gpus=2
-        call_kwargs = mock_actor_class.options.call_args[1]
-        assert call_kwargs["num_gpus"] == 2
+        # Verify ray.remote was called with num_gpus=2
+        mock_ray.remote.assert_called_once_with(num_gpus=2)
 
     @patch("geo_edit.environment.tool_agents.manager.ray")
-    @patch("geo_edit.environment.tool_agents.manager.ToolModelActor")
-    def test_create_agents_includes_resources_when_specified(self, mock_actor_class, mock_ray):
+    @patch("geo_edit.environment.tool_agents.manager.get_actor_class")
+    def test_create_agents_includes_resources_when_specified(self, mock_get_actor_class, mock_ray):
         from geo_edit.environment.tool_agents.manager import ToolAgentManager
 
         mock_ray.is_initialized.return_value = True
-        mock_actor = MagicMock()
-        mock_actor_class.options.return_value.remote.return_value = mock_actor
+        mock_actor_class = MagicMock()
+        mock_get_actor_class.return_value = mock_actor_class
+        mock_remote_class = MagicMock()
+        mock_ray.remote.return_value = mock_remote_class
 
         manager = ToolAgentManager()
         configs = {
@@ -133,17 +138,20 @@ class TestCreateAgents:
 
         manager.create_agents(configs)
 
-        call_kwargs = mock_actor_class.options.call_args[1]
+        # Verify options was called with resources
+        call_kwargs = mock_remote_class.options.call_args[1]
         assert call_kwargs["resources"] == {"node1_gpu": 1}
 
     @patch("geo_edit.environment.tool_agents.manager.ray")
-    @patch("geo_edit.environment.tool_agents.manager.ToolModelActor")
-    def test_create_agents_sets_detached_lifetime(self, mock_actor_class, mock_ray):
+    @patch("geo_edit.environment.tool_agents.manager.get_actor_class")
+    def test_create_agents_sets_detached_lifetime(self, mock_get_actor_class, mock_ray):
         from geo_edit.environment.tool_agents.manager import ToolAgentManager
 
         mock_ray.is_initialized.return_value = True
-        mock_actor = MagicMock()
-        mock_actor_class.options.return_value.remote.return_value = mock_actor
+        mock_actor_class = MagicMock()
+        mock_get_actor_class.return_value = mock_actor_class
+        mock_remote_class = MagicMock()
+        mock_ray.remote.return_value = mock_remote_class
 
         manager = ToolAgentManager()
         configs = {
@@ -158,17 +166,15 @@ class TestCreateAgents:
 
         manager.create_agents(configs)
 
-        call_kwargs = mock_actor_class.options.call_args[1]
+        call_kwargs = mock_remote_class.options.call_args[1]
         assert call_kwargs["lifetime"] == "detached"
 
     @patch("geo_edit.environment.tool_agents.manager.ray")
-    @patch("geo_edit.environment.tool_agents.manager.ToolModelActor")
-    def test_create_agents_skips_existing_agent(self, mock_actor_class, mock_ray):
+    @patch("geo_edit.environment.tool_agents.manager.get_actor_class")
+    def test_create_agents_skips_existing_agent(self, mock_get_actor_class, mock_ray):
         from geo_edit.environment.tool_agents.manager import ToolAgentManager
 
         mock_ray.is_initialized.return_value = True
-        mock_actor = MagicMock()
-        mock_actor_class.options.return_value.remote.return_value = mock_actor
 
         manager = ToolAgentManager()
         manager._actors["existing_agent"] = MagicMock()
@@ -185,8 +191,8 @@ class TestCreateAgents:
 
         manager.create_agents(configs)
 
-        # Actor class should not be called for existing agent
-        mock_actor_class.options.assert_not_called()
+        # get_actor_class should not be called for existing agent
+        mock_get_actor_class.assert_not_called()
 
 
 class TestGetActor:

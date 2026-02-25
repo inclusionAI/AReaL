@@ -30,7 +30,7 @@ geo_edit/
 │   │   ├── google_vision_qa_task.py
 │   │   └── openai_compatible_vision_qa_task.py
 │   └── tool_agents/       # Ray Actor tool agents
-│       ├── actor.py       # ToolModelActor
+│       ├── actor.py       # BaseToolModelActor
 │       └── manager.py     # ToolAgentManager
 ├── evaluation/            # Evaluation scripts
 │   ├── openai_as_judge.py # LLM-based evaluation

@@ -19,11 +19,11 @@ Example:
 from typing import List, Optional
 
 from .manager import ToolAgentManager, get_manager
-from .actor import ToolModelActor
+from .actor import BaseToolModelActor
 
 __all__ = [
     "ToolAgentManager",
-    "ToolModelActor",
+    "BaseToolModelActor",
     "get_manager",
     "call_agent",
 ]

@@ -2,13 +2,13 @@
 
 import base64
 from io import BytesIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
 
 import ray
 from PIL import Image
 
 from geo_edit.prompts import get_tool_agent_prompt
-from geo_edit.environment.tool_agents.actor import ToolModelActor
+from geo_edit.tool_definitions.agents import get_actor_class
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -65,21 +65,25 @@ class ToolAgentManager:
             self._configs[name] = cfg
 
             # Build actor options
-            num_gpus = cfg.get("num_gpus")
+            num_gpus = cfg.get("num_gpus", 1)
             resources = cfg.get("resources")
 
             actor_options = {
-                "num_gpus": num_gpus,
                 "name": f"tool_agent_{name}",
                 "lifetime": "detached",
             }
             if resources:
                 actor_options["resources"] = resources
 
+            # Get the Actor class for this agent
+            ActorClass = get_actor_class(name)
+
             # Get system prompt from registry
             system_prompt = get_tool_agent_prompt(name)
 
-            actor = ToolModelActor.options(**actor_options).remote(
+            # Create Ray remote actor with the specific Actor class
+            RemoteActorClass = ray.remote(num_gpus=num_gpus)(ActorClass)
+            actor = RemoteActorClass.options(**actor_options).remote(
                 model_name=cfg["model_name_or_path"],
                 max_model_len=cfg["max_model_len"],
                 gpu_memory_utilization=cfg["gpu_memory_utilization"],

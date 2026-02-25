@@ -1,233 +1,203 @@
-"""Tests for ToolModelActor - environment/tool_agents/actor.py
+"""Tests for BaseToolModelActor - environment/tool_agents/actor.py
 
-These tests verify the logic in ToolModelActor methods without requiring Ray.
-Since ToolModelActor is decorated with @ray.remote, we test the underlying
-class methods directly by accessing the _modified_class attribute.
+These tests verify that BaseToolModelActor is a proper abstract base class
+and that concrete implementations (MultiMathActor, GLLaVAActor, ChartMoEActor)
+follow the expected interface.
 """
 
 import pytest
+from abc import ABC
 from unittest.mock import MagicMock, patch
 
 
-def _get_actor_class():
-    """Get the underlying class from the Ray ActorClass wrapper."""
-    with patch.dict("sys.modules", {"vllm": MagicMock()}):
-        with patch("ray.remote", lambda *args, **kwargs: lambda cls: cls):
-            # Re-import with ray.remote mocked to return plain class
-            import importlib
-            import geo_edit.environment.tool_agents.actor as actor_module
-            importlib.reload(actor_module)
-            return actor_module.ToolModelActor
+class TestBaseToolModelActor:
+    """Test BaseToolModelActor abstract base class."""
+
+    def test_base_actor_is_abstract(self):
+        from geo_edit.environment.tool_agents.actor import BaseToolModelActor
+
+        assert issubclass(BaseToolModelActor, ABC)
+
+    def test_base_actor_cannot_be_instantiated(self):
+        from geo_edit.environment.tool_agents.actor import BaseToolModelActor
+
+        with pytest.raises(TypeError):
+            BaseToolModelActor(
+                model_name="test",
+                max_model_len=8192,
+                gpu_memory_utilization=0.8,
+                system_prompt="test",
+            )
+
+    def test_base_actor_has_required_abstract_methods(self):
+        from geo_edit.environment.tool_agents.actor import BaseToolModelActor
+
+        # Check abstract methods exist
+        assert hasattr(BaseToolModelActor, "__init__")
+        assert hasattr(BaseToolModelActor, "analyze")
+        assert hasattr(BaseToolModelActor, "health_check")
 
 
-class TestToolModelActorInit:
-    """Test ToolModelActor initialization."""
+class TestConcreteActorClasses:
+    """Test that concrete Actor classes properly inherit from BaseToolModelActor."""
 
-    def test_actor_sets_model_name(self):
-        ActorClass = _get_actor_class()
+    def test_multimath_actor_inherits_from_base(self):
+        from geo_edit.environment.tool_agents.actor import BaseToolModelActor
+        from geo_edit.tool_definitions.agents.multimath import MultiMathActor
+
+        assert issubclass(MultiMathActor, BaseToolModelActor)
+
+    def test_gllava_actor_inherits_from_base(self):
+        from geo_edit.environment.tool_agents.actor import BaseToolModelActor
+        from geo_edit.tool_definitions.agents.gllava import GLLaVAActor
+
+        assert issubclass(GLLaVAActor, BaseToolModelActor)
+
+    def test_chartmoe_actor_inherits_from_base(self):
+        from geo_edit.environment.tool_agents.actor import BaseToolModelActor
+        from geo_edit.tool_definitions.agents.chartmoe import ChartMoEActor
+
+        assert issubclass(ChartMoEActor, BaseToolModelActor)
+
+
+class TestActorClassRegistry:
+    """Test ACTOR_CLASS exports from agent modules."""
+
+    def test_multimath_exports_actor_class(self):
+        from geo_edit.tool_definitions.agents import multimath
+
+        assert hasattr(multimath, "ACTOR_CLASS")
+        assert multimath.ACTOR_CLASS.__name__ == "MultiMathActor"
+
+    def test_gllava_exports_actor_class(self):
+        from geo_edit.tool_definitions.agents import gllava
+
+        assert hasattr(gllava, "ACTOR_CLASS")
+        assert gllava.ACTOR_CLASS.__name__ == "GLLaVAActor"
+
+    def test_chartmoe_exports_actor_class(self):
+        from geo_edit.tool_definitions.agents import chartmoe
+
+        assert hasattr(chartmoe, "ACTOR_CLASS")
+        assert chartmoe.ACTOR_CLASS.__name__ == "ChartMoEActor"
+
+
+class TestGetActorClass:
+    """Test get_actor_class function."""
+
+    def test_get_actor_class_returns_multimath_actor(self):
+        from geo_edit.tool_definitions.agents import get_actor_class
+        from geo_edit.tool_definitions.agents.multimath import MultiMathActor
+
+        assert get_actor_class("multimath") is MultiMathActor
+
+    def test_get_actor_class_returns_gllava_actor(self):
+        from geo_edit.tool_definitions.agents import get_actor_class
+        from geo_edit.tool_definitions.agents.gllava import GLLaVAActor
+
+        assert get_actor_class("gllava") is GLLaVAActor
+
+    def test_get_actor_class_returns_chartmoe_actor(self):
+        from geo_edit.tool_definitions.agents import get_actor_class
+        from geo_edit.tool_definitions.agents.chartmoe import ChartMoEActor
+
+        assert get_actor_class("chartmoe") is ChartMoEActor
+
+    def test_get_actor_class_raises_for_unknown_agent(self):
+        from geo_edit.tool_definitions.agents import get_actor_class
+
+        with pytest.raises(KeyError):
+            get_actor_class("unknown_agent")
+
+
+class TestActorParseOutput:
+    """Test _parse_output method in concrete actors."""
+
+    def _create_mock_actor(self, ActorClass):
+        """Create a mock actor without actually loading the model."""
         actor = object.__new__(ActorClass)
         actor.model_name = "test-model"
-        actor.system_prompt = "test prompt"
-        actor.llm = MagicMock()
-        actor._initialized = True
-
-        assert actor.model_name == "test-model"
-
-    def test_actor_uses_default_prompt_when_none_provided(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
-        actor.model_name = "test-model"
-        actor.system_prompt = ""
-        actor.llm = MagicMock()
-        actor._initialized = True
-
-        assert actor.system_prompt == ""
-
-    def test_actor_uses_custom_system_prompt(self):
-        ActorClass = _get_actor_class()
-        custom_prompt = "You are a custom analysis agent."
-        actor = object.__new__(ActorClass)
-        actor.model_name = "test-model"
-        actor.system_prompt = custom_prompt
-        actor.llm = MagicMock()
-        actor._initialized = True
-
-        assert actor.system_prompt == custom_prompt
-
-
-class TestBuildMessages:
-    """Test _build_messages method."""
-
-    def test_build_messages_includes_system_prompt(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
-        actor.system_prompt = "You are a helpful assistant."
-
-        messages = actor._build_messages("base64_image_data", "What is this?")
-
-        assert messages[0]["role"] == "system"
-        assert messages[0]["content"] == "You are a helpful assistant."
-
-    def test_build_messages_includes_image_as_base64_url(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
         actor.system_prompt = "test"
-
-        messages = actor._build_messages("abc123base64", "Describe")
-
-        user_content = messages[1]["content"]
-        image_part = next(p for p in user_content if p["type"] == "image_url")
-        assert "data:image/jpeg;base64,abc123base64" in image_part["image_url"]["url"]
-
-    def test_build_messages_includes_question_text(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
-        actor.system_prompt = "test"
-
-        messages = actor._build_messages("base64", "What color is the car?")
-
-        user_content = messages[1]["content"]
-        text_part = next(p for p in user_content if p["type"] == "text")
-        assert text_part["text"] == "What color is the car?"
-
-    def test_build_messages_has_correct_structure(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
-        actor.system_prompt = "System prompt"
-
-        messages = actor._build_messages("img_b64", "Question?")
-
-        assert len(messages) == 2
-        assert messages[0]["role"] == "system"
-        assert messages[1]["role"] == "user"
-        assert isinstance(messages[1]["content"], list)
-
-
-class TestParseOutput:
-    """Test _parse_output method."""
+        actor.max_model_len = 8192
+        actor._initialized = True
+        return actor
 
     def test_parse_output_extracts_analysis_key(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
+        from geo_edit.tool_definitions.agents.multimath import MultiMathActor
 
+        actor = self._create_mock_actor(MultiMathActor)
         result = actor._parse_output('{"analysis": "The image shows a cat"}')
 
         assert result == "The image shows a cat"
 
     def test_parse_output_extracts_text_key(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
+        from geo_edit.tool_definitions.agents.gllava import GLLaVAActor
 
+        actor = self._create_mock_actor(GLLaVAActor)
         result = actor._parse_output('{"text": "Some text content"}')
 
         assert result == "Some text content"
 
     def test_parse_output_extracts_result_key(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
+        from geo_edit.tool_definitions.agents.chartmoe import ChartMoEActor
 
+        actor = self._create_mock_actor(ChartMoEActor)
         result = actor._parse_output('{"result": "Final result here"}')
 
         assert result == "Final result here"
 
     def test_parse_output_returns_error_message(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
+        from geo_edit.tool_definitions.agents.multimath import MultiMathActor
 
+        actor = self._create_mock_actor(MultiMathActor)
         result = actor._parse_output('{"error": "Something went wrong"}')
 
         assert "Error:" in result
         assert "Something went wrong" in result
 
     def test_parse_output_returns_raw_text_on_json_error(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
+        from geo_edit.tool_definitions.agents.gllava import GLLaVAActor
 
+        actor = self._create_mock_actor(GLLaVAActor)
         result = actor._parse_output("This is not JSON, just plain text")
 
         assert result == "This is not JSON, just plain text"
 
-    def test_parse_output_prefers_analysis_over_text(self):
-        ActorClass = _get_actor_class()
+
+class TestActorHealthCheck:
+    """Test health_check method in concrete actors."""
+
+    def _create_mock_actor(self, ActorClass):
+        """Create a mock actor without actually loading the model."""
         actor = object.__new__(ActorClass)
-
-        result = actor._parse_output('{"analysis": "Analysis content", "text": "Text content"}')
-
-        assert result == "Analysis content"
-
-
-class TestHealthCheck:
-    """Test health_check method."""
+        actor.model_name = "test-model"
+        actor.system_prompt = "test"
+        actor.max_model_len = 8192
+        actor._initialized = True
+        return actor
 
     def test_health_check_returns_model_name(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
-        actor.model_name = "my-vlm-model"
-        actor._initialized = True
+        from geo_edit.tool_definitions.agents.multimath import MultiMathActor
 
+        actor = self._create_mock_actor(MultiMathActor)
         result = actor.health_check()
 
-        assert result["model"] == "my-vlm-model"
+        assert result["model"] == "test-model"
 
     def test_health_check_returns_initialized_status(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
-        actor.model_name = "model"
-        actor._initialized = True
+        from geo_edit.tool_definitions.agents.gllava import GLLaVAActor
 
+        actor = self._create_mock_actor(GLLaVAActor)
         result = actor.health_check()
 
         assert result["initialized"] is True
 
     def test_health_check_returns_dict(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
-        actor.model_name = "model"
-        actor._initialized = True
+        from geo_edit.tool_definitions.agents.chartmoe import ChartMoEActor
 
+        actor = self._create_mock_actor(ChartMoEActor)
         result = actor.health_check()
 
         assert isinstance(result, dict)
         assert "model" in result
         assert "initialized" in result
-
-
-class TestAnalyze:
-    """Test analyze method."""
-
-    def test_analyze_calls_llm_chat(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
-        actor.model_name = "model"
-        actor.system_prompt = "prompt"
-        actor._initialized = True
-
-        # Mock LLM
-        mock_llm = MagicMock()
-        mock_output = MagicMock()
-        mock_output.outputs = [MagicMock(text='{"analysis": "Result"}')]
-        mock_llm.chat.return_value = [mock_output]
-        actor.llm = mock_llm
-
-        # Mock SamplingParams
-        with patch("geo_edit.environment.tool_agents.actor.SamplingParams", create=True):
-            result = actor.analyze("base64img", "question", 0.5, 1024)
-
-        assert result == "Result"
-
-    def test_analyze_returns_error_when_no_output(self):
-        ActorClass = _get_actor_class()
-        actor = object.__new__(ActorClass)
-        actor.model_name = "model"
-        actor.system_prompt = "prompt"
-        actor._initialized = True
-
-        # Mock LLM returning empty outputs
-        mock_llm = MagicMock()
-        mock_llm.chat.return_value = []
-        actor.llm = mock_llm
-
-        with patch("geo_edit.environment.tool_agents.actor.SamplingParams", create=True):
-            result = actor.analyze("base64img", "question", 0.0, 1024)
-
-        assert "error" in result.lower()

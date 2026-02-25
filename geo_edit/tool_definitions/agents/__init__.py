@@ -4,7 +4,7 @@ This module exports static agent definitions (declarations, configs, prompts).
 Execute functions are created dynamically by ToolRouter to avoid circular dependencies.
 """
 
-from typing import Dict
+from typing import Dict, Type
 
 from geo_edit.tool_definitions.agents import multimath, gllava, chartmoe
 
@@ -35,3 +35,25 @@ AGENT_SYSTEM_PROMPTS: Dict[str, str] = {
     "gllava": gllava.SYSTEM_PROMPT,
     "chartmoe": chartmoe.SYSTEM_PROMPT,
 }
+
+# Export Actor classes for tool_agents manager
+AGENT_ACTOR_CLASSES: Dict[str, Type] = {
+    "multimath": multimath.ACTOR_CLASS,
+    "gllava": gllava.ACTOR_CLASS,
+    "chartmoe": chartmoe.ACTOR_CLASS,
+}
+
+
+def get_actor_class(agent_name: str) -> Type:
+    """Get the Actor class for a specific agent.
+
+    Args:
+        agent_name: Name of the agent.
+
+    Returns:
+        The Actor class for the agent.
+
+    Raises:
+        KeyError: If agent_name is not found.
+    """
+    return AGENT_ACTOR_CLASSES[agent_name]
