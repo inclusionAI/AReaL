@@ -11,7 +11,7 @@ DEFAULT_API_BASE = "https://matrixllm.alipay.com/v1"
 DEFAULT_MODEL = "gpt-5-2025-08-07"
 DEFAULT_PROMPT = "Please describe this image briefly."
 
-REPO_RELATIVE_IMAGE_PATH = Path("images/input_image.png")
+REPO_RELATIVE_IMAGE_PATH = Path("geo_edit/images/input_image.png")
 
 def _to_data_url(image_path: Path) -> str:
     suffix = image_path.suffix.lower()
@@ -55,11 +55,12 @@ def test_describe_single_image_via_chat_completions() -> None:
                 ],
             }
         ],
-        temperature=0.0,
-        max_tokens=256,
+        max_completion_tokens=1024,
+        reasoning_effort="low"
     )
 
     content = ""
+    print(response)
     if response.choices and response.choices[0].message:
         content = response.choices[0].message.content or ""
 
