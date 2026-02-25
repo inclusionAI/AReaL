@@ -56,7 +56,6 @@ python3 -m areal.launcher.local \
     cluster.fileroot=${CKPTS_DIR} \
     max_turns=${MAX_TURNS} \
     turn_discount=${TURN_DISCOUNT} \
-    export_style=${EXPORT_STYLE} \
     total_train_epochs=10 \
     saver.freq_epochs=1 \
     "$@" 2>&1 | tee ${OUTPUT_LOG_FILE}
