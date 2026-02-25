@@ -16,10 +16,13 @@ Example:
     result = call_agent("chartmoe", [image], 0, "Analyze this chart")
 """
 
-from typing import List, Optional
+from typing import TYPE_CHECKING
 
-from .manager import ToolAgentManager, get_manager
 from .actor import BaseToolModelActor
+
+# Lazy imports to avoid circular dependency
+if TYPE_CHECKING:
+    from .manager import ToolAgentManager
 
 __all__ = [
     "ToolAgentManager",
@@ -27,6 +30,12 @@ __all__ = [
     "get_manager",
     "call_agent",
 ]
+
+
+def get_manager() -> "ToolAgentManager":
+    """Get the singleton ToolAgentManager instance."""
+    from .manager import get_manager as _get_manager
+    return _get_manager()
 
 
 def call_agent(tool_name: str, image_list, image_index: int, question: str) -> str:
@@ -41,4 +50,5 @@ def call_agent(tool_name: str, image_list, image_index: int, question: str) -> s
     Returns:
         Analysis result as string.
     """
-    return get_manager().call(tool_name, image_list, image_index, question)
+    from .manager import get_manager as _get_manager
+    return _get_manager().call(tool_name, image_list, image_index, question)
