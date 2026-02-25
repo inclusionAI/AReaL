@@ -19,10 +19,7 @@ from geo_edit.prompts.eval_prompts import (
     EVAL_QUERY_PROMPT,
 )
 from geo_edit.prompts.tool_agent_prompts import (
-    DEFAULT_TOOL_AGENT_PROMPT,
-    TOOL_AGENT_PROMPTS,
     get_tool_agent_prompt,
-    register_tool_agent_prompt,
     list_tool_agents,
 )
 
@@ -38,9 +35,6 @@ __all__ = [
     "EVAL_SYSTEM_PROMPT",
     "EVAL_QUERY_PROMPT",
     # Tool agent prompts
-    "DEFAULT_TOOL_AGENT_PROMPT",
-    "TOOL_AGENT_PROMPTS",
     "get_tool_agent_prompt",
-    "register_tool_agent_prompt",
     "list_tool_agents",
 ]

@@ -174,12 +174,6 @@ class TestEvalPrompts:
 class TestToolAgentPrompts:
     """Test tool agent prompts."""
 
-    def test_default_tool_agent_prompt_exists(self):
-        from geo_edit.prompts import DEFAULT_TOOL_AGENT_PROMPT
-
-        assert DEFAULT_TOOL_AGENT_PROMPT is not None
-        assert len(DEFAULT_TOOL_AGENT_PROMPT) > 0
-
     def test_get_tool_agent_prompt_returns_string(self):
         from geo_edit.prompts import get_tool_agent_prompt
 
@@ -187,8 +181,22 @@ class TestToolAgentPrompts:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    def test_get_tool_agent_prompt_returns_empty_for_unknown(self):
+        from geo_edit.prompts import get_tool_agent_prompt
+
+        result = get_tool_agent_prompt("unknown_agent")
+        assert result == ""
+
     def test_list_tool_agents_returns_list(self):
         from geo_edit.prompts import list_tool_agents
 
         result = list_tool_agents()
         assert isinstance(result, list)
+
+    def test_list_tool_agents_contains_known_agents(self):
+        from geo_edit.prompts import list_tool_agents
+
+        result = list_tool_agents()
+        assert "multimath" in result
+        assert "gllava" in result
+        assert "chartmoe" in result

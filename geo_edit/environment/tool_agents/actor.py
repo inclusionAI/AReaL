@@ -5,7 +5,6 @@ from typing import Optional
 
 import ray
 
-from geo_edit.prompts import DEFAULT_TOOL_AGENT_PROMPT
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -25,7 +24,7 @@ class ToolModelActor:
         from vllm import LLM
 
         self.model_name = model_name
-        self.system_prompt = system_prompt or DEFAULT_TOOL_AGENT_PROMPT
+        self.system_prompt = system_prompt or ""
         self.llm = LLM(
             model=model_name,
             max_model_len=max_model_len,

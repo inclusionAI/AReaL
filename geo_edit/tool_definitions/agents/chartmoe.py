@@ -1,9 +1,7 @@
 """ChartMoE VLM Agent Tool."""
 
-from typing import List
-from PIL import Image
-
-from geo_edit.environment.tool_agents import call_agent
+# System prompt for this agent (empty string means no system prompt)
+SYSTEM_PROMPT = ""
 
 # Model configuration
 agent_config = {
@@ -17,7 +15,7 @@ agent_config = {
 
 DECLARATION = {
     "name": "chartmoe",
-    "description": "Use a chart-analysis agent to reason over plots and provide analysis for the final answer.",
+    "description": "Use a chart-analysis VLM tool to read charts from images and return structured outputs (e.g., table/JSON) plus chart-grounded analysis. It can extract chart elements, visible values/relationships, trends, and key observations for downstream reasoning.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -35,7 +33,3 @@ DECLARATION = {
 }
 
 RETURN_TYPE = "text"
-
-
-def execute(image_list: List[Image.Image], image_index: int, question: str) -> str:
-    return call_agent("chartmoe", image_list, image_index, question)

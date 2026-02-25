@@ -163,14 +163,15 @@ class TestToolAgentCallFlow:
         assert result == "Analysis result"
 
     def test_chartmoe_execute_calls_call_agent(self):
-        """Verify chartmoe.execute calls call_agent with correct parameters."""
-        with patch("geo_edit.tool_definitions.agents.chartmoe.call_agent") as mock_call:
+        """Verify chartmoe execute function calls call_agent with correct parameters."""
+        with patch("geo_edit.environment.tool_agents.call_agent") as mock_call:
             mock_call.return_value = "Chart analysis result"
 
-            from geo_edit.tool_definitions.agents.chartmoe import execute
+            from geo_edit.tool_definitions.router import _TOOL_REGISTRY
 
+            execute_fn = _TOOL_REGISTRY["chartmoe"][1]
             test_image = Image.new("RGB", (100, 100), "white")
-            result = execute([test_image], 0, "What does this chart show?")
+            result = execute_fn([test_image], 0, "What does this chart show?")
 
             mock_call.assert_called_once_with(
                 "chartmoe", [test_image], 0, "What does this chart show?"

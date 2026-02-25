@@ -1,9 +1,10 @@
 """Multimath VLM Agent Tool."""
 
-from typing import List
-from PIL import Image
-
-from geo_edit.environment.tool_agents import call_agent
+# System prompt for this agent
+SYSTEM_PROMPT = (
+    "You are a math-vision analysis agent. "
+    "Analyze the mathematical content in the image and provide your reasoning step by step, but do NOT give the final answer. "
+)
 
 # Model configuration
 agent_config = {
@@ -17,7 +18,7 @@ agent_config = {
 
 DECLARATION = {
     "name": "multimath",
-    "description": "Use a math-vision agent to analyze the selected image and provide analysis for the final answer.",
+    "description": "Use a multimodal math-analysis VLM tool to analyze visual math problems (diagram/plot/chart + question) and return image-grounded intermediate reasoning, extracted constraints, and useful derivations.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -35,7 +36,3 @@ DECLARATION = {
 }
 
 RETURN_TYPE = "text"
-
-
-def execute(image_list: List[Image.Image], image_index: int, question: str) -> str:
-    return call_agent("multimath", image_list, image_index, question)

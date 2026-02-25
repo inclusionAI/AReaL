@@ -1,9 +1,10 @@
 """GLLaVA VLM Agent Tool."""
 
-from typing import List
-from PIL import Image
-
-from geo_edit.environment.tool_agents import call_agent
+# System prompt for this agent
+SYSTEM_PROMPT = (
+    "You are a visual language model analysis agent. "
+    "Analyze the image carefully and provide your reasoning step by step, but do NOT give the final answer."
+)
 
 # Model configuration
 agent_config = {
@@ -17,7 +18,7 @@ agent_config = {
 
 DECLARATION = {
     "name": "gllava",
-    "description": "Use a VLM analysis agent on the selected image and return concise analysis for the final answer.",
+    "description": "Use a geometry-analysis VLM tool to analyze geometric figures and return image-grounded intermediate reasoning (elements, relations, constraints, and useful derivations).",
     "parameters": {
         "type": "object",
         "properties": {
@@ -35,7 +36,3 @@ DECLARATION = {
 }
 
 RETURN_TYPE = "text"
-
-
-def execute(image_list: List[Image.Image], image_index: int, question: str) -> str:
-    return call_agent("gllava", image_list, image_index, question)

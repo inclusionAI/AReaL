@@ -24,18 +24,16 @@ class TestToolModelActorInit:
 
     @patch("geo_edit.environment.tool_agents.actor.LLM", create=True)
     def test_actor_uses_default_prompt_when_none_provided(self, mock_llm_class):
-        from geo_edit.prompts import DEFAULT_TOOL_AGENT_PROMPT
-
         with patch.dict("sys.modules", {"vllm": MagicMock()}):
             from geo_edit.environment.tool_agents.actor import ToolModelActor
 
             actor = object.__new__(ToolModelActor)
             actor.model_name = "test-model"
-            actor.system_prompt = DEFAULT_TOOL_AGENT_PROMPT
+            actor.system_prompt = ""
             actor.llm = MagicMock()
             actor._initialized = True
 
-            assert actor.system_prompt == DEFAULT_TOOL_AGENT_PROMPT
+            assert actor.system_prompt == ""
 
     @patch("geo_edit.environment.tool_agents.actor.LLM", create=True)
     def test_actor_uses_custom_system_prompt(self, mock_llm_class):

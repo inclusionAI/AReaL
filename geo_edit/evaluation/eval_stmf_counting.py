@@ -23,7 +23,8 @@ def parse_counting_from_lines(text: str) -> Optional[int]:
             continue
         line = re.sub(r"^(answer|final answer)\s*[:\-]\s*", "", line, flags=re.IGNORECASE)
         match = re.search(r"[-+]?\d+", line)
-        return int(match.group(0)) if match else None
+        if match:
+            return int(match.group(0))
     return None
 
 

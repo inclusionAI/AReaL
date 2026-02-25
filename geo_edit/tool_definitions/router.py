@@ -12,9 +12,12 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 
 import yaml
 from PIL import Image
-from geo_edit.environment.tool_agents import get_manager
 from geo_edit.tool_definitions.functions import FUNCTION_TOOLS
-from geo_edit.tool_definitions.agents import AGENT_TOOLS, AGENT_CONFIGS
+from geo_edit.tool_definitions.agents import (
+    AGENT_DECLARATIONS,
+    AGENT_RETURN_TYPES,
+    AGENT_CONFIGS,
+)
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -27,8 +30,32 @@ _CONFIG_PATH = Path(__file__).parent / "config.yaml"
 with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
     _TOOL_CONFIG: Dict[str, bool] = yaml.safe_load(f)
 
-# Merge all tool registries
-_TOOL_REGISTRY: Dict[str, tuple] = {**FUNCTION_TOOLS, **AGENT_TOOLS}
+
+def _make_agent_execute(agent_name: str) -> Callable[[List[Image.Image], int, str], str]:
+    """Create an execute function for a specific agent."""
+    def execute(image_list: List[Image.Image], image_index: int, question: str) -> str:
+        from geo_edit.environment.tool_agents import call_agent
+        return call_agent(agent_name, image_list, image_index, question)
+    return execute
+
+
+def _build_tool_registry() -> Dict[str, tuple]:
+    """Build the complete tool registry from functions and agents."""
+    registry = dict(FUNCTION_TOOLS)
+
+    # Add agent tools with dynamically created execute functions
+    for name, declaration in AGENT_DECLARATIONS.items():
+        registry[name] = (
+            declaration,
+            _make_agent_execute(name),
+            "agent",
+            AGENT_RETURN_TYPES[name],
+        )
+
+    return registry
+
+
+_TOOL_REGISTRY: Dict[str, tuple] = _build_tool_registry()
 
 
 # =============================================================================
@@ -70,6 +97,8 @@ class ToolRouter:
         node_resource: Optional[str],
     ) -> Dict[str, Any]:
         """Create Ray Actors for enabled agent tools."""
+        from geo_edit.environment.tool_agents import get_manager
+
         agent_configs = self.get_enabled_agent_configs()
         if not agent_configs:
             return {}
@@ -132,6 +161,8 @@ class ToolRouter:
         """
         if not self._agents:
             return
+
+        from geo_edit.environment.tool_agents import get_manager
 
         logger.info("Shutting down Tool Agents...")
         get_manager().shutdown(tool_names)
