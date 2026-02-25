@@ -139,7 +139,7 @@ class APIBasedAgent(BaseAgent):
 
     def _generate_chat_completions_api(self, model_input: Any) -> Tuple[Any, Dict[str, int | float | str | None]]:
         """Generate response using OpenAI Chat Completions API (client.chat.completions.create)."""
-        gen_kwargs = dict(self.config.generate_config)
+        gen_kwargs: Dict[str, Any] = dict(self.config.generate_config)
         extra_info = {}
 
         # Extract system_prompt from config (not a valid API parameter)
@@ -156,6 +156,9 @@ class APIBasedAgent(BaseAgent):
         # Inject system message at the beginning if provided
         if system_prompt:
             messages.insert(0, {"role": "system", "content": system_prompt})
+
+        if self.config.api_base and "matrixllm" in self.config.api_base:
+            gen_kwargs.pop("temperature", None)  # matrixllm API does not support temperature parameter
 
         response = self.client.chat.completions.create(
             model=self.model,
