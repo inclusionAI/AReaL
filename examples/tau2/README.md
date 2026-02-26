@@ -119,6 +119,16 @@ python3 examples/tau2/train.py \
 | `econfig.turn_discount`          | `1.0`     | Discount factor for turn-based learning                                         |
 | `econfig.invalid_format_penalty` | `0.1`     | Penalty for invalid format in completions                                       |
 
+## Results
+
+The following figure shows the training reward curves for the two configurations, trained
+using the Archon engine:
+
+![Training Reward Curves](reward.png)
+
+- **Green line**: Qwen3-1.5B model (`config_1.7b_airline.yaml`)
+- **Purple line**: Qwen3-7B model (`config_8b_airline.yaml`)
+
 ## Notes
 
 1. **Trajectory logging**: Trajectories are dumped as `json` and `txt` files in the

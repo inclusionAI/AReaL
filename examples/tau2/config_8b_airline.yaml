@@ -15,7 +15,7 @@ cluster:
     type: nfs
     nfs_record_root: /path/to/name_resolve  # Replace with your name resolve directory
 
-allocation_mode: sglang:d16+fsdp:d8
+allocation_mode: sglang:d16+archon:d8
 
 scheduler:
   type: slurm
