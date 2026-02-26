@@ -48,7 +48,7 @@ def test_vllm_task() -> None:
         image_path=Path("./geo_edit/images/173.jpg"),
         prompt=DEFAULT_PROMPT,
         system_prompt=None,
-        tool_mode="force",
+        tool_mode="auto",
         temperature=1.0,
         max_tokens=16384,
         max_steps=MAX_TOOL_CALLS,
