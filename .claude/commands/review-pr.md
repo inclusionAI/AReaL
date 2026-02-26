@@ -1,12 +1,12 @@
 ---
-name: pr-review
+name: review-pr
 description: Intelligent PR code review with dynamic agent allocation based on change types
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
 <!-- Reference data (auto-loaded via @import) -->
 
-@.claude/data/pr-review-change-types.md @.claude/data/pr-review-templates.md
+@.claude/data/review-pr-change-types.md @.claude/data/review-pr-templates.md
 
 # PR Code Review (Dynamic Agent Allocation)
 
@@ -18,7 +18,7 @@ targeted review tasks based on PR changes.
 `$ARGUMENTS`
 
 - No arguments: Review PR for current branch
-- PR number: Review specific PR (e.g., `/pr-review 123`)
+- PR number: Review specific PR (e.g., `/review-pr 123`)
 - `--quick`: Quick mode, only run Phase 1 analysis
 
 ## Quick Start
@@ -31,14 +31,14 @@ targeted review tasks based on PR changes.
 
 ```
 Phase 1: Deep PR Analysis [Haiku + Sonnet]
-    ├─ 1.0 PR Status Check [Haiku]
-    ├─ 1.1 Get PR Summary [Haiku]
-    └─ 1.2-1.4 Change Type Detection [Sonnet]
-    ↓
+    |- 1.0 PR Status Check [Haiku]
+    |- 1.1 Get PR Summary [Haiku]
+    +- 1.2-1.4 Change Type Detection [Sonnet]
+    |
 Phase 2: Dynamic Agent Planning [Sonnet]
-    ↓
+    |
 Phase 3: Execute Review Tasks [Parallel, Dynamic Model Selection]
-    ↓
+    |
 Phase 4: Confidence Scoring & Summary [Haiku]
 ```
 
@@ -58,9 +58,9 @@ ______________________________________________________________________
 
 Check if PR should be reviewed:
 
-- Is it closed? → Stop
-- Is it a draft? → Note but continue
-- Is it bot-generated? → Skip
+- Is it closed? -> Stop
+- Is it a draft? -> Note but continue
+- Is it bot-generated? -> Skip
 
 ### 1.1 Get PR Summary \[Haiku\]
 
@@ -70,7 +70,7 @@ Get basic PR info: title, description, modified files, change summary.
 
 Analyze each file change, detecting change types by risk level.
 
-**Reference**: See `pr-review-change-types.md` for complete detection tables:
+**Reference**: See `review-pr-change-types.md` for complete detection tables:
 
 - CRITICAL level types (Archon, FSDP, Megatron, DCP)
 - HIGH level types (distributed comm, DTensor, MoE, TP/EP/CP)
@@ -81,7 +81,7 @@ Analyze each file change, detecting change types by risk level.
 
 Based on detected types, identify corresponding risks.
 
-**Reference**: See `pr-review-change-types.md` for risk lists per framework.
+**Reference**: See `review-pr-change-types.md` for risk lists per framework.
 
 ### 1.4 Output Change Analysis Report
 
@@ -102,14 +102,14 @@ ______________________________________________________________________
 
 1. **Generate tasks by risk area**: Each high-risk area gets a dedicated task
 1. **Merge related changes**: Interdependent changes can be merged
-1. **Model selection**: CRITICAL/HIGH → Opus, MEDIUM → Sonnet, LOW → Haiku
+1. **Model selection**: CRITICAL/HIGH -> Opus, MEDIUM -> Sonnet, LOW -> Haiku
 1. **Minimum coverage**: Even simple changes get at least 1 basic review task
 
 ### 2.2 Task Template Selection
 
 Based on detected change types, select appropriate review task templates.
 
-**Reference**: See `pr-review-templates.md` for complete task templates:
+**Reference**: See `review-pr-templates.md` for complete task templates:
 
 - Framework-specific tasks (Archon, FSDP, Megatron, DCP, Trainer)
 - General tasks (Logic, Concurrency, Tensor, Numerical, TP, etc.)
@@ -209,6 +209,18 @@ ______________________________________________________________________
 - Filtered false positives: X
 ```
 
+### 4.3 Output Integrity (CRITICAL)
+
+The Phase 4 summary report is the **FINAL DELIVERABLE** of this command.
+
+- Output the COMPLETE report exactly as specified in Section 4.2 -- every section, every
+  finding, every field.
+- Do NOT abbreviate, summarize, or compress any part of the report.
+- Do NOT omit findings, code snippets, fix suggestions, or statistics.
+- If the report is long, that is expected and correct -- **completeness > brevity**.
+- The orchestrating agent receiving this output MUST present it **VERBATIM** to the
+  user. No re-summarization, no condensing, no "brief version".
+
 ______________________________________________________________________
 
 ## Dynamic Generation Examples
@@ -247,27 +259,27 @@ ______________________________________________________________________
                             MAINTAINER GUIDE
 ================================================================================
 
-Location: .claude/commands/pr-review.md
-Invocation: /pr-review
+Location: .claude/commands/review-pr.md
+Invocation: /review-pr
 Related files:
-  - .claude/data/pr-review-change-types.md: Change type detection tables
-  - .claude/data/pr-review-templates.md: Review task templates
+  - .claude/data/review-pr-change-types.md: Change type detection tables
+  - .claude/data/review-pr-templates.md: Review task templates
 
 ## Structure
 
 - Main file (this): workflow and phases, @imports data files
-- data/pr-review-change-types.md: detection tables
-- data/pr-review-templates.md: task templates
+- data/review-pr-change-types.md: detection tables
+- data/review-pr-templates.md: task templates
 
 ## How to Update
 
 ### Adding New Change Types
-Edit .claude/data/pr-review-change-types.md:
+Edit .claude/data/review-pr-change-types.md:
 1. Add to appropriate level table (CRITICAL/HIGH/MEDIUM/LOW)
 2. Add framework risks if applicable
 
 ### Adding New Task Templates
-Edit .claude/data/pr-review-templates.md:
+Edit .claude/data/review-pr-templates.md:
 1. Add to framework-specific or general section
 2. Include checklist
 

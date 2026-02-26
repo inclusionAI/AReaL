@@ -18,6 +18,7 @@ class MathAgent:
         # Store kwargs for client.messages.create call
         self.kwargs = kwargs.copy()
         self.kwargs.pop("max_completion_tokens", None)
+        self.kwargs.pop("max_turns", None)
 
     async def run(self, data: dict, **extra_kwargs) -> float:
         """Run the agent on a single problem.

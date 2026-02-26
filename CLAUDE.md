@@ -5,7 +5,7 @@
 AReaL is a distributed RL training framework for LLM alignment via reinforcement
 learning.
 
-**Tech Stack**: Python 3.12+ · PyTorch · FSDP2/Megatron · SGLang/vLLM
+**Tech Stack**: Python 3.12+ | PyTorch | FSDP2/Megatron | SGLang/vLLM
 
 **Core Directories**:
 
@@ -151,7 +151,7 @@ Commands perform specific actions when invoked:
 
 - `/create-pr` - Rebase, squash commits, and create/update PR with intelligent messages
 - `/gen-commit-msg` - Generate commit messages from staged changes
-- `/pr-review` - Intelligent PR code review with dynamic agent allocation
+- `/review-pr` - Intelligent PR code review with dynamic agent allocation
 
 ### Rules (Code Quality Standards)
 

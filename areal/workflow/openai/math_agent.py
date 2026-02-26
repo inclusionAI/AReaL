@@ -24,6 +24,7 @@ class MathAgent:
     def __init__(self, **kwargs):
         self.kwargs = kwargs.copy()
         self.kwargs.pop("max_tokens", None)
+        self.kwargs.pop("max_turns", None)
 
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
@@ -119,6 +120,7 @@ class MathToolAgent:
     def __init__(self, **kwargs):
         self.kwargs = kwargs.copy()
         self.kwargs.pop("max_tokens", None)
+        self.kwargs.pop("max_turns", None)
 
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)

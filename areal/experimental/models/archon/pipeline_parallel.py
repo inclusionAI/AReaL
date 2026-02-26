@@ -212,7 +212,7 @@ def pipeline_module_split(
     Args:
         whole_model: The complete model to split
         pp_mesh: Pipeline parallel device mesh
-        pp_schedule: Schedule type ("1F1B", "Interleaved1F1B", or "ZBVZeroBubble")
+        pp_schedule: Schedule type ("1F1B", "Interleaved1F1B", "InterleavedZeroBubble", or "ZBVZeroBubble")
         device: Target device for stages
         module_names_per_stage: Module FQNs for each stage
 
@@ -297,9 +297,10 @@ def pipeline_module_split(
         """Get stage indices for this rank based on schedule style.
 
         Examples (pp_degree=4, num_stages=8):
-            1F1B:            Rank 0->(0,), Rank 1->(1,), ...
-            Interleaved1F1B: Rank 0->(0,4), Rank 1->(1,5), Rank 2->(2,6), Rank 3->(3,7)
-            ZBVZeroBubble:   Rank 0->(0,7), Rank 1->(1,6), Rank 2->(2,5), Rank 3->(3,4)
+            1F1B:                  Rank 0->(0,), Rank 1->(1,), ...
+            Interleaved1F1B:       Rank 0->(0,4), Rank 1->(1,5), Rank 2->(2,6), Rank 3->(3,7)
+            InterleavedZeroBubble: (same loop-style assignment as Interleaved1F1B)
+            ZBVZeroBubble:         Rank 0->(0,7), Rank 1->(1,6), Rank 2->(2,5), Rank 3->(3,4)
         """
         if num_stages % pp_degree != 0:
             raise ValueError(
@@ -355,7 +356,7 @@ def pipeline_llm(
 
     Workflow:
     1. Generate module names for each virtual stage
-    2. Split model into stages (multiple per rank for Interleaved1F1B/ZBVZeroBubble)
+    2. Split model into stages (multiple per rank for Interleaved1F1B/InterleavedZeroBubble/ZBVZeroBubble)
     3. Apply parallelization (TP, FSDP) to each model part
 
     Args:
@@ -368,7 +369,7 @@ def pipeline_llm(
 
     Returns:
         Tuple of:
-        - stages: List of PipelineStage (1 for 1F1B, 2+ for Interleaved1F1B/ZBVZeroBubble)
+        - stages: List of PipelineStage (1 for 1F1B, 2+ for Interleaved1F1B/InterleavedZeroBubble/ZBVZeroBubble)
         - model_parts: List of model parts
         - has_first_stage: Whether this rank has the first stage
         - has_last_stage: Whether this rank has the last stage

@@ -1,13 +1,13 @@
 # PR Review: Task Templates Reference
 
 This file contains the review task templates for PR review. Referenced by:
-`.claude/commands/pr-review.md`
+`.opencode/command/review-pr.md`
 
 ______________________________________________________________________
 
 ## Framework-Specific Review Task Templates
 
-### Archon Tasks \[Opus\]
+### Archon Tasks \[deep\]
 
 **Task: Archon EP/ETP Strategy Correctness Review**
 
@@ -50,9 +50,9 @@ Checklist:
 - Explicit prefetching configuration
 ```
 
-### FSDP Tasks \[Opus/Sonnet\]
+### FSDP Tasks \[deep / unspecified-high\]
 
-**Task: FSDP Core Correctness \[Opus\]**
+**Task: FSDP Core Correctness \[deep\]**
 
 ```
 Checklist:
@@ -61,7 +61,7 @@ Checklist:
 - Mixed precision (param_dtype vs reduce_dtype)
 ```
 
-**Task: FSDP Interaction with Other Parallel Strategies \[Opus\]**
+**Task: FSDP Interaction with Other Parallel Strategies \[deep\]**
 
 ```
 Checklist:
@@ -70,7 +70,7 @@ Checklist:
 - Gradient divide factor relationship with world size
 ```
 
-**Task: FSDP State Management \[Sonnet\]**
+**Task: FSDP State Management \[unspecified-high\]**
 
 ```
 Checklist:
@@ -79,7 +79,7 @@ Checklist:
 - Checkpoint compatibility
 ```
 
-### Megatron Tasks \[Opus\]
+### Megatron Tasks \[deep\]
 
 **Task: Pipeline Parallelism Correctness**
 
@@ -99,7 +99,7 @@ Checklist:
 - Embedding/output layer parallel strategy
 ```
 
-### DCP/Checkpoint Tasks \[Opus\]
+### DCP/Checkpoint Tasks \[deep\]
 
 **Task: Distributed Checkpoint Correctness**
 
@@ -122,7 +122,7 @@ Checklist:
 - Checkpoint resumption logic
 ```
 
-### Trainer Tasks \[Opus\]
+### Trainer Tasks \[deep\]
 
 **Task: Trainer Core Logic**
 
@@ -138,7 +138,7 @@ ______________________________________________________________________
 
 ## General Review Task Templates
 
-### Logic and Boundary Conditions \[Opus\]
+### Logic and Boundary Conditions \[deep\]
 
 ```
 Applicable: Any non-doc/config changes
@@ -152,7 +152,7 @@ Checklist:
 - Boolean expression errors (De Morgan's law violation, precedence errors)
 ```
 
-### Concurrency and Async \[Opus\]
+### Concurrency and Async \[deep\]
 
 ```
 Applicable: ASYNC_CONCURRENT type detected
@@ -168,7 +168,7 @@ Checklist:
 - Signal handling and graceful shutdown issues
 ```
 
-### Tensor Shape and Data Type \[Opus\]
+### Tensor Shape and Data Type \[deep\]
 
 ```
 Applicable: TENSOR_OPS type detected with complex tensor operations
@@ -184,7 +184,7 @@ Checklist:
 - In-place operation effects on gradient computation
 ```
 
-### Numerical Stability \[Sonnet\]
+### Numerical Stability \[unspecified-high\]
 
 ```
 Applicable: NUMERICAL type detected
@@ -196,7 +196,7 @@ Checklist:
 - Scaling issues in mixed precision training
 ```
 
-### Tensor Parallel (TP) Correctness \[Opus\]
+### Tensor Parallel (TP) Correctness \[deep\]
 
 ```
 Applicable: TENSOR_PARALLEL or DISTRIBUTED_COMM type detected
@@ -209,7 +209,7 @@ Checklist:
 - TP group communication correctness
 ```
 
-### Communication and Synchronization \[Sonnet\]
+### Communication and Synchronization \[unspecified-high\]
 
 ```
 Applicable: DISTRIBUTED_COMM type detected
@@ -221,7 +221,7 @@ Checklist:
 - Collective communication order dependencies
 ```
 
-### API Compatibility \[Sonnet\]
+### API Compatibility \[unspecified-high\]
 
 ```
 Applicable: API_CONFIG type detected
@@ -234,7 +234,7 @@ Checklist:
 - Class/module rename or move
 ```
 
-### Configuration and Parameter Validation \[Sonnet\]
+### Configuration and Parameter Validation \[unspecified-high\]
 
 ```
 Applicable: API_CONFIG type detected with dataclass
@@ -248,7 +248,7 @@ Checklist:
 - Incorrect dataclass field types
 ```
 
-### Workflow and Engine Interaction \[Sonnet\]
+### Workflow and Engine Interaction \[unspecified-high\]
 
 ```
 Applicable: WORKFLOW_ENGINE type detected
@@ -261,7 +261,7 @@ Checklist:
 - AsyncRewardWrapper wrapping requirements
 ```
 
-### Activation Checkpointing (AC) \[Sonnet\]
+### Activation Checkpointing (AC) \[unspecified-high\]
 
 ```
 Applicable: ACTIVATION_CKPT type detected
@@ -272,7 +272,7 @@ Checklist:
 - Compatibility with torch.compile
 ```
 
-### Performance Regression Risk \[Sonnet\]
+### Performance Regression Risk \[unspecified-high\]
 
 ```
 Applicable: Any non-doc changes, especially TENSOR_OPS, DISTRIBUTED_COMM
@@ -285,7 +285,7 @@ Checklist:
 - Unnecessary tensor copies
 ```
 
-### Context-Aware Review \[Sonnet\]
+### Context-Aware Review \[unspecified-high\]
 
 ```
 Applicable: Any code changes
@@ -298,7 +298,7 @@ Checklist:
 - Check for ignored NOTE/WARNING comments
 ```
 
-### Sequence Parallel (SP/CP) Correctness \[Opus\]
+### Sequence Parallel (SP/CP) Correctness \[deep\]
 
 ```
 Applicable: sequence_parallel, context_parallel, SP, CP
@@ -310,7 +310,7 @@ Checklist:
 - Combination correctness with TP
 ```
 
-### Checkpoint and Recovery \[Sonnet\]
+### Checkpoint and Recovery \[unspecified-high\]
 
 ```
 Applicable: areal/utils/saver.py, areal/utils/recover.py, state_dict, checkpoint
@@ -322,7 +322,7 @@ Checklist:
 - Optimizer state handling
 ```
 
-### Reward Function Correctness \[Sonnet\]
+### Reward Function Correctness \[unspecified-high\]
 
 ```
 Applicable: areal/reward/ directory
@@ -334,7 +334,7 @@ Checklist:
 - Edge case handling (empty input, abnormal answers)
 ```
 
-### Dataset Loader Correctness \[Sonnet\]
+### Dataset Loader Correctness \[unspecified-high\]
 
 ```
 Applicable: areal/dataset/ directory
@@ -346,7 +346,7 @@ Checklist:
 - Memory efficiency (avoid loading all data at once)
 ```
 
-### Launcher and Scheduler Configuration \[Sonnet\]
+### Launcher and Scheduler Configuration \[unspecified-high\]
 
 ```
 Applicable: areal/infra/launcher/, areal/infra/scheduler/, areal/infra/rpc/ directories
@@ -358,7 +358,7 @@ Checklist:
 - Slurm/Ray specific configurations
 ```
 
-### torch.compile Compatibility \[Sonnet\]
+### torch.compile Compatibility \[unspecified-high\]
 
 ```
 Applicable: COMPILE type detected or hot path code modified
@@ -370,7 +370,7 @@ Checklist:
 - Interaction with FSDP/TP
 ```
 
-### Documentation Format Check \[Haiku\]
+### Documentation Format Check \[quick\]
 
 ```
 Applicable: DOCS type detected
@@ -380,7 +380,7 @@ Checklist:
 - Code example correctness
 ```
 
-### Test Coverage Check \[Haiku\]
+### Test Coverage Check \[quick\]
 
 ```
 Applicable: TESTS type detected
@@ -390,7 +390,7 @@ Checklist:
 - Error handling tests
 ```
 
-### Logging and Metrics \[Haiku\]
+### Logging and Metrics \[quick\]
 
 ```
 Applicable: logging, stats_tracker, StatsLogger
@@ -401,7 +401,7 @@ Checklist:
 - Sensitive info not logged
 ```
 
-### Import and Dependencies \[Haiku\]
+### Import and Dependencies \[quick\]
 
 ```
 Applicable: Any Python file changes
@@ -412,7 +412,7 @@ Checklist:
 - Circular import risks
 ```
 
-### Security and Sensitive Information \[Haiku\]
+### Security and Sensitive Information \[quick\]
 
 ```
 Applicable: Config files, environment variables, API calls

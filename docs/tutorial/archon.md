@@ -25,7 +25,7 @@ excellent work in making distributed training accessible through pure PyTorch AP
 | torch.compile     | Limited             | No              | Yes (default)               |
 | Data Parallel     | FSDP2               | Megatron DP     | FSDP2                       |
 | Tensor Parallel   | PyTorch DTensor     | Megatron TP     | PyTorch DTensor             |
-| Pipeline Parallel | No                  | Yes (VPP)       | Yes (1F1B, Interleaved1F1B) |
+| Pipeline Parallel | No                  | Yes (VPP)       | Yes (1F1B, I1F1B, IZB, ZBV) |
 | Expert Parallel   | No                  | Full EP/ETP     | Full EP/ETP                 |
 | Context Parallel  | Ulysses SP          | Megatron CP     | Ulysses SP                  |
 | Supported Models  | Any HF              | Via mbridge     | Built-in + User-defined     |
@@ -40,7 +40,8 @@ excellent work in making distributed training accessible through pure PyTorch AP
 - **Flexible activation checkpointing**: Supports `none`, `full`, `selective`, and
   `memory_budget` modes
 - **Native RL training support**: Built-in PPO Actor/Critic implementations
-- **Pipeline parallel schedules**: 1F1B and Interleaved1F1B schedules
+- **Pipeline parallel schedules**: 1F1B, Interleaved1F1B, InterleavedZeroBubble (ZB1P),
+  and ZBVZeroBubble schedules
 
 ## Enabling Archon
 
@@ -129,12 +130,12 @@ reducing GPU requirements for combined context and expert parallelism.
 
 Archon-specific options are configured under `actor.archon.*`:
 
-| Option           | Default           | Description                                    |
-| ---------------- | ----------------- | ---------------------------------------------- |
-| `pp_schedule`    | `Interleaved1F1B` | Pipeline schedule: `1F1B` or `Interleaved1F1B` |
-| `enable_compile` | `True`            | Enable torch.compile for TransformerBlocks     |
-| `ac_mode`        | `selective`       | Activation checkpointing mode                  |
-| `offload_params` | `False`           | Offload FSDP parameters to CPU                 |
+| Option           | Default           | Description                                   |
+| ---------------- | ----------------- | --------------------------------------------- |
+| `pp_schedule`    | `Interleaved1F1B` | PP schedule: `1F1B`, `I1F1B`, `IZB`, or `ZBV` |
+| `enable_compile` | `True`            | Enable torch.compile                          |
+| `ac_mode`        | `selective`       | Activation checkpointing mode                 |
+| `offload_params` | `False`           | Offload FSDP parameters to CPU                |
 
 See [Performance Tuning](#performance-tuning) for detailed guidance on these options.
 
