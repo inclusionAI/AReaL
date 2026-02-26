@@ -8,6 +8,6 @@ image_highlight: true
 # VLM analysis tools (agents/)
 multimath: true
 gllava: true
-chartmoe: true
-ovr: true
+chartmoe: false
+ovr: false
  
