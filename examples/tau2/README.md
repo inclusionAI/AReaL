@@ -50,10 +50,10 @@ For multi-node experiment with slurm, this can be set in the config file under
 
 Two example configurations are provided:
 
-| Config                     | Model      | Cluster          | Allocation           | Use Case                   |
-| -------------------------- | ---------- | ---------------- | -------------------- | -------------------------- |
-| `config_1.7b_airline.yaml` | Qwen3-1.7B | 1 node, 8 GPUs   | `sglang:d6+d2`       | Small-scale local training |
-| `config_8b_airline.yaml`   | Qwen3-8B   | 3 nodes, 24 GPUs | `sglang:d16+fsdp:d8` | Multi-node Slurm training  |
+| Config                     | Model      | Cluster          | Allocation             | Use Case                   |
+| -------------------------- | ---------- | ---------------- | ---------------------- | -------------------------- |
+| `config_1.7b_airline.yaml` | Qwen3-1.7B | 1 node, 8 GPUs   | `sglang:d6+archon:d2`  | Small-scale local training |
+| `config_8b_airline.yaml`   | Qwen3-8B   | 3 nodes, 24 GPUs | `sglang:d16+archon:d8` | Multi-node Slurm training  |
 
 ### Prepare User Simulator Server
 
@@ -118,6 +118,16 @@ python3 examples/tau2/train.py \
 | `econfig.user_llm_args`          | `null`    | Arguments for user LLM (e.g., `{temperature: 0.0, max_completion_tokens: 512}`) |
 | `econfig.turn_discount`          | `1.0`     | Discount factor for turn-based learning                                         |
 | `econfig.invalid_format_penalty` | `0.1`     | Penalty for invalid format in completions                                       |
+
+## Results
+
+The following figure shows the training reward curves for the two configurations,
+trained using the Archon engine:
+
+![Training Reward Curves](reward.png)
+
+- **Green line**: Qwen3-1.7B model (`config_1.7b_airline.yaml`)
+- **Purple line**: Qwen3-8B model (`config_8b_airline.yaml`)
 
 ## Notes
 

@@ -462,23 +462,23 @@ Core configuration for model training, including optimization and backend settin
 
 Controls text generation behavior for rollout.
 
-| Parameter             | Type                   | Default      | Description                                                                                                                           |
-| --------------------- | ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `n_samples`           | integer                | `1`          | Number of sequences to generate per prompt.                                                                                           |
-| `max_new_tokens`      | integer                | `16384`      | Maximum number of tokens to generate.                                                                                                 |
-| `min_new_tokens`      | integer                | `0`          | Minimum number of tokens to generate.                                                                                                 |
-| `max_tokens`          | integer                | `32768`      | Maximum number of tokens including prompt and generated tokens.                                                                       |
-| `greedy`              | boolean                | `False`      | Whether to use greedy decoding (max probability).                                                                                     |
-| `top_p`               | float                  | `1.0`        | Nucleus sampling probability threshold (0.0, 1.0\].                                                                                   |
-| `top_k`               | integer                | `100000000`  | Number of highest probability tokens to consider.                                                                                     |
-| `temperature`         | float                  | `1.0`        | Sampling temperature. Higher values increase diversity.                                                                               |
-| `stop_token_ids`      | list of integer        | **Required** | Stop generation when encountering these token IDs.                                                                                    |
-| `ignore_eos`          | boolean                | `False`      | Do not stop generation when EOS is encountered.                                                                                       |
-| `skip_special_tokens` | boolean                | `True`       | Skip special tokens when decoding/displaying outputs.                                                                                 |
-| `stop`                | list of string \| None | `None`       | One or multiple stop words. Generation will stop if one of these words is sampled.                                                    |
-| `frequency_penalty`   | float                  | `0.0`        | Penalizes tokens based on their frequency in generation so far. Must be between -2 and 2 where negative numbers encourage repetition. |
-| `lora_name`           | string                 | `""`         | Lora name to be used for this generation.                                                                                             |
-| `use_beam_search`     | boolean                | `False`      | Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored.         |
+| Parameter             | Type                   | Default          | Description                                                                                                                           |
+| --------------------- | ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `n_samples`           | integer                | `1`              | Number of sequences to generate per prompt.                                                                                           |
+| `max_new_tokens`      | integer                | `16384`          | Maximum number of tokens to generate.                                                                                                 |
+| `min_new_tokens`      | integer                | `0`              | Minimum number of tokens to generate.                                                                                                 |
+| `max_tokens`          | integer                | `32768`          | Maximum number of tokens including prompt and generated tokens.                                                                       |
+| `greedy`              | boolean                | `False`          | Whether to use greedy decoding (max probability).                                                                                     |
+| `top_p`               | float                  | `1.0`            | Nucleus sampling probability threshold (0.0, 1.0\].                                                                                   |
+| `top_k`               | integer                | `100000000`      | Number of highest probability tokens to consider.                                                                                     |
+| `temperature`         | float                  | `1.0`            | Sampling temperature. Higher values increase diversity.                                                                               |
+| `stop_token_ids`      | list of integer        | **Required**     | Stop generation when encountering these token IDs.                                                                                    |
+| `ignore_eos`          | boolean                | `False`          | Do not stop generation when EOS is encountered.                                                                                       |
+| `skip_special_tokens` | boolean                | `True`           | Skip special tokens when decoding/displaying outputs.                                                                                 |
+| `stop`                | list of string \| None | `None`           | One or multiple stop words. Generation will stop if one of these words is sampled.                                                    |
+| `frequency_penalty`   | float                  | `0.0`            | Penalizes tokens based on their frequency in generation so far. Must be between -2 and 2 where negative numbers encourage repetition. |
+| `lora_name`           | string                 | `"default_lora"` | Lora name to be used for this generation.                                                                                             |
+| `use_beam_search`     | boolean                | `False`          | Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored.         |
 
 (section-inference-engine)=
 
@@ -561,10 +561,8 @@ https://github.com/sgl-project/sglang for detailed documentation.
 | `ep_size`                         | integer                 | `1`          | -           |
 | `enable_lora`                     | boolean \| None         | `None`       | -           |
 | `max_lora_rank`                   | integer \| None         | `None`       | -           |
-| `lora_target_modules`             | list of string \| None  | `None`       | -           |
+| `max_loaded_loras`                | integer                 | `8`          | -           |
 | `lora_paths`                      | list of string \| None  | `None`       | -           |
-| `max_loaded_loras`                | integer                 | `1`          | -           |
-| `max_loras_per_batch`             | integer                 | `1`          | -           |
 | `lora_backend`                    | string                  | `"triton"`   | -           |
 | `log_level`                       | string                  | `"warning"`  | -           |
 | `log_level_http`                  | string \| None          | `"warning"`  | -           |
@@ -583,28 +581,30 @@ Configuration for vLLM runtime. Refer to:
 
 https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 
-| Parameter                      | Type            | Default                                                             | Description |
-| ------------------------------ | --------------- | ------------------------------------------------------------------- | ----------- |
-| `model`                        | string          | `""`                                                                | -           |
-| `seed`                         | integer         | `1`                                                                 | -           |
-| `skip_tokenizer_init`          | boolean         | `False`                                                             | -           |
-| `enforce_eager`                | boolean         | `False`                                                             | -           |
-| `dtype`                        | string          | `"bfloat16"`                                                        | -           |
-| `distributed_executor_backend` | string          | `"mp"`                                                              | -           |
-| `max_num_seqs`                 | integer         | `256`                                                               | -           |
-| `block_size`                   | integer         | `16`                                                                | -           |
-| `swap_space`                   | integer         | `4`                                                                 | -           |
-| `cpu_offload_gb`               | float           | `0`                                                                 | -           |
-| `disable_sliding_window`       | boolean         | `True`                                                              | -           |
-| `max_model_len`                | integer \| None | `32768`                                                             | -           |
-| `no_enable_chunked_prefill`    | boolean         | `False`                                                             | -           |
-| `no_enable_prefix_caching`     | boolean         | `True`                                                              | -           |
-| `gpu_memory_utilization`       | float           | `0.9`                                                               | -           |
-| `worker_extension_cls`         | string          | `"areal.engine.vllm_ext.vllm_worker_extension.VLLMWorkerExtension"` | -           |
-| `enable_sleep_mode`            | boolean         | `False`                                                             | -           |
-| `uvicorn_log_level`            | string          | `"warning"`                                                         | -           |
-| `enable_lora`                  | boolean         | `False`                                                             | -           |
-| `lora_modules`                 | string          | `""`                                                                | -           |
+| Parameter                      | Type                   | Default                                                             | Description |
+| ------------------------------ | ---------------------- | ------------------------------------------------------------------- | ----------- |
+| `model`                        | string                 | `""`                                                                | -           |
+| `seed`                         | integer                | `1`                                                                 | -           |
+| `skip_tokenizer_init`          | boolean                | `False`                                                             | -           |
+| `enforce_eager`                | boolean                | `False`                                                             | -           |
+| `dtype`                        | string                 | `"bfloat16"`                                                        | -           |
+| `distributed_executor_backend` | string                 | `"mp"`                                                              | -           |
+| `max_num_seqs`                 | integer                | `256`                                                               | -           |
+| `block_size`                   | integer                | `16`                                                                | -           |
+| `swap_space`                   | integer                | `4`                                                                 | -           |
+| `cpu_offload_gb`               | float                  | `0`                                                                 | -           |
+| `disable_sliding_window`       | boolean                | `True`                                                              | -           |
+| `max_model_len`                | integer \| None        | `32768`                                                             | -           |
+| `no_enable_chunked_prefill`    | boolean                | `False`                                                             | -           |
+| `no_enable_prefix_caching`     | boolean                | `True`                                                              | -           |
+| `gpu_memory_utilization`       | float                  | `0.9`                                                               | -           |
+| `worker_extension_cls`         | string                 | `"areal.engine.vllm_ext.vllm_worker_extension.VLLMWorkerExtension"` | -           |
+| `enable_sleep_mode`            | boolean                | `False`                                                             | -           |
+| `uvicorn_log_level`            | string                 | `"warning"`                                                         | -           |
+| `enable_lora`                  | boolean                | `False`                                                             | -           |
+| `max_lora_rank`                | integer                | `16`                                                                | -           |
+| `max_loras`                    | integer                | `8`                                                                 | -           |
+| `lora_modules`                 | list of string \| None | `None`                                                              | -           |
 
 (section-train-dataset)=
 
@@ -785,20 +785,20 @@ Configuration for Weights & Biases experiment tracking.
 
 Configuration for Archon Engine training backend.
 
-| Parameter                    | Type            | Default             | Description                                                                                                                                                                                                                                    |
-| ---------------------------- | --------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `attn_type`                  | string          | `"varlen"`          | Attention backend type. Use 'tree' for tree training. **Choices:** `varlen`, `sdpa`, `tree`                                                                                                                                                    |
-| `offload_params`             | boolean         | `False`             | Whether to offload FSDP parameters to CPU.                                                                                                                                                                                                     |
-| `enable_compile`             | boolean         | `True`              | Enable torch.compile for TransformerBlocks.                                                                                                                                                                                                    |
-| `ac_mode`                    | string          | `"selective"`       | Activation checkpointing mode. 'memory_budget' requires enable_compile=True. **Choices:** `none`, `full`, `selective`, `memory_budget`                                                                                                         |
-| `selective_ac_option`        | string          | `"op"`              | Selective AC option: 'op' for op-level, or integer string (e.g., '2') for every Nth layer.                                                                                                                                                     |
-| `ac_memory_budget`           | float           | `0.5`               | Memory budget for 'memory_budget' AC mode. 0.0 = minimum memory (max recompute), 1.0 = default behavior (no recompute).                                                                                                                        |
-| `ac_preserve_rng_state`      | boolean         | `False`             | Preserve RNG state during checkpointing for deterministic output. Enabling this may slow down training.                                                                                                                                        |
-| `ac_debug`                   | boolean         | `False`             | (Testing only) Capture AC debug information. Will be slower.                                                                                                                                                                                   |
-| `pp_schedule`                | string          | `"Interleaved1F1B"` | Pipeline parallel schedule type. **Choices:** `1F1B`, `Interleaved1F1B`, `ZBVZeroBubble`                                                                                                                                                       |
-| `pp_layers_per_stage`        | integer \| None | `None`              | Number of transformer layers per (virtual) pipeline stage. If set, num_virtual_stages is calculated from num_layers. If None, stages are inferred from schedule type (1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B/ZBVZeroBubble). |
-| `pp_first_stage_less_layers` | integer         | `1`                 | Number of layers to reduce in the first pipeline stage. Accounts for embedding layer overhead.                                                                                                                                                 |
-| `pp_last_stage_less_layers`  | integer         | `1`                 | Number of layers to reduce in the last pipeline stage. Accounts for output layer overhead.                                                                                                                                                     |
+| Parameter                    | Type            | Default             | Description                                                                                                                                                                                                                                                          |
+| ---------------------------- | --------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `attn_type`                  | string          | `"varlen"`          | Attention backend type. Use 'tree' for tree training. **Choices:** `varlen`, `sdpa`, `tree`                                                                                                                                                                          |
+| `offload_params`             | boolean         | `False`             | Whether to offload FSDP parameters to CPU.                                                                                                                                                                                                                           |
+| `enable_compile`             | boolean         | `True`              | Enable torch.compile for TransformerBlocks.                                                                                                                                                                                                                          |
+| `ac_mode`                    | string          | `"selective"`       | Activation checkpointing mode. 'memory_budget' requires enable_compile=True. **Choices:** `none`, `full`, `selective`, `memory_budget`                                                                                                                               |
+| `selective_ac_option`        | string          | `"op"`              | Selective AC option: 'op' for op-level, or integer string (e.g., '2') for every Nth layer.                                                                                                                                                                           |
+| `ac_memory_budget`           | float           | `0.5`               | Memory budget for 'memory_budget' AC mode. 0.0 = minimum memory (max recompute), 1.0 = default behavior (no recompute).                                                                                                                                              |
+| `ac_preserve_rng_state`      | boolean         | `False`             | Preserve RNG state during checkpointing for deterministic output. Enabling this may slow down training.                                                                                                                                                              |
+| `ac_debug`                   | boolean         | `False`             | (Testing only) Capture AC debug information. Will be slower.                                                                                                                                                                                                         |
+| `pp_schedule`                | string          | `"Interleaved1F1B"` | Pipeline parallel schedule type. **Choices:** `1F1B`, `Interleaved1F1B`, `InterleavedZeroBubble`, `ZBVZeroBubble`                                                                                                                                                    |
+| `pp_layers_per_stage`        | integer \| None | `None`              | Number of transformer layers per (virtual) pipeline stage. If set, num_virtual_stages is calculated from num_layers. If None, stages are inferred from schedule type (1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B/InterleavedZeroBubble/ZBVZeroBubble). |
+| `pp_first_stage_less_layers` | integer         | `1`                 | Number of layers to reduce in the first pipeline stage. Accounts for embedding layer overhead.                                                                                                                                                                       |
+| `pp_last_stage_less_layers`  | integer         | `1`                 | Number of layers to reduce in the last pipeline stage. Accounts for output layer overhead.                                                                                                                                                                           |
 
 (section-distributed-data-parallel)=
 

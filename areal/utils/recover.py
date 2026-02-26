@@ -251,14 +251,16 @@ class RecoverHandler:
             global_step = recover_info.last_step_info.global_step
 
             if inference_engine is not None:
+                assert weight_update_meta is not None
                 update_engine = engine[inference_engine_update_from]
-                update_engine.connect_engine(inference_engine, weight_update_meta)
-                # update inference engine weights
+                recovery_version = global_step + 1
+                versioned_meta = weight_update_meta.with_version(recovery_version)
+                update_engine.connect_engine(inference_engine, versioned_meta)
                 inference_engine.pause()
-                update_engine.update_weights(weight_update_meta)
+                update_engine.update_weights(versioned_meta)
                 inference_engine.resume()
-                update_engine.set_version(global_step + 1)
-                inference_engine.set_version(global_step + 1)
+                update_engine.set_version(recovery_version)
+                inference_engine.set_version(recovery_version)
             return recover_info
         except (FileNotFoundError, InValidRecoverInfo):
             logger.warning(
