@@ -50,10 +50,10 @@ For multi-node experiment with slurm, this can be set in the config file under
 
 Two example configurations are provided:
 
-| Config                     | Model      | Cluster          | Allocation           | Use Case                   |
-| -------------------------- | ---------- | ---------------- | -------------------- | -------------------------- |
-| `config_1.7b_airline.yaml` | Qwen3-1.7B | 1 node, 8 GPUs   | `sglang:d6+d2`       | Small-scale local training |
-| `config_8b_airline.yaml`   | Qwen3-8B   | 3 nodes, 24 GPUs | `sglang:d16+fsdp:d8` | Multi-node Slurm training  |
+| Config                     | Model      | Cluster          | Allocation              | Use Case                   |
+| -------------------------- | ---------- | ---------------- | ----------------------- | -------------------------- |
+| `config_1.7b_airline.yaml` | Qwen3-1.7B | 1 node, 8 GPUs   | `sglang:d6+archon:d2`   | Small-scale local training |
+| `config_8b_airline.yaml`   | Qwen3-8B   | 3 nodes, 24 GPUs | `sglang:d16+archon:d8`  | Multi-node Slurm training  |
 
 ### Prepare User Simulator Server
 

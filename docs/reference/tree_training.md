@@ -94,6 +94,7 @@ class TrieNode:
     sequence_ids: list[int]  # IDs of sequences passing through
     children: dict[int, TrieNode]  # Child nodes by diverging token
     ancestors: list[TrieNode]      # Ancestor nodes from root
+    nodes: list[TrieNode]  # All descendant nodes in pre-order (root only)
 ```
 
 For root nodes, `start_idx` and `end_idx` are -1, and the `nodes` list tracks all
@@ -149,17 +150,21 @@ FSDP integration uses monkey patching to replace standard attention with tree at
 patch_fsdp_for_tree_training(enable=self.enable_tree_training)
 ```
 
-During forward pass, block masks are lazily created just before model execution:
+During forward pass, tree attention kwargs are built using `build_tree_attn_kwargs()`:
 
 ```python
+tree_attn_keys: list[str] = []
 if self.enable_tree_training and ctx.trie_node is not None:
-    if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
-        triton_attn_data = build_triton_attn_data_from_trie(ctx.trie_node, padded_size)
-        inputs["triton_attn_data"] = triton_attn_data
-    else:
-        block_mask = build_block_mask_from_trie(ctx.trie_node, padded_size, self.device)
-        inputs["block_mask"] = block_mask
+    padded_size = mb_item.padded_to_length
+    assert padded_size is not None
+    tree_kwargs = build_tree_attn_kwargs(
+        ctx.trie_node, padded_size, self.device
+    )
+    inputs.update(tree_kwargs)
+    tree_attn_keys = list(tree_kwargs.keys())
 ```
+
+The dict keys are `tree_block_mask` or `tree_triton_data` depending on the backend.
 
 ### Megatron Engine
 
@@ -179,23 +184,24 @@ instead of BlockMask objects, since `save_for_backward()` can only serialize ten
 
 **Key files:** `areal/experimental/engine/archon_engine.py`, `archon_runner.py`
 
-Archon uses `TreeAttentionWrapper` which handles tree attention internally:
+Archon uses `TreeAttentionMeta` which wraps the backend selection internally:
 
 ```python
 # In SequentialRunner.run()
+tree_attn_meta = None
 if ctx.trie_node is not None:
-    if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
-        triton_attn_data = build_triton_attn_data_from_trie(ctx.trie_node, padded_size)
-    else:
-        block_mask = build_block_mask_from_trie(ctx.trie_node, padded_size, device)
+    padded_size = mb_item.padded_to_length
+    assert padded_size is not None
+    tree_attn_meta = TreeAttentionMeta.from_trie(
+        ctx.trie_node, padded_size, inputs["input_ids"].device
+    )
 
 logits = self.model(
     inputs["input_ids"],
     inputs["position_ids"],
     cu_seqlens=cu_seqlens,
     max_seqlen=max_seqlen,
-    block_mask=block_mask,
-    triton_attn_data=triton_attn_data,
+    tree_attn_meta=tree_attn_meta,
 )
 ```
 
