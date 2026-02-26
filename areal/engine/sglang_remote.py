@@ -108,6 +108,8 @@ class SGLangBackend:
         if meta.use_lora:
             if not meta.lora_name:
                 raise ValueError("LoRA name is required for LoRA update.")
+            if meta.version is None:
+                raise ValueError("Version is required for LoRA update.")
             lora_name = get_versioned_lora_name(meta.lora_name, meta.version)
             # Load new LoRA
             requests = [

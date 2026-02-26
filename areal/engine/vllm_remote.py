@@ -123,6 +123,8 @@ class VLLMBackend:
     ) -> WeightUpdateRequests:
         """Build vLLM disk weight update requests."""
         if meta.use_lora:
+            if meta.version is None:
+                raise ValueError("Version is required for LoRA update.")
             lora_name = get_versioned_lora_name(meta.lora_name, meta.version)
             endpoint = "/v1/load_lora_adapter"
             payload = {
@@ -153,6 +155,8 @@ class VLLMBackend:
         }
 
         if meta.use_lora:
+            if meta.version is None:
+                raise ValueError("Version is required for LoRA update.")
             lora_name = get_versioned_lora_name(meta.lora_name, meta.version)
             lora_payload = {
                 "lora_name": lora_name,
