@@ -182,7 +182,7 @@ def _run_one_task(task_payload: dict):
 
             task.update_observation_from_action(function_call_part_list)
 
-        if task.state and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS:
+        if task.state and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS and _WORKER_TOOL_ROUTER.tool_mode != "direct":
             logger.info(f"[{task_id}] reached max tool calls {_WORKER_MAX_TOOL_CALLS}, forcing final answer.")
             force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
             task.append_prompt(force_prompt)
