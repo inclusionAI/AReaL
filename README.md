@@ -121,12 +121,12 @@ For comprehensive setup instructions, see
 
 ### Math & Reasoning
 
-| Task                                             | Description                                                                                  | Performance                                                       |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| **[Math](examples/math/)**                       | GSM8K math reasoning with GRPO, PPO, DAPO, REINFORCE, RLOO, LitePPO, DR-GRPO, GSPO, and more | -                                                                 |
-| **[Multi-Turn Math](examples/multi_turn_math/)** | Multi-turn math agent with reward discounting across turns                                   | [Training Curve](examples/multi_turn_math/reward_curve.png)       |
-| **[LoRA Math](examples/lora/)**                  | Parameter-efficient math training with LoRA (SGLang/vLLM backends)                           | -                                                                 |
-| **[Countdown](examples/countdown/)**             | Countdown numbers game with custom rewards                                                   | [Training Curve](examples/countdown/countdown_training_curve.png) |
+| Task                                                | Description                                                                                  | Performance                                                       |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **[Math](examples/math/)**                          | GSM8K math reasoning with GRPO, PPO, DAPO, REINFORCE, RLOO, LitePPO, DR-GRPO, GSPO, and more | -                                                                 |
+| **[Multi-Turn Math](examples/multi_turn_math/)**    | Multi-turn math agent with reward discounting across turns                                   | [Training Curve](examples/multi_turn_math/reward_curve.png)       |
+| **[LoRA Math](examples/math/gsm8k_grpo_lora.yaml)** | Parameter-efficient math training with LoRA (SGLang/vLLM backends)                           | -                                                                 |
+| **[Countdown](examples/countdown/)**                | Countdown numbers game with custom rewards                                                   | [Training Curve](examples/countdown/countdown_training_curve.png) |
 
 ### Agentic RL
 
