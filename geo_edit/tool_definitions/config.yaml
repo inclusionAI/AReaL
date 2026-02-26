@@ -1,13 +1,13 @@
 # Tool Enable Configuration - set true/false to enable/disable
 # Image editing tools (functions/)
-image_crop: true
-image_label: true
-draw_line: true
-bounding_box: true
-image_highlight: true
+image_crop: false
+image_label: false
+draw_line: false
+bounding_box: false
+image_highlight: false
 # VLM analysis tools (agents/)
-multimath: true
-gllava: true
-chartmoe: true
-ovr: true
+multimath: false
+gllava: false
+chartmoe: false
+ovr: false
  
