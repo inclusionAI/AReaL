@@ -121,8 +121,8 @@ python3 examples/tau2/train.py \
 
 ## Results
 
-The following figure shows the training reward curves for the two configurations, trained
-using the Archon engine:
+The following figure shows the training reward curves for the two configurations,
+trained using the Archon engine:
 
 ![Training Reward Curves](reward.png)
 
