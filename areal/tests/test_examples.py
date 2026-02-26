@@ -401,8 +401,12 @@ def test_gsm8k_ppo(tmp_path_factory):
     assert success, "GSM8K PPO example failed"
 
 
+@pytest.mark.parametrize(
+    "alloc_mode",
+    ["sglang:d1+fsdp:d1", "vllm:d1+fsdp:d1"],
+)
 @pytest.mark.multi_gpu
-def test_gsm8k_grpo_lora(tmp_path_factory):
+def test_gsm8k_grpo_lora(tmp_path_factory, alloc_mode):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = get_model_path(
@@ -410,13 +414,13 @@ def test_gsm8k_grpo_lora(tmp_path_factory):
     )
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
 
-    example_file = "examples/lora/gsm8k_grpo_lora.py"
-    config_name = "examples/lora/gsm8k_grpo_lora.yaml"
+    example_file = "examples/math/gsm8k_rl.py"
+    config_name = "examples/math/gsm8k_grpo_lora.yaml"
     success = run_async_task(
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
+        f"allocation_mode={alloc_mode}",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=1024",
@@ -428,6 +432,9 @@ def test_gsm8k_grpo_lora(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "scheduler.type=local",
+        "actor.weight_update_mode=disk",
+        single_controller=True,
     )
     assert success, "GSM8K GRPO LoRA example failed"
 

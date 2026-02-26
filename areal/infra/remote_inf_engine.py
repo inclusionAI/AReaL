@@ -126,7 +126,7 @@ class RemoteInfBackendProtocol(Protocol):
     """
 
     def build_generation_request(
-        self, req: ModelRequest, with_lora: bool
+        self, req: ModelRequest, with_lora: bool, version: int
     ) -> HttpRequest:
         """Build HTTP request for text generation.
 
@@ -136,6 +136,8 @@ class RemoteInfBackendProtocol(Protocol):
             The generation request containing input and parameters
         with_lora : bool
             Whether to specify a LoRA to use
+        version : int
+            The current weight version for versioned LoRA names
 
         Returns
         -------
@@ -162,7 +164,7 @@ class RemoteInfBackendProtocol(Protocol):
         ...
 
     def build_disk_weight_update_requests(
-        self, meta: WeightUpdateMeta, lora_initialized: bool
+        self, meta: WeightUpdateMeta
     ) -> WeightUpdateRequests:
         """Build requests for loading weights from disk.
 
@@ -170,10 +172,6 @@ class RemoteInfBackendProtocol(Protocol):
         ----------
         meta : WeightUpdateMeta
             Metadata containing path and configuration
-        lora_initialized : bool
-            Whether LoRA has been initialized in the server.
-            If so, we need to unload the previous LoRA before
-            uploading a new one.
 
         Returns
         -------
@@ -183,7 +181,9 @@ class RemoteInfBackendProtocol(Protocol):
         ...
 
     def build_distributed_weight_update_requests(
-        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
+        self,
+        meta: WeightUpdateMeta,
+        param_specs: list[ParamSpec],
     ) -> WeightUpdateRequests:
         """Build requests for distributed weight update via NCCL/XCCL.
 
@@ -347,8 +347,6 @@ class RemoteInfEngine(InferenceEngine):
         self._version = 0
 
         self.lock = Lock()
-
-        self.lora_initialized = False
 
         self._workflow_executor: WorkflowExecutor | None = None
         self._initialized = False
@@ -745,7 +743,11 @@ class RemoteInfEngine(InferenceEngine):
                 await asyncio.sleep(0.5)
 
             # Build request using backend
-            http_req = self.backend.build_generation_request(req, self.lora_initialized)
+            http_req = self.backend.build_generation_request(
+                req,
+                with_lora=self.config.use_lora,
+                version=self.get_version(),
+            )
 
             # Loop until the generation is complete
             result = await arequest_with_retry(
@@ -756,6 +758,11 @@ class RemoteInfEngine(InferenceEngine):
                 method=http_req.method,
                 max_retries=self.config.request_retries,
                 timeout=self.config.request_timeout,
+            )
+
+            # Assert response is JSON dict (not text/binary from error pages)
+            assert isinstance(result, dict), (
+                f"Expected JSON dict response, got {type(result).__name__}"
             )
 
             # Parse response using backend
@@ -902,7 +909,6 @@ class RemoteInfEngine(InferenceEngine):
         fut = get_executor().submit(
             _update_weights_from_disk,
             self.backend,
-            self.lora_initialized,
             self.config.experiment_name,
             self.config.trial_name,
             self.get_version(),
@@ -919,9 +925,6 @@ class RemoteInfEngine(InferenceEngine):
                 f"in {(time.perf_counter() - tik):.2f}s. "
                 f"Respond time: {respond_time:.2f}s."
             )
-            # Update LoRA state if this was a LoRA update
-            if meta.use_lora:
-                self.lora_initialized = True
             if meta.clear_checkpoint_after_load:
                 shutil.rmtree(meta.path, ignore_errors=True)
 
@@ -1213,7 +1216,6 @@ class RemoteInfEngine(InferenceEngine):
 
 def _update_weights_from_disk(
     backend: RemoteInfBackendProtocol,
-    lora_initialized: bool,
     experiment_name: str,
     trial_name: str,
     model_version: int,
@@ -1231,8 +1233,8 @@ def _update_weights_from_disk(
         save_timestamp = float(name_resolve.wait(update_name, timeout=120))
         load_timestamp = datetime.now().timestamp()
 
-        # Get requests from backend
-        weight_reqs = backend.build_disk_weight_update_requests(meta, lora_initialized)
+        # Get requests from backend with version for LoRA name
+        weight_reqs = backend.build_disk_weight_update_requests(meta)
 
         # Execute all requests
         async with aiohttp.ClientSession(

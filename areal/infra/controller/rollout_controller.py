@@ -441,18 +441,24 @@ class RolloutController:
             logger.error(f"Callback handler error: {e}")
             return jsonify({"error": str(e)}), 500
 
-        # Configure Werkzeug logging
-        import logging as stdlib_logging
-
-        werkzeug_logger = stdlib_logging.getLogger("werkzeug")
-        werkzeug_logger.setLevel(stdlib_logging.WARNING)
-
         self._callback_port = find_free_ports(1)[0]
         self._callback_host = gethostip()
         self._callback_app = app
         self._callback_server = make_server(
             self._callback_host, self._callback_port, app, threaded=False
         )
+
+        # Suppress Werkzeug access logs (e.g., "POST /callback/rollout_complete 200 -")
+        # Override log_request directly on the request handler class
+        self._callback_server.RequestHandlerClass.log_request = (
+            lambda self, *args, **kwargs: None
+        )
+
+        # Also configure Werkzeug logger level for any other log messages
+        import logging as stdlib_logging
+
+        werkzeug_logger = stdlib_logging.getLogger("werkzeug")
+        werkzeug_logger.setLevel(stdlib_logging.WARNING)
 
         def serve_forever():
             # Create and set event loop for this thread
