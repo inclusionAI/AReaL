@@ -126,8 +126,8 @@ trained using the Archon engine:
 
 ![Training Reward Curves](reward.png)
 
-- **Green line**: Qwen3-1.5B model (`config_1.7b_airline.yaml`)
-- **Purple line**: Qwen3-7B model (`config_8b_airline.yaml`)
+- **Green line**: Qwen3-1.7B model (`config_1.7b_airline.yaml`)
+- **Purple line**: Qwen3-8B model (`config_8b_airline.yaml`)
 
 ## Notes
 
