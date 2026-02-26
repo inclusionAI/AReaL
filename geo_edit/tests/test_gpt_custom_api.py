@@ -47,7 +47,7 @@ class Args:
 def test_gpt_custom_api_base_tool_call() -> None:
     """Test GPT with custom API base for tool calling."""
     api_key = os.environ.get("API_KEY")
-    api_base = "https://matrixllm.alipay.com"
+    api_base = "https://matrixllm.alipay.com/v1"
     model_name = "gpt-5-2025-08-07"
 
     # matrixllm API only supports chat_completions mode and does not support temperature
@@ -60,7 +60,7 @@ def test_gpt_custom_api_base_tool_call() -> None:
         image_path=Path("./geo_edit/images/173.jpg"),
         prompt=DEFAULT_PROMPT,
         system_prompt=None,
-        tool_mode="auto",
+        tool_mode="force",
         temperature=0.0 if is_matrixllm else 0.2,  # matrixllm does not support temperature
         max_tokens=16384,
         max_steps=MAX_TOOL_CALLS,

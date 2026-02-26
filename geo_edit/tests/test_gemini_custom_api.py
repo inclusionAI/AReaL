@@ -47,7 +47,7 @@ class Args:
 def test_gemini_custom_api_base_tool_call() -> None:
     """Test Gemini with custom OpenAI-compatible API base for tool calling."""
     api_key = os.environ.get("API_KEY")
-    api_base = "https://matrixllm.alipay.com"
+    api_base = "https://matrixllm.alipay.com/v1"
     model_name = "gemini-3-pro-preview"
 
     if not api_key:
