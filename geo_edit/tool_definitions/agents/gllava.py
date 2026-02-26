@@ -113,7 +113,6 @@ class GLLaVAActor(BaseToolModelActor):
             output_ids = self.model.generate(
                 input_ids,
                 images=image_tensor,
-                image_sizes=[image.size],
                 do_sample=temperature > 0,
                 temperature=temperature if temperature > 0 else None,
                 max_new_tokens=max_tokens,
