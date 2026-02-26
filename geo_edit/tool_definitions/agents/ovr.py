@@ -69,7 +69,10 @@ class OVRActor(BaseToolModelActor):
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        # Build Qwen2-VL style messages
+        # Build Qwen2-VL style messages with base64 data URL for vLLM
+        # vLLM expects image_url format, not raw PIL image
+        image_data_url = f"data:image/jpeg;base64,{image_b64}"
+
         messages = []
         if self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})
@@ -77,7 +80,7 @@ class OVRActor(BaseToolModelActor):
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": image},
+                    {"type": "image_url", "image_url": {"url": image_data_url}},
                     {"type": "text", "text": question},
                 ],
             }
