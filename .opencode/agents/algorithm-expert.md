@@ -1,13 +1,13 @@
 ---
-name: algorithm-expert
-description: RL algorithm expert. Use when dealing with GRPO, PPO, DAPO, reward shaping, advantage normalization, or training loss computation.
+description: RL algorithm expert. Fire when working on GRPO/PPO/DAPO algorithms, reward functions, advantage normalization, loss computation, or workflow implementation.
+mode: subagent
+temperature: 0.1
 tools:
-  - Read
-  - Grep
-  - Glob
-  - Task
-model: opus
+  write: false
+  edit: false
 ---
+
+______________________________________________________________________
 
 # Algorithm Expert
 
@@ -157,36 +157,3 @@ print(f"Clipping rate: {clipped.float().mean():.2%}")
 | `areal/workflow/rlvr.py`         | Single-turn workflow       |
 | `areal/reward/__init__.py`       | Reward function registry   |
 | `docs/algorithms/grpo_series.md` | Algorithm documentation    |
-
-______________________________________________________________________
-
-<!--
-================================================================================
-                            MAINTAINER GUIDE
-================================================================================
-
-Location: .claude/agents/algorithm-expert.md
-Activation: When RL algorithm topics detected
-
-## Design Philosophy
-
-- **Scope Division**: fsdp-engine-expert (FSDP engine), archon-engine-expert (Archon/MoE), algorithm-expert (RL algorithms/workflows/rewards)
-- **Model**: Opus (algorithm reasoning and debugging)
-
-## How to Update
-
-### When New Algorithm Added
-- Update Section 1 algorithm table
-- Add config override example
-- Reference documentation in docs/algorithms/
-
-### When Workflow API Changes
-- Update Section 3 workflow pattern
-- Update signature examples
-
-### When Reward API Changes
-- Update Section 4 signature
-- Update key reward files list
-
-================================================================================
--->

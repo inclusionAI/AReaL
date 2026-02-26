@@ -15,6 +15,7 @@ import torch.distributed as dist
 from torch import nn
 from torch.distributed.pipelining.schedules import (
     ScheduleDualPipeV,
+    ScheduleInterleavedZeroBubble,
     ScheduleZBVZeroBubble,
     get_schedule_class,
 )
@@ -291,9 +292,9 @@ class ArchonEngine(TrainEngine):
         ac_config = self._build_ac_config()
         enable_compile = self.config.archon.enable_compile
 
-        # V-style schedules (ZBVZeroBubble, DualPipeV) split backward into
-        # I (input grad) and W (weight grad) steps. This is incompatible with:
-        # 1. torch.compile - its donated buffer optimization assumes a single
+        # Zero-bubble schedules (InterleavedZeroBubble, ZBVZeroBubble, DualPipeV)
+        # use split backward (I/W steps). This is incompatible with:
+        # 1. torch.compile - donated buffer optimization assumes a single
         #    backward pass (retain_graph=False).
         # 2. Op-level selective AC - its per-op cache (storage.pop) is consumed
         #    by the I step, leaving nothing for the W step recompute.
@@ -301,8 +302,12 @@ class ArchonEngine(TrainEngine):
         # Full AC / layer-level selective AC use standard checkpoint_wrapper
         # whose gid-based recompute supports multiple backward passes.
         schedule_class = get_schedule_class(self.config.archon.pp_schedule)
-        v_style_schedules = (ScheduleZBVZeroBubble, ScheduleDualPipeV)
-        if schedule_class in v_style_schedules:
+        zero_bubble_schedules = (
+            ScheduleInterleavedZeroBubble,
+            ScheduleZBVZeroBubble,
+            ScheduleDualPipeV,
+        )
+        if schedule_class in zero_bubble_schedules:
             schedule_name = self.config.archon.pp_schedule
             if enable_compile:
                 self.logger.warning(

@@ -16,8 +16,12 @@ Test configuration:
         - test_pp_backward_4gpu: PP=4, manual gradient passing (1F1B)
 
     Schedule API Tests (2 GPU):
-        - test_pp_zbv_forward_2gpu: PP=2, schedule.eval() with ZBVZeroBubble
-        - test_pp_zbv_backward_2gpu: PP=2, schedule.step() with ZBVZeroBubble
+        - test_pp_zbv_2gpu[forward_schedule]: PP=2, schedule.eval() with ZBVZeroBubble
+        - test_pp_zbv_2gpu[backward_schedule]: PP=2, schedule.step() with ZBVZeroBubble
+
+    Schedule API Tests (4 GPU):
+        - test_pp_izb_4gpu[forward_schedule]: PP=4, schedule.eval() with InterleavedZeroBubble
+        - test_pp_izb_4gpu[backward_schedule]: PP=4, schedule.step() with InterleavedZeroBubble
 
     PP Combination Tests (4 GPU):
         - test_pp_tp_forward_4gpu: PP=2, TP=2, tests PP+TP combination
@@ -174,11 +178,13 @@ def test_pp_gradient_correctness_2gpu():
 
 @pytest.mark.multi_gpu
 @pytest.mark.slow
-def test_pp_zbv_forward_2gpu():
-    """Test ZBVZeroBubble forward pass with 2 GPUs (pp=2) via schedule API.
+@pytest.mark.parametrize("test_type", ["forward_schedule", "backward_schedule"])
+def test_pp_zbv_2gpu(test_type: str):
+    """Test ZBVZeroBubble forward/backward pass with 2 GPUs (pp=2) via schedule API.
 
     Validates that PP model with ZBVZeroBubble schedule produces correct output
-    using schedule.eval() API with V-style stage assignment.
+    using schedule.eval() and that gradients flow correctly using schedule.step()
+    with V-style stage assignment.
     """
     if current_platform.device_count() < 2:
         pytest.skip("This test requires 2 GPUs")
@@ -187,7 +193,7 @@ def test_pp_zbv_forward_2gpu():
         "areal/tests/experimental/archon/torchrun/run_pp_tests.py",
         n_gpus=2,
         extra_args=[
-            "--test_type=forward_schedule",
+            f"--test_type={test_type}",
             "--pp_size=2",
             "--pp_schedule=ZBVZeroBubble",
         ],
@@ -196,22 +202,24 @@ def test_pp_zbv_forward_2gpu():
 
 @pytest.mark.multi_gpu
 @pytest.mark.slow
-def test_pp_zbv_backward_2gpu():
-    """Test ZBVZeroBubble backward pass with 2 GPUs (pp=2) via schedule API.
+@pytest.mark.parametrize("test_type", ["forward_schedule", "backward_schedule"])
+def test_pp_izb_4gpu(test_type: str):
+    """Test InterleavedZeroBubble forward/backward pass with 4 GPUs (pp=4) via schedule API.
 
-    Validates that gradients flow correctly through all PP stages
-    using schedule.step() API with ZBVZeroBubble V-style stage assignment.
+    Validates that PP model with InterleavedZeroBubble (ZB1P) schedule produces
+    correct output using schedule.eval() and that gradients flow correctly using
+    schedule.step() with loop-style stage assignment.
     """
-    if current_platform.device_count() < 2:
-        pytest.skip("This test requires 2 GPUs")
+    if current_platform.device_count() < 4:
+        pytest.skip("This test requires 4 GPUs")
 
     _run_pp_test_with_torchrun(
         "areal/tests/experimental/archon/torchrun/run_pp_tests.py",
-        n_gpus=2,
+        n_gpus=4,
         extra_args=[
-            "--test_type=backward_schedule",
-            "--pp_size=2",
-            "--pp_schedule=ZBVZeroBubble",
+            f"--test_type={test_type}",
+            "--pp_size=4",
+            "--pp_schedule=InterleavedZeroBubble",
         ],
     )
 

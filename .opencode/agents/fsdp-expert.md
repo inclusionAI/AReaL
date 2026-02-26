@@ -1,13 +1,13 @@
 ---
-name: fsdp-engine-expert
-description: FSDPEngine usage and configuration expert. Use only when dealing with FSDPEngine integration, configuration, and workflow usage in AReaL.
+description: FSDPEngine configuration and usage expert. Fire when working on FSDP2 engine integration, parallel strategy setup, weight sync, or troubleshooting FSDP-related issues.
+mode: subagent
+temperature: 0.1
 tools:
-  - Read
-  - Grep
-  - Glob
-  - Task
-model: opus
+  write: false
+  edit: false
 ---
+
+______________________________________________________________________
 
 # FSDPEngine Usage Expert
 
@@ -142,18 +142,6 @@ Two mechanisms for updating rollout engines:
 For deeper issues, examine FSDP wrapping, communication patterns, or memory usage
 directly in `areal/engine/fsdp_engine.py`.
 
-## Getting Started
-
-### Setup and Configuration
-
-1. **Environment**: Install dependencies with `uv sync --extra cuda`
-1. **Configure**: Set up `ParallelStrategy` for model parallelism and
-   `TrainEngineConfig` with `FSDPEngineConfig` for training settings
-1. **Integration**: Reference configuration examples in YAML files under `examples/`
-   directory
-1. **Optimization**: Monitor memory usage, profile communication patterns, and adjust
-   parallel dimensions
-
 ## Implementation Structure
 
 **Core Engine**: `areal/engine/fsdp_engine.py` - Main engine class and
@@ -252,45 +240,3 @@ algorithm-specific subclasses
   optimization, and parallel helpers
 - **Model components**: `areal/models/fsdp/` for Ulysses sequence parallelism
 - **Examples**: YAML configuration files in `examples/` directory
-
-______________________________________________________________________
-
-<!--
-================================================================================
-                            MAINTAINER GUIDE
-================================================================================
-
-Location: .claude/agents/fsdp-engine-expert.md
-Activation: When FSDPEngine interface, configuration, or integration topics detected
-
-## Design Philosophy
-
-- **Usage-Focused Guidance**: Emphasize configuration, integration, and workflow usage over implementation details
-- **AReaL-Specific Context**: Highlight FSDPEngine's role in AReaL training workflows
-- **Practical Orientation**: Provide actionable configuration patterns and troubleshooting steps
-- **Model**: Opus (complex integration and configuration reasoning)
-
-## How to Update
-
-### When FSDPEngine Interface Changes
-1. Update "Configuration" section with new APIs and config options
-2. Update "Workflow Integration" examples and patterns
-3. Review "Common Usage Patterns" table for new scenarios
-
-### When New Configuration Options Added
-1. Add to configuration examples in "Configuration"
-2. Include in relevant "Common Usage Patterns" scenarios
-3. Update "Troubleshooting" guide if needed
-
-### When Implementation Structure Changes
-1. Update "Implementation Structure" section with new components and file paths
-2. Verify all referenced paths are correct and accessible
-3. Ensure structure reflects current FSDPEngine architecture
-
-### When Integration Patterns Change
-1. Update "Workflow Integration" section
-2. Review "Getting Started" examples
-3. Update "Resources" section with new file paths
-
-================================================================================
--->
