@@ -1,6 +1,6 @@
 # Tool Enable Configuration - set true/false to enable/disable
 # Image editing tools (functions/)
-image_crop: false
+image_crop: true
 image_label: false
 draw_line: false
 bounding_box: false

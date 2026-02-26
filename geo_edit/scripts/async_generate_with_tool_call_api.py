@@ -91,7 +91,7 @@ def _init_worker(
             api_mode=api_mode,
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            reasoning_level="high" if model_type == "OpenAI" else None,
+            reasoning_level="low" if model_type == "OpenAI" else None,
             system_prompt=system_prompt,
         )
         _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask

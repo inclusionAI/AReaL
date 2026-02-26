@@ -117,7 +117,7 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
 
 def main(
     *,
-    default_model: str = "gpt-5-mini",
+    default_model: str = "gpt-5-mini-2025-08-07",
     default_api_base: Optional[str] = None,
     description: str = "Batch evaluate results with OpenAI judge.",
 ) -> None:
