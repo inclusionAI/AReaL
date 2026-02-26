@@ -29,7 +29,7 @@ agent_config = {
 
 
 class MultiMathActor(BaseToolModelActor):
-    """MultiMath VLM Actor using transformers inference."""
+    """MultiMath VLM Actor using LLaVA model builder."""
 
     def __init__(
         self,
@@ -38,22 +38,27 @@ class MultiMathActor(BaseToolModelActor):
         gpu_memory_utilization: float = 0.8,
         system_prompt: Optional[str] = None,
     ):
-        import torch
-        from transformers import AutoProcessor, LlavaForConditionalGeneration
-
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
         self.model_name = model_name
         self.system_prompt = system_prompt or ""
         self.max_model_len = max_model_len
 
-        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, use_fast=True)
-        self.model = LlavaForConditionalGeneration.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16,
+        # Use LLaVA model builder for proper loading
+        from geo_edit.models.llava.model.builder import load_pretrained_model
+        from geo_edit.models.llava.mm_utils import get_model_name_from_path
+
+        model_path = model_name
+        model_base = None
+        llava_model_name = get_model_name_from_path(model_path)
+
+        self.tokenizer, self.model, self.image_processor, self.context_len = load_pretrained_model(
+            model_path,
+            model_base,
+            llava_model_name,
             device_map=self.device_map,
-            trust_remote_code=True,
         )
+
         self._initialized = True
         logger.info("MultiMathActor initialized on GPU %s: %s", self.gpu_ids, model_name)
 
@@ -68,35 +73,62 @@ class MultiMathActor(BaseToolModelActor):
         import torch
         from PIL import Image
 
+        from geo_edit.models.llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
+        from geo_edit.models.llava.conversation import conv_templates
+        from geo_edit.models.llava.mm_utils import tokenizer_image_token, process_images
+
         # Decode base64 image
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        # Build prompt with system prompt
-        if self.system_prompt:
-            prompt = f"USER: <image>\n{self.system_prompt}\n{question}\nASSISTANT:"
+        # Process image
+        image_tensor = process_images([image], self.image_processor, self.model.config)
+        if isinstance(image_tensor, list):
+            image_tensor = [img.to(self.model.device, dtype=torch.float16) for img in image_tensor]
         else:
-            prompt = f"USER: <image>\n{question}\nASSISTANT:"
+            image_tensor = image_tensor.to(self.model.device, dtype=torch.float16)
 
-        # Process inputs
-        inputs = self.processor(text=prompt, images=image, return_tensors="pt")
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+        # Build prompt with conversation template
+        conv = conv_templates["llava_v1"].copy()
+        if self.system_prompt:
+            full_question = f"{self.system_prompt}\n{question}"
+        else:
+            full_question = question
+
+        # Add image token to the question
+        inp = DEFAULT_IMAGE_TOKEN + "\n" + full_question
+        conv.append_message(conv.roles[0], inp)
+        conv.append_message(conv.roles[1], None)
+        prompt = conv.get_prompt()
+
+        # Tokenize
+        input_ids = tokenizer_image_token(
+            prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
+        )
+        if not isinstance(input_ids, torch.Tensor):
+            input_ids = torch.tensor(input_ids, dtype=torch.long)
+        input_ids = input_ids.unsqueeze(0).to(self.model.device)
 
         # Generate
         with torch.no_grad():
-            generate_kwargs = {
-                "max_new_tokens": max_tokens,
-                "do_sample": temperature > 0,
-            }
-            if temperature > 0:
-                generate_kwargs["temperature"] = temperature
-            output_ids = self.model.generate(**inputs, **generate_kwargs)
+            output_ids = self.model.generate(
+                input_ids,
+                images=image_tensor,
+                image_sizes=[image.size],
+                do_sample=temperature > 0,
+                temperature=temperature if temperature > 0 else None,
+                max_new_tokens=max_tokens,
+                use_cache=True,
+            )
 
-        # Decode output (skip input tokens)
-        input_len = inputs["input_ids"].shape[1]
-        generated_text = self.processor.decode(
-            output_ids[0][input_len:], skip_special_tokens=True
-        )
+        # Decode output
+        generated_text = self.tokenizer.decode(
+            output_ids[0], skip_special_tokens=True
+        ).strip()
+
+        # Remove the prompt from output if present
+        if generated_text.startswith(prompt):
+            generated_text = generated_text[len(prompt):].strip()
 
         return self._parse_output(generated_text)
 
