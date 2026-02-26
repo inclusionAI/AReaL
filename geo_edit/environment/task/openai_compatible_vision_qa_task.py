@@ -268,9 +268,16 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         content = message.content or ""
         native_tool_calls = message.tool_calls
 
-        # Extract thinking/answer from tags
-        thinking_parts = [m.group(1).strip() for m in self._THINK_PATTERN.finditer(content)]
-        thinking_process = "\n".join(part for part in thinking_parts if part)
+        # Extract structured reasoning from OpenAI/matrixllm response
+        thinking_process = ""
+        if hasattr(message, "reasoning_content") and message.reasoning_content:
+            thinking_process = message.reasoning_content
+
+        # Fallback: extract thinking from <think> tags
+        if not thinking_process:
+            thinking_parts = [m.group(1).strip() for m in self._THINK_PATTERN.finditer(content)]
+            thinking_process = "\n".join(part for part in thinking_parts if part)
+
         answer_parts = [m.group(1).strip() for m in self._ANSWER_PATTERN.finditer(content)]
         output_text = "\n".join(part for part in answer_parts if part)
 

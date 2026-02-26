@@ -195,7 +195,7 @@ def build_api_agent_configs(
         generate_config["parallel_tool_calls"] = False  # Only allow one tool call at a time
     if api_mode == "responses":
         if reasoning_level is not None:
-            generate_config["reasoning"] = {"effort": reasoning_level}
+            generate_config["reasoning"] = {"effort": reasoning_level, "summary": "auto"}
         if system_prompt is not None:
             generate_config["instructions"] = system_prompt
     elif api_mode == "chat_completions":
