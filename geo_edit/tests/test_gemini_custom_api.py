@@ -46,9 +46,9 @@ class Args:
 
 def test_gemini_custom_api_base_tool_call() -> None:
     """Test Gemini with custom OpenAI-compatible API base for tool calling."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    api_base = os.environ.get("GEMINI_API_BASE", "")
-    model_name = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+    api_key = os.environ.get("API_KEY")
+    api_base = "https://matrixllm.alipay.com"
+    model_name = "gemini-3-pro-preview"
 
     if not api_key:
         pytest.skip("GEMINI_API_KEY environment variable not set")

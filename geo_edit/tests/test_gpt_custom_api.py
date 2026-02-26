@@ -46,12 +46,10 @@ class Args:
 
 def test_gpt_custom_api_base_tool_call() -> None:
     """Test GPT with custom API base for tool calling."""
-    api_key = os.environ.get("OPENAI_API_KEY")
-    api_base = os.environ.get("OPENAI_API_BASE", "")
-    model_name = os.environ.get("OPENAI_MODEL_NAME", "gpt-4o")
+    api_key = os.environ.get("API_KEY")
+    api_base = "https://matrixllm.alipay.com"
+    model_name = "gpt-5-2025-08-07"
 
-    if not api_key:
-        pytest.skip("OPENAI_API_KEY environment variable not set")
 
     args = Args(
         api_base=api_base if api_base else None,
