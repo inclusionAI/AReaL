@@ -42,6 +42,7 @@ and </think> tags, then give your final answer
 between <answer> and </answer> tags.
 '''
 
+
 VLLM_FORCE_TOOL_CALL_PROMPT = """
 Force tool-call mode:
 1. ALWAYS call the appropriate tool first;
