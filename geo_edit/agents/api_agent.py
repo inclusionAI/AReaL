@@ -159,6 +159,9 @@ class APIBasedAgent(BaseAgent):
 
         if self.config.api_base and "matrixllm" in self.config.api_base:
             gen_kwargs.pop("temperature", None)  # matrixllm API does not support temperature parameter
+            # matrixllm uses max_completion_tokens instead of max_tokens
+            if "max_tokens" in gen_kwargs:
+                gen_kwargs["max_completion_tokens"] = gen_kwargs.pop("max_tokens")
 
         response = self.client.chat.completions.create(
             model=self.model,

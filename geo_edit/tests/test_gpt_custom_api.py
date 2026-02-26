@@ -50,6 +50,8 @@ def test_gpt_custom_api_base_tool_call() -> None:
     api_base = "https://matrixllm.alipay.com"
     model_name = "gpt-5-2025-08-07"
 
+    # matrixllm API only supports chat_completions mode and does not support temperature
+    is_matrixllm = api_base and "matrixllm" in api_base
 
     args = Args(
         api_base=api_base if api_base else None,
@@ -59,10 +61,13 @@ def test_gpt_custom_api_base_tool_call() -> None:
         prompt=DEFAULT_PROMPT,
         system_prompt=None,
         tool_mode="auto",
-        temperature=0.2,
+        temperature=0.0 if is_matrixllm else 0.2,  # matrixllm does not support temperature
         max_tokens=16384,
         max_steps=MAX_TOOL_CALLS,
     )
+
+    # matrixllm only supports chat_completions mode
+    api_mode = "chat_completions" if is_matrixllm else "responses"
 
     save_dir = Path("./gpt_custom_api_test")
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -70,6 +75,7 @@ def test_gpt_custom_api_base_tool_call() -> None:
     use_tools = args.tool_mode != "direct"
     tool_router = ToolRouter(tool_mode=args.tool_mode)
     tool_functions = tool_router.get_available_tools() if use_tools else {}
+    tool_return_types = tool_router.get_tool_return_types() if use_tools else {}
 
     if args.system_prompt is not None:
         system_prompt = args.system_prompt
@@ -80,7 +86,7 @@ def test_gpt_custom_api_base_tool_call() -> None:
 
     agent_configs = build_api_agent_configs(
         tool_router,
-        api_mode="responses",
+        api_mode=api_mode,
         max_output_tokens=args.max_tokens,
         temperature=args.temperature,
         system_prompt=system_prompt,
@@ -93,7 +99,7 @@ def test_gpt_custom_api_base_tool_call() -> None:
         api_base=args.api_base,
         generate_config=agent_configs.generate_config,
         n_retry=3,
-        api_mode="responses",
+        api_mode=api_mode,
     )
 
     agent = APIBasedAgent(config)
@@ -106,8 +112,9 @@ def test_gpt_custom_api_base_tool_call() -> None:
         task_image_path=str(args.image_path),
         save_dir=save_dir,
         tool_functions=tool_functions,
+        tool_return_types=tool_return_types,
         model_type="openai",
-        api_mode="responses",
+        api_mode=api_mode,
     )
 
     logger.info("Model: %s", args.model_name)
