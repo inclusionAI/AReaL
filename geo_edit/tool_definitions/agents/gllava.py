@@ -120,9 +120,17 @@ class GLLaVAActor(BaseToolModelActor):
             )
 
         # Decode output
+        vocab_size = len(self.tokenizer)
+        output_ids_list = output_ids[0].tolist()
+        logger.info("Generated %d tokens, vocab_size=%d", len(output_ids_list), vocab_size)
+        logger.info("Token ID range: min=%d, max=%d", min(output_ids_list), max(output_ids_list))
+        invalid_ids = [tid for tid in output_ids_list if tid < 0 or tid >= vocab_size]
+        if invalid_ids:
+            logger.warning("Found %d invalid token ids (out of vocab range): %s", len(invalid_ids), invalid_ids[:10])
         generated_text = self.tokenizer.decode(
             output_ids[0], skip_special_tokens=True
         ).strip()
+        logger.info("Generated text: %s", generated_text)
 
         # Remove the prompt from output if present
         if generated_text.startswith(prompt):
