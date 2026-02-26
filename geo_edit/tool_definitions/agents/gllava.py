@@ -116,7 +116,7 @@ class GLLaVAActor(BaseToolModelActor):
                 do_sample=temperature > 0,
                 temperature=temperature if temperature > 0 else None,
                 max_new_tokens=max_tokens,
-                use_cache=True,
+                use_cache=False,
             )
 
         # Decode output
