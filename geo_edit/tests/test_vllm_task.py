@@ -63,6 +63,7 @@ def test_vllm_task() -> None:
     use_tools = args.tool_mode != "direct"
     tool_router = ToolRouter(tool_mode=args.tool_mode)
     tool_functions = tool_router.get_available_tools() if use_tools else {}
+    tool_return_types = tool_router.get_tool_return_types() if use_tools else {}
 
     if args.system_prompt is not None:
         system_prompt = args.system_prompt
@@ -100,6 +101,7 @@ def test_vllm_task() -> None:
         task_image_path=str(args.image_path),
         save_dir=save_dir,
         tool_functions=tool_functions,
+        tool_return_types=tool_return_types,
         model_type="vllm",
         api_mode="responses",
     )
