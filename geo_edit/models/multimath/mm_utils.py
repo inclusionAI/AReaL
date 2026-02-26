@@ -6,7 +6,7 @@ import math
 import ast
 
 from transformers import StoppingCriteria
-from geo_edit.models.llava.constants import IMAGE_TOKEN_INDEX
+from geo_edit.models.multimath.constants import IMAGE_TOKEN_INDEX
 
 
 def select_best_resolution(original_size, possible_resolutions):

@@ -43,9 +43,9 @@ class GLLaVAActor(BaseToolModelActor):
         self.system_prompt = system_prompt or ""
         self.max_model_len = max_model_len
 
-        # Use LLaVA model builder for proper loading
-        from geo_edit.models.llava.model.builder import load_pretrained_model
-        from geo_edit.models.llava.mm_utils import get_model_name_from_path
+        # Use G-LLaVA model builder for proper loading
+        from geo_edit.models.gllava.model.builder import load_pretrained_model
+        from geo_edit.models.gllava.mm_utils import get_model_name_from_path
 
         model_path = model_name
         model_base = None
@@ -72,9 +72,9 @@ class GLLaVAActor(BaseToolModelActor):
         import torch
         from PIL import Image
 
-        from geo_edit.models.llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
-        from geo_edit.models.llava.conversation import conv_templates
-        from geo_edit.models.llava.mm_utils import tokenizer_image_token, process_images
+        from geo_edit.models.gllava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
+        from geo_edit.models.gllava.conversation import conv_templates
+        from geo_edit.models.gllava.mm_utils import tokenizer_image_token, process_images
 
         # Decode base64 image
         image_bytes = base64.b64decode(image_b64)

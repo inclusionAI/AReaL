@@ -6,7 +6,7 @@ import sys
 
 import requests
 
-from geo_edit.models.llava.constants import LOGDIR
+from geo_edit.models.multimath.constants import LOGDIR
 
 server_error_msg = "**NETWORK ERROR DUE TO HIGH TRAFFIC. PLEASE REGENERATE OR REFRESH THIS PAGE.**"
 moderation_msg = "YOUR INPUT VIOLATES OUR CONTENT MODERATION GUIDELINES. PLEASE TRY AGAIN."

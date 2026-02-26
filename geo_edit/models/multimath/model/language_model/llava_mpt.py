@@ -19,7 +19,7 @@ import torch
 
 from transformers import AutoConfig, AutoModelForCausalLM, \
                          MptConfig, MptForCausalLM, MptModel
-from geo_edit.models.llava.model.llava_arch import LlavaMetaModel, LlavaMetaForCausalLM
+from geo_edit.models.multimath.model.llava_arch import LlavaMetaModel, LlavaMetaForCausalLM
 
 
 class LlavaMptConfig(MptConfig):
