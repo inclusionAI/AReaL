@@ -118,7 +118,7 @@ ACTOR_CLASS = ChartMoEActor
 
 DECLARATION = {
     "name": "chartmoe",
-    "description": "Use a chart-analysis VLM tool to read charts from images and return structured outputs (e.g., table/JSON) plus chart-grounded analysis. It can extract chart elements, visible values/relationships, trends, and key observations for downstream reasoning.",
+    "description": "Use a chart-analysis VLM tool to read charts from images and return structured outputs (e.g., table/JSON) plus chart-grounded analysis. It can extract chart elements, visible values/relationships, trends, and key observations for downstream reasoning. You should input the index of the image to analyze and a question about it, the question should contain clear instructions and necessary information for the analysis.",
     "parameters": {
         "type": "object",
         "properties": {

@@ -154,7 +154,7 @@ ACTOR_CLASS = MultiMathActor
 
 DECLARATION = {
     "name": "multimath",
-    "description": "Use a multimodal math-vision parsing tool to process math-problem images, returning either LaTeX OCR (for expression-only images) or a detailed English description of diagrams/plots/charts with all visible text, symbols, labels, and markers for downstream reasoning.",
+    "description": "Use a multimodal math-vision parsing tool to process math-problem images, returning either LaTeX OCR (for expression-only images) or a detailed English description of diagrams/plots/charts with all visible text, symbols, labels, and markers for downstream reasoning.  You should input the index of the image to analyze and a question about it, the question should contain clear instructions and necessary information for the analysis.",
     "parameters": {
         "type": "object",
         "properties": {

@@ -21,7 +21,7 @@ tool call immediately after your reasoning.
 4. Reasoning After Action: Once you receive the
 output from a tool, you must analyze the results to
 determine if further actions are needed or if the task
-is complete. Output this analysis inside <think> and </think> tags;
+is complete. Output this analysis inside <think> and </think> tags and then decide your next step, which could be calling another tool or providing the final answer.;
 5. Final Output: When you have formulated your
 conclusion, you must wrap your final answer in
 <answer> and </answer> tags.

@@ -115,6 +115,28 @@ def test_vllm_task() -> None:
         action, extra_info = agent.act(task.contents)
         assert not isinstance(action, str)
 
+        # Debug: check if vLLM returns structured reasoning
+        logger.info("=== Step %d Response Structure ===", step)
+        has_structured_reasoning = False
+        has_function_call = False
+        if hasattr(action, "output"):
+            for item in action.output:
+                item_type = getattr(item, "type", "unknown")
+                if item_type == "reasoning":
+                    has_structured_reasoning = True
+                    logger.info("Found structured reasoning: %s", item)
+                elif item_type == "function_call":
+                    has_function_call = True
+                    logger.info("Found function_call: name=%s", getattr(item, "name", "unknown"))
+        logger.info("Has structured reasoning: %s, Has function_call: %s", has_structured_reasoning, has_function_call)
+        if hasattr(action, "output_text"):
+            raw_text = action.output_text or ""
+            has_think_tag = "<think>" in raw_text.lower()
+            logger.info("Has <think> tag in output_text: %s", has_think_tag)
+            if has_think_tag:
+                logger.info("output_text preview: %s...", raw_text[:300])
+        logger.info("=== End Response Structure ===")
+
         tool_calls = task.parse_action(step=step, action=action, extra_info=extra_info)
         if not tool_calls:
             output_text = task.conversation_history[-1]["output_text"]

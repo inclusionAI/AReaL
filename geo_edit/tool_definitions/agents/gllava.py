@@ -151,7 +151,7 @@ ACTOR_CLASS = GLLaVAActor
 
 DECLARATION = {
     "name": "gllava",
-    "description": "Use a geometry-analysis VLM tool to analyze geometric figures and return image-grounded intermediate reasoning (elements, relations, constraints, and useful derivations).",
+    "description": "Use a geometry-analysis VLM tool to analyze geometric figures and return image-grounded intermediate reasoning (elements, relations, constraints, and useful derivations). You should input the index of the image to analyze and a question about it, the question should contain clear instructions and necessary information for the analysis. ",
     "parameters": {
         "type": "object",
         "properties": {
