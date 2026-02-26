@@ -1370,9 +1370,6 @@ class SGLangConfig:
             raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
         if is_version_less("sglang", "0.4.10.post2"):
             args.pop("max_loaded_loras", None)
-
-        if sglang_config.enable_return_routed_experts:
-            args["enable_return_routed_experts"] = True
         return args
 
 
