@@ -47,7 +47,7 @@ class MultiMathActor(BaseToolModelActor):
         self.system_prompt = system_prompt or ""
         self.max_model_len = max_model_len
 
-        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, use_fast=True)
         self.model = LlavaForConditionalGeneration.from_pretrained(
             model_name,
             torch_dtype=torch.float16,
