@@ -115,6 +115,15 @@ class RolloutController:
         self.proxy_addrs: list[str] = []
         self._proxy_started = False
 
+    @property
+    def _proxy_role(self) -> str:
+        """Generate a unique proxy role name based on the worker role.
+
+        This avoids collisions when multiple controllers (e.g., rollout and
+        eval-rollout) each fork proxy workers into the same scheduler.
+        """
+        return f"proxy-{self._worker_role}"
+
     def _engine_name(self, rank: int) -> str:
         """Generate engine name for a worker rank.
 
@@ -285,7 +294,7 @@ class RolloutController:
         # Delete proxy workers if initialized
         if self._proxy_started:
             try:
-                self.scheduler.delete_workers(role="proxy")
+                self.scheduler.delete_workers(role=self._proxy_role)
                 logger.info("Proxy workers deleted")
             except Exception as e:
                 logger.error(f"Error deleting proxy workers: {e}")
@@ -319,13 +328,13 @@ class RolloutController:
         """Async implementation of proxy worker initialization."""
         command = "areal.experimental.openai.proxy.proxy_rollout_server"
         worker_ids = self.scheduler.fork_workers(
-            role="proxy",
+            role=self._proxy_role,
             target_role=self._worker_role,
             command=command,
         )
         logger.info(f"Proxy workers forked: {worker_ids}")
 
-        self.proxy_workers = self.scheduler.get_workers(role="proxy")
+        self.proxy_workers = self.scheduler.get_workers(role=self._proxy_role)
         logger.info(f"Proxy workers: {[w.id for w in self.proxy_workers]}")
 
         engine_class = f"{self.inf_engine.__module__}.{self.inf_engine.__name__}"
@@ -336,7 +345,7 @@ class RolloutController:
                 self.scheduler.create_engine(
                     worker_id=worker.id,
                     engine=engine_class,
-                    engine_name=f"proxy/{rank}",
+                    engine_name=self._proxy_engine_name(rank),
                     config=self.config,
                 )
             )
@@ -351,7 +360,7 @@ class RolloutController:
                 self.scheduler.async_call_engine(
                     worker_id=worker.id,
                     method="initialize",
-                    engine_name=f"proxy/{rank}",
+                    engine_name=self._proxy_engine_name(rank),
                     addr=f"{server_info.host}:{server_info.port}",
                 )
             )
@@ -520,6 +529,28 @@ class RolloutController:
                 **kwargs,
             )
             for rank, worker in enumerate(self.workers)
+        ]
+        return await asyncio.gather(*tasks)
+
+    def _proxy_collective_rpc(self, method: str, *args, **kwargs) -> list[Any]:
+        return run_async_task(self._proxy_collective_rpc_async, method, *args, **kwargs)
+
+    def _proxy_engine_name(self, rank: int) -> str:
+        """Generate engine name for a proxy worker rank."""
+        return f"{self._proxy_role}/{rank}"
+
+    async def _proxy_collective_rpc_async(
+        self, method: str, *args, **kwargs
+    ) -> list[Any]:
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker_id=worker.id,
+                method=method,
+                engine_name=self._proxy_engine_name(rank),
+                *args,
+                **kwargs,
+            )
+            for rank, worker in enumerate(self.proxy_workers)
         ]
         return await asyncio.gather(*tasks)
 
@@ -859,6 +890,10 @@ class RolloutController:
         with self._version_lock:
             self._version = version
             self._collective_rpc("set_version", version=version, http_timeout=60.0)
+            if self._proxy_started:
+                self._proxy_collective_rpc(
+                    "set_version", version=version, http_timeout=60.0
+                )
 
     def get_version(self) -> int:
         with self._version_lock:

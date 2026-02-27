@@ -772,9 +772,8 @@ class RemoteInfEngine(InferenceEngine):
             # Update accumulated outputs
             accumulated_output_tokens.extend(gen_result.output_tokens)
             accumulated_output_logprobs.extend(gen_result.output_logprobs)
-            accumulated_versions.extend(
-                [self.get_version()] * len(gen_result.output_tokens)
-            )
+            cur_ver = self.get_version()
+            accumulated_versions.extend([cur_ver] * len(gen_result.output_tokens))
 
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens

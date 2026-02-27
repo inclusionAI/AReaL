@@ -246,6 +246,9 @@ async def call_engine_method(raw_request: Request):
     args = deserialize_value(data.get("args", []))
     kwargs = deserialize_value(data.get("kwargs", {}))
 
+    if method_name == "set_version":
+        logger.info(f"Proxy set_version args={args} kwargs={kwargs}")
+
     method = getattr(_engine, method_name)
     result = method(*args, **kwargs)
 
