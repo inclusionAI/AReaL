@@ -21,7 +21,7 @@ def acc_reward(predict_str: str, ground_truth: str) -> float:
 
 
 def virl39k_reward_fn(
-    _prompt, completions, _prompt_ids, _completion_ids, answer, **_kwargs
+    prompt, completions, prompt_ids, completion_ids, answer, **kwargs
 ):
     format_reward_val = format_reward(completions)
     acc_reward_val = acc_reward(completions, answer)
