@@ -69,7 +69,7 @@ def _init_worker(
     # Determine api_mode based on model_type
     if model_type == "Google":
         api_mode = "google"
-    elif model_type == "SGLang" or "matrixllm" in api_base:
+    elif model_type == "SGLang" or (api_base is not None and "matrixllm" in api_base):
         api_mode = "chat_completions"
     else:
         api_mode = "responses"
