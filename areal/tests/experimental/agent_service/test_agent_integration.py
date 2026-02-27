@@ -222,7 +222,7 @@ class TestAgentServiceIntegration:
 
             # Get proxy and agent service addresses
             proxy_addr = rollout.get_proxy_addr(0)
-            agent_addr = rollout.get_agent_addr(0)
+            agent_addr = rollout.get_agent_service_addr(0)
             assert proxy_addr.startswith("http://")
             assert agent_addr.startswith("http://")
 
@@ -303,7 +303,7 @@ class TestAgentServiceIntegration:
             )
 
             proxy_addr = rollout.get_proxy_addr(0)
-            agent_addr = rollout.get_agent_addr(0)
+            agent_addr = rollout.get_agent_service_addr(0)
 
             # Wait for Agent Service to be ready
             wait_for_agent_service(agent_addr)
