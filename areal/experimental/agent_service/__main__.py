@@ -58,6 +58,12 @@ def _parse_args() -> argparse.Namespace:
         default=1,
         help="Number of worker processes (default: 1)",
     )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="Directory for log files (standalone mode only).",
+    )
 
     # Agent config (CLI args, override environment variables)
     parser.add_argument(
@@ -100,7 +106,7 @@ def _parse_args() -> argparse.Namespace:
         "--fileroot",
         type=str,
         default=None,
-        help="Root directory for log files (unused, for compatibility)",
+        help="Accepted for CLI compatibility with scheduler, not used by agent service.",
     )
     return parser.parse_known_args()[0]
 
@@ -238,10 +244,16 @@ def main() -> None:
             "Use --standalone to run without framework integration."
         )
 
+    # Set up file logging only in standalone mode.
+    if is_standalone:
+        log_dir = args.log_dir
+        if log_dir is not None:
+            logging.setup_file_logging(log_dir, filename="agent_service.log")
+            logger.info(f"Logging to {log_dir}")
+
     mode_str = "shared" if agent_reuse else "per-request"
     path_str = agent_import_path or "(dynamic)"
     workers_str = f", workers={workers}" if workers > 1 else ""
-
     if not is_standalone:
         # Framework mode: configure name_resolve and register
         worker_index = _resolve_worker_index(args)
