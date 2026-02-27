@@ -3,7 +3,7 @@
 This module provides the command-line entry point for running the Agent Service
 as a standalone process. The Agent Service can be started via:
 
-    python -m areal.experimental.agent_service --experiment-name exp --trial-name trial --role agent
+    python -m areal.experimental.agent_service --standalone --port 8300 --agent-import-path your.Agent
 
 The Agent Service runs agent.run() in an independent process, accepting HTTP
 requests from OpenAIProxyWorkflow (mode="service").
@@ -78,7 +78,15 @@ def _parse_args() -> argparse.Namespace:
         help="JSON-encoded agent init kwargs (overrides AGENT_INIT_KWARGS)",
     )
 
-    # Framework integration (optional for standalone mode)
+    # Standalone mode flag
+    parser.add_argument(
+        "--standalone",
+        action="store_true",
+        help="Run in standalone mode without framework integration "
+        "(skip name_resolve registration)",
+    )
+
+    # Framework integration (required when not using --standalone)
     parser.add_argument("--experiment-name", type=str, default=None)
     parser.add_argument("--trial-name", type=str, default=None)
     parser.add_argument("--role", type=str, default=None)
@@ -222,8 +230,13 @@ def main() -> None:
     port = args.port if args.port != 0 else find_free_ports(1)[0]
     workers = args.workers
 
-    # Determine if running in standalone mode (no experiment-name means standalone)
-    is_standalone = args.experiment_name is None
+    # Determine if running in standalone mode
+    is_standalone = args.standalone
+    if not is_standalone and args.experiment_name is None:
+        raise ValueError(
+            "--experiment-name is required in framework mode. "
+            "Use --standalone to run without framework integration."
+        )
 
     mode_str = "shared" if agent_reuse else "per-request"
     path_str = agent_import_path or "(dynamic)"
