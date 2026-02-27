@@ -144,6 +144,8 @@ class APIBasedAgent(BaseAgent):
 
         # Extract system_prompt from config (not a valid API parameter)
         system_prompt = gen_kwargs.pop("_system_prompt", None)
+        # Extract reasoning_level for dynamic handling based on model type
+        reasoning_level = gen_kwargs.pop("_reasoning_level", None)
 
         # Extract messages
         if isinstance(model_input, dict) and "messages" in model_input:
@@ -162,6 +164,23 @@ class APIBasedAgent(BaseAgent):
             # matrixllm uses max_completion_tokens instead of max_tokens
             if "max_tokens" in gen_kwargs:
                 gen_kwargs["max_completion_tokens"] = gen_kwargs.pop("max_tokens")
+
+            # Handle reasoning based on model type
+            if reasoning_level is not None:
+                if "gemini" in self.model.lower():
+                    # For Gemini models: use extra_body with thinking_config
+                    gen_kwargs["extra_body"] = {
+                        "google": {
+                            "thinking_config": {
+                                "include_thoughts": True,
+                                "thinking_level": reasoning_level,
+                            },
+                            "thought_tag_marker": "think",
+                        }
+                    }
+                else:
+                    # For GPT models: use reasoning_effort
+                    gen_kwargs["reasoning_effort"] = reasoning_level
 
         response = self.client.chat.completions.create(
             model=self.model,

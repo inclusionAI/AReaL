@@ -202,9 +202,10 @@ def build_api_agent_configs(
         # Store system_prompt in config for injection in api_agent
         if system_prompt is not None:
             generate_config["_system_prompt"] = system_prompt
-        # reasoning_effort for chat_completions API (e.g., matrixllm)
+        # Store reasoning_level for chat_completions API
+        # Will be converted to reasoning_effort (GPT) or extra_body (Gemini) in api_agent
         if reasoning_level is not None:
-            generate_config["reasoning_effort"] = reasoning_level
+            generate_config["_reasoning_level"] = reasoning_level
 
     # Build force_final config (copy and override tool_choice)
     force_final_generate_config = generate_config.copy()
