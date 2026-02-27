@@ -160,3 +160,10 @@ class GoogleVisionQATask(VisionQATask):
 
     def append_prompt(self, prompt: str) -> None:
         self.contents.append(prompt)
+
+    def append_assistant_message(self, text: str) -> None:
+        """Append an assistant message to contents."""
+        from google.genai import types
+        self.contents.append(
+            types.Content(role="model", parts=[types.Part.from_text(text=text)])
+        )

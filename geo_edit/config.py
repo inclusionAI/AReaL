@@ -221,9 +221,116 @@ def build_api_agent_configs(
     )
 
 
+# =============================================================================
+# Separated Reasoning Mode Config Derivation Functions
+# =============================================================================
+
+def build_google_reasoning_only_config(
+    base_config: types.GenerateContentConfig,
+) -> types.GenerateContentConfig:
+    """Derive reasoning-only config from base config for Google API.
+
+    - Keeps tools (model can see tools for reasoning)
+    - Sets tool_config mode=NONE (prevents tool execution)
+    - Keeps thinking_config (reasoning enabled)
+    """
+    # Extract base config attributes
+    kwargs = {}
+    if base_config.thinking_config is not None:
+        kwargs["thinking_config"] = base_config.thinking_config
+    if base_config.temperature is not None:
+        kwargs["temperature"] = base_config.temperature
+    if base_config.system_instruction is not None:
+        kwargs["system_instruction"] = base_config.system_instruction
+    if base_config.max_output_tokens is not None:
+        kwargs["max_output_tokens"] = base_config.max_output_tokens
+    if base_config.candidate_count is not None:
+        kwargs["candidate_count"] = base_config.candidate_count
+
+    # Keep tools but disable tool execution
+    if base_config.tools is not None:
+        kwargs["tools"] = base_config.tools
+    kwargs["tool_config"] = types.ToolConfig(
+        function_calling_config=types.FunctionCallingConfig(mode="NONE")
+    )
+
+    return types.GenerateContentConfig(**kwargs)
+
+
+def build_google_tool_call_only_config(
+    base_config: types.GenerateContentConfig,
+) -> types.GenerateContentConfig:
+    """Derive tool-call-only config from base config for Google API.
+
+    - Keeps tools and tool_config (allows tool execution)
+    - Disables thinking_config (no additional reasoning)
+    """
+    kwargs = {}
+    # No thinking_config - disable reasoning
+    if base_config.temperature is not None:
+        kwargs["temperature"] = base_config.temperature
+    if base_config.system_instruction is not None:
+        kwargs["system_instruction"] = base_config.system_instruction
+    if base_config.max_output_tokens is not None:
+        kwargs["max_output_tokens"] = base_config.max_output_tokens
+    if base_config.candidate_count is not None:
+        kwargs["candidate_count"] = base_config.candidate_count
+    if base_config.automatic_function_calling is not None:
+        kwargs["automatic_function_calling"] = base_config.automatic_function_calling
+
+    # Keep tools and tool_config for execution
+    if base_config.tools is not None:
+        kwargs["tools"] = base_config.tools
+    if base_config.tool_config is not None:
+        kwargs["tool_config"] = base_config.tool_config
+
+    return types.GenerateContentConfig(**kwargs)
+
+
+def build_api_reasoning_only_config(
+    base_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Derive reasoning-only config from base config for OpenAI-compatible API.
+
+    - Keeps tools definition (model can see tools for reasoning)
+    - Sets tool_choice="none" (prevents tool execution)
+    - Keeps reasoning_level (reasoning enabled)
+    """
+    config = dict(base_config)
+
+    # Keep tools but disable execution
+    if "tools" in config:
+        config["tool_choice"] = "none"
+
+    return config
+
+
+def build_api_tool_call_only_config(
+    base_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Derive tool-call-only config from base config for OpenAI-compatible API.
+
+    - Keeps tools and tool_choice (allows tool execution)
+    - Disables reasoning (removes _reasoning_level)
+    """
+    config = dict(base_config)
+
+    # Remove reasoning
+    config.pop("_reasoning_level", None)
+
+    # Remove reasoning config for responses API
+    config.pop("reasoning", None)
+
+    return config
+
+
 __all__ = [
     "GoogleAgentConfigs",
     "APIAgentConfigs",
     "build_google_agent_configs",
     "build_api_agent_configs",
+    "build_google_reasoning_only_config",
+    "build_google_tool_call_only_config",
+    "build_api_reasoning_only_config",
+    "build_api_tool_call_only_config",
 ]

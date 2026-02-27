@@ -101,6 +101,29 @@ TOOL_EXECUTION_FAILURE_PROMPT = (
     "When planning next steps, reuse previous Observations and any successful text outputs."
 )
 
+# =============================================================================
+# Separated Reasoning Mode Prompts
+# =============================================================================
+
+# Phase 1: Generate reasoning only (can see tools but cannot execute)
+SEPARATED_REASONING_ONLY_PROMPT = """
+You are an advanced AI agent. In this phase, you must provide reasoning about what tool to call.
+
+Instructions:
+1. Analyze the observations and determine what tool to call next
+2. Explain your reasoning clearly
+3. State which tool you plan to call and with what parameters
+4. DO NOT provide any final answer in this phase
+
+IMPORTANT: You must NOT output <answer> tags in this phase. Only reasoning is allowed.
+"""
+
+# Phase 2: Execute tool call based on previous reasoning
+SEPARATED_TOOL_CALL_ONLY_PROMPT = """
+Based on your previous reasoning, now execute the tool call.
+Call the tool immediately without additional reasoning.
+"""
+
 
 def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
     """Select system prompt based on model type.
