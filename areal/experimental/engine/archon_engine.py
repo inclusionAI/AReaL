@@ -329,6 +329,44 @@ class ArchonEngine(TrainEngine):
                 )
                 ac_config.mode = "full"
 
+        # Deterministic env vars
+        if self.config.archon.use_deterministic_algorithms:
+            self.logger.info("Deterministic mode enabled. May reduce performance.")
+
+            if ac_config is not None:
+                ac_config.preserve_rng_state = True
+                self.logger.info(
+                    "Deterministic mode: overriding ac_config.preserve_rng_state=True."
+                )
+
+            # Enable PyTorch deterministic algorithms
+            torch.use_deterministic_algorithms(True, warn_only=True)
+
+            # cuBLAS workspace config for deterministic matmuls
+            cublas_valid = (":4096:8", ":16:8")
+            if os.getenv("CUBLAS_WORKSPACE_CONFIG") not in cublas_valid:
+                self.logger.info(
+                    "For deterministic mode, env [CUBLAS_WORKSPACE_CONFIG] "
+                    "will be set to ':4096:8'."
+                )
+                os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+            # NCCL algorithm for deterministic collective operations
+            nccl_valid = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
+            if os.getenv("NCCL_ALGO") not in nccl_valid:
+                self.logger.info(
+                    "For deterministic mode, env [NCCL_ALGO] will be set to 'Ring'."
+                )
+                os.environ["NCCL_ALGO"] = "Ring"
+
+            # Torch compile deterministic (only when compile is active)
+            if enable_compile and os.getenv("TORCH_COMPILE_DETERMINISTIC") != "1":
+                self.logger.info(
+                    "For deterministic mode, env [TORCH_COMPILE_DETERMINISTIC] "
+                    "will be set to '1'."
+                )
+                os.environ["TORCH_COMPILE_DETERMINISTIC"] = "1"
+
         # Force pad_to_maximum when compile is enabled to avoid dynamic shape issues
         if enable_compile and not self.config.pad_to_maximum:
             self.logger.info(

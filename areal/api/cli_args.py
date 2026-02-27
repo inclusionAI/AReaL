@@ -489,6 +489,17 @@ class ArchonEngineConfig:
         },
     )
 
+    # Deterministic mode
+    use_deterministic_algorithms: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable deterministic algorithms for training reproducibility. "
+            "Sets torch.use_deterministic_algorithms(True, warn_only=True), "
+            "CUBLAS_WORKSPACE_CONFIG, NCCL_ALGO, and TORCH_COMPILE_DETERMINISTIC. "
+            "May reduce performance.",
+        },
+    )
+
     def __post_init__(self):
         if self.pp_layers_per_stage is not None and self.pp_layers_per_stage < 1:
             raise ValueError(

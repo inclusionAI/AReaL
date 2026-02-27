@@ -130,12 +130,13 @@ reducing GPU requirements for combined context and expert parallelism.
 
 Archon-specific options are configured under `actor.archon.*`:
 
-| Option           | Default           | Description                                   |
-| ---------------- | ----------------- | --------------------------------------------- |
-| `pp_schedule`    | `Interleaved1F1B` | PP schedule: `1F1B`, `I1F1B`, `IZB`, or `ZBV` |
-| `enable_compile` | `True`            | Enable torch.compile                          |
-| `ac_mode`        | `selective`       | Activation checkpointing mode                 |
-| `offload_params` | `False`           | Offload FSDP parameters to CPU                |
+| Option                         | Default           | Description                                                                   |
+| ------------------------------ | ----------------- | ----------------------------------------------------------------------------- |
+| `pp_schedule`                  | `Interleaved1F1B` | PP schedule: `1F1B`, `I1F1B`, `IZB`, or `ZBV`                                 |
+| `enable_compile`               | `True`            | Enable torch.compile                                                          |
+| `ac_mode`                      | `selective`       | Activation checkpointing mode                                                 |
+| `offload_params`               | `False`           | Offload FSDP parameters to CPU                                                |
+| `use_deterministic_algorithms` | `False`           | Deterministic training for reproducibility (see [below](#deterministic-mode)) |
 
 See [Performance Tuning](#performance-tuning) for detailed guidance on these options.
 
@@ -193,12 +194,13 @@ Initialized Archon engine with parallel dims: pp=2, dp_shard=4, tp=2, cp=1, ep=1
 
 ### Common Issues
 
-| Issue                              | Possible Cause                    | Solution                                        |
-| ---------------------------------- | --------------------------------- | ----------------------------------------------- |
-| Shape mismatch across microbatches | Variable sequence lengths with PP | Set `pad_to_maximum=True`                       |
-| OOM during compilation             | torch.compile memory overhead     | Try `+actor.archon.enable_compile=False`        |
-| "tie_word_embeddings" error        | PP with weight-tied model         | Use PP=1 or different model                     |
-| Slow first iteration               | torch.compile warmup              | Expected behavior, subsequent iterations faster |
+| Issue                              | Possible Cause                    | Solution                                              |
+| ---------------------------------- | --------------------------------- | ----------------------------------------------------- |
+| Shape mismatch across microbatches | Variable sequence lengths with PP | Set `pad_to_maximum=True`                             |
+| OOM during compilation             | torch.compile memory overhead     | Try `+actor.archon.enable_compile=False`              |
+| "tie_word_embeddings" error        | PP with weight-tied model         | Use PP=1 or different model                           |
+| Slow first iteration               | torch.compile warmup              | Expected behavior, subsequent iterations faster       |
+| Non-deterministic loss across runs | GPU-level non-determinism in MoE  | Set `+actor.archon.use_deterministic_algorithms=True` |
 
 ### Activation Checkpointing Debug
 
@@ -207,6 +209,29 @@ Enable AC debugging to capture detailed information (slower):
 ```bash
 +actor.archon.ac_debug=True
 ```
+
+### Deterministic Mode
+
+Models can exhibit non-deterministic behavior across training runs due to GPU-level
+non-determinism in matmuls, NCCL collective reductions, and torch.compile code
+generation. This makes debugging training instability difficult — you cannot tell
+whether a loss spike is from your algorithm change or random hardware noise.
+
+Enable deterministic mode to eliminate these sources of variance:
+
+```bash
++actor.archon.use_deterministic_algorithms=True
+```
+
+This sets:
+
+- `torch.use_deterministic_algorithms(True, warn_only=True)` — forces PyTorch to use
+  deterministic algorithm variants where available
+- `CUBLAS_WORKSPACE_CONFIG=:4096:8` — deterministic cuBLAS matmul workspace
+- `NCCL_ALGO=Ring` — deterministic NCCL collective reductions
+- `TORCH_COMPILE_DETERMINISTIC=1` — deterministic Inductor code generation (when compile
+  is enabled)
+- `ac_config.preserve_rng_state=True` — deterministic activation checkpointing recompute
 
 ## Migration from FSDPEngine
 

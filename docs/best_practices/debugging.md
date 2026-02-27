@@ -4,6 +4,7 @@ This guide covers debugging AReaL training applications, including:
 
 - Debugging your agent workflow (i.e., rollout) with a persistent inference server
 - Comparing rollout results between Transformers and inference engines
+- Diagnosing training hangs and deadlocks with `py-spy`
 
 ## Debugging agent workflows with a Persistent Inference Server
 
@@ -214,3 +215,146 @@ support in Transformers or SGLang, compare outputs against a dataset using a sim
 validation script. See `examples/docs/debug/cmp_rollout.py` for a complete example
 comparing rollout results for `google/gemma-3-4b-it` on the
 `BUAADreamer/clevr_count_70k` dataset.
+
+## Debugging Training Hangs and Deadlocks
+
+Distributed training can hang or deadlock when ranks get out of sync. This section
+covers how to diagnose these issues.
+
+### Symptoms
+
+A hang or deadlock typically looks like one of the following:
+
+- **Training stops making progress** — logs stop updating, no new training steps, but
+  processes remain alive with high CPU usage.
+- **Training exits with no error** — the job finishes (sometimes even printing "Training
+  completes!") but completed 0 actual training steps. The processes may hang
+  indefinitely during cleanup.
+- **Some ranks finish, others hang** — `nvidia-smi` shows some GPUs idle while others
+  are still at 100% utilization.
+
+These symptoms usually share a common root cause: **an exception or early exit on some
+ranks causes the remaining ranks to wait forever on a collective operation** (e.g.,
+`all_reduce`, `send`/`recv`, or `destroy_process_group`).
+
+### Common Causes
+
+| Cause                           | What happens                                                                                                                                                                                                               |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Exception on partial ranks**  | One side of a PP/TP group hits an error and exits, while the other side waits for a P2P or collective op that never arrives. The exception may be swallowed by cleanup code (`__exit__` → `destroy_process_group()` hang). |
+| **Mismatched collective calls** | A code path calls `all_reduce` on some ranks but not others (e.g., due to a conditional branch that differs across ranks).                                                                                                 |
+| **Shape mismatch in PP**        | Pipeline parallel stages expect to exchange tensors of specific shapes. If one stage produces unexpected shapes, `recv` blocks forever.                                                                                    |
+| **NCCL timeout**                | Network issues or slow ranks cause NCCL operations to exceed the timeout, but the default timeout may be very long (30 minutes).                                                                                           |
+| **Deadlock in initialization**  | Model loading or compilation takes different amounts of time across ranks, and a collective is called before all ranks are ready.                                                                                          |
+
+### Step 1: Confirm the Hang
+
+First, verify that training is actually hung (not just slow):
+
+```bash
+# Check if training steps are advancing
+tail -f /path/to/training.log
+
+# Check GPU utilization — hung ranks often show 0% GPU, high CPU
+nvidia-smi
+
+# List the training processes
+ps aux | grep 'python.*areal' | grep -v grep
+```
+
+### Step 2: Dump Call Stacks with `py-spy`
+
+[py-spy](https://github.com/benfred/py-spy) is the most effective tool for diagnosing
+hangs. It attaches to a running Python process and dumps the call stack without
+interrupting execution.
+
+```bash
+# Install py-spy (if not already installed)
+pip install py-spy
+
+# Dump call stack for a single process
+py-spy dump --pid <PID>
+
+# Dump all training worker processes at once
+for pid in $(ps aux | grep 'python.*areal' | grep -v grep | awk '{print $2}'); do
+    echo "========== PID $pid =========="
+    py-spy dump --pid $pid
+done
+```
+
+### Step 3: Read the Call Stacks
+
+The call stacks tell you exactly where each rank is blocked. Look for these patterns:
+
+**Pattern A: Cleanup deadlock** — Some ranks finished (hit an error or completed early)
+and are stuck in `destroy_process_group`, while others are still in the training loop
+waiting for communication:
+
+```
+# Ranks that exited (e.g., PP Stage 0 hit an exception)
+Thread: "MainThread"
+    destroy_process_group (torch/distributed/distributed_c10d.py)
+    destroy (archon_engine.py)
+    close (sft_trainer.py)              ← stuck in cleanup
+    __exit__ (sft_trainer.py)
+
+# Ranks still running (e.g., PP Stage 1 waiting for data)
+Thread: "MainThread"
+    recv_object_list (torch/distributed/distributed_c10d.py)
+    _shape_inference (torch/distributed/pipelining/stage.py)
+    step (torch/distributed/pipelining/schedules.py)
+    _run_train (archon_runner.py)       ← waiting for the other stage
+```
+
+**Pattern B: Collective mismatch** — All ranks are inside the training loop, but waiting
+on different collective operations:
+
+```
+# Rank 0
+    all_reduce (torch/distributed/distributed_c10d.py)
+    forward (some_module.py:123)
+
+# Rank 1
+    all_reduce (torch/distributed/distributed_c10d.py)
+    backward (some_module.py:456)       ← different code path!
+```
+
+**Pattern C: NCCL timeout** — All ranks are in the same collective call, suggesting a
+network or performance issue rather than a code bug:
+
+```
+# All ranks show the same stack:
+    all_reduce (torch/distributed/distributed_c10d.py)
+    forward (my_model.py:100)           ← same location on all ranks
+```
+
+### Step 4: Environment Variables for More Detail
+
+Set these environment variables **before** launching training to get more information
+when hangs occur:
+
+```bash
+# NCCL debug logging — shows collective operations as they happen
+export NCCL_DEBUG=INFO
+
+# PyTorch distributed debug — logs every collective call with ranks and shapes
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
+
+# Reduce NCCL timeout so hangs fail faster (default is 1800s = 30 min)
+export NCCL_TIMEOUT=300  # 5 minutes
+
+# CUDA sync mode — makes errors appear at the correct location
+# WARNING: significant performance impact, use only for debugging
+export CUDA_LAUNCH_BLOCKING=1
+```
+
+### Tips
+
+- **Exception swallowed by cleanup**: If py-spy shows some ranks in
+  `destroy_process_group` and others still in the training loop, the root cause is an
+  exception on the exiting ranks.
+- **Reproduce with fewer GPUs**: If possible, reproduce with the minimum number of GPUs
+  (e.g., PP=2 with 2 GPUs). This makes the call stacks easier to read.
+- **Check all ranks**: Always dump stacks for **all** worker processes, not just one.
+  Hangs are fundamentally about rank divergence — you need to compare stacks across
+  ranks to see who is waiting for whom.
