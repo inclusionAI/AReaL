@@ -20,7 +20,7 @@ class TestMoEArgsDefaults:
         assert args.score_func == "sigmoid"
         assert args.route_norm is False
         assert args.route_scale == 1.0
-        assert args.score_before_experts is True
+        assert args.score_before_experts is False
         assert args.num_expert_groups is None
         assert args.num_limited_groups is None
         assert args.use_grouped_mm is True
