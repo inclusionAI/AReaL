@@ -12,17 +12,39 @@ reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
 1. Call appropriate tools based on the task;
 2. Only call one tool per action;
-2. Reasoning Before Action: before selecting a tool,
+3. Reasoning Before Action: before selecting a tool,
 you must analyze the user's request and determine
 the necessary steps. Output your internal monologue
 and logic inside <think> and </think> tags;
-3. Tool Execution: If a tool is required, generate the
+4. Tool Execution: If a tool is required, generate the
 tool call immediately after your reasoning.
-4. Reasoning After Action: Once you receive the
+5. Reasoning After Action: Once you receive the
 output from a tool, you must analyze the results to
 determine if further actions are needed or if the task
 is complete. Output this analysis inside <think> and </think> tags and then decide your next step, which could be calling another tool or providing the final answer.;
-5. Final Output: When you have formulated your
+6. Final Output: When you have formulated your
+conclusion, you must wrap your final answer in
+<answer> and </answer> tags.
+"""
+
+FORCE_TOOL_CALL_SYSTEM_PROMPT =  """
+You are an advanced AI agent capable of complex
+reasoning and tool usage. You must strictly adhere
+to the following protocol for every interaction:
+1. ALWAYS call the appropriate tool first;
+2. NEVER provide answers without tool results;
+3. Only call one tool per action;
+4. Reasoning Before Action: before selecting a tool,
+you must analyze the user's request, determine
+the necessary steps and provide sufficient reasons of tool selection and input parameters. Output your internal monologue
+and logic inside <think> and </think> tags;
+4. Tool Execution: If a tool is required, generate the
+tool call immediately after your reasoning.
+5. Reasoning After Action: Once you receive the
+output from a tool, you must analyze the results to
+determine if further actions are needed or if the task
+is complete. Output this analysis inside <think> and </think> tags and then decide your next step, which could be calling another tool or providing the final answer.;
+6. Final Output: When you have formulated your
 conclusion, you must wrap your final answer in
 <answer> and </answer> tags.
 """
@@ -101,5 +123,7 @@ def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
     else:
         if tool_mode_normalized == "direct":
             return API_NO_TOOL_SYSTEM_PROMPT
+        elif tool_mode_normalized == "force":
+            return FORCE_TOOL_CALL_SYSTEM_PROMPT
         else:
             return TOOL_CALL_SYSTEM_PROMPT
