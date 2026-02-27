@@ -102,14 +102,15 @@ def _get_agent_config_from_env() -> tuple[str | None, bool, dict[str, Any]]:
     if kwargs_str:
         try:
             agent_init_kwargs = json.loads(kwargs_str)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON for agent_init_kwargs, using empty dict: {e}")
             pass
     return agent_import_path, agent_reuse, agent_init_kwargs
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for multi-worker mode.
+    """Lifespan context manager.
 
     Each worker process independently initializes its own AgentService instance.
     Configuration is read from environment variables set by the main process
@@ -141,10 +142,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    """Factory function for creating FastAPI app in multi-worker mode.
-
-    This function is called by uvicorn when running with --workers > 1.
-    Each worker process calls this function to create its own app instance.
+    """Factory function for creating FastAPI app.
 
     Returns
     -------

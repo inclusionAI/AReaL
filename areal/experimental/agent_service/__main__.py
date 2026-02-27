@@ -3,7 +3,7 @@
 This module provides the command-line entry point for running the Agent Service
 as a standalone process. The Agent Service can be started via:
 
-    python -m areal.experimental.agent_service --experiment-name exp --trial-name trial --role agent --worker-index 0
+    python -m areal.experimental.agent_service --experiment-name exp --trial-name trial --role agent
 
 The Agent Service runs agent.run() in an independent process, accepting HTTP
 requests from OpenAIProxyWorkflow (mode="service").
