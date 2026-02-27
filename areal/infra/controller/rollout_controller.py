@@ -520,17 +520,9 @@ class RolloutController:
         return run_async_task(self._collective_rpc_async, method, *args, **kwargs)
 
     async def _collective_rpc_async(self, method: str, *args, **kwargs) -> list[Any]:
-        tasks = [
-            self.scheduler.async_call_engine(
-                worker_id=worker.id,
-                method=method,
-                engine_name=self._engine_name(rank),
-                *args,
-                **kwargs,
-            )
-            for rank, worker in enumerate(self.workers)
-        ]
-        return await asyncio.gather(*tasks)
+        return await self._generic_collective_rpc_async(
+            method, self.workers, self._engine_name, *args, **kwargs
+        )
 
     def _proxy_collective_rpc(self, method: str, *args, **kwargs) -> list[Any]:
         return run_async_task(self._proxy_collective_rpc_async, method, *args, **kwargs)
@@ -542,15 +534,27 @@ class RolloutController:
     async def _proxy_collective_rpc_async(
         self, method: str, *args, **kwargs
     ) -> list[Any]:
+        return await self._generic_collective_rpc_async(
+            method, self.proxy_workers, self._proxy_engine_name, *args, **kwargs
+        )
+
+    async def _generic_collective_rpc_async(
+        self,
+        method: str,
+        workers: list[Worker],
+        engine_name_fn: Callable[[int], str],
+        *args,
+        **kwargs,
+    ) -> list[Any]:
         tasks = [
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
                 method=method,
-                engine_name=self._proxy_engine_name(rank),
+                engine_name=engine_name_fn(rank),
                 *args,
                 **kwargs,
             )
-            for rank, worker in enumerate(self.proxy_workers)
+            for rank, worker in enumerate(workers)
         ]
         return await asyncio.gather(*tasks)
 
