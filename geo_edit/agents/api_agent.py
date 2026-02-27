@@ -175,6 +175,10 @@ class APIBasedAgent(BaseAgent):
                                 "include_thoughts": True,
                                 "thinking_level": reasoning_level,
                             },
+                            "automatic_function_calling":{
+                                    "disable": True,
+                                    "maximum_remote_calls": 1, #Only allow one tool call per action now.
+                            },
                             "thought_tag_marker": "think",
                         }
                     }
