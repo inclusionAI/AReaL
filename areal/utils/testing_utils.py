@@ -15,15 +15,6 @@ from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
 logger = logging.getLogger("TestingUtils")
 
-__all__ = [
-    "get_model_path",
-    "get_dataset_path",
-    "DENSE_MODEL_PATHS",
-    "MOE_MODEL_PATHS",
-    "MODEL_PATHS",
-    "load_archon_model",
-]
-
 
 def get_model_path(local_path: str, hf_id: str) -> str:
     """Get model path, preferring local storage over HuggingFace Hub.
