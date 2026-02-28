@@ -761,9 +761,10 @@ class RemoteInfEngine(InferenceEngine):
             )
 
             # Assert response is JSON dict (not text/binary from error pages)
-            assert isinstance(result, dict), (
-                f"Expected JSON dict response, got {type(result).__name__}"
-            )
+            if not isinstance(result, dict):
+                raise ValueError(
+                    f"Expected JSON dict response, got {type(result).__name__}"
+                )
 
             # Parse response using backend
             gen_result = self.backend.parse_generation_response(result)
