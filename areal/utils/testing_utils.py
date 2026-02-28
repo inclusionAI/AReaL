@@ -3,13 +3,19 @@
 This module provides utilities that are shared between tests and profiling tools.
 """
 
+import asyncio
 import os
+import random
+from typing import Any
 
 import torch
 from huggingface_hub import snapshot_download
 from transformers import AutoConfig
 
+from areal.api.engine_api import InferenceEngine
+from areal.api.workflow_api import RolloutWorkflow
 from areal.experimental.models.archon import get_model_spec, is_supported_model
+from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
@@ -141,3 +147,30 @@ def load_archon_model(
     model.eval()
 
     return model, adapter
+
+
+class TestWorkflow(RolloutWorkflow):
+    """Simple test workflow for testing RolloutWorkflow functionality."""
+
+    async def arun_episode(
+        self, engine: InferenceEngine, data: dict[str, Any]
+    ) -> dict[str, Any] | None | dict[str, InteractionWithTokenLogpReward]:
+        await asyncio.sleep(0.1)
+        prompt_len = random.randint(2, 8)
+        gen_len = random.randint(2, 8)
+        seqlen = prompt_len + gen_len
+        return dict(
+            input_ids=torch.randint(
+                0,
+                100,
+                (
+                    1,
+                    seqlen,
+                ),
+            ),
+            attention_mask=torch.ones(1, seqlen, dtype=torch.bool),
+            loss_mask=torch.tensor(
+                [0] * prompt_len + [1] * gen_len, dtype=torch.bool
+            ).unsqueeze(0),
+            rewards=torch.randn(1),
+        )
