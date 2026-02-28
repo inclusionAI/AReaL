@@ -834,6 +834,8 @@ class PPOTrainer:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is not None:
+            logger.error(f"Training failed with exception: {exc_value}", exc_info=True)
         self.close()
         if exc_type is not None:
             raise exc_value
