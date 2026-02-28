@@ -269,7 +269,7 @@ def run_profile(args: argparse.Namespace) -> None:
     dtype = get_dtype(args.dtype)
 
     # Get model path - use same default as Archon for fair comparison
-    from areal.tests.experimental.archon.utils import MODEL_PATHS
+    from areal.tools.profiling_utils import MODEL_PATHS
 
     model_path = args.model_path or MODEL_PATHS.get(
         "qwen2", "Qwen/Qwen2.5-0.5B-Instruct"
