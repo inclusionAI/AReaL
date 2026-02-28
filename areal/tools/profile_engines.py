@@ -149,14 +149,13 @@ def profile_archon(
     output_path: Path | None,
 ) -> EngineResult:
     """Profile Archon engine."""
-    from areal.tests.experimental.archon.utils import load_archon_model
-
     # Import functions for packed input creation
     from areal.tools.profile_archon import (
         create_packed_input,
         run_forward,
         run_forward_backward,
     )
+    from areal.utils.testing_utils import load_archon_model
 
     print("\n" + "=" * 70)
     print("PROFILING ARCHON ENGINE")
@@ -424,7 +423,7 @@ def run_comparison(args: argparse.Namespace) -> None:
     # Get model path
     from transformers import AutoConfig
 
-    from areal.tests.experimental.archon.utils import MODEL_PATHS
+    from areal.utils.testing_utils import MODEL_PATHS
 
     model_path = args.model_path or MODEL_PATHS.get(
         "qwen2", "Qwen/Qwen2.5-0.5B-Instruct"

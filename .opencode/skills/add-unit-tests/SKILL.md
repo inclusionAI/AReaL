@@ -22,10 +22,10 @@ This skill is triggered when:
 
 AReaL has two main test categories:
 
-| Test Type             | Purpose                            | Location Pattern                         | How It Runs                                |
-| --------------------- | ---------------------------------- | ---------------------------------------- | ------------------------------------------ |
-| **Unit Tests**        | Test individual functions/modules  | `areal/tests/test_<module>_<feature>.py` | Directly via pytest                        |
-| **Distributed Tests** | Test distributed/parallel behavior | `areal/tests/torchrun/run_*.py`          | Via torchrun (called by pytest subprocess) |
+| Test Type             | Purpose                            | Location Pattern                   | How It Runs                                |
+| --------------------- | ---------------------------------- | ---------------------------------- | ------------------------------------------ |
+| **Unit Tests**        | Test individual functions/modules  | `tests/test_<module>_<feature>.py` | Directly via pytest                        |
+| **Distributed Tests** | Test distributed/parallel behavior | `tests/torchrun/run_*.py`          | Via torchrun (called by pytest subprocess) |
 
 **Note**: All tests are invoked via pytest. Distributed tests use `torchrun` but are
 still called from pytest test files.
@@ -40,7 +40,7 @@ import torch
 
 # Import the module to test
 from areal.dataset.gsm8k import get_gsm8k_sft_dataset
-from areal.tests.utils import get_dataset_path  # Optional test utilities
+from tests.utils import get_dataset_path  # Optional test utilities
 # For mocking tokenizer: from unittest.mock import MagicMock
 ```
 
@@ -154,11 +154,11 @@ def test_gpu_function():
 
 ## Reference Implementations
 
-| Test File                              | Description                            | Key Patterns                                      |
-| -------------------------------------- | -------------------------------------- | ------------------------------------------------- |
-| `areal/tests/test_utils.py`            | Utility function tests                 | Fixtures, parametrized tests                      |
-| `areal/tests/test_examples.py`         | Integration tests with dataset loading | Dataset path resolution, success pattern matching |
-| `areal/tests/test_fsdp_engine_nccl.py` | Distributed tests                      | Torchrun integration                              |
+| Test File                        | Description                            | Key Patterns                                      |
+| -------------------------------- | -------------------------------------- | ------------------------------------------------- |
+| `tests/test_utils.py`            | Utility function tests                 | Fixtures, parametrized tests                      |
+| `tests/test_examples.py`         | Integration tests with dataset loading | Dataset path resolution, success pattern matching |
+| `tests/test_fsdp_engine_nccl.py` | Distributed tests                      | Torchrun integration                              |
 
 ## Common Mistakes
 
@@ -187,7 +187,7 @@ This skill complements other AReaL development skills:
 python -c "import torch; print('GPU available:', torch.cuda.is_available())"
 
 # Run specific test file
-uv run pytest areal/tests/test_<name>.py
+uv run pytest tests/test_<name>.py
 
 # Skip slow tests (CI default)
 uv run pytest -m "not slow"
@@ -197,7 +197,7 @@ uv run pytest -v
 
 # Run distributed tests (requires torchrun and multi-GPU)
 # Note: Usually invoked via pytest test files
-torchrun --nproc_per_node=2 areal/tests/torchrun/run_<test>.py
+torchrun --nproc_per_node=2 tests/torchrun/run_<test>.py
 ```
 
 <!--

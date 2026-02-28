@@ -227,7 +227,7 @@ def run_profile(args: argparse.Namespace) -> None:
     dtype = get_dtype(args.dtype)
 
     # Get model path
-    from areal.tests.experimental.archon.utils import MODEL_PATHS, load_archon_model
+    from areal.utils.testing_utils import MODEL_PATHS, load_archon_model
 
     model_path = args.model_path or MODEL_PATHS["qwen2"]
 
