@@ -8,47 +8,15 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from areal.experimental.agent_service.__main__ import _set_config_env_vars
-from areal.experimental.agent_service.config import AgentServiceConfig
-from areal.experimental.agent_service.rpc_server import (
+from areal.experimental.agent_service.worker_server import (
     ENV_AGENT_HOST,
     ENV_AGENT_IMPORT_PATH_INTERNAL,
     ENV_AGENT_INIT_KWARGS_INTERNAL,
     ENV_AGENT_PORT,
     ENV_AGENT_REUSE_INTERNAL,
-    ENV_AGENT_WORKERS,
     _get_agent_config_from_env,
     create_app,
 )
-
-
-class TestAgentServiceConfigWorkers:
-    """Tests for AgentServiceConfig workers field."""
-
-    def test_default_workers_is_one(self):
-        """Default workers value should be 1."""
-        config = AgentServiceConfig()
-        assert config.workers == 1
-
-    def test_workers_custom_value(self):
-        """Workers can be set to custom value."""
-        config = AgentServiceConfig(workers=4)
-        assert config.workers == 4
-
-    def test_workers_zero_raises_error(self):
-        """workers=0 should raise ValueError."""
-        with pytest.raises(ValueError, match="workers must be at least 1"):
-            AgentServiceConfig(workers=0)
-
-    def test_workers_negative_raises_error(self):
-        """Negative workers should raise ValueError."""
-        with pytest.raises(ValueError, match="workers must be at least 1"):
-            AgentServiceConfig(workers=-1)
-
-    def test_workers_large_value(self):
-        """Large workers value should be accepted."""
-        config = AgentServiceConfig(workers=100)
-        assert config.workers == 100
 
 
 class TestGetAgentConfigFromEnv:
@@ -113,67 +81,6 @@ class TestGetAgentConfigFromEnv:
             assert agent_init_kwargs == {}
 
 
-class TestSetConfigEnvVars:
-    """Tests for _set_config_env_vars function."""
-
-    def test_sets_all_env_vars(self):
-        """Should set all configuration environment variables."""
-        with patch.dict(os.environ, {}, clear=True):
-            _set_config_env_vars(
-                host="192.168.1.100",
-                port=8500,
-                workers=4,
-                agent_import_path="mymodule.MyAgent",
-                agent_reuse=True,
-                agent_init_kwargs={"model": "test"},
-            )
-
-            assert os.environ[ENV_AGENT_HOST] == "192.168.1.100"
-            assert os.environ[ENV_AGENT_PORT] == "8500"
-            assert os.environ[ENV_AGENT_WORKERS] == "4"
-            assert os.environ[ENV_AGENT_IMPORT_PATH_INTERNAL] == "mymodule.MyAgent"
-            assert os.environ[ENV_AGENT_REUSE_INTERNAL] == "true"
-            assert os.environ[ENV_AGENT_INIT_KWARGS_INTERNAL] == '{"model": "test"}'
-
-    def test_handles_none_import_path(self):
-        """Should handle None agent_import_path."""
-        with patch.dict(os.environ, {}, clear=True):
-            _set_config_env_vars(
-                host="0.0.0.0",
-                port=8300,
-                workers=1,
-                agent_import_path=None,
-                agent_reuse=False,
-                agent_init_kwargs={},
-            )
-
-            assert os.environ[ENV_AGENT_IMPORT_PATH_INTERNAL] == ""
-            assert os.environ[ENV_AGENT_REUSE_INTERNAL] == "false"
-            assert os.environ[ENV_AGENT_INIT_KWARGS_INTERNAL] == ""
-
-    def test_roundtrip_with_get_config(self):
-        """Set and get should roundtrip correctly."""
-        with patch.dict(os.environ, {}, clear=True):
-            original_path = "mymodule.TestAgent"
-            original_reuse = True
-            original_kwargs = {"key": "value", "num": 42}
-
-            _set_config_env_vars(
-                host="localhost",
-                port=9000,
-                workers=2,
-                agent_import_path=original_path,
-                agent_reuse=original_reuse,
-                agent_init_kwargs=original_kwargs,
-            )
-
-            path, reuse, kwargs = _get_agent_config_from_env()
-
-            assert path == original_path
-            assert reuse == original_reuse
-            assert kwargs == original_kwargs
-
-
 class TestCreateAppFactory:
     """Tests for create_app factory function."""
 
@@ -183,7 +90,6 @@ class TestCreateAppFactory:
         env_vars = {
             ENV_AGENT_HOST: "127.0.0.1",
             ENV_AGENT_PORT: "8300",
-            ENV_AGENT_WORKERS: "2",
             ENV_AGENT_IMPORT_PATH_INTERNAL: mock_agent_import_path,
             ENV_AGENT_REUSE_INTERNAL: "false",
             ENV_AGENT_INIT_KWARGS_INTERNAL: "",
@@ -217,12 +123,11 @@ class TestCreateAppFactory:
     @pytest.mark.asyncio
     async def test_create_app_with_lifespan(self, mock_agent_import_path):
         """Test create_app with lifespan context properly initialized."""
-        import areal.experimental.agent_service.rpc_server as rpc_module
+        import areal.experimental.agent_service.worker_server as rpc_module
 
         env_vars = {
             ENV_AGENT_HOST: "127.0.0.1",
             ENV_AGENT_PORT: "8300",
-            ENV_AGENT_WORKERS: "1",
             ENV_AGENT_IMPORT_PATH_INTERNAL: mock_agent_import_path,
             ENV_AGENT_REUSE_INTERNAL: "false",
             ENV_AGENT_INIT_KWARGS_INTERNAL: "",
@@ -256,12 +161,11 @@ class TestCreateAppFactory:
     @pytest.mark.asyncio
     async def test_create_app_run_episode_with_lifespan(self, mock_agent_import_path):
         """Test run_episode endpoint with lifespan properly initialized."""
-        import areal.experimental.agent_service.rpc_server as rpc_module
+        import areal.experimental.agent_service.worker_server as rpc_module
 
         env_vars = {
             ENV_AGENT_HOST: "127.0.0.1",
             ENV_AGENT_PORT: "8300",
-            ENV_AGENT_WORKERS: "1",
             ENV_AGENT_IMPORT_PATH_INTERNAL: mock_agent_import_path,
             ENV_AGENT_REUSE_INTERNAL: "false",
             ENV_AGENT_INIT_KWARGS_INTERNAL: "",
@@ -293,12 +197,11 @@ class TestCreateAppFactory:
     @pytest.mark.asyncio
     async def test_create_app_shared_mode_with_lifespan(self, mock_agent_import_path):
         """Test create_app in shared mode with lifespan."""
-        import areal.experimental.agent_service.rpc_server as rpc_module
+        import areal.experimental.agent_service.worker_server as rpc_module
 
         env_vars = {
             ENV_AGENT_HOST: "127.0.0.1",
             ENV_AGENT_PORT: "8300",
-            ENV_AGENT_WORKERS: "1",
             ENV_AGENT_IMPORT_PATH_INTERNAL: mock_agent_import_path,
             ENV_AGENT_REUSE_INTERNAL: "true",
             ENV_AGENT_INIT_KWARGS_INTERNAL: '{"shared": true}',
@@ -328,7 +231,7 @@ class TestParseArgsWorkers:
         """Default workers should be 1."""
         from areal.experimental.agent_service.__main__ import _parse_args
 
-        with patch("sys.argv", ["rpc_server"]):
+        with patch("sys.argv", ["worker_server"]):
             args = _parse_args()
             assert args.workers == 1
 
@@ -336,7 +239,7 @@ class TestParseArgsWorkers:
         """--workers argument should be parsed correctly."""
         from areal.experimental.agent_service.__main__ import _parse_args
 
-        with patch("sys.argv", ["rpc_server", "--workers", "4"]):
+        with patch("sys.argv", ["worker_server", "--workers", "4"]):
             args = _parse_args()
             assert args.workers == 4
 
@@ -347,7 +250,7 @@ class TestParseArgsWorkers:
         with patch(
             "sys.argv",
             [
-                "rpc_server",
+                "worker_server",
                 "--host",
                 "0.0.0.0",
                 "--port",

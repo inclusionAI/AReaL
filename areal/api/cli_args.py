@@ -1495,8 +1495,11 @@ class AgentServiceSpec:
 
     def __post_init__(self):
         """Validate configuration values."""
-        if not self.agent_import_path:
-            raise ValueError("agent_import_path must be provided")
+        if self.agent_reuse and not self.agent_import_path:
+            raise ValueError(
+                "agent_import_path is required when agent_reuse=True. "
+                "Use --agent-import-path to specify the agent class."
+            )
         if self.workers < 1:
             raise ValueError(f"workers must be at least 1, got {self.workers}")
 

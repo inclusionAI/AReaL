@@ -661,17 +661,18 @@ class LocalScheduler(Scheduler):
                     )
                 cmd = shlex.split(scheduling.cmd)
                 cmd.extend(["--port", str(ports[0])])
-                # Add name_resolve and worker identity args
-                cmd.extend(["--experiment-name", str(self.experiment_name)])
-                cmd.extend(["--trial-name", str(self.trial_name)])
-                cmd.extend(["--role", role])
-                cmd.extend(["--worker-index", str(idx)])
-                cmd.extend(["--name-resolve-type", self.name_resolve_config.type])
-                cmd.extend(
-                    ["--nfs-record-root", self.name_resolve_config.nfs_record_root]
-                )
-                cmd.extend(["--etcd3-addr", self.name_resolve_config.etcd3_addr])
-                cmd.extend(["--fileroot", str(self.fileroot)])
+                # Add name_resolve and worker identity args (only when experiment context is configured)
+                if self.experiment_name is not None:
+                    cmd.extend(["--experiment-name", str(self.experiment_name)])
+                    cmd.extend(["--trial-name", str(self.trial_name)])
+                    cmd.extend(["--role", role])
+                    cmd.extend(["--worker-index", str(idx)])
+                    cmd.extend(["--name-resolve-type", self.name_resolve_config.type])
+                    cmd.extend(
+                        ["--nfs-record-root", self.name_resolve_config.nfs_record_root]
+                    )
+                    cmd.extend(["--etcd3-addr", self.name_resolve_config.etcd3_addr])
+                    cmd.extend(["--fileroot", str(self.fileroot)])
 
                 logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
                 if cmd[0].startswith("python"):

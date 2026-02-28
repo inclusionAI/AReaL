@@ -49,6 +49,7 @@ from areal.utils.stats_logger import StatsLogger
 if TYPE_CHECKING:
     from areal.engine.fsdp_engine import FSDPPPOActor, FSDPPPOCritic
     from areal.engine.megatron_engine import MegatronPPOActor, MegatronPPOCritic
+    from areal.experimental.agent_service.agent_controller import AgentController
     from areal.experimental.engine.archon_engine import ArchonPPOActor, ArchonPPOCritic
     from areal.trainer.ppo.actor import PPOActorController
     from areal.trainer.ppo.critic import PPOCriticController
@@ -120,6 +121,7 @@ class PPOTrainer:
 
         # Agent Service initialization (lazy, for managed deployment mode)
         self._agent_service_started = False
+        self._agent_controller: AgentController | None = None
 
         ft_spec = FinetuneSpec(
             total_train_epochs=config.total_train_epochs,
@@ -421,6 +423,9 @@ class PPOTrainer:
             self._save_perf_tracer(step=global_step)
 
     def close(self):
+        if self._agent_controller is not None:
+            self._agent_controller.stop()
+            self._agent_controller = None
         self.saver.finalize()
         self.stats_logger.close()
         self.eval_rollout.destroy()
@@ -776,20 +781,13 @@ class PPOTrainer:
         self._proxy_started = True
 
     def _ensure_agent_service_started(self) -> None:
-        """Lazily initialize Agent Service workers when configured.
-
-        This method is called before training when agent_service configuration is
-        provided in rollout config. It creates Agent Service workers as independent
-        CPU-only processes to run agent workflows.
-
-        Requires proxy workers to be started first.
-        """
+        """Lazily initialize Agent Service at Trainer level when configured."""
         if self._agent_service_started:
             return
 
-        agent_config = self.config.rollout.agent_service
-        if agent_config is None:
-            return  # Not configured, user may use external Agent Service
+        agent_service_spec = self.config.rollout.agent_service
+        if agent_service_spec is None:
+            return  # Not configured
 
         # Agent Service requires proxy workers
         self._ensure_proxy_started()
@@ -799,24 +797,26 @@ class PPOTrainer:
 
         assert isinstance(self.rollout, RolloutController)
 
+        from areal.experimental.agent_service.agent_controller import AgentController
+        from areal.experimental.agent_service.config import GatewayConfig
+
         logger.info(
-            f"Starting Agent Service with agent: {agent_config.agent_import_path}, "
-            f"workers: {agent_config.workers}"
-        )
-        self.rollout.start_agent_service(
-            agent_import_path=agent_config.agent_import_path,
-            agent_reuse=agent_config.agent_reuse,
-            agent_init_kwargs=agent_config.agent_init_kwargs,
-            workers=agent_config.workers,
+            f"Starting Agent Service with agent: {agent_service_spec.agent_import_path}, "
+            f"workers: {agent_service_spec.workers}"
         )
 
+        gateway_config = GatewayConfig()
+        self._agent_controller = AgentController(
+            config=gateway_config,
+            scheduler=self.rollout.scheduler,
+        )
+
+        gateway_addr = self._agent_controller.start(agent_service_spec)
+
+        # Pass gateway address to both train and eval rollout controllers
+        self.rollout.set_agent_service_addr(gateway_addr)
         if self.eval_rollout is not None:
-            self.eval_rollout.start_agent_service(
-                agent_import_path=agent_config.agent_import_path,
-                agent_reuse=agent_config.agent_reuse,
-                agent_init_kwargs=agent_config.agent_init_kwargs,
-                workers=agent_config.workers,
-            )
+            self.eval_rollout.set_agent_service_addr(gateway_addr)
 
         self._agent_service_started = True
 

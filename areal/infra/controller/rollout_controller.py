@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import shutil
 import threading
 from collections import defaultdict
@@ -116,10 +115,8 @@ class RolloutController:
         self.proxy_addrs: list[str] = []
         self._proxy_started = False
 
-        # Agent Service worker management (for standalone agent deployment)
-        self.agent_service_workers: list[Worker] = []
-        self.agent_service_addrs: list[str] = []
-        self._agent_service_started = False
+        # Agent Service address (injected by Trainer after AgentController starts)
+        self._agent_service_addr: str | None = None
 
     def _engine_name(self, rank: int) -> str:
         """Generate engine name for a worker rank.
@@ -127,15 +124,6 @@ class RolloutController:
         Engine names follow the "role/index" format (e.g., "rollout/0", "rollout/1").
         """
         return f"{self._worker_role}/{rank}"
-
-    @property
-    def _agent_service_role(self) -> str:
-        """Derive unique agent service role name from worker role.
-
-        This ensures each controller registers a distinct agent service worker group
-        on the shared scheduler, e.g. "rollout" -> "agent_service", "eval-rollout" -> "eval-agent_service".
-        """
-        return self._worker_role.replace("rollout", "agent_service")
 
     def initialize(
         self,
@@ -287,12 +275,12 @@ class RolloutController:
         addrs: list[str],
         started_flag_attr: str,
     ) -> None:
-        """Clean up a group of workers (proxy or agent).
+        """Clean up a group of workers.
 
         Parameters
         ----------
         role : str
-            The role name for the workers (e.g., "proxy", "agent").
+            The role name for the workers (e.g., "proxy").
         workers : list[Worker]
             The list of worker objects to clear.
         addrs : list[str]
@@ -328,15 +316,9 @@ class RolloutController:
             except Exception as e:
                 logger.error(f"Error deleting workers: {e}")
 
-        # Clean up proxy and agent workers
+        # Clean up proxy workers
         self._cleanup_worker_group(
             "proxy", self.proxy_workers, self.proxy_addrs, "_proxy_started"
-        )
-        self._cleanup_worker_group(
-            self._agent_service_role,
-            self.agent_service_workers,
-            self.agent_service_addrs,
-            "_agent_service_started",
         )
 
         self.workers.clear()
@@ -429,175 +411,18 @@ class RolloutController:
             )
         return self.proxy_addrs[rank]
 
-    def start_agent_service(
-        self,
-        agent_import_path: str | None = None,
-        agent_reuse: bool = False,
-        agent_init_kwargs: dict | None = None,
-        workers: int = 1,
-    ) -> None:
-        """Initialize Agent Service workers for standalone agent deployment.
+    def set_agent_service_addr(self, addr: str) -> None:
+        """Set the Agent Service (Gateway) address for workflow dispatch.
 
-        Creates Agent Service workers as independent CPU-only processes.
-        Each Agent Service worker runs agent workflows (e.g., OpenAIProxyWorkflow)
-        and connects to its corresponding Proxy Server for inference.
-
-        The Agent Service enables decoupling of agent logic from inference,
-        allowing independent scaling and hot-updating of agent strategies.
+        Called by the Trainer after AgentController starts the Gateway.
+        The address is auto-injected into workflow_kwargs for each task.
 
         Parameters
         ----------
-        agent_import_path : str, optional
-            Import path to the agent class (e.g., "mymodule.MyAgent").
-            If not provided, uses the default agent implementation.
-        agent_reuse : bool
-            If True, reuse a single agent instance across all requests (shared mode).
-            If False, create a new agent instance for each request (per-request mode).
-            Default is False.
-        agent_init_kwargs : dict, optional
-            Keyword arguments for agent instantiation in shared mode.
-            Only used when agent_reuse=True.
-        workers : int
-            Number of worker processes per Agent Service instance.
-            Each worker handles requests concurrently. Default is 1.
-
-        Raises
-        ------
-        RuntimeError
-            If Proxy Server workers are not initialized. Call start_proxy() first.
+        addr : str
+            HTTP address of the Gateway (e.g., 'http://host:8300').
         """
-        if self._agent_service_started:
-            logger.warning("Agent Service workers already initialized")
-            return
-
-        if not self.proxy_addrs:
-            raise RuntimeError(
-                "Cannot initialize Agent Service: No proxy addresses available. "
-                "Call start_proxy() first."
-            )
-
-        run_async_task(
-            self._async_start_agent_service,
-            agent_import_path,
-            agent_reuse,
-            agent_init_kwargs,
-            workers,
-        )
-        self._agent_service_started = True
-
-    async def _async_start_agent_service(
-        self,
-        agent_import_path: str | None = None,
-        agent_reuse: bool = False,
-        agent_init_kwargs: dict | None = None,
-        workers: int = 1,
-    ) -> None:
-        """Async implementation of Agent Service worker initialization.
-
-        Creates Agent Service workers as independent CPU-only processes using
-        a single create_workers(Job) call. Each agent receives its corresponding
-        proxy address via environment variables.
-
-        Parameters
-        ----------
-        agent_import_path : str, optional
-            Import path to the agent class.
-        agent_reuse : bool
-            If True, reuse a single agent instance (shared mode).
-            If False, create a new agent for each request (per-request mode).
-        agent_init_kwargs : dict, optional
-            Keyword arguments for agent instantiation in shared mode.
-        workers : int
-            Number of worker processes per Agent Service instance.
-        """
-        # Get experiment/trial info from scheduler for name_resolve registration
-        experiment_name = self.scheduler.experiment_name
-        trial_name = self.scheduler.trial_name
-
-        # Prepare agent init kwargs as JSON string
-        agent_init_kwargs_str = (
-            json.dumps(agent_init_kwargs) if agent_init_kwargs else ""
-        )
-
-        # Build all service specs first, then create workers in a single call
-        # This avoids the error of creating duplicate worker groups with same role
-        service_specs = []
-        for idx, proxy_addr in enumerate(self.proxy_addrs):
-            # Build command with required arguments
-            # Note: --worker-index will be overwritten by SLURM_PROCID if running under SLURM
-            cmd = (
-                f"python -m areal.experimental.agent_service "
-                f"--experiment-name {experiment_name} "
-                f"--trial-name {trial_name} "
-                f"--role {self._agent_service_role} "
-                f"--worker-index {idx} "
-                f"--workers {workers}"
-            )
-
-            # Create CPU-only SchedulingSpec with proxy address in env vars
-            service_spec = SchedulingSpec(
-                cpu=4,
-                gpu=0,
-                mem=4,
-                port_count=1,
-                cmd=cmd,
-                env_vars={
-                    "AGENT_PROXY_ADDR": proxy_addr,
-                    "AGENT_IMPORT_PATH": agent_import_path or "",
-                    "AGENT_REUSE": "true" if agent_reuse else "false",
-                    "AGENT_INIT_KWARGS": agent_init_kwargs_str,
-                },
-            )
-            service_specs.append(service_spec)
-
-        # Single call to create_workers with all specs
-        # Each worker gets its own spec (len(tasks) == replicas)
-        job = Job(
-            role=self._agent_service_role,
-            replicas=len(self.proxy_addrs),
-            tasks=service_specs,
-        )
-
-        all_worker_ids = self.scheduler.create_workers(job=job)
-        logger.info(f"Agent Service workers created: {all_worker_ids}")
-
-        self.agent_service_workers = self.scheduler.get_workers(
-            role=self._agent_service_role
-        )
-        logger.info(
-            f"Agent Service workers: {[w.id for w in self.agent_service_workers]}"
-        )
-
-        # Store agent service addresses for external access
-        for service_worker in self.agent_service_workers:
-            self.agent_service_addrs.append(
-                f"http://{service_worker.ip}:{service_worker.worker_ports[0]}"
-            )
-
-        logger.info(f"Agent Service initialized. Addresses: {self.agent_service_addrs}")
-
-    def get_agent_service_addr(self, rank: int) -> str:
-        """Get the Agent Service address for a given rank.
-
-        Parameters
-        ----------
-        rank : int
-            The rank of the Agent Service worker
-
-        Returns
-        -------
-        str
-            The HTTP address of the corresponding Agent Service
-        """
-        if not self._agent_service_started:
-            raise RuntimeError(
-                "Agent Service workers not initialized. Call start_agent_service() first."
-            )
-        if rank >= len(self.agent_service_addrs):
-            raise IndexError(
-                f"Invalid rank {rank}, only {len(self.agent_service_addrs)} agent service workers"
-            )
-        return self.agent_service_addrs[rank]
+        self._agent_service_addr = addr
 
     def _start_callback_server(self):
         """Start Flask HTTP server to receive callbacks from RolloutCallback."""
@@ -826,12 +651,10 @@ class RolloutController:
                 # Create a copy of workflow_kwargs to avoid mutating shared state
                 workflow_kwargs = pending_task.workflow_kwargs.copy()
                 if (
-                    self._agent_service_started
+                    self._agent_service_addr is not None
                     and "agent_service_addr" not in workflow_kwargs
                 ):
-                    workflow_kwargs["agent_service_addr"] = self.get_agent_service_addr(
-                        rank
-                    )
+                    workflow_kwargs["agent_service_addr"] = self._agent_service_addr
                 engine_task_id = await self.scheduler.async_call_engine(
                     worker.id,
                     "submit",
