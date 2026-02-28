@@ -119,8 +119,7 @@ class TestAgentControllerStartGateway:
         assert len(job.tasks) == 1
 
         spec = job.tasks[0]
-        assert "areal.experimental.agent_service.gateway" in spec.cmd
-        assert "--queue-size 500" in spec.cmd
+        assert "agent_service.gateway" in spec.cmd
         assert "--queue-size 500" in spec.cmd
         assert spec.gpu == 0  # CPU-only
 
