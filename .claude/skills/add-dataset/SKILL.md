@@ -139,7 +139,7 @@ class TrainDatasetConfig:
 
 ### Step 4: Add Tests
 
-Create `areal/tests/test_<name>_dataset.py`:
+Create `tests/test_<name>_dataset.py`:
 
 ```python
 import pytest

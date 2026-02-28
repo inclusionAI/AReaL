@@ -232,4 +232,4 @@ patterns (refer to source code).
 - Code: `areal/experimental/engine/archon_engine.py`
 - Parallel: `areal/experimental/models/archon/parallel_dims.py`
 - MoE: `areal/experimental/models/archon/moe/`
-- Tests: `areal/tests/experimental/archon/torchrun/` (working examples)
+- Tests: `tests/experimental/archon/torchrun/` (working examples)
