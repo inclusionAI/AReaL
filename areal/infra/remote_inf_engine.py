@@ -761,9 +761,10 @@ class RemoteInfEngine(InferenceEngine):
             )
 
             # Assert response is JSON dict (not text/binary from error pages)
-            assert isinstance(result, dict), (
-                f"Expected JSON dict response, got {type(result).__name__}"
-            )
+            if not isinstance(result, dict):
+                raise ValueError(
+                    f"Expected JSON dict response, got {type(result).__name__}"
+                )
 
             # Parse response using backend
             gen_result = self.backend.parse_generation_response(result)
@@ -772,8 +773,9 @@ class RemoteInfEngine(InferenceEngine):
             # Update accumulated outputs
             accumulated_output_tokens.extend(gen_result.output_tokens)
             accumulated_output_logprobs.extend(gen_result.output_logprobs)
-            cur_ver = self.get_version()
-            accumulated_versions.extend([cur_ver] * len(gen_result.output_tokens))
+            accumulated_versions.extend(
+                [self.get_version()] * len(gen_result.output_tokens)
+            )
 
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens

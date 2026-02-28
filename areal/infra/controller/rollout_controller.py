@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import threading
+import traceback
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -122,7 +123,15 @@ class RolloutController:
         This avoids collisions when multiple controllers (e.g., rollout and
         eval-rollout) each fork proxy workers into the same scheduler.
         """
+        if not hasattr(self, "_worker_role"):
+            raise RuntimeError(
+                "Cannot access _proxy_role before initialize() is called"
+            )
         return f"proxy-{self._worker_role}"
+
+    def _proxy_engine_name(self, rank: int) -> str:
+        """Generate engine name for a proxy worker rank."""
+        return f"{self._proxy_role}/{rank}"
 
     def _engine_name(self, rank: int) -> str:
         """Generate engine name for a worker rank.
@@ -287,22 +296,24 @@ class RolloutController:
         if hasattr(self, "_worker_role"):
             try:
                 self.scheduler.delete_workers(role=self._worker_role)
+                self.workers.clear()
                 logger.info("Workers deleted")
-            except Exception as e:
-                logger.error(f"Error deleting workers: {e}")
+            except Exception:
+                logger.error(f"Error deleting workers: {traceback.format_exc()}")
 
         # Delete proxy workers if initialized
         if self._proxy_started:
             try:
                 self.scheduler.delete_workers(role=self._proxy_role)
+                self.proxy_workers.clear()
+                self.proxy_addrs.clear()
+                self._proxy_started = False
                 logger.info("Proxy workers deleted")
-            except Exception as e:
-                logger.error(f"Error deleting proxy workers: {e}")
-            self.proxy_workers.clear()
-            self.proxy_addrs.clear()
-            self._proxy_started = False
+            except Exception:
+                logger.error(f"Error deleting proxy workers: {traceback.format_exc()}")
 
-        self.workers.clear()
+        with self._futures_lock:
+            self._pending_futures.clear()
 
     def start_proxy(self) -> None:
         """Initialize proxy workers for AgentWorkflow support.
@@ -354,7 +365,7 @@ class RolloutController:
 
         init_tasks = []
         for rank, (worker, server_info) in enumerate(
-            zip(self.proxy_workers, self.server_infos)
+            zip(self.proxy_workers, self.server_infos, strict=True)
         ):
             init_tasks.append(
                 self.scheduler.async_call_engine(
@@ -526,10 +537,6 @@ class RolloutController:
 
     def _proxy_collective_rpc(self, method: str, *args, **kwargs) -> list[Any]:
         return run_async_task(self._proxy_collective_rpc_async, method, *args, **kwargs)
-
-    def _proxy_engine_name(self, rank: int) -> str:
-        """Generate engine name for a proxy worker rank."""
-        return f"{self._proxy_role}/{rank}"
 
     async def _proxy_collective_rpc_async(
         self, method: str, *args, **kwargs
