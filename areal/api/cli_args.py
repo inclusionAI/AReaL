@@ -173,7 +173,7 @@ class GenerationHyperparameters:
         },
     )
     lora_name: str = field(
-        default="",
+        default="default_lora",
         metadata={"help": "Lora name to be used for this generation."},
     )
     use_beam_search: bool = field(
@@ -453,7 +453,12 @@ class ArchonEngineConfig:
         default="Interleaved1F1B",
         metadata={
             "help": "Pipeline parallel schedule type.",
-            "choices": ["1F1B", "Interleaved1F1B", "ZBVZeroBubble"],
+            "choices": [
+                "1F1B",
+                "Interleaved1F1B",
+                "InterleavedZeroBubble",
+                "ZBVZeroBubble",
+            ],
         },
     )
     # NOTE: The following three PP layer distribution parameters are advanced options
@@ -466,7 +471,7 @@ class ArchonEngineConfig:
             "help": "Number of transformer layers per (virtual) pipeline stage. "
             "If set, num_virtual_stages is calculated from num_layers. "
             "If None, stages are inferred from schedule type "
-            "(1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B/ZBVZeroBubble).",
+            "(1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B/InterleavedZeroBubble/ZBVZeroBubble).",
         },
     )
     pp_first_stage_less_layers: int = field(
@@ -481,6 +486,17 @@ class ArchonEngineConfig:
         metadata={
             "help": "Number of layers to reduce in the last pipeline stage. "
             "Accounts for output layer overhead.",
+        },
+    )
+
+    # Deterministic mode
+    use_deterministic_algorithms: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable deterministic algorithms for training reproducibility. "
+            "Sets torch.use_deterministic_algorithms(True, warn_only=True), "
+            "CUBLAS_WORKSPACE_CONFIG, NCCL_ALGO, and TORCH_COMPILE_DETERMINISTIC. "
+            "May reduce performance.",
         },
     )
 
@@ -1182,8 +1198,11 @@ class vLLMConfig:
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
+    # lora
     enable_lora: bool = False
-    lora_modules: str = ""
+    max_lora_rank: int = 16  # vllm's default
+    max_loras: int = 8  # override default
+    lora_modules: list[str] | None = None  # lora_modules is automatically filled
 
     @staticmethod
     def build_args(
@@ -1208,18 +1227,6 @@ class vLLMConfig:
             args["port"] = port
         if host is not None:
             args["host"] = host
-        # handle lora modules separately
-        lm = args.get("lora_modules")
-        if lm:
-            if isinstance(lm, str):
-                lm = [lm]
-            if isinstance(lm, (list, tuple)):
-                try:
-                    args["lora_modules"] = [
-                        json.dumps(json.loads(s), separators=(",", ":")) for s in lm
-                    ]
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"Invalid JSON string in lora_modules: {e}") from e
         return args
 
     @staticmethod
@@ -1297,10 +1304,8 @@ class SGLangConfig:
     # lora
     enable_lora: bool | None = None
     max_lora_rank: int | None = None
-    lora_target_modules: list[str] | None = None
-    lora_paths: list[str] | None = None
-    max_loaded_loras: int = 1
-    max_loras_per_batch: int = 1
+    max_loaded_loras: int = 8  # override default
+    lora_paths: list[str] | None = None  # lora_paths is automatically filled
     lora_backend: str = "triton"
     # logging
     log_level: str = "warning"
@@ -1367,11 +1372,6 @@ class SGLangConfig:
                 model_loader_extra_config, separators=(",", ":")
             )
         args.pop("enable_multithread_load", None)
-        # Map "all-linear" to "all"
-        if "lora_target_modules" in args and args["lora_target_modules"]:
-            args["lora_target_modules"] = [
-                x.replace("-linear", "") for x in args["lora_target_modules"]
-            ]
 
         args = dict(
             # Model and tokenizer
@@ -1464,6 +1464,22 @@ class OpenAIProxyConfig:
             "help": "Session timeout in seconds. Sessions inactive longer than this will be garbage collected."
         },
     )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": (
+                "Admin API key for the proxy server. Used to authenticate management "
+                "operations (grant_capacity, start_session). "
+                "Cannot be used for chat completions. Each session gets a unique "
+                "API key allocated via start_session. "
+                "WARNING: Change this from the default for non-local deployments."
+            ),
+        },
+    )
+
+    def __post_init__(self):
+        if not self.admin_api_key or not self.admin_api_key.strip():
+            raise ValueError("admin_api_key must not be empty or whitespace-only")
 
 
 @dataclass

@@ -5,6 +5,7 @@ proxy-based training infrastructure via the AgentWorkflow pattern.
 """
 
 import math
+import os
 
 from langchain_openai import ChatOpenAI
 from math_verify import parse, verify
@@ -81,19 +82,20 @@ class MathAgent:
 
         Args:
             data: Input data containing "messages" and "answer"
-            **extra_kwargs: Contains base_url and http_client from proxy
+            **extra_kwargs: Contains base_url, api_key, and http_client from proxy
 
         Returns:
             Reward value for this trajectory
         """
         http_client = extra_kwargs.get("http_client", None)
-        base_url = extra_kwargs.get("base_url", None)
+        base_url = extra_kwargs.get("base_url", None) or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key", None) or os.getenv("OPENAI_API_KEY")
 
         # Build LangChain ChatOpenAI with proxy settings
         llm = ChatOpenAI(
             model="default",
             base_url=base_url,
-            api_key="placeholder",
+            api_key=api_key,
             temperature=self.kwargs.get("temperature", 1.0),
             top_p=self.kwargs.get("top_p", 1.0),
             max_tokens=self.kwargs.get("max_completion_tokens", 1024),
@@ -124,19 +126,20 @@ class MathToolAgent:
 
         Args:
             data: Input data containing "messages" and "answer"
-            **extra_kwargs: Contains base_url and http_client from proxy
+            **extra_kwargs: Contains base_url, api_key, and http_client from proxy
 
         Returns:
             Reward value for this trajectory
         """
         http_client = extra_kwargs.get("http_client", None)
-        base_url = extra_kwargs.get("base_url", None)
+        base_url = extra_kwargs.get("base_url", None) or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key", None) or os.getenv("OPENAI_API_KEY")
 
         # Build LangChain ChatOpenAI with proxy settings
         llm = ChatOpenAI(
             model="default",
             base_url=base_url,
-            api_key="placeholder",
+            api_key=api_key,
             temperature=self.kwargs.get("temperature", 1.0),
             top_p=self.kwargs.get("top_p", 1.0),
             max_tokens=self.kwargs.get("max_completion_tokens", 1024),

@@ -27,7 +27,7 @@ async def arequest_with_retry(
     timeout: float | None = None,
     retry_delay: float = 1.0,
     verbose=False,
-) -> dict:
+) -> dict | str | bytes:
     if timeout is None:
         timeout = DEFAULT_REQUEST_TIMEOUT
     last_exception = None
@@ -67,7 +67,13 @@ async def arequest_with_retry(
                 if verbose:
                     logger.info("http requests return")
                 response.raise_for_status()
-                res = await response.json()
+                ctype = response.content_type or ""
+                if ctype == "application/json":
+                    res = await response.json()
+                elif ctype.startswith("text/"):
+                    res = await response.text()
+                else:
+                    res = await response.read()
                 if verbose:
                     logger.info("get http result")
                 if session is None:

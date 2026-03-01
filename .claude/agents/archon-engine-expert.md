@@ -80,14 +80,13 @@ and `ParallelStrategy` for model parallelism.
 
 ## Workflow Integration
 
-ArchonEngine integrates with AReaL workflows through the `WorkflowLike` interface,
+ArchonEngine integrates with AReaL workflows through the `WorkflowLike` type alias,
 supporting RLVRWorkflow, MultiTurnWorkflow, and other workflow implementations.
 
 **Integration Pattern**:
 
 - Import `ArchonEngine` from `areal.experimental.engine.archon_engine`
-- Import desired workflow class (e.g., `RLVRWorkflow` from
-  `areal.workflow.rlvr_workflow`)
+- Import desired workflow class (e.g., `RLVRWorkflow` from `areal.workflow.rlvr`)
 - Initialize `ArchonEngine` with configuration
 - Create workflow instance with engine, reward functions, and dataset
 
@@ -189,8 +188,8 @@ patterns (refer to source code).
 1. **Setup**: Install dependencies with `uv sync --extra experimental`
 1. **Configure**: Set up `ParallelStrategy` for model parallelism and
    `TrainEngineConfig` with `ArchonEngineConfig` for training settings
-1. **Integrate**: Reference test files in `areal/tests/experimental/archon/torchrun/`
-   for working examples
+1. **Integrate**: Reference test files in `tests/experimental/archon/torchrun/` for
+   working examples
 1. **Monitor**: Track expert utilization, parallel dimensions, and use profiling tools
    for optimization
 
@@ -243,7 +242,7 @@ patterns (refer to source code).
 - Code: `areal/experimental/engine/archon_engine.py`
 - Parallel: `areal/experimental/models/archon/parallel_dims.py`
 - MoE: `areal/experimental/models/archon/moe/`
-- Tests: `areal/tests/experimental/archon/torchrun/` (working examples)
+- Tests: `tests/experimental/archon/torchrun/` (working examples)
 
 ______________________________________________________________________
 

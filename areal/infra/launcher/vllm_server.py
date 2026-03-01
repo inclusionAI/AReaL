@@ -44,6 +44,7 @@ def launch_server_cmd(
     vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
     if vllm_cache_path:
         _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
+    _env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
 
     if custom_env is not None:
         _env.update(custom_env)

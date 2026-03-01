@@ -56,7 +56,7 @@ helping with code reviews. This guide will help you get started.
    ```bash
    # --sw: step-wise debugging
    # --lf: run the last failed test first
-   pytest -sv --sw --lf areal/tests/
+   pytest -sv --sw --lf tests/
    ```
 
    Our test suite includes:
@@ -71,7 +71,7 @@ helping with code reviews. This guide will help you get started.
    - Running other unit tests for individual components
 
    Some unit tests require multiple GPUs. The entry point scripts are located under
-   `areal/tests/torchrun`. In the corresponding test files (e.g.,
+   `tests/torchrun`. In the corresponding test files (e.g.,
    `test_data_redistribution.py`), we use subprocesses to launch distributed experiments
    with `torchrun` and wait for results.
 
@@ -171,8 +171,8 @@ suite runs on ephemeral GCP compute engines with 2 A100 GPUs (40GB memory).
 **Writing Tests for New Features:**
 
 If you have implemented a new feature, we highly recommend writing tests and adding them
-to our pytest workflow. Place your test files under `areal/tests/test_*.py` and mark
-them with our pre-defined pytest markers:
+to our pytest workflow. Place your test files under `tests/test_*.py` and mark them with
+our pre-defined pytest markers:
 
 - `slow`: Tests that take more than 30 seconds to run. These will not run in the CI/CD
   workflow unless also marked with `ci`.
