@@ -746,7 +746,7 @@ Configuration for SwanLab experiment tracking and monitoring.
 | `config`  | `dict` \| None | `None`                    | -           |
 | `logdir`  | string \| None | `None`                    | -           |
 | `mode`    | string \| None | `"disabled"`              | -           |
-| `api_key` | string \| None | `"4KHJ20cRg6fuVkvwvGaXD"` | -           |
+| `api_key` | string \| None | `None`                    | -           |
 
 (section-tensor-board)=
 
