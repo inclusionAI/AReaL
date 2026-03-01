@@ -502,6 +502,7 @@ class RemoteInfEngine(InferenceEngine):
             mode=openai_cfg.mode,
             agent=agent,
             proxy_addr=proxy_addr,
+            admin_api_key=openai_cfg.admin_api_key,
             discount=openai_cfg.turn_discount,
             export_style=openai_cfg.export_style,
             subproc_max_workers=openai_cfg.subproc_max_workers,

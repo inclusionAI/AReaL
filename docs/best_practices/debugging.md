@@ -57,8 +57,8 @@ from openai import AsyncOpenAI
 
 class MyAgent:
     async def run(self, data, **extra_kwargs):
-        base_url = extra_kwargs.get("base_url")
-        api_key = extra_kwargs.get("api_key")
+        base_url = extra_kwargs.get("base_url") or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key") or os.getenv("OPENAI_BASE_API_KEY")
         async with AsyncOpenAI(base_url=base_url, api_key=api_key) as client:
             comp = await client.chat.completions.create(
                 model="qwen/qwen2.5-0.5b-instruct",
