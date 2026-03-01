@@ -139,8 +139,14 @@ class OpenAIProxyClient:
         """Export interactions for this session via HTTP.
 
         This method should be called after the session context exits
-        (i.e., after `__aexit__` has ended the RL session), since
-        `/export_trajectories` waits for the session to finish.
+        (i.e., after ``__aexit__`` has ended the RL session), since
+        ``/export_trajectories`` waits for the session to finish.
+
+        The request always includes the explicit ``session_id`` so that
+        the server resolves the correct session regardless of any
+        API-key-to-session remapping that may have occurred during a
+        refresh cycle.  Admin auth is used because the session key is
+        not guaranteed to still map to this session.
 
         Parameters
         ----------
@@ -153,17 +159,22 @@ class OpenAIProxyClient:
         -------
         dict[str, InteractionWithTokenLogpReward]
             Dictionary mapping interaction IDs to their data
-        """
 
-        if self._session_api_key is None:
-            raise ValueError("Session API key is not set")
+        Raises
+        ------
+        ValueError
+            If ``session_id`` has not been set on this client.
+        """
+        if self.session_id is None:
+            raise ValueError("session_id must be set before exporting interactions")
 
         url = f"{self.base_url}{EXPORT_TRAJECTORIES_PATHNAME}"
         payload = {
+            "session_id": self.session_id,
             "discount": discount,
             "style": style,
         }
-        headers = self._session_auth_headers()
+        headers = self._admin_auth_headers()
         async with self._session.post(url, json=payload, headers=headers) as resp:
             resp.raise_for_status()
             data = await resp.json()

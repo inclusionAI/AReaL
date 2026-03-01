@@ -26,6 +26,7 @@ class StartSessionRequest(BaseModel):
     """Request to start a new RL session."""
 
     task_id: str
+    api_key: str | None = None  # Reuse a previously-issued key (refresh)
 
 
 class StartSessionResponse(BaseModel):
@@ -45,7 +46,7 @@ class SetRewardRequest(BaseModel):
 class ExportTrajectoriesRequest(BaseModel):
     """Request to export trajectories for a session."""
 
-    session_id: str | None = None
+    session_id: str
     discount: float = 1.0
     style: str = "individual"
 
@@ -89,6 +90,11 @@ class SessionData:
         self._completed = True
         self._end_time = time.time()
         self._completed_event.set()
+
+    @property
+    def is_completed(self) -> bool:
+        """Whether this session has been completed via ``finish()``."""
+        return self._completed
 
     @property
     def completions(self):
@@ -163,7 +169,22 @@ RESPONSES_PATHNAME = "responses"
 ANTHROPIC_MESSAGES_PATHNAME = "v1/messages"
 GRANT_CAPACITY_PATHNAME = "grant_capacity"
 EXPORT_TRAJECTORIES_PATHNAME = "export_trajectories"
+INTERNAL_WAIT_FOR_SESSION_PATHNAME = "internal/wait_for_session"
 
 # Shared default for admin API key — used by cli_args.py and workflow.py
 # to avoid independent duplication.
 DEFAULT_ADMIN_API_KEY = "areal-admin-key"
+
+
+class WaitForSessionRequest(BaseModel):
+    """Request from _OnlineAgent to register a worker and wait for a session."""
+
+    worker_addr: str
+
+
+class WaitForSessionResponse(BaseModel):
+    """Response with completed session credentials."""
+
+    session_api_key: str
+    session_id: str
+    worker_addr: str

@@ -56,11 +56,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger("RLTrainer")
 
 
+class _EmptyDataLoader:
+    """Minimal dataloader for online mode that yields empty dicts.
+
+    Compatible with ``cycle_dataloader()`` and ``len()`` expectations.
+    Each "epoch" produces a single batch of ``batch_size`` empty dicts,
+    so the training loop collects the correct number of trajectories
+    before proceeding to a train step.
+    """
+
+    def __init__(self, batch_size: int = 1):
+        self.batch_size = batch_size
+
+    def __len__(self) -> int:
+        return 1  # 1 step per "epoch" for online mode
+
+    def __iter__(self):
+        while True:
+            yield [{} for _ in range(self.batch_size)]
+
+    def state_dict(self) -> dict:
+        return {}
+
+    def load_state_dict(self, state_dict: dict) -> None:  # noqa: ARG002
+        pass
+
+
 class PPOTrainer:
     def __init__(
         self,
         config: PPOConfig,
-        train_dataset: Dataset,
+        train_dataset: Dataset | None = None,
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
@@ -96,12 +122,18 @@ class PPOTrainer:
         # Create dataloaders
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
-        self.train_dataloader = self._create_dataloader(
-            train_dataset,
-            dataset_config=self.config.train_dataset,
-            rank=self.actor.data_parallel_rank,
-            world_size=self.actor.data_parallel_world_size,
-        )
+        if train_dataset is None:
+            # Online mode: use empty data generator
+            self.train_dataloader = _EmptyDataLoader(
+                batch_size=config.train_dataset.batch_size
+            )
+        else:
+            self.train_dataloader = self._create_dataloader(
+                train_dataset,
+                dataset_config=self.config.train_dataset,
+                rank=self.actor.data_parallel_rank,
+                world_size=self.actor.data_parallel_world_size,
+            )
         self.valid_dataloader = None
         if self.config.valid_dataset is not None and valid_dataset is not None:
             self.valid_dataloader = self._create_dataloader(
@@ -137,9 +169,17 @@ class PPOTrainer:
         self.rollout = self._init_rollout(
             config.rollout, is_eval=False, lora_path=initial_lora_path
         )
-        self.eval_rollout = self._init_rollout(
-            config.rollout, is_eval=True, lora_path=initial_lora_path
+        # Online mode detection: skip eval rollout for efficiency.
+        openai_cfg = config.rollout.openai
+        self._online_mode = train_dataset is None or (
+            openai_cfg is not None and openai_cfg.mode == "online"
         )
+
+        self.eval_rollout = None
+        if not self._online_mode:
+            self.eval_rollout = self._init_rollout(
+                config.rollout, is_eval=True, lora_path=initial_lora_path
+            )
 
         # Proxy worker initialization (lazy, for AgentWorkflow support)
         self._proxy_started = False
@@ -185,7 +225,7 @@ class PPOTrainer:
             )
         self.actor.connect_engine(self.rollout, self.weight_update_meta)
 
-        # Set up evaluation
+        # Set up evaluation (skip in online mode)
         self.evaluator = Evaluator(config.evaluator, ft_spec)
 
         # Set up save as HF model
@@ -210,7 +250,7 @@ class PPOTrainer:
 
     def train(
         self,
-        workflow: WorkflowLike,
+        workflow: WorkflowLike | None = None,
         eval_workflow: WorkflowLike | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         eval_workflow_kwargs: dict[str, Any] | None = None,
@@ -232,7 +272,17 @@ class PPOTrainer:
         max_steps = total_epochs * steps_per_epoch
 
         # Initialize proxy workers if not using RolloutWorkflow
-        if self._requires_proxy_workflow(workflow):
+        if workflow is None:
+            openai_cfg = self.config.rollout.openai
+            if openai_cfg is not None and openai_cfg.mode == "online":
+                self._ensure_proxy_started()
+            else:
+                raise ValueError(
+                    "workflow must be specified for train() unless "
+                    "openai.mode='online' is configured. "
+                    "Pass a RolloutWorkflow, AgentWorkflow, or callable."
+                )
+        elif self._requires_proxy_workflow(workflow):
             self._ensure_proxy_started()
 
         for global_step in range(start_step, max_steps):
@@ -359,7 +409,8 @@ class PPOTrainer:
                 if self.critic is not None:
                     self.critic.set_version(new_version)
                 self.rollout.set_version(new_version)
-                self.eval_rollout.set_version(new_version)
+                if self.eval_rollout is not None:
+                    self.eval_rollout.set_version(new_version)
 
             with (
                 stats_tracker.record_timing("save"),
@@ -428,7 +479,8 @@ class PPOTrainer:
     def close(self):
         self.saver.finalize()
         self.stats_logger.close()
-        self.eval_rollout.destroy()
+        if self.eval_rollout is not None:
+            self.eval_rollout.destroy()
         self.rollout.destroy()
         if self.ref is not None:
             self.ref.destroy()
@@ -452,9 +504,10 @@ class PPOTrainer:
         if self.ref is not None:
             self.ref.config_perf_tracer(self.config.perf_tracer, role="ref")
         self.rollout.config_perf_tracer(self.config.perf_tracer, role="rollout")
-        self.eval_rollout.config_perf_tracer(
-            self.config.perf_tracer, role="eval-rollout"
-        )
+        if self.eval_rollout is not None:
+            self.eval_rollout.config_perf_tracer(
+                self.config.perf_tracer, role="eval-rollout"
+            )
 
     def _save_perf_tracer(self, step: int):
         self.actor.save_perf_tracer(step=step)
@@ -462,7 +515,8 @@ class PPOTrainer:
             self.ref.save_perf_tracer(step=step)
         if self.critic is not None:
             self.critic.save_perf_tracer(step=step)
-        self.eval_rollout.save_perf_tracer(step=step)
+        if self.eval_rollout is not None:
+            self.eval_rollout.save_perf_tracer(step=step)
         self.rollout.save_perf_tracer(step=step)
         perf_tracer.save(step=step)
 
@@ -740,7 +794,11 @@ class PPOTrainer:
         epoch_step: int,
         global_step: int,
     ):
-        if self.valid_dataloader is None or eval_workflow is None:
+        if (
+            self.eval_rollout is None
+            or self.valid_dataloader is None
+            or eval_workflow is None
+        ):
             return
         self.evaluator.evaluate(
             functools.partial(
@@ -759,13 +817,14 @@ class PPOTrainer:
         # Upload statistics to the logger (e.g., wandb)
         stats = self.actor.export_stats()
         stats.update(self.rollout.export_stats())
-        stats.update(self.eval_rollout.export_stats())
+        if self.eval_rollout is not None:
+            stats.update(self.eval_rollout.export_stats())
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
-    def _requires_proxy_workflow(self, workflow: WorkflowLike) -> bool:
+    def _requires_proxy_workflow(self, workflow: WorkflowLike | None) -> bool:
         """Check if workflow requires proxy workers (i.e., not a RolloutWorkflow).
 
         Returns True if:
@@ -776,6 +835,10 @@ class PPOTrainer:
         This enables any callable object with a compatible signature to work
         without requiring inheritance from AgentWorkflow.
         """
+        # None workflow is handled separately in train()
+        if workflow is None:
+            return False
+
         # Direct RolloutWorkflow instances
         if isinstance(workflow, RolloutWorkflow):
             return False
@@ -808,9 +871,11 @@ class PPOTrainer:
     def _ensure_proxy_started(self) -> None:
         """Lazily initialize proxy workers when agent workflows are used.
 
-        This method is called before training when a non-RolloutWorkflow is detected.
-        It creates proxy workers colocated with rollout workers to handle
-        OpenAI-compatible API requests from agent subprocesses.
+        This method is called before training when a non-RolloutWorkflow is detected
+        or when online mode is configured. It creates proxy workers colocated with
+        rollout workers to handle OpenAI-compatible API requests.
+
+        In online mode, also starts the proxy gateway for external access.
         """
         if self._proxy_started:
             return
@@ -828,6 +893,16 @@ class PPOTrainer:
         self.rollout.start_proxy()
         if self.eval_rollout is not None:
             self.eval_rollout.start_proxy()
+
+        # Start proxy gateway for online mode.
+        openai_cfg = self.config.rollout.openai
+        if openai_cfg is not None and openai_cfg.mode == "online":
+            self.rollout.start_proxy_gateway()
+            logger.info(
+                "Proxy gateway available at %s",
+                self.rollout.proxy_gateway_addr,
+            )
+
         self._proxy_started = True
 
     def __enter__(self):

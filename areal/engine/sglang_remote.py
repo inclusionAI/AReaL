@@ -271,6 +271,9 @@ class RemoteSGLangEngine(InferenceEngine):
         """Get the current weight version."""
         return self._engine.get_version()
 
+    def set_proxy_gateway_addr(self, addr: str) -> None:
+        return self._engine.set_proxy_gateway_addr(addr)
+
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request."""
         return await self._engine.agenerate(req)
