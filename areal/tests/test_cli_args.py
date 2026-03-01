@@ -1,9 +1,7 @@
 # Import directly from cli_args module to avoid importing areal package
-import sys
 
 import pytest
 
-sys.path.insert(0, "/F00120250029/lixiang_share/zengziyi_share/zengziyi/Research/AReaL")
 from areal.api.cli_args import PPOActorConfig, PPOConfig, validation_cfg
 
 

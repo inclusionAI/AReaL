@@ -1039,7 +1039,7 @@ class PPOActorConfig(TrainEngineConfig):
         },
     )
     engine_mismatch_IS_mode: str = field(
-        default="token_mask",
+        default="sequence_mask",
         metadata={
             "help": "Importance sampling correction mode for train-inference mismatch. "
             "'token_truncate': clamp token ratio to [0, cap]. "
@@ -2085,6 +2085,14 @@ def validation_cfg(cfg: PPOConfig) -> None:
                 "use_decoupled_loss=True or prox_logp_method='recompute'. "
                 f"Got use_decoupled_loss={actor.use_decoupled_loss}, "
                 f"prox_logp_method='{actor.prox_logp_method}'"
+            )
+        # SAPO is not compatible with MIS/TIS correction
+        if actor.use_sapo_loss:
+            raise ValueError(
+                "enable_MIS_TIS_correction=True is not compatible with use_sapo_loss=True. "
+                "SAPO requires use_decoupled_loss=False, but MIS/TIS correction requires "
+                "use_decoupled_loss=True or prox_logp_method='recompute'. "
+                "Please disable either enable_MIS_TIS_correction or use_sapo_loss."
             )
     # ADD MORE VALIDATION RULES IF NEEDED
     # RULE 2...

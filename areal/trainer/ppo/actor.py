@@ -468,9 +468,9 @@ def grpo_loss_fn(
         )
 
     # Log TIS/MIS engine IS ratio statistics
-    if "engine_IS_ratio" in stat and enable_MIS_TIS_correction:
+    if "engine_mismatch_IS_ratio" in stat and enable_MIS_TIS_correction:
         stats_tracker.stat(
-            engine_IS_ratio=stat["engine_IS_ratio"],
+            engine_mismatch_IS_ratio=stat["engine_mismatch_IS_ratio"],
             denominator="n_valid_tokens",
         )
 

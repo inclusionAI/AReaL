@@ -1,15 +1,9 @@
 import sys
 
-import debugpy
-
 from areal import PPOTrainer
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.utils.hf_utils import load_hf_tokenizer
-
-print("Waiting for debugger to attach...")
-debugpy.listen(("0.0.0.0", 5678))
-debugpy.wait_for_client()
 
 
 def main(args):
