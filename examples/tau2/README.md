@@ -147,4 +147,7 @@ trained using the Megatron engine:
 1. **Tree training**: The configs enable `enable_tree_training=true` by default, which
 optimizes training by sharing prefix computations across rollouts with the same
    prompt. This option can largely accelerate training but will possibly increase GPU
-   memory usage if `actor.mb_spec.max_tokens_per_mb` is large. But this setting may cause instability during the training of the MoE model.
+   memory usage if `actor.mb_spec.max_tokens_per_mb` is large. And this setting may cause instability during the training of the MoE model.
+
+## Customize Data
+By default, this example uses the official Tau2 dataset, but you can replace it with your own [open-source dataset](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data) to run experiments with real data.
