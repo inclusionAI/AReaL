@@ -2,7 +2,7 @@
 
 import pytest
 
-from areal.api.cli_args import PPOActorConfig, PPOConfig, validation_cfg
+from areal.api.cli_args import PPOActorConfig, PPOConfig, _validate_cfg
 
 
 class TestPPOActorConfigEngineIS:
@@ -23,9 +23,9 @@ class TestPPOActorConfigEngineIS:
                 prox_logp_method="loglinear",  # not recompute
             ),
         )
-        # Should raise when validation_cfg is called
+        # Should raise when _validate_cfg is called
         with pytest.raises(ValueError, match="enable_MIS_TIS_correction=True requires"):
-            validation_cfg(config)
+            _validate_cfg(config)
 
     def test_engine_is_works_with_decoupled(self):
         """Test that enable_MIS_TIS_correction works with decoupled loss."""
@@ -40,7 +40,7 @@ class TestPPOActorConfigEngineIS:
                 use_decoupled_loss=True,
             ),
         )
-        validation_cfg(config)  # Should not raise
+        _validate_cfg(config)  # Should not raise
         assert config.actor.enable_MIS_TIS_correction is True
 
     def test_engine_is_works_with_recompute(self):
@@ -57,7 +57,7 @@ class TestPPOActorConfigEngineIS:
                 prox_logp_method="recompute",
             ),
         )
-        validation_cfg(config)  # Should not raise
+        _validate_cfg(config)  # Should not raise
         assert config.actor.enable_MIS_TIS_correction is True
 
     def test_engine_is_defaults(self):

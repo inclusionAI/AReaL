@@ -2086,7 +2086,7 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def validation_cfg(cfg: PPOConfig) -> None:
+def _validate_cfg(cfg: Any) -> None:
     """Validate configuration after it's fully loaded.
 
     This function is called after OmegaConf.to_object() to ensure
@@ -2121,11 +2121,10 @@ def load_expr_config[ConfigT](
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
+    _validate_cfg(cfg)
     assert isinstance(cfg, config_cls)
-    # Validate configuration
-    validation_cfg(cfg)
-    # Setup environment
 
+    # Setup environment
     name_resolve.reconfigure(cfg.cluster.name_resolve)
 
     from areal.utils.stats_logger import StatsLogger
