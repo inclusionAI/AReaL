@@ -1433,6 +1433,22 @@ class OpenAIProxyConfig:
             "help": "Session timeout in seconds. Sessions inactive longer than this will be garbage collected."
         },
     )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": (
+                "Admin API key for the proxy server. Used to authenticate management "
+                "operations (grant_capacity, start_session). "
+                "Cannot be used for chat completions. Each session gets a unique "
+                "API key allocated via start_session. "
+                "WARNING: Change this from the default for non-local deployments."
+            ),
+        },
+    )
+
+    def __post_init__(self):
+        if not self.admin_api_key or not self.admin_api_key.strip():
+            raise ValueError("admin_api_key must not be empty or whitespace-only")
 
 
 @dataclass
