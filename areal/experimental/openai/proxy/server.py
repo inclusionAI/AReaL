@@ -32,6 +32,7 @@ class StartSessionResponse(BaseModel):
     """Response from start_session endpoint."""
 
     session_id: str
+    api_key: str
 
 
 class SetRewardRequest(BaseModel):
@@ -44,7 +45,7 @@ class SetRewardRequest(BaseModel):
 class ExportTrajectoriesRequest(BaseModel):
     """Request to export trajectories for a session."""
 
-    session_id: str
+    session_id: str | None = None
     discount: float = 1.0
     style: str = "individual"
 
@@ -68,8 +69,7 @@ class SessionData:
 
         self._completed = False
         self._completions = InteractionCache()
-        self._completed_event = asyncio.Event()
-
+        self._completed_event = threading.Event()
         self._start_time = time.time()
         self._last_access_time = time.time()
         self._end_time = None
@@ -95,14 +95,14 @@ class SessionData:
         return self._completions
 
     async def wait_for_finish(self, timeout: float | None = None) -> bool:
-        """Asynchronously wait for session to finish. Returns True if finished, False if timeout."""
-        if timeout:
-            try:
-                await asyncio.wait_for(self._completed_event.wait(), timeout)
-                return True
-            except TimeoutError:
+        loop = asyncio.get_running_loop()
+        deadline = time.monotonic() + timeout if timeout else None
+        while not self._completed_event.is_set():
+            remaining = (deadline - time.monotonic()) if deadline else 1.0
+            if deadline and remaining <= 0:
                 return False
-        await self._completed_event.wait()
+            poll = min(remaining, 1.0)  # Poll every 1s so cancellation works
+            await loop.run_in_executor(None, self._completed_event.wait, poll)
         return True
 
     def export_interactions(
@@ -161,3 +161,9 @@ RL_SET_REWARD_PATHNAME = "rl/set_reward"
 CHAT_COMPLETIONS_PATHNAME = "chat/completions"
 RESPONSES_PATHNAME = "responses"
 ANTHROPIC_MESSAGES_PATHNAME = "v1/messages"
+GRANT_CAPACITY_PATHNAME = "grant_capacity"
+EXPORT_TRAJECTORIES_PATHNAME = "export_trajectories"
+
+# Shared default for admin API key — used by cli_args.py and workflow.py
+# to avoid independent duplication.
+DEFAULT_ADMIN_API_KEY = "areal-admin-key"

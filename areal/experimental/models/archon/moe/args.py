@@ -50,7 +50,7 @@ class MoEArgs:
     score_func: Literal["softmax", "sigmoid"] = "sigmoid"
     route_norm: bool = False
     route_scale: float = 1.0
-    score_before_experts: bool = True
+    score_before_experts: bool = False
 
     # Node-limited routing (optional)
     num_expert_groups: int | None = None

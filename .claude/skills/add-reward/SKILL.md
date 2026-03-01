@@ -113,7 +113,7 @@ rewards = await self.reward_fn(prompt, completions, **data)
 
 ### Step 4: Add Tests
 
-Create `areal/tests/test_<name>_reward.py`:
+Create `tests/test_<name>_reward.py`:
 
 ```python
 import pytest

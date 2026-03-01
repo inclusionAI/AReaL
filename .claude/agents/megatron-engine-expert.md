@@ -261,7 +261,7 @@ distributed training coordination
 - **Checkpointing**: `areal/engine/megatron_utils/checkpointer.py`
 - **Utilities**: `areal/engine/megatron_utils/megatron.py` for core Megatron utilities
 - **Examples**: YAML configuration files in `examples/` and
-  `areal/tests/sft/config_megatron.yaml`
+  `tests/sft/config_megatron.yaml`
 
 ## Response Guidance
 

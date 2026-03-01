@@ -19,6 +19,7 @@ from areal.infra.utils.http import ensure_end_with_slash
 from areal.utils.logging import getLogger
 
 from .server import (
+    EXPORT_TRAJECTORIES_PATHNAME,
     RL_END_SESSION_PATHNAME,
     RL_SET_REWARD_PATHNAME,
     RL_START_SESSION_PATHNAME,
@@ -40,14 +41,21 @@ class OpenAIProxyClient:
     methods for setting rewards and exporting interactions. It uses composition
     rather than inheritance - an aiohttp.ClientSession must be passed in.
 
+    Session isolation is achieved via unique API keys (not URL paths).
+    The admin API key is used for management operations (start_session,
+    grant_capacity), while a per-session API key is used for
+    generation endpoints (set_reward, end_session, export_trajectories).
+
     Parameters
     ----------
     session : aiohttp.ClientSession
         The HTTP session to use for requests
     base_url : str
-        Base URL of the proxy server
+        Base URL of the proxy server (fixed, no session_id in path)
     task_id : str
         Unique identifier for this task
+    admin_api_key : str
+        Admin API key for management operations
 
     Example
     -------
@@ -57,9 +65,11 @@ class OpenAIProxyClient:
             session=http_session,
             base_url="http://localhost:8000",
             task_id="task-1",
+            admin_api_key="my-admin-key",
         )
         async with proxy_client:
-            # Make OpenAI API calls using proxy_client.session_url
+            # Session API key is available for agents
+            api_key = proxy_client.session_api_key
             await proxy_client.set_last_reward(1.0)
 
         # After context exit, export interactions
@@ -72,18 +82,31 @@ class OpenAIProxyClient:
         session: aiohttp.ClientSession,
         base_url: str,
         task_id: str,
+        admin_api_key: str,
     ):
         self._session = session
         self.base_url = ensure_end_with_slash(base_url)
         self.task_id = task_id
+        self._admin_api_key = admin_api_key
         self.session_id: str | None = None
+        self._session_api_key: str | None = None
 
     @property
-    def session_url(self) -> str:
-        """Return the full URL for this session."""
-        if self.session_id is None:
-            raise ValueError("Session ID is not set")
-        return f"{self.base_url}{self.session_id}/"
+    def session_api_key(self) -> str:
+        """Return the session API key for this session."""
+        if self._session_api_key is None:
+            raise ValueError("Session API key is not set")
+        return self._session_api_key
+
+    def _admin_auth_headers(self) -> dict[str, str]:
+        """Return Authorization headers with admin API key."""
+        return {"Authorization": f"Bearer {self._admin_api_key}"}
+
+    def _session_auth_headers(self) -> dict[str, str]:
+        """Return Authorization headers with session API key."""
+        if self._session_api_key is None:
+            raise ValueError("Session API key is not set")
+        return {"Authorization": f"Bearer {self._session_api_key}"}
 
     async def set_reward(self, completion_id: str, reward: float):
         """Set reward for a specific completion/response by its ID."""
@@ -93,7 +116,8 @@ class OpenAIProxyClient:
             self._session,
             interaction_id=completion_id,
             reward=reward,
-            url=f"{self.base_url}{self.session_id}/{RL_SET_REWARD_PATHNAME}",
+            url=f"{self.base_url}{RL_SET_REWARD_PATHNAME}",
+            headers=self._session_auth_headers(),
         )
 
     async def set_last_reward(self, reward: float):
@@ -103,7 +127,8 @@ class OpenAIProxyClient:
         await set_last_interaction_reward(
             self._session,
             reward=reward,
-            url=f"{self.base_url}{self.session_id}/{RL_SET_REWARD_PATHNAME}",
+            url=f"{self.base_url}{RL_SET_REWARD_PATHNAME}",
+            headers=self._session_auth_headers(),
         )
 
     async def export_interactions(
@@ -130,16 +155,16 @@ class OpenAIProxyClient:
             Dictionary mapping interaction IDs to their data
         """
 
-        if self.session_id is None:
-            raise ValueError("Session ID is not set")
+        if self._session_api_key is None:
+            raise ValueError("Session API key is not set")
 
-        url = f"{self.base_url}export_trajectories"
+        url = f"{self.base_url}{EXPORT_TRAJECTORIES_PATHNAME}"
         payload = {
-            "session_id": self.session_id,
             "discount": discount,
             "style": style,
         }
-        async with self._session.post(url, json=payload) as resp:
+        headers = self._session_auth_headers()
+        async with self._session.post(url, json=payload, headers=headers) as resp:
             resp.raise_for_status()
             data = await resp.json()
             return deserialize_interactions(data["interactions"])
@@ -150,8 +175,10 @@ class OpenAIProxyClient:
             self._session,
             url=f"{self.base_url}{RL_START_SESSION_PATHNAME}",
             payload=StartSessionRequest(task_id=self.task_id),
+            headers=self._admin_auth_headers(),
         )
         self.session_id = data["session_id"]
+        self._session_api_key = data["api_key"]
         return self
 
     async def __aexit__(
@@ -172,7 +199,8 @@ class OpenAIProxyClient:
         try:
             await post_json_with_retry(
                 self._session,
-                url=f"{self.base_url}{self.session_id}/{RL_END_SESSION_PATHNAME}",
+                url=f"{self.base_url}{RL_END_SESSION_PATHNAME}",
+                headers=self._session_auth_headers(),
             )
         except Exception as e:
             # Raised errors will be properly handled by OpenAIProxyWorkflow
@@ -185,6 +213,7 @@ async def post_json(
     url: str,
     payload: dict | BaseModel | None = None,
     total_timeout: int = 10,
+    headers: dict[str, str] | None = None,
 ) -> dict:
     timeout = aiohttp.ClientTimeout(total=total_timeout)
 
@@ -193,7 +222,9 @@ async def post_json(
     elif isinstance(payload, BaseModel):
         payload = payload.model_dump()
 
-    async with session.post(url, json=payload, timeout=timeout) as response:
+    async with session.post(
+        url, json=payload, timeout=timeout, headers=headers
+    ) as response:
         response.raise_for_status()
         return await response.json()
 
@@ -237,8 +268,9 @@ async def post_json_with_retry(
     url: str,
     payload: dict | BaseModel | None = None,
     total_timeout: float = 10,
+    headers: dict[str, str] | None = None,
 ) -> dict:
-    return await post_json(session, url, payload, total_timeout)
+    return await post_json(session, url, payload, total_timeout, headers=headers)
 
 
 async def _set_reward(
@@ -246,10 +278,13 @@ async def _set_reward(
     interaction_id: str | None,
     reward: float,
     url: str = RL_SET_REWARD_PATHNAME,
+    headers: dict[str, str] | None = None,
 ):
     payload = SetRewardRequest(interaction_id=interaction_id, reward=reward)
     try:
-        await post_json_with_retry(http_session, url=url, payload=payload)
+        await post_json_with_retry(
+            http_session, url=url, payload=payload, headers=headers
+        )
     except aiohttp.ClientResponseError as e:
         if e.status == 400:
             logger.error(f"[error code {e.status}] Error setting reward: {e.message}")
@@ -262,9 +297,14 @@ async def set_interaction_reward(
     interaction_id: str,
     reward: float,
     url: str = RL_SET_REWARD_PATHNAME,
+    headers: dict[str, str] | None = None,
 ):
     await _set_reward(
-        http_session, interaction_id=interaction_id, reward=reward, url=url
+        http_session,
+        interaction_id=interaction_id,
+        reward=reward,
+        url=url,
+        headers=headers,
     )
 
 
@@ -272,8 +312,11 @@ async def set_last_interaction_reward(
     http_session: aiohttp.ClientSession,
     reward: float,
     url: str = RL_SET_REWARD_PATHNAME,
+    headers: dict[str, str] | None = None,
 ):
-    await _set_reward(http_session, interaction_id=None, reward=reward, url=url)
+    await _set_reward(
+        http_session, interaction_id=None, reward=reward, url=url, headers=headers
+    )
 
 
 @get_retry_strategy(allowed_attempt=-1)

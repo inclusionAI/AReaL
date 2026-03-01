@@ -13,7 +13,7 @@ pre-commit install               # formatting hooks (Ruff, mdformat, clang-forma
 pre-commit run --all-files       # lint + format everything
 
 # Tests
-uv run pytest areal/tests/test_<topic>.py
+uv run pytest tests/test_<topic>.py
 
 # CLI docs
 uv run python docs/generate_cli_docs.py
@@ -198,12 +198,12 @@ ______________________________________________________________________
 - Assertions: `torch.testing.assert_close()` with explicit `rtol`/`atol`; prefer
   `tmp_path`, `monkeypatch`.
 
-| Suite       | Command                             | GPU       |
-| ----------- | ----------------------------------- | --------- |
-| Unit        | `pytest areal/tests/test_*.py`      | No        |
-| GRPO        | `pytest areal/tests/grpo/`          | Yes       |
-| FSDP        | `pytest areal/tests/test_fsdp_*.py` | Yes       |
-| Distributed | `pytest areal/tests/torchrun/`      | Multi-GPU |
+| Suite       | Command                       | GPU       |
+| ----------- | ----------------------------- | --------- |
+| Unit        | `pytest tests/test_*.py`      | No        |
+| GRPO        | `pytest tests/grpo/`          | Yes       |
+| FSDP        | `pytest tests/test_fsdp_*.py` | Yes       |
+| Distributed | `pytest tests/torchrun/`      | Multi-GPU |
 
 ______________________________________________________________________
 
