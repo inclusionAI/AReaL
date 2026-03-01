@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from areal.utils.functional import (
-    compute_engine_mismatch_IS_ratio,
+    compute_engine_mismatch_is_ratio,
     ppo_actor_loss_fn,
     sapo_loss_fn,
 )
@@ -1181,7 +1181,7 @@ class TestEngineISCorrection:
         loss_mask = torch.ones_like(training, dtype=torch.bool)
         cap = 3.0
 
-        result = compute_engine_mismatch_IS_ratio(
+        result = compute_engine_mismatch_is_ratio(
             training_logprobs=training,
             inference_logprobs=inference,
             mode="token_truncate",
@@ -1200,7 +1200,7 @@ class TestEngineISCorrection:
         loss_mask = torch.ones_like(training, dtype=torch.bool)
         cap = 3.0
 
-        result = compute_engine_mismatch_IS_ratio(
+        result = compute_engine_mismatch_is_ratio(
             training_logprobs=training,
             inference_logprobs=inference,
             mode="token_mask",
@@ -1219,7 +1219,7 @@ class TestEngineISCorrection:
         loss_mask = torch.ones_like(training, dtype=torch.bool)
         cap = 3.0
 
-        result = compute_engine_mismatch_IS_ratio(
+        result = compute_engine_mismatch_is_ratio(
             training_logprobs=training,
             inference_logprobs=inference,
             mode="token_truncate",
@@ -1241,7 +1241,7 @@ class TestEngineISCorrection:
         loss_mask = torch.ones_like(training, dtype=torch.bool)
         cap = 3.0
 
-        result = compute_engine_mismatch_IS_ratio(
+        result = compute_engine_mismatch_is_ratio(
             training_logprobs=training,
             inference_logprobs=inference,
             mode="sequence_truncate",
@@ -1265,7 +1265,7 @@ class TestEngineISCorrection:
         loss_mask = torch.ones_like(training, dtype=torch.bool)
         cap = 3.0
 
-        result = compute_engine_mismatch_IS_ratio(
+        result = compute_engine_mismatch_is_ratio(
             training_logprobs=training,
             inference_logprobs=inference,
             mode="sequence_mask",
@@ -1291,7 +1291,7 @@ class TestEngineISCorrection:
         loss_mask = torch.ones_like(training, dtype=torch.bool)
         cap = 3.0
 
-        result = compute_engine_mismatch_IS_ratio(
+        result = compute_engine_mismatch_is_ratio(
             training_logprobs=training,
             inference_logprobs=inference,
             mode="sequence_truncate",
@@ -1316,7 +1316,7 @@ class TestEngineISCorrection:
         loss_mask = torch.tensor([[True, True, False, False]])
         cap = 3.0
 
-        result = compute_engine_mismatch_IS_ratio(
+        result = compute_engine_mismatch_is_ratio(
             training_logprobs=training,
             inference_logprobs=inference,
             mode="token_truncate",
@@ -1330,7 +1330,7 @@ class TestEngineISCorrection:
 
 
 class TestPPOActorLossFnWithEngineIS:
-    """Test ppo_actor_loss_fn with enable_MIS_TIS_correction enabled."""
+    """Test ppo_actor_loss_fn with enable_mis_tis_correction enabled."""
 
     def test_engine_IS_ratio_in_stats_2d(self):
         """Test that engine_IS_ratio is returned in stats when correction enabled."""
@@ -1342,16 +1342,16 @@ class TestPPOActorLossFnWithEngineIS:
             advantages=torch.randn(batch_size, seq_len),
             eps_clip=0.2,
             loss_mask=torch.ones(batch_size, seq_len, dtype=torch.bool),
-            enable_MIS_TIS_correction=True,
-            engine_mismatch_IS_mode="sequence_mask",
-            engine_mismatch_IS_cap=3.0,
+            enable_mis_tis_correction=True,
+            engine_mismatch_is_mode="sequence_mask",
+            engine_mismatch_is_cap=3.0,
         )
 
-        assert "engine_IS_ratio" in stat
-        assert stat["engine_IS_ratio"].shape == (batch_size, seq_len)
+        assert "engine_mismatch_IS_ratio" in stat
+        assert stat["engine_mismatch_IS_ratio"].shape == (batch_size, seq_len)
 
     def test_no_engine_IS_ratio_when_disabled(self):
-        """Test that engine_IS_ratio is None when correction disabled."""
+        """Test that engine_mismatch_IS_ratio is None when correction disabled."""
         loss, stat = ppo_actor_loss_fn(
             logprobs=torch.randn(2, 4),
             proximal_logprobs=torch.randn(2, 4),
@@ -1359,13 +1359,13 @@ class TestPPOActorLossFnWithEngineIS:
             advantages=torch.randn(2, 4),
             eps_clip=0.2,
             loss_mask=torch.ones(2, 4, dtype=torch.bool),
-            enable_MIS_TIS_correction=False,
+            enable_mis_tis_correction=False,
         )
 
-        assert "engine_IS_ratio" not in stat
+        assert "engine_mismatch_IS_ratio" not in stat
 
-    def test_enable_MIS_TIS_correction_affects_loss(self):
-        """Test that enabling enable_MIS_TIS_correction changes the loss value."""
+    def test_enable_mis_tis_correction_affects_loss(self):
+        """Test that enabling enable_mis_tis_correction changes the loss value."""
         logprobs = torch.tensor([[1.0, 1.0, 1.0, 1.0]])
         proximal = torch.tensor([[1.0, 1.0, 1.0, 1.0]])  # same as logprobs
         old = torch.tensor([[0.0, 0.0, 0.0, 0.0]])  # different from proximal
@@ -1373,7 +1373,7 @@ class TestPPOActorLossFnWithEngineIS:
         loss_mask = torch.ones_like(advantages, dtype=torch.bool)
         cap = 3.0
 
-        # With IS correction: Mismatch_IS_ratio = exp(prox - old) = exp(1) ≈ 2.72
+        # With IS correction: engine_mismatch_is_ratio = exp(prox - old) = exp(1) ≈ 2.72
         loss_with_is, _ = ppo_actor_loss_fn(
             logprobs=logprobs,
             proximal_logprobs=proximal,
@@ -1381,9 +1381,9 @@ class TestPPOActorLossFnWithEngineIS:
             advantages=advantages,
             eps_clip=0.2,
             loss_mask=loss_mask,
-            enable_MIS_TIS_correction=True,
-            engine_mismatch_IS_mode="token_truncate",
-            engine_mismatch_IS_cap=cap,
+            enable_mis_tis_correction=True,
+            engine_mismatch_is_mode="token_truncate",
+            engine_mismatch_is_cap=cap,
         )
 
         # Without IS correction
@@ -1394,7 +1394,7 @@ class TestPPOActorLossFnWithEngineIS:
             advantages=advantages,
             eps_clip=0.2,
             loss_mask=loss_mask,
-            enable_MIS_TIS_correction=False,
+            enable_mis_tis_correction=False,
         )
 
         # Losses should be different due to IS correction

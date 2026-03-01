@@ -1047,14 +1047,14 @@ class PPOActorConfig(TrainEngineConfig):
         },
     )
     # TIS/MIS: Training-Inference Matching Importance Sampling
-    enable_MIS_TIS_correction: bool = field(
+    enable_mis_tis_correction: bool = field(
         default=False,
         metadata={
             "help": "Enable importance sampling correction for train-inference mismatch (TIS/MIS). "
             "Requires use_decoupled_loss=True or prox_logp_method='recompute'."
         },
     )
-    engine_mismatch_IS_mode: str = field(
+    engine_mismatch_is_mode: str = field(
         default="sequence_mask",
         metadata={
             "help": "Importance sampling correction mode for train-inference mismatch. "
@@ -1070,11 +1070,11 @@ class PPOActorConfig(TrainEngineConfig):
             ],
         },
     )
-    engine_mismatch_IS_cap: float = field(
+    engine_mismatch_is_cap: float = field(
         default=3.0,
         metadata={
             "help": "Cap value for importance sampling correction. "
-            "Tokens/sequences with ratio > cap are truncated or masked based on engine_mismatch_IS_mode."
+            "Tokens/sequences with ratio > cap are truncated or masked based on engine_mismatch_is_mode."
         },
     )
     # Proximal Log-Probability Computation Method
@@ -2094,10 +2094,10 @@ def _validate_cfg(cfg: Any) -> None:
     """
     # Validate PPOActorConfig MIS/TIS correction settings
     actor = cfg.actor
-    if actor.enable_MIS_TIS_correction:
+    if actor.enable_mis_tis_correction:
         if not actor.use_decoupled_loss and actor.prox_logp_method != "recompute":
             raise ValueError(
-                "enable_MIS_TIS_correction=True requires either "
+                "enable_mis_tis_correction=True requires either "
                 "use_decoupled_loss=True or prox_logp_method='recompute'. "
                 f"Got use_decoupled_loss={actor.use_decoupled_loss}, "
                 f"prox_logp_method='{actor.prox_logp_method}'"
@@ -2105,10 +2105,10 @@ def _validate_cfg(cfg: Any) -> None:
         # SAPO is not compatible with MIS/TIS correction
         if actor.use_sapo_loss:
             raise ValueError(
-                "enable_MIS_TIS_correction=True is not compatible with use_sapo_loss=True. "
+                "enable_mis_tis_correction=True is not compatible with use_sapo_loss=True. "
                 "SAPO requires use_decoupled_loss=False, but MIS/TIS correction requires "
                 "use_decoupled_loss=True or prox_logp_method='recompute'. "
-                "Please disable either enable_MIS_TIS_correction or use_sapo_loss."
+                "Please disable either enable_mis_tis_correction or use_sapo_loss."
             )
     # ADD MORE VALIDATION RULES IF NEEDED
     # RULE 2...

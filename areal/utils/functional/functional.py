@@ -141,7 +141,7 @@ def _compute_sequence_level_ratio_and_advantages(
     return ratio, advantages
 
 
-def compute_engine_mismatch_IS_ratio(
+def compute_engine_mismatch_is_ratio(
     training_logprobs: torch.Tensor,
     inference_logprobs: torch.Tensor,
     mode: str,
@@ -212,9 +212,9 @@ def ppo_actor_loss_fn(
     behav_imp_weight_cap: float | None = None,
     importance_sampling_level: str = "token",
     cu_seqlens: torch.Tensor | None = None,
-    enable_MIS_TIS_correction: bool = False,
-    engine_mismatch_IS_mode: str = "token_mask",
-    engine_mismatch_IS_cap: float = 3.0,
+    enable_mis_tis_correction: bool = False,
+    engine_mismatch_is_mode: str = "token_mask",
+    engine_mismatch_is_cap: float = 3.0,
 ) -> tuple[torch.Tensor, dict]:
     """
     When decoupled loss is disabled:
@@ -232,9 +232,9 @@ def ppo_actor_loss_fn(
             Required when inputs are 1D and importance_sampling_level='sequence'.
             Shape: [batch_size + 1], where cu_seqlens[i] marks the start of sequence i.
             Not needed for 2D padded inputs (sequences identified by batch dimension).
-        enable_MIS_TIS_correction: Enable TIS/MIS correction for train-inference mismatch.
-        engine_mismatch_IS_mode: Mode for IS correction - "token_truncate", "token_mask", "sequence_truncate", "sequence_mask"
-        engine_mismatch_IS_cap: Cap value for IS correction.
+        enable_mis_tis_correction: Enable TIS/MIS correction for train-inference mismatch.
+        engine_mismatch_is_mode: Mode for IS correction - "token_truncate", "token_mask", "sequence_truncate", "sequence_mask"
+        engine_mismatch_is_cap: Cap value for IS correction.
     """
     loss_mask_count = loss_mask.count_nonzero() or 1
 
@@ -254,16 +254,16 @@ def ppo_actor_loss_fn(
         )
 
     # TIS/MIS: Compute IS ratio for train-inference mismatch correction
-    engine_mismatch_IS_ratio = (
-        compute_engine_mismatch_IS_ratio(
+    engine_mismatch_is_ratio = (
+        compute_engine_mismatch_is_ratio(
             training_logprobs=proximal_logprobs,
             inference_logprobs=old_logprobs,
-            mode=engine_mismatch_IS_mode,
-            cap=engine_mismatch_IS_cap,
+            mode=engine_mismatch_is_mode,
+            cap=engine_mismatch_is_cap,
             loss_mask=loss_mask,
             cu_seqlens=cu_seqlens,
         )
-        if enable_MIS_TIS_correction
+        if enable_mis_tis_correction
         else None
     )
 
@@ -295,8 +295,8 @@ def ppo_actor_loss_fn(
     behav_imp_weight = torch.where(behav_mask, behav_imp_weight, 0.0)
     pg_loss = pg_loss * behav_imp_weight
 
-    if engine_mismatch_IS_ratio is not None:
-        pg_loss = pg_loss * engine_mismatch_IS_ratio
+    if engine_mismatch_is_ratio is not None:
+        pg_loss = pg_loss * engine_mismatch_is_ratio
 
     logging_loss = pg_loss.detach()
     pg_loss = torch.where(loss_mask, pg_loss, 0).sum() / loss_mask_count
@@ -313,8 +313,8 @@ def ppo_actor_loss_fn(
         stat["behave_imp_weight"] = behav_imp_weight
         stat["behave_approx_kl"] = behav_kl
         stat["behave_mask"] = behav_mask
-    if engine_mismatch_IS_ratio is not None:
-        stat["engine_mismatch_IS_ratio"] = engine_mismatch_IS_ratio
+    if engine_mismatch_is_ratio is not None:
+        stat["engine_mismatch_IS_ratio"] = engine_mismatch_is_ratio
     return pg_loss, stat
 
 
