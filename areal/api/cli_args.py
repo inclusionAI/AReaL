@@ -2048,7 +2048,7 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def _validate_cfg(cfg: DictConfig) -> None:
+def _validate_cfg(cfg: Any) -> None:
     """Validate configuration for consistency and correctness."""
     from areal.api.alloc_mode import AllocationMode
 
@@ -2061,7 +2061,7 @@ def _validate_cfg(cfg: DictConfig) -> None:
             )
 
 
-def _modify_cfg(cfg: DictConfig) -> None:
+def _modify_cfg(cfg: Any) -> None:
     """Modify configuration for Megatron engine."""
     from areal.api.alloc_mode import AllocationMode
 
@@ -2085,10 +2085,9 @@ def load_expr_config[ConfigT](
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
 
+    cfg = OmegaConf.to_object(cfg)
     _validate_cfg(cfg)
     _modify_cfg(cfg)
-
-    cfg = OmegaConf.to_object(cfg)
     assert isinstance(cfg, config_cls)
     # Setup environment
 
