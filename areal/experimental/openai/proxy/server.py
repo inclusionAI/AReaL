@@ -160,7 +160,7 @@ RL_END_SESSION_PATHNAME = "rl/end_session"
 RL_SET_REWARD_PATHNAME = "rl/set_reward"
 CHAT_COMPLETIONS_PATHNAME = "chat/completions"
 RESPONSES_PATHNAME = "responses"
-ANTHROPIC_MESSAGES_PATHNAME = "messages"
+ANTHROPIC_MESSAGES_PATHNAME = "v1/messages"
 GRANT_CAPACITY_PATHNAME = "grant_capacity"
 EXPORT_TRAJECTORIES_PATHNAME = "export_trajectories"
 
