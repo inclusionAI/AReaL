@@ -1,3 +1,4 @@
+import copy
 import os
 import subprocess
 import uuid
@@ -152,6 +153,11 @@ class ParamSpec:
         return getattr(torch, self.dtype).itemsize * np.prod(self.shape)
 
 
+def get_versioned_lora_name(lora_name: str, version: int) -> str:
+    """Get versioned LoRA adapter name (e.g., 'lora-v1')."""
+    return f"{lora_name}-v{version}"
+
+
 @dataclass
 class WeightUpdateMeta:
     type: Literal["disk", "nccl"]
@@ -170,6 +176,22 @@ class WeightUpdateMeta:
     peft_config: dict = field(default_factory=dict)
 
     clear_checkpoint_after_load: bool = True
+
+    version: int | None = None
+
+    def with_version(self, version: int) -> "WeightUpdateMeta":
+        """Return a copy of this meta with versioned path.
+
+        Changes path from 'weight_update' to 'weight_update_v{version}'.
+        """
+        if version < 0:
+            raise ValueError(f"version must be non-negative, got {version}")
+        new_meta = copy.copy(self)
+        new_meta.version = version
+        if self.path is not None:
+            base_dir = os.path.dirname(self.path)
+            new_meta.path = os.path.join(base_dir, f"weight_update_v{version}")
+        return new_meta
 
     @classmethod
     def from_disk(

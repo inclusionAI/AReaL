@@ -61,14 +61,14 @@ workflow and wrapped automatically when passed to the trainer.
 
 AReaL offers two approaches for integrating agent frameworks:
 
-| Aspect                  | Proxy Approach                          | Direct Approach                            |
-| ----------------------- | --------------------------------------- | ------------------------------------------ |
-| **Code modification**   | None (just change `base_url`)           | Must accept `ArealOpenAI` client           |
-| **Communication**       | HTTP via proxy server                   | Direct engine calls                        |
-| **Framework support**   | Any OpenAI-compatible framework         | Frameworks accepting custom clients        |
-| **Performance**         | HTTP overhead (minimal)                 | No HTTP overhead                           |
-| **Engine state access** | Limited                                 | Full access                                |
-| **Recommended for**     | Existing agents, third-party frameworks | Legacy code. **Don't use it proactively.** |
+| Aspect                  | Proxy Approach                              | Direct Approach                            |
+| ----------------------- | ------------------------------------------- | ------------------------------------------ |
+| **Code modification**   | None (just change `base_url` and `api_key`) | Must accept `ArealOpenAI` client           |
+| **Communication**       | HTTP via proxy server                       | Direct engine calls                        |
+| **Framework support**   | Any OpenAI-compatible framework             | Frameworks accepting custom clients        |
+| **Performance**         | HTTP overhead (minimal)                     | No HTTP overhead                           |
+| **Engine state access** | Limited                                     | Full access                                |
+| **Recommended for**     | Existing agents, third-party frameworks     | Legacy code. **Don't use it proactively.** |
 
 See the [Agentic RL Guide](../tutorial/agentic_rl.md) for concrete examples.
 
@@ -85,11 +85,13 @@ class MyAgent:
     async def run(self, data, **extra_kwargs):
         # AReaL injects these kwargs
         http_client = extra_kwargs.get("http_client")
-        base_url = extra_kwargs.get("base_url")
+        base_url = extra_kwargs.get("base_url") or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")
 
         # Standard OpenAI SDK usage
         client = AsyncOpenAI(
             base_url=base_url,
+            api_key=api_key,
             http_client=http_client,
             max_retries=0,
         )
@@ -142,8 +144,8 @@ The proxy approach supports two execution modes, configured via `rollout.openai.
 ### Inline Mode (Default)
 
 The agent runs in the same process as the rollout worker. AReaL calls the agent's `run`
-method directly as an async coroutine, passing `base_url` and `http_client` via
-`extra_kwargs`.
+method directly as an async coroutine, passing `base_url`, `api_key`, and `http_client`
+via `extra_kwargs`.
 
 ```yaml
 rollout:
@@ -174,7 +176,7 @@ rollout:
 
 - Agent must be picklable (serializable)
 - `OPENAI_BASE_URL` and `OPENAI_API_KEY` are set as environment variables
-- Agent reads `base_url` from `os.environ["OPENAI_BASE_URL"]` instead of `extra_kwargs`
+- Agent reads `base_url` and `api_key` from environs instead of `extra_kwargs`
 - Synchronous code allowed inside `run()` (AReaL wraps with `asyncio.run()`)
 - Pickling overhead for agent and data
 - Useful for non-async libraries or process isolation
@@ -187,9 +189,10 @@ from openai import OpenAI  # Sync client is OK
 
 class MySyncAgent:
     async def run(self, data, **extra_kwargs):
-        # In subproc mode, base_url comes from environment
+        # In subproc mode, base_url and api_key come from environment
         client = OpenAI(
             base_url=os.environ.get("OPENAI_BASE_URL"),
+            api_key=os.environ.get("OPENAI_API_KEY"),
             api_key="DUMMY",
         )
 
@@ -295,7 +298,7 @@ lifecycle with the proxy server. Key interactions include:
 │  │ 1. grant_capacity()─┼─────>│                                                          │ │
 │  │                     │      │                                                          │ │
 │  │ 2. start_session() ─┼─────>│ → SessionData created                                    │ │
-│  │    → session_id    <┼──────┤                                                          │ │
+│  │    ← session_id, session_api_key │ │
 │  │                     │      │                                                          │ │
 │  │ 3. agent.run()      │      │   ┌──────────────────────────────────────────────────┐   │ │
 │  │    │                │      │   │                   ArealOpenAI                    │   │ │
@@ -330,16 +333,16 @@ lifecycle with the proxy server. Key interactions include:
 
 ### Proxy Endpoints
 
-| Endpoint                                 | Purpose                          |
-| ---------------------------------------- | -------------------------------- |
-| `POST /grant_capacity`                   | Reserve slot (staleness control) |
-| `POST /rl/start_session`                 | Create unique session ID         |
-| `POST /{session_id}/v1/chat/completions` | OpenAI chat completions API      |
-| `POST /{session_id}/v1/responses`        | OpenAI responses API             |
-| `POST /{session_id}/v1/messages`         | Anthropic Messages API           |
-| `POST /{session_id}/rl/set_reward`       | Assign reward to interaction     |
-| `POST /{session_id}/rl/end_session`      | Mark session complete            |
-| `POST /export_trajectories`              | Export with reward discounting   |
+| Endpoint                    | Auth        | Purpose                          |
+| --------------------------- | ----------- | -------------------------------- |
+| `POST /grant_capacity`      | Admin key   | Reserve slot (staleness control) |
+| `POST /rl/start_session`    | Admin key   | Create unique session ID         |
+| `POST /v1/chat/completions` | Session key | OpenAI chat completions API      |
+| `POST /v1/responses`        | Session key | OpenAI responses API             |
+| `POST /v1/messages`         | Session key | Anthropic Messages API           |
+| `POST /rl/set_reward`       | Session key | Assign reward to interaction     |
+| `POST /rl/end_session`      | Session key | Mark session complete            |
+| `POST /export_trajectories` | Session key | Export with reward discounting   |
 
 ## Session Lifecycle
 
@@ -350,27 +353,28 @@ Each agent execution follows this lifecycle:
    POST /grant_capacity → Staleness control
 
 2. Start session
-   POST /rl/start_session → Returns session_id (e.g., "task-0-0")
+   POST /rl/start_session → Returns session_id and unique API key
 
 3. Agent execution (multiple LLM calls)
-   POST /{session_id}/v1/chat/completions
+   POST /v1/chat/completions (with session API key in Authorization header)
      → Proxy tokenizes messages
      → Engine generates tokens with logprobs
      → Response stored in InteractionCache
      → ChatCompletion returned to agent
 
 4. Assign rewards
-   POST /{session_id}/rl/set_reward
+   POST /rl/set_reward (with session API key)
      Body: {"reward": 1.0}                           → Last completion
      Body: {"interaction_id": "...", "reward": 0.5}  → Specific completion
 
 5. End session
-   POST /{session_id}/rl/end_session
+   POST /rl/end_session (with session API key)
 
 6. Export trajectories
-   POST /export_trajectories
+   POST /export_trajectories (with session API key)
      → Apply reward backpropagation
      → Return InteractionWithTokenLogpReward objects
+     → Clean up session and API key mappings
 ```
 
 ## Token-Level Tracking
@@ -466,7 +470,7 @@ interactions = client.export_interactions(style="individual")
 
 # Proxy approach (via export endpoint)
 POST /export_trajectories
-Body: {"session_id": "...", "discount": 0.9, "style": "individual"}
+Body: {"discount": 0.9, "style": "individual"}
 ```
 
 ## Workflow Resolution
@@ -512,8 +516,8 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         proxy_client = OpenAIProxyClient(...)
 
         async with proxy_client:
-            # 3. Run agent with session URL
-            rewards = await self._run_agent(proxy_client.session_url, data)
+            # 3. Run agent with session API key
+            rewards = await self._run_agent(proxy_client.session_api_key, data)
 
             # 4. Assign rewards
             if isinstance(rewards, float):

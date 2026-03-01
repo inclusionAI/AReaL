@@ -69,20 +69,20 @@ python -c "import torch; print('GPU available:', torch.cuda.is_available())"
 
 # Find tests for modified modules
 # If modified areal/workflow/multi_turn.py, run:
-uv run pytest areal/tests/test_workflow.py -v
+uv run pytest tests/test_workflow.py -v
 
 # For quick smoke test
-uv run pytest areal/tests/test_utils.py -v
+uv run pytest tests/test_utils.py -v
 ```
 
 **Test categories:**
 
-| Category    | Command                             | GPU Required   |
-| ----------- | ----------------------------------- | -------------- |
-| Unit tests  | `pytest areal/tests/test_*.py`      | No             |
-| GRPO tests  | `pytest areal/tests/grpo/`          | Yes            |
-| FSDP tests  | `pytest areal/tests/test_fsdp_*.py` | Yes            |
-| Distributed | `pytest areal/tests/torchrun/`      | Yes, multi-GPU |
+| Category    | Command                       | GPU Required   |
+| ----------- | ----------------------------- | -------------- |
+| Unit tests  | `pytest tests/test_*.py`      | No             |
+| GRPO tests  | `pytest tests/grpo/`          | Yes            |
+| FSDP tests  | `pytest tests/test_fsdp_*.py` | Yes            |
+| Distributed | `pytest tests/torchrun/`      | Yes, multi-GPU |
 
 **Auto-skip GPU tests when no GPU**: If GPU is not available, skip GPU-required test
 categories.
@@ -110,7 +110,7 @@ Output a clear summary:
 
 ### Files Changed
 - `areal/workflow/multi_turn.py` (modified)
-- `areal/tests/test_workflow.py` (modified)
+- `tests/test_workflow.py` (modified)
 
 ### Checks Performed
 
