@@ -353,10 +353,14 @@ def grant_capacity():
 
 
 def _cleanup_stale_sessions():
-    """Remove stale sessions from the cache.
+    """Remove stale sessions and orphaned API key mappings.
 
     Called periodically (at most once per minute) during start_session to clean up
     sessions that were started but never finished.
+
+    Also sweeps orphaned API key mappings whose session_id is no longer in
+    _session_cache (e.g. if a client crashes after end_session but before
+    export_trajectories).
 
     Must be called with _lock held.
     """
@@ -383,6 +387,15 @@ def _cleanup_stale_sessions():
         for sid in stale_sessions:
             _remove_api_keys_for_session(sid)
         logger.info(f"Cleaned up {len(stale_sessions)} stale sessions")
+
+    # Sweep orphaned API key mappings whose session_id is no longer in cache.
+    # Handles edge case where client crashes after end_session but before
+    # export_trajectories, leaving key mappings with no cleanup path.
+    orphaned_sids = [sid for sid in _session_to_api_key if sid not in _session_cache]
+    for sid in orphaned_sids:
+        _remove_api_keys_for_session(sid)
+    if orphaned_sids:
+        logger.info(f"Cleaned up {len(orphaned_sids)} orphaned API key mappings")
 
 
 @app.post(f"/{RL_START_SESSION_PATHNAME}", dependencies=[Depends(_require_admin_key)])

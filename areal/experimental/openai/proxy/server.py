@@ -95,18 +95,14 @@ class SessionData:
         return self._completions
 
     async def wait_for_finish(self, timeout: float | None = None) -> bool:
-        """Asynchronously wait for session to finish. Returns True if finished, False if timeout."""
         loop = asyncio.get_running_loop()
-        if timeout:
-            try:
-                await asyncio.wait_for(
-                    loop.run_in_executor(None, self._completed_event.wait),
-                    timeout,
-                )
-                return True
-            except TimeoutError:
+        deadline = time.monotonic() + timeout if timeout else None
+        while not self._completed_event.is_set():
+            remaining = (deadline - time.monotonic()) if deadline else 1.0
+            if deadline and remaining <= 0:
                 return False
-        await loop.run_in_executor(None, self._completed_event.wait)
+            poll = min(remaining, 1.0)  # Poll every 1s so cancellation works
+            await loop.run_in_executor(None, self._completed_event.wait, poll)
         return True
 
     def export_interactions(
