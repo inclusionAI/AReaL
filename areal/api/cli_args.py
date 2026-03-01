@@ -290,7 +290,8 @@ class OptimizerConfig:
         default="adam",
         metadata={
             "help": "Optimizer type. For FSDP Engine, adam_bf16 enables memory-efficient BF16 optimizer states. "
-            "For Megatron Engine, adam_bf16 is automatically converted to adam with precision-aware optimizer enabled.",
+            "For Megatron Engine, adam_bf16 requires dtype=bfloat16 and is automatically converted to adam "
+            "with precision-aware optimizer enabled.",
             "choices": ["adam", "sgd", "adam_bf16"],
         },
     )
@@ -2047,91 +2048,35 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def _validate_and_modify_config(cfg: DictConfig) -> None:
-    """Validate and modify configuration for engine-specific optimizations.
-
-    This function checks for configuration issues and applies necessary
-    modifications based on the engine type being used.
-
-    Currently handles:
-    - Converting adam_bf16 optimizer to adam with precision-aware optimizer
-      for Megatron engine (which doesn't natively support adam_bf16).
-    """
-    # Import here to avoid circular import
+def _validate_cfg(cfg: DictConfig) -> None:
+    """Validate configuration for consistency and correctness."""
     from areal.api.alloc_mode import AllocationMode
 
-    logger = logging.getLogger("ConfigValidator")
+    am = AllocationMode.from_str(cfg.allocation_mode)
+    if am.train_backend == "megatron" and cfg.actor.optimizer.type == "adam_bf16":
+        if cfg.actor.dtype != "bfloat16":
+            raise ValueError(
+                f"dtype must be 'bfloat16' for adam_bf16 optimizer with Megatron Engine, "
+                f"got '{cfg.actor.dtype}'."
+            )
 
-    # Get allocation mode to determine engine type
-    allocation_mode = OmegaConf.select(cfg, "allocation_mode", default="")
-    if not allocation_mode:
-        return
 
-    try:
-        am = AllocationMode.from_str(allocation_mode)
-    except Exception:
-        # If allocation mode parsing fails, skip validation
-        return
+def _modify_cfg(cfg: DictConfig) -> None:
+    """Modify configuration for Megatron engine."""
+    from areal.api.alloc_mode import AllocationMode
 
-    train_backend = am.train_backend
-    if train_backend != "megatron":
-        return
-
-    # Check if using adam_bf16 optimizer with Megatron
-    # Navigate through the config structure: cfg.actor.optimizer or cfg.optimizer
-    actor_optimizer = OmegaConf.select(cfg, "actor.optimizer")
-    optimizer = (
-        actor_optimizer
-        if actor_optimizer is not None
-        else OmegaConf.select(cfg, "optimizer")
-    )
-
-    if optimizer is None:
-        return
-
-    optimizer_type = OmegaConf.select(optimizer, "type", default="adam")
-    if optimizer_type != "adam_bf16":
-        return
-
-    # Validate dtype is bfloat16
-    actor_dtype = OmegaConf.select(cfg, "actor.dtype", default="bfloat16")
-    dtype = (
-        actor_dtype
-        if actor_dtype
-        else OmegaConf.select(cfg, "dtype", default="bfloat16")
-    )
-
-    if dtype != "bfloat16":
+    am = AllocationMode.from_str(cfg.allocation_mode)
+    if am.train_backend == "megatron" and cfg.actor.optimizer.type == "adam_bf16":
+        logger = logging.getLogger("ConfigModifier")
         logger.warning(
-            f"When using 'adam_bf16' optimizer with Megatron Engine, "
-            f"dtype must be 'bfloat16', but got '{dtype}'. "
-            f"Automatically converting dtype to 'bfloat16'."
+            "Detected 'adam_bf16' optimizer with Megatron Engine. "
+            "Automatically converting to 'adam' with precision-aware optimizer and setting exp_avg_dtype/exp_avg_sq_dtype dtypes to 'bfloat16'."
         )
-        # Set dtype to bfloat16
-        if OmegaConf.select(cfg, "actor") is not None:
-            OmegaConf.update(cfg, "actor.dtype", "bfloat16")
-
-    # Modify optimizer config
-    logger.warning(
-        "Detected 'adam_bf16' optimizer, which is not natively supported by Megatron. "
-        "Automatically converting to 'adam' with precision-aware optimizer settings. "
-        "Any user-set values for 'use_precision_aware_optimizer', 'exp_avg_dtype', "
-        "or 'exp_avg_sq_dtype' will be overridden."
-    )
-
-    # Update optimizer type
-    OmegaConf.update(optimizer, "type", "adam")
-
-    # Update Megatron config for precision-aware optimizer
-    # Try actor.megatron first, then fall back to megatron
-    megatron_cfg = OmegaConf.select(cfg, "actor.megatron")
-    if megatron_cfg is None:
-        megatron_cfg = OmegaConf.select(cfg, "megatron")
-
-    if megatron_cfg is not None:
-        OmegaConf.update(megatron_cfg, "use_precision_aware_optimizer", True)
-        OmegaConf.update(megatron_cfg, "exp_avg_dtype", "bfloat16")
-        OmegaConf.update(megatron_cfg, "exp_avg_sq_dtype", "bfloat16")
+        cfg.actor.dtype = "bfloat16"
+        cfg.actor.optimizer.type = "adam"
+        cfg.actor.megatron.use_precision_aware_optimizer = True
+        cfg.actor.megatron.exp_avg_dtype = "bfloat16"
+        cfg.actor.megatron.exp_avg_sq_dtype = "bfloat16"
 
 
 def load_expr_config[ConfigT](
@@ -2139,8 +2084,10 @@ def load_expr_config[ConfigT](
 ) -> tuple[ConfigT, str]:
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
-    # Validate and modify config based on engine type
-    _validate_and_modify_config(cfg)
+
+    _validate_cfg(cfg)
+    _modify_cfg(cfg)
+
     cfg = OmegaConf.to_object(cfg)
     assert isinstance(cfg, config_cls)
     # Setup environment
