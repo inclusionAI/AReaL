@@ -202,28 +202,6 @@ class MegatronEngine(TrainEngine):
             self.own_global_group = True
         self.logger = logging.getLogger(f"[MegatronEngine Rank {dist.get_rank()}]")
 
-        # Detect adam_bf16 and auto-configure for Megatron
-        if (
-            self.optimizer_config is not None
-            and self.optimizer_config.type == "adam_bf16"
-        ):
-            # Ensure dtype is bfloat16 when using adam_bf16 optimizer
-            assert self.config.dtype == "bfloat16", (
-                "When using 'adam_bf16' optimizer with Megatron Engine, "
-                f"dtype must be set to 'bfloat16', but got '{self.config.dtype}'. "
-            )
-            self.logger.info(
-                "Detected 'adam_bf16' optimizer type. Megatron does not natively support this type, "
-                "so we will automatically convert to 'adam' with precision-aware optimizer enabled: "
-                "use_precision_aware_optimizer=True, exp_avg_dtype=bfloat16, exp_avg_sq_dtype=bfloat16."
-            )
-            # Override optimizer type
-            self.optimizer_config.type = "adam"
-            # Auto-enable precision-aware optimizer config
-            self.mcore_config.use_precision_aware_optimizer = True
-            self.mcore_config.exp_avg_dtype = "bfloat16"
-            self.mcore_config.exp_avg_sq_dtype = "bfloat16"
-
         self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
         # This is needed for barrier synchronization when models are moved to CPU
