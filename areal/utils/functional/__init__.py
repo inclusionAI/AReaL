@@ -1,5 +1,5 @@
 from areal.utils.functional.functional import (
-    compute_engine_mismatch_is_ratio,
+    compute_behav_imp_weight,
     masked_normalization,
     ppo_actor_loss_fn,
     ppo_critic_loss_fn,
@@ -13,7 +13,7 @@ from areal.utils.functional.vocab_parallel import (
 
 __all__ = [
     # functional.py
-    "compute_engine_mismatch_is_ratio",
+    "compute_behav_imp_weight",
     "masked_normalization",
     "ppo_actor_loss_fn",
     "ppo_critic_loss_fn",

@@ -5,68 +5,81 @@ import pytest
 from areal.api.cli_args import PPOActorConfig, PPOConfig, _validate_cfg
 
 
-class TestPPOActorConfigEngineIS:
-    """Test PPOActorConfig validation for enable_mis_tis_correction."""
+class TestPPOActorConfig:
+    """Test PPOActorConfig basic functionality."""
 
-    def test_engine_is_requires_decoupled_or_recompute(self):
-        """Test that enable_mis_tis_correction=True requires decoupled or recompute."""
-        # Create config with invalid combination
-        config = PPOConfig(
-            experiment_name="test",
-            trial_name="test",
-            actor=PPOActorConfig(
-                experiment_name="test",
-                trial_name="test",
-                path="/test/path",
-                enable_mis_tis_correction=True,
-                use_decoupled_loss=False,
-                prox_logp_method="loglinear",  # not recompute
-            ),
-        )
-        # Should raise when _validate_cfg is called
-        with pytest.raises(ValueError, match="enable_mis_tis_correction=True requires"):
-            _validate_cfg(config)
-
-    def test_engine_is_works_with_decoupled(self):
-        """Test that enable_mis_tis_correction works with decoupled loss."""
-        config = PPOConfig(
-            experiment_name="test",
-            trial_name="test",
-            actor=PPOActorConfig(
-                experiment_name="test",
-                trial_name="test",
-                path="/test/path",
-                enable_mis_tis_correction=True,
-                use_decoupled_loss=True,
-            ),
-        )
-        _validate_cfg(config)  # Should not raise
-        assert config.actor.enable_mis_tis_correction is True
-
-    def test_engine_is_works_with_recompute(self):
-        """Test that enable_mis_tis_correction works with recompute."""
-        config = PPOConfig(
-            experiment_name="test",
-            trial_name="test",
-            actor=PPOActorConfig(
-                experiment_name="test",
-                trial_name="test",
-                path="/test/path",
-                enable_mis_tis_correction=True,
-                use_decoupled_loss=False,
-                prox_logp_method="recompute",
-            ),
-        )
-        _validate_cfg(config)  # Should not raise
-        assert config.actor.enable_mis_tis_correction is True
-
-    def test_engine_is_defaults(self):
-        """Test default values for engine_is parameters."""
+    def test_default_values(self):
+        """Test default values for PPOActorConfig."""
         config = PPOActorConfig(
             experiment_name="test",
             trial_name="test",
             path="/test/path",
         )
-        assert config.enable_mis_tis_correction is False
-        assert config.engine_mismatch_is_mode == "sequence_mask"
-        assert config.engine_mismatch_is_cap == 3.0
+        # Test that the new parameters have correct defaults
+        assert config.behav_imp_weight_mode == "token_mask"
+        assert config.behav_imp_weight_cap == 5.0
+
+    def test_validation_passes(self):
+        """Test that _validate_cfg passes with valid config."""
+        config = PPOConfig(
+            experiment_name="test",
+            trial_name="test",
+            actor=PPOActorConfig(
+                experiment_name="test",
+                trial_name="test",
+                path="/test/path",
+                use_decoupled_loss=True,
+            ),
+        )
+        _validate_cfg(config)  # Should not raise
+
+    def test_disable_mode_validation(self):
+        """Test that disable mode requires behav_imp_weight_cap to be None."""
+        # Should pass: disable mode with cap=None
+        config = PPOConfig(
+            experiment_name="test",
+            trial_name="test",
+            actor=PPOActorConfig(
+                experiment_name="test",
+                trial_name="test",
+                path="/test/path",
+                use_decoupled_loss=True,
+                behav_imp_weight_mode="disable",
+                behav_imp_weight_cap=None,
+            ),
+        )
+        _validate_cfg(config)  # Should not raise
+
+        # Should fail: disable mode with cap set
+        config_with_cap = PPOConfig(
+            experiment_name="test",
+            trial_name="test",
+            actor=PPOActorConfig(
+                experiment_name="test",
+                trial_name="test",
+                path="/test/path",
+                use_decoupled_loss=True,
+                behav_imp_weight_mode="disable",
+                behav_imp_weight_cap=5.0,
+            ),
+        )
+        with pytest.raises(ValueError, match="behav_imp_weight_cap must be None"):
+            _validate_cfg(config_with_cap)
+
+    def test_non_disable_mode_validation(self):
+        """Test that non-disable mode requires behav_imp_weight_cap > 1.0."""
+        # Should fail: non-disable mode with cap <= 1.0
+        config = PPOConfig(
+            experiment_name="test",
+            trial_name="test",
+            actor=PPOActorConfig(
+                experiment_name="test",
+                trial_name="test",
+                path="/test/path",
+                use_decoupled_loss=True,
+                behav_imp_weight_mode="token_mask",
+                behav_imp_weight_cap=1.0,
+            ),
+        )
+        with pytest.raises(ValueError, match="behav_imp_weight_cap must be > 1.0"):
+            _validate_cfg(config)

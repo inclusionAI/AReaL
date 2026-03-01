@@ -1034,9 +1034,29 @@ class PPOActorConfig(TrainEngineConfig):
         },
     )
     behav_imp_weight_cap: float | None = field(
-        default=None,
+        default=5.0,
         metadata={
-            "help": "Filter out tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing loss. Must be > 1.0. use_decoupled_loss must be true."
+            "help": "Filter out tokens/sequences where behav_imp_weight exceeds this cap when computing loss. "
+            "Must be > 1.0 when mode is not 'disable'. use_decoupled_loss must be true. "
+            "Mode controlled by behav_imp_weight_mode (mask/truncate/disable)."
+        },
+    )
+    behav_imp_weight_mode: str = field(
+        default="token_mask",
+        metadata={
+            "help": "Mode for importance weight filtering. "
+            "'token_truncate': clamp token ratio to [0, cap]. "
+            "'token_mask': set token ratio to 0 where ratio > cap. "
+            "'sequence_truncate': clamp sequence ratio to [0, cap]. "
+            "'sequence_mask': set sequence ratio to 0 where ratio > cap. "
+            "'disable': disable importance weight correction.",
+            "choices": [
+                "token_truncate",
+                "token_mask",
+                "sequence_truncate",
+                "sequence_mask",
+                "disable",
+            ],
         },
     )
     importance_sampling_level: str = field(
@@ -1044,37 +1064,6 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Level at which to compute importance sampling ratios. 'token': per-token ratios (standard PPO). 'sequence': sequence-level geometric mean of per-token ratios (GSPO).",
             "choices": ["token", "sequence"],
-        },
-    )
-    # TIS/MIS: Training-Inference Matching Importance Sampling
-    enable_mis_tis_correction: bool = field(
-        default=False,
-        metadata={
-            "help": "Enable importance sampling correction for train-inference mismatch (TIS/MIS). "
-            "Requires use_decoupled_loss=True or prox_logp_method='recompute'."
-        },
-    )
-    engine_mismatch_is_mode: str = field(
-        default="sequence_mask",
-        metadata={
-            "help": "Importance sampling correction mode for train-inference mismatch. "
-            "'token_truncate': clamp token ratio to [0, cap]. "
-            "'token_mask': set token ratio to 0 where ratio > cap. "
-            "'sequence_truncate': clamp sequence ratio to [0, cap]. "
-            "'sequence_mask': set sequence ratio to 0 where ratio > cap (default).",
-            "choices": [
-                "token_truncate",
-                "token_mask",
-                "sequence_truncate",
-                "sequence_mask",
-            ],
-        },
-    )
-    engine_mismatch_is_cap: float = field(
-        default=3.0,
-        metadata={
-            "help": "Cap value for importance sampling correction. "
-            "Tokens/sequences with ratio > cap are truncated or masked based on engine_mismatch_is_mode."
         },
     )
     # Proximal Log-Probability Computation Method
@@ -2092,27 +2081,48 @@ def _validate_cfg(cfg: Any) -> None:
     This function is called after OmegaConf.to_object() to ensure
     all YAML values have been properly merged into the config.
     """
-    # Validate PPOActorConfig MIS/TIS correction settings
+    # Validate PPOActorConfig parameters
     actor = cfg.actor
-    if actor.enable_mis_tis_correction:
-        if not actor.use_decoupled_loss and actor.prox_logp_method != "recompute":
+
+    # Validate behav_imp_weight_mode
+    valid_modes = [
+        "token_truncate",
+        "token_mask",
+        "sequence_truncate",
+        "sequence_mask",
+        "disable",
+    ]
+    if actor.behav_imp_weight_mode not in valid_modes:
+        raise ValueError(
+            f"Invalid behav_imp_weight_mode: {actor.behav_imp_weight_mode}. "
+            f"Must be one of {valid_modes}."
+        )
+
+    # Validate importance_sampling_level
+    valid_levels = ["token", "sequence"]
+    if actor.importance_sampling_level not in valid_levels:
+        raise ValueError(
+            f"Invalid importance_sampling_level: {actor.importance_sampling_level}. "
+            f"Must be one of {valid_levels}."
+        )
+
+    # Validate behav_imp_weight_cap based on mode
+    if actor.behav_imp_weight_mode == "disable":
+        if actor.behav_imp_weight_cap is not None:
             raise ValueError(
-                "enable_mis_tis_correction=True requires either "
-                "use_decoupled_loss=True or prox_logp_method='recompute'. "
-                f"Got use_decoupled_loss={actor.use_decoupled_loss}, "
-                f"prox_logp_method='{actor.prox_logp_method}'"
+                f"behav_imp_weight_cap must be None when behav_imp_weight_mode is 'disable', "
+                f"got {actor.behav_imp_weight_cap}."
             )
-        # SAPO is not compatible with MIS/TIS correction
-        if actor.use_sapo_loss:
+    else:
+        if actor.behav_imp_weight_cap is not None and actor.behav_imp_weight_cap <= 1.0:
             raise ValueError(
-                "enable_mis_tis_correction=True is not compatible with use_sapo_loss=True. "
-                "SAPO requires use_decoupled_loss=False, but MIS/TIS correction requires "
-                "use_decoupled_loss=True or prox_logp_method='recompute'. "
-                "Please disable either enable_mis_tis_correction or use_sapo_loss."
+                f"behav_imp_weight_cap must be > 1.0 when behav_imp_weight_mode is not 'disable', "
+                f"got {actor.behav_imp_weight_cap}."
             )
+
     # ADD MORE VALIDATION RULES IF NEEDED
-    # RULE 2...
     # RULE 3...
+    # RULE 4...
 
 
 def load_expr_config[ConfigT](

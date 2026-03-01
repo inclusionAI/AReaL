@@ -141,63 +141,74 @@ def _compute_sequence_level_ratio_and_advantages(
     return ratio, advantages
 
 
-def compute_engine_mismatch_is_ratio(
-    training_logprobs: torch.Tensor,
-    inference_logprobs: torch.Tensor,
-    mode: str,
-    cap: float,
+def compute_behav_imp_weight(
+    proximal_logprobs: torch.Tensor,
+    old_logprobs: torch.Tensor,
     loss_mask: torch.Tensor,
-    cu_seqlens: torch.Tensor | None = None,
-) -> torch.Tensor:
-    """Compute importance sampling ratio with TIS/MIS correction.
-
-    This computes the IS ratio between training (recomputed) logprobs and inference logprobs
-    to correct for train-inference mismatch. The ratio is computed as:
-        engine_mismatch_IS_ratio = exp(training_logprobs - inference_logprobs)
+    cu_seqlens: torch.Tensor | None,
+    behav_imp_weight_mode: str,
+    behav_imp_weight_cap: float | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Compute behavioural importance weight for decoupled loss correction.
 
     Args:
-        training_logprobs: Proximal/training logprobs (recomputed from training engine)
-        inference_logprobs: Old inference logprobs (from rollout)
-        mode: TIS/MIS mode - "token_truncate", "token_mask", "sequence_truncate", "sequence_mask"
-        cap: Cap value - tokens/sequences with ratio > cap are truncated or masked
-        loss_mask: Boolean mask for valid tokens
-        cu_seqlens: Cumulative sequence lengths (required for 1D packed format)
+        proximal_logprobs: Recomputed log probabilities from reference model
+        old_logprobs: Log probabilities from inference engine
+        loss_mask: Boolean mask indicating valid tokens
+        cu_seqlens: Cumulative sequence lengths for packed sequences
+        behav_imp_weight_mode: Mode for importance weight correction
+            - 'token_truncate': clamp token ratio to [0, cap]
+            - 'token_mask': set token ratio to 0 where ratio > cap
+            - 'sequence_truncate': clamp sequence ratio to [0, cap]
+            - 'sequence_mask': set sequence ratio to 0 where ratio > cap
+            - 'disable': skip importance weight correction
+        behav_imp_weight_cap: Cap value for importance weights
 
     Returns:
-        IS ratio tensor with same shape as logprobs
+        Tuple of (behav_imp_weight, behav_kl, behav_mask)
     """
-    # Compute raw IS ratio: exp(prox_logp - old_logp)
-    IS_log_ratio = training_logprobs - inference_logprobs
+    if behav_imp_weight_mode == "disable":
+        # Disable mode: return zeros
+        return (
+            torch.zeros_like(loss_mask, dtype=torch.float32),
+            torch.zeros_like(proximal_logprobs),
+            torch.zeros_like(loss_mask, dtype=torch.bool),
+        )
 
-    if "sequence" in mode:
-        # Sequence-level: compute geometric mean ratio per sequence first
-        # Use a dummy advantages tensor (all zeros) since we only compute seq-level ratio nor advantages
-        dummy_advantages = torch.zeros_like(IS_log_ratio)
-        IS_ratio_seq, _ = _compute_sequence_level_ratio_and_advantages(
-            IS_log_ratio,
+    # Infer level from mode (token vs sequence)
+    is_sequence_level = "sequence" in behav_imp_weight_mode
+    behav_kl = proximal_logprobs - old_logprobs
+    behav_imp_weight_log_ratio = behav_kl
+
+    if is_sequence_level:
+        # Compute sequence-level geometric mean importance weights
+        dummy_advantages = torch.zeros_like(behav_imp_weight_log_ratio)
+        behav_imp_weight_seq, _ = _compute_sequence_level_ratio_and_advantages(
+            behav_imp_weight_log_ratio,
             dummy_advantages,
             loss_mask,
             cu_seqlens,
         )
-
-        # Now apply cap/mask on sequence-level ratio
-        if "truncate" in mode:
-            IS_ratio_seq = IS_ratio_seq.clamp(min=0.0, max=cap)
-        else:  # mask
-            IS_ratio_seq = torch.where(IS_ratio_seq > cap, 0.0, IS_ratio_seq)
-
-        # Apply loss_mask to get final output
-        return torch.where(loss_mask, IS_ratio_seq, 0.0)
+        behav_imp_weight = behav_imp_weight_seq
     else:
-        # Token-level
-        engine_mismatch_IS_ratio = torch.exp(IS_log_ratio)
-        if "truncate" in mode:
-            engine_mismatch_IS_ratio = engine_mismatch_IS_ratio.clamp(min=0.0, max=cap)
+        # Token-level importance weights (default)
+        behav_imp_weight = behav_imp_weight_log_ratio.exp()
+
+    # Apply cap (truncate or mask) based on mode
+    if behav_imp_weight_cap is not None:
+        if "truncate" in behav_imp_weight_mode:
+            behav_imp_weight = behav_imp_weight.clamp(min=0.0, max=behav_imp_weight_cap)
         else:  # mask
-            engine_mismatch_IS_ratio = torch.where(
-                engine_mismatch_IS_ratio > cap, 0.0, engine_mismatch_IS_ratio
+            behav_imp_weight = torch.where(
+                behav_imp_weight > behav_imp_weight_cap, 0.0, behav_imp_weight
             )
-        return torch.where(loss_mask, engine_mismatch_IS_ratio, 0.0)
+
+    # Apply loss_mask
+    behav_imp_weight = torch.where(loss_mask, behav_imp_weight, 0.0)
+    behav_mask = (behav_imp_weight > 0).logical_and(loss_mask)
+    behav_kl = torch.where(behav_mask, behav_kl, 0.0)
+
+    return behav_imp_weight, behav_kl, behav_mask
 
 
 def ppo_actor_loss_fn(
@@ -212,9 +223,7 @@ def ppo_actor_loss_fn(
     behav_imp_weight_cap: float | None = None,
     importance_sampling_level: str = "token",
     cu_seqlens: torch.Tensor | None = None,
-    enable_mis_tis_correction: bool = False,
-    engine_mismatch_is_mode: str = "token_mask",
-    engine_mismatch_is_cap: float = 3.0,
+    behav_imp_weight_mode: str = "token_mask",
 ) -> tuple[torch.Tensor, dict]:
     """
     When decoupled loss is disabled:
@@ -232,9 +241,12 @@ def ppo_actor_loss_fn(
             Required when inputs are 1D and importance_sampling_level='sequence'.
             Shape: [batch_size + 1], where cu_seqlens[i] marks the start of sequence i.
             Not needed for 2D padded inputs (sequences identified by batch dimension).
-        enable_mis_tis_correction: Enable TIS/MIS correction for train-inference mismatch.
-        engine_mismatch_is_mode: Mode for IS correction - "token_truncate", "token_mask", "sequence_truncate", "sequence_mask"
-        engine_mismatch_is_cap: Cap value for IS correction.
+        behav_imp_weight_mode: Mode for importance weight correction (mask or truncate).
+            - 'token_truncate': clamp token ratio to [0, cap]
+            - 'token_mask': set token ratio to 0 where ratio > cap
+            - 'sequence_truncate': clamp sequence ratio to [0, cap]
+            - 'sequence_mask': set sequence ratio to 0 where ratio > cap
+            - 'disable': skip importance weight correction
     """
     loss_mask_count = loss_mask.count_nonzero() or 1
 
@@ -253,20 +265,6 @@ def ppo_actor_loss_fn(
             "Must be 'token' or 'sequence'."
         )
 
-    # TIS/MIS: Compute IS ratio for train-inference mismatch correction
-    engine_mismatch_is_ratio = (
-        compute_engine_mismatch_is_ratio(
-            training_logprobs=proximal_logprobs,
-            inference_logprobs=old_logprobs,
-            mode=engine_mismatch_is_mode,
-            cap=engine_mismatch_is_cap,
-            loss_mask=loss_mask,
-            cu_seqlens=cu_seqlens,
-        )
-        if enable_mis_tis_correction
-        else None
-    )
-
     clipped_ratio = torch.clamp(
         ratio,
         1.0 - eps_clip,
@@ -284,19 +282,19 @@ def ppo_actor_loss_fn(
         pg_loss = torch.min(pg_loss, pg_loss3)
     else:
         dual_clip_mask = torch.zeros_like(clip_mask)
-    behav_kl = proximal_logprobs - old_logprobs
-    behav_imp_weight = behav_kl.exp()
-    behav_mask = (
-        (behav_imp_weight <= behav_imp_weight_cap).logical_and(loss_mask)
-        if behav_imp_weight_cap is not None
-        else loss_mask
-    )
-    behav_kl = torch.where(behav_mask, behav_kl, 0.0)
-    behav_imp_weight = torch.where(behav_mask, behav_imp_weight, 0.0)
-    pg_loss = pg_loss * behav_imp_weight
 
-    if engine_mismatch_is_ratio is not None:
-        pg_loss = pg_loss * engine_mismatch_is_ratio
+    # Compute behavioural importance weight only when not disabled
+    # When disabled, pg_loss remains unchanged (no behavioural correction applied)
+    if behav_imp_weight_mode != "disable":
+        behav_imp_weight, behav_kl, behav_mask = compute_behav_imp_weight(
+            proximal_logprobs=proximal_logprobs,
+            old_logprobs=old_logprobs,
+            loss_mask=loss_mask,
+            cu_seqlens=cu_seqlens,
+            behav_imp_weight_mode=behav_imp_weight_mode,
+            behav_imp_weight_cap=behav_imp_weight_cap,
+        )
+        pg_loss = pg_loss * behav_imp_weight
 
     logging_loss = pg_loss.detach()
     pg_loss = torch.where(loss_mask, pg_loss, 0).sum() / loss_mask_count
@@ -309,12 +307,12 @@ def ppo_actor_loss_fn(
         clip_mask=clip_mask,
         dual_clip_mask=dual_clip_mask,
     )
-    if proximal_logprobs is not None:
-        stat["behave_imp_weight"] = behav_imp_weight
-        stat["behave_approx_kl"] = behav_kl
-        stat["behave_mask"] = behav_mask
-    if engine_mismatch_is_ratio is not None:
-        stat["engine_mismatch_IS_ratio"] = engine_mismatch_is_ratio
+    if proximal_logprobs is not None and behav_imp_weight_mode != "disable":
+        stat.update(
+            behav_kl=behav_kl.detach(),
+            behav_imp_weight=behav_imp_weight.detach(),
+            behav_mask=behav_mask,
+        )
     return pg_loss, stat
 
 

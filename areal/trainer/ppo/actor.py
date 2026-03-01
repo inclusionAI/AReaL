@@ -336,9 +336,7 @@ class PPOActor:
                         sapo_tau_pos=self.config.sapo_tau_pos,
                         sapo_tau_neg=self.config.sapo_tau_neg,
                         use_decoupled_loss=self.config.use_decoupled_loss,
-                        enable_mis_tis_correction=self.config.enable_mis_tis_correction,
-                        engine_mismatch_is_mode=self.config.engine_mismatch_is_mode,
-                        engine_mismatch_is_cap=self.config.engine_mismatch_is_cap,
+                        behav_imp_weight_mode=self.config.behav_imp_weight_mode,
                     ),
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
@@ -372,9 +370,7 @@ def grpo_loss_fn(
     sapo_tau_pos: float = 1.0,
     sapo_tau_neg: float = 1.05,
     use_decoupled_loss: bool = False,
-    enable_mis_tis_correction: bool = False,
-    engine_mismatch_is_mode: str = "token_mask",
-    engine_mismatch_is_cap: float = 3.0,
+    behav_imp_weight_mode: str = "token_mask",
     vocab_min_logits: torch.Tensor | None = None,
     vocab_max_logits: torch.Tensor | None = None,
 ):
@@ -431,9 +427,7 @@ def grpo_loss_fn(
             behav_imp_weight_cap=behav_imp_weight_cap,
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
-            enable_mis_tis_correction=enable_mis_tis_correction,
-            engine_mismatch_is_mode=engine_mismatch_is_mode,
-            engine_mismatch_is_cap=engine_mismatch_is_cap,
+            behav_imp_weight_mode=behav_imp_weight_mode,
         )
 
     # Log training statistics
@@ -465,13 +459,6 @@ def grpo_loss_fn(
             behave_imp_weight=stat["behave_imp_weight"],
             behave_approx_kl=stat["behave_approx_kl"],
             denominator="unclipped_behave_tokens",
-        )
-
-    # Log TIS/MIS engine IS ratio statistics
-    if "engine_mismatch_IS_ratio" in stat and enable_mis_tis_correction:
-        stats_tracker.stat(
-            engine_mismatch_IS_ratio=stat["engine_mismatch_IS_ratio"],
-            denominator="n_valid_tokens",
         )
 
     if vocab_min_logits is not None and vocab_max_logits is not None:
