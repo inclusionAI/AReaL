@@ -3,6 +3,9 @@
 .data/
 .idea/
 
+# uv
+uv.lock
+
 # claude
 .claude/settings.local.json
 .claude/sessions/
