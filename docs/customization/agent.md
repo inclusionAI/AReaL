@@ -21,11 +21,13 @@ class MyAgent:
     async def run(self, data, **extra_kwargs):
         # Get injected client and URL
         http_client = extra_kwargs.get("http_client")
-        base_url = extra_kwargs.get("base_url")
+        base_url = extra_kwargs.get("base_url") or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")
 
         # Use standard OpenAI SDK
         client = AsyncOpenAI(
             base_url=base_url,
+            api_key=api_key,
             http_client=http_client,
             max_retries=0,
         )
@@ -64,10 +66,11 @@ async def run(self, data: dict, **extra_kwargs) -> float | dict[str, float]
 
 AReaL injects these arguments via `extra_kwargs`:
 
-| Key           | Type                | Description                           |
-| ------------- | ------------------- | ------------------------------------- |
-| `base_url`    | `str`               | URL to AReaL's proxy server           |
-| `http_client` | `httpx.AsyncClient` | Shared HTTP client (reduces overhead) |
+| Key           | Type                | Description                                  |
+| ------------- | ------------------- | -------------------------------------------- |
+| `base_url`    | `str`               | URL to AReaL's proxy server                  |
+| `api_key`     | `str`               | Session-wise API key to AReaL's proxy server |
+| `http_client` | `httpx.AsyncClient` | Shared HTTP client (reduces overhead)        |
 
 ## Execution Modes
 
@@ -121,9 +124,10 @@ from openai import OpenAI  # Sync client is OK
 
 class MySyncAgent:
     async def run(self, data, **extra_kwargs):
-        # In subproc mode, base_url comes from environment
+        # In subproc mode, base_url and api_key come from environment
         client = OpenAI(
-            base_url=os.environ.get("OPENAI_BASE_URL"),
+            base_url=os.getenv("OPENAI_BASE_URL"),
+            api_key=os.getenv("OPENAI_API_KEY"),
             api_key="DUMMY",  # Not used by AReaL
         )
 

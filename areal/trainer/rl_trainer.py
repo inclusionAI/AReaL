@@ -24,7 +24,7 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
 from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
 from areal.engine.sglang_remote import RemoteSGLangEngine
@@ -114,20 +114,12 @@ class PPOTrainer:
                 world_size=self.actor.data_parallel_world_size,
             )
 
-        # Initialize inference
-        self.rollout = self._init_rollout(config.rollout, is_eval=False)
-        self.eval_rollout = self._init_rollout(config.rollout, is_eval=True)
-
-        # Proxy worker initialization (lazy, for AgentWorkflow support)
-        self._proxy_started = False
-
         ft_spec = FinetuneSpec(
             total_train_epochs=config.total_train_epochs,
             dataset_size=len(self.train_dataloader) * config.train_dataset.batch_size,
             train_batch_size=config.train_dataset.batch_size,
         )
 
-        # Initialize models
         self.parallel_strategy = self.allocation_mode.train
         assert self.parallel_strategy is not None
         engine_init_kwargs = {
@@ -140,6 +132,20 @@ class PPOTrainer:
             self.critic.initialize(**engine_init_kwargs, role="critic")
         if self.ref is not None:
             self.ref.initialize(**engine_init_kwargs, role="ref")
+
+        # Save initial LoRA weights if enabled (for inference server pre-loading)
+        initial_lora_path = self._save_initial_lora_weights()
+
+        # Initialize inference with LoRA path
+        self.rollout = self._init_rollout(
+            config.rollout, is_eval=False, lora_path=initial_lora_path
+        )
+        self.eval_rollout = self._init_rollout(
+            config.rollout, is_eval=True, lora_path=initial_lora_path
+        )
+
+        # Proxy worker initialization (lazy, for AgentWorkflow support)
+        self._proxy_started = False
 
         # Prepare weight update meta and connect to inference engine
         if self.config.actor.weight_update_mode == "disk":
@@ -347,13 +353,16 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                self.actor.update_weights(self.weight_update_meta)
+                # Use versioned path for weight updates
+                new_version = global_step + 1
+                versioned_meta = self.weight_update_meta.with_version(new_version)
+                self.actor.update_weights(versioned_meta)
 
-                self.actor.set_version(global_step + 1)
+                self.actor.set_version(new_version)
                 if self.critic is not None:
-                    self.critic.set_version(global_step + 1)
-                self.rollout.set_version(global_step + 1)
-                self.eval_rollout.set_version(global_step + 1)
+                    self.critic.set_version(new_version)
+                self.rollout.set_version(new_version)
+                self.eval_rollout.set_version(new_version)
 
             with (
                 stats_tracker.record_timing("save"),
@@ -549,8 +558,17 @@ class PPOTrainer:
         return critic
 
     def _init_rollout(
-        self, rollout_config: InferenceEngineConfig, is_eval: bool = False
+        self,
+        rollout_config: InferenceEngineConfig,
+        is_eval: bool = False,
+        lora_path: str | None = None,
     ) -> InferenceEngine | RolloutController:
+        if lora_path is not None and not is_single_controller():
+            raise ValueError(
+                "LoRA is only supported in single-controller mode. "
+                "Use `python3 train.py scheduler.type=local` instead of "
+                "`python3 -m areal.infra.launcher.local`."
+            )
         # Create a working copy of config
         config = deepcopy(rollout_config)
         if is_eval:
@@ -567,6 +585,10 @@ class PPOTrainer:
         if self.allocation_mode.gen_backend == "sglang":
             if self.config.rollout.return_routed_experts:
                 self.config.sglang.enable_return_routed_experts = True
+            if lora_path is not None and self.config.actor.use_lora:
+                self.config.sglang.lora_paths = [
+                    f"{self.config.gconfig.lora_name}-v0={lora_path}"
+                ]
             engine_cls = RemoteSGLangEngine
             server_args = SGLangConfig.build_args(
                 sglang_config=self.config.sglang,
@@ -578,12 +600,18 @@ class PPOTrainer:
                 raise ValueError(
                     "return_routed_experts is not supported with vLLM backend. Please disable return_routed_experts or switch to SGLang backend."
                 )
+            if lora_path is not None and self.config.actor.use_lora:
+                self.config.vllm.lora_modules = [
+                    f"{self.config.gconfig.lora_name}-v0={lora_path}"
+                ]
             engine_cls = RemotevLLMEngine
             server_args = vLLMConfig.build_args(
                 vllm_config=self.config.vllm,
                 tp_size=self.allocation_mode.gen.tp_size,
                 pp_size=self.allocation_mode.gen.pp_size,
             )
+            # vLLM does not require LoRA paths during initialization.
+            # LoRA is attached to generation requests.
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.gen_backend}, expected sglang or vllm"
@@ -609,6 +637,37 @@ class PPOTrainer:
             init_kwargs["role"] = "eval-rollout"
         controller.initialize(**init_kwargs)
         return controller
+
+    def _save_initial_lora_weights(self) -> str | None:
+        """Save initial LoRA weights for inference server pre-loading.
+
+        Returns path to saved LoRA weights, or None if LoRA is disabled.
+        """
+        if not self.config.actor.use_lora:
+            return None
+
+        path = os.path.join(
+            Saver.get_model_save_root(
+                self.config.experiment_name,
+                self.config.trial_name,
+                self.config.cluster.fileroot,
+                name="actor",
+            ),
+            "initial_lora",
+        )
+
+        meta = SaveLoadMeta(
+            path=path,
+            weight_format="hf",
+            with_optim=False,
+            tokenizer=self.tokenizer,
+            processor=self.processor,
+            base_model_path=self.config.actor.path,
+        )
+        # Save LoRA weights using engine's HuggingFace save
+        self.actor.save(meta=meta)
+
+        return path
 
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
         # Save as HF models for evaluation
@@ -795,6 +854,8 @@ class PPOTrainer:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is not None:
+            logger.error(f"Training failed with exception: {exc_value}", exc_info=True)
         self.close()
         if exc_type is not None:
             raise exc_value

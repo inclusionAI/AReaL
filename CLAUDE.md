@@ -50,7 +50,7 @@ pre-commit run --all-files    # Format and lint
 # Run tests
 # First check GPU availability (many tests require GPU)
 python -c "import torch; print('GPU available:', torch.cuda.is_available())"
-uv run pytest areal/tests/test_<topic>.py
+uv run pytest tests/test_<topic>.py
 
 # Generate CLI docs
 uv run python docs/generate_cli_docs.py

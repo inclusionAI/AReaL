@@ -86,7 +86,7 @@ Search the codebase systematically:
 
 1. **Check tests**
 
-   - Does the target file have tests? `ls areal/tests/test_<module>.py`
+   - Does the target file have tests? `ls tests/test_<module>.py`
    - What test patterns are used? Read a test file for reference
 
 1. **Check configuration**

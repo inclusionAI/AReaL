@@ -21,6 +21,7 @@ from areal.api.io_struct import (
     ParamSpec,
     WeightUpdateMeta,
     WeightUpdateRequests,
+    get_versioned_lora_name,
 )
 from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import WorkflowLike
@@ -34,7 +35,7 @@ class SGLangBackend:
     """SGLang-specific backend implementation for remote inference."""
 
     def build_generation_request(
-        self, req: ModelRequest, with_lora: bool
+        self, req: ModelRequest, with_lora: bool, version: int
     ) -> HttpRequest:
         """Build SGLang generation request."""
         gconfig = req.gconfig
@@ -72,7 +73,12 @@ class SGLangBackend:
             payload["return_routed_experts"] = True
         # Add LoRA if initialized
         if with_lora:
-            payload["lora_path"] = "lora_1"
+            lora_name = gconfig.lora_name
+            if not lora_name:
+                raise ValueError(
+                    "LoRA name (gconfig.lora_name) is required when use_lora is enabled."
+                )
+            payload["lora_path"] = get_versioned_lora_name(lora_name, version)
 
         return HttpRequest(endpoint="/generate", payload=payload)
 
@@ -115,29 +121,22 @@ class SGLangBackend:
         )
 
     def build_disk_weight_update_requests(
-        self, meta: WeightUpdateMeta, lora_initialized: bool
+        self, meta: WeightUpdateMeta
     ) -> WeightUpdateRequests:
         """Build SGLang disk weight update requests."""
-        lora_name = "lora_1"
-
         if meta.use_lora:
-            # LoRA workflow
-            requests = []
-            if lora_initialized:
-                # Unload existing LoRA
-                requests.append(
-                    HttpRequest(
-                        endpoint="/unload_lora_adapter",
-                        payload={"lora_name": lora_name},
-                    )
-                )
+            if not meta.lora_name:
+                raise ValueError("LoRA name is required for LoRA update.")
+            if meta.version is None:
+                raise ValueError("Version is required for LoRA update.")
+            lora_name = get_versioned_lora_name(meta.lora_name, meta.version)
             # Load new LoRA
-            requests.append(
+            requests = [
                 HttpRequest(
                     endpoint="/load_lora_adapter",
                     payload={"lora_name": lora_name, "lora_path": str(meta.path)},
                 )
-            )
+            ]
             return WeightUpdateRequests(requests=requests)
         else:
             # Full model update
@@ -156,7 +155,16 @@ class SGLangBackend:
     def build_distributed_weight_update_requests(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> WeightUpdateRequests:
-        """Build SGLang distributed weight update requests."""
+        """Build SGLang distributed weight update requests.
+
+        Note: SGLang distributed weight update (NCCL-based) does not support LoRA.
+        For LoRA weight updates with SGLang, use disk-based update mode instead.
+        """
+        if meta.use_lora:
+            raise ValueError(
+                "SGLang distributed (XCCL/NCCL) weight update does not support LoRA. "
+                "Use weight_update_mode='disk' for LoRA weight updates with SGLang."
+            )
         return WeightUpdateRequests(
             requests=[
                 HttpRequest(

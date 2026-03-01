@@ -15,6 +15,7 @@ from areal.utils import logging, stats_tracker
 from areal.utils.perf_tracer import session_context, trace_session
 
 from .client_session import OpenAIProxyClient
+from .server import DEFAULT_ADMIN_API_KEY, GRANT_CAPACITY_PATHNAME
 
 if TYPE_CHECKING:
     from ..client import TRolloutEngine
@@ -71,6 +72,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         mode: str,
         agent: Any,
         proxy_addr: str,
+        admin_api_key: str = DEFAULT_ADMIN_API_KEY,
         discount: float = 1.0,
         export_style: str = "individual",
         subproc_max_workers: int = 4,
@@ -93,23 +95,27 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         self.mode = mode
         self.agent = agent
         self.proxy_addr = proxy_addr
+        self._admin_api_key = admin_api_key
         self.discount = discount
         self.export_style = export_style
         self.subproc_max_workers = subproc_max_workers
 
     @trace_session("run_agent")
-    async def _run_agent(self, base_url: str, data: dict):
+    async def _run_agent(self, session_api_key: str, data: dict):
         if self.mode == "inline":
             http_client = await workflow_context.get_httpx_client()
             extra_kwargs = {
-                "base_url": base_url,
+                "base_url": self.proxy_addr,
                 "http_client": http_client,
+                "api_key": session_api_key,
             }
             return await self.agent.run(data, **extra_kwargs)
         if self.mode == "subproc":
             extra_envs = {
-                "OPENAI_BASE_URL": base_url,
-                "OPENAI_API_KEY": "DUMMY",
+                "OPENAI_BASE_URL": self.proxy_addr,
+                "OPENAI_API_KEY": session_api_key,
+                "ANTHROPIC_BASE_URL": self.proxy_addr,
+                "ANTHROPIC_API_KEY": session_api_key,
             }
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
@@ -123,8 +129,9 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
 
     async def _grant_capacity(self, session: aiohttp.ClientSession) -> None:
         """Grant capacity via HTTP."""
-        url = f"{self.proxy_addr}/grant_capacity"
-        async with session.post(url) as resp:
+        url = f"{self.proxy_addr}/{GRANT_CAPACITY_PATHNAME}"
+        headers = {"Authorization": f"Bearer {self._admin_api_key}"}
+        async with session.post(url, headers=headers) as resp:
             resp.raise_for_status()
 
     @session_context()
@@ -147,17 +154,18 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         proxy_client: OpenAIProxyClient | None = None
 
         # Create proxy client to manage the lifecycle of an RL session
-        # An RL session creates a unique URL for storing interactions
+        # An RL session creates a unique API key for isolating interactions
         # for this agentic trajectory.
         proxy_client = OpenAIProxyClient(
             session=http_session,
             base_url=self.proxy_addr,
             task_id=str(task_id),
+            admin_api_key=self._admin_api_key,
         )
         async with proxy_client:
             # Run the user code.
             try:
-                rewards = await self._run_agent(proxy_client.session_url, data)
+                rewards = await self._run_agent(proxy_client.session_api_key, data)
             except Exception:
                 logger.warning("Agent task failed. This trajectory will be rejected.")
                 raise

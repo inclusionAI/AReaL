@@ -69,11 +69,6 @@ class AgentWorkflow(ABC, metaclass=_DeprecatedAgentWorkflowMeta):
     To use agent-based workflows, simply implement a class with::
 
         async def run(self, data: dict[str, Any], **extra_kwargs: Any) -> dict[str, float] | float
-
-    The ``extra_kwargs`` will receive:
-
-    - base_url: str - The OpenAI-compatible proxy server URL
-    - http_client: httpx.AsyncClient - HTTP client for async requests
     """
 
     @abstractmethod
@@ -91,6 +86,8 @@ class AgentWorkflow(ABC, metaclass=_DeprecatedAgentWorkflowMeta):
             The base URL of the OpenAI-compatible proxy server
         - http_client: httpx.AsyncClient
             The HTTP client to use for making requests in AsyncOpenAI
+        - api_key: str
+            The session-scoped API key for authenticating with the proxy
 
         Parameters
         ----------
