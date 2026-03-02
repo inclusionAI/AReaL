@@ -489,6 +489,18 @@ class ArchonEngineConfig:
         },
     )
 
+    # FSDP reshard policy after forward pass
+    reshard_after_forward_policy: str = field(
+        default="default",
+        metadata={
+            "help": "FSDP reshard policy after forward pass. "
+            "'default': reshard when pipeline parallelism is off; keep unsharded when on to avoid repeated all-gather per microbatch. "
+            "'always': always reshard after forward (saves memory). "
+            "'never': never reshard after forward.",
+            "choices": ["default", "always", "never"],
+        },
+    )
+
     # Deterministic mode
     use_deterministic_algorithms: bool = field(
         default=False,
@@ -514,6 +526,12 @@ class ArchonEngineConfig:
             raise ValueError(
                 f"pp_last_stage_less_layers must be >= 0, "
                 f"got {self.pp_last_stage_less_layers}"
+            )
+        valid_reshard_policies = ("default", "always", "never")
+        if self.reshard_after_forward_policy not in valid_reshard_policies:
+            raise ValueError(
+                f"reshard_after_forward_policy must be one of {valid_reshard_policies}, "
+                f"got '{self.reshard_after_forward_policy}'"
             )
 
 
