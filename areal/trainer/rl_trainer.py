@@ -109,6 +109,9 @@ class PPOTrainer:
         # Parse allocation mode.
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
 
+        # Validate config before proceeding with weight initialization
+        self._validate_cfg()
+
         self._amend_xccl_weight_update_envvar()
 
         # Create models: actor, critic, etc.
@@ -652,6 +655,8 @@ class PPOTrainer:
 
         # Determine engine class and server args based on backend
         if self.allocation_mode.gen_backend == "sglang":
+            if self.config.rollout.return_routed_experts:
+                self.config.sglang.enable_return_routed_experts = True
             if lora_path is not None and self.config.actor.use_lora:
                 self.config.sglang.lora_paths = [
                     f"{self.config.gconfig.lora_name}-v0={lora_path}"
@@ -663,6 +668,10 @@ class PPOTrainer:
                 base_gpu_id=0,
             )
         elif self.allocation_mode.gen_backend == "vllm":
+            if self.config.rollout.return_routed_experts:
+                raise ValueError(
+                    "return_routed_experts is not supported with vLLM backend. Please disable return_routed_experts or switch to SGLang backend."
+                )
             if lora_path is not None and self.config.actor.use_lora:
                 self.config.vllm.lora_modules = [
                     f"{self.config.gconfig.lora_name}-v0={lora_path}"
@@ -841,6 +850,17 @@ class PPOTrainer:
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
+
+    def _validate_cfg(self):
+        """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
+        if (
+            self.allocation_mode.gen_backend == "vllm"
+            and self.config.rollout.return_routed_experts
+        ):
+            raise ValueError(
+                "return_routed_experts is only supported with SGLang backend. "
+                "Please disable return_routed_experts or switch to SGLang backend."
+            )
 
     def _requires_proxy_workflow(self, workflow: WorkflowLike | None) -> bool:
         """Check if workflow requires proxy workers (i.e., not a RolloutWorkflow).

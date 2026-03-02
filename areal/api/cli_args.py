@@ -1291,6 +1291,9 @@ class SGLangConfig:
     # and passed as `model_loader_extra_config` to SGLang.
     enable_multithread_load: bool = False
 
+    # Internal field, not exposed to users.
+    enable_return_routed_experts: bool = False
+
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
     def build_cmd(
@@ -1555,6 +1558,12 @@ class InferenceEngineConfig:
             "help": "OpenAI proxy configuration (used when workflow is an agent workflow)."
         },
     )
+    return_routed_experts: bool = field(
+        default=False,
+        metadata={
+            "help": "Return routed expert indices for MoE models. Effective only when using SGLang engine with MoE models."
+        },
+    )
 
     def __post_init__(self):
         """Validate scheduling_spec length."""
@@ -1675,7 +1684,12 @@ class SwanlabConfig:
     config: dict | None = None
     logdir: str | None = None
     mode: str | None = "disabled"
-    api_key: str | None = os.getenv("SWANLAB_API_KEY", None)
+    # set None to prevent info-leak in docs
+    api_key: str | None = None
+
+    def __post_init__(self):
+        if self.api_key is None:
+            self.api_key = os.getenv("SWANLAB_API_KEY")
 
 
 @dataclass

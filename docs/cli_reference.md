@@ -508,6 +508,7 @@ Configuration for inference servers, including offpolicyness control.
 | `scheduling_strategy`     | [`SchedulingStrategy`](section-scheduling-strategy)  | **Required**    | The scheduling strategy of this TrainEngine, either separation or colocation. Currently only used by the RolloutController.                                                                                                                                                          |
 | `use_lora`                | boolean                                              | `False`         | Whether to use LoRA. Should be same as actors LORA option.                                                                                                                                                                                                                           |
 | `openai`                  | [`OpenAIProxyConfig`](section-open-ai-proxy) \| None | `None`          | OpenAI proxy configuration (used when workflow is an agent workflow).                                                                                                                                                                                                                |
+| `return_routed_experts`   | boolean                                              | `False`         | Return routed expert indices for MoE models. Effective only when using SGLang engine with MoE models.                                                                                                                                                                                |
 
 (section-sg-lang)=
 
@@ -572,6 +573,7 @@ https://github.com/sgl-project/sglang for detailed documentation.
 | `enable_metrics`                  | boolean                 | `True`       | -           |
 | `decode_log_interval`             | integer                 | `1`          | -           |
 | `enable_multithread_load`         | boolean                 | `False`      | -           |
+| `enable_return_routed_experts`    | boolean                 | `False`      | -           |
 
 (section-v-llm)=
 
