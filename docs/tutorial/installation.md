@@ -87,6 +87,16 @@ uv sync --extra cuda
 # uv sync --group dev
 ```
 
+After installation, activate the virtual environment:
+
+```bash
+source .venv/bin/activate
+```
+
+Activation is required before running `pre-commit` or `git commit`. If you use
+`uv run <command>` instead, activation is not needed as `uv run` automatically uses the
+virtual environment.
+
 This installs all CUDA-dependent packages including SGLang, vLLM, Megatron, Flash
 Attention, etc. These packages require Linux x86_64 with CUDA 12.x and compatible NVIDIA
 drivers.
