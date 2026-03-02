@@ -112,10 +112,10 @@ You are an advanced AI agent. In this phase, you must provide reasoning about wh
 Instructions:
 1. Analyze the observations and determine what tool to call next
 2. Explain your reasoning clearly
-3. State which tool you plan to call and with what parameters
-4. DO NOT provide any final answer in this phase
+3. State which tool you plan to call and with what parameters. 
+4. Output the reason in <think> and </think> tags.
+5. DO NOT provide any final answer, just focus on tool calling
 
-IMPORTANT: You must NOT output <answer> tags in this phase. Only reasoning is allowed.
 """
 
 # Phase 2: Execute tool call based on previous reasoning

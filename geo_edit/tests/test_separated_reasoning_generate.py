@@ -198,7 +198,7 @@ def test_separated_reasoning_gemini() -> None:
     """Test separated reasoning generation with Gemini via matrixllm."""
     _run_separated_reasoning_test(
         model_name="gemini-3-pro-preview",
-        model_type="SGLang",
+        model_type="OpenAI",
         test_name="separated_reasoning_gemini_test",
     )
 
@@ -206,7 +206,7 @@ def test_separated_reasoning_gemini() -> None:
 def test_separated_reasoning_gpt() -> None:
     """Test separated reasoning generation with GPT via matrixllm."""
     _run_separated_reasoning_test(
-        model_name="o3",
+        model_name="gpt-5-2025-08-07",
         model_type="OpenAI",
         test_name="separated_reasoning_gpt_test",
     )
