@@ -14,7 +14,6 @@ from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
-from areal.api.alloc_mode import AllocationMode
 from areal.utils import logging, name_resolve, pkg_version
 from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
@@ -2067,6 +2066,8 @@ def to_structured_cfg(cfg, config_cls):
 
 def _validate_cfg(cfg: Any) -> None:
     """Validate configuration for consistency and correctness."""
+    
+
     am = AllocationMode.from_str(cfg.allocation_mode)
     if am.train_backend == "megatron" and cfg.actor.optimizer.type == "adam_bf16":
         if cfg.actor.dtype != "bfloat16":
@@ -2078,6 +2079,8 @@ def _validate_cfg(cfg: Any) -> None:
 
 def _modify_cfg(cfg: Any) -> None:
     """Modify configuration for Megatron engine."""
+    from areal.api.alloc_mode import AllocationMode
+
     am = AllocationMode.from_str(cfg.allocation_mode)
     if am.train_backend == "megatron" and cfg.actor.optimizer.type == "adam_bf16":
         logger = logging.getLogger("ConfigModifier")
