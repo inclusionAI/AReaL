@@ -160,4 +160,7 @@ For reward curves of experiments on a larger scale, please refer to the
 
 By default, this example uses the official Tau2 dataset. You can replace it with the
 [open-source Tau2 dataset](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data)
-to reproduce results from the [AReaL Tau2 paper](https://arxiv.org/abs/2601.22607).
+to reproduce results from the [AReaL Tau2 paper](https://arxiv.org/abs/2601.22607). You
+can also download our open-source model
+[AReaL-SEA-235B-A22B](https://huggingface.co/inclusionAI/AReaL-SEA-235B-A22B) to run
+experiments directly.
