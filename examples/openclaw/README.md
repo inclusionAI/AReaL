@@ -37,7 +37,7 @@ uv sync --all-extras
 ### 2. Start the RL service
 
 ```bash
-uv run python3 examples/online_rl/train.py --config examples/online_rl/config.yaml \
+uv run python3 examples/openclaw/train.py --config examples/openclaw/config.yaml \
     experiment_name=my-exp trial_name=trial-0 \
     allocation_mode=sglang:d1+fsdp:d1 \
     actor.path=Qwen/Qwen3-0.6B \
@@ -59,7 +59,7 @@ Take note of the gateway address — you will need it for all subsequent steps.
 
 > **Configuration**
 >
-> You can modify `examples/online_rl/config.yaml` to suit your setup. Command-line
+> You can modify `examples/openclaw/config.yaml` to suit your setup. Command-line
 > arguments override values in the YAML file, and all options are parsed into the
 > dataclasses defined in `areal/api/cli_args.py`. See the
 > [CLI reference](../../docs/cli_reference.md) for a full description of each field and
