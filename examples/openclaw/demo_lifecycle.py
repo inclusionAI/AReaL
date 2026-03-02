@@ -127,7 +127,7 @@ def main() -> None:
         error(f"Cannot reach gateway at {gateway_url}")
         info("Make sure the proxy gateway is running.")
         info(
-            "Start online training first:  python examples/online_rl/train.py --config ..."
+            "Start online training first:  python examples/openclaw/train.py --config ..."
         )
         sys.exit(1)
 
