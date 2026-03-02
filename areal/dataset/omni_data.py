@@ -1,8 +1,8 @@
-"""Omni multimodal RL dataset loader for interleaved text, image, and audio inputs.
+"""Omni multimodal RL dataset loader for interleaved text, image, audio, and video.
 
 Follows the same conventions as ``geometry3k.py`` and ``clevr_count_70k.py``:
 RL datasets return ``messages``, ``messages_chat``, and raw media objects
-(``images``, ``audios``) for workflow-level processing.
+(``images``, ``audios``, ``videos``) for workflow-level processing.
 """
 
 from __future__ import annotations
@@ -18,19 +18,20 @@ from areal.dataset.audio import DEFAULT_SAMPLING_RATE, load_audio
 
 def _build_messages_chat(
     text: str,
-    has_images: bool,
-    has_audios: bool,
     num_images: int = 0,
+    num_videos: int = 0,
     num_audios: int = 0,
 ) -> list[dict[str, Any]]:
     """Build OpenAI-style chat messages with multimodal content blocks.
 
-    Image/audio URL placeholders are left empty -- the inference engine
+    Image/video/audio URL placeholders are left empty -- the inference engine
     fills them with base64 data at request time.
     """
     content: list[dict[str, Any]] = []
     for _ in range(num_images):
         content.append({"type": "image_url", "image_url": {"url": ""}})
+    for _ in range(num_videos):
+        content.append({"type": "video_url", "video_url": {"url": ""}})
     for _ in range(num_audios):
         content.append({"type": "audio_url", "audio_url": {"url": ""}})
     content.append({"type": "text", "text": text})
@@ -43,6 +44,9 @@ def get_omni_rl_dataset(
     processor=None,
     max_length: int | None = None,
     audio_sr: int = DEFAULT_SAMPLING_RATE,
+    max_video_frames: int = 32,
+    video_fps: float | None = None,
+    use_audio_in_video: bool = False,
     **kwargs,
 ) -> Dataset:
     """Load an Omni multimodal RL dataset.
@@ -56,6 +60,7 @@ def get_omni_rl_dataset(
 
     * ``images`` -- list of PIL images or image paths
     * ``audios`` or ``audio`` -- list of audio arrays / paths, or a single one
+    * ``videos`` or ``video`` -- list of video file paths
 
     Parameters
     ----------
@@ -70,6 +75,13 @@ def get_omni_rl_dataset(
         If set, samples whose tokenised length exceeds this are filtered out.
     audio_sr:
         Target sampling rate for audio files loaded from paths.
+    max_video_frames:
+        Maximum number of frames to sample per video.
+    video_fps:
+        If set, sample video at this frame rate (capped at *max_video_frames*).
+    use_audio_in_video:
+        If ``True``, extract audio tracks from video files and include them
+        as additional audio inputs.
     """
     dataset = load_dataset(path=path, split=split, **kwargs)
 
@@ -105,21 +117,50 @@ def get_omni_rl_dataset(
                     loaded.append(np.asarray(a, dtype=np.float32))
             audios = loaded if loaded else None
 
+        # --- videos ---
+        videos: list[list[ImageObject]] | None = None
+        video_paths: list[str] | None = None
+        raw_videos = sample.get("videos") or sample.get("video")
+        if raw_videos is not None:
+            if not isinstance(raw_videos, list):
+                raw_videos = [raw_videos]
+            from areal.dataset.video import (
+                extract_audio_from_video,
+                load_video_frames,
+            )
+
+            loaded_videos: list[list[ImageObject]] = []
+            paths: list[str] = []
+            for v in raw_videos:
+                if isinstance(v, str):
+                    loaded_videos.append(
+                        load_video_frames(v, max_frames=max_video_frames, fps=video_fps)
+                    )
+                    paths.append(v)
+                    if use_audio_in_video:
+                        video_audio = extract_audio_from_video(v, sr=audio_sr)
+                        if audios is None:
+                            audios = []
+                        audios.append(video_audio)
+                elif isinstance(v, list):
+                    loaded_videos.append(v)
+            videos = loaded_videos if loaded_videos else None
+            video_paths = paths if paths else None
+
         # --- chat-template formatted prompt ---
         num_images = len(images) if images else 0
+        num_videos = len(videos) if videos else 0
         num_audios = len(audios) if audios else 0
 
         plain_text = text
-        if isinstance(text, str) and "<image>" in text:
-            plain_text = text.replace("<image>", "")
-        if isinstance(plain_text, str) and "<audio>" in plain_text:
-            plain_text = plain_text.replace("<audio>", "")
+        for tag in ("<image>", "<audio>", "<video>"):
+            if isinstance(plain_text, str) and tag in plain_text:
+                plain_text = plain_text.replace(tag, "")
 
         messages_chat = _build_messages_chat(
             plain_text.strip(),
-            has_images=num_images > 0,
-            has_audios=num_audios > 0,
             num_images=num_images,
+            num_videos=num_videos,
             num_audios=num_audios,
         )
 
@@ -142,6 +183,10 @@ def get_omni_rl_dataset(
             result["images"] = images
         if audios is not None:
             result["audios"] = audios
+        if videos is not None:
+            result["videos"] = videos
+        if video_paths is not None:
+            result["video_paths"] = video_paths
 
         return result
 
@@ -159,6 +204,8 @@ def get_omni_rl_dataset(
             }
             if sample.get("images"):
                 proc_kwargs["images"] = sample["images"]
+            if sample.get("videos"):
+                proc_kwargs["videos"] = sample["videos"]
             if sample.get("audios"):
                 proc_kwargs["audios"] = sample["audios"]
             processed = processor(**proc_kwargs)

@@ -1303,9 +1303,9 @@ class FSDPEngine(TrainEngine):
             sp_size = self.parallel_helper.sp_size
             tp_size = self.parallel_helper.tp_size
             # Build tree inputs
-            assert (
-                BLOCK_SIZE % (tp_size * sp_size) == 0
-            ), f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by the product of tensor and sequence parallel sizes ({tp_size * sp_size})."
+            assert BLOCK_SIZE % (tp_size * sp_size) == 0, (
+                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by the product of tensor and sequence parallel sizes ({tp_size * sp_size})."
+            )
             mb_list = build_packed_tree_batch(
                 input_,
                 mb_spec=self.config.mb_spec,
@@ -1429,6 +1429,19 @@ class FSDPEngine(TrainEngine):
                 if video_grid_thw_list:
                     mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
                     padded_mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+                # Video pixel values (separate from image pixel_values)
+                pixel_values_videos_list = [
+                    item["pixel_values_videos"]
+                    for item in mb["multi_modal_input"]
+                    if "pixel_values_videos" in item
+                ]
+                if pixel_values_videos_list:
+                    mb["pixel_values_videos"] = torch.cat(
+                        pixel_values_videos_list, dim=0
+                    )
+                    padded_mb["pixel_values_videos"] = torch.cat(
+                        pixel_values_videos_list, dim=0
+                    )
                 # Audio fields for Omni models
                 input_features_list = [
                     item["input_features"]

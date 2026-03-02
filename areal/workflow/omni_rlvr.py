@@ -1,10 +1,10 @@
-"""Omni multimodal RLVR workflow supporting text, image, and audio inputs.
+"""Omni multimodal RLVR workflow supporting text, image, audio, and video inputs.
 
-Extends :class:`VisionRLVRWorkflow` with audio processing stages.  The
-processor handles all modalities simultaneously; the resulting
-``multi_modal_input`` carries both vision tensors (``pixel_values``,
-``image_grid_thw``) and audio tensors (``input_features``,
-``feature_attention_mask``).
+Extends :class:`VisionRLVRWorkflow` with audio and video processing stages.
+The processor handles all modalities simultaneously; the resulting
+``multi_modal_input`` carries vision tensors (``pixel_values``,
+``image_grid_thw``, ``pixel_values_videos``, ``video_grid_thw``) and audio
+tensors (``input_features``, ``feature_attention_mask``).
 """
 
 import uuid
@@ -26,12 +26,17 @@ from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 
 logger = logging.getLogger("OmniRLVRWorkflow")
 
-_VISION_KEYS = ("pixel_values", "image_grid_thw", "video_grid_thw")
+_VISION_KEYS = (
+    "pixel_values",
+    "image_grid_thw",
+    "pixel_values_videos",
+    "video_grid_thw",
+)
 _AUDIO_KEYS = ("input_features", "feature_attention_mask")
 
 
 class OmniRLVRWorkflow(VisionRLVRWorkflow):
-    """RLVR workflow for Omni multimodal models (text + image + audio)."""
+    """RLVR workflow for Omni multimodal models (text + image + audio + video)."""
 
     def __init__(
         self,
@@ -65,6 +70,8 @@ class OmniRLVRWorkflow(VisionRLVRWorkflow):
         }
         if data.get("images"):
             proc_kwargs["images"] = data["images"]
+        if data.get("videos"):
+            proc_kwargs["videos"] = data["videos"]
         if data.get("audios"):
             proc_kwargs["audios"] = data["audios"]
 
@@ -74,12 +81,18 @@ class OmniRLVRWorkflow(VisionRLVRWorkflow):
         # --- Build ModelRequest with multimodal data for inference ---
         byte_images = image2base64(data["images"]) if data.get("images") else None
         byte_audios = audios2base64(data["audios"]) if data.get("audios") else None
+        byte_videos = None
+        if data.get("video_paths"):
+            from areal.dataset.video import videos2base64
+
+            byte_videos = videos2base64(data["video_paths"])
 
         req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             image_data=byte_images,
             audio_data=byte_audios,
+            video_data=byte_videos,
             vision_msg_vllm=(
                 [data["messages_chat"]] if "messages_chat" in data else None
             ),
@@ -98,7 +111,7 @@ class OmniRLVRWorkflow(VisionRLVRWorkflow):
         loss_mask = [0] * resp.input_len + [1] * resp.output_len
         versions = [-1] * resp.input_len + resp.output_versions
 
-        # --- Build multi_modal_input with both vision and audio fields ---
+        # --- Build multi_modal_input with vision, video, and audio fields ---
         mm_entry: dict[str, torch.Tensor] = {}
         for key in _VISION_KEYS + _AUDIO_KEYS:
             if key in processed_input:

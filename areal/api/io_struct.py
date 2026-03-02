@@ -42,6 +42,9 @@ class ModelRequest:
     # omni (audio): base64-encoded WAV strings
     audio_data: list[str] | None = None
 
+    # omni (video): base64-encoded video files (one string per video clip)
+    video_data: list[str] | None = None
+
     def copy(self):
         return ModelRequest(
             rid=self.rid,
@@ -58,6 +61,9 @@ class ModelRequest:
             ),
             audio_data=(
                 self.audio_data.copy() if self.audio_data is not None else None
+            ),
+            video_data=(
+                self.video_data.copy() if self.video_data is not None else None
             ),
         )
 

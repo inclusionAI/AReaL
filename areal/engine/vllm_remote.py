@@ -58,6 +58,7 @@ class VLLMBackend:
 
         if req.vision_msg_vllm:
             images = iter(req.image_data) if req.image_data else iter([])
+            videos = iter(req.video_data) if req.video_data else iter([])
             audios = iter(req.audio_data) if req.audio_data else iter([])
             parsed_input = req.vision_msg_vllm[0]
             for msg in parsed_input:
@@ -72,6 +73,16 @@ class VLLMBackend:
                                 )
                             content["image_url"] = {
                                 "url": f"data:image/jpeg;base64,{base64_img}"
+                            }
+                        elif content.get("type") == "video_url":
+                            try:
+                                base64_video = next(videos)
+                            except StopIteration:
+                                raise ValueError(
+                                    "Not enough videos in req.video_data to match video_url entries."
+                                )
+                            content["video_url"] = {
+                                "url": f"data:video/mp4;base64,{base64_video}"
                             }
                         elif content.get("type") == "audio_url":
                             try:
