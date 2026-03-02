@@ -38,15 +38,16 @@ class AgentServiceConfig:
 class GatewayConfig:
     """Configuration for the Agent Service Gateway.
 
-    The Gateway receives /run_episode requests, queues them internally,
-    and dispatches to Agent Worker processes via HTTP.
+    The Gateway acts as a transparent reverse proxy, forwarding
+    /run_episode requests to Agent Worker processes via round-robin
+    load balancing with health checks and request-level retry.
 
     Attributes:
         host: Host address to bind the Gateway.
         port: Port number for the Gateway HTTP server.
-        queue_size: Maximum number of queued requests before returning 503.
         worker_timeout: Timeout in seconds for Worker HTTP responses.
-        health_check_interval: Interval in seconds for passive health checks.
+        health_check_interval: Interval in seconds for active health checks.
+        max_retries: Maximum retry attempts per request (try next worker on failure).
         gateway_cpu: CPU cores for the Gateway process.
         gateway_mem: Memory (GB) for the Gateway process.
         worker_cpu: CPU cores per Agent Worker process.
@@ -61,17 +62,17 @@ class GatewayConfig:
         default=8300,
         metadata={"help": "Port number for the Gateway."},
     )
-    queue_size: int = field(
-        default=1000,
-        metadata={"help": "Maximum queued requests before returning 503."},
-    )
     worker_timeout: float = field(
         default=300.0,
         metadata={"help": "Timeout in seconds for Worker HTTP responses."},
     )
     health_check_interval: float = field(
         default=30.0,
-        metadata={"help": "Interval in seconds between passive health checks."},
+        metadata={"help": "Interval in seconds between active health checks."},
+    )
+    max_retries: int = field(
+        default=3,
+        metadata={"help": "Maximum retry attempts per request."},
     )
     gateway_cpu: int = field(
         default=2,
@@ -94,9 +95,9 @@ class GatewayConfig:
         """Validate configuration values."""
         if self.port <= 0 or self.port > 65535:
             raise ValueError(f"port must be between 1 and 65535, got {self.port}")
-        if self.queue_size < 1:
-            raise ValueError(f"queue_size must be at least 1, got {self.queue_size}")
         if self.worker_timeout <= 0:
             raise ValueError(
                 f"worker_timeout must be positive, got {self.worker_timeout}"
             )
+        if self.max_retries < 1:
+            raise ValueError(f"max_retries must be at least 1, got {self.max_retries}")

@@ -56,7 +56,7 @@ class AgentController:
         """Initialize the AgentController.
 
         Args:
-            config: Gateway configuration (host, port, queue_size, etc.).
+            config: Gateway configuration (host, port, timeouts, etc.).
             scheduler: Scheduler instance for creating worker processes.
         """
         if scheduler is None:
@@ -116,10 +116,7 @@ class AgentController:
             assert self._gateway_addr is not None
             return self._gateway_addr
 
-        cmd = (
-            f"python -m areal.experimental.agent_service.gateway "
-            f"--queue-size {self._config.queue_size}"
-        )
+        cmd = "python -m areal.experimental.agent_service.gateway"
 
         spec = SchedulingSpec(
             cpu=self._config.gateway_cpu,

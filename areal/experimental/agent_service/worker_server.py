@@ -263,7 +263,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Agent Service Worker")
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=0)
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     host = gethostip() if args.host == "0.0.0.0" else args.host
     port = args.port if args.port != 0 else find_free_ports(1)[0]

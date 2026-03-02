@@ -75,13 +75,6 @@ def _parse_args() -> argparse.Namespace:
         help="Scheduler backend (default: local)",
     )
 
-    parser.add_argument(
-        "--queue-size",
-        type=int,
-        default=1000,
-        help="Maximum queued requests before returning 503",
-    )
-
     return parser.parse_args()
 
 
@@ -166,7 +159,6 @@ def main() -> None:
     config = GatewayConfig(
         host=host,
         port=port,
-        queue_size=args.queue_size,
     )
     controller = AgentController(config=config, scheduler=scheduler)
 

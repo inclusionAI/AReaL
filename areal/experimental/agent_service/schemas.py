@@ -22,30 +22,13 @@ class WorkerInfo(BaseModel):
 
     worker_id: str
     address: str
-    status: str = "idle"  # "idle", "busy", "unhealthy"
+    status: str = "healthy"  # "healthy", "unhealthy"
     last_heartbeat: float = 0.0
 
     @classmethod
     def create(cls, worker_id: str, address: str) -> WorkerInfo:
         """Create a new WorkerInfo with current timestamp."""
         return cls(worker_id=worker_id, address=address, last_heartbeat=time.time())
-
-
-class DispatchRequest(BaseModel):
-    """Request sent from Gateway to Agent Worker."""
-
-    data: dict[str, Any]
-    session_url: str
-    agent_kwargs: dict[str, Any] | None = None
-    agent_import_path: str | None = None
-
-
-class DispatchResponse(BaseModel):
-    """Response from Agent Worker to Gateway."""
-
-    status: str
-    result: Any | None = None
-    error: str | None = None
 
 
 class RegisterWorkerRequest(BaseModel):
@@ -56,46 +39,43 @@ class RegisterWorkerRequest(BaseModel):
 
 
 # ------------------------------------------------------------------
-# Worker RPC server models
+# Episode request / response
 # ------------------------------------------------------------------
 
 
 class RunEpisodeRequest(BaseModel):
-    """Request model for /run_episode endpoint."""
+    """Request to run an episode via the Agent Service."""
 
     data: dict[str, Any]
     session_url: str
     agent_kwargs: dict[str, Any] | None = None
-    agent_import_path: str | None = None  # Per-request agent selection
+    agent_import_path: str | None = None
 
 
 class RunEpisodeResponse(BaseModel):
-    """Response model for /run_episode endpoint."""
+    """Response from running an episode."""
 
     status: str
-    result: Any | None = None
+    result: float | dict[str, float] | None = None
     error: str | None = None
 
 
+# ------------------------------------------------------------------
+# Health
+# ------------------------------------------------------------------
+
+
 class HealthResponse(BaseModel):
-    """Response model for /health endpoint."""
+    """Response for health check endpoint.
+
+    Used by both Gateway (/health with workers stats) and
+    Worker (/health with running/agent info).
+    """
 
     status: str
-    running: bool
-    agent_import_path: str
-    agent_reuse: bool
-
-
-class ConfigureRequest(BaseModel):
-    """Request model for /configure endpoint."""
-
-    config: dict[str, Any] | None = None
-    role: str | None = None
-    rank: int | None = None
-
-
-class ConfigureResponse(BaseModel):
-    """Response model for /configure endpoint."""
-
-    status: str
-    message: str
+    # Gateway fields
+    workers: dict[str, int] | None = None
+    # Worker fields
+    running: bool | None = None
+    agent_import_path: str | None = None
+    agent_reuse: bool | None = None

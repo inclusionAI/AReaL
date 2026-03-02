@@ -1,31 +1,39 @@
 """Gateway process for the Agent Service.
 
-The Gateway receives ``/run_episode`` requests from callers (e.g.
-OpenAIProxyWorkflow), queues them internally via the :class:`Router`, and
-dispatches them to registered Agent Worker processes over HTTP.
+The Gateway acts as a transparent reverse proxy, forwarding
+``/run_episode`` requests to Agent Worker processes using round-robin
+load balancing.  There is no internal queue or dispatcher — each
+request is forwarded directly to a healthy worker via HTTP.
+
+On worker failure, the Gateway retries the request on the next
+healthy worker (up to ``max_retries`` attempts).
 
 Endpoints
 ---------
-- POST /run_episode  — Enqueue an episode request for dispatch to a worker.
-- GET  /health       — Health check with worker pool statistics.
+- POST /run_episode       — Forward an episode request to a worker.
+- GET  /health            — Health check with worker pool statistics.
 - POST /register_worker   — Register a new Agent Worker.
 - POST /unregister_worker — Remove an Agent Worker from the pool.
-- GET  /workers      — List all registered workers.
+- GET  /workers           — List all registered workers.
+- GET  /metrics           — Request metrics (count, latency, per-worker stats).
 """
 
 from __future__ import annotations
 
 import asyncio
+import math
+import time
+from collections import deque
 from contextlib import asynccontextmanager
+from typing import Any
 
+import aiohttp
 from fastapi import FastAPI, HTTPException
 
 from areal.utils import logging
 
 from .config import GatewayConfig
-from .router import Router
 from .schemas import (
-    DispatchRequest,
     RegisterWorkerRequest,
     RunEpisodeRequest,
     RunEpisodeResponse,
@@ -36,21 +44,80 @@ logger = logging.getLogger("Gateway")
 
 
 # ------------------------------------------------------------------
+# Metrics
+# ------------------------------------------------------------------
+
+
+class _Metrics:
+    """Simple in-process request metrics."""
+
+    def __init__(self) -> None:
+        self.total_requests: int = 0
+        self.total_success: int = 0
+        self.total_errors: int = 0
+        self.total_retries: int = 0
+        self._latencies: deque[float] = deque(maxlen=10_000)
+        self._per_worker: dict[str, dict[str, int]] = {}
+
+    def record(
+        self,
+        worker_id: str,
+        latency: float,
+        *,
+        success: bool,
+    ) -> None:
+        self.total_requests += 1
+        self._latencies.append(latency)
+        if success:
+            self.total_success += 1
+        else:
+            self.total_errors += 1
+
+        if worker_id not in self._per_worker:
+            self._per_worker[worker_id] = {"requests": 0, "errors": 0}
+        self._per_worker[worker_id]["requests"] += 1
+        if not success:
+            self._per_worker[worker_id]["errors"] += 1
+
+    def record_retry(self) -> None:
+        self.total_retries += 1
+
+    def snapshot(self) -> dict[str, Any]:
+        latencies = list(self._latencies)
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+        if latencies:
+            sorted_lat = sorted(latencies)
+            idx = max(0, math.ceil(len(sorted_lat) * 0.99) - 1)
+            p99_latency = sorted_lat[idx]
+        else:
+            p99_latency = 0.0
+        return {
+            "total_requests": self.total_requests,
+            "total_success": self.total_success,
+            "total_errors": self.total_errors,
+            "total_retries": self.total_retries,
+            "avg_latency_s": round(avg_latency, 4),
+            "p99_latency_s": round(p99_latency, 4),
+            "per_worker": dict(self._per_worker),
+        }
+
+
+# ------------------------------------------------------------------
 # Gateway
 # ------------------------------------------------------------------
 
 
 class Gateway:
-    """Central dispatcher that bridges HTTP callers to Agent Workers.
+    """Transparent reverse proxy that forwards requests to Agent Workers.
 
-    The Gateway owns a :class:`WorkerPoolManager` and a :class:`Router`.
-    Incoming ``/run_episode`` requests are placed onto the Router's bounded
-    queue; the Router's background dispatcher forwards them to idle workers.
+    The Gateway owns a :class:`WorkerPoolManager` for round-robin worker
+    selection and an :class:`aiohttp.ClientSession` for forwarding requests.
+    There is no internal queue — each request is forwarded directly.
 
     Parameters
     ----------
     config : GatewayConfig
-        Gateway configuration (host, port, queue_size, etc.).
+        Gateway configuration (host, port, timeouts, retries, etc.).
     """
 
     def __init__(
@@ -60,35 +127,134 @@ class Gateway:
         self._config = config
 
         self._pool: WorkerPoolManager | None = None
-        self._router: Router | None = None
+        self._session: aiohttp.ClientSession | None = None
+        self._metrics = _Metrics()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Initialize WorkerPoolManager and Router, then start dispatching."""
+        """Initialize WorkerPoolManager and HTTP session."""
         self._pool = WorkerPoolManager(
             worker_timeout=self._config.worker_timeout,
+            health_check_interval=self._config.health_check_interval,
         )
-        self._router = Router(
-            pool=self._pool,
-            queue_size=self._config.queue_size,
-            worker_timeout=self._config.worker_timeout,
+        await self._pool.start()
+        self._session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self._config.worker_timeout),
         )
-        await self._router.start()
         logger.info(
-            "Gateway started on %s:%d (queue_size=%d)",
+            "Gateway started on %s:%d (max_retries=%d)",
             self._config.host,
             self._config.port,
-            self._config.queue_size,
+            self._config.max_retries,
         )
 
     async def stop(self) -> None:
-        """Stop the Router (cancels dispatcher and closes HTTP session)."""
-        if self._router is not None:
-            await self._router.stop()
+        """Stop the WorkerPool health check and close the HTTP session."""
+        if self._pool is not None:
+            await self._pool.stop()
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+            self._session = None
         logger.info("Gateway stopped")
+
+    # ------------------------------------------------------------------
+    # Proxy logic
+    # ------------------------------------------------------------------
+
+    async def _forward_request(
+        self,
+        request_data: dict[str, Any],
+    ) -> RunEpisodeResponse:
+        """Forward a request to a worker with round-robin + retry.
+
+        Tries up to ``max_retries`` workers.  On each failure, the
+        worker is marked unhealthy and the next healthy worker is tried.
+
+        Args:
+            request_data: Serialized request body to forward.
+
+        Returns:
+            RunEpisodeResponse from the worker.
+
+        Raises:
+            HTTPException: If all retries are exhausted.
+        """
+        assert self._pool is not None
+        assert self._session is not None
+
+        last_error: str | None = None
+
+        for attempt in range(self._config.max_retries):
+            worker = await self._pool.next_worker()
+            if worker is None:
+                last_error = "No healthy workers available"
+                logger.warning(
+                    "forward_request: attempt %d/%d — no healthy workers",
+                    attempt + 1,
+                    self._config.max_retries,
+                )
+                break
+
+            t0 = time.monotonic()
+            try:
+                url = f"{worker.address}/run_episode"
+                async with self._session.post(url, json=request_data) as resp:
+                    elapsed = time.monotonic() - t0
+
+                    if resp.status != 200:
+                        body = await resp.text()
+                        self._metrics.record(worker.worker_id, elapsed, success=False)
+                        await self._pool.mark_unhealthy(worker.worker_id)
+                        last_error = f"Worker {worker.worker_id} returned HTTP {resp.status}: {body}"
+                        logger.warning(
+                            "forward_request: attempt %d/%d — worker %s returned HTTP %d after %.2fs",
+                            attempt + 1,
+                            self._config.max_retries,
+                            worker.worker_id,
+                            resp.status,
+                            elapsed,
+                        )
+                        if attempt < self._config.max_retries - 1:
+                            self._metrics.record_retry()
+                            continue
+                        break
+
+                    data: dict[str, Any] = await resp.json()
+                    parsed = RunEpisodeResponse(**data)
+                    self._metrics.record(worker.worker_id, elapsed, success=True)
+                    logger.info(
+                        "forward_request: worker %s completed in %.2fs",
+                        worker.worker_id,
+                        elapsed,
+                    )
+                    return parsed
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                elapsed = time.monotonic() - t0
+                self._metrics.record(worker.worker_id, elapsed, success=False)
+                await self._pool.mark_unhealthy(worker.worker_id)
+                last_error = f"Worker {worker.worker_id} failed: {exc}"
+                logger.warning(
+                    "forward_request: attempt %d/%d — worker %s failed after %.2fs: %s",
+                    attempt + 1,
+                    self._config.max_retries,
+                    worker.worker_id,
+                    elapsed,
+                    exc,
+                )
+                if attempt < self._config.max_retries - 1:
+                    self._metrics.record_retry()
+
+        # All retries exhausted
+        raise HTTPException(
+            status_code=503,
+            detail=f"All workers failed after {self._config.max_retries} "
+            f"attempts. Last error: {last_error}",
+        )
 
     # ------------------------------------------------------------------
     # FastAPI application factory
@@ -112,36 +278,24 @@ class Gateway:
 
         app = FastAPI(
             title="Agent Service Gateway",
-            description="Gateway that dispatches run_episode requests to Agent Workers",
-            version="1.0.0",
+            description=(
+                "Reverse proxy that forwards run_episode requests to Agent Workers"
+            ),
+            version="2.0.0",
             lifespan=lifespan,
         )
 
         # -- endpoints ------------------------------------------------
 
         @app.post("/run_episode", response_model=RunEpisodeResponse)
-        async def run_episode(request: RunEpisodeRequest) -> RunEpisodeResponse:
-            """Enqueue an episode request for dispatch to a worker."""
-            if gateway._router is None:
+        async def run_episode(
+            request: RunEpisodeRequest,
+        ) -> RunEpisodeResponse:
+            """Forward an episode request to a worker."""
+            if gateway._pool is None:
                 raise HTTPException(status_code=503, detail="Gateway not initialized")
-            try:
-                dispatch_req = DispatchRequest(
-                    data=request.data,
-                    session_url=request.session_url,
-                    agent_kwargs=request.agent_kwargs,
-                    agent_import_path=request.agent_import_path,
-                )
-                response = await gateway._router.enqueue(dispatch_req)
-                return RunEpisodeResponse(
-                    status=response.status,
-                    result=response.result,
-                    error=response.error,
-                )
-            except asyncio.QueueFull:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Request queue is full, try again later",
-                )
+            logger.info("run_episode: received request")
+            return await gateway._forward_request(request.model_dump())
 
         @app.get("/health")
         async def health():
@@ -175,11 +329,21 @@ class Gateway:
             workers = await gateway._pool.get_all_workers()
             return [w.model_dump() for w in workers]
 
+        @app.post("/configure")
+        async def configure():
+            """Accept Scheduler configuration (no-op for Gateway)."""
+            return {"status": "success"}
+
+        @app.get("/metrics")
+        async def metrics():
+            """Return request metrics."""
+            return gateway._metrics.snapshot()
+
         return app
 
 
 def main() -> None:
-    """Entry point for the Gateway process (internal, launched by Scheduler)."""
+    """Entry point for the Gateway process (launched by Scheduler)."""
     import argparse
 
     import uvicorn
@@ -189,8 +353,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Agent Service Gateway")
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=0)
-    parser.add_argument("--queue-size", type=int, default=1000)
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     host = gethostip() if args.host == "0.0.0.0" else args.host
     port = args.port if args.port != 0 else find_free_ports(1)[0]
@@ -198,16 +361,10 @@ def main() -> None:
     config = GatewayConfig(
         host=host,
         port=port,
-        queue_size=args.queue_size,
     )
     gateway = Gateway(config=config)
 
-    logger.info(
-        "Starting Gateway on %s:%d (queue_size=%d)",
-        host,
-        port,
-        config.queue_size,
-    )
+    logger.info("Starting Gateway on %s:%d", host, port)
     try:
         uvicorn.run(
             gateway.create_app(),
