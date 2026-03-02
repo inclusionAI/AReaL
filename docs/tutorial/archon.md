@@ -136,6 +136,7 @@ Archon-specific options are configured under `actor.archon.*`:
 | `enable_compile`               | `True`            | Enable torch.compile                                                          |
 | `ac_mode`                      | `selective`       | Activation checkpointing mode                                                 |
 | `offload_params`               | `False`           | Offload FSDP parameters to CPU                                                |
+| `reshard_after_forward_policy` | `default`         | FSDP reshard after forward (`default`/`always`/`never`)                       |
 | `use_deterministic_algorithms` | `False`           | Deterministic training for reproducibility (see [below](#deterministic-mode)) |
 
 See [Performance Tuning](#performance-tuning) for detailed guidance on these options.
@@ -350,3 +351,177 @@ python3 examples/math/gsm8k_rl.py --config archon_qwen3_moe.yaml
   mode syntax
 - [Fine-tuning Large MoE Models](megatron.md) - MegatronEngine alternative for MoE
   models
+
+## Appendix: Pipeline Parallelism Memory Guide
+
+Pipeline parallelism (PP) in the Archon engine introduces unique memory challenges
+compared to pure data parallelism. This appendix explains the root causes and practical
+mitigations.
+
+### A.1 Microbatch Count and Warmup Accumulation
+
+Interleaved PP schedules (e.g., `Interleaved1F1B`, `InterleavedZeroBubble`) have a
+**warmup phase** that accumulates multiple forward passes before any backward pass runs.
+When `n_microbatches < num_total_stages`, most or all forward passes pile up before the
+first backward, causing peak GPU memory to spike far beyond what the steady-state 1F1B
+phase requires.
+
+For example, with `pp_size=2` and `stages_per_rank=2` (`num_total_stages=4`):
+
+| `mb_spec.n_mbs` | Actual microbatches          | Warmup forwards (rank 0) | Peak activation sets    | Per-set size |
+| --------------- | ---------------------------- | ------------------------ | ----------------------- | ------------ |
+| 1 (default)     | 2 (auto-raised to `pp_size`) | 3                        | 4 (all before backward) | `batch / 2`  |
+| 4 (recommended) | 4                            | 3                        | 4 (transient)           | `batch / 4`  |
+| 8               | 8                            | 3                        | 4 (transient)           | `batch / 8`  |
+
+While the peak count of in-flight activation sets stays the same (~`num_total_stages`),
+each set shrinks proportionally with more microbatches.
+
+**Fix:** Set `mb_spec.n_mbs` to at least `num_total_stages`:
+
+```yaml
+actor:
+  mb_spec:
+    n_mbs: 4  # >= pp_size * stages_per_rank
+```
+
+```{note}
+AReaL automatically raises `n_mbs` to `num_total_stages` when it is too low and logs a
+warning. To silence the warning and ensure optimal splitting, set `n_mbs` explicitly.
+```
+
+### A.2 Zero Bubble Schedules and `retain_graph`
+
+Zero bubble schedules (`InterleavedZeroBubble`, `ZBVZeroBubble`, `DualPipeV`) split each
+backward pass into two phases:
+
+- **I step** (`stage_backward_input`): computes input gradients with `retain_graph=True`
+- **W step** (`stage_backward_weight`): computes weight gradients, then releases the
+  graph
+
+The I step must keep the forward computation graph alive (`retain_graph=True`) because
+the W step still needs it. This single design choice cascades into several memory
+penalties:
+
+| Consequence                    | Why                                                                   | Memory impact                                |
+| ------------------------------ | --------------------------------------------------------------------- | -------------------------------------------- |
+| Activations live longer        | Graph between I->W cannot be freed                                    | +15--20 GB (model-dependent)                 |
+| `donated_buffer` disabled      | Donated buffers are freed after backward, conflicts with retain_graph | Backward temp buffers cannot be reused       |
+| `torch.compile` disabled       | Compile's donated buffer optimization has the same conflict           | Lose Inductor memory optimizations           |
+| Op-level selective AC unusable | Per-op cache is consumed by I step, nothing left for W step           | Must use full AC or layer-level selective AC |
+
+Non-zero-bubble schedules (`1F1B`, `Interleaved1F1B`) perform backward in a single pass
+without `retain_graph=True`, so **none of these penalties apply**. If memory is tight
+and you do not need zero-bubble throughput, switching to `Interleaved1F1B` is the
+simplest mitigation:
+
+```yaml
+actor:
+  archon:
+    pp_schedule: Interleaved1F1B  # no split backward, no retain_graph overhead
+```
+
+If you need zero-bubble throughput but IZB causes OOM, **try `ZBVZeroBubble` first**.
+ZBV uses a V-shape stage assignment that is significantly more memory-friendly than
+IZB's interleaved assignment:
+
+|                         | IZB (interleaved)    | ZBV (V-shape)            |
+| ----------------------- | -------------------- | ------------------------ |
+| Rank 0 stages (4 total) | \[0, 2\] (same side) | \[0, 3\] (opposite ends) |
+| Rank 1 stages (4 total) | \[1, 3\] (same side) | \[1, 2\] (opposite ends) |
+
+The V-shape co-locates the first and last pipeline stages on the same rank. This matters
+because the last stage produces the loss directly -- its backward can start
+**immediately** after forward with no cross-rank communication. In ZBV's warmup, chunk1
+activations follow an `F->I->W` pattern where each activation is created and freed
+locally, never piling up.
+
+IZB's interleaved assignment places all of a rank's stages on the same side of the
+pipeline. Backward requires gradient propagation from downstream ranks, creating a real
+bubble where warmup activations sit in memory waiting. This difference -- typically a
+few GB -- can be decisive at the OOM boundary.
+
+```yaml
+actor:
+  archon:
+    pp_schedule: ZBVZeroBubble  # V-shape: less warmup memory than IZB
+```
+
+```{note}
+`ZBVZeroBubble` requires exactly 2 stages per rank (`stages_per_rank=2`).
+```
+
+### A.3 FSDP Parameter Resharding
+
+With PP enabled, FSDP defaults to keeping parameters unsharded after forward
+(`reshard_after_forward=False`) to avoid redundant all-gather communication per
+microbatch. This trades memory for speed -- each rank holds the full (unsharded)
+parameters of its assigned layers, adding ~`model_params_per_rank * (1 - 1/dp_shard)` in
+bf16.
+
+Override with `reshard_after_forward_policy: always` if communication overhead is
+acceptable:
+
+```yaml
+actor:
+  archon:
+    reshard_after_forward_policy: always  # reshard after each forward, saves memory
+```
+
+### A.4 Gradient Accumulation Overhead (FSDP + PP)
+
+This is an inherent cost of combining FSDP with PP and applies to **all** PP schedules
+(not just zero bubble).
+
+PyTorch's PP scheduler disables gradient synchronization
+(`set_requires_gradient_sync(False)`) and parameter resharding
+(`set_reshard_after_backward(False)`) for all backward microbatches except the last one.
+This means gradients accumulate in **unsharded fp32** form across microbatches rather
+than being reduce-scattered immediately.
+
+For a model with `P` parameters per rank, this adds up to `P * 4 bytes` (fp32) of
+gradient memory. For example, a 30B MoE model with PP=2 holds ~13.5B parameters per
+rank, resulting in ~54 GB of unsharded gradient buffers during the backward phase.
+
+This overhead **cannot be reduced by AReaL configuration alone** -- the only mitigation
+is to reduce parameters per rank via TP or EP.
+
+### A.5 When to Add TP/EP
+
+If OOM persists after tuning `n_mbs`, `reshard_after_forward_policy`, and activation
+checkpointing, the model likely exceeds the per-rank memory budget. Add tensor
+parallelism (`t2` or `t4`) or expert parallelism (`e2`, `e4`) to reduce parameters per
+rank. For MoE models, EP is preferred because expert weights typically dominate model
+size:
+
+```yaml
+# Before: archon:d2p2 (PP only, OOM)
+# After: archon:d1p2e2 (PP + EP, fits in memory)
+allocation_mode: sglang:d4+archon:d1p2e2
+```
+
+### A.6 Activation Checkpointing with PP
+
+Full AC (`gradient_checkpointing: true`) is strongly recommended with PP since the
+warmup phase holds activations from multiple forward passes simultaneously.
+
+For zero bubble schedules, the AC mode is further constrained:
+
+| AC mode                               | Zero bubble compatible | Notes                                       |
+| ------------------------------------- | ---------------------- | ------------------------------------------- |
+| `full`                                | Yes                    | Recommended for maximum memory savings      |
+| `selective` (layer-level, e.g. `"2"`) | Yes                    | Good balance of speed and memory            |
+| `selective` (`"op"`)                  | No                     | Per-op cache conflicts with split backward  |
+| `memory_budget`                       | No                     | Depends on torch.compile, which is disabled |
+
+### A.7 Memory Budget Rule of Thumb
+
+```{tip}
+Each rank needs memory for:
+1. Sharded model parameters: `model_size / (dp_shard * tp * ep)` in bf16
+2. Unsharded gradients during backward: `model_size / (tp * ep * pp)` in fp32
+3. Optimizer states: `2 * model_size / (dp_shard * tp * ep)` in fp32 (AdamW)
+4. Activations: ~`num_total_stages * (batch_tokens / n_mbs) * hidden_dim` in bf16
+
+If the sum exceeds GPU memory, increase TP, EP, or PP to reduce per-rank load.
+```
