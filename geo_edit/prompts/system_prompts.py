@@ -133,12 +133,13 @@ Instructions:
 
 # Phase 3: Generate final answer based on all observations
 SEPARATED_FINAL_ANSWER_PROMPT = """
-You are an advanced AI agent. In this phase, you must provide the final answer.
+You are an advanced AI agent. In this phase, you must analyze all observations and tool results to provide the final answer.
 
 Instructions:
-1. Based on all the observations and tool results gathered, provide the final answer
-2. Wrap your final answer in <answer> and </answer> tags
-3. Be concise and direct in your answer
+1. Based on all the observations and tool results gathered, analyze them carefully and provide the final answer
+2. Wrap your analysis in <think> and </think> tags.
+3. Wrap your final answer in <answer> and </answer> tags
+4. Be concise and direct in your answer
 """
 
 

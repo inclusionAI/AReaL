@@ -387,44 +387,45 @@ class OpenAICompatibleVisionQATask(VisionQATask):
     def _build_sft_messages(self) -> List[Dict[str, Any]]:
         """Build SFT-format messages for training.
 
-        Combines observation (user/tool messages) with action records (assistant messages with tool_calls).
+        Builds messages in correct chronological order:
+        1. Initial user message (from first step's observation)
+        2. For each step: assistant message (with tool_calls) + tool results
         """
         if not self.conversation_history:
             return []
 
         messages = []
-        added_observations = set()
 
-        # Process each step in conversation history
+        # Step 1: Add initial user message from first observation
+        first_record = self.conversation_history[0]
+        first_observation = first_record.get("observation", [])
+
+        for item in first_observation:
+            if isinstance(item, dict) and item.get("role") == "user":
+                msg = self._convert_observation_item_to_sft(item)
+                if msg:
+                    messages.append(msg)
+                    break  # Only add the first user message
+
+        # Step 2: Process each step's assistant message and tool results
         for idx, record in enumerate(self.conversation_history):
             step = record["step"]
-            observation = record.get("observation", [])
-
-            # Add observation messages only once (avoid duplicates from multiple steps)
-            for obs_idx, item in enumerate(observation):
-                obs_id = (step, obs_idx, json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item))
-                if obs_id not in added_observations and isinstance(item, dict):
-                    msg = self._convert_observation_item_to_sft(item)
-                    if msg and msg.get("role") in ("user", "tool"):
-                        messages.append(msg)
-                        added_observations.add(obs_id)
-
-            # Add assistant message from action record
             action_record = record.get("action", {})
             thinking_process = record.get("thinking_process", "")
             output_text = record.get("output_text", "")
             function_calls = record.get("function_call")
 
+            # Build assistant message
             assistant_msg = {"role": "assistant"}
 
-            # Build content from thinking + output
+            # Combine thinking + output as content
             content_parts = []
             if thinking_process:
                 content_parts.append(thinking_process)
             if output_text:
                 content_parts.append(output_text)
 
-            assistant_msg["content"] = "\n".join(content_parts) if content_parts else (action_record.get("text", ""))
+            assistant_msg["content"] = "\n".join(content_parts) if content_parts else (action_record.get("text", "") or "")
 
             # Add tool_calls from action_record
             if function_calls:
@@ -456,6 +457,18 @@ class OpenAICompatibleVisionQATask(VisionQATask):
                 assistant_msg["tool_calls"] = tool_calls
 
             messages.append(assistant_msg)
+
+            # Add tool results from next step's observation (if exists)
+            if function_calls and idx + 1 < len(self.conversation_history):
+                next_record = self.conversation_history[idx + 1]
+                next_observation = next_record.get("observation", [])
+
+                # Extract tool messages from next observation
+                for item in next_observation:
+                    if isinstance(item, dict) and item.get("role") == "tool":
+                        msg = self._convert_observation_item_to_sft(item)
+                        if msg:
+                            messages.append(msg)
 
         return messages
 
