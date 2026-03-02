@@ -152,7 +152,7 @@ class SharedRayPlacementStrategy(RayPlacementStrategy):
         placement_group = self._placement_groups[0]
 
         # Build scheduling strategy with optional bundle index
-        strategy_kwargs: dict[str:Any] = {
+        strategy_kwargs: dict[str, Any] = {
             "placement_group": placement_group,
             "placement_group_capture_child_tasks": True,
             "placement_group_bundle_index": self._current_bundle_idx,
