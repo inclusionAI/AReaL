@@ -1947,18 +1947,6 @@ class BaseExperimentConfig:
     # NOTE: we need this unified config class because different experiments
     # have different config structures, e.g., GRPO has two engine configs,
     # but SFT only has a single one. We use subclasses to represent these structures.
-
-    def __post_init__(self):
-        from areal.api.alloc_mode import AllocationMode
-
-        am = AllocationMode.from_str(self.allocation_mode)
-        if am.train_backend == "megatron" and self.actor.optimizer.type == "adam_bf16":
-            if self.actor.dtype != "bfloat16":
-                raise ValueError(
-                    f"dtype must be 'bfloat16' for adam_bf16 optimizer with Megatron Engine, "
-                    f"got '{self.actor.dtype}'."
-                )
-
     experiment_name: str = field(
         default=MISSING,
         metadata={"help": "Name of the experiment (no '_' or '/'). Required."},
@@ -2114,7 +2102,6 @@ def load_expr_config[ConfigT](
 ) -> tuple[ConfigT, str]:
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
-
     cfg = OmegaConf.to_object(cfg)
     assert isinstance(cfg, config_cls)
     # Setup environment
