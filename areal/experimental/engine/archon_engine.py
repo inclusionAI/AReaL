@@ -190,6 +190,27 @@ class ArchonEngine(TrainEngine):
         self._initialized = False
         self.is_offload = False
 
+        # LoRA Configuration (extract from config if enabled)
+        self.lora_config = None
+        if hasattr(config, "use_lora") and config.use_lora:
+            # Create a simple config object for LoRA parameters
+            # FIXME: temporal solution - should be moved to cli args and merged with train engine config
+            from dataclasses import dataclass
+
+            @dataclass
+            class LoRAConfig:
+                enabled: bool
+                rank: int
+                alpha: float
+                target_modules: list[str]
+
+            self.lora_config = LoRAConfig(
+                enabled=True,
+                rank=config.lora_rank,
+                alpha=float(config.lora_alpha),
+                target_modules=config.target_modules if config.target_modules else [],
+            )
+
     def create_process_group(
         self,
         parallel_strategy: ParallelStrategy | None = None,
@@ -769,7 +790,21 @@ class ArchonEngine(TrainEngine):
             )
 
     def save(self, meta: SaveLoadMeta):
-        """Save model in HuggingFace or DCP format."""
+        """Save model in HuggingFace or DCP format.
+
+        When LoRA is enabled, only the adapter weights are saved in PEFT format.
+        When LoRA is disabled, the full model is saved.
+        """
+        if self.lora_config is not None:
+            # Save only adapter in PEFT format
+            from areal.experimental.engine.archon_lora_checkpoint import (
+                save_lora_adapter,
+            )
+
+            save_lora_adapter(self, meta.path, meta.base_model_path)
+            return
+
+        # Standard save (full model)
         if meta.weight_format == "hf":
             save_model_to_hf(self, meta.path, meta.tokenizer, meta.processor)
         elif meta.weight_format == "dcp":
@@ -781,7 +816,24 @@ class ArchonEngine(TrainEngine):
             save_optimizer_state(self, meta.path)
 
     def load(self, meta: SaveLoadMeta):
-        """Load model from HuggingFace or DCP format."""
+        """Load model from HuggingFace or DCP format.
+
+        When LoRA is enabled and the checkpoint is a PEFT adapter,
+        loads only the adapter weights (base model must already be loaded).
+        Otherwise, loads the full model.
+        """
+        from areal.experimental.engine.archon_lora_checkpoint import (
+            is_lora_adapter_checkpoint,
+            load_lora_adapter,
+        )
+
+        # Check if this is an adapter-only checkpoint
+        if self.lora_config is not None and is_lora_adapter_checkpoint(meta.path):
+            # Load adapter only (assumes base model already in memory)
+            load_lora_adapter(self, meta.path)
+            return
+
+        # Standard load (full model)
         if meta.weight_format == "hf":
             load_model_from_hf(self, meta.path)
         elif meta.weight_format == "dcp":
