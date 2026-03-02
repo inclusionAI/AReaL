@@ -50,11 +50,11 @@ For multi-node experiment with slurm, this can be set in the config file under
 
 Two example configurations are provided:
 
-| Config                     | Model      | Cluster          | Allocation             | Use Case                   |
-| -------------------------- | ---------- | ---------------- | ---------------------- | -------------------------- |
-| `config_1.7b_airline.yaml`   | Qwen3-1.7B    | 1 node, 8 GPUs   | `sglang:d6+archon:d2`  | Small-scale local training |
-| `config_8b_airline.yaml`     | Qwen3-8B      | 3 nodes, 24 GPUs | `sglang:d16+archon:d8` | Multi-node Slurm training  |
-| `config_30b_moe_airline.yaml`| Qwen3-30B-A3B | 8 nodes, 64 GPUs | `sglang:d8t4+megatron:(attn:d4p4t2\|ffn:d2p4e4)` | Multi-node Slurm training for MOE model |
+| Config                        | Model         | Cluster          | Allocation                                       | Use Case                                |
+| ----------------------------- | ------------- | ---------------- | ------------------------------------------------ | --------------------------------------- |
+| `config_1.7b_airline.yaml`    | Qwen3-1.7B    | 1 node, 8 GPUs   | `sglang:d6+archon:d2`                            | Small-scale local training              |
+| `config_8b_airline.yaml`      | Qwen3-8B      | 3 nodes, 24 GPUs | `sglang:d16+archon:d8`                           | Multi-node Slurm training               |
+| `config_30b_moe_airline.yaml` | Qwen3-30B-A3B | 8 nodes, 64 GPUs | `sglang:d8t4+megatron:(attn:d4p4t2\|ffn:d2p4e4)` | Multi-node Slurm training for MOE model |
 
 ### Prepare User Simulator Server
 
@@ -91,7 +91,7 @@ python3 examples/tau2/train.py \
     econfig.user_llm_base_url=http://localhost:8000/v1/ # your user LLM address
 ```
 
-#### Multi-Node Slurm (8B Model or larger)
+#### Multi-Node Slurm
 
 On a SLURM cluster with at least 3 8x GPU nodes, directly run from a intermediate server
 with AReaL and SLURM cli installed:
@@ -129,15 +129,21 @@ trained using the Archon engine:
   <img src="reward.png" width="400">
 </p>
 
-- **Green line**: Qwen3-1.7B model (`config_1.7b_airline.yaml`)  
+- **Green line**: Qwen3-1.7B model (`config_1.7b_airline.yaml`)
 - **Purple line**: Qwen3-8B model (`config_8b_airline.yaml`)
 
-The following figure shows the training reward curve of Qwen3-30B-A3B model
-trained using the Megatron engine:
+We also provide example configs for MoE models: `config_30b_moe_airline.yaml`
+(Qwen3-30B-A3B) and `config_235b_moe_airline.yaml` (Qwen3-235B-A22B). The following
+figure shows the training reward curve of Qwen3-30B-A3B model trained using the Megatron
+engine:
 
 <p align="left">
   <img src="reward_moe.png" width="400">
 </p>
+
+For reward curves of experiments on a larger scale, please refer to the
+[AReaL Tau2 paper](https://arxiv.org/abs/2601.22607).
+
 ## Notes
 
 1. **Trajectory logging**: Trajectories are dumped as `json` and `txt` files in the
@@ -145,9 +151,13 @@ trained using the Megatron engine:
    and evaluation.
 
 1. **Tree training**: The configs enable `enable_tree_training=true` by default, which
-optimizes training by sharing prefix computations across rollouts with the same
+   optimizes training by sharing prefix computations across rollouts with the same
    prompt. This option can largely accelerate training but will possibly increase GPU
-   memory usage if `actor.mb_spec.max_tokens_per_mb` is large. And this setting may cause instability during the training of the MoE model.
+   memory usage if `actor.mb_spec.max_tokens_per_mb` is large. And this setting may
+   cause instability during the training of the MoE model.
 
-## Customize Data
-By default, this example uses the official Tau2 dataset, but you can replace it with your own [open-source dataset](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data) to run experiments with real data.
+## Customization
+
+By default, this example uses the official Tau2 dataset. You can replace it with the
+[open-source Tau2 dataset](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data)
+to reproduce results from the [AReaL Tau2 paper](https://arxiv.org/abs/2601.22607).
