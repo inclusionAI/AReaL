@@ -1042,7 +1042,7 @@ class ArealOpenAI(AsyncOpenAI):
         self,
         engine: TRolloutEngine,
         tokenizer: "PreTrainedTokenizerFast",
-        tool_call_parser: str = "qwen3",
+        tool_call_parser: str = "qwen",
         reasoning_parser: str = "qwen3",
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",

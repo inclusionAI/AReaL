@@ -350,6 +350,7 @@ class RemoteInfEngine(InferenceEngine):
 
         self._workflow_executor: WorkflowExecutor | None = None
         self._initialized = False
+        self._proxy_gateway_addr: str | None = None
         self.local_server_processes: list[LocalInfServerInfo] = []
 
     def _wait_for_server(self, address):
@@ -484,13 +485,24 @@ class RemoteInfEngine(InferenceEngine):
         with self.lock:
             return self._version
 
-    def _wrap_openai_agent(self, agent, proxy_addr: str) -> RolloutWorkflow:
+    def set_proxy_gateway_addr(self, addr: str) -> None:
+        """Set the proxy gateway address.
+
+        Called by ``RolloutController.start_proxy_gateway()`` via
+        collective RPC after the proxy gateway is started.
+        """
+        # HACK: We'd better not have this kind of setter beyond well-defined APIs,
+        # but for now it's a workaround for the next release.
+        self._proxy_gateway_addr = addr
+
+    def _wrap_openai_agent(self, agent: Any, proxy_addr: str) -> RolloutWorkflow:
         """Wrap an agent workflow in OpenAIProxyWorkflow (HTTP mode only).
 
         Parameters
         ----------
-        agent : Any
-            The agent workflow to wrap (any class with async run() method)
+        agent : Any | None
+            The agent workflow to wrap (any class with async run() method).
+            ``None`` is valid when ``mode='online'``.
         proxy_addr : str
             HTTP address of the proxy server (required)
         """
@@ -506,16 +518,32 @@ class RemoteInfEngine(InferenceEngine):
             discount=openai_cfg.turn_discount,
             export_style=openai_cfg.export_style,
             subproc_max_workers=openai_cfg.subproc_max_workers,
+            proxy_gateway_addr=self._proxy_gateway_addr,
         )
 
     def _resolve_workflow(
         self,
-        workflow: WorkflowLike,
+        workflow: WorkflowLike | None,
         workflow_kwargs: dict[str, Any] | None,
         group_size: int = 1,
         proxy_addr: str | None = None,
     ) -> RolloutWorkflow:
         resolved: RolloutWorkflow
+
+        # 0. None workflow = online mode (config-driven)
+        if workflow is None:
+            openai_cfg = self.config.openai or OpenAIProxyConfig()
+            if openai_cfg.mode != "online":
+                raise ValueError(
+                    "workflow is None but OpenAIProxyConfig.mode is not 'online'. "
+                    "Provide a workflow or set mode='online' in the config."
+                )
+            if proxy_addr is None:
+                raise ValueError("proxy_addr is required for online mode")
+            resolved = self._wrap_openai_agent(None, proxy_addr=proxy_addr)
+            if group_size > 1:
+                resolved = GroupedRolloutWorkflow(resolved, group_size, self.logger)
+            return resolved
 
         # 1. Already a RolloutWorkflow instance
         if isinstance(workflow, RolloutWorkflow):
@@ -969,7 +997,12 @@ class RemoteInfEngine(InferenceEngine):
             HTTP address of the proxy server for AgentWorkflow. If provided,
             AgentWorkflow will use this proxy instead of a local one.
         """
-        assert workflow is not None, "Workflow must be specified for submit."
+        if workflow is None and (
+            self.config.openai is None or self.config.openai.mode != "online"
+        ):
+            raise ValueError(
+                "workflow must be specified for submit (unless mode='online')"
+            )
         if callback_addr:
             self.workflow_executor.dispatcher.register_callback(task_id, callback_addr)
 
