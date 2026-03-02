@@ -2081,42 +2081,17 @@ def _validate_cfg(cfg: Any) -> None:
     This function is called after OmegaConf.to_object() to ensure
     all YAML values have been properly merged into the config.
     """
-    # Validate PPOActorConfig parameters
-    actor = cfg.actor
-
-    # Validate behav_imp_weight_mode
-    valid_modes = [
-        "token_truncate",
-        "token_mask",
-        "sequence_truncate",
-        "sequence_mask",
-        "disable",
-    ]
-    if actor.behav_imp_weight_mode not in valid_modes:
-        raise ValueError(
-            f"Invalid behav_imp_weight_mode: {actor.behav_imp_weight_mode}. "
-            f"Must be one of {valid_modes}."
-        )
-
-    # Validate importance_sampling_level
-    valid_levels = ["token", "sequence"]
-    if actor.importance_sampling_level not in valid_levels:
-        raise ValueError(
-            f"Invalid importance_sampling_level: {actor.importance_sampling_level}. "
-            f"Must be one of {valid_levels}."
-        )
-
-    # Validate behav_imp_weight_cap based on mode
-    if actor.behav_imp_weight_mode == "disable":
-        if actor.behav_imp_weight_cap is not None:
+    # RULE 1: Validate for MIS/TIS
+    if cfg.actor.behav_imp_weight_mode == "disable":
+        if cfg.actor.behav_imp_weight_cap is not None:
             raise ValueError(
                 f"behav_imp_weight_cap must be None when behav_imp_weight_mode is 'disable', "
-                f"got {actor.behav_imp_weight_cap}."
+                f"got {cfg.actor.behav_imp_weight_cap}."
             )
     else:
-        if actor.behav_imp_weight_cap is not None and actor.behav_imp_weight_cap <= 1.0:
+        if cfg.actor.behav_imp_weight_cap is not None and cfg.actor.behav_imp_weight_cap <= 0:
             raise ValueError(
-                f"behav_imp_weight_cap must be > 1.0 when behav_imp_weight_mode is not 'disable', "
+                f"behav_imp_weight_cap must be > 0 when behav_imp_weight_mode is not 'disable', "
                 f"got {actor.behav_imp_weight_cap}."
             )
 
