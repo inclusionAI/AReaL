@@ -160,7 +160,7 @@ AReaL supports different optimizers depending on the training engine.
 | --------------- | ---- | -------- | --------- |
 | AdamW (default) | ✅   | ✅       | adam      |
 | SGD             | ✅   | ✅       | sgd       |
-| AdamW_bf16      | ✅   | ❌       | adam_bf16 |
+| AdamW_bf16      | ✅   | ✅       | adam_bf16 |
 
 `SGD` and `AdamW_bf16` use less memory than the default `AdamW`. Switch by setting
 `actor.optimizer.type: <name>` in your YAML configuration file (e.g.,
