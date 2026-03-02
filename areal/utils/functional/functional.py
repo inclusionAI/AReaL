@@ -165,7 +165,7 @@ def compute_behav_imp_weight(
         behav_imp_weight_cap: Cap value for importance weights
 
     Returns:
-        Tuple of (behav_imp_weight, behav_kl, behav_mask)
+        Tuple of (behave_imp_weight, behave_approx_kl, behave_mask)
     """
     if behav_imp_weight_mode == "disable":
         # Disable mode: return zeros
@@ -177,38 +177,40 @@ def compute_behav_imp_weight(
 
     # Infer level from mode (token vs sequence)
     is_sequence_level = "sequence" in behav_imp_weight_mode
-    behav_kl = proximal_logprobs - old_logprobs
-    behav_imp_weight_log_ratio = behav_kl
+    behave_approx_kl = proximal_logprobs - old_logprobs
+    behave_imp_weight_log_ratio = behave_approx_kl
 
     if is_sequence_level:
         # Compute sequence-level geometric mean importance weights
-        dummy_advantages = torch.zeros_like(behav_imp_weight_log_ratio)
-        behav_imp_weight_seq, _ = _compute_sequence_level_ratio_and_advantages(
-            behav_imp_weight_log_ratio,
+        dummy_advantages = torch.zeros_like(behave_imp_weight_log_ratio)
+        behave_imp_weight_seq, _ = _compute_sequence_level_ratio_and_advantages(
+            behave_imp_weight_log_ratio,
             dummy_advantages,
             loss_mask,
             cu_seqlens,
         )
-        behav_imp_weight = behav_imp_weight_seq
+        behave_imp_weight = behave_imp_weight_seq
     else:
         # Token-level importance weights (default)
-        behav_imp_weight = behav_imp_weight_log_ratio.exp()
+        behave_imp_weight = behave_imp_weight_log_ratio.exp()
 
     # Apply cap (truncate or mask) based on mode
     if behav_imp_weight_cap is not None:
         if "truncate" in behav_imp_weight_mode:
-            behav_imp_weight = behav_imp_weight.clamp(min=0.0, max=behav_imp_weight_cap)
+            behave_imp_weight = behave_imp_weight.clamp(
+                min=0.0, max=behav_imp_weight_cap
+            )
         else:  # mask
-            behav_imp_weight = torch.where(
-                behav_imp_weight > behav_imp_weight_cap, 0.0, behav_imp_weight
+            behave_imp_weight = torch.where(
+                behave_imp_weight > behav_imp_weight_cap, 0.0, behave_imp_weight
             )
 
     # Apply loss_mask
-    behav_imp_weight = torch.where(loss_mask, behav_imp_weight, 0.0)
-    behav_mask = (behav_imp_weight > 0).logical_and(loss_mask)
-    behav_kl = torch.where(behav_mask, behav_kl, 0.0)
+    behave_imp_weight = torch.where(loss_mask, behave_imp_weight, 0.0)
+    behave_mask = (behave_imp_weight > 0).logical_and(loss_mask)
+    behave_approx_kl = torch.where(behave_mask, behave_approx_kl, 0.0)
 
-    return behav_imp_weight, behav_kl, behav_mask
+    return behave_imp_weight, behave_approx_kl, behave_mask
 
 
 def ppo_actor_loss_fn(
@@ -286,7 +288,7 @@ def ppo_actor_loss_fn(
     # Compute behavioural importance weight only when not disabled
     # When disabled, pg_loss remains unchanged (no behavioural correction applied)
     if behav_imp_weight_mode != "disable":
-        behav_imp_weight, behav_kl, behav_mask = compute_behav_imp_weight(
+        behave_imp_weight, behave_approx_kl, behave_mask = compute_behav_imp_weight(
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
             loss_mask=loss_mask,
@@ -294,7 +296,7 @@ def ppo_actor_loss_fn(
             behav_imp_weight_mode=behav_imp_weight_mode,
             behav_imp_weight_cap=behav_imp_weight_cap,
         )
-        pg_loss = pg_loss * behav_imp_weight
+        pg_loss = pg_loss * behave_imp_weight
 
     logging_loss = pg_loss.detach()
     pg_loss = torch.where(loss_mask, pg_loss, 0).sum() / loss_mask_count
@@ -309,9 +311,9 @@ def ppo_actor_loss_fn(
     )
     if proximal_logprobs is not None and behav_imp_weight_mode != "disable":
         stat.update(
-            behav_kl=behav_kl.detach(),
-            behav_imp_weight=behav_imp_weight.detach(),
-            behav_mask=behav_mask,
+            behave_approx_kl=behave_approx_kl.detach(),
+            behave_imp_weight=behave_imp_weight.detach(),
+            behave_mask=behave_mask,
         )
     return pg_loss, stat
 

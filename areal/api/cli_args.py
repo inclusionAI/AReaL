@@ -1107,6 +1107,24 @@ class PPOActorConfig(TrainEngineConfig):
             not self.use_decoupled_loss and self.recompute_logprob
         )
 
+    def __post_init__(self):
+        """Validate MIS/TIS configuration."""
+        if self.behav_imp_weight_mode == "disable":
+            if self.behav_imp_weight_cap is not None:
+                raise ValueError(
+                    f"behav_imp_weight_cap must be None when behav_imp_weight_mode is 'disable', "
+                    f"got {self.behav_imp_weight_cap}."
+                )
+        else:
+            if (
+                self.behav_imp_weight_cap is not None
+                and self.behav_imp_weight_cap <= 1.0
+            ):
+                raise ValueError(
+                    f"behav_imp_weight_cap must be > 1.0 when behav_imp_weight_mode is not 'disable', "
+                    f"got {self.behav_imp_weight_cap}."
+                )
+
 
 @dataclass
 class PPOCriticConfig(TrainEngineConfig):
@@ -2075,38 +2093,12 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def _validate_cfg(cfg: Any) -> None:
-    """Validate configuration after it's fully loaded.
-
-    This function is called after OmegaConf.to_object() to ensure
-    all YAML values have been properly merged into the config.
-    """
-    # RULE 1: Validate for MIS/TIS
-    if cfg.actor.behav_imp_weight_mode == "disable":
-        if cfg.actor.behav_imp_weight_cap is not None:
-            raise ValueError(
-                f"behav_imp_weight_cap must be None when behav_imp_weight_mode is 'disable', "
-                f"got {cfg.actor.behav_imp_weight_cap}."
-            )
-    else:
-        if cfg.actor.behav_imp_weight_cap is not None and cfg.actor.behav_imp_weight_cap <= 0:
-            raise ValueError(
-                f"behav_imp_weight_cap must be > 0 when behav_imp_weight_mode is not 'disable', "
-                f"got {actor.behav_imp_weight_cap}."
-            )
-
-    # ADD MORE VALIDATION RULES IF NEEDED
-    # RULE 3...
-    # RULE 4...
-
-
 def load_expr_config[ConfigT](
     argv: list[str], config_cls: type[ConfigT]
 ) -> tuple[ConfigT, str]:
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
-    _validate_cfg(cfg)
     assert isinstance(cfg, config_cls)
 
     # Setup environment
