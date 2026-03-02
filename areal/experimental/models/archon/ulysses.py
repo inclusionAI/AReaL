@@ -65,7 +65,7 @@ def ulysses_slice_inputs(
 
 def ulysses_gather_output(
     output: Tensor,
-    cp_group: ProcessGroup,
+    cp_group: ProcessGroup | None,
     seq_dim: int = 0,
 ) -> Tensor:
     """Gather output tensor from all CP ranks after forward pass."""

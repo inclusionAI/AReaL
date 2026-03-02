@@ -15,6 +15,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol
 
 import aiohttp
+import numpy as np
 import ray
 import requests
 import torch.distributed as dist
@@ -36,15 +37,15 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
 from areal.infra import workflow_context
 from areal.infra.platforms import current_platform
+from areal.infra.utils.concurrent import get_executor
+from areal.infra.utils.http import arequest_with_retry, get_default_connector
+from areal.infra.utils.launcher import wait_llm_server_addrs
+from areal.infra.utils.proc import kill_process_tree
 from areal.utils import logging, name_resolve, names
-from areal.utils.concurrent import get_executor
 from areal.utils.data import concat_padded_tensors
 from areal.utils.dynamic_import import import_from_string
-from areal.utils.http import arequest_with_retry, get_default_connector
-from areal.utils.launcher import wait_llm_server_addrs
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
-from areal.utils.proc import kill_process_tree
 
 from .workflow_executor import WorkflowExecutor
 
@@ -126,7 +127,7 @@ class RemoteInfBackendProtocol(Protocol):
     """
 
     def build_generation_request(
-        self, req: ModelRequest, with_lora: bool
+        self, req: ModelRequest, with_lora: bool, version: int
     ) -> HttpRequest:
         """Build HTTP request for text generation.
 
@@ -136,6 +137,8 @@ class RemoteInfBackendProtocol(Protocol):
             The generation request containing input and parameters
         with_lora : bool
             Whether to specify a LoRA to use
+        version : int
+            The current weight version for versioned LoRA names
 
         Returns
         -------
@@ -162,7 +165,7 @@ class RemoteInfBackendProtocol(Protocol):
         ...
 
     def build_disk_weight_update_requests(
-        self, meta: WeightUpdateMeta, lora_initialized: bool
+        self, meta: WeightUpdateMeta
     ) -> WeightUpdateRequests:
         """Build requests for loading weights from disk.
 
@@ -170,10 +173,6 @@ class RemoteInfBackendProtocol(Protocol):
         ----------
         meta : WeightUpdateMeta
             Metadata containing path and configuration
-        lora_initialized : bool
-            Whether LoRA has been initialized in the server.
-            If so, we need to unload the previous LoRA before
-            uploading a new one.
 
         Returns
         -------
@@ -183,7 +182,9 @@ class RemoteInfBackendProtocol(Protocol):
         ...
 
     def build_distributed_weight_update_requests(
-        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
+        self,
+        meta: WeightUpdateMeta,
+        param_specs: list[ParamSpec],
     ) -> WeightUpdateRequests:
         """Build requests for distributed weight update via NCCL/XCCL.
 
@@ -348,10 +349,9 @@ class RemoteInfEngine(InferenceEngine):
 
         self.lock = Lock()
 
-        self.lora_initialized = False
-
         self._workflow_executor: WorkflowExecutor | None = None
         self._initialized = False
+        self._proxy_gateway_addr: str | None = None
         self.local_server_processes: list[LocalInfServerInfo] = []
 
     def _wait_for_server(self, address):
@@ -486,13 +486,24 @@ class RemoteInfEngine(InferenceEngine):
         with self.lock:
             return self._version
 
-    def _wrap_openai_agent(self, agent, proxy_addr: str) -> RolloutWorkflow:
+    def set_proxy_gateway_addr(self, addr: str) -> None:
+        """Set the proxy gateway address.
+
+        Called by ``RolloutController.start_proxy_gateway()`` via
+        collective RPC after the proxy gateway is started.
+        """
+        # HACK: We'd better not have this kind of setter beyond well-defined APIs,
+        # but for now it's a workaround for the next release.
+        self._proxy_gateway_addr = addr
+
+    def _wrap_openai_agent(self, agent: Any, proxy_addr: str) -> RolloutWorkflow:
         """Wrap an agent workflow in OpenAIProxyWorkflow (HTTP mode only).
 
         Parameters
         ----------
-        agent : Any
-            The agent workflow to wrap (any class with async run() method)
+        agent : Any | None
+            The agent workflow to wrap (any class with async run() method).
+            ``None`` is valid when ``mode='online'``.
         proxy_addr : str
             HTTP address of the proxy server (required)
         """
@@ -504,19 +515,36 @@ class RemoteInfEngine(InferenceEngine):
             mode=openai_cfg.mode,
             agent=agent,
             proxy_addr=proxy_addr,
+            admin_api_key=openai_cfg.admin_api_key,
             discount=openai_cfg.turn_discount,
             export_style=openai_cfg.export_style,
             subproc_max_workers=openai_cfg.subproc_max_workers,
+            proxy_gateway_addr=self._proxy_gateway_addr,
         )
 
     def _resolve_workflow(
         self,
-        workflow: WorkflowLike,
+        workflow: WorkflowLike | None,
         workflow_kwargs: dict[str, Any] | None,
         group_size: int = 1,
         proxy_addr: str | None = None,
     ) -> RolloutWorkflow:
         resolved: RolloutWorkflow
+
+        # 0. None workflow = online mode (config-driven)
+        if workflow is None:
+            openai_cfg = self.config.openai or OpenAIProxyConfig()
+            if openai_cfg.mode != "online":
+                raise ValueError(
+                    "workflow is None but OpenAIProxyConfig.mode is not 'online'. "
+                    "Provide a workflow or set mode='online' in the config."
+                )
+            if proxy_addr is None:
+                raise ValueError("proxy_addr is required for online mode")
+            resolved = self._wrap_openai_agent(None, proxy_addr=proxy_addr)
+            if group_size > 1:
+                resolved = GroupedRolloutWorkflow(resolved, group_size, self.logger)
+            return resolved
 
         # 1. Already a RolloutWorkflow instance
         if isinstance(workflow, RolloutWorkflow):
@@ -689,6 +717,10 @@ class RemoteInfEngine(InferenceEngine):
         # we are going to modify it in-place
         req = req.copy()
 
+        # Populate return_routed_experts from config to metadata
+        if self.config.return_routed_experts:
+            req.metadata["return_routed_experts"] = True
+
         # Validate n_samples
         gconfig = req.gconfig
         if gconfig.n_samples != 1:
@@ -716,6 +748,7 @@ class RemoteInfEngine(InferenceEngine):
         accumulated_output_tokens = []
         accumulated_output_logprobs = []
         accumulated_versions = []
+        accumulated_routed_experts: list[np.ndarray] = []
 
         # A single "rid" shares the same server to allow KV cache reuse
         if req.rid in self.rid_to_address:
@@ -745,7 +778,11 @@ class RemoteInfEngine(InferenceEngine):
                 await asyncio.sleep(0.5)
 
             # Build request using backend
-            http_req = self.backend.build_generation_request(req, self.lora_initialized)
+            http_req = self.backend.build_generation_request(
+                req,
+                with_lora=self.config.use_lora,
+                version=self.get_version(),
+            )
 
             # Loop until the generation is complete
             result = await arequest_with_retry(
@@ -758,9 +795,26 @@ class RemoteInfEngine(InferenceEngine):
                 timeout=self.config.request_timeout,
             )
 
+            # Assert response is JSON dict (not text/binary from error pages)
+            if not isinstance(result, dict):
+                raise ValueError(
+                    f"Expected JSON dict response, got {type(result).__name__}"
+                )
+
             # Parse response using backend
             gen_result = self.backend.parse_generation_response(result)
             stop_reason = gen_result.stop_reason
+
+            if (
+                req.metadata.get("return_routed_experts", False)
+                and gen_result.routed_experts is None
+            ):
+                if stop_reason != "abort":  # Only validate for successful generations
+                    raise RuntimeError(
+                        "Requested return_routed_experts=True but received None from SGLang. "
+                        "This usually means the model is not a MoE (Mixture of Experts) model. "
+                        "Please use a MoE model to get routed_experts information."
+                    )
 
             # Update accumulated outputs
             accumulated_output_tokens.extend(gen_result.output_tokens)
@@ -768,6 +822,9 @@ class RemoteInfEngine(InferenceEngine):
             accumulated_versions.extend(
                 [self.get_version()] * len(gen_result.output_tokens)
             )
+            # Accumulate routed_experts for MoE models
+            if gen_result.routed_experts is not None:
+                accumulated_routed_experts.append(gen_result.routed_experts)
 
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens
@@ -787,6 +844,12 @@ class RemoteInfEngine(InferenceEngine):
 
         latency = time.perf_counter() - start_time
 
+        accumulated_routed_experts = (
+            np.concatenate(accumulated_routed_experts)
+            if accumulated_routed_experts
+            else None
+        )
+
         response = ModelResponse(
             input_tokens=req.input_ids[
                 : len(req.input_ids) - len(accumulated_output_tokens)
@@ -800,6 +863,7 @@ class RemoteInfEngine(InferenceEngine):
             ttft=latency,  # Simplified for non-streaming
             tokenizer=req.tokenizer,
             processor=req.processor,
+            routed_experts=accumulated_routed_experts,
         )
         return response
 
@@ -902,7 +966,6 @@ class RemoteInfEngine(InferenceEngine):
         fut = get_executor().submit(
             _update_weights_from_disk,
             self.backend,
-            self.lora_initialized,
             self.config.experiment_name,
             self.config.trial_name,
             self.get_version(),
@@ -919,9 +982,6 @@ class RemoteInfEngine(InferenceEngine):
                 f"in {(time.perf_counter() - tik):.2f}s. "
                 f"Respond time: {respond_time:.2f}s."
             )
-            # Update LoRA state if this was a LoRA update
-            if meta.use_lora:
-                self.lora_initialized = True
             if meta.clear_checkpoint_after_load:
                 shutil.rmtree(meta.path, ignore_errors=True)
 
@@ -964,7 +1024,12 @@ class RemoteInfEngine(InferenceEngine):
             HTTP address of the proxy server for AgentWorkflow. If provided,
             AgentWorkflow will use this proxy instead of a local one.
         """
-        assert workflow is not None, "Workflow must be specified for submit."
+        if workflow is None and (
+            self.config.openai is None or self.config.openai.mode != "online"
+        ):
+            raise ValueError(
+                "workflow must be specified for submit (unless mode='online')"
+            )
         if callback_addr:
             self.workflow_executor.dispatcher.register_callback(task_id, callback_addr)
 
@@ -1213,7 +1278,6 @@ class RemoteInfEngine(InferenceEngine):
 
 def _update_weights_from_disk(
     backend: RemoteInfBackendProtocol,
-    lora_initialized: bool,
     experiment_name: str,
     trial_name: str,
     model_version: int,
@@ -1231,8 +1295,8 @@ def _update_weights_from_disk(
         save_timestamp = float(name_resolve.wait(update_name, timeout=120))
         load_timestamp = datetime.now().timestamp()
 
-        # Get requests from backend
-        weight_reqs = backend.build_disk_weight_update_requests(meta, lora_initialized)
+        # Get requests from backend with version for LoRA name
+        weight_reqs = backend.build_disk_weight_update_requests(meta)
 
         # Execute all requests
         async with aiohttp.ClientSession(

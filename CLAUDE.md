@@ -5,17 +5,23 @@
 AReaL is a distributed RL training framework for LLM alignment via reinforcement
 learning.
 
-**Tech Stack**: Python 3.12+ · PyTorch · FSDP2/Megatron · SGLang/vLLM
+**Tech Stack**: Python 3.12+ | PyTorch | FSDP2/Megatron | SGLang/vLLM
 
 **Core Directories**:
 
 - `areal/` - Core package
   - `api/` - Config dataclasses, workflow/engine contracts
   - `engine/` - FSDP2, Megatron, SGLang/vLLM adapters
+    - `fsdp_utils/` - FSDP2-specific utilities (checkpoint, grad, optimizer, parallel)
+    - `megatron_utils/` - Megatron/FP8 utilities (checkpoint, pipeline, quantization)
+    - `core/` - Engine-shared utilities (distributed, lock, model, offload)
+  - `infra/` - Infrastructure (launcher, scheduler, RPC)
+    - `utils/` - Infrastructure utilities (launcher, proc, http, concurrent, slurm, ray)
   - `workflow/` - RolloutWorkflow implementations
   - `reward/` - Reward functions
   - `dataset/` - Dataset loaders
-  - `utils/` - Logging, tensor ops, checkpoints
+  - `utils/` - Cross-cutting utilities (logging, data, checkpoints, network, RL
+    functional)
 - `examples/` - Training scripts and configs
 - `docs/` - Jupyter Book source
 
@@ -44,7 +50,7 @@ pre-commit run --all-files    # Format and lint
 # Run tests
 # First check GPU availability (many tests require GPU)
 python -c "import torch; print('GPU available:', torch.cuda.is_available())"
-uv run pytest areal/tests/test_<topic>.py
+uv run pytest tests/test_<topic>.py
 
 # Generate CLI docs
 uv run python docs/generate_cli_docs.py
@@ -88,6 +94,7 @@ uv run python docs/generate_cli_docs.py
 | Add Workflow           | `docs/customization/agent.md`, `areal/workflow/multi_turn.py` |
 | Add Dataset            | `docs/customization/`, `areal/dataset/gsm8k.py`               |
 | Add Reward             | `areal/api/reward_api.py`, `areal/reward/geometry3k.py`       |
+| Add Archon Model       | `areal/experimental/models/archon/qwen2/`, `qwen3/`           |
 | Algorithm Details      | `docs/algorithms/*.md`                                        |
 | Quickstart             | `docs/tutorial/quickstart.md`                                 |
 | Architecture Deep Dive | `docs/tutorial/gsm8k_grpo.md`                                 |
@@ -134,6 +141,7 @@ Skills provide step-by-step guides for common development tasks:
 - `/add-dataset` - Dataset loader creation guide
 - `/add-workflow` - Workflow implementation guide
 - `/add-reward` - Reward function guide
+- `/add-archon-model` - Archon engine model architecture guide
 - `/debug-distributed` - Distributed debugging guide
 - `/add-unit-tests` - Test development guide (NEW)
 
@@ -143,7 +151,7 @@ Commands perform specific actions when invoked:
 
 - `/create-pr` - Rebase, squash commits, and create/update PR with intelligent messages
 - `/gen-commit-msg` - Generate commit messages from staged changes
-- `/pr-review` - Intelligent PR code review with dynamic agent allocation
+- `/review-pr` - Intelligent PR code review with dynamic agent allocation
 
 ### Rules (Code Quality Standards)
 

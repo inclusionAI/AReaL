@@ -15,9 +15,9 @@ from areal.api.io_struct import (
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import WorkflowLike
-from areal.scheduler.rpc.rtensor import RTensor
+from areal.infra.rpc.rtensor import RTensor
+from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, stats_tracker
-from areal.utils.concurrent import run_async_task
 from areal.utils.network import find_free_ports
 
 from .rollout_callback import RolloutCallback

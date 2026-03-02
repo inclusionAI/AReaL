@@ -114,13 +114,13 @@ coordination handled through PyTorch distributed primitives.
 
 ```bash
 # SPMD mode with local launcher (legacy)
-python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
+python3 -m areal.infra.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
 
 # SPMD mode with Ray launcher (legacy)
-python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
+python3 -m areal.infra.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
 
 # SPMD mode with Slurm launcher (legacy)
-python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
+python3 -m areal.infra.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
 ```
 
 ## Distributed Experiments on Cloud or K8s with SkyPilot

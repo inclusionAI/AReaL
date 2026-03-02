@@ -1,5 +1,7 @@
 # Adapted from torchtitan: torchtitan/models/qwen3/model/model.py
 
+from __future__ import annotations
+
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -9,6 +11,8 @@ from torch.distributed.tensor import DTensor
 
 from areal.experimental.models.archon.attention import (
     SDPAWrapper,
+    TreeAttentionMeta,
+    TreeAttentionWrapper,
     VarlenAttentionWrapper,
 )
 from areal.experimental.models.archon.base import BaseArchonModel
@@ -140,7 +144,9 @@ class Attention(nn.Module):
         )
 
         # Select attention backend
-        if model_args.attn_type == "varlen":
+        if model_args.attn_type == "tree":
+            self.packed_attn = TreeAttentionWrapper()
+        elif model_args.attn_type == "varlen":
             self.packed_attn = VarlenAttentionWrapper()
         else:
             self.packed_attn = SDPAWrapper()
@@ -186,6 +192,7 @@ class Attention(nn.Module):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        tree_attn_meta: TreeAttentionMeta | None = None,
     ) -> torch.Tensor:
         bs, seqlen, _ = x.shape
 
@@ -249,6 +256,7 @@ class Attention(nn.Module):
             scale=self.scaling,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
+            tree_attn_meta=tree_attn_meta,
         )
 
         output = output.transpose(1, 2).contiguous()
@@ -323,6 +331,7 @@ class TransformerBlock(nn.Module):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        tree_attn_meta: TreeAttentionMeta | None = None,
     ) -> torch.Tensor:
         x = x + self.attention(
             self.attention_norm(x),
@@ -330,6 +339,7 @@ class TransformerBlock(nn.Module):
             positions,
             cu_seqlens,
             max_seqlen,
+            tree_attn_meta=tree_attn_meta,
         )
         if self.moe_enabled:
             x = x + self.moe(self.ffn_norm(x))
@@ -447,6 +457,7 @@ class Qwen3Model(BaseArchonModel):
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int | torch.Tensor,
+        tree_attn_meta: TreeAttentionMeta | None = None,
     ) -> torch.Tensor:
         # When pipeline parallelism enabled, cu_seqlens is [1, B+1]
         if cu_seqlens.ndim == 2:
@@ -459,7 +470,14 @@ class Qwen3Model(BaseArchonModel):
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
         for layer in self.layers.values():
-            h = layer(h, self.rope_cache, positions, cu_seqlens, max_seqlen)
+            h = layer(
+                h,
+                self.rope_cache,
+                positions,
+                cu_seqlens,
+                max_seqlen,
+                tree_attn_meta=tree_attn_meta,
+            )
 
         h = self.norm(h) if self.norm else h
 

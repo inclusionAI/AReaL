@@ -173,7 +173,7 @@ class GenerationHyperparameters:
         },
     )
     lora_name: str = field(
-        default="",
+        default="default_lora",
         metadata={"help": "Lora name to be used for this generation."},
     )
     use_beam_search: bool = field(
@@ -394,8 +394,8 @@ class ArchonEngineConfig:
     attn_type: str = field(
         default="varlen",
         metadata={
-            "help": "Attention backend type.",
-            "choices": ["varlen", "sdpa"],
+            "help": "Attention backend type. Use 'tree' for tree training.",
+            "choices": ["varlen", "sdpa", "tree"],
         },
     )
 
@@ -453,7 +453,12 @@ class ArchonEngineConfig:
         default="Interleaved1F1B",
         metadata={
             "help": "Pipeline parallel schedule type.",
-            "choices": ["1F1B", "Interleaved1F1B"],
+            "choices": [
+                "1F1B",
+                "Interleaved1F1B",
+                "InterleavedZeroBubble",
+                "ZBVZeroBubble",
+            ],
         },
     )
     # NOTE: The following three PP layer distribution parameters are advanced options
@@ -466,7 +471,7 @@ class ArchonEngineConfig:
             "help": "Number of transformer layers per (virtual) pipeline stage. "
             "If set, num_virtual_stages is calculated from num_layers. "
             "If None, stages are inferred from schedule type "
-            "(1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B).",
+            "(1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B/InterleavedZeroBubble/ZBVZeroBubble).",
         },
     )
     pp_first_stage_less_layers: int = field(
@@ -484,6 +489,29 @@ class ArchonEngineConfig:
         },
     )
 
+    # FSDP reshard policy after forward pass
+    reshard_after_forward_policy: str = field(
+        default="default",
+        metadata={
+            "help": "FSDP reshard policy after forward pass. "
+            "'default': reshard when pipeline parallelism is off; keep unsharded when on to avoid repeated all-gather per microbatch. "
+            "'always': always reshard after forward (saves memory). "
+            "'never': never reshard after forward.",
+            "choices": ["default", "always", "never"],
+        },
+    )
+
+    # Deterministic mode
+    use_deterministic_algorithms: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable deterministic algorithms for training reproducibility. "
+            "Sets torch.use_deterministic_algorithms(True, warn_only=True), "
+            "CUBLAS_WORKSPACE_CONFIG, NCCL_ALGO, and TORCH_COMPILE_DETERMINISTIC. "
+            "May reduce performance.",
+        },
+    )
+
     def __post_init__(self):
         if self.pp_layers_per_stage is not None and self.pp_layers_per_stage < 1:
             raise ValueError(
@@ -498,6 +526,12 @@ class ArchonEngineConfig:
             raise ValueError(
                 f"pp_last_stage_less_layers must be >= 0, "
                 f"got {self.pp_last_stage_less_layers}"
+            )
+        valid_reshard_policies = ("default", "always", "never")
+        if self.reshard_after_forward_policy not in valid_reshard_policies:
+            raise ValueError(
+                f"reshard_after_forward_policy must be one of {valid_reshard_policies}, "
+                f"got '{self.reshard_after_forward_policy}'"
             )
 
 
@@ -876,15 +910,13 @@ class TrainEngineConfig:
     # Tree training
     enable_tree_training: bool = field(
         default=False,
-        metadata={
-            "help": "Enable tree training with flex attention module. Not supported for Archon engine yet."
-        },
+        metadata={"help": "Enable tree training with flex attention module."},
     )
 
     # Scheduling
     scheduling_spec: tuple[SchedulingSpec, ...] = field(
         default_factory=lambda: (
-            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+            SchedulingSpec(cmd="python -m areal.infra.rpc.rpc_server"),
         ),
         metadata={
             "help": "Train engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
@@ -1153,8 +1185,11 @@ class vLLMConfig:
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
+    # lora
     enable_lora: bool = False
-    lora_modules: str = ""
+    max_lora_rank: int = 16  # vllm's default
+    max_loras: int = 8  # override default
+    lora_modules: list[str] | None = None  # lora_modules is automatically filled
 
     @staticmethod
     def build_args(
@@ -1179,18 +1214,6 @@ class vLLMConfig:
             args["port"] = port
         if host is not None:
             args["host"] = host
-        # handle lora modules separately
-        lm = args.get("lora_modules")
-        if lm:
-            if isinstance(lm, str):
-                lm = [lm]
-            if isinstance(lm, (list, tuple)):
-                try:
-                    args["lora_modules"] = [
-                        json.dumps(json.loads(s), separators=(",", ":")) for s in lm
-                    ]
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"Invalid JSON string in lora_modules: {e}") from e
         return args
 
     @staticmethod
@@ -1268,10 +1291,8 @@ class SGLangConfig:
     # lora
     enable_lora: bool | None = None
     max_lora_rank: int | None = None
-    lora_target_modules: list[str] | None = None
-    lora_paths: list[str] | None = None
-    max_loaded_loras: int = 1
-    max_loras_per_batch: int = 1
+    max_loaded_loras: int = 8  # override default
+    lora_paths: list[str] | None = None  # lora_paths is automatically filled
     lora_backend: str = "triton"
     # logging
     log_level: str = "warning"
@@ -1287,6 +1308,9 @@ class SGLangConfig:
     # NOTE: These arguments will be parsed into a dict json-string
     # and passed as `model_loader_extra_config` to SGLang.
     enable_multithread_load: bool = False
+
+    # Internal field, not exposed to users.
+    enable_return_routed_experts: bool = False
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
@@ -1338,11 +1362,6 @@ class SGLangConfig:
                 model_loader_extra_config, separators=(",", ":")
             )
         args.pop("enable_multithread_load", None)
-        # Map "all-linear" to "all"
-        if "lora_target_modules" in args and args["lora_target_modules"]:
-            args["lora_target_modules"] = [
-                x.replace("-linear", "") for x in args["lora_target_modules"]
-            ]
 
         args = dict(
             # Model and tokenizer
@@ -1380,17 +1399,18 @@ class OpenAIProxyConfig:
         default="inline",
         metadata={
             "help": (
-                "OpenAI proxy mode: 'inline' (in-process) or 'subproc' (subprocess). "
+                "OpenAI proxy mode: 'inline' (in-process), 'subproc' (subprocess), "
+                "or 'online' (external user sessions for online RL training). "
                 "`inline` mode runs the provided agent workflow directly in the same process. "
-                "It can use the provided `base_url` and `http_client` to reduce overhead. "
-                "`subproc` mode launches a separate process to run the agent with `OPENAI_BASE_URL` environment variable, "
-                "which offers more flexible deployment options at the cost of larger overhead."
+                "`subproc` mode launches a separate process to run the agent. "
+                "`online` mode waits for external users to complete sessions via "
+                "the proxy gateway URL, enabling online RL training."
             ),
-            "choices": ["inline", "subproc"],
+            "choices": ["inline", "subproc", "online"],
         },
     )
     tool_call_parser: str = field(
-        default="qwen3",
+        default="qwen",
         metadata={"help": "Parser for tool calls in model output."},
     )
     reasoning_parser: str = field(
@@ -1435,6 +1455,22 @@ class OpenAIProxyConfig:
             "help": "Session timeout in seconds. Sessions inactive longer than this will be garbage collected."
         },
     )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": (
+                "Admin API key for the proxy server. Used to authenticate management "
+                "operations (grant_capacity, start_session). "
+                "Cannot be used for chat completions. Each session gets a unique "
+                "API key allocated via start_session. "
+                "WARNING: Change this from the default for non-local deployments."
+            ),
+        },
+    )
+
+    def __post_init__(self):
+        if not self.admin_api_key or not self.admin_api_key.strip():
+            raise ValueError("admin_api_key must not be empty or whitespace-only")
 
 
 @dataclass
@@ -1514,7 +1550,7 @@ class InferenceEngineConfig:
     )
     scheduling_spec: tuple[SchedulingSpec, ...] = field(
         default_factory=lambda: (
-            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+            SchedulingSpec(cmd="python -m areal.infra.rpc.rpc_server"),
         ),
         metadata={
             "help": "inference engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
@@ -1538,6 +1574,12 @@ class InferenceEngineConfig:
         default=None,
         metadata={
             "help": "OpenAI proxy configuration (used when workflow is an agent workflow)."
+        },
+    )
+    return_routed_experts: bool = field(
+        default=False,
+        metadata={
+            "help": "Return routed expert indices for MoE models. Effective only when using SGLang engine with MoE models."
         },
     )
 
@@ -1583,6 +1625,26 @@ class EvaluatorConfig(_Timer):
 @dataclass
 class SaverConfig(_Timer):
     """Configuration for model checkpoint saving scheduling and timing."""
+
+    mode: str = field(
+        default="auto",
+        metadata={
+            "help": "Checkpoint save mode for HF saves. "
+            "'auto': use async for Archon engine, sync for others (default). "
+            "'sync': always synchronous. "
+            "'async': always process-based async with pinned memory staging, "
+            "extra CPU pinned memory "
+            "proportional to per-rank model shard size "
+            "(e.g., ~17.5GB/rank for 70B model on 8 GPUs). "
+            "Non-Archon engines fall back to sync with a warning.",
+            "choices": ["auto", "sync", "async"],
+        },
+    )
+
+    def __post_init__(self):
+        valid_modes = {"auto", "sync", "async"}
+        if self.mode not in valid_modes:
+            raise ValueError(f"Invalid mode '{self.mode}'. Valid: {valid_modes}")
 
 
 @dataclass
@@ -1640,7 +1702,12 @@ class SwanlabConfig:
     config: dict | None = None
     logdir: str | None = None
     mode: str | None = "disabled"
-    api_key: str | None = os.getenv("SWANLAB_API_KEY", None)
+    # set None to prevent info-leak in docs
+    api_key: str | None = None
+
+    def __post_init__(self):
+        if self.api_key is None:
+            self.api_key = os.getenv("SWANLAB_API_KEY")
 
 
 @dataclass

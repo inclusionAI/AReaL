@@ -128,7 +128,7 @@ trainer.train(
 
 ### Step 4: Add Tests
 
-Create `areal/tests/test_<name>_workflow.py`:
+Create `tests/test_<name>_workflow.py`:
 
 ```python
 import pytest

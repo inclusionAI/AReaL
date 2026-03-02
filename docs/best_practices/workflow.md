@@ -81,11 +81,13 @@ class MyAgentWorkflow:
     async def run(self, data, **extra_kwargs):
         # Get pre-configured client from extra_kwargs
         http_client = extra_kwargs.get("http_client")
-        base_url = extra_kwargs.get("base_url")
+        base_url = extra_kwargs.get("base_url") or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")
 
         # Pass to SDK constructor
         client = AsyncOpenAI(
             base_url=base_url,
+            api_key=api_key,
             http_client=http_client,
             max_retries=0,
         )

@@ -29,7 +29,7 @@ class StatsLogger:
         self.ft_spec = ft_spec
         self.init()
 
-        self._last_commit_step = 0
+        self._last_commit_step = -1
 
     def init(self):
         if dist.is_initialized() and dist.get_rank() != 0:

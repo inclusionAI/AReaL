@@ -22,7 +22,8 @@ allocation correctness.
 
 Use this agent **when requested** when:
 
-- **Code modifications**: User edits files in `areal/launcher/` or `areal/scheduler/`
+- **Code modifications**: User edits files in `areal/infra/launcher/`,
+  `areal/infra/rpc/`, or `areal/infra/scheduler/`
 - **Configuration changes**: User modifies `ClusterSpecConfig`, `SchedulerConfig`, or
   related dataclasses
 - **Deployment issues**: User encounters job launch failures, port conflicts, GPU
@@ -36,16 +37,16 @@ Use this agent **when requested** when:
 
 ### Launcher vs. Scheduler
 
-| Component     | Responsibility                                                                          | Key Classes                                                                   | Config Source                               |
-| ------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------- |
-| **Launcher**  | Starts training/inference processes, manages process tree, passes environment variables | `LocalLauncher`, `SlurmLauncher`, `RayLauncher`, `SGLangServer`, `vLLMServer` | `ClusterSpecConfig` (cluster specification) |
-| **Scheduler** | Allocates GPU/port resources, manages worker lifecycle, performs health checks          | `LocalScheduler`, `SlurmScheduler`, `RayScheduler`                            | `SchedulerConfig` (scheduling strategy)     |
+| Component     | Responsibility                                                                          | Key Classes                                                                                 | Config Source                               |
+| ------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| **Launcher**  | Starts training/inference processes, manages process tree, passes environment variables | `LocalLauncher`, `SlurmLauncher`, `RayLauncher`, `SGLangServerWrapper`, `vLLMServerWrapper` | `ClusterSpecConfig` (cluster specification) |
+| **Scheduler** | Allocates GPU/port resources, manages worker lifecycle, performs health checks          | `LocalScheduler`, `SlurmScheduler`, `RayScheduler`                                          | `SchedulerConfig` (scheduling strategy)     |
 
 ### Key Configuration Dataclasses
 
 Located in `areal/api/cli_args.py`:
 
-- **`ClusterSpecConfig`** (`areal/api/cli_args.py:1708`):
+- **`ClusterSpecConfig`** (`areal/api/cli_args.py`):
 
   - `name_resolve`: Name resolving configuration (NFS/Redis)
   - `cluster_name`: Cluster identifier for environment presets
@@ -54,11 +55,11 @@ Located in `areal/api/cli_args.py`:
   - `n_nodes`: Total cluster nodes
   - `n_gpus_per_node`: Physical GPUs per node
 
-- **`SchedulerConfig`** (`areal/api/cli_args.py:1737`):
+- **`SchedulerConfig`** (`areal/api/cli_args.py`)
 
-  - `scheduling_strategy`: `local`, `slurm`, or `ray`
-  - `startup_timeout`: Worker initialization timeout (seconds)
-  - `health_check_interval`: Worker health monitoring frequency
+  - `type`: Scheduler type (`local`, `slurm`, or `ray`)
+  - `endpoint`: Scheduler service endpoint
+  - `deploy_mode`: Deployment mode (e.g., `separation`)
 
 ### Environment Variable Propagation Chain
 
@@ -66,7 +67,7 @@ Located in `areal/api/cli_args.py`:
 ClusterSpecConfig -> Launcher -> BASE_ENVIRONS + thread vars -> Worker processes
 ```
 
-Critical utilities in `areal/utils/launcher.py`:
+Critical utilities in `areal/infra/utils/launcher.py`:
 
 - `BASE_ENVIRONS`: Essential runtime variables (PyTorch cache, Triton, tokenizers)
 - `get_thread_env_vars()`: CPU thread control based on allocated cores
@@ -99,10 +100,10 @@ Critical utilities in `areal/utils/launcher.py`:
   hard-coded GPU indices or direct `torch.cuda` calls
 - Use `areal.utils.name_resolve` for multi-node service discovery -> not direct
   IP/hostname assumptions
-- Raise specific exceptions from `areal.scheduler.exceptions` -> not generic exception
-  types
-- Use `areal.utils.proc.kill_process_tree()` for process termination -> not leaving
-  zombie processes
+- Raise specific exceptions from `areal.infra.scheduler.exceptions` -> not generic
+  exception types
+- Use `areal.infra.utils.proc.kill_process_tree()` for process termination -> not
+  leaving zombie processes
 - Propagate all `BASE_ENVIRONS` variables and thread control variables -> not missing
   environment variable propagation
 - Use `areal.utils.network.find_free_ports()` for port allocation -> not static port
@@ -132,17 +133,17 @@ Critical utilities in `areal/utils/launcher.py`:
 
 ## Resources & Reference Implementations
 
-| File                              | Purpose                            | Key Patterns                                              |
-| --------------------------------- | ---------------------------------- | --------------------------------------------------------- |
-| `areal/launcher/local.py`         | Single-node process management     | Environment variable propagation, process tree management |
-| `areal/launcher/slurm.py`         | Slurm cluster job submission       | Slurm directive generation, multi-node coordination       |
-| `areal/launcher/ray.py`           | Ray cluster deployment             | Ray actor management, placement group allocation          |
-| `areal/launcher/sglang_server.py` | SGLang inference server deployment | SGLang server process management, cache isolation         |
-| `areal/launcher/vllm_server.py`   | vLLM inference server deployment   | vLLM server process management, cache isolation           |
-| `areal/scheduler/local.py`        | Local worker scheduling            | GPU round-robin, port allocation, health monitoring       |
-| `areal/scheduler/slurm.py`        | Slurm-integrated scheduling        | Job array coordination, resource reservation              |
-| `areal/scheduler/ray.py`          | Ray cluster scheduling             | Ray placement groups, actor-based worker management       |
-| `areal/utils/launcher.py`         | Shared utilities                   | Environment variable management, configuration validation |
+| File                                    | Purpose                            | Key Patterns                                              |
+| --------------------------------------- | ---------------------------------- | --------------------------------------------------------- |
+| `areal/infra/launcher/local.py`         | Single-node process management     | Environment variable propagation, process tree management |
+| `areal/infra/launcher/slurm.py`         | Slurm cluster job submission       | Slurm directive generation, multi-node coordination       |
+| `areal/infra/launcher/ray.py`           | Ray cluster deployment             | Ray actor management, placement group allocation          |
+| `areal/infra/launcher/sglang_server.py` | SGLang inference server deployment | SGLang server process management, cache isolation         |
+| `areal/infra/launcher/vllm_server.py`   | vLLM inference server deployment   | vLLM server process management, cache isolation           |
+| `areal/infra/scheduler/local.py`        | Local worker scheduling            | GPU round-robin, port allocation, health monitoring       |
+| `areal/infra/scheduler/slurm.py`        | Slurm-integrated scheduling        | Job array coordination, resource reservation              |
+| `areal/infra/scheduler/ray.py`          | Ray cluster scheduling             | Ray placement groups, actor-based worker management       |
+| `areal/infra/utils/launcher.py`         | Shared utilities                   | Environment variable management, configuration validation |
 
 ______________________________________________________________________
 
@@ -174,7 +175,7 @@ Activation: Manual (when requested) for launcher/scheduler topics
 3. Document any new environment variables or configuration requirements
 
 ### When Utility Functions Change
-1. Update references to `areal/utils/launcher.py` functions
+1. Update references to `areal/infra/utils/launcher.py` functions
 2. Adjust "Environment Variable Propagation Pattern" if BASE_ENVIRONS changes
 3. Update diagnostic steps that rely on specific utility functions
 

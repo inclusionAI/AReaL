@@ -57,6 +57,29 @@ from areal.engine.core import (
     compute_total_loss_weight,
     reorder_and_pad_outputs,
 )
+from areal.engine.core.distributed import (
+    init_custom_process_group,
+    patch_dist_group_timeout,
+)
+from areal.engine.core.model import (
+    disable_dropout_in_model,
+    is_gemma3_model,
+    is_omni_model,
+    is_qwen3_moe_model,
+    is_qwen3_vl_model,
+    is_qwen_omni_model,
+    is_qwen_vl_model,
+    is_qwen_vl_or_omni_model,
+    is_valid_vision_model,
+)
+from areal.engine.fsdp_utils import (
+    fsdp2_load_full_state_dict,
+    get_cosine_schedule_with_warmup,
+)
+from areal.engine.fsdp_utils.checkpoint import DCPState
+from areal.engine.fsdp_utils.grad import fsdp2_clip_grad_norm
+from areal.engine.fsdp_utils.optimizer import AnyPrecisionAdamW
+from areal.engine.fsdp_utils.parallel import ParallelHelper, parallelize_model
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
 from areal.models.fsdp.ulysses import (
@@ -73,11 +96,7 @@ from areal.models.tree_attn.functional import (
     merge_packed_tree_results,
 )
 from areal.models.tree_attn.module import (
-    BLOCK_SIZE,
-    TRITON_AVAILABLE,
-    USE_TRITON_TREE_ATTN,
-    build_block_mask_from_trie,
-    build_triton_attn_data_from_trie,
+    build_tree_attn_kwargs,
     patch_fsdp_for_tree_training,
 )
 from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
@@ -99,25 +118,8 @@ from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
     unsqueeze_mb_list,
 )
-from areal.utils.distributed import init_custom_process_group, patch_dist_group_timeout
-from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
-from areal.utils.fsdp.checkpoint import DCPState
-from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
-from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
-from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
-from areal.utils.model import (
-    disable_dropout_in_model,
-    is_gemma3_model,
-    is_omni_model,
-    is_qwen3_moe_model,
-    is_qwen3_vl_model,
-    is_qwen_omni_model,
-    is_qwen_vl_model,
-    is_qwen_vl_or_omni_model,
-    is_valid_vision_model,
-)
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
@@ -153,13 +155,8 @@ class FSDPTrainContext:
     trie_node: TrieNode | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dict without recursive serialization of trie_node.
-
-        Note: We cannot use dataclasses.asdict() here because it recursively
-        converts all nested objects. The trie_node field contains a TrieNode
-        with recursive parent/child references, which causes
-        "RecursionError: maximum recursion depth exceeded" when asdict()
-        attempts to serialize the entire tree structure.
+        """Shallow dict conversion (avoids ``dataclasses.asdict`` which would
+        recurse into TrieNode and hit ``RecursionError``).
         """
         return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
 
@@ -552,37 +549,28 @@ class FSDPEngine(TrainEngine):
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
-            # Lazily create tree attention metadata just before forward
+            # Lazily create tree attention metadata just before forward.
+            # The returned dict keys are prefixed with "tree_" to avoid collisions
+            # with HuggingFace's own kwargs. The patched _tree_attn_fwd_func in
+            # module_fsdp.py reads these keys from the **kwargs that transformers
+            # forwards through.
+            tree_attn_keys: list[str] = []
             if self.enable_tree_training and ctx.trie_node is not None:
                 padded_size = mb_item.padded_to_length
-                if padded_size is None:
-                    raise ValueError(
-                        "padded_size must be set for tree training with FSDP."
-                    )
-                if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
-                    triton_attn_data = build_triton_attn_data_from_trie(
-                        ctx.trie_node, padded_size
-                    )
-                    inputs["triton_attn_data"] = triton_attn_data
-                else:
-                    block_mask = build_block_mask_from_trie(
-                        ctx.trie_node, padded_size, self.device
-                    )
-                    # Pass block_mask as a separate kwarg, not as attention_mask.
-                    # The patched _tree_attn_fwd_func expects block_mask in kwargs,
-                    # which transformers will pass through to the attention function.
-                    inputs["block_mask"] = block_mask
+                assert padded_size is not None
+                tree_kwargs = build_tree_attn_kwargs(
+                    ctx.trie_node, padded_size, self.device
+                )
+                inputs.update(tree_kwargs)
+                tree_attn_keys = list(tree_kwargs.keys())
 
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
 
             # Release tree attention metadata after forward pass
-            if self.enable_tree_training:
-                if "block_mask" in inputs:
-                    del inputs["block_mask"]
-                if "triton_attn_data" in inputs:
-                    del inputs["triton_attn_data"]
+            for key in tree_attn_keys:
+                del inputs[key]
 
             ctx_dict = ctx.to_dict()
             loss = process_output_fn(logits, ctx_dict)
@@ -1300,17 +1288,13 @@ class FSDPEngine(TrainEngine):
 
         # Tree training path
         if self.enable_tree_training:
-            sp_size = self.parallel_helper.sp_size
-            tp_size = self.parallel_helper.tp_size
-            # Build tree inputs
-            assert BLOCK_SIZE % (tp_size * sp_size) == 0, (
-                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by the product of tensor and sequence parallel sizes ({tp_size * sp_size})."
-            )
             mb_list = build_packed_tree_batch(
                 input_,
                 mb_spec=self.config.mb_spec,
                 pad_to_maximum=self.config.pad_to_maximum,
                 dp_group=self.data_parallel_group,
+                parallel_size=self.parallel_helper.tp_size
+                * self.parallel_helper.sp_size,
             )
             self.logger.info(
                 f"Packed tree #microbatch: {len(mb_list)}, microbatch #tokens: {mb_list.group_lens}, "
@@ -1473,6 +1457,7 @@ class FSDPEngine(TrainEngine):
         This method handles Ulysses SP padding and slicing, returning both
         the prepared model inputs and a context object for later processing.
         """
+        trie_node = None
         if self.parallel_helper.sp_size > 1:
             input_ids = mb_item.padded_mb["input_ids"]
             position_ids = mb_item.padded_mb.get("position_ids", None)

@@ -128,8 +128,8 @@ jobs:
       - name: Get package version
         id: get-version
         run: |
-          # Extract version from areal/version.py
-          VERSION=$(grep -oP '__version__\s*=\s*"\K[^"]+' areal/version.py)
+          # Extract version from pyproject.toml (single source of truth)
+          VERSION=$(sed -n 's/^version *= *"\([^"]*\)"/\1/p' pyproject.toml)
           RELEASE_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
 
           echo "Package version: $VERSION"

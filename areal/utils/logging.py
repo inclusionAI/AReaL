@@ -63,6 +63,7 @@ LOGGER_COLORS_EXACT = {
     "SGLangWrapper": "white",
     "VLLMWrapper": "white",
     "RemoteInfEngine": "white",
+    "vLLMEngine": "white",
     # Dataset - green
     "Dataset": "light_green",
     "CLEVR70KDataset": "light_green",
@@ -76,6 +77,17 @@ LOGGER_COLORS_EXACT = {
     "Geometry3KReward": "purple",
     "RewardUtils": "purple",
     "RewardAPI": "purple",
+    # Tree attention - cyan
+    "TreeAttentionWrapper": "light_cyan",
+    "TreeAttentionFSDP": "light_cyan",
+    "TreeAttentionMegatron": "light_cyan",
+    "TreeAttentionCore": "light_cyan",
+    "TreeAttentionConstants": "light_cyan",
+    "TreeAttentionViz": "light_cyan",
+    # Checkpoint - blue (infrastructure)
+    "Saver": "blue",
+    "AsyncCheckpoint": "blue",
+    "ArchonCheckpoint": "blue",
     # Platforms - cyan
     "Platform": "light_cyan",
     "PlatformInit": "light_cyan",

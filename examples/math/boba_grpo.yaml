@@ -81,7 +81,7 @@ actor:
       port_count: 2
       gpu: 1
       mem: 32
-      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars:
         VLLM_USE_V1: "1"
         VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"

@@ -12,6 +12,7 @@ VALID_DATASETS = [
     "gsm8k",
     "clevr_count_70k",
     "geometry3k",
+    "virl39k",
     "hh-rlhf",
     "torl_data",
     "omni_data",
@@ -83,6 +84,16 @@ def _get_custom_dataset(
         from .geometry3k import get_geometry3k_rl_dataset
 
         return get_geometry3k_rl_dataset(
+            path=path,
+            split=split,
+            processor=processor,
+            max_length=max_length,
+            **kwargs,
+        )
+    elif "virl39k" in path.lower() and type == "rl":
+        from .virl39k import get_virl39k_rl_dataset
+
+        return get_virl39k_rl_dataset(
             path=path,
             split=split,
             processor=processor,

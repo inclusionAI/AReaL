@@ -71,8 +71,9 @@ def math_reward_fn(completions: str, answer: str) -> float:
 class MathAgent:
     async def run(self, data, **extra_kwargs):
         http_client = extra_kwargs.get("http_client")
-        base_url = extra_kwargs.get("base_url")
-        client = AsyncOpenAI(base_url=base_url, http_client=http_client, max_retries=0)
+        base_url = extra_kwargs.get("base_url") or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")
+        client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client, max_retries=0)
 
         run_config = RunConfig(
             model_provider=OpenAIProvider(openai_client=client),
@@ -119,7 +120,7 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, SGLangConfig, load_expr_config, vLLMConfig
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
+from areal.infra import LocalScheduler, RayScheduler, SlurmScheduler
 
 # Load config and parse allocation mode
 config, _ = load_expr_config(args, GRPOConfig)
@@ -216,7 +217,7 @@ actor:
     - task_type: worker
       port_count: 2
       gpu: 1
-      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      cmd: python3 -m areal.infra.rpc.rpc_server
 
 valid_dataset:
   name: gsm8k

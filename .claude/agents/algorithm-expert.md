@@ -49,13 +49,13 @@ Location: `areal/api/cli_args.py` -> `PPOActorConfig`, `NormConfig`
 ```python
 # PPOActorConfig
 eps_clip: float = 0.2          # PPO clipping parameter
-kl_ctl: float = 0.0            # KL penalty (0 for critic-free)
+kl_ctl: float = 0.1            # KL penalty (0 for critic-free)
 discount: float = 1.0          # gamma for future rewards
 gae_lambda: float = 1.0        # GAE lambda parameter
 
 # NormConfig (for reward_norm and adv_norm)
-mean_level: str = "global"     # global, group, sample, null
-std_level: str = "global"      # global, group, sample, null
+mean_level: str | None = "batch"  # batch, group, None
+std_level: str | None = "batch"  # batch, group, None
 ```
 
 ### 3. Workflows
@@ -72,7 +72,7 @@ Location: `areal/workflow/`
 
 ```python
 class MyWorkflow(RolloutWorkflow):
-    async def arun_episode(self, engine, data, group_size):
+    async def arun_episode(self, engine: InferenceEngine, data: dict[str, Any]):
         # 1. Prepare input (tokenize)
         # 2. Generate response (engine.generate)
         # 3. Compute reward (async_reward_fn)
@@ -87,18 +87,15 @@ Location: `areal/reward/`
 
 ```python
 def reward_fn(
-    prompt: List[str],
-    completions: List[str],
-    prompt_ids: Optional[Tensor],
-    completion_ids: Optional[Tensor],
-    **data: Any,
-) -> Tensor:  # Shape: [batch_size]
+    prompt, completions, prompt_ids, completion_ids, answer, **kwargs
+) -> float:
+
 ```
 
 **Key rewards:**
 
 - `gsm8k.py` - Math answer verification
-- `math_verify.py` - General math verification
+- `clevr_count_70k.py` - CLEVR counting verification
 - `geometry3k.py` - Geometry problem verification
 
 ### 5. Loss Computation
@@ -108,20 +105,22 @@ Location: `areal/trainer/ppo/actor.py`
 **PPO Loss:**
 
 ```
+
 L = -min(r(theta) * A, clip(r(theta), 1-epsilon, 1+epsilon) * A)
 
 where:
+
 - r(theta) = pi_new / pi_old (importance ratio)
 - A = advantage (normalized per config)
 - epsilon = eps_clip
+
 ```
 
 **Advantage Normalization Levels:**
 
-- `global`: Normalize across all samples in batch
+- `batch`: Normalize across all samples in batch
 - `group`: Normalize within each prompt group (GRPO default)
-- `sample`: Normalize per sample
-- `null`: No normalization
+- `None`: No normalization
 
 ## Common Issues
 

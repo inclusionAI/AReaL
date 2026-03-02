@@ -22,6 +22,7 @@ Use this agent for **ArchonEngine interface and integration guidance**:
 - Integrating ArchonEngine with AReaL workflows
 - Understanding capabilities and choosing between engines
 - Debugging integration issues with other components
+- **Adding support for new model architectures** in ArchonEngine
 
 **Not for** implementation details, distributed training theory, or deep debugging
 (refer to code).
@@ -35,7 +36,7 @@ Parallelism (EP), Expert Tensor Parallelism (ETP), and pipeline parallelism.
 
 - MoE-first design for efficient sparse model training
 - Unified TP/CP/PP/EP/ETP parallel strategies
-- Flexible checkpointing (HF or DCP formats)
+- Flexible checkpointing (HF or DCP formats) with async save support
 - Seamless weight sync with rollout engines
 
 **Engine Comparison**:
@@ -79,14 +80,13 @@ and `ParallelStrategy` for model parallelism.
 
 ## Workflow Integration
 
-ArchonEngine integrates with AReaL workflows through the `WorkflowLike` interface,
+ArchonEngine integrates with AReaL workflows through the `WorkflowLike` type alias,
 supporting RLVRWorkflow, MultiTurnWorkflow, and other workflow implementations.
 
 **Integration Pattern**:
 
 - Import `ArchonEngine` from `areal.experimental.engine.archon_engine`
-- Import desired workflow class (e.g., `RLVRWorkflow` from
-  `areal.workflow.rlvr_workflow`)
+- Import desired workflow class (e.g., `RLVRWorkflow` from `areal.workflow.rlvr`)
 - Initialize `ArchonEngine` with configuration
 - Create workflow instance with engine, reward functions, and dataset
 
@@ -98,7 +98,32 @@ supporting RLVRWorkflow, MultiTurnWorkflow, and other workflow implementations.
 
 ## Common Usage Patterns
 
-### 1. MoE Training with Expert Parallelism
+### 1. Adding a New Model Architecture
+
+To add support for a new HuggingFace model in ArchonEngine, use the `/add-archon-model`
+skill which provides a semi-automated guide. The process involves:
+
+1. **Analyze** the target model's HF source code (config.json, modeling files)
+1. **Select reference**: `qwen2` (dense) or `qwen3` (dense + MoE + QK norm)
+1. **Implement** model files under `areal/experimental/models/archon/<model>/`
+1. **Register** via `ModelSpec` in `spec.py` and import in `__init__.py`
+1. **Test** with staged verification (args, state dict adapter, weight loading, forward)
+
+**Key files for model support**:
+
+- `model_spec.py` -- `ModelSpec` dataclass and registry (`register_model_spec`)
+- `base.py` -- Base classes: `BaseModelArgs`, `BaseArchonModel`, `BaseStateDictAdapter`
+- `__init__.py` -- Auto-registration via import
+
+**Currently supported model types**: Check `get_supported_model_types()` from
+`areal.experimental.models.archon.model_spec`.
+
+**Model discovery flow**: ArchonEngine reads `model_type` from HuggingFace `config.json`
+via `AutoConfig.from_pretrained()`, then looks up the corresponding `ModelSpec` from the
+global registry to determine which model class, args class, state dict adapter, and
+parallelization function to use.
+
+### 2. MoE Training with Expert Parallelism
 
 **Configuration Approach**: Use `ParallelStrategy` with significant
 `expert_parallel_size` and `expert_tensor_parallel_size` settings, combined with
@@ -114,7 +139,7 @@ supporting RLVRWorkflow, MultiTurnWorkflow, and other workflow implementations.
 **Capabilities**: Expert weight sharding, token dispatch, and load balancing for
 efficient MoE training.
 
-### 2. Pipeline + Expert Parallelism
+### 3. Pipeline + Expert Parallelism
 
 **Configuration Approach**: Combine `pipeline_parallel_size` with `expert_parallel_size`
 in `ParallelStrategy` for hybrid parallel training.
@@ -128,19 +153,14 @@ in `ParallelStrategy` for hybrid parallel training.
 **Capabilities**: Pipeline stage management with intra-stage expert parallelism for
 ultra-deep MoE models.
 
-### 3. Large-scale Checkpointing
+### 4. Checkpointing
 
-**Configuration Approach**: Use `TrainEngineConfig` with DCP checkpoint format and
-appropriate checkpoint intervals.
+ArchonEngine supports both DCP and HF checkpoint formats. HF saves default to async mode
+(`saver.mode: auto`), which stages state to pinned CPU memory and writes to disk in a
+background process. Override with `saver.mode: sync` if needed.
 
-**Key Settings**:
-
-- TrainEngineConfig: DCP format for distributed checkpoint coordination
-- Checkpoint interval configuration for regular saving
-- ArchonEngineConfig: Standard attention and compilation settings
-
-**Capabilities**: Distributed checkpoint coordination with expert-aware sharding for
-large-scale training.
+**Key files**: `areal/utils/async_checkpoint.py` (async manager), `areal/utils/saver.py`
+(auto-detection), `areal/experimental/engine/archon_checkpoint.py` (HF save path).
 
 ## Troubleshooting
 
@@ -150,6 +170,9 @@ large-scale training.
 - Poor performance -> Adjust TP/EP/PP balance
 - Checkpoint loading fails -> Verify format consistency
 - Weight sync timeout -> Switch to disk-based updates
+- Unknown model_type error -> Model not registered; check `__init__.py` import and
+  `spec.py`
+- Weight mismatch after loading -> Check `state_dict_adapter.py` key mappings
 
 **Diagnostic Steps**:
 
@@ -165,8 +188,8 @@ patterns (refer to source code).
 1. **Setup**: Install dependencies with `uv sync --extra experimental`
 1. **Configure**: Set up `ParallelStrategy` for model parallelism and
    `TrainEngineConfig` with `ArchonEngineConfig` for training settings
-1. **Integrate**: Reference test files in `areal/tests/experimental/archon/torchrun/`
-   for working examples
+1. **Integrate**: Reference test files in `tests/experimental/archon/torchrun/` for
+   working examples
 1. **Monitor**: Track expert utilization, parallel dimensions, and use profiling tools
    for optimization
 
@@ -210,15 +233,16 @@ patterns (refer to source code).
   constraints
 - `areal/experimental/models/archon/activation_checkpoint.py` - Activation checkpointing
 - `areal/experimental/models/archon/compile.py` - torch.compile integration
-- `areal/experimental/models/archon/varlen_attention.py` - Variable-length attention
-- `areal/experimental/models/archon/attention.py` - Attention mechanism implementations
+- `areal/experimental/models/archon/attention/` - Attention package
+  - `attention/sdpa.py` - Scaled dot-product attention
+  - `attention/varlen.py` - Variable-length attention (custom op registration)
 
 ## Resources
 
 - Code: `areal/experimental/engine/archon_engine.py`
 - Parallel: `areal/experimental/models/archon/parallel_dims.py`
 - MoE: `areal/experimental/models/archon/moe/`
-- Tests: `areal/tests/experimental/archon/torchrun/` (working examples)
+- Tests: `tests/experimental/archon/torchrun/` (working examples)
 
 ______________________________________________________________________
 
@@ -249,6 +273,11 @@ Activation: When ArchonEngine interface, configuration, or integration topics de
 1. Add to "Core Concepts" characteristics
 2. Include in relevant usage patterns
 3. Update troubleshooting guide if needed
+
+### When New Models Are Added
+1. No changes needed here -- the `/add-archon-model` skill handles the guided workflow
+2. Update "Adding a New Model Architecture" section only if the registration pattern changes
+3. The model discovery flow description should stay current with `model_spec.py`
 
 ### When Integration Patterns Change
 1. Update "Workflow Integration" section

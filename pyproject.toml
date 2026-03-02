@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "areal"
-description = "AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning"
+description = "AReaL: A Large-Scale Asynchronous Reinforcement Learning System"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12,<3.13"
@@ -20,13 +20,15 @@ keywords = [
     "reinforcement-learning",
     "large-language-models",
     "llm-training",
+    "llm-agent",
+    "agentic-rl",
 ]
 classifiers = [
     #   3 - Alpha
     #   4 - Beta
     #   5 - Production/Stable
     "Development Status :: 2 - Pre-Alpha",
-    "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.2",
+    "Environment :: GPU :: NVIDIA CUDA :: 12",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",

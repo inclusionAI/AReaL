@@ -7,6 +7,7 @@ prefix computation.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,9 +16,10 @@ import torch.distributed as dist
 from torch.nn.attention.flex_attention import BlockMask
 
 from areal.api.cli_args import MicroBatchSpec
-from areal.models.tree_attn.constants import BLOCK_SIZE
+from areal.models.tree_attn.constants import BLOCK_SIZE, USE_TRITON_TREE_ATTN
 from areal.models.tree_attn.module_fsdp import create_block_mask_from_dense
 from areal.models.tree_attn.triton_kernel import (
+    TRITON_AVAILABLE,
     TreeAttentionData,
     precompute_tree_attention_data,
 )
@@ -25,7 +27,7 @@ from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TreeAttentionCore")
 
 
 # =============================================================================
@@ -271,6 +273,7 @@ def build_packed_tree_batch(
     mb_spec: MicroBatchSpec,
     pad_to_maximum: bool = True,
     dp_group: dist.ProcessGroup | None = None,
+    parallel_size: int = 1,
 ) -> MicroBatchList:
     """Build a MicroBatchList from input data using greedy trie packing.
 
@@ -293,6 +296,10 @@ def build_packed_tree_batch(
         If torch.distributed is initialized, synchronizes the number of
         trees across all ranks by appending dummy trees to ranks with fewer
         trees.
+    parallel_size : int, default=1
+        Product of parallelism dimensions (e.g. TP, SP) that require
+        BLOCK_SIZE alignment. The actual alignment is
+        ``math.lcm(BLOCK_SIZE, parallel_size)``.
 
     Returns
     -------
@@ -324,10 +331,17 @@ def build_packed_tree_batch(
             "Block masks require padded sequences for efficient computation. "
             "Please set pad_to_maximum=True."
         )
-    if pad_to_maximum and max_tokens_per_tree % BLOCK_SIZE != 0:
+    # Block masks operate at BLOCK_SIZE granularity. parallel_size comes from
+    # TP/SP dimensions that may impose additional alignment requirements.
+    # Currently parallel_size always divides BLOCK_SIZE (e.g. TP=1,2,4,8 vs
+    # BLOCK_SIZE=128), so lcm == BLOCK_SIZE. If a future parallel_size doesn't
+    # divide BLOCK_SIZE, lcm will enforce the stricter alignment automatically.
+    block_align = math.lcm(BLOCK_SIZE, parallel_size)
+    if pad_to_maximum and max_tokens_per_tree % block_align != 0:
         raise ValueError(
-            f"max_tokens_per_tree must be a multiple of BLOCK_SIZE ({BLOCK_SIZE}) "
-            f"when pad_to_maximum=True."
+            f"max_tokens_per_tree ({max_tokens_per_tree}) must be a multiple of "
+            f"{block_align} (lcm of BLOCK_SIZE={BLOCK_SIZE} and "
+            f"parallel_size={parallel_size}) when pad_to_maximum=True."
         )
 
     # Build tries using greedy packing
@@ -548,14 +562,23 @@ def _pack_input_ids(
     return input_ids.unsqueeze(0)
 
 
+# Block size for memory-efficient attention mask building.
+# tril_indices for a block of this size uses ~32MB (2048*2048/2 * 2 tensors * 4 bytes).
+_ATTN_MASK_BLOCK_SIZE = 2048
+
+
 def _build_attention_mask(
     trie: TrieNode,
     max_tokens: int,
     device: torch.device,
 ) -> torch.Tensor:
-    """Build 2D attention mask from trie structure."""
+    """Build 2D attention mask from trie structure.
+
+    Uses blockwise processing for large sequences to limit memory usage.
+    For a sequence of length N, instead of creating tril_indices(N, N) which
+    uses O(N^2) memory, we process in blocks of size B, each using O(B^2) memory.
+    """
     mask = torch.zeros((max_tokens, max_tokens), dtype=torch.bool, device=device)
-    tril_cache: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
 
     for seq_id in trie.all_sequence_ids:
         # Get all tree index ranges for this sequence
@@ -577,18 +600,74 @@ def _build_attention_mask(
         if seq_len == 0:
             continue
 
-        # Get or create lower triangular indices
-        rows_cols = tril_cache.get(seq_len)
-        if rows_cols is None:
-            rows_cols = torch.tril_indices(
-                seq_len, seq_len, device=device, dtype=torch.int32
-            )
-            tril_cache[seq_len] = rows_cols
-        rows, cols = rows_cols
+        # Apply causal mask in blocks to limit memory usage
+        _apply_causal_mask_blockwise(mask, positions, seq_len, device)
 
-        # Set causal mask entries
-        mask[positions[rows], positions[cols]] = True
     return mask
+
+
+def _apply_causal_mask_blockwise(
+    mask: torch.Tensor,
+    positions: torch.Tensor,
+    seq_len: int,
+    device: torch.device,
+) -> None:
+    """Apply causal mask entries blockwise to limit memory usage.
+
+    Instead of creating one huge tril_indices(seq_len, seq_len), we process
+    the lower triangular matrix in blocks. For each block, we compute the
+    valid (row, col) pairs where row >= col (causal) and set mask entries.
+
+    The lower triangular matrix is divided into:
+    1. Diagonal blocks: square blocks along the diagonal
+    2. Off-diagonal blocks: rectangular blocks below the diagonal
+
+    For a 6x6 matrix with block_size=2:
+        [D0  .   . ]
+        [B10 D1  . ]
+        [B20 B21 D2]
+
+    Where D0, D1, D2 are diagonal blocks (lower triangular within)
+    and B10, B20, B21 are fully dense blocks.
+    """
+    block_size = _ATTN_MASK_BLOCK_SIZE
+    num_blocks = (seq_len + block_size - 1) // block_size
+
+    for block_row in range(num_blocks):
+        row_start = block_row * block_size
+        row_end = min((block_row + 1) * block_size, seq_len)
+        row_len = row_end - row_start
+
+        # Process diagonal block (lower triangular within block)
+        # These are positions where block_row == block_col
+        tril = torch.tril_indices(row_len, row_len, device=device, dtype=torch.int32)
+        local_rows, local_cols = tril
+        global_rows = row_start + local_rows
+        global_cols = row_start + local_cols
+        mask[positions[global_rows], positions[global_cols]] = True
+        del tril, local_rows, local_cols, global_rows, global_cols
+
+        # Process off-diagonal blocks (fully dense, all entries valid)
+        # These are positions where block_row > block_col
+        for block_col in range(block_row):
+            col_start = block_col * block_size
+            col_end = min((block_col + 1) * block_size, seq_len)
+
+            # Create meshgrid for this block - all (row, col) pairs are valid
+            # since row >= row_start > col_end > col for off-diagonal blocks
+            block_rows = torch.arange(
+                row_start, row_end, device=device, dtype=torch.int32
+            )
+            block_cols = torch.arange(
+                col_start, col_end, device=device, dtype=torch.int32
+            )
+
+            # Use broadcasting to set all entries in this block
+            # positions[block_rows] gives row indices, positions[block_cols] gives col indices
+            row_positions = positions[block_rows].unsqueeze(1)  # [row_len, 1]
+            col_positions = positions[block_cols].unsqueeze(0)  # [1, col_len]
+            mask[row_positions, col_positions] = True
+            del block_rows, block_cols, row_positions, col_positions
 
 
 def _pack_extra_data(
@@ -780,3 +859,37 @@ def build_triton_attn_data_from_trie(
         fa = trie_to_parent_array(trie, padded_size)
         triton_attn_data = precompute_tree_attention_data(fa)
     return triton_attn_data
+
+
+def build_tree_attn_kwargs(
+    trie: TrieNode,
+    padded_size: int,
+    device: torch.device,
+    *,
+    dense_mask: bool = False,
+) -> dict[str, Any]:
+    """Build tree attention kwargs dict for HF model forwarding.
+
+    Selects Triton or flex attention backend automatically.
+    Returns a dict to be merged into model ``**kwargs``.
+
+    Parameters
+    ----------
+    trie : TrieNode
+        The root trie node.
+    padded_size : int
+        Padded sequence length.
+    device : torch.device
+        Device for mask tensors.
+    dense_mask : bool, default=False
+        If True, the non-Triton path returns a dense ``attention_mask`` tensor
+        (for Megatron, which needs tensors for gradient checkpointing).
+        If False, returns a ``tree_block_mask`` BlockMask (for FSDP).
+    """
+    if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE and not dense_mask:
+        return {"tree_triton_data": build_triton_attn_data_from_trie(trie, padded_size)}
+    if dense_mask:
+        return {
+            "attention_mask": build_attention_mask_from_trie(trie, padded_size, device)
+        }
+    return {"tree_block_mask": build_block_mask_from_trie(trie, padded_size, device)}

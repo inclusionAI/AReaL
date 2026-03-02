@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import struct
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -17,10 +19,66 @@ from torch.distributed.checkpoint.state_dict import (
 )
 from torch.distributed.checkpoint.stateful import Stateful
 
+from areal.utils.logging import getLogger
+
 if TYPE_CHECKING:
     from transformers import AutoProcessor, PreTrainedTokenizerFast
 
     from areal.experimental.engine.archon_engine import ArchonEngine
+    from areal.utils.async_checkpoint import AsyncCheckpointManager
+
+logger = getLogger("ArchonCheckpoint")
+
+
+# NOTE: Upgrading PyTorch may resolve this in the future.
+def _consolidate_shards_distributed(
+    input_dir: str,
+    output_dir: str,
+    fqn_to_index_mapping: dict[str, int],
+    num_threads: int = 8,
+    process_group: dist.ProcessGroup | None = None,
+) -> None:
+    """Distribute safetensors consolidation across ranks, with correct PG barrier.
+
+    This replaces ``consolidate_safetensors_files_on_every_rank`` which has a bug:
+    its internal ``dist.barrier()`` ignores the *process_group* parameter and uses
+    the default (NCCL) PG instead.  When the bg consolidation thread calls that
+    NCCL barrier concurrently with the main thread's NCCL collectives, different
+    ranks may enqueue the collectives in different order, causing a deadlock.
+
+    """
+    from torch.distributed.checkpoint._consolidate_hf_safetensors import (
+        _consolidate_safetensors_files,
+    )
+    from torch.distributed.checkpoint._hf_utils import _gen_file_name
+
+    rank = dist.get_rank(group=process_group)
+    world_size = dist.get_world_size(group=process_group)
+
+    unique_indices = set(fqn_to_index_mapping.values())
+
+    # Simple round-robin: index % world_size == rank
+    indices_for_this_rank = [idx for idx in unique_indices if idx % world_size == rank]
+
+    filtered_mapping = {
+        fqn: idx
+        for fqn, idx in fqn_to_index_mapping.items()
+        if idx in indices_for_this_rank
+    }
+
+    if filtered_mapping:
+        max_index = max(unique_indices)
+        filtered_filename_mapping = {
+            fqn: _gen_file_name(idx, max_index) for fqn, idx in filtered_mapping.items()
+        }
+        _consolidate_safetensors_files(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            fqn_to_file_mapping=filtered_filename_mapping,
+            num_threads=num_threads,
+        )
+
+    dist.barrier(group=process_group)
 
 
 class DCPState(Stateful):
@@ -124,13 +182,57 @@ def _get_merged_state_dict(
     return get_model_state_dict(engine.model, options=options)
 
 
+def _write_safetensors_index(
+    output_dir: str, fqn_to_index_mapping: dict[str, int]
+) -> None:
+    """Write model.safetensors.index.json for multi-file HF checkpoints."""
+    max_index = max(fqn_to_index_mapping.values())
+    weight_map = {
+        fqn: f"model-{idx:05d}-of-{max_index:05d}.safetensors"
+        for fqn, idx in fqn_to_index_mapping.items()
+    }
+
+    # Compute total_size from safetensors file headers (no tensor loading)
+    total_size = 0
+    for filename in set(weight_map.values()):
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, "rb") as f:
+            # safetensors format: 8-byte LE header size, then JSON header
+            header_size = struct.unpack("<Q", f.read(8))[0]
+            header = json.loads(f.read(header_size))
+        for key, meta in header.items():
+            if key == "__metadata__":
+                continue
+            start, end = meta["data_offsets"]
+            total_size += end - start
+
+    index = {
+        "metadata": {"total_size": total_size},
+        "weight_map": weight_map,
+    }
+    index_path = os.path.join(output_dir, "model.safetensors.index.json")
+    with open(index_path, "w") as f:
+        json.dump(index, f, indent=2)
+
+
 def save_model_to_hf(
     engine: ArchonEngine,
     path: str,
     tokenizer: PreTrainedTokenizerFast | None,
     processor: AutoProcessor | None = None,
+    async_mgr: AsyncCheckpointManager | None = None,
 ) -> None:
-    """Save model in HuggingFace format using DCP infrastructure."""
+    """Save model in HuggingFace format using DCP infrastructure.
+
+    Args:
+        engine: The ArchonEngine instance.
+        path: Output directory for the HF checkpoint.
+        tokenizer: Optional tokenizer to save alongside the model.
+        processor: Optional processor to save alongside the model.
+        async_mgr: Optional async checkpoint manager. When provided and async
+            is enabled, dcp.async_save() is used instead of dcp.save().
+            The manager's post_upload_fn is set to handle consolidation.
+    """
     from torch.distributed.checkpoint import HuggingFaceStorageWriter
 
     _validate_model_initialized(engine)
@@ -138,66 +240,87 @@ def save_model_to_hf(
         raise RuntimeError("state_dict_adapter is required for HF format")
 
     engine.logger.info(f"Saving HF checkpoint to {path}")
-    os.makedirs(path, exist_ok=True)
 
-    # Get distributed state dict
-    options = StateDictOptions(full_state_dict=False, cpu_offload=True)
+    # In async mode, let the stager handle GPU->CPU transfer
+    is_async = async_mgr is not None and async_mgr.is_async
+
+    # Write to temp dir first, then atomically rename to final path.
+    tmp_path = path + ".tmp"
+    if dist.get_rank() == 0 and os.path.exists(tmp_path):
+        shutil.rmtree(tmp_path)
+    dist.barrier(group=engine.cpu_group)
+    os.makedirs(tmp_path, exist_ok=True)
+    cpu_offload = not is_async
+    options = StateDictOptions(full_state_dict=False, cpu_offload=cpu_offload)
     state_dict = _get_merged_state_dict(engine, options)
 
-    # Convert to HF format using adapter
     hf_state_dict = engine.state_dict_adapter.to_hf(state_dict)
-
     fqn_to_index_mapping = engine.state_dict_adapter.fqn_to_index_mapping
 
-    # NOTE: HuggingFaceStorageWriter always creates a sharded/ subdirectory when
-    # save_distributed=True. With enable_consolidation=True, it saves shards to
-    # path/sharded/, then consolidates to path/. The sharded/ directory is NOT
-    # automatically cleaned up by PyTorch, so we must remove it manually.
-    sharded_dir = os.path.join(path, "sharded")
+    # HuggingFaceStorageWriter creates a sharded/ subdir we must clean up after consolidation.
+    sharded_dir = os.path.join(tmp_path, "sharded")
 
-    if fqn_to_index_mapping:
-        # Multi-file output: save to sharded/, then consolidate with all ranks
-        from torch.distributed.checkpoint._consolidate_hf_safetensors import (
-            consolidate_safetensors_files_on_every_rank,
-        )
+    consolidation_mapping = fqn_to_index_mapping or dict.fromkeys(
+        hf_state_dict.keys(), 1
+    )
 
-        hf_writer = HuggingFaceStorageWriter(
-            path=sharded_dir,
-            save_distributed=True,
-            fqn_to_index_mapping=fqn_to_index_mapping,
-            enable_consolidation=False,
-        )
-        dcp.save(hf_state_dict, storage_writer=hf_writer)
+    hf_writer = HuggingFaceStorageWriter(
+        path=sharded_dir,
+        save_distributed=True,
+        fqn_to_index_mapping=fqn_to_index_mapping,
+        enable_consolidation=False,
+    )
 
-        # NOTE: consolidate_safetensors_files_on_every_rank() has internal barrier
-        consolidate_safetensors_files_on_every_rank(
-            input_dir=sharded_dir,
-            output_dir=path,
-            fqn_to_index_mapping=fqn_to_index_mapping,
-            num_threads=8,
+    consolidation_pg = (
+        async_mgr.consolidation_process_group if is_async else engine.cpu_group
+    )
+
+    def _consolidate_and_cleanup(process_group=consolidation_pg):
+        try:
+            _consolidate_shards_distributed(
+                input_dir=sharded_dir,
+                output_dir=tmp_path,
+                fqn_to_index_mapping=consolidation_mapping,
+                num_threads=8,
+                process_group=process_group,
+            )
+        except Exception:
+            # Must re-raise: this function contains a collective barrier, so
+            # swallowing the exception on a subset of ranks causes deadlock.
+            logger.error("Consolidation failed, keeping sharded dir", exc_info=True)
+            raise
+        if dist.get_rank(group=process_group) == 0:
+            # _consolidate_shards_distributed does not write the
+            # index JSON that HuggingFace from_pretrained() needs.
+            # Always write it - consolidation_mapping is defined for
+            # both multi-file and single-file (fallback) cases.
+            _write_safetensors_index(tmp_path, consolidation_mapping)
+            if os.path.exists(sharded_dir):
+                shutil.rmtree(sharded_dir)
+            # Write config / tokenizer / processor into temp dir
+            engine.model_config.save_pretrained(tmp_path)
+            if tokenizer is not None:
+                tokenizer.save_pretrained(tmp_path)
+            if processor is not None:
+                processor.save_pretrained(tmp_path)
+            # Atomically swap temp dir to final path
+            if os.path.exists(path):
+                shutil.rmtree(path)
+            os.rename(tmp_path, path)
+        dist.barrier(group=process_group)
+
+    if is_async:
+        async_mgr.save(
+            state_dict=hf_state_dict,
+            storage_writer=hf_writer,
+            post_fn=_consolidate_and_cleanup,
         )
     else:
-        # Single-file output: auto consolidation
-        hf_writer = HuggingFaceStorageWriter(
-            path=path,
-            save_distributed=True,
-            enable_consolidation=True,
-        )
         dcp.save(hf_state_dict, storage_writer=hf_writer)
+        _consolidate_and_cleanup()
 
-    # Clean up sharded/ directory after consolidation
-    if dist.get_rank() == 0 and os.path.exists(sharded_dir):
-        shutil.rmtree(sharded_dir)
-
-    dist.barrier(group=engine.cpu_group)
-
-    if dist.get_rank() == 0:
-        engine.model_config.save_pretrained(path)
-        if tokenizer is not None:
-            tokenizer.save_pretrained(path)
-        if processor is not None:
-            processor.save_pretrained(path)
-    dist.barrier(group=engine.cpu_group)
+    if not is_async:
+        dist.barrier(group=engine.cpu_group)
 
 
 def load_model_from_hf(engine: ArchonEngine, path: str) -> None:

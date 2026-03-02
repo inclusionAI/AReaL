@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-| <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> | <a href="https://huggingface.co/collections/inclusionAI/areal-boba-2-683f0e819ccb7bb2e1b2f2d5"><b>🤗 Models & Data</b></a> |
+| <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> | <a href="https://huggingface.co/collections/inclusionAI/"><b>🤗 Models & Data</b></a> |
 <a href="./assets/wechat_qrcode.png" target="_blank"><img src="./assets/wechat_icon.png" width="20" style="vertical-align: middle;"> <b>WeChat (微信) Group</b></a> |
 </p>
 
@@ -22,9 +22,8 @@ as much as you'd enjoy real milk tea. Cheers!
 **AReaL Highlights**
 
 - ⚡ **Flexibility**: Seamless customization for
-  [multi-turn agentic rollout](https://inclusionai.github.io/AReaL/customization/agent.html)
-  with
-  [other agentic frameworks](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html).
+  [agentic RL](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html) and
+  [online RL training](./examples/openclaw/) by simply replacing the `base_url`.
 - 📈 **Scalability**: **Stable** fully asynchronous RL training with **industry-leading
   speed**.
 - ✨ **Cutting-Edge Performance**: State-of-the-art [math](/blog/AReaL_v0_2.md),
@@ -33,10 +32,16 @@ as much as you'd enjoy real milk tea. Cheers!
 
 ## 📰 News
 
+**\[2026/03/02\]** We provide [a complete example](./examples/openclaw/) to train your
+own 🦞 OpenClaw agent by simply replacing the `base_url` and `api_key` with AReaL's RL
+service - no complicated dependencies, no code changes, works with any agentic runtime!
+
 **\[2026/02/06\]** We are delighted to introduce **EigenData**, a self-evolving data
-synthesis engine. Combined with RL training on AReaL, the 235B MoE model surpasses
-Gemini 3.0 Pro and GPT 5.2 on $\\tau^2$-bench! Check out the
-[paper](https://arxiv.org/pdf/2601.22607),
+synthesis engine. Combined with RL training on AReaL, the 235B MoE model surpasses GPT 5
+and achieves comparable performance with Gemini 3.0 Pro on $\\tau^2$-bench! Check out
+the [paper](https://arxiv.org/pdf/2601.22607),
+[model](https://huggingface.co/inclusionAI/AReaL-SEA-235B-A22B),
+[data](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data),
 [code](https://github.com/inclusionAI/AReaL/tree/main/examples/tau2), and
 [announcement on X](https://x.com/Eigen_AI_Labs/status/2018561648022130805?s=20).
 
@@ -46,15 +51,15 @@ trained with AReaL! Check out
 [their training workflow](https://github.com/camel-ai/seta/tree/main/training/tbench_areal_workflow)
 and the [announcement on X](https://x.com/guohao_li/status/2009678513574408636).
 
+<details>
+<summary><b>📋 Previous Releases</b></summary>
+
 **\[2026/01/01\]** Happy New Year! Thanks to the outstanding contribution from
 @HwVanICI, we are excited to officially announce stable support for AReaL training on
 **Ascend NPU devices**! The code is actively maintained and continuously updated in the
 [`ascend` branch](https://github.com/inclusionAI/AReaL/tree/ascend). Check out
 [our documentation](https://inclusionai.github.io/AReaL/tutorial/installation_npu.html)
 to get started, and feel free to report any issues!
-
-<details>
-<summary><b>📋 Previous Releases</b></summary>
 
 **\[2025/08/30\]** Introducing ASearcher, a state-of-the-art search agent built with
 AReaL's end-to-end asynchronous RL training. Check out the [paper](assets/paper.pdf) and
@@ -121,12 +126,12 @@ For comprehensive setup instructions, see
 
 ### Math & Reasoning
 
-| Task                                             | Description                                                                                  | Performance                                                       |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| **[Math](examples/math/)**                       | GSM8K math reasoning with GRPO, PPO, DAPO, REINFORCE, RLOO, LitePPO, DR-GRPO, GSPO, and more | -                                                                 |
-| **[Multi-Turn Math](examples/multi_turn_math/)** | Multi-turn math agent with reward discounting across turns                                   | [Training Curve](examples/multi_turn_math/reward_curve.png)       |
-| **[LoRA Math](examples/lora/)**                  | Parameter-efficient math training with LoRA (SGLang/vLLM backends)                           | -                                                                 |
-| **[Countdown](examples/countdown/)**             | Countdown numbers game with custom rewards                                                   | [Training Curve](examples/countdown/countdown_training_curve.png) |
+| Task                                                | Description                                                                                  | Performance                                                       |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **[Math](examples/math/)**                          | GSM8K math reasoning with GRPO, PPO, DAPO, REINFORCE, RLOO, LitePPO, DR-GRPO, GSPO, and more | -                                                                 |
+| **[Multi-Turn Math](examples/multi_turn_math/)**    | Multi-turn math agent with reward discounting across turns                                   | [Training Curve](examples/multi_turn_math/reward_curve.png)       |
+| **[LoRA Math](examples/math/gsm8k_grpo_lora.yaml)** | Parameter-efficient math training with LoRA (SGLang/vLLM backends)                           | -                                                                 |
+| **[Countdown](examples/countdown/)**                | Countdown numbers game with custom rewards                                                   | [Training Curve](examples/countdown/countdown_training_curve.png) |
 
 ### Agentic RL
 

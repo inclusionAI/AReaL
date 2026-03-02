@@ -11,7 +11,7 @@ from areal.models.tree_attn.constants import BLOCK_SIZE, USE_TRITON_TREE_ATTN
 from areal.models.tree_attn.triton_kernel import TRITON_AVAILABLE, tree_attention
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TreeAttentionFSDP")
 
 _TORCH_COMPILE_OPTIONS = {
     "epilogue_fusion": True,
@@ -89,10 +89,11 @@ def _tree_attn_fwd_func(
     *args,
     **kwargs,
 ):
-    # Check for Triton path
-    triton_attn_data = kwargs.get("triton_attn_data", None)
+    # Check for Triton path (dict key prefixed with "tree_" to avoid
+    # collisions with HuggingFace's own kwargs during **kwargs forwarding)
+    tree_triton_data = kwargs.get("tree_triton_data", None)
 
-    if USE_TRITON_TREE_ATTN and triton_attn_data is not None and TRITON_AVAILABLE:
+    if USE_TRITON_TREE_ATTN and tree_triton_data is not None and TRITON_AVAILABLE:
         # [B, S, H, D] -> [B, H, S, D]
         query = query.permute(0, 2, 1, 3).contiguous()
         key = key.permute(0, 2, 1, 3).contiguous()
@@ -102,11 +103,11 @@ def _tree_attn_fwd_func(
             query,
             key,
             value,
-            triton_attn_data.packed_mask,
-            triton_attn_data.kv_indices,
-            triton_attn_data.kv_offsets,
-            triton_attn_data.q_indices,
-            triton_attn_data.q_offsets,
+            tree_triton_data.packed_mask,
+            tree_triton_data.kv_indices,
+            tree_triton_data.kv_offsets,
+            tree_triton_data.q_indices,
+            tree_triton_data.q_offsets,
             sm_scale=softmax_scale,
         )
         # [B, H, S, D] -> [B, S, H, D]
@@ -114,10 +115,11 @@ def _tree_attn_fwd_func(
         return output
     else:
         # Require pre-created block_mask
-        block_mask = kwargs.get("block_mask", None)
-        if block_mask is None or not isinstance(block_mask, BlockMask):
+        tree_block_mask = kwargs.get("tree_block_mask", None)
+        if tree_block_mask is None or not isinstance(tree_block_mask, BlockMask):
             raise ValueError(
-                "_tree_attn_fwd_func requires a pre-created BlockMask in kwargs['block_mask']. "
+                "_tree_attn_fwd_func requires a pre-created BlockMask in "
+                "kwargs['tree_block_mask']. "
                 "Use create_block_mask_from_dense() during data preparation."
             )
 
@@ -132,7 +134,7 @@ def _tree_attn_fwd_func(
             query,
             key,
             value,
-            block_mask=block_mask,
+            block_mask=tree_block_mask,
             score_mod=None,
             scale=softmax_scale,
             enable_gqa=enable_gqa,

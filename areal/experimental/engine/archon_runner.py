@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from areal.experimental.models.archon.pipeline_parallel import build_pipeline_schedule
+from areal.models.tree_attn.module_archon import TreeAttentionMeta
 from areal.utils import logging
 
 if TYPE_CHECKING:
@@ -17,6 +18,11 @@ if TYPE_CHECKING:
     from areal.utils.data import MicroBatchItem, MicroBatchList
 
 logger = logging.getLogger("ArchonRunner")
+
+
+class _NullOutputChunks(list):
+    def append(self, item: Any) -> None:
+        pass
 
 
 class ForwardBackwardRunner(ABC):
@@ -30,7 +36,7 @@ class ForwardBackwardRunner(ABC):
             [torch.Tensor, dict[str, Any]], torch.Tensor | None
         ],
         forward_only: bool,
-    ) -> list[torch.Tensor] | None:
+    ) -> list[torch.Tensor | dict[int, torch.Tensor]] | None:
         """Run forward (and optionally backward) pass over microbatches.
 
         Args:
@@ -40,6 +46,7 @@ class ForwardBackwardRunner(ABC):
 
         Returns:
             List of results from process_output_fn, or None if not applicable.
+            Results can be tensors or dicts (for tree training).
         """
         ...
 
@@ -63,26 +70,50 @@ class SequentialRunner(ForwardBackwardRunner):
             [torch.Tensor, dict[str, Any]], torch.Tensor | None
         ],
         forward_only: bool,
-    ) -> list[torch.Tensor]:
-        results: list[torch.Tensor] = []
+    ) -> list[torch.Tensor | dict[int, torch.Tensor]]:
+        results: list[torch.Tensor | dict[int, torch.Tensor]] = []
 
         for mb_item in mb_list:
             inputs, ctx = self.prepare_inputs_fn(mb_item)
 
+            tree_attn_meta = None
+            if ctx.trie_node is not None:
+                padded_size = mb_item.padded_to_length
+                assert padded_size is not None
+                tree_attn_meta = TreeAttentionMeta.from_trie(
+                    ctx.trie_node, padded_size, inputs["input_ids"].device
+                )
+                # Tree attention uses tree_attn_meta instead of cu_seqlens;
+                # create dummy cu_seqlens for model interface compatibility.
+                seq_len = inputs["input_ids"].shape[-1]
+                cu_seqlens = torch.tensor(
+                    [0, seq_len], dtype=torch.int32, device=inputs["input_ids"].device
+                )
+                max_seqlen = seq_len
+            else:
+                cu_seqlens = inputs["cu_seqlens"]
+                max_seqlen = int(inputs["max_seqlen"])
+
             logits = self.model(
                 inputs["input_ids"],
                 inputs["position_ids"],
-                cu_seqlens=inputs["cu_seqlens"],
-                max_seqlen=int(inputs["max_seqlen"]),
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                tree_attn_meta=tree_attn_meta,
             )
             logits = logits.squeeze(0)
+            del tree_attn_meta
 
-            ctx_dict = ctx.__dict__.copy()
+            ctx_dict = ctx.to_dict()
             result = process_output_fn(logits, ctx_dict)
 
             if result is not None:
                 if forward_only:
-                    results.append(result.detach())
+                    # Result can be a tensor or dict (for tree training)
+                    if isinstance(result, dict):
+                        results.append({k: v.detach() for k, v in result.items()})
+                    else:
+                        results.append(result.detach())
                 else:
                     result.backward()
 
@@ -190,9 +221,11 @@ class PipelinedRunner(ForwardBackwardRunner):
         if not self.has_last_stage:
             return None
         output_stage = self._get_output_stage()
-        return self._process_outputs(
+        results = self._process_outputs(
             output_stage.output_chunks, contexts, process_output_fn
         )
+        output_stage.output_chunks.clear()
+        return results
 
     def _run_train(
         self,
@@ -206,7 +239,24 @@ class PipelinedRunner(ForwardBackwardRunner):
         pp_loss_fn = self._create_loss_fn(contexts, process_output_fn)
         schedule = self._create_schedule(n_microbatches, loss_fn=pp_loss_fn)
         self._patch_skip_output_merge(schedule)
+
+        # NOTE: Upgrading PyTorch may resolve this in the future.
+        # Replace output_chunks with a null list so
+        # forward_one_chunk's `output_chunks.append(output)` becomes a no-op.
+        # (torch/distributed/pipelining/schedules.py)
+        # This lets each microbatch's logits be freed right after its backward,
+        # instead of holding all N sets of logits until step() returns.
+        output_stage = None
+        if self.has_last_stage:
+            output_stage = self._get_output_stage()
+            output_stage.output_chunks = _NullOutputChunks()
+
         schedule.step(*args, target=batched_target, **batched_kwargs)
+
+        # Restore normal list so subsequent eval() calls on the same
+        # stage can read output_chunks normally.
+        if output_stage is not None:
+            output_stage.output_chunks = []
         return []
 
     def _create_loss_fn(
@@ -222,7 +272,7 @@ class PipelinedRunner(ForwardBackwardRunner):
                 # Squeeze batch dim: outputs (1, seq_len, vocab) -> (seq_len, vocab)
                 if pred.ndim == 3:
                     pred = pred.squeeze(0)
-                ctx_dict = ctx.__dict__.copy()
+                ctx_dict = ctx.to_dict()
                 loss = process_output_fn(pred, ctx_dict)
                 if loss is None:
                     return pred.sum() * 0.0
@@ -246,7 +296,7 @@ class PipelinedRunner(ForwardBackwardRunner):
             # Squeeze batch dim: outputs (1, seq_len, vocab) -> (seq_len, vocab)
             if output.ndim == 3:
                 output = output.squeeze(0)
-            ctx_dict = ctx.__dict__.copy()
+            ctx_dict = ctx.to_dict()
             result = process_output_fn(output, ctx_dict)
             if result is not None:
                 results.append(result.detach())
