@@ -144,6 +144,14 @@ allocation_mode: sglang:d4+archon:d2p2e2
 We recommend pipeline and expert parallelism over tensor/context parallelism. Check
 [Allocation Mode Reference](../reference/alloc_mode.md) for more details.
 
+```{seealso}
+Pipeline parallelism introduces unique memory challenges (microbatch warmup accumulation,
+zero-bubble `retain_graph` overhead, FSDP resharding trade-offs, gradient accumulation
+costs, and per-rank memory budgeting). See the
+[Archon PP Memory Guide](../tutorial/archon.md#appendix-pipeline-parallelism-memory-guide)
+for a comprehensive walkthrough.
+```
+
 ### 4. Switch to a Lightweight Optimizer
 
 AReaL supports different optimizers depending on the training engine.
