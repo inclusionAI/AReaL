@@ -10,6 +10,7 @@ import areal.utils.logging as logging
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
+    InferenceEngineConfig,
     RecoverConfig,
     SGLangConfig,
     parse_cli_args,
@@ -456,6 +457,7 @@ def slurm_main(config, run_id: int = 0):
             config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
             random_seed = config.vllm.seed
 
+        config.rollout = to_structured_cfg(config.rollout, InferenceEngineConfig)
         # Get rollout scheduling spec
         rollout_spec = get_scheduling_spec(config.rollout)
 
