@@ -196,7 +196,7 @@ class SeparatedRayPlacementStrategy(RayPlacementStrategy):
         placement_group = self._placement_groups[self._current_placement_group_idx]
         self._current_placement_group_idx += 1
 
-        strategy_kwargs: dict[str:Any] = {
+        strategy_kwargs: dict[str, Any] = {
             "placement_group": placement_group,
             "placement_group_capture_child_tasks": True,
             "placement_group_bundle_index": 0,
