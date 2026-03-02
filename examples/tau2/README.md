@@ -34,10 +34,10 @@ pip install git+https://github.com/dhh1995/tau2-bench.git@dhh/async-and-custom-c
 ```
 
 Note that the training relies on the async version of the agent and user simulator in
-the tau2-bench package. These changes will be merged into the
-[original tau2-bench repository](https://github.com/sierra-research/tau2-bench) later.
+the [tau2-bench package](https://github.com/dhh1995/tau-bench). These changes will be
+merged into the original tau2-bench repository later.
 
-2. Setup the `TAU2_DATA_DIR` environment variable:
+1. Setup the `TAU2_DATA_DIR` environment variable:
 
 ```bash
 export TAU2_DATA_DIR=/path/to/tau2-bench/data
@@ -48,7 +48,7 @@ For multi-node experiment with slurm, this can be set in the config file under
 
 ### Configuration Files
 
-Two example configurations are provided:
+Four example configurations are provided:
 
 | Config                         | Model           | Cluster           | Allocation                                             | Use Case                                |
 | ------------------------------ | --------------- | ----------------- | ------------------------------------------------------ | --------------------------------------- |
