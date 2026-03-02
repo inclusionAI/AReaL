@@ -112,7 +112,7 @@ You are an advanced AI agent. In this phase, you must provide reasoning about wh
 Instructions:
 1. Analyze the observations and determine what tool to call next
 2. Explain your reasoning clearly
-3. State which tool you plan to call and with what parameters. 
+3. State which tool you plan to call and with what parameters.
 4. Output the reason in <think> and </think> tags.
 5. DO NOT provide any final answer, just focus on tool calling
 
@@ -120,8 +120,24 @@ Instructions:
 
 # Phase 2: Execute tool call based on previous reasoning
 SEPARATED_TOOL_CALL_ONLY_PROMPT = """
-Based on your previous reasoning, now execute the tool call.
-Call the tool immediately without additional reasoning.
+You are an advanced AI agent. In this phase, you must execute the tool call based on previous reasoning.
+
+Instructions:
+1. Based on the reasoning provided, execute the tool call immediately
+2. Do NOT provide additional reasoning or explanation
+3. Do NOT provide any final answer in this phase
+4. Just call the tool with the parameters specified in the reasoning
+"""
+
+# Phase 3: Generate final answer based on all observations
+SEPARATED_FINAL_ANSWER_PROMPT = """
+You are an advanced AI agent. In this phase, you must provide the final answer.
+
+Instructions:
+1. Based on all the observations and tool results gathered, provide the final answer
+2. Wrap your final answer in <answer> and </answer> tags
+3. Be concise and direct in your answer
+4. Do NOT call any more tools
 """
 
 

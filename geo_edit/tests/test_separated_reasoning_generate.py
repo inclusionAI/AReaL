@@ -13,12 +13,15 @@ from geo_edit.agents.base import AgentConfig
 from geo_edit.agents.api_agent import APIBasedAgent
 from geo_edit.config import (
     build_api_agent_configs,
-    build_api_reasoning_only_config,
-    build_api_tool_call_only_config,
+    derive_api_config,
 )
 from geo_edit.constants import MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
-from geo_edit.prompts.system_prompts import SEPARATED_TOOL_CALL_ONLY_PROMPT
+from geo_edit.prompts.system_prompts import (
+    SEPARATED_REASONING_ONLY_PROMPT,
+    SEPARATED_TOOL_CALL_ONLY_PROMPT,
+    SEPARATED_FINAL_ANSWER_PROMPT,
+)
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.tool_definitions import ToolRouter
 from geo_edit.utils.logger import setup_logger
@@ -56,7 +59,7 @@ def _run_separated_reasoning_test(
     model_type: Literal["SGLang", "OpenAI"],
     test_name: str,
 ) -> None:
-    """Common test logic for separated reasoning generation."""
+    """Common test logic for separated three-phase generation."""
     api_key = os.environ.get("API_KEY")
     api_base = "https://matrixllm.alipay.com/v1"
 
@@ -95,8 +98,16 @@ def _run_separated_reasoning_test(
         system_prompt=system_prompt,
     )
 
-    reasoning_only_config = build_api_reasoning_only_config(agent_configs.generate_config)
-    tool_call_only_config = build_api_tool_call_only_config(agent_configs.generate_config)
+    base = agent_configs.generate_config
+    reasoning_only_config = derive_api_config(
+        base, api_mode="chat_completions", system_prompt=SEPARATED_REASONING_ONLY_PROMPT, tool_choice="none"
+    )
+    tool_call_only_config = derive_api_config(
+        base, api_mode="chat_completions", system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
+    )
+    final_answer_config = derive_api_config(
+        base, api_mode="chat_completions", system_prompt=SEPARATED_FINAL_ANSWER_PROMPT, tool_choice="none"
+    )
 
     config = AgentConfig(
         model_type=model_type,
@@ -151,7 +162,6 @@ def _run_separated_reasoning_test(
         # ===== Phase 2: Generate tool call =====
         logger.info("Phase 2: Generating tool call...")
         task.append_assistant_message(reasoning_text)
-        task.append_prompt(SEPARATED_TOOL_CALL_ONLY_PROMPT)
 
         agent.config.generate_config = tool_call_only_config
         tool_action, tool_extra = agent.act(task.contents)
@@ -178,11 +188,11 @@ def _run_separated_reasoning_test(
 
         logger.info("Tool calls: %s", [(tc.name, tc.args) for tc in tool_calls])
         task.update_observation_from_action(tool_calls)
-    else:
-        # Force final answer if max steps reached
-        logger.info("Reached max steps, forcing final answer...")
-        task.append_prompt("Max tool calls reached. Please provide the final answer based on the information gathered so far.")
-        agent.config.generate_config = agent_configs.force_final_generate_config
+
+    # ===== Phase 3: Generate final answer =====
+    if task.state:
+        logger.info("Phase 3: Generating final answer...")
+        agent.config.generate_config = final_answer_config
         action, extra_info = agent.act(task.contents)
         agent.config.generate_config = original_generate_config
         task.parse_action(step=args.max_steps + 1, action=action, extra_info=extra_info)

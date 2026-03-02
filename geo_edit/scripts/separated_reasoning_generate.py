@@ -1,10 +1,11 @@
-"""Separated reasoning script for two-phase tool call generation.
+"""Separated reasoning script for three-phase tool call generation.
 
 Supports Gemini and GPT models (Google API and matrixllm chat_completions).
 Only supports force tool mode.
 
 Phase 1: Generate reasoning (can see tools, but cannot execute)
 Phase 2: Generate tool call based on reasoning (no additional reasoning)
+Phase 3: Generate final answer (no tool execution)
 """
 import argparse
 import json
@@ -24,14 +25,16 @@ from geo_edit.agents.api_agent import AgentConfig, APIBasedAgent
 from geo_edit.config import (
     build_google_agent_configs,
     build_api_agent_configs,
-    build_google_reasoning_only_config,
-    build_google_tool_call_only_config,
-    build_api_reasoning_only_config,
-    build_api_tool_call_only_config,
+    derive_google_config,
+    derive_api_config,
 )
 from geo_edit.constants import MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
-from geo_edit.prompts.system_prompts import SEPARATED_TOOL_CALL_ONLY_PROMPT
+from geo_edit.prompts.system_prompts import (
+    SEPARATED_REASONING_ONLY_PROMPT,
+    SEPARATED_TOOL_CALL_ONLY_PROMPT,
+    SEPARATED_FINAL_ANSWER_PROMPT,
+)
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
@@ -51,6 +54,7 @@ _WORKER_API_MODE: "str | None" = None
 _WORKER_TOOL_ROUTER: "ToolRouter | None" = None
 _WORKER_REASONING_ONLY_CONFIG = None
 _WORKER_TOOL_CALL_ONLY_CONFIG = None
+_WORKER_FINAL_ANSWER_CONFIG = None
 
 
 def _init_worker(
@@ -66,6 +70,7 @@ def _init_worker(
     global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS
     global _WORKER_TASK_CLASS, _WORKER_API_MODE
     global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_TOOL_CALL_ONLY_CONFIG
+    global _WORKER_FINAL_ANSWER_CONFIG
 
     # Force mode only
     _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force")
@@ -86,8 +91,16 @@ def _init_worker(
             system_prompt=system_prompt,
         )
         _WORKER_TASK_CLASS = GoogleVisionQATask
-        _WORKER_REASONING_ONLY_CONFIG = build_google_reasoning_only_config(agent_configs.generate_config)
-        _WORKER_TOOL_CALL_ONLY_CONFIG = build_google_tool_call_only_config(agent_configs.generate_config)
+        base = agent_configs.generate_config
+        _WORKER_REASONING_ONLY_CONFIG = derive_google_config(
+            base, system_prompt=SEPARATED_REASONING_ONLY_PROMPT, tool_mode="NONE"
+        )
+        _WORKER_TOOL_CALL_ONLY_CONFIG = derive_google_config(
+            base, system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
+        )
+        _WORKER_FINAL_ANSWER_CONFIG = derive_google_config(
+            base, system_prompt=SEPARATED_FINAL_ANSWER_PROMPT, tool_mode="NONE"
+        )
     else:
         # SGLang/OpenAI via matrixllm uses chat_completions
         _WORKER_API_MODE = "chat_completions"
@@ -99,8 +112,16 @@ def _init_worker(
             system_prompt=system_prompt,
         )
         _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
-        _WORKER_REASONING_ONLY_CONFIG = build_api_reasoning_only_config(agent_configs.generate_config)
-        _WORKER_TOOL_CALL_ONLY_CONFIG = build_api_tool_call_only_config(agent_configs.generate_config)
+        base = agent_configs.generate_config
+        _WORKER_REASONING_ONLY_CONFIG = derive_api_config(
+            base, api_mode="chat_completions", system_prompt=SEPARATED_REASONING_ONLY_PROMPT, tool_choice="none"
+        )
+        _WORKER_TOOL_CALL_ONLY_CONFIG = derive_api_config(
+            base, api_mode="chat_completions", system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
+        )
+        _WORKER_FINAL_ANSWER_CONFIG = derive_api_config(
+            base, api_mode="chat_completions", system_prompt=SEPARATED_FINAL_ANSWER_PROMPT, tool_choice="none"
+        )
 
     config = AgentConfig(
         model_type=model_type,
@@ -120,9 +141,10 @@ def _init_worker(
 
 def _run_one_task(task_payload: dict):
     """
-    Worker: run separated two-phase generation.
+    Worker: run separated three-phase generation.
     Phase 1: Generate reasoning (no tool execution)
     Phase 2: Generate tool call (no additional reasoning)
+    Phase 3: Generate final answer (no tool execution)
     """
     assert _WORKER_AGENT is not None
     assert _WORKER_AGENT_CONFIGS is not None
@@ -130,6 +152,7 @@ def _run_one_task(task_payload: dict):
     assert _WORKER_TOOL_ROUTER is not None
     assert _WORKER_REASONING_ONLY_CONFIG is not None
     assert _WORKER_TOOL_CALL_ONLY_CONFIG is not None
+    assert _WORKER_FINAL_ANSWER_CONFIG is not None
 
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
@@ -191,7 +214,6 @@ def _run_one_task(task_payload: dict):
 
             # ===== Phase 2: Generate tool call =====
             task.append_assistant_message(reasoning_text)
-            task.append_prompt(SEPARATED_TOOL_CALL_ONLY_PROMPT)
 
             _WORKER_AGENT.config.generate_config = _WORKER_TOOL_CALL_ONLY_CONFIG
             tool_action, tool_extra = _WORKER_AGENT.act(task.contents)
@@ -216,11 +238,10 @@ def _run_one_task(task_payload: dict):
 
             task.update_observation_from_action(function_call_part_list)
 
-        # Force final answer if max tool calls reached
+        # ===== Phase 3: Generate final answer =====
         if task.state:
-            logger.info(f"[{task_id}] reached max tool calls {_WORKER_MAX_TOOL_CALLS}, forcing final answer.")
-            task.append_prompt("Max tool calls reached. Please provide the final answer based on the information gathered so far.")
-            _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_final_generate_config
+            logger.info(f"[{task_id}] generating final answer.")
+            _WORKER_AGENT.config.generate_config = _WORKER_FINAL_ANSWER_CONFIG
             action, extra_info = _WORKER_AGENT.act(task.contents)
             _WORKER_AGENT.config.generate_config = original_generate_config
             task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
