@@ -64,15 +64,24 @@ def _init_worker(
     port: int,
     output_path: str,
     max_tool_calls: int,
+    node_resource: str | None,
 ):
-    """Initialize worker for Gemini/GPT models (Google API or matrixllm)."""
+    """Initialize worker for Gemini/GPT models (Google API or matrixllm).
+
+    Agent instance is created once per worker and reused for all tasks.
+    Ray tool agents are shared across all workers (initialized in main process).
+    """
     global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS
     global _WORKER_TASK_CLASS, _WORKER_API_MODE
     global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_TOOL_CALL_ONLY_CONFIG
     global _WORKER_FINAL_ANSWER_CONFIG
 
-    # Force mode only
-    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force")
+    # Create ToolRouter in worker - it will connect to existing Ray actors (not create new ones)
+    # This is safe because ToolAgentManager is a singleton and create_agents() skips existing actors
+    if node_resource is not None:
+        _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force", node_resource=node_resource)
+    else:
+        _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force")
 
     if model_type == "Google" and not api_key:
         raise ValueError("API key must be provided for Google models.")
@@ -137,6 +146,8 @@ def _init_worker(
     _WORKER_OUTPUT_PATH = output_path
     _WORKER_MAX_TOOL_CALLS = max_tool_calls
 
+    logger.info(f"Worker initialized with {model_type} agent (PID: {os.getpid()})")
+
 
 def _run_one_task(task_payload: dict):
     """
@@ -190,6 +201,7 @@ def _run_one_task(task_payload: dict):
         **task_kwargs,
     )
 
+    # Reset agent state for new task (reuses same agent instance)
     _WORKER_AGENT.reset()
     original_generate_config = _WORKER_AGENT.config.generate_config
     answer_pattern = re.compile(r"<answer>", re.IGNORECASE)
@@ -286,11 +298,19 @@ def main():
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes.")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
     parser.add_argument("--n_trajectories", type=int, default=1, help="Number of trajectories per task.")
-    parser.add_argument("--node_resource", type=str, default=None, help="Ray custom resource name.")
+    parser.add_argument("--node_resource", type=str, default=None, help="Ray custom resource name (default: 'tool_agent').")
     args = parser.parse_args()
 
     if args.model_type == "Google" and not args.api_key:
         raise ValueError("API key must be provided for Google models.")
+
+    # Initialize Ray tool agents in main process (shared by all workers)
+    # Ray will auto-connect to local cluster or start one if needed
+    tool_router = ToolRouter(tool_mode="force", node_resource=args.node_resource or "tool_agent")
+    if tool_router.is_agent_enabled():
+        logger.info(f"Initialized {len(tool_router._agents)} shared Ray tool agents in main process")
+    else:
+        logger.info("No tool agents enabled (check config.yaml)")
 
     output_path = args.output_dir
     os.makedirs(output_path, exist_ok=True)
@@ -324,10 +344,9 @@ def main():
 
     logger.info(f"Already done: {len(meta_info_list)}, Pending: {len(pending_items)}")
 
-    tool_router = ToolRouter(tool_mode="force", node_resource=args.node_resource)
-
     ctx = mp.get_context("spawn")
     n_workers = max(1, int(args.max_concurrent_requests))
+    logger.info(f"Starting {n_workers} worker processes (each reuses Agent for all tasks)")
 
     with ctx.Pool(
         processes=n_workers,
@@ -340,6 +359,7 @@ def main():
             args.port,
             output_path,
             MAX_TOOL_CALLS,
+            args.node_resource,
         ),
     ) as pool:
         inflight = []
@@ -408,7 +428,13 @@ def main():
         pbar.close()
 
     save_global_meta_info(output_path, meta_info_list)
-    tool_router.shutdown_agents()
+    logger.info(f"All tasks completed. Total successful: {len(meta_info_list)}")
+
+    # Shutdown Ray tool agents
+    if tool_router.is_agent_enabled():
+        logger.info("Shutting down shared Ray tool agents...")
+        tool_router.shutdown_agents()
+        logger.info("Ray tool agents shutdown complete")
 
 
 if __name__ == "__main__":
