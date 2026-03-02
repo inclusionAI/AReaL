@@ -169,84 +169,110 @@ class GoogleVisionQATask(VisionQATask):
         )
 
     def _build_sft_messages(self) -> List[Dict[str, Any]]:
-        """Build SFT-format messages for training (Google format to standard chat format)."""
-        from google.genai import types
+        """Build SFT-format messages for training.
+
+        Uses the observation from the last step which contains the complete conversation history.
+        """
         import json
 
+        if not self.conversation_history:
+            return []
+
+        # Get the last step's observation - it contains the full conversation
+        last_record = self.conversation_history[-1]
+        observation = last_record.get("observation", [])
+
         messages = []
-
-        # Convert Google contents to standard chat format
-        for item in self.contents:
-            if isinstance(item, types.Content):
-                role = "assistant" if item.role == "model" else item.role
-                if role == "tool":
-                    # Tool response
-                    for part in item.parts:
-                        if part.function_response:
+        for item in observation:
+            if isinstance(item, dict):
+                # Handle stringified Content objects
+                if "parts" in item and "role" in item:
+                    msg = self._convert_google_content_to_sft(item)
+                    if msg:
+                        messages.append(msg)
+                # Handle image_data
+                elif "image_data" in item:
+                    image_path = item["image_data"]
+                    if image_path:
+                        # Add to last user message or create new one
+                        if messages and messages[-1]["role"] == "user":
+                            if isinstance(messages[-1]["content"], str):
+                                messages[-1]["content"] = [{"type": "text", "text": messages[-1]["content"]}]
+                            messages[-1]["content"].append({
+                                "type": "image_url",
+                                "image_url": {"url": f"file://{image_path}"}
+                            })
+                        else:
                             messages.append({
-                                "role": "tool",
-                                "tool_call_id": f"call_{part.function_response.name}",
-                                "content": json.dumps(part.function_response.response)
+                                "role": "user",
+                                "content": [{"type": "image_url", "image_url": {"url": f"file://{image_path}"}}]
                             })
-                else:
-                    # User or assistant message
-                    msg = {"role": role, "content": []}
-                    tool_calls = []
-
-                    for part in item.parts:
-                        if part.text and not part.thought:
-                            msg["content"].append({"type": "text", "text": part.text})
-                        elif part.function_call:
-                            tool_calls.append({
-                                "id": f"call_{part.function_call.name}",
-                                "type": "function",
-                                "function": {
-                                    "name": part.function_call.name,
-                                    "arguments": json.dumps(dict(part.function_call.args))
-                                }
-                            })
-
-                    if tool_calls:
-                        msg["tool_calls"] = tool_calls
-
-                    # Simplify content if it's just one text part
-                    if len(msg["content"]) == 1 and msg["content"][0]["type"] == "text":
-                        msg["content"] = msg["content"][0]["text"]
-                    elif not msg["content"]:
-                        msg["content"] = ""
-
-                    messages.append(msg)
-
-            elif isinstance(item, Image.Image):
-                # Image in user message
-                if messages and messages[-1]["role"] == "user":
-                    # Add to last user message
-                    if isinstance(messages[-1]["content"], str):
-                        messages[-1]["content"] = [{"type": "text", "text": messages[-1]["content"]}]
-                    image_path = self.image_path_map.get(id(item), "")
-                    if image_path:
-                        messages[-1]["content"].append({
-                            "type": "image_url",
-                            "image_url": {"url": f"file://{image_path}"}
-                        })
-                    else:
-                        messages[-1]["content"].append({"type": "text", "text": "[IMAGE]"})
-                else:
-                    # Create new user message with image
-                    image_path = self.image_path_map.get(id(item), "")
-                    if image_path:
-                        messages.append({
-                            "role": "user",
-                            "content": [{"type": "image_url", "image_url": {"url": f"file://{image_path}"}}]
-                        })
-                    else:
-                        messages.append({"role": "user", "content": "[IMAGE]"})
-
             elif isinstance(item, str):
-                # Text prompt
+                # Text prompt - add to last user message or create new one
                 if messages and messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list):
                     messages[-1]["content"].append({"type": "text", "text": item})
                 else:
                     messages.append({"role": "user", "content": item})
 
         return messages
+
+    def _convert_google_content_to_sft(self, content_dict: Dict[str, Any]) -> Dict[str, Any] | None:
+        """Convert stringified Google Content to SFT format."""
+        import json
+
+        role = content_dict.get("role")
+        if not role:
+            return None
+
+        # Convert role: "model" -> "assistant"
+        sft_role = "assistant" if role == "model" else role
+
+        parts = content_dict.get("parts", [])
+        if not parts:
+            return None
+
+        msg = {"role": sft_role, "content": []}
+        tool_calls = []
+
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+
+            # Handle text
+            text = part.get("text")
+            thought = part.get("thought")
+            if text and not thought:
+                msg["content"].append({"type": "text", "text": text})
+
+            # Handle function_call
+            function_call = part.get("function_call")
+            if function_call:
+                tool_calls.append({
+                    "id": f"call_{function_call['name']}",
+                    "type": "function",
+                    "function": {
+                        "name": function_call["name"],
+                        "arguments": json.dumps(function_call["args"]) if isinstance(function_call["args"], dict) else str(function_call["args"])
+                    }
+                })
+
+            # Handle function_response (tool role)
+            function_response = part.get("function_response")
+            if function_response and sft_role == "tool":
+                return {
+                    "role": "tool",
+                    "tool_call_id": f"call_{function_response['name']}",
+                    "content": json.dumps(function_response["response"])
+                }
+
+        # Add tool_calls if present
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+
+        # Simplify content if it's just one text part
+        if len(msg["content"]) == 1 and msg["content"][0]["type"] == "text":
+            msg["content"] = msg["content"][0]["text"]
+        elif not msg["content"]:
+            msg["content"] = ""
+
+        return msg
