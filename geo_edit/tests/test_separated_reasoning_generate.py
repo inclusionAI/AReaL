@@ -1,6 +1,7 @@
 """Test script for separated reasoning generation with matrixllm (Gemini/GPT via chat_completions)."""
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -203,14 +204,23 @@ def _run_separated_reasoning_test(
     logger.info("Total tool calls: %d", meta_info["function_call_total_count"])
     logger.info("Total tokens: %d", meta_info["tokens_used_total"])
 
+    # Verify trajectory.jsonl was created
+    trajectory_path = save_dir / "trajectory.jsonl"
+    if trajectory_path.exists():
+        logger.info("trajectory.jsonl created successfully")
+        with open(trajectory_path, "r", encoding="utf-8") as f:
+            trajectory_data = json.loads(f.readline())
+            logger.info("Trajectory contains %d messages", len(trajectory_data))
 
-# def test_separated_reasoning_gemini() -> None:
-#     """Test separated reasoning generation with Gemini via matrixllm."""
-#     _run_separated_reasoning_test(
-#         model_name="gemini-3-pro-preview",
-#         model_type="OpenAI",
-#         test_name="separated_reasoning_gemini_test",
-#     )
+            # Log first few messages for inspection
+            for i, msg in enumerate(trajectory_data[:3]):
+                role = msg.get("role")
+                content_preview = str(msg.get("content", ""))[:100]
+                has_tool_calls = "tool_calls" in msg
+                logger.info("  Message %d: role=%s, has_tool_calls=%s, content_preview=%s...",
+                           i, role, has_tool_calls, content_preview)
+    else:
+        logger.warning("trajectory.jsonl was not created")
 
 
 def test_separated_reasoning_gpt() -> None:
@@ -220,5 +230,4 @@ def test_separated_reasoning_gpt() -> None:
         model_type="OpenAI",
         test_name="separated_reasoning_gpt_test",
     )
-
 

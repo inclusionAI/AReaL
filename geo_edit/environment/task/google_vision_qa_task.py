@@ -167,3 +167,86 @@ class GoogleVisionQATask(VisionQATask):
         self.contents.append(
             types.Content(role="model", parts=[types.Part.from_text(text=text)])
         )
+
+    def _build_sft_messages(self) -> List[Dict[str, Any]]:
+        """Build SFT-format messages for training (Google format to standard chat format)."""
+        from google.genai import types
+        import json
+
+        messages = []
+
+        # Convert Google contents to standard chat format
+        for item in self.contents:
+            if isinstance(item, types.Content):
+                role = "assistant" if item.role == "model" else item.role
+                if role == "tool":
+                    # Tool response
+                    for part in item.parts:
+                        if part.function_response:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": f"call_{part.function_response.name}",
+                                "content": json.dumps(part.function_response.response)
+                            })
+                else:
+                    # User or assistant message
+                    msg = {"role": role, "content": []}
+                    tool_calls = []
+
+                    for part in item.parts:
+                        if part.text and not part.thought:
+                            msg["content"].append({"type": "text", "text": part.text})
+                        elif part.function_call:
+                            tool_calls.append({
+                                "id": f"call_{part.function_call.name}",
+                                "type": "function",
+                                "function": {
+                                    "name": part.function_call.name,
+                                    "arguments": json.dumps(dict(part.function_call.args))
+                                }
+                            })
+
+                    if tool_calls:
+                        msg["tool_calls"] = tool_calls
+
+                    # Simplify content if it's just one text part
+                    if len(msg["content"]) == 1 and msg["content"][0]["type"] == "text":
+                        msg["content"] = msg["content"][0]["text"]
+                    elif not msg["content"]:
+                        msg["content"] = ""
+
+                    messages.append(msg)
+
+            elif isinstance(item, Image.Image):
+                # Image in user message
+                if messages and messages[-1]["role"] == "user":
+                    # Add to last user message
+                    if isinstance(messages[-1]["content"], str):
+                        messages[-1]["content"] = [{"type": "text", "text": messages[-1]["content"]}]
+                    image_path = self.image_path_map.get(id(item), "")
+                    if image_path:
+                        messages[-1]["content"].append({
+                            "type": "image_url",
+                            "image_url": {"url": f"file://{image_path}"}
+                        })
+                    else:
+                        messages[-1]["content"].append({"type": "text", "text": "[IMAGE]"})
+                else:
+                    # Create new user message with image
+                    image_path = self.image_path_map.get(id(item), "")
+                    if image_path:
+                        messages.append({
+                            "role": "user",
+                            "content": [{"type": "image_url", "image_url": {"url": f"file://{image_path}"}}]
+                        })
+                    else:
+                        messages.append({"role": "user", "content": "[IMAGE]"})
+
+            elif isinstance(item, str):
+                # Text prompt
+                if messages and messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list):
+                    messages[-1]["content"].append({"type": "text", "text": item})
+                else:
+                    messages.append({"role": "user", "content": item})
+
+        return messages

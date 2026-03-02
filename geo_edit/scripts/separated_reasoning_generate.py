@@ -9,7 +9,6 @@ Phase 3: Generate final answer (no tool execution)
 """
 import argparse
 import json
-import logging
 import multiprocessing as mp
 import os
 import re
@@ -197,7 +196,11 @@ def _run_one_task(task_payload: dict):
 
     try:
         for i in range(_WORKER_MAX_TOOL_CALLS):
+            step = i + 1
+            logger.info(f"[{task_id}] Step {step}: Starting three-phase generation")
+
             # ===== Phase 1: Generate reasoning (no tool call, no answer) =====
+            logger.info(f"[{task_id}] Step {step} Phase 1: Generating reasoning...")
             _WORKER_AGENT.config.generate_config = _WORKER_REASONING_ONLY_CONFIG
             reasoning_action, reasoning_extra = _WORKER_AGENT.act(task.contents)
 
@@ -208,11 +211,15 @@ def _run_one_task(task_payload: dict):
             else:
                 reasoning_text = reasoning_action.choices[0].message.content or ""
 
+            logger.info(f"[{task_id}] Step {step} Phase 1: Reasoning generated ({len(reasoning_text)} chars)")
+            logger.debug(f"[{task_id}] Step {step} Phase 1: Reasoning content: {reasoning_text[:500]}...")
+
             # Check for <answer> - error if found
             if answer_pattern.search(reasoning_text):
                 raise ValueError("Reasoning phase should not generate <answer>. Model violated the protocol.")
 
             # ===== Phase 2: Generate tool call =====
+            logger.info(f"[{task_id}] Step {step} Phase 2: Generating tool call...")
             task.append_assistant_message(reasoning_text)
 
             _WORKER_AGENT.config.generate_config = _WORKER_TOOL_CALL_ONLY_CONFIG
@@ -228,33 +235,42 @@ def _run_one_task(task_payload: dict):
 
             # Task parses tool call or answer
             function_call_part_list = task.parse_action(
-                step=i + 1,
+                step=step,
                 action=tool_action,
                 extra_info=merged_extra
             )
 
             if not function_call_part_list:
+                logger.info(f"[{task_id}] Step {step} Phase 2: No tool calls, final answer detected")
                 break
+
+            # Log tool calls
+            tool_names = [tc.name for tc in function_call_part_list]
+            logger.info(f"[{task_id}] Step {step} Phase 2: Tool calls generated: {tool_names}")
 
             task.update_observation_from_action(function_call_part_list)
 
         # ===== Phase 3: Generate final answer =====
         if task.state:
-            logger.info(f"[{task_id}] generating final answer.")
+            logger.info(f"[{task_id}] Phase 3: Generating final answer...")
             _WORKER_AGENT.config.generate_config = _WORKER_FINAL_ANSWER_CONFIG
             action, extra_info = _WORKER_AGENT.act(task.contents)
             _WORKER_AGENT.config.generate_config = original_generate_config
             task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
+            logger.info(f"[{task_id}] Phase 3: Final answer generated")
 
         if task.state:
             meta_info = task.save_trajectory()
+            logger.info(f"[{task_id}] Task completed successfully - Total steps: {meta_info.get('total_steps', 'N/A')}, "
+                       f"Total tokens: {meta_info.get('tokens_used_total', 'N/A')}")
             return True, meta_info
 
+        logger.warning(f"[{task_id}] Task failed - no valid trajectory")
         shutil.rmtree(task_save_dir, ignore_errors=True)
         return False, None
 
     except Exception as e:
-        logging.error(f"[{task_id}] worker failed: {e}")
+        logger.error(f"[{task_id}] Worker failed with exception: {e}", exc_info=True)
         shutil.rmtree(task_save_dir, ignore_errors=True)
         return False, None
 

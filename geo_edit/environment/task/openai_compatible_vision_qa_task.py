@@ -383,3 +383,172 @@ class OpenAICompatibleVisionQATask(VisionQATask):
             })
         else:
             self.contents.append({"role": "assistant", "content": text})
+
+    def _build_sft_messages(self) -> List[Dict[str, Any]]:
+        """Build SFT-format messages for training.
+
+        Returns a list of messages in standard chat format:
+        [
+            {"role": "user", "content": [...]},
+            {"role": "assistant", "content": "...", "tool_calls": [...]},
+            {"role": "tool", "tool_call_id": "...", "content": "..."},
+            ...
+        ]
+        """
+        messages = []
+
+        # Add initial user message (question + image)
+        if self.api_mode == "responses":
+            # For responses API, get first user message from contents["input"]
+            first_messages = [msg for msg in self.contents["input"] if msg.get("role") == "user"]
+            if first_messages:
+                messages.append(self._convert_to_sft_format(first_messages[0]))
+        else:
+            # For chat_completions API, get first user message from contents
+            first_messages = [msg for msg in self.contents if msg.get("role") == "user"]
+            if first_messages:
+                messages.append(self._convert_to_sft_format(first_messages[0]))
+
+        # Process conversation history to build complete trajectory
+        for record in self.conversation_history:
+            # Add assistant message (with tool calls if any)
+            assistant_msg = {"role": "assistant"}
+
+            # Add text content if present
+            if record.get("output_text"):
+                assistant_msg["content"] = record["output_text"]
+            elif record["action"].get("text"):
+                assistant_msg["content"] = record["action"]["text"]
+            else:
+                assistant_msg["content"] = ""
+
+            # Add tool calls if present
+            function_calls = record.get("function_call")
+            if function_calls:
+                tool_calls = []
+                for idx, (func_name, func_args) in enumerate(function_calls):
+                    # Generate call_id based on step and index
+                    call_id = f"call_{record['step']}_{idx}"
+                    tool_calls.append({
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": func_name,
+                            "arguments": json.dumps(func_args) if isinstance(func_args, dict) else func_args
+                        }
+                    })
+                assistant_msg["tool_calls"] = tool_calls
+
+            messages.append(assistant_msg)
+
+            # Add tool results if there were tool calls
+            if function_calls:
+                # Extract tool results from observation of next step or current observation
+                observation = record.get("observation", [])
+                tool_results = self._extract_tool_results_from_observation(observation, function_calls, record['step'])
+                messages.extend(tool_results)
+
+        return messages
+
+    def _convert_to_sft_format(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert internal message format to SFT format, replacing images with paths."""
+        sft_msg = {"role": message.get("role"), "content": []}
+
+        content = message.get("content")
+        if isinstance(content, str):
+            sft_msg["content"] = content
+            return sft_msg
+
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    # Handle image_url
+                    if part.get("type") == "image_url":
+                        image_url = part["image_url"]
+                        if isinstance(image_url, dict):
+                            image_url = image_url["url"]
+                        image_path = self.image_url_map.get(image_url, "")
+                        if image_path:
+                            sft_msg["content"].append({"type": "image_url", "image_url": {"url": f"file://{image_path}"}})
+                        else:
+                            sft_msg["content"].append({"type": "text", "text": "[IMAGE]"})
+                    # Handle input_image (responses format)
+                    elif part.get("type") == "input_image":
+                        image_url = part.get("image_url", "")
+                        image_path = self.image_url_map.get(image_url, "")
+                        if image_path:
+                            sft_msg["content"].append({"type": "image_url", "image_url": {"url": f"file://{image_path}"}})
+                        else:
+                            sft_msg["content"].append({"type": "text", "text": "[IMAGE]"})
+                    # Handle text
+                    elif part.get("type") in ("text", "input_text", "output_text"):
+                        text = part.get("text", "")
+                        if text:
+                            sft_msg["content"].append({"type": "text", "text": text})
+                    else:
+                        sft_msg["content"].append(part)
+                else:
+                    sft_msg["content"].append({"type": "text", "text": str(part)})
+        else:
+            sft_msg["content"] = str(content)
+
+        return sft_msg
+
+    def _extract_tool_results_from_observation(
+        self, observation: List[Any], function_calls: List[tuple], step: int
+    ) -> List[Dict[str, Any]]:
+        """Extract tool results from observation messages."""
+        tool_messages = []
+
+        for idx, (func_name, _) in enumerate(function_calls):
+            call_id = f"call_{step}_{idx}"
+
+            # Find corresponding tool result in observation
+            tool_result = None
+            for obs_item in observation:
+                if isinstance(obs_item, dict):
+                    # responses format
+                    if obs_item.get("type") == "function_call_output":
+                        if obs_item.get("name") == func_name or idx < len(observation):
+                            tool_result = obs_item.get("output", {})
+                            break
+                    # chat_completions format
+                    elif obs_item.get("role") == "tool":
+                        if obs_item.get("name") == func_name:
+                            tool_result = obs_item.get("content", "")
+                            break
+
+            if tool_result is not None:
+                # Format tool result, replacing images with paths
+                if isinstance(tool_result, list):
+                    formatted_parts = []
+                    for part in tool_result:
+                        if isinstance(part, dict):
+                            if part.get("type") in ("input_image", "image_url"):
+                                image_url = part.get("image_url", "")
+                                if isinstance(image_url, dict):
+                                    image_url = image_url.get("url", "")
+                                image_path = self.image_url_map.get(image_url, "")
+                                if image_path:
+                                    formatted_parts.append(f"[IMAGE: {image_path}]")
+                                else:
+                                    formatted_parts.append("[IMAGE]")
+                            elif part.get("type") in ("text", "input_text"):
+                                formatted_parts.append(part.get("text", ""))
+                            else:
+                                formatted_parts.append(json.dumps(part))
+                        else:
+                            formatted_parts.append(str(part))
+                    content = "\n".join(formatted_parts)
+                elif isinstance(tool_result, dict):
+                    content = json.dumps(tool_result)
+                else:
+                    content = str(tool_result)
+
+                tool_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": content
+                })
+
+        return tool_messages

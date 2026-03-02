@@ -67,6 +67,7 @@ class VisionQATask(AbstractVLMTask):
         self.output_jsonl_path = os.path.join(self.save_dir, "output.jsonl")
         self.extra_info_jsonl_path = os.path.join(self.save_dir, "extra_info.jsonl")
         self.meta_info_jsonl_path = os.path.join(self.save_dir, "meta_info.jsonl")
+        self.trajectory_jsonl_path = os.path.join(self.save_dir, "trajectory.jsonl")
         self.image_save_dir = os.path.join(self.save_dir, "images")
         os.makedirs(self.image_save_dir, exist_ok=True)
 
@@ -103,6 +104,14 @@ class VisionQATask(AbstractVLMTask):
         raise NotImplementedError
 
     def append_prompt(self, prompt: str) -> None:
+        raise NotImplementedError
+
+    def _build_sft_messages(self) -> List[Dict[str, Any]]:
+        """Build SFT-format messages from conversation history.
+
+        Should be implemented by subclasses to convert internal representation
+        to standard chat format with roles (system/user/assistant/tool).
+        """
         raise NotImplementedError
 
     def _record_conversation_history(
@@ -431,5 +440,14 @@ class VisionQATask(AbstractVLMTask):
 
         with open(self.meta_info_jsonl_path, "w", encoding="utf-8") as f:
             f.write(json.dumps(meta_info) + "\n")
+
+        # Generate trajectory.jsonl for SFT training
+        try:
+            sft_messages = self._build_sft_messages()
+            with open(self.trajectory_jsonl_path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(sft_messages) + "\n")
+        except NotImplementedError:
+            # Subclass hasn't implemented _build_sft_messages yet
+            pass
 
         return meta_info
