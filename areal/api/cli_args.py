@@ -289,7 +289,9 @@ class OptimizerConfig:
     type: str = field(
         default="adam",
         metadata={
-            "help": "Optimizer type. Adam_bf16 currently only supported FSDP Engine.",
+            "help": "Optimizer type. For FSDP Engine, adam_bf16 enables memory-efficient BF16 optimizer states. "
+            "For Megatron Engine, adam_bf16 requires dtype=bfloat16 and is automatically converted to adam "
+            "with precision-aware optimizer enabled.",
             "choices": ["adam", "sgd", "adam_bf16"],
         },
     )
@@ -685,7 +687,14 @@ class MegatronEngineConfig:
     overlap_param_gather_with_optimizer_step: bool = False
 
     # Precision Configuration
-    use_precision_aware_optimizer: bool = False
+    use_precision_aware_optimizer: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable precision-aware optimizer for Megatron. "
+            "When using adam_bf16 optimizer type with Megatron Engine, "
+            "this is automatically enabled with exp_avg_dtype=bfloat16 and exp_avg_sq_dtype=bfloat16."
+        },
+    )
     main_grads_dtype: str = "float32"
     main_params_dtype: str = "float32"
     exp_avg_dtype: str = "float32"
