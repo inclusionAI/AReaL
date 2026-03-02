@@ -387,88 +387,66 @@ class OpenAICompatibleVisionQATask(VisionQATask):
     def _build_sft_messages(self) -> List[Dict[str, Any]]:
         """Build SFT-format messages for training.
 
-        Builds messages in correct chronological order:
-        1. Initial user message (from first step's observation)
-        2. For each step: assistant message (with tool_calls) + tool results
+        Uses self.contents which has the complete conversation including phase 1 reasoning.
+        Then enriches assistant messages with tool_calls from conversation_history.
         """
-        if not self.conversation_history:
-            return []
-
         messages = []
 
-        # Step 1: Add initial user message from first observation
-        first_record = self.conversation_history[0]
-        first_observation = first_record.get("observation", [])
+        # Get all messages from contents
+        if self._use_responses_format:
+            content_list = self.contents.get("input", []) if isinstance(self.contents, dict) else []
+        else:
+            content_list = self.contents if isinstance(self.contents, list) else []
 
-        for item in first_observation:
-            if isinstance(item, dict) and item.get("role") == "user":
+        # Convert all contents to SFT format
+        for item in content_list:
+            if isinstance(item, dict):
                 msg = self._convert_observation_item_to_sft(item)
                 if msg:
                     messages.append(msg)
-                    break  # Only add the first user message
 
-        # Step 2: Process each step's assistant message and tool results
-        for idx, record in enumerate(self.conversation_history):
-            step = record["step"]
-            action_record = record.get("action", {})
-            thinking_process = record.get("thinking_process", "")
-            output_text = record.get("output_text", "")
+        # Enrich assistant messages with tool_calls from conversation_history
+        assistant_msg_index = 0
+        for record in self.conversation_history:
             function_calls = record.get("function_call")
+            if not function_calls:
+                continue
 
-            # Build assistant message
-            assistant_msg = {"role": "assistant"}
+            action_record = record.get("action", {})
+            tool_call_records = action_record.get("tool_calls", [])
 
-            # Combine thinking + output as content
-            content_parts = []
-            if thinking_process:
-                content_parts.append(thinking_process)
-            if output_text:
-                content_parts.append(output_text)
+            # Find the next assistant message without tool_calls
+            while assistant_msg_index < len(messages):
+                msg = messages[assistant_msg_index]
+                if msg.get("role") == "assistant" and "tool_calls" not in msg:
+                    # This is the assistant message that should have tool_calls
+                    tool_calls = []
+                    for func_name, func_args in function_calls:
+                        matching_call = next((tc for tc in tool_call_records if tc.get("name") == func_name), None)
 
-            assistant_msg["content"] = "\n".join(content_parts) if content_parts else (action_record.get("text", "") or "")
+                        if matching_call:
+                            tool_calls.append({
+                                "id": matching_call.get("id", f"call_{func_name}"),
+                                "type": "function",
+                                "function": {
+                                    "name": func_name,
+                                    "arguments": matching_call.get("arguments", json.dumps(func_args) if isinstance(func_args, dict) else str(func_args))
+                                }
+                            })
+                        else:
+                            tool_calls.append({
+                                "id": f"call_{record['step']}_{func_name}",
+                                "type": "function",
+                                "function": {
+                                    "name": func_name,
+                                    "arguments": json.dumps(func_args) if isinstance(func_args, dict) else str(func_args)
+                                }
+                            })
 
-            # Add tool_calls from action_record
-            if function_calls:
-                tool_calls = []
-                tool_call_records = action_record.get("tool_calls", [])
-
-                for func_name, func_args in function_calls:
-                    matching_call = next((tc for tc in tool_call_records if tc.get("name") == func_name), None)
-
-                    if matching_call:
-                        tool_calls.append({
-                            "id": matching_call.get("id", f"call_{func_name}"),
-                            "type": "function",
-                            "function": {
-                                "name": func_name,
-                                "arguments": matching_call.get("arguments", json.dumps(func_args) if isinstance(func_args, dict) else str(func_args))
-                            }
-                        })
-                    else:
-                        tool_calls.append({
-                            "id": f"call_{step}_{func_name}",
-                            "type": "function",
-                            "function": {
-                                "name": func_name,
-                                "arguments": json.dumps(func_args) if isinstance(func_args, dict) else str(func_args)
-                            }
-                        })
-
-                assistant_msg["tool_calls"] = tool_calls
-
-            messages.append(assistant_msg)
-
-            # Add tool results from next step's observation (if exists)
-            if function_calls and idx + 1 < len(self.conversation_history):
-                next_record = self.conversation_history[idx + 1]
-                next_observation = next_record.get("observation", [])
-
-                # Extract tool messages from next observation
-                for item in next_observation:
-                    if isinstance(item, dict) and item.get("role") == "tool":
-                        msg = self._convert_observation_item_to_sft(item)
-                        if msg:
-                            messages.append(msg)
+                    msg["tool_calls"] = tool_calls
+                    assistant_msg_index += 1
+                    break
+                assistant_msg_index += 1
 
         return messages
 
