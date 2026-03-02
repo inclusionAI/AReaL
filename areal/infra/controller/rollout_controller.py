@@ -50,7 +50,7 @@ logger = logging.getLogger("RolloutController")
 class _RemoteRolloutTaskInput:
     task_id: int
     data: dict[str, Any]
-    workflow: str
+    workflow: str | None
     workflow_kwargs: dict[str, Any]
     should_accept_fn: str | None
     is_eval: bool = False
@@ -115,6 +115,13 @@ class RolloutController:
         self.proxy_workers: list[Worker] = []
         self.proxy_addrs: list[str] = []
         self._proxy_started = False
+
+        # Proxy gateway server (for online/external access)
+        self._proxy_gateway_app = None
+        self._proxy_gateway_server = None
+        self._proxy_gateway_thread: threading.Thread | None = None
+        self._proxy_gateway_port: int | None = None
+        self._proxy_gateway_host: str | None = None
 
     @property
     def _proxy_role(self) -> str:
@@ -312,6 +319,8 @@ class RolloutController:
             except Exception:
                 logger.error(f"Error deleting proxy workers: {traceback.format_exc()}")
 
+        # Shutdown proxy gateway if initialized
+        self._stop_proxy_gateway()
         with self._futures_lock:
             self._pending_futures.clear()
 
@@ -402,6 +411,113 @@ class RolloutController:
                 f"Invalid rank {rank}, only {len(self.proxy_addrs)} proxy workers"
             )
         return self.proxy_addrs[rank]
+
+    def start_proxy_gateway(self) -> None:
+        """Start the proxy gateway for external access.
+
+        Creates a FastAPI server that routes requests to backend proxy
+        workers. Requires ``start_proxy()`` to have been called first.
+        """
+        if not self._proxy_started:
+            raise RuntimeError(
+                "Proxy workers not initialized. Call start_proxy() first."
+            )
+        if self._proxy_gateway_host is not None:
+            logger.warning("Proxy gateway already running")
+            return
+
+        from areal.api.cli_args import OpenAIProxyConfig
+        from areal.experimental.openai.proxy.proxy_gateway import (
+            create_proxy_gateway_app,
+        )
+
+        openai_cfg = self.config.openai or OpenAIProxyConfig()
+
+        app = create_proxy_gateway_app(
+            proxy_addrs=self.proxy_addrs,
+            admin_api_key=openai_cfg.admin_api_key,
+        )
+
+        self._proxy_gateway_port = find_free_ports(1)[0]
+        self._proxy_gateway_host = gethostip()
+        self._proxy_gateway_app = app
+
+        def serve():
+            import uvicorn
+
+            try:
+                config = uvicorn.Config(
+                    app,
+                    host="0.0.0.0",
+                    port=self._proxy_gateway_port,
+                    log_level="warning",
+                )
+                server = uvicorn.Server(config)
+                self._proxy_gateway_server = server
+                server.run()
+            except Exception:
+                logger.error("Proxy gateway thread crashed", exc_info=True)
+
+        self._proxy_gateway_thread = threading.Thread(target=serve, daemon=True)
+        self._proxy_gateway_thread.start()
+
+        # Wait for uvicorn to bind the port before propagating the address
+        # to worker engines via collective RPC.
+        import time
+
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if (
+                self._proxy_gateway_server is not None
+                and self._proxy_gateway_server.started
+            ):
+                break
+            time.sleep(0.05)
+        else:
+            raise RuntimeError(
+                "Proxy gateway failed to start within 10s. "
+                f"Cannot propagate address "
+                f"{self._proxy_gateway_host}:{self._proxy_gateway_port}"
+            )
+
+        logger.info(
+            "Proxy gateway started on "
+            f"{self._proxy_gateway_host}:{self._proxy_gateway_port}"
+        )
+
+        # Propagate proxy_gateway_addr to all rollout worker engines
+        # so that _resolve_workflow can pick it up for online mode.
+        self._collective_rpc(
+            "set_proxy_gateway_addr",
+            addr=self.proxy_gateway_addr,
+        )
+
+    @property
+    def proxy_gateway_addr(self) -> str:
+        """Single URL for external users."""
+        if self._proxy_gateway_host is None:
+            raise RuntimeError("Proxy gateway not started")
+        return f"http://{self._proxy_gateway_host}:{self._proxy_gateway_port}"
+
+    def _stop_proxy_gateway(self) -> None:
+        """Stop the proxy gateway server if running."""
+        if self._proxy_gateway_host is None:
+            return
+        logger.info("Stopping proxy gateway...")
+        if self._proxy_gateway_server is not None:
+            self._proxy_gateway_server.should_exit = True
+        if self._proxy_gateway_thread is not None:
+            self._proxy_gateway_thread.join(timeout=30.0)
+            if self._proxy_gateway_thread.is_alive():
+                logger.warning(
+                    "Proxy gateway thread did not exit within 30s; "
+                    "daemon thread will be killed on process exit"
+                )
+        self._proxy_gateway_app = None
+        self._proxy_gateway_server = None
+        self._proxy_gateway_thread = None
+        self._proxy_gateway_port = None
+        self._proxy_gateway_host = None
 
     def _start_callback_server(self):
         """Start Flask HTTP server to receive callbacks from RolloutCallback."""
@@ -580,11 +696,15 @@ class RolloutController:
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
         return worker, rank
 
-    def _resolve_workflow_str(self, workflow: WorkflowLike) -> str:
+    def _resolve_workflow_str(self, workflow: WorkflowLike | None) -> str | None:
         """Resolve workflow to a string import path.
 
-        Handles RolloutWorkflow, agent workflow instances/classes, and string paths.
+        Handles RolloutWorkflow, agent workflow instances/classes, string paths,
+        and ``None`` (online mode).
         """
+        # None workflow = online mode (config-driven)
+        if workflow is None:
+            return None
 
         # String paths - return as-is
         if isinstance(workflow, str):

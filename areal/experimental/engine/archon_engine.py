@@ -74,6 +74,7 @@ from areal.experimental.models.archon.ulysses import (
     ulysses_gather_output,
     ulysses_slice_inputs,
 )
+from areal.experimental.models.archon.utils import is_moe_model_config
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
 from areal.models.tree_attn.functional import (
@@ -292,13 +293,18 @@ class ArchonEngine(TrainEngine):
         ac_config = self._build_ac_config()
         enable_compile = self.config.archon.enable_compile
 
+        # NOTE: Upgrading PyTorch may resolve these in the future.
         # Zero-bubble schedules (InterleavedZeroBubble, ZBVZeroBubble, DualPipeV)
-        # use split backward (I/W steps). This is incompatible with:
-        # 1. torch.compile - donated buffer optimization assumes a single
-        #    backward pass (retain_graph=False).
-        # 2. Op-level selective AC - its per-op cache (storage.pop) is consumed
+        # use split backward (I/W steps) with retain_graph=True between them.
+        # This is incompatible with:
+        # 1. torch.compile - disabled unconditionally for zero-bubble.
+        # 2. donated_buffer (MoE only) - MoE models have internally compiled
+        #    ops (via AOTAutograd) whose backward uses donated buffers. These
+        #    are freed after backward, conflicting with retain_graph=True.
+        #    Dense models have no such ops and are unaffected.
+        # 3. Op-level selective AC - its per-op cache (storage.pop) is consumed
         #    by the I step, leaving nothing for the W step recompute.
-        # 3. memory_budget AC - it depends on torch.compile.
+        # 4. memory_budget AC - it depends on torch.compile.
         # Full AC / layer-level selective AC use standard checkpoint_wrapper
         # whose gid-based recompute supports multiple backward passes.
         schedule_class = get_schedule_class(self.config.archon.pp_schedule)
@@ -315,6 +321,22 @@ class ArchonEngine(TrainEngine):
                     "Disabling torch.compile."
                 )
                 enable_compile = False
+
+            # NOTE: Upgrading PyTorch may resolve this in the future.
+            # MoE models have internally compiled ops (via AOTAutograd)
+            # whose backward uses donated buffers - these conflict with
+            # retain_graph=True in split backward. Dense models have no
+            # such ops and are unaffected.
+            if is_moe_model_config(self.model_config):
+                import torch._functorch.config as functorch_config
+
+                if getattr(functorch_config, "donated_buffer", False):
+                    self.logger.info(
+                        f"{schedule_name} requires donated_buffer=False "
+                        "for MoE models (internally compiled ops conflict "
+                        "with retain_graph=True in split backward). Disabling."
+                    )
+                    functorch_config.donated_buffer = False
 
             if ac_config is not None and (
                 (
@@ -899,7 +921,7 @@ class ArchonEngine(TrainEngine):
             reduce_dtype=torch.float32,
             loss_parallel=True,
             cpu_offload=self.config.archon.offload_params,
-            reshard_after_forward_policy="default",
+            reshard_after_forward_policy=self.config.archon.reshard_after_forward_policy,
             ac_config=ac_config,
             enable_compile=enable_compile,
         )
@@ -938,7 +960,7 @@ class ArchonEngine(TrainEngine):
             reduce_dtype=torch.float32,
             loss_parallel=True,
             cpu_offload=self.config.archon.offload_params,
-            reshard_after_forward_policy="default",
+            reshard_after_forward_policy=self.config.archon.reshard_after_forward_policy,
             ac_config=ac_config,
             enable_compile=enable_compile,
         )
@@ -1239,16 +1261,20 @@ class ArchonEngine(TrainEngine):
 
         input_ = amend_position_ids(input_)
 
-        # Pipeline parallelism requires n_microbatches >= pp_stages
+        # Pipeline parallelism requires n_microbatches >= num_total_stages
         if self.parallel_dims.pp_enabled:
             pp_size = self.parallel_dims.pp
+            stages_per_rank = len(self.pp_stages)
+            num_total_stages = pp_size * stages_per_rank
             n_seqs = input_["attention_mask"].shape[0]
-            if n_seqs < pp_size:
+            if n_seqs < num_total_stages:
                 raise RuntimeError(
-                    f"Pipeline parallelism requires at least {pp_size} sequences, "
-                    f"but got {n_seqs}. Increase batch size or reduce PP degree."
+                    f"Pipeline parallelism requires at least {num_total_stages} "
+                    f"sequences (pp_size={pp_size} * stages_per_rank="
+                    f"{stages_per_rank}), but got {n_seqs}. "
+                    f"Increase batch size or reduce PP degree/stages."
                 )
-            min_n_mbs = pp_size
+            min_n_mbs = num_total_stages
             mb_spec = MicroBatchSpec.new(
                 self.config.mb_spec,
                 n_mbs=max(min_n_mbs, self.config.mb_spec.n_mbs or 1),
