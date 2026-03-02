@@ -55,6 +55,8 @@ Two example configurations are provided:
 | `config_1.7b_airline.yaml`    | Qwen3-1.7B    | 1 node, 8 GPUs   | `sglang:d6+archon:d2`                            | Small-scale local training              |
 | `config_8b_airline.yaml`      | Qwen3-8B      | 3 nodes, 24 GPUs | `sglang:d16+archon:d8`                           | Multi-node Slurm training               |
 | `config_30b_moe_airline.yaml` | Qwen3-30B-A3B | 8 nodes, 64 GPUs | `sglang:d8t4+megatron:(attn:d4p4t2\|ffn:d2p4e4)` | Multi-node Slurm training for MOE model |
+| `config_235b_moe_airline.yaml` | Qwen3-235B-A22B | 10 nodes, 80 GPUs | `sglang:d4t8+megatron:(attn:d1p12t4c1\|ffn:d1p12t1e4)` | Multi-node Slurm training for MOE model |
+
 
 ### Prepare User Simulator Server
 
