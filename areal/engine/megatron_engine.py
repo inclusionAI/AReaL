@@ -217,6 +217,25 @@ class MegatronEngine(TrainEngine):
             self.logger.warning("Seed not set, using default seed 42.")
             self.seed = 42
 
+        # Handle adam_bf16 optimizer conversion for Megatron
+        if self.optimizer_config.type == "adam_bf16":
+            self.logger.info(
+                "Detected 'adam_bf16' optimizer with Megatron Engine. "
+                "Automatically converting to 'adam' with precision-aware optimizer "
+                "and setting exp_avg_dtype/exp_avg_sq_dtype to 'bfloat16'."
+            )
+            # Modify config
+            self.optimizer_config.type = "adam"
+            self.mcore_config.use_precision_aware_optimizer = True
+            self.mcore_config.exp_avg_dtype = "bfloat16"
+            self.mcore_config.exp_avg_sq_dtype = "bfloat16"
+            # Ensure dtype is bfloat16
+            if self.dtype != torch.bfloat16:
+                self.logger.info(
+                    "Overriding dtype to bfloat16 for adam_bf16 optimizer."
+                )
+                self.dtype = torch.bfloat16
+
         assert addr is None, "FSDPEngine does not support remote initialization."
 
         if is_tms_enabled():

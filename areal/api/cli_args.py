@@ -1914,6 +1914,19 @@ class BaseExperimentConfig:
     # NOTE: we need this unified config class because different experiments
     # have different config structures, e.g., GRPO has two engine configs,
     # but SFT only has a single one. We use subclasses to represent these structures.
+
+    def __post_init__(self):
+        """Validate configuration for Megatron + adam_bf16."""
+        from areal.api.alloc_mode import AllocationMode
+
+        am = AllocationMode.from_str(self.allocation_mode)
+        if am.train_backend == "megatron" and self.actor.optimizer.type == "adam_bf16":
+            if self.actor.dtype != "bfloat16":
+                raise ValueError(
+                    f"dtype must be 'bfloat16' for adam_bf16 optimizer with Megatron Engine, "
+                    f"got '{self.actor.dtype}'."
+                )
+
     experiment_name: str = field(
         default=MISSING,
         metadata={"help": "Name of the experiment (no '_' or '/'). Required."},
@@ -2064,37 +2077,6 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def _validate_cfg(cfg: Any) -> None:
-    """Validate configuration for consistency and correctness."""
-    from areal.api.alloc_mode import AllocationMode
-
-    am = AllocationMode.from_str(cfg.allocation_mode)
-    if am.train_backend == "megatron" and cfg.actor.optimizer.type == "adam_bf16":
-        if cfg.actor.dtype != "bfloat16":
-            raise ValueError(
-                f"dtype must be 'bfloat16' for adam_bf16 optimizer with Megatron Engine, "
-                f"got '{cfg.actor.dtype}'."
-            )
-
-
-def _modify_cfg(cfg: Any) -> None:
-    """Modify configuration for Megatron engine."""
-    from areal.api.alloc_mode import AllocationMode
-
-    am = AllocationMode.from_str(cfg.allocation_mode)
-    if am.train_backend == "megatron" and cfg.actor.optimizer.type == "adam_bf16":
-        logger = logging.getLogger("ConfigModifier")
-        logger.warning(
-            "Detected 'adam_bf16' optimizer with Megatron Engine. "
-            "Automatically converting to 'adam' with precision-aware optimizer and setting exp_avg_dtype/exp_avg_sq_dtype dtypes to 'bfloat16'."
-        )
-        cfg.actor.dtype = "bfloat16"
-        cfg.actor.optimizer.type = "adam"
-        cfg.actor.megatron.use_precision_aware_optimizer = True
-        cfg.actor.megatron.exp_avg_dtype = "bfloat16"
-        cfg.actor.megatron.exp_avg_sq_dtype = "bfloat16"
-
-
 def load_expr_config[ConfigT](
     argv: list[str], config_cls: type[ConfigT]
 ) -> tuple[ConfigT, str]:
@@ -2102,8 +2084,6 @@ def load_expr_config[ConfigT](
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
 
     cfg = OmegaConf.to_object(cfg)
-    _validate_cfg(cfg)
-    _modify_cfg(cfg)
     assert isinstance(cfg, config_cls)
     # Setup environment
 
