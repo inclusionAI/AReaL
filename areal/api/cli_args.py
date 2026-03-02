@@ -1439,7 +1439,7 @@ class OpenAIProxyConfig:
         metadata={
             "help": "HTTP address of an external Agent Service (e.g., 'http://host:8300'). "
             "Required when mode='service'. Start the service with: "
-            "python -m areal.experimental.agent_service --port 8300 --agent-import-path your.Agent"
+            "python -m areal.experimental.agent_service --agent-import-path your.Agent"
         },
     )
 
