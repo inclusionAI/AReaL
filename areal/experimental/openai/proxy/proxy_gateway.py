@@ -365,20 +365,22 @@ def create_proxy_gateway_app(
             "reuse" if requested_key else "new",
         )
 
+        # Reject if a refresh is already in flight for this key.
+        # Must be checked BEFORE `in routes` since refresh pops the route.
+        if requested_key and requested_key in _refreshing:
+            return Response(
+                status_code=429,
+                content=json.dumps(
+                    {"detail": "A refresh is already in progress for this key."}
+                ).encode(),
+            )
+
         # ---- REFRESH PATH ----
         # Known key with an active route → end old session, wait for
         # the training pipeline to cycle, start a new session.
         if requested_key and requested_key in known_keys and requested_key in routes:
-            # Reject concurrent refresh for the same key.
-            if requested_key in _refreshing:
-                return Response(
-                    status_code=429,
-                    content=json.dumps(
-                        {"detail": "A refresh is already in progress for this key."}
-                    ).encode(),
-                )
-
             _refreshing.add(requested_key)
+            ready_entry: _ReadyWorkerEntry | None = None
             try:
                 old_route = routes.pop(requested_key)
                 logger.info(
@@ -391,7 +393,7 @@ def create_proxy_gateway_app(
 
                 # Skip stale ready entries within the deadline.
                 deadline = asyncio.get_running_loop().time() + refresh_timeout
-                ready_entry: _ReadyWorkerEntry | None = None
+                ready_entry = None
                 while True:
                     remaining = deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
@@ -465,6 +467,9 @@ def create_proxy_gateway_app(
             except Exception:
                 known_keys.pop(requested_key, None)
                 _reject_future(old_route.pending_future, "Refresh failed unexpectedly")
+                # Also settle the new worker's future if we consumed one
+                if ready_entry is not None:
+                    _reject_future(ready_entry.future, "Refresh failed unexpectedly")
                 raise
             finally:
                 _refreshing.discard(requested_key)

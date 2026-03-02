@@ -4,6 +4,7 @@ trial_name: trial0
 seed: 1
 enable_offload: false
 total_train_epochs: 10
+total_trian_steps: 100
 tokenizer_path: ${actor.path}
 
 cluster:

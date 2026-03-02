@@ -678,10 +678,9 @@ class TestConcurrentRefreshRejected:
                 headers=_admin_headers(),
                 json={"task_id": "t", "api_key": "k1"},
             )
-            # The first refresh already popped the route, so the second
-            # request falls through to round-robin (no mock → 500) or
-            # hits the sentinel (429) if the route was still present.
-            assert resp2.status_code in (429, 500)
+            # The _refreshing guard now rejects concurrent refreshes for the
+            # same key before checking `routes`, so this reliably returns 429.
+            assert resp2.status_code == 429
 
             # Clean up.
             refresh1.cancel()

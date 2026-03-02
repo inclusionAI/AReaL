@@ -60,16 +60,17 @@ class _EmptyDataLoader:
     """Minimal dataloader for online mode that yields empty dicts.
 
     Compatible with ``cycle_dataloader()`` and ``len()`` expectations.
-    Each "epoch" produces a single batch of ``batch_size`` empty dicts,
-    so the training loop collects the correct number of trajectories
-    before proceeding to a train step.
+    ``steps_per_epoch`` controls how many steps constitute one epoch,
+    derived from ``total_train_steps // total_train_epochs`` to ensure
+    epoch-frequency-gated components (Saver, RecoverHandler) behave correctly.
     """
 
-    def __init__(self, batch_size: int = 1):
+    def __init__(self, batch_size: int = 1, steps_per_epoch: int = 1):
         self.batch_size = batch_size
+        self._steps_per_epoch = steps_per_epoch
 
     def __len__(self) -> int:
-        return 1  # 1 step per "epoch" for online mode
+        return self._steps_per_epoch
 
     def __iter__(self):
         while True:
@@ -123,9 +124,26 @@ class PPOTrainer:
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
         if train_dataset is None:
-            # Online mode: use empty data generator
+            # Online mode: require total_train_steps to compute steps_per_epoch.
+            # Without this, __len__()=1 causes every step to be treated as an
+            # epoch boundary, making Saver/RecoverHandler fire every step and
+            # corrupting the LR schedule.
+            if config.total_train_steps is None:
+                raise ValueError(
+                    "total_train_steps must be set for online mode "
+                    "(train_dataset is None). Both total_train_epochs and "
+                    "total_train_steps are needed to compute steps_per_epoch."
+                )
+            steps_per_epoch = config.total_train_steps // config.total_train_epochs
+            if steps_per_epoch < 1:
+                raise ValueError(
+                    f"total_train_steps ({config.total_train_steps}) must be >= "
+                    f"total_train_epochs ({config.total_train_epochs}) so that "
+                    f"steps_per_epoch >= 1."
+                )
             self.train_dataloader = _EmptyDataLoader(
-                batch_size=config.train_dataset.batch_size
+                batch_size=config.train_dataset.batch_size,
+                steps_per_epoch=steps_per_epoch,
             )
         else:
             self.train_dataloader = self._create_dataloader(
