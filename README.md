@@ -34,7 +34,7 @@ as much as you'd enjoy real milk tea. Cheers!
 
 **\[2026/03/02\]** We provide [a complete example](./examples/openclaw/) to train your
 own 🦞 OpenClaw agent by simply replacing the `base_url` and `api_key` with AReaL's RL
-service—no complicated dependencies, no code changes, works with any agentic runtime!
+service - no complicated dependencies, no code changes, works with any agentic runtime!
 
 **\[2026/02/06\]** We are delighted to introduce **EigenData**, a self-evolving data
 synthesis engine. Combined with RL training on AReaL, the 235B MoE model surpasses GPT 5
