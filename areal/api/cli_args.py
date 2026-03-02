@@ -1381,17 +1381,18 @@ class OpenAIProxyConfig:
         default="inline",
         metadata={
             "help": (
-                "OpenAI proxy mode: 'inline' (in-process) or 'subproc' (subprocess). "
+                "OpenAI proxy mode: 'inline' (in-process), 'subproc' (subprocess), "
+                "or 'online' (external user sessions for online RL training). "
                 "`inline` mode runs the provided agent workflow directly in the same process. "
-                "It can use the provided `base_url` and `http_client` to reduce overhead. "
-                "`subproc` mode launches a separate process to run the agent with `OPENAI_BASE_URL` environment variable, "
-                "which offers more flexible deployment options at the cost of larger overhead."
+                "`subproc` mode launches a separate process to run the agent. "
+                "`online` mode waits for external users to complete sessions via "
+                "the proxy gateway URL, enabling online RL training."
             ),
-            "choices": ["inline", "subproc"],
+            "choices": ["inline", "subproc", "online"],
         },
     )
     tool_call_parser: str = field(
-        default="qwen3",
+        default="qwen",
         metadata={"help": "Parser for tool calls in model output."},
     )
     reasoning_parser: str = field(
