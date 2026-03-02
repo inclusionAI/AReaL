@@ -171,81 +171,109 @@ class GoogleVisionQATask(VisionQATask):
     def _build_sft_messages(self) -> List[Dict[str, Any]]:
         """Build SFT-format messages for training.
 
-        Combines observation (user/tool/image messages) with action records (assistant messages with tool_calls).
+        Uses self.contents which has the complete conversation including phase 1 reasoning
+        and tool_calls information (added by parse_action).
         """
         import json
 
-        if not self.conversation_history:
-            return []
-
         messages = []
-        added_items = set()
 
-        for idx, record in enumerate(self.conversation_history):
-            step = record["step"]
-            observation = record.get("observation", [])
-
-            # Add observation items (user messages, images, tool responses)
-            for obs_idx, item in enumerate(observation):
-                item_id = (step, obs_idx, json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item))
-                if item_id in added_items:
-                    continue
-
-                if isinstance(item, dict):
-                    if "parts" in item and "role" in item:
-                        # Stringified Content - only add if it's NOT an assistant/model message
-                        # (assistant messages come from action_record)
-                        role = item.get("role")
-                        if role not in ("model", "assistant"):
-                            msg = self._convert_google_content_to_sft(item)
-                            if msg:
-                                messages.append(msg)
-                                added_items.add(item_id)
-                    elif "image_data" in item:
-                        image_path = item["image_data"]
-                        if image_path:
-                            if messages and messages[-1]["role"] == "user":
-                                if isinstance(messages[-1]["content"], str):
-                                    messages[-1]["content"] = [{"type": "text", "text": messages[-1]["content"]}]
-                                messages[-1]["content"].append({
-                                    "type": "image_url",
-                                    "image_url": {"url": f"file://{image_path}"}
-                                })
-                            else:
-                                messages.append({
-                                    "role": "user",
-                                    "content": [{"type": "image_url", "image_url": {"url": f"file://{image_path}"}}]
-                                })
-                            added_items.add(item_id)
-                elif isinstance(item, str):
-                    if messages and messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list):
+        # Convert all contents to SFT format
+        for item in self.contents:
+            if isinstance(item, str):
+                # Text message (user prompt or observation label)
+                if messages and messages[-1]["role"] == "user":
+                    # Append to last user message
+                    if isinstance(messages[-1]["content"], str):
+                        messages[-1]["content"] = [{"type": "text", "text": messages[-1]["content"]}]
+                    if isinstance(messages[-1]["content"], list):
                         messages[-1]["content"].append({"type": "text", "text": item})
+                else:
+                    messages.append({"role": "user", "content": item})
+            elif isinstance(item, Image.Image):
+                # Image
+                image_id = id(item)
+                image_path = self.image_path_map.get(image_id, "")
+                if image_path:
+                    if messages and messages[-1]["role"] == "user":
+                        if isinstance(messages[-1]["content"], str):
+                            messages[-1]["content"] = [{"type": "text", "text": messages[-1]["content"]}]
+                        messages[-1]["content"].append({
+                            "type": "image_url",
+                            "image_url": {"url": f"file://{image_path}"}
+                        })
                     else:
-                        messages.append({"role": "user", "content": item})
-                    added_items.add(item_id)
-
-            # Add assistant message from action_record
-            action_record = record.get("action", {})
-            thinking_process = record.get("thinking_process", "")
-            output_text = record.get("output_text", "")
-            function_calls = record.get("function_call")
-
-            # Parse action_record which is a stringified Content
-            if isinstance(action_record, dict) and "parts" in action_record:
-                assistant_msg = self._convert_google_content_to_sft(action_record)
-                if assistant_msg:
-                    # Override content with thinking + output if available
-                    content_parts = []
-                    if thinking_process:
-                        content_parts.append(thinking_process)
-                    if output_text:
-                        content_parts.append(output_text)
-                    if content_parts:
-                        assistant_msg["content"] = "\n".join(content_parts)
-
-                    messages.append(assistant_msg)
+                        messages.append({
+                            "role": "user",
+                            "content": [{"type": "image_url", "image_url": {"url": f"file://{image_path}"}}]
+                        })
+            else:
+                # Google Content object (assistant or tool message)
+                from google.genai import types
+                if isinstance(item, types.Content):
+                    msg = self._convert_google_content_to_sft_from_object(item)
+                    if msg:
+                        messages.append(msg)
 
         return messages
+
+    def _convert_google_content_to_sft_from_object(self, content: Any) -> Dict[str, Any] | None:
+        """Convert Google Content object to SFT format."""
+        import json
+        from google.genai import types
+
+        if not isinstance(content, types.Content):
+            return None
+
+        role = content.role
+        if not role:
+            return None
+
+        # Convert role: "model" -> "assistant"
+        sft_role = "assistant" if role == "model" else role
+
+        parts = content.parts
+        if not parts:
+            return None
+
+        msg = {"role": sft_role, "content": []}
+        tool_calls = []
+
+        for part in parts:
+            # Handle text
+            if part.text and not part.thought:
+                msg["content"].append({"type": "text", "text": part.text})
+
+            # Handle function_call
+            if part.function_call:
+                tool_calls.append({
+                    "id": f"call_{part.function_call.name}",
+                    "type": "function",
+                    "function": {
+                        "name": part.function_call.name,
+                        "arguments": json.dumps(dict(part.function_call.args)) if part.function_call.args else "{}"
+                    }
+                })
+
+            # Handle function_response (tool role)
+            if part.function_response and sft_role == "tool":
+                return {
+                    "role": "tool",
+                    "tool_call_id": f"call_{part.function_response.name}",
+                    "content": json.dumps(dict(part.function_response.response)) if part.function_response.response else "{}"
+                }
+
+        # Add tool_calls if present
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+
+        # Simplify content if it's just one text part
+        if len(msg["content"]) == 1 and msg["content"][0]["type"] == "text":
+            msg["content"] = msg["content"][0]["text"]
+        elif not msg["content"]:
+            msg["content"] = ""
+
+        return msg
 
     def _convert_google_content_to_sft(self, content_dict: Dict[str, Any]) -> Dict[str, Any] | None:
         """Convert stringified Google Content to SFT format."""

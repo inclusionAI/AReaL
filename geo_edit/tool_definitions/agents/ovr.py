@@ -12,7 +12,7 @@ logger = setup_logger(__name__)
 
 SYSTEM_PROMPT = (
     "You are a math problem solving expert with visual reasoning capabilities. "
-    "Analyze the image carefully and provide your reasoning step by step, but do NOT give the final answer."
+    "According to the user's request, analyze the image carefully and provide your reasoning step by step, but do NOT give the final answer."
 )
 
 agent_config = {

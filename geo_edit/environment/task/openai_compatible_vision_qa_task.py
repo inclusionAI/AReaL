@@ -387,8 +387,8 @@ class OpenAICompatibleVisionQATask(VisionQATask):
     def _build_sft_messages(self) -> List[Dict[str, Any]]:
         """Build SFT-format messages for training.
 
-        Uses self.contents which has the complete conversation including phase 1 reasoning.
-        Then enriches assistant messages with tool_calls from conversation_history.
+        Uses self.contents which has the complete conversation including phase 1 reasoning
+        and tool_calls information (added by parse_action).
         """
         messages = []
 
@@ -404,49 +404,6 @@ class OpenAICompatibleVisionQATask(VisionQATask):
                 msg = self._convert_observation_item_to_sft(item)
                 if msg:
                     messages.append(msg)
-
-        # Enrich assistant messages with tool_calls from conversation_history
-        assistant_msg_index = 0
-        for record in self.conversation_history:
-            function_calls = record.get("function_call")
-            if not function_calls:
-                continue
-
-            action_record = record.get("action", {})
-            tool_call_records = action_record.get("tool_calls", [])
-
-            # Find the next assistant message without tool_calls
-            while assistant_msg_index < len(messages):
-                msg = messages[assistant_msg_index]
-                if msg.get("role") == "assistant" and "tool_calls" not in msg:
-                    # This is the assistant message that should have tool_calls
-                    tool_calls = []
-                    for func_name, func_args in function_calls:
-                        matching_call = next((tc for tc in tool_call_records if tc.get("name") == func_name), None)
-
-                        if matching_call:
-                            tool_calls.append({
-                                "id": matching_call.get("id", f"call_{func_name}"),
-                                "type": "function",
-                                "function": {
-                                    "name": func_name,
-                                    "arguments": matching_call.get("arguments", json.dumps(func_args) if isinstance(func_args, dict) else str(func_args))
-                                }
-                            })
-                        else:
-                            tool_calls.append({
-                                "id": f"call_{record['step']}_{func_name}",
-                                "type": "function",
-                                "function": {
-                                    "name": func_name,
-                                    "arguments": json.dumps(func_args) if isinstance(func_args, dict) else str(func_args)
-                                }
-                            })
-
-                    msg["tool_calls"] = tool_calls
-                    assistant_msg_index += 1
-                    break
-                assistant_msg_index += 1
 
         return messages
 
