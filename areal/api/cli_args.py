@@ -289,7 +289,9 @@ class OptimizerConfig:
     type: str = field(
         default="adam",
         metadata={
-            "help": "Optimizer type. Adam_bf16 currently only supported FSDP Engine.",
+            "help": "Optimizer type. For FSDP Engine, adam_bf16 enables memory-efficient BF16 optimizer states. "
+            "For Megatron Engine, adam_bf16 requires dtype=bfloat16 and is automatically converted to adam "
+            "with precision-aware optimizer enabled.",
             "choices": ["adam", "sgd", "adam_bf16"],
         },
     )
@@ -489,6 +491,18 @@ class ArchonEngineConfig:
         },
     )
 
+    # FSDP reshard policy after forward pass
+    reshard_after_forward_policy: str = field(
+        default="default",
+        metadata={
+            "help": "FSDP reshard policy after forward pass. "
+            "'default': reshard when pipeline parallelism is off; keep unsharded when on to avoid repeated all-gather per microbatch. "
+            "'always': always reshard after forward (saves memory). "
+            "'never': never reshard after forward.",
+            "choices": ["default", "always", "never"],
+        },
+    )
+
     # Deterministic mode
     use_deterministic_algorithms: bool = field(
         default=False,
@@ -514,6 +528,12 @@ class ArchonEngineConfig:
             raise ValueError(
                 f"pp_last_stage_less_layers must be >= 0, "
                 f"got {self.pp_last_stage_less_layers}"
+            )
+        valid_reshard_policies = ("default", "always", "never")
+        if self.reshard_after_forward_policy not in valid_reshard_policies:
+            raise ValueError(
+                f"reshard_after_forward_policy must be one of {valid_reshard_policies}, "
+                f"got '{self.reshard_after_forward_policy}'"
             )
 
 
@@ -667,7 +687,14 @@ class MegatronEngineConfig:
     overlap_param_gather_with_optimizer_step: bool = False
 
     # Precision Configuration
-    use_precision_aware_optimizer: bool = False
+    use_precision_aware_optimizer: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable precision-aware optimizer for Megatron. "
+            "When using adam_bf16 optimizer type with Megatron Engine, "
+            "this is automatically enabled with exp_avg_dtype=bfloat16 and exp_avg_sq_dtype=bfloat16."
+        },
+    )
     main_grads_dtype: str = "float32"
     main_params_dtype: str = "float32"
     exp_avg_dtype: str = "float32"
@@ -1329,6 +1356,9 @@ class SGLangConfig:
     # and passed as `model_loader_extra_config` to SGLang.
     enable_multithread_load: bool = False
 
+    # Internal field, not exposed to users.
+    enable_return_routed_experts: bool = False
+
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
     def build_cmd(
@@ -1416,17 +1446,18 @@ class OpenAIProxyConfig:
         default="inline",
         metadata={
             "help": (
-                "OpenAI proxy mode: 'inline' (in-process) or 'subproc' (subprocess). "
+                "OpenAI proxy mode: 'inline' (in-process), 'subproc' (subprocess), "
+                "or 'online' (external user sessions for online RL training). "
                 "`inline` mode runs the provided agent workflow directly in the same process. "
-                "It can use the provided `base_url` and `http_client` to reduce overhead. "
-                "`subproc` mode launches a separate process to run the agent with `OPENAI_BASE_URL` environment variable, "
-                "which offers more flexible deployment options at the cost of larger overhead."
+                "`subproc` mode launches a separate process to run the agent. "
+                "`online` mode waits for external users to complete sessions via "
+                "the proxy gateway URL, enabling online RL training."
             ),
-            "choices": ["inline", "subproc"],
+            "choices": ["inline", "subproc", "online"],
         },
     )
     tool_call_parser: str = field(
-        default="qwen3",
+        default="qwen",
         metadata={"help": "Parser for tool calls in model output."},
     )
     reasoning_parser: str = field(
@@ -1592,6 +1623,12 @@ class InferenceEngineConfig:
             "help": "OpenAI proxy configuration (used when workflow is an agent workflow)."
         },
     )
+    return_routed_experts: bool = field(
+        default=False,
+        metadata={
+            "help": "Return routed expert indices for MoE models. Effective only when using SGLang engine with MoE models."
+        },
+    )
 
     def __post_init__(self):
         """Validate scheduling_spec length."""
@@ -1712,7 +1749,12 @@ class SwanlabConfig:
     config: dict | None = None
     logdir: str | None = None
     mode: str | None = "disabled"
-    api_key: str | None = os.getenv("SWANLAB_API_KEY", None)
+    # set None to prevent info-leak in docs
+    api_key: str | None = None
+
+    def __post_init__(self):
+        if self.api_key is None:
+            self.api_key = os.getenv("SWANLAB_API_KEY")
 
 
 @dataclass

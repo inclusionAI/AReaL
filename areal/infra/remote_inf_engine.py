@@ -15,6 +15,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol
 
 import aiohttp
+import numpy as np
 import ray
 import requests
 import torch.distributed as dist
@@ -350,6 +351,7 @@ class RemoteInfEngine(InferenceEngine):
 
         self._workflow_executor: WorkflowExecutor | None = None
         self._initialized = False
+        self._proxy_gateway_addr: str | None = None
         self.local_server_processes: list[LocalInfServerInfo] = []
 
     def _wait_for_server(self, address):
@@ -484,13 +486,24 @@ class RemoteInfEngine(InferenceEngine):
         with self.lock:
             return self._version
 
-    def _wrap_openai_agent(self, agent, proxy_addr: str) -> RolloutWorkflow:
+    def set_proxy_gateway_addr(self, addr: str) -> None:
+        """Set the proxy gateway address.
+
+        Called by ``RolloutController.start_proxy_gateway()`` via
+        collective RPC after the proxy gateway is started.
+        """
+        # HACK: We'd better not have this kind of setter beyond well-defined APIs,
+        # but for now it's a workaround for the next release.
+        self._proxy_gateway_addr = addr
+
+    def _wrap_openai_agent(self, agent: Any, proxy_addr: str) -> RolloutWorkflow:
         """Wrap an agent workflow in OpenAIProxyWorkflow (HTTP mode only).
 
         Parameters
         ----------
-        agent : Any
-            The agent workflow to wrap (any class with async run() method)
+        agent : Any | None
+            The agent workflow to wrap (any class with async run() method).
+            ``None`` is valid when ``mode='online'``.
         proxy_addr : str
             HTTP address of the proxy server (required)
         """
@@ -506,16 +519,32 @@ class RemoteInfEngine(InferenceEngine):
             discount=openai_cfg.turn_discount,
             export_style=openai_cfg.export_style,
             subproc_max_workers=openai_cfg.subproc_max_workers,
+            proxy_gateway_addr=self._proxy_gateway_addr,
         )
 
     def _resolve_workflow(
         self,
-        workflow: WorkflowLike,
+        workflow: WorkflowLike | None,
         workflow_kwargs: dict[str, Any] | None,
         group_size: int = 1,
         proxy_addr: str | None = None,
     ) -> RolloutWorkflow:
         resolved: RolloutWorkflow
+
+        # 0. None workflow = online mode (config-driven)
+        if workflow is None:
+            openai_cfg = self.config.openai or OpenAIProxyConfig()
+            if openai_cfg.mode != "online":
+                raise ValueError(
+                    "workflow is None but OpenAIProxyConfig.mode is not 'online'. "
+                    "Provide a workflow or set mode='online' in the config."
+                )
+            if proxy_addr is None:
+                raise ValueError("proxy_addr is required for online mode")
+            resolved = self._wrap_openai_agent(None, proxy_addr=proxy_addr)
+            if group_size > 1:
+                resolved = GroupedRolloutWorkflow(resolved, group_size, self.logger)
+            return resolved
 
         # 1. Already a RolloutWorkflow instance
         if isinstance(workflow, RolloutWorkflow):
@@ -688,6 +717,10 @@ class RemoteInfEngine(InferenceEngine):
         # we are going to modify it in-place
         req = req.copy()
 
+        # Populate return_routed_experts from config to metadata
+        if self.config.return_routed_experts:
+            req.metadata["return_routed_experts"] = True
+
         # Validate n_samples
         gconfig = req.gconfig
         if gconfig.n_samples != 1:
@@ -715,6 +748,7 @@ class RemoteInfEngine(InferenceEngine):
         accumulated_output_tokens = []
         accumulated_output_logprobs = []
         accumulated_versions = []
+        accumulated_routed_experts: list[np.ndarray] = []
 
         # A single "rid" shares the same server to allow KV cache reuse
         if req.rid in self.rid_to_address:
@@ -771,12 +805,26 @@ class RemoteInfEngine(InferenceEngine):
             gen_result = self.backend.parse_generation_response(result)
             stop_reason = gen_result.stop_reason
 
+            if (
+                req.metadata.get("return_routed_experts", False)
+                and gen_result.routed_experts is None
+            ):
+                if stop_reason != "abort":  # Only validate for successful generations
+                    raise RuntimeError(
+                        "Requested return_routed_experts=True but received None from SGLang. "
+                        "This usually means the model is not a MoE (Mixture of Experts) model. "
+                        "Please use a MoE model to get routed_experts information."
+                    )
+
             # Update accumulated outputs
             accumulated_output_tokens.extend(gen_result.output_tokens)
             accumulated_output_logprobs.extend(gen_result.output_logprobs)
             accumulated_versions.extend(
                 [self.get_version()] * len(gen_result.output_tokens)
             )
+            # Accumulate routed_experts for MoE models
+            if gen_result.routed_experts is not None:
+                accumulated_routed_experts.append(gen_result.routed_experts)
 
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens
@@ -796,6 +844,12 @@ class RemoteInfEngine(InferenceEngine):
 
         latency = time.perf_counter() - start_time
 
+        accumulated_routed_experts = (
+            np.concatenate(accumulated_routed_experts)
+            if accumulated_routed_experts
+            else None
+        )
+
         response = ModelResponse(
             input_tokens=req.input_ids[
                 : len(req.input_ids) - len(accumulated_output_tokens)
@@ -809,6 +863,7 @@ class RemoteInfEngine(InferenceEngine):
             ttft=latency,  # Simplified for non-streaming
             tokenizer=req.tokenizer,
             processor=req.processor,
+            routed_experts=accumulated_routed_experts,
         )
         return response
 
@@ -969,7 +1024,12 @@ class RemoteInfEngine(InferenceEngine):
             HTTP address of the proxy server for AgentWorkflow. If provided,
             AgentWorkflow will use this proxy instead of a local one.
         """
-        assert workflow is not None, "Workflow must be specified for submit."
+        if workflow is None and (
+            self.config.openai is None or self.config.openai.mode != "online"
+        ):
+            raise ValueError(
+                "workflow must be specified for submit (unless mode='online')"
+            )
         if callback_addr:
             self.workflow_executor.dispatcher.register_callback(task_id, callback_addr)
 

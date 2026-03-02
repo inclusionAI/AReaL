@@ -20,6 +20,7 @@ from .server import DEFAULT_ADMIN_API_KEY, GRANT_CAPACITY_PATHNAME
 if TYPE_CHECKING:
     from ..client import TRolloutEngine
     from ..types import InteractionWithTokenLogpReward
+    from .proxy_gateway import CompletedSessionInfo
 
 logger = logging.getLogger("OpenAIProxyWorkflow")
 
@@ -70,27 +71,42 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
     def __init__(
         self,
         mode: str,
-        agent: Any,
-        proxy_addr: str,
+        agent: Any | None = None,
+        proxy_addr: str = "",
         admin_api_key: str = DEFAULT_ADMIN_API_KEY,
         discount: float = 1.0,
         export_style: str = "individual",
         subproc_max_workers: int = 4,
+        proxy_gateway_addr: str | None = None,
     ):
-        if mode not in ("inline", "subproc"):
-            raise ValueError(f"Invalid mode: {mode}. Must be 'inline' or 'subproc'")
+        if mode not in ("inline", "subproc", "online"):
+            raise ValueError(
+                f"Invalid mode: {mode}. Must be 'inline', 'subproc', or 'online'"
+            )
 
-        # Validate that agent has an async 'run' method
-        if not hasattr(agent, "run") or not callable(getattr(agent, "run")):
-            raise TypeError(
-                f"Agent must have a callable 'run' method. "
-                f"Got agent of type {type(agent).__name__} without a callable 'run' attribute."
+        if mode == "online":
+            if proxy_gateway_addr is None:
+                raise ValueError("proxy_gateway_addr is required when mode='online'")
+            from .online_agent import _OnlineAgent
+
+            agent = _OnlineAgent(
+                proxy_gateway_addr=proxy_gateway_addr,
+                admin_api_key=admin_api_key,
             )
-        if not asyncio.iscoroutinefunction(agent.run):
-            raise TypeError(
-                f"Agent's 'run' method must be an async function. "
-                f"Got {type(agent).__name__}.run which is not a coroutine function."
-            )
+        else:
+            if agent is None:
+                raise ValueError("agent is required when mode is 'inline' or 'subproc'")
+            # Validate that agent has an async 'run' method
+            if not hasattr(agent, "run") or not callable(getattr(agent, "run")):
+                raise TypeError(
+                    f"Agent must have a callable 'run' method. "
+                    f"Got agent of type {type(agent).__name__} without a callable 'run' attribute."
+                )
+            if not asyncio.iscoroutinefunction(agent.run):
+                raise TypeError(
+                    f"Agent's 'run' method must be an async function. "
+                    f"Got {type(agent).__name__}.run which is not a coroutine function."
+                )
 
         self.mode = mode
         self.agent = agent
@@ -125,6 +141,14 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 data,
                 extra_envs,
             )
+        if self.mode == "online":
+            http_client = await workflow_context.get_httpx_client()
+            extra_kwargs = {
+                "base_url": self.proxy_addr,
+                "http_client": http_client,
+                "api_key": self._admin_api_key,
+            }
+            return await self.agent.run(data, **extra_kwargs)
         raise ValueError(f"Unsupported mode: {self.mode}")
 
     async def _grant_capacity(self, session: aiohttp.ClientSession) -> None:
@@ -151,11 +175,38 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         # so we can grant capacity to let the agent session proceed.
         await self._grant_capacity(http_session)
 
-        proxy_client: OpenAIProxyClient | None = None
+        if self.mode == "online":
+            # Online mode: _OnlineAgent waits for external user session.
+            # Returns CompletedSessionInfo with session credentials.
+            session_info: CompletedSessionInfo = await self._run_agent(
+                self._admin_api_key, data
+            )
 
-        # Create proxy client to manage the lifecycle of an RL session
-        # An RL session creates a unique API key for isolating interactions
-        # for this agentic trajectory.
+            # Create proxy client for export only (no start/end session).
+            proxy_client = OpenAIProxyClient(
+                session=http_session,
+                base_url=self.proxy_addr,
+                task_id=str(task_id),
+                admin_api_key=self._admin_api_key,
+            )
+            proxy_client.session_id = session_info.session_id
+
+            interactions = await proxy_client.export_interactions(
+                discount=self.discount,
+                style=self.export_style,
+            )
+
+            # Record stats
+            last_id = list(interactions.keys())[-1] if interactions else None
+            if last_id and interactions:
+                last_reward = interactions[last_id].reward
+                stats_tracker.get(workflow_context.stat_scope()).scalar(
+                    reward=last_reward
+                )
+            return interactions
+
+        # ---- Normal mode (inline / subproc) ----
+
         proxy_client = OpenAIProxyClient(
             session=http_session,
             base_url=self.proxy_addr,

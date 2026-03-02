@@ -6,6 +6,8 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
+import numpy as np
+import pybase64
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig, PerfTracerConfig, SGLangConfig
@@ -66,6 +68,9 @@ class SGLangBackend:
             "stream": False,
         }
 
+        # Add return_routed_experts to payload if set
+        if req.metadata.get("return_routed_experts", False):
+            payload["return_routed_experts"] = True
         # Add LoRA if initialized
         if with_lora:
             lora_name = gconfig.lora_name
@@ -85,11 +90,24 @@ class SGLangBackend:
         finish_reason = meta_info["finish_reason"]
         stop_reason = finish_reason["type"]
         stop_message = finish_reason.get("message", "")
+
+        # Extract routed_experts information if available
+        routed_experts = meta_info.get("routed_experts", None)
+        if routed_experts is not None:
+            num_sgl_token = (
+                meta_info["prompt_tokens"] + meta_info["completion_tokens"] - 1
+            )
+            # Extract expert_id and reshape to (num_sgl_token, num_layers*expert_top_k)
+            routed_experts = np.frombuffer(
+                pybase64.b64decode(routed_experts.encode("utf-8")), dtype=np.int32
+            ).reshape(num_sgl_token, -1)
+
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):
             return HttpGenerationResult(
                 output_tokens=[],
                 output_logprobs=[],
                 stop_reason=stop_reason,
+                routed_experts=routed_experts,
             )
 
         output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
@@ -99,6 +117,7 @@ class SGLangBackend:
             output_tokens=output_tokens,
             output_logprobs=output_logprobs,
             stop_reason=stop_reason,
+            routed_experts=routed_experts,
         )
 
     def build_disk_weight_update_requests(
@@ -211,7 +230,6 @@ class SGLangBackend:
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch SGLang server subprocess."""
         cmd = SGLangConfig.build_cmd_from_args(server_args)
-
         _env = os.environ.copy()
         triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
         _env["TRITON_CACHE_PATH"] = os.path.join(triton_cache_path, str(uuid.uuid4()))
@@ -270,6 +288,9 @@ class RemoteSGLangEngine(InferenceEngine):
     def get_version(self) -> int:
         """Get the current weight version."""
         return self._engine.get_version()
+
+    def set_proxy_gateway_addr(self, addr: str) -> None:
+        return self._engine.set_proxy_gateway_addr(addr)
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request."""

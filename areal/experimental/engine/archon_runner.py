@@ -20,6 +20,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("ArchonRunner")
 
 
+class _NullOutputChunks(list):
+    def append(self, item: Any) -> None:
+        pass
+
+
 class ForwardBackwardRunner(ABC):
     """Abstract base for forward/backward execution strategies."""
 
@@ -216,9 +221,11 @@ class PipelinedRunner(ForwardBackwardRunner):
         if not self.has_last_stage:
             return None
         output_stage = self._get_output_stage()
-        return self._process_outputs(
+        results = self._process_outputs(
             output_stage.output_chunks, contexts, process_output_fn
         )
+        output_stage.output_chunks.clear()
+        return results
 
     def _run_train(
         self,
@@ -232,7 +239,24 @@ class PipelinedRunner(ForwardBackwardRunner):
         pp_loss_fn = self._create_loss_fn(contexts, process_output_fn)
         schedule = self._create_schedule(n_microbatches, loss_fn=pp_loss_fn)
         self._patch_skip_output_merge(schedule)
+
+        # NOTE: Upgrading PyTorch may resolve this in the future.
+        # Replace output_chunks with a null list so
+        # forward_one_chunk's `output_chunks.append(output)` becomes a no-op.
+        # (torch/distributed/pipelining/schedules.py)
+        # This lets each microbatch's logits be freed right after its backward,
+        # instead of holding all N sets of logits until step() returns.
+        output_stage = None
+        if self.has_last_stage:
+            output_stage = self._get_output_stage()
+            output_stage.output_chunks = _NullOutputChunks()
+
         schedule.step(*args, target=batched_target, **batched_kwargs)
+
+        # Restore normal list so subsequent eval() calls on the same
+        # stage can read output_chunks normally.
+        if output_stage is not None:
+            output_stage.output_chunks = []
         return []
 
     def _create_loss_fn(

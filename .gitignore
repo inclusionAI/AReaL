@@ -16,6 +16,7 @@ uv.lock
 
 # opencode
 .opencode/sessions/
+.sisyphus/
 
 # Ruff
 .ruff_cache/
