@@ -12,6 +12,7 @@ import requests
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
+    InferenceEngineConfig,
     NameResolveConfig,
     SGLangConfig,
     parse_cli_args,
@@ -214,6 +215,7 @@ def launch_sglang_server(argv):
     config.cluster.name_resolve = to_structured_cfg(
         config.cluster.name_resolve, NameResolveConfig
     )
+    config.rollout = to_structured_cfg(config.rollout, InferenceEngineConfig)
     name_resolve.reconfigure(config.cluster.name_resolve)
 
     allocation_mode = config.allocation_mode
