@@ -139,12 +139,13 @@ class RayScheduler(Scheduler):
 
         mode = placement_strategies[0]
 
-        if mode == "deferred":
-            return DeferredDeviceRayPlacementStrategy()
-        elif mode == "separate":
-            return SeparatedRayPlacementStrategy()
-        elif mode == "shared":
-            return SharedRayPlacementStrategy()
+        strategy_map = {
+            "deferred": DeferredDeviceRayPlacementStrategy,
+            "separate": SeparatedRayPlacementStrategy,
+            "shared": SharedRayPlacementStrategy,
+        }
+        if mode in strategy_map:
+            return strategy_map[mode]()
         else:
             raise RuntimeError(f"Ray scheduling mode {mode} is not supported")
 
