@@ -1141,7 +1141,9 @@ def cycle_dataloader(dataloader: StatefulDataLoader, num_cycles: int = -1):
     """Cycle through a dataloader indefinitely."""
     epoch = 0
     while True:
-        if isinstance(dataloader.sampler, DistributedSampler):
+        if hasattr(dataloader, "sampler") and isinstance(
+            dataloader.sampler, DistributedSampler
+        ):
             dataloader.sampler.set_epoch(epoch)
         yield from dataloader
         epoch += 1

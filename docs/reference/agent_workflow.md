@@ -333,16 +333,16 @@ lifecycle with the proxy server. Key interactions include:
 
 ### Proxy Endpoints
 
-| Endpoint                    | Auth        | Purpose                          |
-| --------------------------- | ----------- | -------------------------------- |
-| `POST /grant_capacity`      | Admin key   | Reserve slot (staleness control) |
-| `POST /rl/start_session`    | Admin key   | Create unique session ID         |
-| `POST /v1/chat/completions` | Session key | OpenAI chat completions API      |
-| `POST /v1/responses`        | Session key | OpenAI responses API             |
-| `POST /v1/messages`         | Session key | Anthropic Messages API           |
-| `POST /rl/set_reward`       | Session key | Assign reward to interaction     |
-| `POST /rl/end_session`      | Session key | Mark session complete            |
-| `POST /export_trajectories` | Session key | Export with reward discounting   |
+| Endpoint                    | Auth                             | Purpose                          |
+| --------------------------- | -------------------------------- | -------------------------------- |
+| `POST /grant_capacity`      | Admin key                        | Reserve slot (staleness control) |
+| `POST /rl/start_session`    | Admin key                        | Create unique session ID         |
+| `POST /v1/chat/completions` | Session key                      | OpenAI chat completions API      |
+| `POST /v1/responses`        | Session key                      | OpenAI responses API             |
+| `POST /v1/messages`         | Session key                      | Anthropic Messages API           |
+| `POST /rl/set_reward`       | Session key                      | Assign reward to interaction     |
+| `POST /rl/end_session`      | Session key                      | Mark session complete            |
+| `POST /export_trajectories` | Admin key + `session_id` in body | Export with reward discounting   |
 
 ## Session Lifecycle
 
@@ -371,7 +371,7 @@ Each agent execution follows this lifecycle:
    POST /rl/end_session (with session API key)
 
 6. Export trajectories
-   POST /export_trajectories (with session API key)
+   POST /export_trajectories (with admin API key, body: {session_id: ..., discount: 0.9})
      → Apply reward backpropagation
      → Return InteractionWithTokenLogpReward objects
      → Clean up session and API key mappings

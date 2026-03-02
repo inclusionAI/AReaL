@@ -400,7 +400,13 @@ def _cleanup_stale_sessions():
 
 @app.post(f"/{RL_START_SESSION_PATHNAME}", dependencies=[Depends(_require_admin_key)])
 def start_session(request: StartSessionRequest) -> StartSessionResponse:
-    """Start a new RL session and allocate a unique session API key."""
+    """Start a new RL session and allocate a unique session API key.
+
+    If ``request.api_key`` is provided, reuse that key instead of generating
+    a new one.  When the key already maps to a *finished* session on this
+    worker, the stale mapping is cleaned up first.  If it maps to an
+    *active* (unfinished) session, the request is rejected with HTTP 409.
+    """
     global _capacity
     task_id = request.task_id
 
@@ -419,13 +425,33 @@ def start_session(request: StartSessionRequest) -> StartSessionResponse:
         while (session_id := f"{task_id}-{idx}") in _session_cache:
             idx += 1
 
-        # Generate unique session API key
-        # (verify uniqueness inside lock)
-        session_api_key = secrets.token_urlsafe(32)
-        while (
-            session_api_key in _api_key_to_session or session_api_key == _admin_api_key
-        ):
+        # Resolve session API key
+        if request.api_key:
+            # Gateway requested a specific key (refresh / reuse).
+            session_api_key = request.api_key
+            if session_api_key == _admin_api_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot use the admin API key as a session key.",
+                )
+            existing_sid = _api_key_to_session.get(session_api_key)
+            if existing_sid is not None:
+                existing_session = _session_cache.get(existing_sid)
+                if existing_session is not None and not existing_session.is_completed:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"API key is already bound to active session {existing_sid}.",
+                    )
+                # Finished or orphaned — clean up the stale mapping.
+                _remove_api_keys_for_session(existing_sid)
+        else:
+            # Generate unique session API key (current behaviour).
             session_api_key = secrets.token_urlsafe(32)
+            while (
+                session_api_key in _api_key_to_session
+                or session_api_key == _admin_api_key
+            ):
+                session_api_key = secrets.token_urlsafe(32)
 
         _capacity -= 1
         _session_cache[session_id] = SessionData(session_id=session_id)
@@ -437,17 +463,23 @@ def start_session(request: StartSessionRequest) -> StartSessionResponse:
 
 @app.post(f"/{RL_END_SESSION_PATHNAME}")
 def end_session(session_id: str = Depends(_require_session_key)):
-    """End an RL session."""
+    """End an RL session.
+
+    Returns the number of recorded interactions so callers (e.g. the proxy
+    gateway refresh path) can decide whether meaningful trajectory data
+    exists.
+    """
     with _lock:
         if session_id not in _session_cache:
             raise HTTPException(
                 status_code=410, detail="Session already ended or expired"
             )
         session = _session_cache[session_id]
+        interaction_count = len(session.completions)
 
     # finish() outside lock to avoid holding lock during potential I/O
     session.finish()
-    return {"message": "success"}
+    return {"message": "success", "interaction_count": interaction_count}
 
 
 @app.post(f"/{RL_SET_REWARD_PATHNAME}")
@@ -787,12 +819,18 @@ async def anthropic_messages(
 
 @app.post(
     f"/{EXPORT_TRAJECTORIES_PATHNAME}",
+    dependencies=[Depends(_require_admin_key)],
 )
 async def export_trajectories(
     request: ExportTrajectoriesRequest,
-    session_id: str = Depends(_require_session_key),
 ) -> ExportTrajectoriesResponse:
-    """Export interactions for a session."""
+    """Export interactions for a completed session.
+
+    The caller must supply an explicit ``session_id`` in the request body
+    and authenticate with the admin key.  This avoids routing ambiguity
+    when an API key has been reused across sessions.
+    """
+    session_id = request.session_id
 
     with _lock:
         if session_id not in _session_cache:
