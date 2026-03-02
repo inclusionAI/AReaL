@@ -70,6 +70,8 @@ class ToolRouter:
         node_resource: Ray custom resource name to schedule agents on specific nodes.
             E.g., "tool_agent" will add {"tool_agent": 1} to each agent's resources.
         ray_address: Ray cluster address for agent initialization.
+        skip_agent_init: If True, skip automatic agent initialization (useful for worker processes
+            that should connect to existing agents without re-initializing them).
     """
 
     def __init__(
@@ -77,12 +79,13 @@ class ToolRouter:
         tool_mode: Literal["auto", "force", "direct"] = "auto",
         node_resource: str = "tool_agent",
         ray_address: str = "auto",
+        skip_agent_init: bool = False,
     ):
         self.tool_mode = tool_mode
         self._agents: Dict[str, Any] = {}
 
-        # Auto-initialize agents if any are enabled
-        if self.get_enabled_agents():
+        # Auto-initialize agents if any are enabled (unless explicitly skipped)
+        if not skip_agent_init and self.get_enabled_agents():
             self._agents = self._create_agents(ray_address, node_resource)
 
     def _get_enabled_tool_names(self) -> List[str]:

@@ -64,24 +64,21 @@ def _init_worker(
     port: int,
     output_path: str,
     max_tool_calls: int,
-    node_resource: str | None,
 ):
     """Initialize worker for Gemini/GPT models (Google API or matrixllm).
 
     Agent instance is created once per worker and reused for all tasks.
     Ray tool agents are shared across all workers (initialized in main process).
+    Workers create ToolRouter with skip_agent_init=True to avoid re-initializing Ray actors.
     """
     global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS
     global _WORKER_TASK_CLASS, _WORKER_API_MODE
     global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_TOOL_CALL_ONLY_CONFIG
     global _WORKER_FINAL_ANSWER_CONFIG
 
-    # Create ToolRouter in worker - it will connect to existing Ray actors (not create new ones)
-    # This is safe because ToolAgentManager is a singleton and create_agents() skips existing actors
-    if node_resource is not None:
-        _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force", node_resource=node_resource)
-    else:
-        _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force")
+    # Create ToolRouter WITHOUT initializing Ray actors (they're already initialized in main process)
+    # Tool functions still work because they access actors via the singleton ToolAgentManager
+    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force", skip_agent_init=True)
 
     if model_type == "Google" and not api_key:
         raise ValueError("API key must be provided for Google models.")
@@ -359,7 +356,6 @@ def main():
             args.port,
             output_path,
             MAX_TOOL_CALLS,
-            args.node_resource,
         ),
     ) as pool:
         inflight = []
