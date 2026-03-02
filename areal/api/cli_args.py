@@ -2024,6 +2024,21 @@ class RWConfig(BaseExperimentConfig):
 
     actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
+@dataclass
+class TeacherConfig(PPOActorConfig):
+    allocation_mode: str = field(
+        default="",
+        metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
+    )
+    rl_loss_weight: float = field(
+        default=1.0,
+        metadata={"help": "RL loss weight"},
+    )
+
+    distill_loss_weight: float = field(
+        default=0.005,
+        metadata={"help": "Distillation loss weight"},
+    )
 
 @dataclass
 class PPOConfig(BaseExperimentConfig):
@@ -2042,6 +2057,7 @@ class PPOConfig(BaseExperimentConfig):
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig | None = field(default=None)
     critic: PPOCriticConfig | None = field(default=None)
+    teacher: TeacherConfig | None = None
     dynamic_bs: bool = field(
         default=False,
         metadata={

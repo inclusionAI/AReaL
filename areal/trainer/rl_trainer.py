@@ -182,6 +182,10 @@ class PPOTrainer:
             self.critic.initialize(**engine_init_kwargs, role="critic")
         if self.ref is not None:
             self.ref.initialize(**engine_init_kwargs, role="ref")
+        
+        self.teacher = None
+        if config.teacher is not None:
+            self.teacher = self._create_teacher(config.teacher)
 
         # Save initial LoRA weights if enabled (for inference server pre-loading)
         initial_lora_path = self._save_initial_lora_weights()
@@ -370,6 +374,20 @@ class PPOTrainer:
                 ):
                     rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
                     self.ref.get_device_stats().log("ref logp")
+
+            if self.teacher is not None:
+                with (
+                    stats_tracker.record_timing("teacher_logp"),
+                    perf_tracer.trace_scope(
+                        "train.teacher_logp",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    rollout_batch["teacher_logp"] = self.teacher.compute_logp(rollout_batch)
+                    rollout_batch["rl_loss_weight"] = self.config.teacher.rl_loss_weight
+                    rollout_batch["distill_loss_weight"] = self.config.teacher.distill_loss_weight
+                    self.teacher.get_device_stats().log("teacher logp")
 
             with (
                 stats_tracker.record_timing("compute_advantage"),
@@ -628,6 +646,41 @@ class PPOTrainer:
             critic = critic_cls(config=critic_config)
         critic.create_process_group(parallel_strategy=self.allocation_mode.train)
         return critic
+    
+    def _create_teacher(self, teacher_config):
+        allocation_mode = AllocationMode.from_str(teacher_config.allocation_mode)
+
+        if allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPPPOActor
+
+            actor_cls = FSDPPPOActor
+        elif allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronPPOActor
+
+            actor_cls = MegatronPPOActor
+        else:
+            raise ValueError(
+                f"Invalid backend: {allocation_mode.train_backend}, expected fsdp, megatron"
+            )
+        
+        teacher = actor_cls.as_controller(teacher_config, self.scheduler)
+        teacher.create_process_group(parallel_strategy=allocation_mode.train)
+
+        parallel_strategy = allocation_mode.train
+        assert parallel_strategy is not None
+        ft_spec = FinetuneSpec(
+            total_train_epochs=self.config.total_train_epochs,
+            dataset_size=len(self.train_dataloader) * self.config.train_dataset.batch_size,
+            train_batch_size= self.config.train_dataset.batch_size 
+        )
+        engine_init_kwargs = {
+            "addr": None,
+            "ft_spec": ft_spec,
+            "alloc_mode": allocation_mode
+        }
+        teacher.initialize(**engine_init_kwargs, role="teacher")
+        return teacher
+
 
     def _init_rollout(
         self,

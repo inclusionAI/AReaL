@@ -426,6 +426,35 @@ def grpo_loss_fn(
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
         )
+    
+    # Joint Distillation KL Loss
+    teacher_logp = input_data.get("teacher_logp")
+    if teacher_logp is not None:
+        # Coefficients for RL and Knowledge Distillation
+        rl_loss_weight = input_data.get("rl_loss_weight", 1.0)
+        distill_loss_weight = input_data.get("distill_loss_weight", 0.005)
+
+        teacher_logp = teacher_logp.detach()  # detach to prevent gradient backprop to teacher
+
+        if rl_loss_weight == 0:
+            # Pure KD using reverse KL (importance-sampling)
+            teacher_kl = teacher_logp - logprobs
+            prob_ratio = torch.exp(logprobs - old_logp)
+
+            loss_per_token = prob_ratio * teacher_kl * loss_mask
+            kd_coef = -1 * distill_loss_weight  # usually 1.0
+            loss = kd_coef * loss_per_token.sum() / loss_mask.sum().clamp(min=1)
+
+            stats_tracker.scalar(teacher_kl_loss=loss.detach())
+
+        else:
+            # KDRL: Knowledge Distillation + Reinforcement Learning (joint loss)
+            teacher_kl = (logprobs - teacher_logp) * loss_mask
+            teacher_kl = teacher_kl.sum() / loss_mask.sum().clamp(min=1)
+
+            loss = rl_loss_weight * loss + distill_loss_weight * teacher_kl
+
+            stats_tracker.scalar(teacher_kl=teacher_kl.detach())
 
     # Log training statistics
     stats_tracker.denominator(
