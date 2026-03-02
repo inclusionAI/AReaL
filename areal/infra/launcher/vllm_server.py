@@ -12,6 +12,7 @@ import requests
 
 from areal.api.cli_args import (
     ClusterSpecConfig,
+    InferenceEngineConfig,
     NameResolveConfig,
     parse_cli_args,
     to_structured_cfg,
@@ -252,6 +253,7 @@ def launch_vllm_server(argv):
     config.cluster.name_resolve = to_structured_cfg(
         config.cluster.name_resolve, NameResolveConfig
     )
+    config.rollout = to_structured_cfg(config.rollout, InferenceEngineConfig)
     name_resolve.reconfigure(config.cluster.name_resolve)
 
     allocation_mode = config.allocation_mode

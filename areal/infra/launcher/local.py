@@ -12,6 +12,7 @@ import psutil
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
+    InferenceEngineConfig,
     RecoverConfig,
     SGLangConfig,
     parse_cli_args,
@@ -303,6 +304,8 @@ def local_main(config, run_id: int = 0):
         else:
             config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
             random_seed = config.vllm.seed
+
+        config.rollout = to_structured_cfg(config.rollout, InferenceEngineConfig)
 
         backend_spec = {
             "sglang": {
