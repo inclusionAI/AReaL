@@ -1916,7 +1916,6 @@ class BaseExperimentConfig:
     # but SFT only has a single one. We use subclasses to represent these structures.
 
     def __post_init__(self):
-        """Validate configuration for Megatron + adam_bf16."""
         from areal.api.alloc_mode import AllocationMode
 
         am = AllocationMode.from_str(self.allocation_mode)
