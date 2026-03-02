@@ -41,7 +41,7 @@ teacher:
 ```
 
 ```bash
-python3 examples/math/gsm8k_rl.py --config examples/distillation/gsm8k_grpo_distill.py scheduler.type=local experiment_name=gsm8k-grpo-distillation trial_name=trial0
+python3 examples/math/gsm8k_rl.py --config examples/distillation/gsm8k_grpo_distill.yaml scheduler.type=local experiment_name=gsm8k-grpo-distillation trial_name=trial0
 ```
 
 ## Result
