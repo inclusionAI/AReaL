@@ -2066,7 +2066,7 @@ def to_structured_cfg(cfg, config_cls):
 
 def _validate_cfg(cfg: Any) -> None:
     """Validate configuration for consistency and correctness."""
-    
+    from areal.api.alloc_mode import AllocationMode
 
     am = AllocationMode.from_str(cfg.allocation_mode)
     if am.train_backend == "megatron" and cfg.actor.optimizer.type == "adam_bf16":

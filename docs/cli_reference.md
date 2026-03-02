@@ -739,14 +739,14 @@ Configuration for experiment statistics logging and tracking services.
 
 Configuration for SwanLab experiment tracking and monitoring.
 
-| Parameter | Type           | Default                   | Description |
-| --------- | -------------- | ------------------------- | ----------- |
-| `project` | string \| None | `None`                    | -           |
-| `name`    | string \| None | `None`                    | -           |
-| `config`  | `dict` \| None | `None`                    | -           |
-| `logdir`  | string \| None | `None`                    | -           |
-| `mode`    | string \| None | `"disabled"`              | -           |
-| `api_key` | string \| None | `None`                    | -           |
+| Parameter | Type           | Default      | Description |
+| --------- | -------------- | ------------ | ----------- |
+| `project` | string \| None | `None`       | -           |
+| `name`    | string \| None | `None`       | -           |
+| `config`  | `dict` \| None | `None`       | -           |
+| `logdir`  | string \| None | `None`       | -           |
+| `mode`    | string \| None | `"disabled"` | -           |
+| `api_key` | string \| None | `None`       | -           |
 
 (section-tensor-board)=
 
