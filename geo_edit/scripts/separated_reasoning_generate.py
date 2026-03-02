@@ -197,7 +197,6 @@ def _run_one_task(task_payload: dict):
     try:
         for i in range(_WORKER_MAX_TOOL_CALLS):
             step = i + 1
-            logger.info(f"[{task_id}] Step {step}: Starting three-phase generation")
 
             # ===== Phase 1: Generate reasoning (no tool call, no answer) =====
             logger.info(f"[{task_id}] Step {step} Phase 1: Generating reasoning...")
@@ -212,7 +211,7 @@ def _run_one_task(task_payload: dict):
                 reasoning_text = reasoning_action.choices[0].message.content or ""
 
             logger.info(f"[{task_id}] Step {step} Phase 1: Reasoning generated ({len(reasoning_text)} chars)")
-            logger.debug(f"[{task_id}] Step {step} Phase 1: Reasoning content: {reasoning_text[:500]}...")
+
 
             # Check for <answer> - error if found
             if answer_pattern.search(reasoning_text):
@@ -241,7 +240,7 @@ def _run_one_task(task_payload: dict):
             )
 
             if not function_call_part_list:
-                logger.info(f"[{task_id}] Step {step} Phase 2: No tool calls, final answer detected")
+                logger.error(f"[{task_id}] Step {step} Phase 2: No tool calls, final answer detected")
                 break
 
             # Log tool calls
@@ -257,7 +256,6 @@ def _run_one_task(task_payload: dict):
             action, extra_info = _WORKER_AGENT.act(task.contents)
             _WORKER_AGENT.config.generate_config = original_generate_config
             task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
-            logger.info(f"[{task_id}] Phase 3: Final answer generated")
 
         if task.state:
             meta_info = task.save_trajectory()

@@ -204,23 +204,31 @@ def _run_separated_reasoning_test(
     logger.info("Total tool calls: %d", meta_info["function_call_total_count"])
     logger.info("Total tokens: %d", meta_info["tokens_used_total"])
 
-    # Verify trajectory.jsonl was created
-    trajectory_path = save_dir / "trajectory.jsonl"
+    # Verify trajectory.json was created
+    trajectory_path = save_dir / "trajectory.json"
     if trajectory_path.exists():
-        logger.info("trajectory.jsonl created successfully")
+        logger.info("trajectory.json created successfully")
         with open(trajectory_path, "r", encoding="utf-8") as f:
-            trajectory_data = json.loads(f.readline())
+            trajectory_data = json.load(f)
             logger.info("Trajectory contains %d messages", len(trajectory_data))
 
             # Log first few messages for inspection
-            for i, msg in enumerate(trajectory_data[:3]):
+            for i, msg in enumerate(trajectory_data[:5]):
                 role = msg.get("role")
-                content_preview = str(msg.get("content", ""))[:100]
                 has_tool_calls = "tool_calls" in msg
-                logger.info("  Message %d: role=%s, has_tool_calls=%s, content_preview=%s...",
+                content_preview = str(msg.get("content", ""))[:100]
+                logger.info("  Message %d: role=%s, has_tool_calls=%s, content=%s...",
                            i, role, has_tool_calls, content_preview)
+
+                # Log tool_calls if present
+                if has_tool_calls:
+                    tool_calls = msg.get("tool_calls", [])
+                    for tc in tool_calls:
+                        logger.info("    Tool call: %s(%s)",
+                                   tc.get("function", {}).get("name", "unknown"),
+                                   tc.get("function", {}).get("arguments", "")[:50])
     else:
-        logger.warning("trajectory.jsonl was not created")
+        logger.warning("trajectory.json was not created")
 
 
 def test_separated_reasoning_gpt() -> None:

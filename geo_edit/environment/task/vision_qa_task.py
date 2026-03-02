@@ -441,11 +441,12 @@ class VisionQATask(AbstractVLMTask):
         with open(self.meta_info_jsonl_path, "w", encoding="utf-8") as f:
             f.write(json.dumps(meta_info) + "\n")
 
-        # Generate trajectory.jsonl for SFT training
+        # Generate trajectory.json for SFT training (formatted JSON, not JSONL)
         try:
             sft_messages = self._build_sft_messages()
-            with open(self.trajectory_jsonl_path, "w", encoding="utf-8") as f:
-                f.write(json.dumps(sft_messages) + "\n")
+            trajectory_json_path = self.trajectory_jsonl_path.replace('.jsonl', '.json')
+            with open(trajectory_json_path, "w", encoding="utf-8") as f:
+                json.dump(sft_messages, f, indent=2, ensure_ascii=False)
         except NotImplementedError:
             # Subclass hasn't implemented _build_sft_messages yet
             pass

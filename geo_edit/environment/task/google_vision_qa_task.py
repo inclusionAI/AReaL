@@ -171,48 +171,79 @@ class GoogleVisionQATask(VisionQATask):
     def _build_sft_messages(self) -> List[Dict[str, Any]]:
         """Build SFT-format messages for training.
 
-        Uses the observation from the last step which contains the complete conversation history.
+        Combines observation (user/tool/image messages) with action records (assistant messages with tool_calls).
         """
         import json
 
         if not self.conversation_history:
             return []
 
-        # Get the last step's observation - it contains the full conversation
-        last_record = self.conversation_history[-1]
-        observation = last_record.get("observation", [])
-
         messages = []
-        for item in observation:
-            if isinstance(item, dict):
-                # Handle stringified Content objects
-                if "parts" in item and "role" in item:
-                    msg = self._convert_google_content_to_sft(item)
-                    if msg:
-                        messages.append(msg)
-                # Handle image_data
-                elif "image_data" in item:
-                    image_path = item["image_data"]
-                    if image_path:
-                        # Add to last user message or create new one
-                        if messages and messages[-1]["role"] == "user":
-                            if isinstance(messages[-1]["content"], str):
-                                messages[-1]["content"] = [{"type": "text", "text": messages[-1]["content"]}]
-                            messages[-1]["content"].append({
-                                "type": "image_url",
-                                "image_url": {"url": f"file://{image_path}"}
-                            })
-                        else:
-                            messages.append({
-                                "role": "user",
-                                "content": [{"type": "image_url", "image_url": {"url": f"file://{image_path}"}}]
-                            })
-            elif isinstance(item, str):
-                # Text prompt - add to last user message or create new one
-                if messages and messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list):
-                    messages[-1]["content"].append({"type": "text", "text": item})
-                else:
-                    messages.append({"role": "user", "content": item})
+        added_items = set()
+
+        for idx, record in enumerate(self.conversation_history):
+            step = record["step"]
+            observation = record.get("observation", [])
+
+            # Add observation items (user messages, images, tool responses)
+            for obs_idx, item in enumerate(observation):
+                item_id = (step, obs_idx, json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item))
+                if item_id in added_items:
+                    continue
+
+                if isinstance(item, dict):
+                    if "parts" in item and "role" in item:
+                        # Stringified Content - only add if it's NOT an assistant/model message
+                        # (assistant messages come from action_record)
+                        role = item.get("role")
+                        if role not in ("model", "assistant"):
+                            msg = self._convert_google_content_to_sft(item)
+                            if msg:
+                                messages.append(msg)
+                                added_items.add(item_id)
+                    elif "image_data" in item:
+                        image_path = item["image_data"]
+                        if image_path:
+                            if messages and messages[-1]["role"] == "user":
+                                if isinstance(messages[-1]["content"], str):
+                                    messages[-1]["content"] = [{"type": "text", "text": messages[-1]["content"]}]
+                                messages[-1]["content"].append({
+                                    "type": "image_url",
+                                    "image_url": {"url": f"file://{image_path}"}
+                                })
+                            else:
+                                messages.append({
+                                    "role": "user",
+                                    "content": [{"type": "image_url", "image_url": {"url": f"file://{image_path}"}}]
+                                })
+                            added_items.add(item_id)
+                elif isinstance(item, str):
+                    if messages and messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list):
+                        messages[-1]["content"].append({"type": "text", "text": item})
+                    else:
+                        messages.append({"role": "user", "content": item})
+                    added_items.add(item_id)
+
+            # Add assistant message from action_record
+            action_record = record.get("action", {})
+            thinking_process = record.get("thinking_process", "")
+            output_text = record.get("output_text", "")
+            function_calls = record.get("function_call")
+
+            # Parse action_record which is a stringified Content
+            if isinstance(action_record, dict) and "parts" in action_record:
+                assistant_msg = self._convert_google_content_to_sft(action_record)
+                if assistant_msg:
+                    # Override content with thinking + output if available
+                    content_parts = []
+                    if thinking_process:
+                        content_parts.append(thinking_process)
+                    if output_text:
+                        content_parts.append(output_text)
+                    if content_parts:
+                        assistant_msg["content"] = "\n".join(content_parts)
+
+                    messages.append(assistant_msg)
 
         return messages
 

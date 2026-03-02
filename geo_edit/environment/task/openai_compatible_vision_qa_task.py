@@ -387,22 +387,75 @@ class OpenAICompatibleVisionQATask(VisionQATask):
     def _build_sft_messages(self) -> List[Dict[str, Any]]:
         """Build SFT-format messages for training.
 
-        Uses the observation from the last step which contains the complete conversation history.
+        Combines observation (user/tool messages) with action records (assistant messages with tool_calls).
         """
         if not self.conversation_history:
             return []
 
-        # Get the last step's observation - it contains the full conversation
-        last_record = self.conversation_history[-1]
-        observation = last_record.get("observation", [])
-
         messages = []
-        for item in observation:
-            if isinstance(item, dict):
-                # Already in dict format, just ensure images are replaced with paths
-                msg = self._convert_observation_item_to_sft(item)
-                if msg:
-                    messages.append(msg)
+        added_observations = set()
+
+        # Process each step in conversation history
+        for idx, record in enumerate(self.conversation_history):
+            step = record["step"]
+            observation = record.get("observation", [])
+
+            # Add observation messages only once (avoid duplicates from multiple steps)
+            for obs_idx, item in enumerate(observation):
+                obs_id = (step, obs_idx, json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item))
+                if obs_id not in added_observations and isinstance(item, dict):
+                    msg = self._convert_observation_item_to_sft(item)
+                    if msg and msg.get("role") in ("user", "tool"):
+                        messages.append(msg)
+                        added_observations.add(obs_id)
+
+            # Add assistant message from action record
+            action_record = record.get("action", {})
+            thinking_process = record.get("thinking_process", "")
+            output_text = record.get("output_text", "")
+            function_calls = record.get("function_call")
+
+            assistant_msg = {"role": "assistant"}
+
+            # Build content from thinking + output
+            content_parts = []
+            if thinking_process:
+                content_parts.append(thinking_process)
+            if output_text:
+                content_parts.append(output_text)
+
+            assistant_msg["content"] = "\n".join(content_parts) if content_parts else (action_record.get("text", ""))
+
+            # Add tool_calls from action_record
+            if function_calls:
+                tool_calls = []
+                tool_call_records = action_record.get("tool_calls", [])
+
+                for func_name, func_args in function_calls:
+                    matching_call = next((tc for tc in tool_call_records if tc.get("name") == func_name), None)
+
+                    if matching_call:
+                        tool_calls.append({
+                            "id": matching_call.get("id", f"call_{func_name}"),
+                            "type": "function",
+                            "function": {
+                                "name": func_name,
+                                "arguments": matching_call.get("arguments", json.dumps(func_args) if isinstance(func_args, dict) else str(func_args))
+                            }
+                        })
+                    else:
+                        tool_calls.append({
+                            "id": f"call_{step}_{func_name}",
+                            "type": "function",
+                            "function": {
+                                "name": func_name,
+                                "arguments": json.dumps(func_args) if isinstance(func_args, dict) else str(func_args)
+                            }
+                        })
+
+                assistant_msg["tool_calls"] = tool_calls
+
+            messages.append(assistant_msg)
 
         return messages
 
