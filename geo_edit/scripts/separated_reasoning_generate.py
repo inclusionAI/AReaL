@@ -1,6 +1,6 @@
 """Separated reasoning script for two-phase tool call generation.
 
-Supports Gemini models only (Google API and matrixllm chat_completions).
+Supports Gemini and GPT models (Google API and matrixllm chat_completions).
 Only supports force tool mode.
 
 Phase 1: Generate reasoning (can see tools, but cannot execute)
@@ -62,7 +62,7 @@ def _init_worker(
     output_path: str,
     max_tool_calls: int,
 ):
-    """Initialize worker for Gemini models (Google API or matrixllm)."""
+    """Initialize worker for Gemini/GPT models (Google API or matrixllm)."""
     global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS
     global _WORKER_TASK_CLASS, _WORKER_API_MODE
     global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_TOOL_CALL_ONLY_CONFIG
@@ -89,7 +89,7 @@ def _init_worker(
         _WORKER_REASONING_ONLY_CONFIG = build_google_reasoning_only_config(agent_configs.generate_config)
         _WORKER_TOOL_CALL_ONLY_CONFIG = build_google_tool_call_only_config(agent_configs.generate_config)
     else:
-        # matrixllm uses chat_completions
+        # SGLang/OpenAI via matrixllm uses chat_completions
         _WORKER_API_MODE = "chat_completions"
         agent_configs = build_api_agent_configs(
             _WORKER_TOOL_ROUTER,
@@ -239,13 +239,13 @@ def _run_one_task(task_payload: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Separated reasoning generation for Gemini models.")
+    parser = argparse.ArgumentParser(description="Separated reasoning generation for Gemini/GPT models.")
     parser.add_argument("--api_key", type=str, default=None, help="API key for Google API.")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
     parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()), help="Dataset adapter name.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-2.5-pro-preview-05-06", help="Model name.")
-    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "SGLang"], help="Model provider.")
+    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "SGLang", "OpenAI"], help="Model provider.")
     parser.add_argument("--api_base", type=str, default=None, help="Base URL for matrixllm server.")
     parser.add_argument("--port", type=int, default=None, help="Port for server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes.")

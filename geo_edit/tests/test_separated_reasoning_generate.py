@@ -1,10 +1,11 @@
-"""Test script for separated reasoning generation with matrixllm (SGLang/chat_completions)."""
+"""Test script for separated reasoning generation with matrixllm (Gemini/GPT via chat_completions)."""
 from __future__ import annotations
 
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -42,6 +43,7 @@ class Args:
     api_base: str | None
     api_key: str
     model_name: str
+    model_type: str
     image_path: Path
     prompt: str
     temperature: float
@@ -49,11 +51,14 @@ class Args:
     max_steps: int
 
 
-def test_separated_reasoning_matrixllm() -> None:
-    """Test separated reasoning generation with matrixllm (chat_completions API)."""
+def _run_separated_reasoning_test(
+    model_name: str,
+    model_type: Literal["SGLang", "OpenAI"],
+    test_name: str,
+) -> None:
+    """Common test logic for separated reasoning generation."""
     api_key = os.environ.get("API_KEY")
     api_base = "https://matrixllm.alipay.com/v1"
-    model_name = "gemini-3-pro-preview"
 
     if not api_key:
         pytest.skip("API_KEY environment variable not set")
@@ -62,6 +67,7 @@ def test_separated_reasoning_matrixllm() -> None:
         api_base=api_base,
         api_key=api_key,
         model_name=model_name,
+        model_type=model_type,
         image_path=Path("./geo_edit/images/173.jpg"),
         prompt=DEFAULT_PROMPT,
         temperature=1.0,
@@ -69,7 +75,7 @@ def test_separated_reasoning_matrixllm() -> None:
         max_steps=MAX_TOOL_CALLS,
     )
 
-    save_dir = Path("./separated_reasoning_test")
+    save_dir = Path(f"./{test_name}")
     save_dir.mkdir(parents=True, exist_ok=True)
 
     # Force mode only
@@ -77,7 +83,7 @@ def test_separated_reasoning_matrixllm() -> None:
     tool_functions = tool_router.get_available_tools()
     tool_return_types = tool_router.get_tool_return_types()
 
-    system_prompt = get_system_prompt("SGLang", "force")
+    system_prompt = get_system_prompt(model_type, "force")
 
     # Build configs for chat_completions API
     agent_configs = build_api_agent_configs(
@@ -93,7 +99,7 @@ def test_separated_reasoning_matrixllm() -> None:
     tool_call_only_config = build_api_tool_call_only_config(agent_configs.generate_config)
 
     config = AgentConfig(
-        model_type="SGLang",
+        model_type=model_type,
         model_name=args.model_name,
         api_key=args.api_key,
         api_base=args.api_base,
@@ -106,18 +112,19 @@ def test_separated_reasoning_matrixllm() -> None:
     agent.reset()
 
     task = OpenAICompatibleVisionQATask(
-        task_id="separated_reasoning_test",
+        task_id=test_name,
         task_prompt=args.prompt,
         task_answer="E",
         task_image_path=str(args.image_path),
         save_dir=save_dir,
         tool_functions=tool_functions,
         tool_return_types=tool_return_types,
-        model_type="sglang",
+        model_type=model_type.lower(),
         api_mode="chat_completions",
     )
 
     logger.info("Model: %s", args.model_name)
+    logger.info("Model type: %s", model_type)
     logger.info("API base: %s", args.api_base)
     logger.info("Image: %s", args.image_path)
 
@@ -187,10 +194,36 @@ def test_separated_reasoning_matrixllm() -> None:
     logger.info("Total tokens: %d", meta_info["tokens_used_total"])
 
 
+def test_separated_reasoning_gemini() -> None:
+    """Test separated reasoning generation with Gemini via matrixllm."""
+    _run_separated_reasoning_test(
+        model_name="gemini-3-pro-preview",
+        model_type="SGLang",
+        test_name="separated_reasoning_gemini_test",
+    )
+
+
+def test_separated_reasoning_gpt() -> None:
+    """Test separated reasoning generation with GPT via matrixllm."""
+    _run_separated_reasoning_test(
+        model_name="o3",
+        model_type="OpenAI",
+        test_name="separated_reasoning_gpt_test",
+    )
+
+
 if __name__ == "__main__":
+    import sys
+
     print("Separated Reasoning Generation Test (matrixllm)")
     print("=" * 50)
     print("\nEnvironment variables:")
     print("  API_KEY - Required: API key for matrixllm authentication")
+    print("\nUsage:")
+    print("  python test_separated_reasoning_generate.py [gemini|gpt]")
     print("\nRunning test...")
-    test_separated_reasoning_matrixllm()
+
+    if len(sys.argv) > 1 and sys.argv[1] == "gpt":
+        test_separated_reasoning_gpt()
+    else:
+        test_separated_reasoning_gemini()
