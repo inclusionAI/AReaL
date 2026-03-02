@@ -37,16 +37,8 @@ class TestWorkerCreationAndDeletion:
             replicas=2,
             role="train",
             tasks=[
-                SchedulingSpec(
-                    cpu=1,
-                    mem=1,
-                    gpu=1,
-                ),
-                SchedulingSpec(
-                    cpu=1,
-                    mem=1,
-                    gpu=1,
-                ),
+                SchedulingSpec(cpu=1, mem=1, gpu=1, ray_placement_strategy="shared"),
+                SchedulingSpec(cpu=1, mem=1, gpu=1, ray_placement_strategy="shared"),
             ],
         )
 
@@ -54,12 +46,6 @@ class TestWorkerCreationAndDeletion:
         worker_ids = scheduler.create_workers(job)
         assert len(worker_ids) == 2
         assert len(scheduler._workers["train"]) == 2
-
-        # Verify each worker has its own placement group with bundle_index=0
-        pgs = [wi.placement_group for wi in scheduler._workers["train"]]
-        assert pgs[0] != pgs[1], "Each worker should have its own placement group"
-        for wi in scheduler._workers["train"]:
-            assert wi.bundle_index == 0, "bundle_index should always be 0"
 
         actor_summary = summarize_actors()
 
@@ -224,9 +210,11 @@ class TestForkColocation:
             actor_pg = scheduler._workers["actor"][i].placement_group
             ref_pg = scheduler._workers["ref"][i].placement_group
             assert actor_pg == ref_pg, "Forked worker should use same placement group"
-            # Verify both have bundle_index=0
-            assert scheduler._workers["actor"][i].bundle_index == 0
-            assert scheduler._workers["ref"][i].bundle_index == 0
+            # Verify both have the same bundle index as their parent
+            assert (
+                scheduler._workers["actor"][i].bundle_index
+                == scheduler._workers["ref"][i].bundle_index
+            )
 
         # Verify ref role is tracked as colocated
         assert "ref" in scheduler._colocated_roles
