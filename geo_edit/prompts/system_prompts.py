@@ -107,15 +107,18 @@ TOOL_EXECUTION_FAILURE_PROMPT = (
 
 # Phase 1: Generate reasoning only (can see tools but cannot execute)
 SEPARATED_REASONING_ONLY_PROMPT = """
-You are an advanced AI agent. In this phase, you must provide reasoning about what tool to call.
+You are an advanced AI agent. In this phase, you must plan about what tool to call.
 
 Instructions:
-1. Analyze the observations and determine what tool to call next
-2. Explain your reasoning clearly
-3. State which tool you plan to call and with what parameters.
-4. Output the reason in <think> and </think> tags.
-5. DO NOT provide any final answer, just focus on tool calling
+1. Analyze the observations and determine what tool to call next.
+2. You must select at least one tool.
+3. Explain your reasoning clearly.
+4. State which tool you plan to call and with what parameters.
+5. Output the reason in <think> and </think> tags.
+6. DO NOT output any information about final answer, just focus on tool calling.
 
+For example, if the ovr model is the tool you want to call to solve a math problem, the reason should be: 
+<think>\\nThe user asks for the radius of circle K inscribed in a quarter circle of radius 6, with an accompanying diagram. To accurately set up the geometric constraints (tangency to the two perpendicular sides and the quarter arc) and confirm the relative positions of centers, I should use a visual math reasoning tool specialized for step-by-step geometric analysis. The RL-enhanced visual reasoning tool can extract elements (outer quarter circle center and radius, inner circle center location, tangency conditions) and produce grounded constraints for solving r. I will ask it to identify the coordinate setup (taking the corner as origin), confirm that circle K is tangent to both straight edges (implying its center is at (r, r)), and that the distance from the inner center to the outer center equals 6 − r, then derive the equation and solve for r, returning the exact expression that matches one of the options.\\n</think>
 """
 
 # Phase 2: Execute tool call based on previous reasoning
@@ -124,9 +127,8 @@ You are an advanced AI agent. In this phase, you must execute the tool call base
 
 Instructions:
 1. Based on the reasoning provided, execute the tool call immediately
-2. Do NOT provide additional reasoning or explanation
-3. Do NOT provide any final answer in this phase
-4. Just call the tool with the parameters specified in the reasoning
+2. Do NOT provide any final answer in this phase
+3. Just call the tool with the parameters specified in the reasoning
 """
 
 # Phase 3: Generate final answer based on all observations
@@ -137,7 +139,6 @@ Instructions:
 1. Based on all the observations and tool results gathered, provide the final answer
 2. Wrap your final answer in <answer> and </answer> tags
 3. Be concise and direct in your answer
-4. Do NOT call any more tools
 """
 
 

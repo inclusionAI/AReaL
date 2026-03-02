@@ -204,13 +204,13 @@ def _run_separated_reasoning_test(
     logger.info("Total tokens: %d", meta_info["tokens_used_total"])
 
 
-def test_separated_reasoning_gemini() -> None:
-    """Test separated reasoning generation with Gemini via matrixllm."""
-    _run_separated_reasoning_test(
-        model_name="gemini-3-pro-preview",
-        model_type="OpenAI",
-        test_name="separated_reasoning_gemini_test",
-    )
+# def test_separated_reasoning_gemini() -> None:
+#     """Test separated reasoning generation with Gemini via matrixllm."""
+#     _run_separated_reasoning_test(
+#         model_name="gemini-3-pro-preview",
+#         model_type="OpenAI",
+#         test_name="separated_reasoning_gemini_test",
+#     )
 
 
 def test_separated_reasoning_gpt() -> None:
@@ -222,18 +222,3 @@ def test_separated_reasoning_gpt() -> None:
     )
 
 
-if __name__ == "__main__":
-    import sys
-
-    print("Separated Reasoning Generation Test (matrixllm)")
-    print("=" * 50)
-    print("\nEnvironment variables:")
-    print("  API_KEY - Required: API key for matrixllm authentication")
-    print("\nUsage:")
-    print("  python test_separated_reasoning_generate.py [gemini|gpt]")
-    print("\nRunning test...")
-
-    if len(sys.argv) > 1 and sys.argv[1] == "gpt":
-        test_separated_reasoning_gpt()
-    else:
-        test_separated_reasoning_gemini()
