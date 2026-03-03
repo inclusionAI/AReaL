@@ -259,7 +259,7 @@ class TestProximalApproximationIntegration:
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
-            behav_imp_weight_cap=None,
+            behave_imp_weight_cap=None,
             current_version=5,
             prox_logp_method="recompute",  # Not metrics
         )
@@ -445,7 +445,7 @@ class TestGrpoLossFnNoneHandling:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behav_imp_weight_cap=None,
+                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="recompute",
             )
@@ -479,7 +479,7 @@ class TestGrpoLossFnNoneHandling:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behav_imp_weight_cap=None,
+                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="loglinear",
             )
@@ -509,7 +509,7 @@ class TestGrpoLossFnNoneHandling:
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
-            behav_imp_weight_cap=None,
+            behave_imp_weight_cap=None,
             current_version=5,
             prox_logp_method="loglinear",
         )
@@ -543,7 +543,7 @@ class TestGrpoLossFnNoneHandling:
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
-            behav_imp_weight_cap=None,
+            behave_imp_weight_cap=None,
             current_version=5,
             prox_logp_method="loglinear",
         )
@@ -576,7 +576,7 @@ class TestGrpoLossFnNoneHandling:
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
-            behav_imp_weight_cap=None,
+            behave_imp_weight_cap=None,
             current_version=5,
             prox_logp_method="loglinear",
         )
@@ -797,7 +797,7 @@ class TestComputeLogpMetricsLogging:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behav_imp_weight_cap=None,
+                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="loglinear",
             )
@@ -850,7 +850,7 @@ class TestComputeLogpMetricsLogging:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behav_imp_weight_cap=None,
+                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="recompute",
             )
@@ -901,7 +901,7 @@ class TestComputeLogpMetricsLogging:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behav_imp_weight_cap=None,
+                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="metrics",
             )
@@ -966,7 +966,7 @@ class TestComputeLogpMetricsLogging:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behav_imp_weight_cap=None,
+                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="metrics",
             )
@@ -974,10 +974,9 @@ class TestComputeLogpMetricsLogging:
         assert isinstance(loss, torch.Tensor), "Loss should be a tensor"
         # Check for correct spelling in all logged metrics
         for key in logged_stats.keys():
-            # Should use "behave_imp_weight" not "behav_imp_weight"
+            # All imp_weight metrics should use "behave_imp_weight"
             if "imp_weight" in key and "importance_weight" not in key:
                 assert "behave_imp_weight" in key, f"Metric {key} uses wrong spelling"
-                assert "behav_imp_weight" not in key, f"Metric {key} uses old spelling"
 
 
 if __name__ == "__main__":

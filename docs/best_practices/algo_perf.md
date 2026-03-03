@@ -93,7 +93,7 @@ $$L = -\mathbb{E}\left[ \underbrace{\frac{\pi_{\text{proximal}}}{\pi_{\text{beha
 
 **Troubleshooting `behave_imp_weight` deviations:**
 
-- Ensure `behav_imp_weight_cap` is set (recommended value: 5).
+- Ensure `behave_imp_weight_cap` is set (recommended value: 5).
 - If deviation persists, reduce `max_head_offpolicyness` to decrease sample staleness.
 
 ### Sequence Length Metrics
