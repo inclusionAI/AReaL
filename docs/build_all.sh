@@ -5,10 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "[AReaL] Building English version..."
-uv run jupyter-book build "$SCRIPT_DIR/en" --all --path-output "$SCRIPT_DIR/_build/en"
+jupyter-book build "$SCRIPT_DIR/en" --all --path-output "$SCRIPT_DIR/_build/en"
 
 echo "[AReaL] Building Chinese version..."
-uv run jupyter-book build "$SCRIPT_DIR/zh" --all --path-output "$SCRIPT_DIR/_build/zh"
+jupyter-book build "$SCRIPT_DIR/zh" --all --path-output "$SCRIPT_DIR/_build/zh"
 
 # Create root index page with auto-redirect based on localStorage
 ROOT_INDEX="$SCRIPT_DIR/_build/index.html"
