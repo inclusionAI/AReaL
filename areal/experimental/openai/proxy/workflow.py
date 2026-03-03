@@ -196,13 +196,18 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 style=self.export_style,
             )
 
-            # Record stats
-            last_id = list(interactions.keys())[-1] if interactions else None
-            if last_id and interactions:
-                last_reward = interactions[last_id].reward
-                stats_tracker.get(workflow_context.stat_scope()).scalar(
-                    reward=last_reward
+            # Return None if no interactions (empty session — user never sent chat/completions)
+            if not interactions:
+                logger.warning(
+                    f"Session {session_info.session_id} has no interactions, "
+                    "trajectory will be rejected."
                 )
+                return None
+
+            # Record stats
+            last_id = list(interactions.keys())[-1]
+            last_reward = interactions[last_id].reward
+            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=last_reward)
             return interactions
 
         # ---- Normal mode (inline / subproc) ----
