@@ -116,7 +116,7 @@ Example output:
 
   ℹ  To start the next episode with the same key:
 
-  python start_session.py http://<gateway> --admin-key sk-test123456 --api-key sk-sess-xxxxxxxxxxxx
+  python start_session.py http://<gateway> --admin-key <admin-api-key> --api-key sk-sess-xxxxxxxxxxxx
 
 SESSION_API_KEY=sk-sess-xxxxxxxxxxxx
 SESSION_ID=demo-task-0
