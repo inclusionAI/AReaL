@@ -94,13 +94,13 @@ def _actor_resource_spec(cpu: int, gpu: int, mem: int) -> dict:
     return create_resource_spec(device, cpu, gpu, mem * 1024**3)
 
 
-def _create_placement_group(role: str, bundles: list[dict]) -> PlacementGroup:
+def _create_placement_group(role: str, bundles: list[dict], timeout) -> PlacementGroup:
     """
     Helper to create and wait for a placement group
     """
     pg = placement_group(bundles=bundles, strategy="PACK")
     try:
-        ray.get(pg.ready(), timeout=30)
+        ray.get(pg.ready(), timeout=timeout)
     except ray.exceptions.GetTimeoutError:
         logger.error(
             f"Ray placement group timeout for role {role}\n"
@@ -117,7 +117,11 @@ class RayPlacementStrategy(abc.ABC):
 
     @abc.abstractmethod
     def create_placement_group(
-        self, role: str, schedulings: list[SchedulingSpec], n_gpus_per_node: int
+        self,
+        role: str,
+        schedulings: list[SchedulingSpec],
+        n_gpus_per_node: int,
+        timeout: int,
     ) -> list[PlacementGroup]: ...
 
     @abc.abstractmethod
@@ -133,14 +137,18 @@ class SharedRayPlacementStrategy(RayPlacementStrategy):
     _current_bundle_idx: int = 0
 
     def create_placement_group(
-        self, role: str, schedulings: list[SchedulingSpec], n_gpus_per_node: int
+        self,
+        role: str,
+        schedulings: list[SchedulingSpec],
+        n_gpus_per_node: int,
+        timeout=30,
     ) -> list[PlacementGroup]:
         if len(self._placement_groups) > 0:
             raise RuntimeError(
                 "SharedRayPlacementStrategy should only have a single placement group, cannot create another placement group"
             )
         bundles = [_bundle_spec(spec.cpu, spec.gpu, spec.mem) for spec in schedulings]
-        pg = _create_placement_group(role, bundles)
+        pg = _create_placement_group(role, bundles, timeout)
         self._bundles = bundles
         self._placement_groups.append(pg)
         return self._placement_groups
@@ -175,11 +183,15 @@ class SeparatedRayPlacementStrategy(RayPlacementStrategy):
         return _actor_resource_spec(spec.cpu, spec.gpu, spec.mem)
 
     def create_placement_group(
-        self, role: str, schedulings: list[SchedulingSpec], n_gpus_per_node: int
+        self,
+        role: str,
+        schedulings: list[SchedulingSpec],
+        n_gpus_per_node: int,
+        timeout=30,
     ) -> list[PlacementGroup]:
         for spec in schedulings:
             bundles = self._create_bundles(spec, n_gpus_per_node)
-            pg = _create_placement_group(role, bundles)
+            pg = _create_placement_group(role, bundles, timeout)
             self._placement_groups.append(pg)
         return self._placement_groups
 

@@ -163,7 +163,10 @@ class RayScheduler(Scheduler):
 
         placement_strategy = self._get_placement_strategy(schedulings)
         placement_groups = placement_strategy.create_placement_group(
-            role, schedulings, self.exp_config.cluster.n_gpus_per_node
+            role,
+            schedulings,
+            self.exp_config.cluster.n_gpus_per_node,
+            timeout=self.startup_timeout,
         )
 
         master_ip, master_port = get_placement_group_master_ip_and_port(
