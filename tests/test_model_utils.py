@@ -118,6 +118,10 @@ class TestGetModelUpdateMeta:
             (create_ppo_config, "fsdp_xccl", "xccl"),
             (create_sft_config, "fsdp_xccl", "xccl"),
             (create_rw_config, "fsdp_xccl", "xccl"),
+            (create_grpo_config, "awex", "awex"),
+            (create_ppo_config, "awex", "awex"),
+            (create_sft_config, "awex", "awex"),
+            (create_rw_config, "awex", "awex"),
         ],
         ids=[
             "GRPO-disk",
@@ -128,6 +132,10 @@ class TestGetModelUpdateMeta:
             "PPO-fsdp_xccl",
             "SFT-fsdp_xccl",
             "RW-fsdp_xccl",
+            "GRPO-awex",
+            "PPO-awex",
+            "SFT-awex",
+            "RW-awex",
         ],
     )
     def test_get_model_update_meta_modes(
@@ -135,6 +143,8 @@ class TestGetModelUpdateMeta:
     ):
         """Test get_model_update_meta with various configs and modes."""
         config = config_factory(weight_update_mode=weight_update_mode)
+        if weight_update_mode == "awex":
+            config.awex.meta_server_addr = "127.0.0.1:12345"
 
         result = get_model_update_meta(config)
 
@@ -145,6 +155,14 @@ class TestGetModelUpdateMeta:
             assert config.cluster.fileroot in result.path
             assert config.experiment_name in result.path
             assert config.trial_name in result.path
+        if expected_type == "awex":
+            assert result.meta_server_addr == config.awex.meta_server_addr
+
+    def test_awex_requires_meta_server_addr(self):
+        """Test that awex mode requires meta_server_addr."""
+        config = create_grpo_config(weight_update_mode="awex")
+        with pytest.raises(ValueError, match="meta_server_addr"):
+            get_model_update_meta(config)
 
     def test_invalid_config_type(self):
         """Test that passing TrainEngineConfig directly raises TypeError."""

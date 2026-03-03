@@ -90,7 +90,45 @@ def get_model_update_meta(config: BaseExperimentConfig) -> WeightUpdateMeta:
         return WeightUpdateMeta.from_disk(
             config.experiment_name, config.trial_name, config.cluster.fileroot
         )
-    else:
-        return WeightUpdateMeta.from_fsdp_xccl(
-            AllocationMode.from_str(config.allocation_mode)
+    if weight_update_mode == "awex":
+        awex_cfg = getattr(config, "awex", None)
+        if awex_cfg is None:
+            raise ValueError("Awex config is required when weight_update_mode is 'awex'.")
+        if not awex_cfg.meta_server_addr:
+            raise ValueError("awex.meta_server_addr must be set when using awex.")
+        comm_backend = awex_cfg.comm_backend
+        ipc_backend = awex_cfg.weights_exchange_ipc_backend
+        use_mindspeed = awex_cfg.use_mindspeed or awex_cfg.device_backend == "npu"
+        if awex_cfg.device_backend == "npu":
+            # Default to HCCL for NPU when NCCL is requested.
+            if comm_backend == "nccl":
+                comm_backend = "hccl"
+            # CUDA IPC is not available on NPU; fall back to CPU.
+            if ipc_backend == "cuda":
+                ipc_backend = "cpu"
+        meta = WeightUpdateMeta.from_awex(
+            meta_server_addr=awex_cfg.meta_server_addr,
+            comm_backend=comm_backend,
+            weights_exchange_ipc_backend=ipc_backend,
+            weights_comm_nccl_group_size=awex_cfg.weights_comm_nccl_group_size,
+            enable_debug_mode=awex_cfg.enable_debug_mode,
+            debug_mode_config=awex_cfg.debug_mode_config,
+            disable_weights_exchange_pipeline=awex_cfg.disable_weights_exchange_pipeline,
+            enable_colocate_mode=awex_cfg.enable_colocate_mode,
+            weights_validation_steps=awex_cfg.weights_validation_steps,
+            validate_weights_every_n_steps=awex_cfg.validate_weights_every_n_steps,
+            dump_weights_list_for_validation=awex_cfg.dump_weights_list_for_validation,
+            dump_weights_dir_for_validation=awex_cfg.dump_weights_dir_for_validation,
+            nnodes=awex_cfg.nnodes,
+            node_rank=awex_cfg.node_rank,
+            use_mindspeed=use_mindspeed,
         )
+        if awex_cfg.comm_backend == "file":
+            disk_meta = WeightUpdateMeta.from_disk(
+                config.experiment_name, config.trial_name, config.cluster.fileroot
+            )
+            meta.path = disk_meta.path
+        return meta
+    return WeightUpdateMeta.from_fsdp_xccl(
+        AllocationMode.from_str(config.allocation_mode)
+    )

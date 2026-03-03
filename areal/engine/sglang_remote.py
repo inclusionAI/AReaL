@@ -202,6 +202,16 @@ class SGLangBackend:
         }
         return HttpRequest(endpoint="/init_weights_update_group", payload=payload)
 
+    def build_awex_init_request(
+        self, meta: WeightUpdateMeta, engine_rank: int, num_engines: int
+    ) -> HttpRequest:
+        raise NotImplementedError("Awex is not supported for SGLang backend.")
+
+    def build_awex_update_request(
+        self, meta: WeightUpdateMeta, step_id: int, kwargs: dict | None
+    ) -> HttpRequest:
+        raise NotImplementedError("Awex is not supported for SGLang backend.")
+
     def get_pause_request(self) -> HttpRequest:
         """Get SGLang pause request."""
         return HttpRequest(endpoint="/pause_generation", payload={})
@@ -266,9 +276,17 @@ class RemoteSGLangEngine(InferenceEngine):
         engine_id: str | None = None,
         addr: str | list[str] | None = None,
         train_data_parallel_size: int | None = None,
+        engine_rank: int | None = None,
+        num_engines: int | None = None,
     ):
         """Initialize the engine by discovering and connecting to servers."""
-        return self._engine.initialize(engine_id, addr, train_data_parallel_size)
+        return self._engine.initialize(
+            engine_id,
+            addr,
+            train_data_parallel_size,
+            engine_rank=engine_rank,
+            num_engines=num_engines,
+        )
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
@@ -315,6 +333,15 @@ class RemoteSGLangEngine(InferenceEngine):
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""
         return self._engine.update_weights_from_disk(meta)
+
+    def update_weights_from_awex(
+        self,
+        meta: WeightUpdateMeta,
+        step_id: int | None = None,
+        kwargs: dict | None = None,
+    ) -> Future[None]:
+        """Update weights via Awex."""
+        raise NotImplementedError("Awex is not supported for SGLang backend.")
 
     def submit(
         self,

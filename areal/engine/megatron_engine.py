@@ -42,6 +42,7 @@ from areal.api import (
 )
 from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
 from areal.api.io_struct import DeviceRuntimeInfo
+from areal.engine.awex_writer import AwexMegatronWriterAdapter
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_total_loss_weight,
@@ -167,6 +168,7 @@ class MegatronEngine(TrainEngine):
             self.fp8_config.direct_convert if self.enable_fp8 else False
         )
         self.quantization_config: dict[str, int | str | list[str]] | None = None
+        self.awex_writer: AwexMegatronWriterAdapter | None = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -282,8 +284,11 @@ class MegatronEngine(TrainEngine):
 
         self.model = _MegatronModelList(models)
 
-        with self.device:
-            self._load_model_from_hf(self.config.path)
+        if self.config.init_from_scratch:
+            self.logger.info("init_from_scratch=True; skipping HF weight loading.")
+        else:
+            with self.device:
+                self._load_model_from_hf(self.config.path)
 
         # NOTE: Clear high_precision_init_val for FP8 parameters.
         #
@@ -443,6 +448,13 @@ class MegatronEngine(TrainEngine):
             rollout_engine=engine, train_engine=self
         )
 
+        if meta.type == "awex":
+            if not meta.meta_server_addr:
+                raise ValueError("meta_server_addr must be set for awex weight update.")
+            if self.awex_writer is None:
+                self.awex_writer = AwexMegatronWriterAdapter(self, meta)
+                self.awex_writer.initialize()
+
         if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
@@ -496,6 +508,8 @@ class MegatronEngine(TrainEngine):
             )
             with tms_context:
                 self._update_weights_from_distributed(meta)
+        elif meta.type == "awex":
+            self._update_weights_from_awex(meta)
         elif meta.type == "disk":
             self._update_weights_from_disk(meta)
         else:
@@ -1315,6 +1329,49 @@ class MegatronEngine(TrainEngine):
         dist.barrier(group=self.cpu_group)
 
         if dist.get_rank() == 0:
+            self.rollout_engine.continue_generation()
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+
+    @trace_perf("megatron_engine.update_weights_from_awex", category="comm")
+    def _update_weights_from_awex(self, meta: WeightUpdateMeta) -> None:
+        if self.awex_writer is None:
+            raise RuntimeError("Awex writer is not initialized. Call connect_engine().")
+
+        step_id = self.get_version()
+        self.awex_writer.set_global_step(step_id)
+
+        if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
+
+        dist.barrier(group=self.cpu_group)
+
+        comm_backend = meta.comm_backend or "file"
+        fut = None
+        if comm_backend == "file":
+            if not meta.path:
+                raise ValueError("meta.path must be set for awex file backend.")
+            self.awex_writer.write_weights(path=meta.path)
+            if dist.get_rank() == 0:
+                fut = self.rollout_engine.update_weights_from_awex(
+                    meta, step_id=step_id, kwargs={"path": meta.path}
+                )
+        else:
+            if dist.get_rank() == 0:
+                fut = self.rollout_engine.update_weights_from_awex(
+                    meta, step_id=step_id, kwargs=None
+                )
+            # Give the reader a head start before writer sends.
+            dist.barrier(group=self.cpu_group)
+            self.awex_writer.write_weights()
+
+        dist.barrier(group=self.cpu_group)
+
+        if dist.get_rank() == 0 and fut is not None:
+            fut.result()
+            self.rollout_engine.continue_generation()
+        elif dist.get_rank() == 0:
             self.rollout_engine.continue_generation()
 
         current_platform.synchronize()
