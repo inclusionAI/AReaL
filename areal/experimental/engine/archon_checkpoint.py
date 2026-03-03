@@ -250,8 +250,7 @@ def save_model_to_hf(
         shutil.rmtree(tmp_path)
     dist.barrier(group=engine.cpu_group)
     os.makedirs(tmp_path, exist_ok=True)
-    cpu_offload = not is_async
-    options = StateDictOptions(full_state_dict=False, cpu_offload=cpu_offload)
+    options = StateDictOptions(full_state_dict=False, cpu_offload=not is_async)
     state_dict = _get_merged_state_dict(engine, options)
 
     hf_state_dict = engine.state_dict_adapter.to_hf(state_dict)
@@ -352,12 +351,13 @@ def load_model_from_hf(engine: ArchonEngine, path: str) -> None:
         # Add a placeholder with embed_tokens key so DCP will load it
         embed_key = "model.embed_tokens.weight"
         if embed_key not in hf_state_dict:
-            output_tensor = state_dict["output.weight"]
-            hf_state_dict[embed_key] = torch.empty_like(output_tensor)
+            hf_state_dict[embed_key] = torch.empty_like(state_dict["output.weight"])
 
     # Load using DCP with HuggingFaceStorageReader
-    hf_reader = engine.state_dict_adapter.get_hf_storage_reader(path)
-    dcp.load(hf_state_dict, storage_reader=hf_reader)
+    dcp.load(
+        hf_state_dict,
+        storage_reader=engine.state_dict_adapter.get_hf_storage_reader(path),
+    )
 
     # Convert back to Archon format
     archon_state_dict = engine.state_dict_adapter.from_hf(hf_state_dict)

@@ -90,3 +90,11 @@ class DistributedLock:
             self.store.set(self.key_owner, b"")
         except RuntimeError:
             pass
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+        return False

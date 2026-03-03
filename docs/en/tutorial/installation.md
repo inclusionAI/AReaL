@@ -24,7 +24,7 @@ The following hardware configuration has been extensively tested:
 | Git LFS                  | Required for downloading models, datasets, and AReaL code. See [installation guide](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
 | Docker                   |                                                                                                 27.5.1                                                                                                 |
 | NVIDIA Container Toolkit |                                         See [installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)                                          |
-| AReaL Image              |                                                     `ghcr.io/inclusionai/areal-runtime:v0.5.3` (includes runtime dependencies and Ray components)                                                      |
+| AReaL Image              |                                                     `ghcr.io/inclusionai/areal-runtime:v1.0.0` (includes runtime dependencies and Ray components)                                                      |
 
 **Note**: This tutorial does not cover the installation of NVIDIA Drivers, CUDA, or
 shared storage mounting, as these depend on your specific node configuration and system
@@ -42,11 +42,11 @@ We recommend using Docker with our provided image. The Dockerfile is available i
 top-level directory of the AReaL repository.
 
 ```bash
-docker pull ghcr.io/inclusionai/areal-runtime:v0.5.3
+docker pull ghcr.io/inclusionai/areal-runtime:v1.0.0
 docker run -it --name areal-node1 \
    --privileged --gpus all --network host \
    --shm-size 700g -v /path/to/mount:/path/to/mount \
-   ghcr.io/inclusionai/areal-runtime:v0.5.3 \
+   ghcr.io/inclusionai/areal-runtime:v1.0.0 \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL /path/to/mount/AReaL
 cd /path/to/mount/AReaL
@@ -86,6 +86,16 @@ uv sync --extra cuda
 # Or with additional packages for development and testing
 # uv sync --group dev
 ```
+
+After installation, activate the virtual environment:
+
+```bash
+source .venv/bin/activate
+```
+
+Activation is required before running `pre-commit` or `git commit`. If you use
+`uv run <command>` instead, activation is not needed as `uv run` automatically uses the
+virtual environment.
 
 This installs all CUDA-dependent packages including SGLang, vLLM, Megatron, Flash
 Attention, etc. These packages require Linux x86_64 with CUDA 12.x and compatible NVIDIA

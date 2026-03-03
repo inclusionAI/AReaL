@@ -14,6 +14,9 @@ the OpenAI chat-completions protocol.
 > - [Agent workflow reference](../../docs/reference/agent_workflow.md) — internal
 >   architecture details
 
+**Disclaimer**: RL-finetuned models may exhibit unexpected behaviors. Please ensure
+strict permission rules and an isolated execution environment for your agent runtime.
+
 ## Prerequisites
 
 1. A GPU machine with at least **2 NVIDIA GPUs** (compute capability 8.0 or higher, i.e.
@@ -42,7 +45,7 @@ uv run python3 examples/openclaw/train.py --config examples/openclaw/config.yaml
     allocation_mode=sglang:d1+fsdp:d1 \
     actor.path=Qwen/Qwen3-0.6B \
     scheduler.type=local \
-    rollout.openai.admin_api_key=${your-admin-api-key}
+    rollout.openai.admin_api_key=<admin-api-key>
 ```
 
 After initialization, you will see output similar to the following:
@@ -84,7 +87,7 @@ interactions. An episode may contain multiple LLM interactions (multi-turn).
 Start a new session before you first activate agent runtime:
 
 ```bash
-python start_session.py http://<gateway> --admin-key ${your-admin-api-key}
+python start_session.py http://<gateway> --admin-key <admin-api-key>
 ```
 
 Example output:
@@ -113,7 +116,7 @@ Example output:
 
   ℹ  To start the next episode with the same key:
 
-  python start_session.py http://<gateway> --admin-key sk-test123456 --api-key sk-sess-xxxxxxxxxxxx
+  python start_session.py http://<gateway> --admin-key <admin-api-key> --api-key sk-sess-xxxxxxxxxxxx
 
 SESSION_API_KEY=sk-sess-xxxxxxxxxxxx
 SESSION_ID=demo-task-0
@@ -141,7 +144,7 @@ You can also configure channels (Discord, Slack, CLI, etc.) by following the
 Then, to start a new episode, run the refresh command:
 
 ```bash
-python start_session.py http://<gateway> --admin-key ${your-admin-api-key} \
+python start_session.py http://<gateway> --admin-key <admin-api-key> \
   --api-key sk-sess-xxxxxxxxxxxx
 ```
 

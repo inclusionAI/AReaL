@@ -34,10 +34,10 @@ pip install git+https://github.com/dhh1995/tau2-bench.git@dhh/async-and-custom-c
 ```
 
 Note that the training relies on the async version of the agent and user simulator in
-the tau2-bench package. These changes will be merged into the
-[original tau2-bench repository](https://github.com/sierra-research/tau2-bench) later.
+the [tau2-bench package](https://github.com/dhh1995/tau-bench). These changes will be
+merged into the original tau2-bench repository later.
 
-2. Setup the `TAU2_DATA_DIR` environment variable:
+1. Setup the `TAU2_DATA_DIR` environment variable:
 
 ```bash
 export TAU2_DATA_DIR=/path/to/tau2-bench/data
@@ -48,12 +48,14 @@ For multi-node experiment with slurm, this can be set in the config file under
 
 ### Configuration Files
 
-Two example configurations are provided:
+Four example configurations are provided:
 
-| Config                     | Model      | Cluster          | Allocation             | Use Case                   |
-| -------------------------- | ---------- | ---------------- | ---------------------- | -------------------------- |
-| `config_1.7b_airline.yaml` | Qwen3-1.7B | 1 node, 8 GPUs   | `sglang:d6+archon:d2`  | Small-scale local training |
-| `config_8b_airline.yaml`   | Qwen3-8B   | 3 nodes, 24 GPUs | `sglang:d16+archon:d8` | Multi-node Slurm training  |
+| Config                         | Model           | Cluster           | Allocation                                             | Use Case                                |
+| ------------------------------ | --------------- | ----------------- | ------------------------------------------------------ | --------------------------------------- |
+| `config_1.7b_airline.yaml`     | Qwen3-1.7B      | 1 node, 8 GPUs    | `sglang:d6+archon:d2`                                  | Small-scale local training              |
+| `config_8b_airline.yaml`       | Qwen3-8B        | 3 nodes, 24 GPUs  | `sglang:d16+archon:d8`                                 | Multi-node Slurm training               |
+| `config_30b_moe_airline.yaml`  | Qwen3-30B-A3B   | 8 nodes, 64 GPUs  | `sglang:d8t4+megatron:(attn:d4p4t2\|ffn:d2p4e4)`       | Multi-node Slurm training for MOE model |
+| `config_235b_moe_airline.yaml` | Qwen3-235B-A22B | 10 nodes, 80 GPUs | `sglang:d4t8+megatron:(attn:d1p12t4c1\|ffn:d1p12t1e4)` | Multi-node Slurm training for MOE model |
 
 ### Prepare User Simulator Server
 
@@ -90,7 +92,7 @@ python3 examples/tau2/train.py \
     econfig.user_llm_base_url=http://localhost:8000/v1/ # your user LLM address
 ```
 
-#### Multi-Node Slurm (8B Model)
+#### Multi-Node Slurm
 
 On a SLURM cluster with at least 3 8x GPU nodes, directly run from a intermediate server
 with AReaL and SLURM cli installed:
@@ -124,10 +126,24 @@ python3 examples/tau2/train.py \
 The following figure shows the training reward curves for the two configurations,
 trained using the Archon engine:
 
-![Training Reward Curves](reward.png)
+<p align="left">
+  <img src="reward.png" width="400">
+</p>
 
 - **Green line**: Qwen3-1.7B model (`config_1.7b_airline.yaml`)
 - **Purple line**: Qwen3-8B model (`config_8b_airline.yaml`)
+
+We also provide example configs for MoE models: `config_30b_moe_airline.yaml`
+(Qwen3-30B-A3B) and `config_235b_moe_airline.yaml` (Qwen3-235B-A22B). The following
+figure shows the training reward curve of Qwen3-30B-A3B model trained using the Megatron
+engine:
+
+<p align="left">
+  <img src="reward_moe.png" width="400">
+</p>
+
+For reward curves of experiments on a larger scale, please refer to the
+[AReaL Tau2 paper](https://arxiv.org/abs/2601.22607).
 
 ## Notes
 
@@ -138,4 +154,15 @@ trained using the Archon engine:
 1. **Tree training**: The configs enable `enable_tree_training=true` by default, which
    optimizes training by sharing prefix computations across rollouts with the same
    prompt. This option can largely accelerate training but will possibly increase GPU
-   memory usage if `actor.mb_spec.max_tokens_per_mb` is large.
+   memory usage if `actor.mb_spec.max_tokens_per_mb` is large. And this setting may
+   cause instability during the training of the MoE model.
+
+## Customization
+
+We have released the training data and a trained model from this pipeline. You can use
+the
+[open-source Tau2 dataset](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data)
+to reproduce results from the [AReaL Tau2 paper](https://arxiv.org/abs/2601.22607), or
+directly download the resulting model
+[AReaL-SEA-235B-A22B](https://huggingface.co/inclusionAI/AReaL-SEA-235B-A22B) trained
+with this data and pipeline.
