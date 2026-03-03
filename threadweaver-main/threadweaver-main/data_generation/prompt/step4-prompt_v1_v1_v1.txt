@@ -1,0 +1,38 @@
+In this task, your goal is to generate outlines for some mathematical reasoning procedures. Specifically, you will be given
+1. A coherent math reasoning trace segment tagged with parallel structures (`<Parallel> ... <Thread> ... </Thread> ... </Parallel>`) that indicate reasoning steps which can be executed in parallel. 
+2. A group of placeholders placed at the beginning of the segment
+```
+<Outlines>
+<Outline>1: [Outline to be generated for path 1 below]</Outline>
+<Outline>2: [Outline to be generated for path 2 below]</Outline>
+...
+<Outline>X: [Outline to be generated for path X below]</Outline>
+</Outlines>
+```
+3. A segment of text immediately preceding the target reasoning trace segment (`Context:`) to serve as the context for deriving the outline.
+
+Using only the provided context (`Context:`), generate the outline for each <Thread> in the <Parallel> segment. Place the generated outline in the markers "[Outline to be generated for path X below]".
+
+**Output format:**
+```
+<Outlines>
+<Outline>1: [Outline to be generated for path 1 below]</Outline>
+<Outline>2: [Outline to be generated for path 2 below]</Outline>
+...
+<Outline>X: [Outline to be generated for path X below]</Outline>
+</Outlines>
+```
+
+**Guidelines:**
+* Imagine that a mathematician is thinking and using the outlines to structure and guide their thinking process in each corresponding path (`<Outline>X:... <Thread>X:...`). 
+* Frame the outlines so the mathematician could logically plan them based solely on the context, without access to the content in the parallel segment or any additional information. 
+* Make the outline directly and easily derivable from the context – neither too abstract nor too specific – and strictly aligned with the order of the paths.
+* Each outline should capture the gists and logical structure of its path without excessive details.
+* Thinking in each path is done independently. Ensure that the outlines remain distinct and do not depend on one another. 
+* Do not reveal exact calculations, numerical results, or the final conclusion from its path in the outline. Instead, indicate the steps/methods/directions that lead to them.
+* Do not introduce a substantial amount of reasoning in the outlines.
+* Avoid phrases like "conclude that ...", "rule out that ...", or anything that cannot be directly derived from the context without significant reasoning. Do not frame the outline as if the conclusion is already known.
+* A reader should be able to write the path from the outline plus the context alone with some reasoning effort, without additional information.
+* Keep the outline concise and clear: one sentence for short content; at most two sentences for longer content.
+* Output plain text within each outline block: no bullet points, numbering, headings, or extra commentary.
+* Do not start your output with "```xml". Start your output with <Outlines> and end your output with </Outlines>. The only allowed tags in a <Outlines> block are <Outline> tags.

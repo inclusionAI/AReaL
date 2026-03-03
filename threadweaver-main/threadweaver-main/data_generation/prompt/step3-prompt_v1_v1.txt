@@ -1,0 +1,46 @@
+In this task, your goal is to check the English language of a given text segment against two other text segments from the same article:
+* The "allowed context” segment comes from the immediate preceding section of the text segment under review. The text segment under review may reference content from this previous section.  
+* The "forbidden context” segment is from a section **parallel** to the text segment under review. The text segment under review must not reference any content from this parallel section.
+
+Specifically, you will be provided with the following:
+1. Allowed Context — contains information the text under review may reference.
+2. Forbidden Context — contains information the text under review must not reference.
+3. Text Under Review — the text segment to be checked.
+
+Your task is to decide whether the text under review refers to any information in the Forbidden Context. 
+If it does, output a JSON array of substring replacements that remove or rewrite the referencing language in the text under review, following the output format specified below.
+If it does not, output an empty array: `[]`.
+Output the raw JSON only. Do not enclose the output in "```json...```”.
+
+Output format:
+```
+[
+  {
+    "src": "<the substring to be removed or rewritten (exact match, properly escaped)>",
+    "dest": "<the replacement text which removes the reference to the Forbidden Context (use \"\" to delete)>"
+  },
+  ...
+]
+```
+
+**Guidelines:**
+* Replace the minimal substrings needed to eliminate the reference to the Forbidden Context while keeping the text under review grammatical.
+* Escape quotes and newlines in JSON (use `\"` and `\n`).
+* A proposed replacement will affect all occurrences of the "src” field  in the text under review. If you do not intend to modify all the occurrences, make the substring in "src” more specific.
+* Do not introduce new information from the Forbidden Context in your replacements.
+* References to the Allowed Context are permitted. Do not remove any references to the Allowed Context.
+* Do not add explanations or code fences. 
+* Do not output any text outside the JSON.
+
+Special cases to watch for:
+* Remove or rewrite any occurrences of:
+  - Anaphora/Deictics: Phrases like "as above,” "as before,” "same as earlier,” "that result,” "those values,” which implicitly point to the Forbidden Context. Keep these when they refer to the Allowed Context.
+  - Implicit carry-over: "unchanged from the previous section,” "as we computed,” when the "previous” information is from the Forbidden Context.
+  - Shorthand references: Symbols, variable names, or equation labels defined only in the Forbidden Context (e.g., "that z,” "the value from (3)”).
+  - Cross-references: "see previous,” "see above,” footnote markers, or inline citations that point to the Forbidden Context.
+  - Paraphrased pointers: Rewrites that still rely on the Forbidden Context even without verbatim overlap.
+* Overlapping matches: When multiple candidate substrings overlap, prefer one replacement of the longest meaningful phrase rather than many small ones.
+* Case/whitespace variants: Handle differences in capitalization or spacing exactly by matching the literal substring present in the path.
+* Multiline fragments: If the referencing text to be replaced spans lines, include `\n` in src and dest as needed.
+* Grammar preservation: If removing a piece of referencing text  leaves dangling punctuation or grammar issues, include the surrounding words/punctuation in "src” to keep the sentence clean.
+* Nothing salvageable: If an entire clause or sentence is a forbidden reference (e.g., "Which is the same as before.”), delete it by setting "dest": "".
