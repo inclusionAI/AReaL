@@ -174,6 +174,9 @@ class RolloutController:
 
         if sch_spec.ray_placement_strategy == "shared":
             # do not support shared placement for rollout
+            logger.warning(
+                "Placement strategy 'shared' is not supported for rollouts. Forcing to 'separate' strategy'"
+            )
             sch_spec.ray_placement_strategy = "separate"
 
         job = Job(

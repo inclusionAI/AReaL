@@ -17,6 +17,8 @@ from areal.utils import logging
 
 logger = logging.getLogger("RayPlacementGroup")
 
+MAIN_WORKER_GPU_FRAC_FOR_COLOCATION = 0.9
+
 
 def ray_resource_type():
     # npu before cuda because mindspeed patches cuda.is_available
@@ -154,7 +156,7 @@ class SharedRayPlacementStrategy(RayPlacementStrategy):
         return self._placement_groups
 
     def actor_resources(
-        self, spec: SchedulingSpec, gpu_multiplier=0.9
+        self, spec: SchedulingSpec, gpu_multiplier=MAIN_WORKER_GPU_FRAC_FOR_COLOCATION
     ) -> tuple[dict, PlacementGroupSchedulingStrategy]:
         options = _actor_resource_spec(spec.cpu, spec.gpu * gpu_multiplier, spec.mem)
         placement_group = self._placement_groups[0]
