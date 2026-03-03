@@ -384,9 +384,13 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["teacher_logp"] = self.teacher.compute_logp(rollout_batch)
+                    rollout_batch["teacher_logp"] = self.teacher.compute_logp(
+                        rollout_batch
+                    )
                     rollout_batch["rl_loss_weight"] = self.config.teacher.rl_loss_weight
-                    rollout_batch["distill_loss_weight"] = self.config.teacher.distill_loss_weight
+                    rollout_batch["distill_loss_weight"] = (
+                        self.config.teacher.distill_loss_weight
+                    )
                     self.teacher.get_device_stats().log("teacher logp")
 
             with (
@@ -675,7 +679,8 @@ class PPOTrainer:
 
         ft_spec = FinetuneSpec(
             total_train_epochs=self.config.total_train_epochs,
-            dataset_size=len(self.train_dataloader) * self.config.train_dataset.batch_size,
+            dataset_size=len(self.train_dataloader)
+            * self.config.train_dataset.batch_size,
             train_batch_size=self.config.train_dataset.batch_size,
         )
 

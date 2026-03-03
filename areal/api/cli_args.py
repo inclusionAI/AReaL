@@ -2024,6 +2024,7 @@ class RWConfig(BaseExperimentConfig):
 
     actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
+
 @dataclass
 class TeacherConfig(PPOActorConfig):
     allocation_mode: str = field(
@@ -2039,6 +2040,7 @@ class TeacherConfig(PPOActorConfig):
         default=0.005,
         metadata={"help": "Distillation loss weight"},
     )
+
 
 @dataclass
 class PPOConfig(BaseExperimentConfig):

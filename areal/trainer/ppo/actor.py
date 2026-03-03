@@ -434,7 +434,9 @@ def grpo_loss_fn(
         rl_loss_weight = input_data.get("rl_loss_weight", 1.0)
         distill_loss_weight = input_data.get("distill_loss_weight", 0.005)
 
-        teacher_logp = teacher_logp.detach()  # detach to prevent gradient backprop to teacher
+        teacher_logp = (
+            teacher_logp.detach()
+        )  # detach to prevent gradient backprop to teacher
 
         if rl_loss_weight == 0:
             # Pure KD using reverse KL (importance-sampling)
