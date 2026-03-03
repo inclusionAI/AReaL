@@ -52,4 +52,4 @@ On-policy knowledge distillation + RL reward plot for Qwen2.5-14B-Instruct (teac
 
 ## References
 
-[KDRL](https://arxiv.org/pdf/2506.02208): Xu, Hongling, et al. "Kdrl: Post-training reasoning llms via unified knowledge distillation and reinforcement learning." arXiv preprint arXiv:2506.02208 (2025).
+[KDRL](https://arxiv.org/pdf/2506.02208): Xu H, Zhu Q, Deng H, Li J, Hou L, Wang Y, Shang L, Xu R, Mi F. Kdrl: Post-training reasoning llms via unified knowledge distillation and reinforcement learning.

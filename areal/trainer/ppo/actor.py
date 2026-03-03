@@ -426,7 +426,7 @@ def grpo_loss_fn(
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
         )
-    
+
     # Joint Distillation KL Loss
     teacher_logp = input_data.get("teacher_logp")
     if teacher_logp is not None:

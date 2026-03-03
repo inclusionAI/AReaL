@@ -182,7 +182,7 @@ class PPOTrainer:
             self.critic.initialize(**engine_init_kwargs, role="critic")
         if self.ref is not None:
             self.ref.initialize(**engine_init_kwargs, role="ref")
-        
+
         self.teacher = None
         if config.teacher is not None:
             self.teacher = self._create_teacher(config.teacher)
@@ -646,7 +646,7 @@ class PPOTrainer:
             critic = critic_cls(config=critic_config)
         critic.create_process_group(parallel_strategy=self.allocation_mode.train)
         return critic
-    
+
     def _create_teacher(self, teacher_config):
         allocation_mode = AllocationMode.from_str(teacher_config.allocation_mode)
 
@@ -660,27 +660,34 @@ class PPOTrainer:
             actor_cls = MegatronPPOActor
         else:
             raise ValueError(
-                f"Invalid backend: {allocation_mode.train_backend}, expected fsdp, megatron"
+                f"Invalid backend: {allocation_mode.train_backend}, expected fsdp or megatron"
             )
-        
-        teacher = actor_cls.as_controller(teacher_config, self.scheduler)
+
+        if is_single_controller():
+            teacher = actor_cls.as_controller(teacher_config, self.scheduler)
+        else:
+            teacher = actor_cls(config=teacher_config)
+
         teacher.create_process_group(parallel_strategy=allocation_mode.train)
 
         parallel_strategy = allocation_mode.train
         assert parallel_strategy is not None
+
         ft_spec = FinetuneSpec(
             total_train_epochs=self.config.total_train_epochs,
             dataset_size=len(self.train_dataloader) * self.config.train_dataset.batch_size,
-            train_batch_size= self.config.train_dataset.batch_size 
+            train_batch_size=self.config.train_dataset.batch_size,
         )
+
         engine_init_kwargs = {
             "addr": None,
             "ft_spec": ft_spec,
-            "alloc_mode": allocation_mode
+            "alloc_mode": allocation_mode,
         }
-        teacher.initialize(**engine_init_kwargs, role="teacher")
-        return teacher
 
+        teacher.initialize(**engine_init_kwargs, role="teacher")
+
+        return teacher
 
     def _init_rollout(
         self,
