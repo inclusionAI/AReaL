@@ -444,7 +444,7 @@ def grpo_loss_fn(
             prob_ratio = torch.exp(logprobs - old_logp)
 
             loss_per_token = prob_ratio * teacher_kl * loss_mask
-            kd_coef = -1 * distill_loss_weight  # usually 1.0
+            kd_coef = -1 * distill_loss_weight
             loss = kd_coef * loss_per_token.sum() / loss_mask.sum().clamp(min=1)
 
             stats_tracker.scalar(teacher_kl_loss=loss.detach())
