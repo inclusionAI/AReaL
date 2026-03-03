@@ -977,11 +977,6 @@ class TestComputeLogpMetricsLogging:
             # All imp_weight metrics should use "behave_imp_weight"
             if "imp_weight" in key and "importance_weight" not in key:
                 assert "behave_imp_weight" in key, f"Metric {key} uses wrong spelling"
-        for key in logged_stats.keys():
-            # Should use "behave_imp_weight" not "behave_imp_weight"
-            if "imp_weight" in key and "importance_weight" not in key:
-                assert "behave_imp_weight" in key, f"Metric {key} uses wrong spelling"
-                assert "behave_imp_weight" not in key, f"Metric {key} uses old spelling"
 
 
 if __name__ == "__main__":
