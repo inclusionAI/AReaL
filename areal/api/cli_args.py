@@ -1060,10 +1060,32 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "Use the decoupled loss. Implicitly enables recompute_logprob."
         },
     )
-    behav_imp_weight_cap: float | None = field(
-        default=None,
+    behave_imp_weight_cap: float | None = field(
+        default=5.0,
         metadata={
-            "help": "Filter out tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing loss. Must be > 1.0. use_decoupled_loss must be true."
+            "help": "Filter out tokens/sequences where behave_imp_weight exceeds this cap when computing loss. "
+            "Only effective when use_decoupled_loss=True (decoupled/async training). "
+            "Must be > 1.0 when mode is not 'disabled'. "
+            "Mode controlled by behave_imp_weight_mode (mask/truncate/disabled)."
+        },
+    )
+    behave_imp_weight_mode: str = field(
+        default="token_mask",
+        metadata={
+            "help": "Mode for importance weight filtering. "
+            "Only effective when use_decoupled_loss=True (decoupled/async training). "
+            "'token_truncate': clamp token ratio to [0, cap]. "
+            "'token_mask': set token ratio to 0 where ratio > cap. "
+            "'sequence_truncate': clamp sequence ratio to [0, cap]. "
+            "'sequence_mask': set sequence ratio to 0 where ratio > cap. "
+            "'disabled': disable importance weight correction.",
+            "choices": [
+                "token_truncate",
+                "token_mask",
+                "sequence_truncate",
+                "sequence_mask",
+                "disabled",
+            ],
         },
     )
     importance_sampling_level: str = field(
@@ -1113,6 +1135,36 @@ class PPOActorConfig(TrainEngineConfig):
         return (self.use_decoupled_loss and not method.skips_forward_pass()) or (
             not self.use_decoupled_loss and self.recompute_logprob
         )
+
+    def __post_init__(self):
+        """Validate MIS/TIS configuration."""
+        if self.behave_imp_weight_mode == "disabled":
+            if self.behave_imp_weight_cap is not None:
+                raise ValueError(
+                    f"behave_imp_weight_cap must be None when behave_imp_weight_mode is 'disabled', "
+                    f"got {self.behave_imp_weight_cap}."
+                )
+        else:
+            if (
+                self.behave_imp_weight_cap is not None
+                and self.behave_imp_weight_cap <= 1.0
+            ):
+                raise ValueError(
+                    f"behave_imp_weight_cap must be > 1.0 when behave_imp_weight_mode is not 'disabled', "
+                    f"got {self.behave_imp_weight_cap}."
+                )
+
+        # Warn if behave_imp_weight settings are configured but use_decoupled_loss is False
+        if not self.use_decoupled_loss:
+            if (
+                self.behave_imp_weight_cap is not None
+                or self.behave_imp_weight_mode != "disabled"
+            ):
+                logger.warning(
+                    "behave_imp_weight_cap and behave_imp_weight_mode are configured but "
+                    "use_decoupled_loss=False. These settings will be ignored. "
+                    "Set use_decoupled_loss=True to enable decoupled loss with importance weight correction."
+                )
 
 
 @dataclass
@@ -2104,8 +2156,8 @@ def load_expr_config[ConfigT](
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
     assert isinstance(cfg, config_cls)
-    # Setup environment
 
+    # Setup environment
     name_resolve.reconfigure(cfg.cluster.name_resolve)
 
     from areal.utils.stats_logger import StatsLogger
