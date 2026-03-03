@@ -98,7 +98,7 @@ A, \\text{clip}\\left(\\frac{\\pi_\\theta}{\\pi\_{\\text{proximal}}}, 1-\\epsilo
 
 **Troubleshooting `behave_imp_weight` deviations:**
 
-- Ensure `behav_imp_weight_cap` is set (recommended value: 5).
+- Ensure `behave_imp_weight_cap` is set (recommended value: 5).
 - If deviation persists, reduce `max_head_offpolicyness` to decrease sample staleness.
 
 ### Sequence Length Metrics
