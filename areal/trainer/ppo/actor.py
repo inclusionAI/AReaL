@@ -440,7 +440,7 @@ def grpo_loss_fn(
 
         if rl_loss_weight == 0:
             # Pure KD using reverse KL (importance-sampling)
-            teacher_kl = teacher_logp - logprobs
+            teacher_kl = teacher_logp - logprobs.detach()
             prob_ratio = torch.exp(logprobs - old_logp)
 
             loss_per_token = prob_ratio * teacher_kl * loss_mask
