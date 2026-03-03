@@ -56,13 +56,22 @@ Open `http://localhost:8008`, pick a sample index, and click tokens to inspect t
 ## Quick Evaluation
 This is a quick evaluation script that runs parallel generation with SGLang. We recommend using the parallel rollout implementation in veRL for evaluation (see [threadweaver_rl/README.md](threadweaver_rl/README.md)).
 
+
+If using TW dataset, run:
 ```bash
 # Replace with your trained model path
 TRAINED_MODEL="ckpts/Q3-8B-131072-SFT"
 
-python src/simple_eval.py --data-type data/mult-10k-par_pq/train.parquet --model_name $TRAINED_MODEL --launch_server --verbose 2 --template-type model --bfloat16 --branching-generate -n 1 --max-context-length 8192
+python src/simple_eval.py --data-type data/mult-10k-par_pq/train.parquet --model_name $TRAINED_MODEL --launch_server --verbose 2 --template-type model --bfloat16 --branching-generate -n 1 --max-context-length 32768
 ```
 
+If using zzy dataset, run:
+```bash
+# Replace with your trained model path
+TRAINED_MODEL="ckpts/Q3-8B-131072-SFT"
+
+python src/simple_eval.py --data-type data/mult-10k-par_pq/train.parquet --model_name $TRAINED_MODEL --launch_server --verbose 2 --template-type model --bfloat16 --branching-generate -n 1 --max-context-length 32768
+```
 Reference result:
 ```
 With strict grading function:
