@@ -18,9 +18,12 @@ from areal.experimental.scaffolding._compat import (
     OpenaiWorker,
     TaskStatus,
 )
+from areal.utils import logging
 
 if TYPE_CHECKING:
     from areal.engine.sglang_remote import RemoteSGLangEngine
+
+worker_logger = logging.getLogger("SGLangWorker")
 
 
 class SGLangWorker(OpenaiWorker):
@@ -71,7 +74,13 @@ class SGLangWorker(OpenaiWorker):
             params["tools"] = [tool.to_dict() for tool in task.tools]
 
         try:
+            worker_logger.info(
+                "Sending chat request to %s (messages=%d) ...",
+                self.async_client.base_url,
+                len(params.get("messages", [])),
+            )
             response = await self.async_client.chat.completions.create(**params)
+            worker_logger.info("Chat response received.")
 
             # Store the completion in the task for tracing
             task.completion = response
@@ -127,7 +136,12 @@ class SGLangWorker(OpenaiWorker):
             params["prompt"] = task.input_str
 
         try:
+            worker_logger.info(
+                "Sending generation request to %s ...",
+                self.async_client.base_url,
+            )
             response = await self.async_client.completions.create(**params)
+            worker_logger.info("Generation response received.")
 
             task.output_str = response.choices[0].text
             if hasattr(response.choices[0], "token_ids"):

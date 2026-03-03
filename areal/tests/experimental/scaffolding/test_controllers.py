@@ -241,9 +241,11 @@ class TestPipelineTrajectoryMaker:
         task = GenerationTask(input_str=FAKE_PROMPT_STR, input_tokens=FAKE_INPUT_TOKENS)
         results = list(maker.process([task]))
 
-        # Three yields: generation, reward, interactions dict
-        assert len(results) == 3
-        interactions = results[-1]
+        # Only generation yields (reward computed locally, no dict yield)
+        assert len(results) == 1
+
+        # Interactions stored on task
+        interactions = task.customized_result_fields["interactions"]
         assert isinstance(interactions, dict)
         assert len(interactions) == 1
 
@@ -264,9 +266,9 @@ class TestPipelineTrajectoryMaker:
         )
 
         task = GenerationTask(input_str=FAKE_PROMPT_STR, input_tokens=FAKE_INPUT_TOKENS)
-        results = list(maker.process([task]))
+        list(maker.process([task]))
 
-        interactions = results[-1]
+        interactions = task.customized_result_fields["interactions"]
         interaction = list(interactions.values())[0]
         assert interaction.reward == 0.0
 
@@ -286,9 +288,10 @@ class TestPipelineTrajectoryMaker:
             GenerationTask(input_str=FAKE_PROMPT_STR, input_tokens=FAKE_INPUT_TOKENS),
             GenerationTask(input_str="Another prompt", input_tokens=[111, 112]),
         ]
-        results = list(maker.process(tasks))
+        list(maker.process(tasks))
 
-        interactions = results[-1]
+        # Both tasks should have the same interactions dict
+        interactions = tasks[0].customized_result_fields["interactions"]
         assert len(interactions) == 2
         for interaction in interactions.values():
             assert interaction.reward == 1.0
@@ -311,9 +314,9 @@ class TestPipelineTrajectoryMaker:
         )
 
         task = GenerationTask(input_str=FAKE_PROMPT_STR, input_tokens=FAKE_INPUT_TOKENS)
-        results = list(maker.process([task]))
+        list(maker.process([task]))
 
-        interaction = list(results[-1].values())[0]
+        interaction = list(task.customized_result_fields["interactions"].values())[0]
         mr = interaction.model_response
         assert isinstance(mr, ModelResponse)
         assert mr.input_tokens == FAKE_INPUT_TOKENS
@@ -406,9 +409,9 @@ class TestPipelineTrajectoryMaker:
         )
 
         task = GenerationTask(input_str=FAKE_PROMPT_STR, input_tokens=FAKE_INPUT_TOKENS)
-        results = list(maker.process([task]))
+        list(maker.process([task]))
 
-        interaction = list(results[-1].values())[0]
+        interaction = list(task.customized_result_fields["interactions"].values())[0]
         mr = interaction.model_response
         # Placeholders: [0.0] * output_len
         assert mr.output_logprobs == [0.0, 0.0]
@@ -872,8 +875,8 @@ class TestEndToEnd:
         )
 
         task = GenerationTask(input_str=FAKE_PROMPT_STR, input_tokens=FAKE_INPUT_TOKENS)
-        results = list(maker.process([task]))
-        interaction = list(results[-1].values())[0]
+        list(maker.process([task]))
+        interaction = list(task.customized_result_fields["interactions"].values())[0]
 
         td = interaction.to_tensor_dict()
         assert "input_ids" in td

@@ -21,7 +21,15 @@ from transformers import PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
 from areal.api.engine_api import InferenceEngine
 from areal.dataset import get_custom_dataset
-from areal.experimental.scaffolding._compat import GenerationTask
+from areal.experimental.scaffolding._compat import (
+    NativeGenerationController,
+    ScaffoldingLlm,
+)
+from areal.experimental.scaffolding.controllers import (
+    MultiTurnChatController,
+    RLVRRewardController,
+    TraceTrajectoryMaker,
+)
 from areal.experimental.scaffolding.workflow import ScaffoldingWorkflow
 from areal.trainer import PPOTrainer
 from areal.utils import logging
@@ -44,8 +52,8 @@ class ChatScaffoldingWorkflow(ScaffoldingWorkflow):
     non-final turn the ``reflection_message`` is appended as a user message
     to prompt the model to retry. Reward is computed on the final turn only.
 
-    Generation and reward use the same direct-API approach as the base class
-    (``_generate_via_worker`` + ``_compute_rewards_via_controller``).
+    Generation and reward are delegated to ``scaffolding_llm`` which wraps a
+    ``TraceTrajectoryMaker`` with a ``MultiTurnChatController``.
 
     Parameters
     ----------
@@ -81,14 +89,60 @@ class ChatScaffoldingWorkflow(ScaffoldingWorkflow):
         self.max_turns = max_turns
         self.reflection_message = reflection_message
 
+    def build_scaffolding_llm(self, engine: InferenceEngine) -> ScaffoldingLlm:
+        """Build ScaffoldingLlm with MultiTurnChatController + TraceTrajectoryMaker.
+
+        Parameters
+        ----------
+        engine : InferenceEngine
+            The inference engine.
+
+        Returns
+        -------
+        ScaffoldingLlm
+            The constructed ScaffoldingLlm instance.
+        """
+        stop_strings = []
+        if self.gconfig.stop_token_ids:
+            for tid in self.gconfig.stop_token_ids:
+                decoded = self.tokenizer.decode([tid])
+                if decoded:
+                    stop_strings.append(decoded)
+
+        sampling_params = {
+            "max_tokens": self.gconfig.max_new_tokens,
+            "temperature": self.gconfig.temperature or 1.0,
+        }
+        if stop_strings:
+            sampling_params["stop"] = stop_strings
+
+        self.gen_controller = NativeGenerationController(
+            sampling_params=sampling_params
+        )
+        self.reward_controller = RLVRRewardController(self.reward_fn)
+        self.multi_turn_controller = MultiTurnChatController(
+            generation_controller=self.gen_controller,
+            max_turns=self.max_turns,
+            reflection_message=self.reflection_message,
+            tokenizer=self.tokenizer,
+        )
+        self.trajectory_maker = TraceTrajectoryMaker(
+            rollout_controller=self.multi_turn_controller,
+            reward_controller=self.reward_controller,
+        )
+        return ScaffoldingLlm(
+            self.trajectory_maker,
+            {NativeGenerationController.WorkerTag.GENERATION: self.worker},
+        )
+
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, torch.Tensor]:
         """Run a single multi-turn chat episode.
 
-        Each turn: generate via SGLang OpenAI API, then optionally append a
-        reflection message and retry.  After all turns, compute reward on the
-        final completion and build tensor dicts identical to the base class.
+        Delegates the full episode (multi-turn generation + reward) to
+        ``self.scaffolding_llm``, which wraps a ``TraceTrajectoryMaker``
+        with a ``MultiTurnChatController``.
 
         Parameters
         ----------
@@ -103,39 +157,12 @@ class ChatScaffoldingWorkflow(ScaffoldingWorkflow):
             Trajectory tensors for PPO training.
         """
         if self.worker is None:
+            logger.info("Calling _lazy_init_scaffolding ...")
             self._lazy_init_scaffolding(engine)
+            logger.info("_lazy_init_scaffolding done.")
 
-        # Start from the original messages
-        messages = list(data["messages"])
-        last_output_str = ""
-        all_output_tokens: list[int] = []
-
-        for turn in range(self.max_turns):
-            # Build prompt for this turn
-            input_ids = list(
-                self.tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=True,
-                    add_generation_prompt=True,
-                    enable_thinking=self.enable_thinking,
-                )
-            )
-            prompt_str = self.tokenizer.decode(input_ids)
-
-            # Generate via the SGLang OpenAI API (same as base class)
-            gen_task = await self._generate_via_worker(prompt_str, input_ids)
-            last_output_str = gen_task.output_str or ""
-            all_output_tokens = list(gen_task.output_tokens or [])
-
-            # Append the assistant response to messages
-            messages.append({"role": "assistant", "content": last_output_str})
-
-            # Append reflection message for non-final turns
-            if turn < self.max_turns - 1:
-                messages.append({"role": "user", "content": self.reflection_message})
-
-        # Compute reward on the final turn's output (same pattern as base class)
-        final_input_ids = list(
+        # Tokenize the original prompt (before multi-turn)
+        input_ids = list(
             self.tokenizer.apply_chat_template(
                 data["messages"],
                 tokenize=True,
@@ -143,22 +170,46 @@ class ChatScaffoldingWorkflow(ScaffoldingWorkflow):
                 enable_thinking=self.enable_thinking,
             )
         )
-        final_prompt_str = self.tokenizer.decode(final_input_ids)
+        prompt_str = self.tokenizer.decode(input_ids)
 
-        final_gen_task = GenerationTask(
-            input_str=final_prompt_str,
-            input_tokens=final_input_ids,
-            output_str=last_output_str,
-            output_tokens=all_output_tokens,
-        )
-        reward = await self._compute_rewards_via_controller(
-            final_gen_task, final_prompt_str, data
+        # Configure per-episode data on multi-turn controller
+        # (clone() in scaffolding_llm will deep-copy these)
+        self.multi_turn_controller.messages = data["messages"]
+        self.multi_turn_controller.input_tokens = input_ids
+
+        # Run full pipeline via scaffolding_llm
+        logger.info("Calling generate_async ...")
+        result = self.scaffolding_llm.generate_async(prompt_str)
+        logger.info("generate_async returned, awaiting result ...")
+        await result
+        logger.info("Result received.")
+
+        # Extract trace results from ScaffoldingOutput
+        scaffolding_output = result.outputs[0]
+        trace_results = scaffolding_output.data
+
+        # Get the final output text from the last traced interaction
+        if trace_results:
+            last_interaction = list(trace_results.values())[-1]
+            output_str = ""
+            if last_interaction.completion is not None:
+                output_str = (
+                    last_interaction.completion.choices[0].message.content or ""
+                )
+        else:
+            output_str = scaffolding_output.text or ""
+
+        output_tokens = self.tokenizer.encode(output_str, add_special_tokens=False)
+
+        # Compute reward on the final turn's output
+        reward = float(
+            self.reward_fn(prompt_str, output_str, input_ids, output_tokens, **data)
         )
 
-        # Build tensor dict (same as base class)
-        seq = final_input_ids + all_output_tokens
+        # Build tensor dict for PPO training
+        seq = input_ids + output_tokens
         logprobs = [0.0] * len(seq)
-        loss_mask = [0] * len(final_input_ids) + [1] * len(all_output_tokens)
+        loss_mask = [0] * len(input_ids) + [1] * len(output_tokens)
         versions = [-1] * len(seq)
 
         res = {

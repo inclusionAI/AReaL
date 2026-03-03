@@ -7,6 +7,7 @@ Rewards) that integrate with the scaffolding framework.
 Key Components:
 - RLVRRewardController: Controller that processes reward computation
 - PipelineTrajectoryMaker: Controller that composes generation and reward pipelines
+- MultiTurnChatController: Controller for multi-turn chat with reflection
 - ChatTracer: TaskCollection for tracing multi-turn chat conversations
 - TraceTrajectoryMaker: Controller that traces ChatTask objects during rollout
 """
@@ -24,8 +25,10 @@ from areal.experimental.scaffolding._compat import (
     ChatTask,
     Controller,
     GenerationTask,
+    RoleMessage,
     Task,
     TaskCollection,
+    UserMessage,
     with_task_collection,
 )
 from areal.experimental.scaffolding.task import (
@@ -85,6 +88,19 @@ class RLVRRewardController(Controller):
         self.reward_fn = reward_fn
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
         self.scores: list[float] | None = None
+
+    def __deepcopy__(self, memo):
+        """Create a new RLVRRewardController with the same reward function.
+
+        ``AsyncRewardWrapper`` contains ``ProcessPoolExecutor`` and
+        ``threading.Lock`` which cannot be deep-copied.  Instead of
+        copying those objects, we create a fresh controller that shares
+        the same underlying executor pool via ``AsyncRewardWrapper``'s
+        class-level state.
+        """
+        new = RLVRRewardController(self.reward_fn)
+        memo[id(self)] = new
+        return new
 
     def process(self, tasks: list[Task], **kwargs) -> Any:
         """Process reward tasks and compute rewards.
@@ -434,6 +450,7 @@ class PipelineTrajectoryMaker(Controller):
         reward_controller: RLVRRewardController,
         task_data: dict[str, Any] | None = None,
         prompt_str: str = "",
+        input_tokens: list[int] | None = None,
     ):
         """Initialize the pipeline trajectory maker.
 
@@ -447,15 +464,23 @@ class PipelineTrajectoryMaker(Controller):
             Task data containing ground truth for reward computation.
         prompt_str : str, optional
             The prompt string used for generation.
+        input_tokens : list[int], optional
+            The tokenized input IDs for the prompt.
         """
         super().__init__()
         self.generation_controller = generation_controller
         self.reward_controller = reward_controller
         self.task_data = task_data if task_data is not None else {}
         self.prompt_str = prompt_str
+        self.input_tokens = input_tokens if input_tokens is not None else []
 
     def process(self, tasks: list[Task], **kwargs) -> Any:
         """Process tasks through the generation and reward pipeline.
+
+        Yields task lists only for generation (worker execution). Reward
+        computation is done locally without yielding to workers.
+        Interactions are stored in ``task.customized_result_fields["interactions"]``
+        for retrieval in ``generate()``.
 
         Parameters
         ----------
@@ -466,12 +491,13 @@ class PipelineTrajectoryMaker(Controller):
 
         Yields
         ------
-        dict[str, InteractionWithTokenLogpReward]
-            Dictionary mapping task IDs to their interaction results.
+        list[Task]
+            Task lists for worker execution (generation only).
         """
-        # Step 1: Run generation
+        # Step 1: Run generation (yields task lists for worker execution)
         yield from self.generation_controller.process(tasks, **kwargs)
 
+        # Step 2: Create reward tasks and compute rewards locally
         reward_tasks = []
         interactions = {}
 
@@ -491,12 +517,47 @@ class PipelineTrajectoryMaker(Controller):
                 )
                 reward_tasks.append(reward_task)
 
-        # Step 3: Process reward tasks
-        yield from self.reward_controller.process(reward_tasks, **kwargs)
+        # Compute rewards locally (no yield to workers)
+        for _ in self.reward_controller.process(reward_tasks, **kwargs):
+            pass
 
-        # The interactions now have rewards set
-        # Return as the final result
-        yield interactions
+        # Store interactions on tasks for retrieval in generate()
+        for task in tasks:
+            task.customized_result_fields["interactions"] = interactions
+
+    def generate(self, prompt: str, **kwargs) -> Any:
+        """Generate with the full pipeline and return interactions in output.
+
+        Overrides the base ``Controller.generate()`` to:
+        1. Set ``input_tokens`` on the task so ``to_tensor_dict()`` works.
+        2. Reset ``stop`` to ``None`` so ``NativeGenerationController`` can
+           set it from ``sampling_params``.
+        3. Return a ``ScaffoldingOutput`` with interactions in ``data``.
+
+        Parameters
+        ----------
+        prompt : str
+            The input prompt string.
+        **kwargs
+            Additional keyword arguments.
+
+        Returns
+        -------
+        ScaffoldingOutput
+            Output with ``data`` containing the interactions dict.
+        """
+
+        task = GenerationTask.create_from_prompt(prompt)
+        if self.input_tokens:
+            task.input_tokens = self.input_tokens
+        # Reset stop to None so NativeGenerationController can set from sampling_params
+        task.stop = None
+
+        yield from self.process([task], **kwargs)
+
+        output = task.create_scaffolding_output()
+        output.data = task.customized_result_fields.get("interactions")
+        return output
 
     def _create_interaction_from_task(
         self, task: GenerationTask
@@ -540,6 +601,81 @@ class PipelineTrajectoryMaker(Controller):
         )
 
         return interaction
+
+
+class MultiTurnChatController(Controller):
+    """Controller for multi-turn chat with reflection between turns.
+
+    Handles the chat loop: for each turn, yields a ChatTask to the worker
+    for generation, then appends a reflection message for non-final turns.
+
+    Per-episode data (``messages``, ``input_tokens``) should be set before
+    calling ``generate()`` or ``process()``. ``ScaffoldingLlm`` deep-copies
+    the controller via ``clone()`` so each request gets its own copy.
+
+    Parameters
+    ----------
+    generation_controller : Controller
+        The controller for text generation (e.g., NativeGenerationController).
+    max_turns : int
+        Maximum number of chat turns per episode.
+    reflection_message : str
+        Message appended after each non-final turn to prompt retry.
+    tokenizer : Any
+        Tokenizer for encoding the final output to token IDs.
+    messages : list[dict], optional
+        The original chat messages to create the ChatTask from (set per-episode).
+    input_tokens : list[int], optional
+        The tokenized input IDs for the original prompt (set per-episode).
+    """
+
+    def __init__(
+        self,
+        generation_controller: Controller,
+        max_turns: int = 2,
+        reflection_message: str = "",
+        tokenizer: Any = None,
+        messages: list[dict] | None = None,
+        input_tokens: list[int] | None = None,
+    ):
+        super().__init__()
+        self.generation_controller = generation_controller
+        self.max_turns = max_turns
+        self.reflection_message = reflection_message
+        self.tokenizer = tokenizer
+        self.messages = messages if messages is not None else []
+        self.input_tokens = input_tokens if input_tokens is not None else []
+
+    def process(self, tasks: list[Task], **kwargs) -> Any:
+        """Run multi-turn chat generation.
+
+        Creates a ChatTask from the stored messages and yields it to the
+        worker for each turn. Between turns, appends a reflection message.
+
+        Parameters
+        ----------
+        tasks : list[Task]
+            Ignored; the ChatTask is created from ``self.messages``.
+        **kwargs
+            Additional keyword arguments.
+
+        Yields
+        ------
+        list[Task]
+            Task lists for worker execution (one per turn).
+        """
+        role_messages = [RoleMessage.from_dict(m) for m in self.messages]
+        chat_task = ChatTask.create_from_messages(role_messages)
+        # Reset stop so NativeGenerationController can set from sampling_params
+        chat_task.stop = None
+        if self.input_tokens:
+            chat_task.input_tokens = self.input_tokens
+
+        for turn in range(self.max_turns):
+            yield from self.generation_controller.process([chat_task], **kwargs)
+
+            if turn < self.max_turns - 1:
+                chat_task.add_message(UserMessage(self.reflection_message))
 
 
 @with_task_collection("chat_tracer", ChatTracer)
@@ -646,9 +782,10 @@ class TraceTrajectoryMaker(Controller):
             for interaction_id, interaction in trace_results.items()
         ]
 
-        # Run reward computation
+        # Run reward computation locally (no yield to workers)
         if reward_tasks:
-            yield from self.reward_controller.process(reward_tasks, **kwargs)
+            for _ in self.reward_controller.process(reward_tasks, **kwargs):
+                pass
 
             # Update trace_results with computed rewards
             for reward_task in reward_tasks:
@@ -674,11 +811,11 @@ class TraceTrajectoryMaker(Controller):
 
         Returns
         -------
-        Any
-            The scaffolding output.
+        ScaffoldingOutput
+            Output with trace results in ``data``.
         """
         task = TraceGenerationTask.create_from_prompt(prompt)
 
         yield from self.process([task], **kwargs)
 
-        return task.trace_results
+        return task.create_scaffolding_output()
