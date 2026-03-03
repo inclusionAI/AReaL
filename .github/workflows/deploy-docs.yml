@@ -2,7 +2,7 @@ name: Deploy Jupyter Book to GitHub Pages
 
 on:
   push:
-    branches: [ add_chinese_doc ]
+    branches: [ main ]
 
 # Allow one concurrent deployment
 concurrency:
@@ -22,8 +22,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: add_chinese_doc
 
       - name: Set up Python
         uses: actions/setup-python@v4
