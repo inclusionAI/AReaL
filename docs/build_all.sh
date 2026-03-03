@@ -104,7 +104,7 @@ cat > "$ROOT_INDEX" <<'EOF'
   <script>
     (function(){
       var stored = null;
-      try{stored = localStorage.getItem('areal-doc-lang');}catch(e){}
+      try{stored = localStorage.getItem('areal-doc-lang');}catch(e){console.warn('Could not access localStorage for language preference.', e);}
       var lang = stored === 'zh' ? 'zh' : 'en';
       window.location.replace(lang + '/');
     })();
