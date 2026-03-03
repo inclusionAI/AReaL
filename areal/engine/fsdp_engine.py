@@ -803,25 +803,33 @@ class FSDPEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            # VLM: Use from_pretrained() on loading_device.
-            with torch.device(loading_device):
-                model = AutoModelForImageTextToText.from_pretrained(
-                    pretrained_model_name_or_path=self.config.path,
-                    trust_remote_code=True,
-                    dtype=dtype,
-                    attn_implementation=self.config.attn_impl,
-                )
-                if self.config.disable_dropout:
-                    disable_dropout_in_model(model)
-
             if self.is_omni_model:
+                # Omni models: load only the Thinker module (which includes
+                # audio_tower, visual encoder, text model, and lm_head).
+                # The Talker/Code2Wav modules are not needed for RL training.
                 from areal.models.transformers.qwen_omni import (
-                    freeze_and_exclude_generator,
+                    load_omni_thinker_model,
                 )
 
-                frozen = freeze_and_exclude_generator(model)
-                if frozen:
-                    self.logger.info(f"Froze Omni generator modules: {frozen}")
+                with torch.device(loading_device):
+                    model = load_omni_thinker_model(
+                        self.config.path,
+                        dtype=dtype,
+                        attn_implementation=self.config.attn_impl,
+                    )
+                    if self.config.disable_dropout:
+                        disable_dropout_in_model(model)
+            else:
+                # VLM: Use from_pretrained() on loading_device.
+                with torch.device(loading_device):
+                    model = AutoModelForImageTextToText.from_pretrained(
+                        pretrained_model_name_or_path=self.config.path,
+                        trust_remote_code=True,
+                        dtype=dtype,
+                        attn_implementation=self.config.attn_impl,
+                    )
+                    if self.config.disable_dropout:
+                        disable_dropout_in_model(model)
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
             self.processor = None
@@ -966,20 +974,24 @@ class FSDPEngine(TrainEngine):
     def _get_model_name_parameters(self) -> Iterator[tuple[str, nn.Parameter]]:
         name_params_iterator = self.model.named_parameters()
         if self.is_omni_model and is_qwen_omni_model(self.model_config.model_type):
+            # Thinker loaded directly: param names are model.*, lm_head.*,
+            # visual.*, audio_tower.*.  vLLM loads the full Omni model with
+            # thinker.* prefix.  Map FSDP names → vLLM names by adding
+            # "thinker." and adjusting the text model nesting.
             for name, value in name_params_iterator:
                 if not value.requires_grad:
                     continue
-                new_name = name.replace("model.", "", 1)
-                if new_name.startswith("thinker.language_model."):
-                    new_name = new_name.replace(
-                        "thinker.language_model.",
-                        "thinker.language_model.model.",
-                        1,
-                    )
-                elif new_name.startswith("thinker.lm_head."):
-                    new_name = new_name.replace(
-                        "thinker.lm_head.", "thinker.language_model.lm_head.", 1
-                    )
+                if name.startswith("model."):
+                    # model.layers.* → thinker.model.layers.*
+                    new_name = f"thinker.{name}"
+                elif name.startswith("lm_head."):
+                    new_name = f"thinker.{name}"
+                elif name.startswith("visual."):
+                    new_name = f"thinker.{name}"
+                elif name.startswith("audio_tower."):
+                    new_name = f"thinker.{name}"
+                else:
+                    new_name = f"thinker.{name}"
                 yield new_name, value
         elif self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
             for name, value in name_params_iterator:
@@ -1325,12 +1337,9 @@ class FSDPEngine(TrainEngine):
                     video_grid_thw = torch.cat(video_grid_thw_list)
 
             if is_qwen_omni_model(self.model_config.model_type):
-                # Omni models: the Thinker wraps a VL-style text model.
-                # HF structure: model.thinker.model or model.model (depending
-                # on whether AutoModelForImageTextToText returns the full Omni
-                # wrapper or the Thinker directly).
-                thinker = getattr(self.model, "thinker", None)
-                rope_model = thinker.model if thinker is not None else self.model.model
+                # Omni Thinker: get_rope_index lives on the top-level model
+                # (Qwen2_5OmniThinkerForConditionalGeneration), not on model.model.
+                rope_model = self.model
             else:
                 rope_model = self.model.model
             position_ids, _ = rope_model.get_rope_index(

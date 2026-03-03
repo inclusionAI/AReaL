@@ -1,6 +1,7 @@
 """Omni-model-specific patches for distributed training.
 
 Provides:
+- Thinker-only model loading (skips Talker/Code2Wav/Token2Wav)
 - Generator module freezing (Talker, Code2Wav, Token2Wav)
 - Thinker language model resolution
 - DeepStack TP patch for the Thinker's language model
@@ -12,6 +13,8 @@ patch in ``ulyssess_patch.py``, which patches
 ``transformers.integrations.flash_attention._flash_attention_forward``
 globally.
 """
+
+from __future__ import annotations
 
 import types
 
@@ -26,6 +29,59 @@ logger = logging.getLogger("QwenOmniPatch")
 # Generator module name prefixes that should be frozen during RL training.
 # Only the Thinker is trained; Talker and audio synthesis modules are excluded.
 _GENERATOR_PREFIXES = ("talker", "code2wav", "token2wav")
+
+# Mapping from model_type to the Thinker class used for RL training.
+_THINKER_CLASS_MAP = {
+    "qwen2_5_omni": "transformers.Qwen2_5OmniThinkerForConditionalGeneration",
+    "qwen3_omni_moe": "transformers.Qwen3OmniMoeThinkerForConditionalGeneration",
+}
+
+
+def load_omni_thinker_model(
+    model_path: str,
+    *,
+    dtype: torch.dtype = torch.bfloat16,
+    attn_implementation: str | None = None,
+) -> nn.Module:
+    """Load only the Thinker module of an Omni model for RL training.
+
+    The Thinker includes the visual encoder, audio tower, text backbone, and
+    LM head -- everything needed for text generation.  The Talker and audio
+    synthesis modules are excluded, saving memory and avoiding
+    ``AutoModelForImageTextToText`` compatibility issues.
+    """
+    from transformers import AutoConfig
+
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+    model_type = getattr(config, "model_type", "")
+
+    class_path = _THINKER_CLASS_MAP.get(model_type)
+    if class_path is None:
+        raise ValueError(
+            f"No Thinker class registered for model_type={model_type!r}. "
+            f"Supported: {list(_THINKER_CLASS_MAP.keys())}"
+        )
+
+    module_path, class_name = class_path.rsplit(".", 1)
+    import importlib
+
+    mod = importlib.import_module(module_path)
+    thinker_cls = getattr(mod, class_name)
+
+    kwargs: dict = {
+        "pretrained_model_name_or_path": model_path,
+        "trust_remote_code": True,
+        "dtype": dtype,
+    }
+    if attn_implementation:
+        kwargs["attn_implementation"] = attn_implementation
+
+    model = thinker_cls.from_pretrained(**kwargs)
+    logger.info(
+        f"Loaded Omni Thinker model: {class_name} from {model_path} "
+        f"(model_type={model_type})"
+    )
+    return model
 
 
 def freeze_and_exclude_generator(model: nn.Module) -> list[str]:
@@ -47,30 +103,35 @@ def freeze_and_exclude_generator(model: nn.Module) -> list[str]:
 def get_thinker_language_model(model: nn.Module) -> nn.Module:
     """Resolve the Thinker's language model from an Omni model.
 
-    Qwen2.5-Omni / Qwen3-Omni wrap the Thinker under ``model.thinker``
-    (when loaded via ``AutoModelForImageTextToText``).  The language model
-    is then at ``model.thinker.language_model`` or ``model.thinker.model``.
+    When loaded via ``load_omni_thinker_model`` (ThinkerForConditionalGeneration),
+    the text backbone is at ``model.model``.  When loaded via the full
+    ``Qwen2_5OmniForConditionalGeneration``, it is nested under
+    ``model.thinker.model`` or ``model.thinker.language_model``.
     """
+    # Direct Thinker loading: model.model is the text backbone
+    if hasattr(model, "model") and hasattr(model, "lm_head"):
+        lang = model.model
+        if hasattr(lang, "layers"):
+            return lang
+
+    # Full model loading: model.thinker.model or model.thinker.language_model
     thinker = getattr(model, "thinker", None)
     if thinker is None:
-        # Fallback: some HF revisions nest under model.model.thinker
         inner = getattr(model, "model", None)
         if inner is not None:
             thinker = getattr(inner, "thinker", None)
-    if thinker is None:
-        raise AttributeError(
-            "Cannot locate the Thinker module on the Omni model. "
-            "Expected model.thinker or model.model.thinker."
-        )
-    lang = getattr(thinker, "language_model", None)
-    if lang is not None:
-        return lang
-    lang = getattr(thinker, "model", None)
-    if lang is not None:
-        return lang
+    if thinker is not None:
+        lang = getattr(thinker, "language_model", None)
+        if lang is not None:
+            return lang
+        lang = getattr(thinker, "model", None)
+        if lang is not None:
+            return lang
+
     raise AttributeError(
-        "Cannot locate the language model inside the Thinker. "
-        "Expected thinker.language_model or thinker.model."
+        "Cannot locate the language model inside the Omni model. "
+        "Expected model.model (Thinker loading) or model.thinker.model "
+        "(full model loading)."
     )
 
 
