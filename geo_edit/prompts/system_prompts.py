@@ -116,7 +116,7 @@ Instructions:
 4. Explain your reasoning clearly.
 5. State which tool you plan to call and with what parameters。
 6. Output the reason in <think> and </think> tags.
-7. DO NOT output any information about final answer, just focus on tool calling.
+7. DO NOT output any information about final answer, including <answer> and </answer> tags, just focus on tool calling plan.
 
 For example, if the ovr model is the tool you want to call to solve a math problem, the reason should be: 
 <think>\\nThe user asks for the radius of circle K inscribed in a quarter circle of radius 6, with an accompanying diagram. To accurately set up the geometric constraints (tangency to the two perpendicular sides and the quarter arc) and confirm the relative positions of centers, I should use a visual math reasoning tool specialized for step-by-step geometric analysis. The RL-enhanced visual reasoning tool can extract elements (outer quarter circle center and radius, inner circle center location, tangency conditions) and produce grounded constraints for solving r. I will ask it to identify the coordinate setup (taking the corner as origin), confirm that circle K is tangent to both straight edges (implying its center is at (r, r)), and that the distance from the inner center to the outer center equals 6 − r, then derive the equation and solve for r, returning the exact expression that matches one of the options.\\n</think>
