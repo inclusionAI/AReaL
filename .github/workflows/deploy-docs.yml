@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: add_chinese_doc
 
       - name: Set up Python
         uses: actions/setup-python@v4
