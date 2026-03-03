@@ -8,6 +8,7 @@ from ray.util.state import summarize_actors
 from areal.api.cli_args import BaseExperimentConfig, SchedulingStrategy
 from areal.api.scheduler_api import Job, SchedulingSpec, Worker
 from areal.infra.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
+from areal.infra.utils.ray_placement_group import _create_bundle_specs_split
 
 pytestmark = pytest.mark.skip(
     reason=(
@@ -158,7 +159,7 @@ class TestUtilityFunctions:
             assert spec.mem == 1
             assert spec.gpu == 1
 
-        bundle_list = scheduler._create_bundle_list_gpu(1, 24, 1024)
+        bundle_list = _create_bundle_specs_split(16, 1, 24, 1024)
         assert len(bundle_list) == 2
         for bundle in bundle_list:
             assert bundle[ray_resource_type()] <= _num_gpu_per_node

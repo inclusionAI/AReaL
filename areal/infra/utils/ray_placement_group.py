@@ -42,7 +42,6 @@ def _create_bundle_specs_split(
     if n_gpus_per_node <= 0:
         raise ValueError(f"n_gpus_per_node must be > 0, got {n_gpus_per_node}")
 
-    bundles = []
     n_full_nodes, remainder_gpu = divmod(gpu, n_gpus_per_node)
     total_nodes = n_full_nodes + (1 if remainder_gpu > 0 else 0)
 
@@ -200,8 +199,10 @@ class SeparatedRayPlacementStrategy(RayPlacementStrategy):
     def actor_resources(
         self, spec: SchedulingSpec, gpu_multiplier=1
     ) -> tuple[dict, PlacementGroupSchedulingStrategy]:
-        if gpu_multiplier != 1:
-            raise RuntimeError(f"Colocation is not supported for {type(self).__name__}")
+        if gpu_multiplier != 1 and spec.gpu > 1:
+            raise RuntimeError(
+                "Colocation is not supported in Ray for multi-GPU instances."
+            )
         if self._current_placement_group_idx >= len(self._placement_groups):
             raise RuntimeError("Placement groups are full")
 
