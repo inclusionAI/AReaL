@@ -242,6 +242,7 @@ class VisionQATask(AbstractVLMTask):
                 elif result_type == "text":
                     self._append_tool_text_for_calls([call], payload)
                 else:
+                    logger.warning("Tool execution failed: %s", payload)
                     self._append_tool_error(call, str(payload))
             had_error = any(result_type == "error" for result_type, _, _ in call_results)
             self.append_prompt(TOOL_EXECUTION_FAILURE_PROMPT if had_error else TOOL_EXECUTION_SUCCESS_PROMPT)
@@ -283,6 +284,7 @@ class VisionQATask(AbstractVLMTask):
                     )
 
             for call, error_msg in error_result:
+                logger.warning("Tool execution failed: %s", error_msg)
                 self._append_tool_error(call, error_msg)
             had_error = bool(error_result) or success_count == 0
             self.append_prompt(TOOL_EXECUTION_FAILURE_PROMPT if had_error else TOOL_EXECUTION_SUCCESS_PROMPT)
@@ -307,6 +309,7 @@ class VisionQATask(AbstractVLMTask):
                     if dynamic_image_index is None and "image_index" in call.args:
                         dynamic_image_index = call.args["image_index"]
                 except Exception as exc:
+                    logger.warning("Tool execution raised exception: %s(%s) -> %s", call.name, call.args, exc)
                     error_result.append((call, (f"Function call {call.name} with args {call.args} failed with error: {exc}")))
             else:
                 error_result.append((call, f"Unknown function {call.name}"))
@@ -323,6 +326,7 @@ class VisionQATask(AbstractVLMTask):
             )
         else:
             for call, error_msg in error_result:
+                logger.warning("Tool execution failed: %s", error_msg)
                 self._append_tool_error(call, error_msg)
         had_error = bool(error_result) or not isinstance(dynamic_image, Image.Image)
         self.append_prompt(TOOL_EXECUTION_FAILURE_PROMPT if had_error else TOOL_EXECUTION_SUCCESS_PROMPT)

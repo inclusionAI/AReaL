@@ -64,21 +64,28 @@ def _init_worker(
     port: int,
     output_path: str,
     max_tool_calls: int,
+    enabled_agent_names: list,
 ):
     """Initialize worker for Gemini/GPT models (Google API or matrixllm).
 
     Agent instance is created once per worker and reused for all tasks.
     Ray tool agents are shared across all workers (initialized in main process).
-    Workers create ToolRouter with skip_agent_init=True to avoid re-initializing Ray actors.
+    Workers connect to existing Ray actors by name.
     """
     global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS
     global _WORKER_TASK_CLASS, _WORKER_API_MODE
     global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_TOOL_CALL_ONLY_CONFIG
     global _WORKER_FINAL_ANSWER_CONFIG
 
-    # Create ToolRouter WITHOUT initializing Ray actors (they're already initialized in main process)
-    # Tool functions still work because they access actors via the singleton ToolAgentManager
+    # Create ToolRouter WITHOUT initializing Ray actors
     _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force", skip_agent_init=True)
+
+    # Connect to existing Ray actors created in main process
+    if enabled_agent_names:
+        from geo_edit.environment.tool_agents import get_manager
+        manager = get_manager()
+        manager.connect_to_existing_agents(enabled_agent_names)
+        logger.info(f"Worker (PID: {os.getpid()}) connected to {len(enabled_agent_names)} Ray actors: {enabled_agent_names}")
 
     if model_type == "Google" and not api_key:
         raise ValueError("API key must be provided for Google models.")
@@ -304,8 +311,10 @@ def main():
     # Initialize Ray tool agents in main process (shared by all workers)
     # Ray will auto-connect to local cluster or start one if needed
     tool_router = ToolRouter(tool_mode="force", node_resource=args.node_resource or "tool_agent")
-    if tool_router.is_agent_enabled():
-        logger.info(f"Initialized {len(tool_router._agents)} shared Ray tool agents in main process")
+    enabled_agent_names = tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
+
+    if enabled_agent_names:
+        logger.info(f"Initialized {len(enabled_agent_names)} shared Ray tool agents in main process: {enabled_agent_names}")
     else:
         logger.info("No tool agents enabled (check config.yaml)")
 
@@ -356,6 +365,7 @@ def main():
             args.port,
             output_path,
             MAX_TOOL_CALLS,
+            enabled_agent_names,
         ),
     ) as pool:
         inflight = []

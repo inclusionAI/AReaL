@@ -12,7 +12,7 @@ logger = setup_logger(__name__)
 
 # System prompt for this agent
 SYSTEM_PROMPT = (
-    "You are a visual language model analysis agent. "
+    "You are a geometry analysis agent. "
     "Analyze the image carefully and provide your reasoning step by step, but do NOT give the final answer."
 )
 
@@ -151,7 +151,7 @@ ACTOR_CLASS = GLLaVAActor
 
 DECLARATION = {
     "name": "gllava",
-    "description": "Use a geometry-analysis VLM tool to analyze geometric figures and return image-grounded intermediate reasoning (elements, relations, constraints, and useful derivations). You should input the index of the image to analyze and a question about it, the question should contain clear instructions and necessary information for the analysis. ",
+    "description": "Use a geometry VLM tool to analyze geometric problem and return image-grounded geometry math analysis. You should input the index of the image to analyze and a question about it, the question should contain clear instructions and necessary information for the analysis. ",
     "parameters": {
         "type": "object",
         "properties": {

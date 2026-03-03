@@ -31,6 +31,40 @@ class ToolAgentManager:
         self._actors: Dict[str, ray.actor.ActorHandle] = {}
         self._configs: Dict[str, Dict[str, Any]] = {}
 
+    def connect_to_existing_agents(
+        self,
+        agent_names: List[str],
+        ray_address: str = "auto",
+    ) -> Dict[str, ray.actor.ActorHandle]:
+        """Connect to existing Ray actors by name.
+
+        This is useful for worker processes that need to access actors
+        created in the main process.
+
+        Args:
+            agent_names: List of agent names to connect to.
+            ray_address: Ray cluster address.
+
+        Returns:
+            Dict mapping tool names to their actor handles.
+        """
+        if not ray.is_initialized():
+            ray.init(address=ray_address, namespace="tool_agent", ignore_reinit_error=True)
+
+        for name in agent_names:
+            if name in self._actors:
+                continue
+
+            try:
+                # Get actor by name from Ray namespace
+                actor = ray.get_actor(name, namespace="tool_agent")
+                self._actors[name] = actor
+                logger.debug(f"Connected to existing actor: {name}")
+            except ValueError:
+                logger.warning(f"Actor {name} not found in Ray cluster")
+
+        return self._actors
+
     def create_agents(
         self,
         configs: Dict[str, Dict[str, Any]],
@@ -57,7 +91,7 @@ class ToolAgentManager:
             Dict mapping tool names to their actor handles.
         """
         if not ray.is_initialized():
-            ray.init(address=ray_address, namespace="geo_edit_tool_agents", ignore_reinit_error=True)
+            ray.init(address=ray_address, namespace="tool_agent", ignore_reinit_error=True)
 
         new_actors = []
         for name, cfg in configs.items():
@@ -82,8 +116,9 @@ class ToolAgentManager:
             system_prompt = get_tool_agent_prompt(name)
 
             # Create Ray remote actor with the specific Actor class
+            # Use name= to make it discoverable via ray.get_actor()
             RemoteActorClass = ray.remote(num_gpus=num_gpus)(ActorClass)
-            actor = RemoteActorClass.options(**actor_options).remote(
+            actor = RemoteActorClass.options(name=name, **actor_options).remote(
                 model_name=cfg["model_name_or_path"],
                 max_model_len=cfg["max_model_len"],
                 gpu_memory_utilization=cfg["gpu_memory_utilization"],
