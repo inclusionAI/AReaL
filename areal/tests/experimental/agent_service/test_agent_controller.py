@@ -2,61 +2,18 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from areal.api.cli_args import AgentServiceSpec
 from areal.experimental.agent_service.agent_controller import (
     _GATEWAY_ROLE,
-    _ROUTER_ROLE,
     _WORKER_ROLE,
     AgentController,
 )
 from areal.experimental.agent_service.config import GatewayConfig
 
-
-def _make_mock_scheduler(
-    gateway_ip: str = "10.0.0.1",
-    gateway_port: int = 8300,
-    router_ip: str = "10.0.0.0",
-    router_port: int = 9000,
-    worker_ip: str = "10.0.0.2",
-    worker_port: int = 8301,
-):
-    """Create a mock Scheduler that returns fake Worker objects."""
-    scheduler = MagicMock()
-
-    # Mock router worker
-    router_worker = MagicMock()
-    router_worker.ip = router_ip
-    router_worker.worker_ports = [router_port]
-
-    # Mock gateway worker
-    gateway_worker = MagicMock()
-    gateway_worker.ip = gateway_ip
-    gateway_worker.worker_ports = [gateway_port]
-
-    # Mock agent worker
-    agent_worker = MagicMock()
-    agent_worker.ip = worker_ip
-    agent_worker.worker_ports = [worker_port]
-
-    def get_workers(role, timeout=None):
-        if role == _ROUTER_ROLE:
-            return [router_worker]
-        elif role == _GATEWAY_ROLE:
-            return [gateway_worker]
-        elif role == _WORKER_ROLE:
-            return [agent_worker]
-        return []
-
-    scheduler.get_workers.side_effect = get_workers
-    scheduler.create_workers.return_value = ["worker-id-1"]
-    scheduler.experiment_name = "test-experiment"
-    scheduler.trial_name = "test-trial"
-
-    return scheduler
+# Import shared mock helper from conftest.py
+from areal.tests.experimental.agent_service.conftest import make_mock_scheduler
 
 
 class TestAgentControllerInterface:
@@ -75,7 +32,7 @@ class TestAgentControllerInterface:
     def test_init_sets_defaults(self):
         """AgentController.__init__ should set correct defaults."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         assert controller._gateway_started is False
@@ -85,7 +42,7 @@ class TestAgentControllerInterface:
     def test_gateway_started_property_initially_false(self):
         """gateway_started property should be False before start_gateway()."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         assert controller.gateway_started is False
@@ -93,7 +50,7 @@ class TestAgentControllerInterface:
     def test_get_gateway_addr_raises_before_start(self):
         """get_gateway_addr() should raise RuntimeError before start_gateway()."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         with pytest.raises(RuntimeError, match="not started"):
@@ -102,7 +59,7 @@ class TestAgentControllerInterface:
     def test_get_worker_count_initially_zero(self):
         """get_worker_count() should return 0 before start_workers()."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         assert controller.get_worker_count() == 0
@@ -114,7 +71,7 @@ class TestAgentControllerStartGateway:
     def test_start_gateway_creates_correct_job(self):
         """start_gateway() should create a Job with correct SchedulingSpec."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         controller.start_router()
@@ -146,7 +103,7 @@ class TestAgentControllerStartGateway:
     def test_start_gateway_returns_correct_address(self):
         """start_gateway() should return the Gateway's HTTP address."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler(gateway_ip="192.168.1.1", gateway_port=9000)
+        scheduler = make_mock_scheduler(gateway_ip="192.168.1.1", gateway_port=9000)
         controller = AgentController(config=config, scheduler=scheduler)
 
         controller.start_router()
@@ -159,7 +116,7 @@ class TestAgentControllerStartGateway:
     def test_start_gateway_idempotent(self):
         """Calling start_gateway() twice should return same address without re-creating."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         controller.start_router()
@@ -179,7 +136,7 @@ class TestAgentControllerStartWorkers:
     def test_start_workers_raises_without_gateway(self):
         """start_workers() should raise RuntimeError if gateway not started."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         controller.start_router()  # Router required, but no Gateway
@@ -195,7 +152,7 @@ class TestAgentControllerStartWorkers:
     def test_start_workers_creates_correct_job(self):
         """start_workers() should create a Job with correct SchedulingSpec for each worker."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         # Start router first
@@ -234,7 +191,7 @@ class TestAgentControllerStartWorkers:
     def test_start_workers_passes_gateway_addr_to_workers(self):
         """start_workers() should pass Gateway address to each worker via env vars."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler(gateway_ip="10.0.0.1", gateway_port=8300)
+        scheduler = make_mock_scheduler(gateway_ip="10.0.0.1", gateway_port=8300)
         controller = AgentController(config=config, scheduler=scheduler)
 
         controller.start_router()
@@ -263,7 +220,7 @@ class TestAgentControllerStop:
     def test_stop_resets_state(self):
         """stop() should reset all state."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         controller.start_router()
@@ -281,7 +238,7 @@ class TestAgentControllerScaleWorkers:
     def test_scale_up_adds_workers(self):
         """scale_workers() with target > current should add workers."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         controller.start_router()
@@ -313,7 +270,7 @@ class TestAgentControllerScaleWorkers:
     def test_scale_same_count_is_noop(self):
         """scale_workers() with target == current should not call create_workers."""
         config = GatewayConfig()
-        scheduler = _make_mock_scheduler()
+        scheduler = make_mock_scheduler()
         controller = AgentController(config=config, scheduler=scheduler)
 
         controller.start_router()

@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from areal.experimental.agent_service import AgentServiceConfig
+from areal.experimental.agent_service.agent_controller import (
+    _GATEWAY_ROLE,
+    _ROUTER_ROLE,
+    _WORKER_ROLE,
+)
 
 
 class MockAgent:
@@ -31,16 +38,18 @@ class FailingAgent:
 
 
 class CountingAgent:
-    """Test mock agent with class-level counter to verify instance creation.
+    """Test mock agent with instance-level counter.
 
-    Note: Use reset_count() before tests that depend on instance_count.
+    FIXED: Changed from class-level to instance-level tracking
+    to avoid race conditions in parallel test execution.
     """
 
-    instance_count = 0
+    _global_counter = 0
 
     def __init__(self, **kwargs):
-        CountingAgent.instance_count += 1
-        self.instance_id = CountingAgent.instance_count
+        # Use a unique instance ID without modifying class state
+        CountingAgent._global_counter += 1
+        self.instance_id = CountingAgent._global_counter
         self.init_kwargs = kwargs
 
     async def run(self, data: dict, **extra_kwargs) -> float:
@@ -48,7 +57,8 @@ class CountingAgent:
 
     @classmethod
     def reset_count(cls):
-        cls.instance_count = 0
+        """Reset the global counter (for test isolation)."""
+        cls._global_counter = 0
 
 
 @pytest.fixture
@@ -75,3 +85,62 @@ def counting_agent_import_path():
     # Reset count before each test that uses this fixture
     CountingAgent.reset_count()
     return "areal.tests.experimental.agent_service.conftest.CountingAgent"
+
+
+def make_mock_scheduler(
+    gateway_ip: str = "10.0.0.1",
+    gateway_port: int = 8300,
+    router_ip: str = "10.0.0.0",
+    router_port: int = 9000,
+    worker_ip: str = "10.0.0.2",
+    worker_port: int = 8301,
+):
+    """Create a mock Scheduler that returns fake Worker objects.
+
+    This helper consolidates the _make_mock_scheduler() function that was
+    duplicated across test files. It creates a MagicMock Scheduler with
+    fake Worker objects for gateway, router, and worker roles.
+
+    Args:
+        gateway_ip: IP address for gateway worker
+        gateway_port: Port for gateway worker
+        router_ip: IP address for router worker
+        router_port: Port for router worker
+        worker_ip: IP address for agent worker
+        worker_port: Port for agent worker
+
+    Returns:
+        MagicMock Scheduler instance
+    """
+    scheduler = MagicMock()
+
+    # Mock router worker
+    router_worker = MagicMock()
+    router_worker.ip = router_ip
+    router_worker.worker_ports = [router_port]
+
+    # Mock gateway worker
+    gateway_worker = MagicMock()
+    gateway_worker.ip = gateway_ip
+    gateway_worker.worker_ports = [gateway_port]
+
+    # Mock agent worker
+    agent_worker = MagicMock()
+    agent_worker.ip = worker_ip
+    agent_worker.worker_ports = [worker_port]
+
+    def get_workers(role, timeout=None):
+        if role == _ROUTER_ROLE:
+            return [router_worker]
+        elif role == _GATEWAY_ROLE:
+            return [gateway_worker]
+        elif role == _WORKER_ROLE:
+            return [agent_worker]
+        return []
+
+    scheduler.get_workers.side_effect = get_workers
+    scheduler.create_workers.return_value = ["worker-id-1"]
+    scheduler.experiment_name = "test-experiment"
+    scheduler.trial_name = "test-trial"
+
+    return scheduler

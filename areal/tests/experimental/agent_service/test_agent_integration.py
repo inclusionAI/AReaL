@@ -16,10 +16,12 @@ import requests
 import torch
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import InferenceEngineConfig, SGLangConfig
+from areal.api.cli_args import AgentServiceSpec, InferenceEngineConfig, SGLangConfig
 from areal.api.io_struct import LocalInfServerInfo
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.infra import RolloutController
+from areal.experimental.agent_service.agent_controller import AgentController
+from areal.experimental.agent_service.config import GatewayConfig
+from areal.infra.controller.rollout_controller import RolloutController
 from areal.infra.rpc.rtensor import RTensor
 from areal.infra.scheduler.local import LocalScheduler
 from areal.infra.utils.proc import kill_process_tree
@@ -197,6 +199,10 @@ class TestAgentServiceIntegration:
             scheduler=local_scheduler,
         )
 
+        agent_controller = AgentController(
+            config=GatewayConfig(), scheduler=local_scheduler
+        )
+
         try:
             # Initialize rollout workers connected to existing SGLang server
             server_info = LocalInfServerInfo(
@@ -214,15 +220,18 @@ class TestAgentServiceIntegration:
             # Start proxy workers
             rollout.start_proxy()
 
-            # Start agent service workers
-            rollout.start_agent_service(
+            # Start agent service via AgentController (Trainer-level responsibility)
+            spec = AgentServiceSpec(
                 agent_import_path="areal.tests.experimental.openai.utils.SimpleAgent",
                 agent_reuse=False,
+                agent_init_kwargs={},
+                workers=1,
             )
+            agent_addr = agent_controller.start(spec)
+            rollout.set_agent_service_addr(agent_addr)
 
-            # Get proxy and agent service addresses
+            # Get proxy address
             proxy_addr = rollout.get_proxy_addr(0)
-            agent_addr = rollout.get_agent_service_addr(0)
             assert proxy_addr.startswith("http://")
             assert agent_addr.startswith("http://")
 
@@ -244,7 +253,6 @@ class TestAgentServiceIntegration:
                 workflow_kwargs={
                     "mode": "service",
                     "proxy_addr": proxy_addr,
-                    "agent_service_addr": agent_addr,
                 },
             )
 
@@ -255,6 +263,7 @@ class TestAgentServiceIntegration:
             assert result["input_ids"].ndim == 2  # [batch, seq_len]
 
         finally:
+            agent_controller.stop()
             rollout.destroy()
 
     def test_agent_service_shared_mode(self, sglang_server, local_scheduler, tmp_path):
@@ -281,6 +290,10 @@ class TestAgentServiceIntegration:
             scheduler=local_scheduler,
         )
 
+        agent_controller = AgentController(
+            config=GatewayConfig(), scheduler=local_scheduler
+        )
+
         try:
             server_info = LocalInfServerInfo(
                 process=None,
@@ -296,14 +309,17 @@ class TestAgentServiceIntegration:
 
             rollout.start_proxy()
 
-            # Start agent service in shared mode
-            rollout.start_agent_service(
-                agent_import_path="areal.tests.experimental.openai.utils.SimpleAgent",
-                agent_reuse=True,  # Shared mode
-            )
-
             proxy_addr = rollout.get_proxy_addr(0)
-            agent_addr = rollout.get_agent_service_addr(0)
+
+            # Start agent service in shared mode
+            spec = AgentServiceSpec(
+                agent_import_path="areal.tests.experimental.openai.utils.SimpleAgent",
+                agent_reuse=True,
+                agent_init_kwargs={"shared": True},
+                workers=1,
+            )
+            agent_addr = agent_controller.start(spec)
+            rollout.set_agent_service_addr(agent_addr)
 
             # Wait for Agent Service to be ready
             wait_for_agent_service(agent_addr)
@@ -323,11 +339,11 @@ class TestAgentServiceIntegration:
                 workflow_kwargs={
                     "mode": "service",
                     "proxy_addr": proxy_addr,
-                    "agent_service_addr": agent_addr,
                 },
             )
             assert isinstance(result, dict)
             assert "input_ids" in result
 
         finally:
+            agent_controller.stop()
             rollout.destroy()
