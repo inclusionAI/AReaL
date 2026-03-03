@@ -96,7 +96,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, lang);
     } catch (e) {
-      // localStorage unavailable
+      console.warn('Could not save language preference to localStorage.', e);
     }
   }
 
