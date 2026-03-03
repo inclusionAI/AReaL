@@ -104,8 +104,7 @@ class SequentialRunner(ForwardBackwardRunner):
             logits = logits.squeeze(0)
             del tree_attn_meta
 
-            ctx_dict = ctx.to_dict()
-            result = process_output_fn(logits, ctx_dict)
+            result = process_output_fn(logits, ctx.to_dict())
 
             if result is not None:
                 if forward_only:
@@ -272,8 +271,7 @@ class PipelinedRunner(ForwardBackwardRunner):
                 # Squeeze batch dim: outputs (1, seq_len, vocab) -> (seq_len, vocab)
                 if pred.ndim == 3:
                     pred = pred.squeeze(0)
-                ctx_dict = ctx.to_dict()
-                loss = process_output_fn(pred, ctx_dict)
+                loss = process_output_fn(pred, ctx.to_dict())
                 if loss is None:
                     return pred.sum() * 0.0
                 return loss
@@ -296,8 +294,7 @@ class PipelinedRunner(ForwardBackwardRunner):
             # Squeeze batch dim: outputs (1, seq_len, vocab) -> (seq_len, vocab)
             if output.ndim == 3:
                 output = output.squeeze(0)
-            ctx_dict = ctx.to_dict()
-            result = process_output_fn(output, ctx_dict)
+            result = process_output_fn(output, ctx.to_dict())
             if result is not None:
                 results.append(result.detach())
         return results

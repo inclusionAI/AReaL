@@ -15,7 +15,6 @@ import torch.distributed as dist
 from torch import nn
 from torch.distributed.pipelining.schedules import (
     ScheduleDualPipeV,
-    ScheduleInterleavedZeroBubble,
     ScheduleZBVZeroBubble,
     get_schedule_class,
 )
@@ -23,8 +22,6 @@ from transformers import (
     AutoConfig,
     PretrainedConfig,
     PreTrainedTokenizerFast,
-    get_constant_schedule_with_warmup,
-    get_linear_schedule_with_warmup,
 )
 
 from areal.api.alloc_mode import ParallelStrategy
@@ -42,7 +39,6 @@ from areal.engine.core.train_engine import (
     compute_total_loss_weight,
     reorder_and_pad_outputs,
 )
-from areal.engine.fsdp_utils import get_cosine_schedule_with_warmup
 from areal.engine.fsdp_utils.grad import fsdp2_clip_grad_norm
 from areal.experimental.engine.archon_checkpoint import (
     load_from_dcp,
@@ -53,6 +49,11 @@ from areal.experimental.engine.archon_checkpoint import (
     save_to_dcp,
 )
 from areal.experimental.engine.archon_runner import create_runner
+from areal.experimental.engine.archon_utils import (
+    create_lr_scheduler,
+    create_optimizer,
+    prepare_training_config,
+)
 from areal.experimental.engine.archon_weight_sync import (
     WeightSyncState,
     init_weight_update_group,
@@ -74,7 +75,6 @@ from areal.experimental.models.archon.ulysses import (
     ulysses_gather_output,
     ulysses_slice_inputs,
 )
-from areal.experimental.models.archon.utils import is_moe_model_config
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
 from areal.models.tree_attn.functional import (
@@ -155,8 +155,9 @@ class ArchonEngine(TrainEngine):
         )
         self._validate_model_type()
 
-        model_type = getattr(self.model_config, "model_type", "")
-        self.spec: ModelSpec = get_model_spec(model_type)
+        self.spec: ModelSpec = get_model_spec(
+            getattr(self.model_config, "model_type", "")
+        )
 
         # Core Components (initialized in initialize())
         self.model: nn.Module
@@ -261,6 +262,18 @@ class ArchonEngine(TrainEngine):
             self._dp_rank == 0 and cp_rank_is_zero and tp_rank_is_zero
         )
 
+        # Cached parallel groups (None when the dimension is disabled)
+        self._tp_group: dist.ProcessGroup | None = (
+            self.parallel_dims.get_group("tp")
+            if self.parallel_dims.tp_enabled
+            else None
+        )
+        self._cp_group: dist.ProcessGroup | None = (
+            self.parallel_dims.get_group("cp")
+            if self.parallel_dims.cp_enabled
+            else None
+        )
+
         self.logger.info(
             f"Initialized Archon engine with parallel dims: "
             f"pp={self.parallel_dims.pp}, dp_shard={self.parallel_dims.dp_shard}, "
@@ -283,162 +296,21 @@ class ArchonEngine(TrainEngine):
         self._create_device_model()
         self.state_dict_adapter = self._create_state_dict_adapter()
 
-        # Compute page_size: number of tokens that fit in one GPU page
-        # based on hidden_size and dtype element size
-        hidden_size = self.model_config.hidden_size
-        param_dtype = getattr(torch, self.config.dtype)
-        element_size = torch.empty([], dtype=param_dtype).element_size()
-        self.page_size = max(DEFAULT_PAGE_SIZE_BYTES // hidden_size // element_size, 1)
+        self.param_dtype = getattr(torch, self.config.dtype)
 
-        ac_config = self._build_ac_config()
-        enable_compile = self.config.archon.enable_compile
-
-        # NOTE: Upgrading PyTorch may resolve these in the future.
-        # Zero-bubble schedules (InterleavedZeroBubble, ZBVZeroBubble, DualPipeV)
-        # use split backward (I/W steps) with retain_graph=True between them.
-        # This is incompatible with:
-        # 1. torch.compile - disabled unconditionally for zero-bubble.
-        # 2. donated_buffer (MoE only) - MoE models have internally compiled
-        #    ops (via AOTAutograd) whose backward uses donated buffers. These
-        #    are freed after backward, conflicting with retain_graph=True.
-        #    Dense models have no such ops and are unaffected.
-        # 3. Op-level selective AC - its per-op cache (storage.pop) is consumed
-        #    by the I step, leaving nothing for the W step recompute.
-        # 4. memory_budget AC - it depends on torch.compile.
-        # Full AC / layer-level selective AC use standard checkpoint_wrapper
-        # whose gid-based recompute supports multiple backward passes.
-        schedule_class = get_schedule_class(self.config.archon.pp_schedule)
-        zero_bubble_schedules = (
-            ScheduleInterleavedZeroBubble,
-            ScheduleZBVZeroBubble,
-            ScheduleDualPipeV,
+        # NOTE: may mutate self.config.pad_to_maximum and set env vars
+        # (CUBLAS_WORKSPACE_CONFIG, NCCL_ALGO, TORCH_COMPILE_DETERMINISTIC).
+        ac_config, enable_compile = prepare_training_config(
+            config=self.config,
+            parallel_dims=self.parallel_dims,
+            model_config=self.model_config,
+            enable_tree_training=self.enable_tree_training,
+            logger=self.logger,
         )
-        if schedule_class in zero_bubble_schedules:
-            schedule_name = self.config.archon.pp_schedule
-            if enable_compile:
-                self.logger.warning(
-                    f"{schedule_name} is incompatible with torch.compile. "
-                    "Disabling torch.compile."
-                )
-                enable_compile = False
-
-            # NOTE: Upgrading PyTorch may resolve this in the future.
-            # MoE models have internally compiled ops (via AOTAutograd)
-            # whose backward uses donated buffers - these conflict with
-            # retain_graph=True in split backward. Dense models have no
-            # such ops and are unaffected.
-            if is_moe_model_config(self.model_config):
-                import torch._functorch.config as functorch_config
-
-                if getattr(functorch_config, "donated_buffer", False):
-                    self.logger.info(
-                        f"{schedule_name} requires donated_buffer=False "
-                        "for MoE models (internally compiled ops conflict "
-                        "with retain_graph=True in split backward). Disabling."
-                    )
-                    functorch_config.donated_buffer = False
-
-            if ac_config is not None and (
-                (
-                    ac_config.mode == "selective"
-                    and ac_config.selective_ac_option == "op"
-                )
-                or ac_config.mode == "memory_budget"
-            ):
-                self.logger.warning(
-                    f"{schedule_name} is incompatible with {ac_config.mode} AC. "
-                    "Falling back to full AC."
-                )
-                ac_config.mode = "full"
-
-        # Deterministic env vars
-        if self.config.archon.use_deterministic_algorithms:
-            self.logger.info("Deterministic mode enabled. May reduce performance.")
-
-            if ac_config is not None:
-                ac_config.preserve_rng_state = True
-                self.logger.info(
-                    "Deterministic mode: overriding ac_config.preserve_rng_state=True."
-                )
-
-            # Enable PyTorch deterministic algorithms
-            torch.use_deterministic_algorithms(True, warn_only=True)
-
-            # cuBLAS workspace config for deterministic matmuls
-            cublas_valid = (":4096:8", ":16:8")
-            if os.getenv("CUBLAS_WORKSPACE_CONFIG") not in cublas_valid:
-                self.logger.info(
-                    "For deterministic mode, env [CUBLAS_WORKSPACE_CONFIG] "
-                    "will be set to ':4096:8'."
-                )
-                os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-
-            # NCCL algorithm for deterministic collective operations
-            nccl_valid = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
-            if os.getenv("NCCL_ALGO") not in nccl_valid:
-                self.logger.info(
-                    "For deterministic mode, env [NCCL_ALGO] will be set to 'Ring'."
-                )
-                os.environ["NCCL_ALGO"] = "Ring"
-
-            # Torch compile deterministic (only when compile is active)
-            if enable_compile and os.getenv("TORCH_COMPILE_DETERMINISTIC") != "1":
-                self.logger.info(
-                    "For deterministic mode, env [TORCH_COMPILE_DETERMINISTIC] "
-                    "will be set to '1'."
-                )
-                os.environ["TORCH_COMPILE_DETERMINISTIC"] = "1"
-
-        # Force pad_to_maximum when compile is enabled to avoid dynamic shape issues
-        if enable_compile and not self.config.pad_to_maximum:
-            self.logger.info(
-                "torch.compile is enabled: forcing pad_to_maximum=True to avoid "
-                "dynamic shape issues with Inductor. Original pad_to_maximum=False."
-            )
-            self.config.pad_to_maximum = True
-
-        # Force pad_to_maximum when PP is enabled to avoid shape mismatch
-        if self.parallel_dims.pp_enabled and not self.config.pad_to_maximum:
-            self.logger.info(
-                "Pipeline Parallelism is enabled: forcing pad_to_maximum=True to avoid "
-                "shape mismatch across microbatches. Original pad_to_maximum=False."
-            )
-            self.config.pad_to_maximum = True
-
-        if self.enable_tree_training:
-            if self.config.is_critic:
-                raise NotImplementedError(
-                    "Tree training with critic model is not supported yet."
-                )
-            if self.parallel_dims.pp_enabled or self.parallel_dims.cp_enabled:
-                raise ValueError(
-                    "Tree training with pipeline parallelism (pp > 1) or context parallelism (cp > 1) is currently not supported."
-                )
-            # Force pad_to_maximum for tree training
-            if not self.config.pad_to_maximum:
-                self.logger.info(
-                    "Tree training enabled: forcing pad_to_maximum=True for "
-                    "block mask alignment. Original pad_to_maximum=False."
-                )
-                self.config.pad_to_maximum = True
-
-        if self.parallel_dims.pp_enabled:
-            tie_word_embeddings = getattr(
-                self.model_config, "tie_word_embeddings", False
-            )
-            if tie_word_embeddings:
-                raise ValueError(
-                    f"Pipeline Parallelism (PP={self.parallel_dims.pp}) is not supported "
-                    f"with weight tying (tie_word_embeddings=True). "
-                    f"When PP > 1, tok_embeddings and output layers are on different GPUs "
-                    f"and cannot share the same weight tensor. "
-                    f"Please either disable PP (set pipeline_parallel_size=1) or use a model "
-                    f"without weight tying."
-                )
 
         tik = time.perf_counter()
 
-        self._setup_parallelism(param_dtype, ac_config, enable_compile)
+        self._setup_parallelism(ac_config, enable_compile)
 
         # Synchronize all ranks after parallelization (especially after torch.compile)
         current_platform.synchronize()
@@ -549,9 +421,7 @@ class ArchonEngine(TrainEngine):
             self._get_all_parameters(),
             max_norm=self.optimizer_config.gradient_clipping,
             fsdp_group=self.data_parallel_group,
-            tp_group=self.parallel_dims.get_group("tp")
-            if self.parallel_dims.tp_enabled
-            else None,
+            tp_group=self._tp_group,
             pp_group=self.parallel_dims.get_group("pp")
             if self.parallel_dims.pp_enabled
             else None,
@@ -884,18 +754,16 @@ class ArchonEngine(TrainEngine):
 
     def _setup_parallelism(
         self,
-        param_dtype: torch.dtype,
         ac_config: ActivationCheckpointConfig | None,
         enable_compile: bool,
     ) -> None:
         if self.parallel_dims.pp_enabled:
-            self._apply_pipeline_parallelism(param_dtype, ac_config, enable_compile)
+            self._apply_pipeline_parallelism(ac_config, enable_compile)
         else:
-            self._apply_parallelism(param_dtype, ac_config, enable_compile)
+            self._apply_parallelism(ac_config, enable_compile)
 
     def _apply_pipeline_parallelism(
         self,
-        param_dtype: torch.dtype,
         ac_config: ActivationCheckpointConfig | None,
         enable_compile: bool,
     ) -> None:
@@ -917,7 +785,7 @@ class ArchonEngine(TrainEngine):
             parallel_dims=self.parallel_dims,
             archon_config=self.config.archon,
             parallelize_fn=self.spec.parallelize_fn,
-            param_dtype=param_dtype,
+            param_dtype=self.param_dtype,
             reduce_dtype=torch.float32,
             loss_parallel=True,
             cpu_offload=self.config.archon.offload_params,
@@ -930,11 +798,11 @@ class ArchonEngine(TrainEngine):
         del self.model
 
         # Determine which rank holds the last pipeline stage
-        pp_group = self.parallel_dims.get_group("pp")
-        pp_ranks = dist.get_process_group_ranks(pp_group)
-        schedule_class = get_schedule_class(self.config.archon.pp_schedule)
-        v_style_schedules = (ScheduleZBVZeroBubble, ScheduleDualPipeV)
-        if schedule_class in v_style_schedules:
+        pp_ranks = dist.get_process_group_ranks(self.parallel_dims.get_group("pp"))
+        if get_schedule_class(self.config.archon.pp_schedule) in (
+            ScheduleZBVZeroBubble,
+            ScheduleDualPipeV,
+        ):
             # V-style: rank 0 holds stages (0, num_stages-1)
             self._pp_last_stage_rank = pp_ranks[0]
         else:
@@ -948,7 +816,6 @@ class ArchonEngine(TrainEngine):
 
     def _apply_parallelism(
         self,
-        param_dtype: torch.dtype,
         ac_config: ActivationCheckpointConfig | None,
         enable_compile: bool,
     ) -> None:
@@ -956,7 +823,7 @@ class ArchonEngine(TrainEngine):
         self.spec.parallelize_fn(
             model=self.model,
             parallel_dims=self.parallel_dims,
-            param_dtype=param_dtype,
+            param_dtype=self.param_dtype,
             reduce_dtype=torch.float32,
             loss_parallel=True,
             cpu_offload=self.config.archon.offload_params,
@@ -1092,34 +959,6 @@ class ArchonEngine(TrainEngine):
         )
         self.get_device_stats().log("after create model structure")
 
-    def _build_ac_config(self) -> ActivationCheckpointConfig | None:
-        # First check if gradient checkpointing is enabled
-        if not self.config.gradient_checkpointing:
-            return None
-
-        archon_config = self.config.archon
-        mode = archon_config.ac_mode
-
-        if mode == "none":
-            return None
-
-        ac_config = ActivationCheckpointConfig(
-            mode=mode,
-            selective_ac_option=archon_config.selective_ac_option,
-            memory_budget=archon_config.ac_memory_budget,
-            preserve_rng_state=archon_config.ac_preserve_rng_state,
-            debug=archon_config.ac_debug,
-        )
-
-        self.logger.info(
-            f"Activation checkpointing: mode={ac_config.mode}, "
-            f"selective_option={ac_config.selective_ac_option}, "
-            f"memory_budget={ac_config.memory_budget}, "
-            f"preserve_rng={ac_config.preserve_rng_state}, debug={ac_config.debug}"
-        )
-
-        return ac_config
-
     def _create_model_structure(self) -> nn.Module:
         """Create model structure on meta device without loading weights."""
         # Use tree attention type when tree training is enabled
@@ -1141,8 +980,7 @@ class ArchonEngine(TrainEngine):
             is_critic=self.config.is_critic,
             attn_type=attn_type,
         )
-        model = self.spec.model_class(model_args)
-        return model
+        return self.spec.model_class(model_args)
 
     def _materialize_and_load_weights(self):
         """Materialize meta tensors and load weights after FSDP parallelization."""
@@ -1179,63 +1017,14 @@ class ArchonEngine(TrainEngine):
         if self.optimizer_config is None:
             return
 
-        all_params = self._get_all_parameters()
-
         tik = time.perf_counter()
 
-        lr = self.optimizer_config.lr
-        weight_decay = self.optimizer_config.weight_decay
-        beta1 = self.optimizer_config.beta1
-        beta2 = self.optimizer_config.beta2
-        eps = self.optimizer_config.eps
-
-        if self.optimizer_config.type == "adam":
-            self.optimizer = torch.optim.AdamW(
-                all_params,
-                lr=lr,
-                weight_decay=weight_decay,
-                betas=(beta1, beta2),
-                eps=eps,
-                fused=True,
-            )
-        elif self.optimizer_config.type == "sgd":
-            self.optimizer = torch.optim.SGD(
-                all_params,
-                lr=lr,
-                weight_decay=weight_decay,
-            )
-        else:
-            raise ValueError(
-                f"Unsupported optimizer type: {self.optimizer_config.type}"
-            )
-
-        total_train_steps = ft_spec.total_train_steps
-        num_warmup_steps = int(
-            self.optimizer_config.warmup_steps_proportion * total_train_steps
+        self.optimizer = create_optimizer(
+            self._get_all_parameters(), self.optimizer_config
         )
-
-        if self.optimizer_config.lr_scheduler_type == "cosine":
-            self.lr_scheduler = get_cosine_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps,
-                total_train_steps,
-                min_lr_ratio=self.optimizer_config.min_lr_ratio,
-            )
-        elif self.optimizer_config.lr_scheduler_type == "linear":
-            self.lr_scheduler = get_linear_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps,
-                total_train_steps,
-            )
-        elif self.optimizer_config.lr_scheduler_type == "constant":
-            self.lr_scheduler = get_constant_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps,
-            )
-        else:
-            raise ValueError(
-                f"Unknown lr scheduler type: {self.optimizer_config.lr_scheduler_type}"
-            )
+        self.lr_scheduler = create_lr_scheduler(
+            self.optimizer, self.optimizer_config, ft_spec.total_train_steps
+        )
 
         self.logger.info(f"Created optimizer in {time.perf_counter() - tik:.2f}s")
 
@@ -1287,7 +1076,13 @@ class ArchonEngine(TrainEngine):
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
 
         # LCM ensures page-aligned memory and exact CP slicing without extra padding.
-        batch_align_to = math.lcm(self.page_size, self.parallel_dims.seq_len_divisor)
+        page_size = max(
+            DEFAULT_PAGE_SIZE_BYTES
+            // self.model_config.hidden_size
+            // torch.empty([], dtype=self.param_dtype).element_size(),
+            1,
+        )
+        batch_align_to = math.lcm(page_size, self.parallel_dims.seq_len_divisor)
         mb_list = pad_mb_list(
             mb_list,
             pad_value=0.0,
@@ -1365,9 +1160,7 @@ class ArchonEngine(TrainEngine):
                 ctx.trie_node,
                 ctx.mb_input["input_ids"],
                 temperature=self.config.temperature,
-                tp_group=self.parallel_dims.get_group("tp")
-                if self.parallel_dims.tp_enabled
-                else None,
+                tp_group=self._tp_group,
             )
             return logprobs, entropy, vocab_min, vocab_max
 
@@ -1376,18 +1169,15 @@ class ArchonEngine(TrainEngine):
             logits,
             ctx.labels,
             temperature=self.config.temperature,
-            tp_group=self.parallel_dims.get_group("tp")
-            if self.parallel_dims.tp_enabled
-            else None,
+            tp_group=self._tp_group,
         )
         vocab_min, vocab_max = self._get_vocab_min_max_logits(logits)
 
-        if self.parallel_dims.cp_enabled:
-            cp_group = self.parallel_dims.get_group("cp")
-            logprobs = ulysses_gather_output(logprobs, cp_group)
-            entropy = ulysses_gather_output(entropy, cp_group)
-            vocab_min = ulysses_gather_output(vocab_min, cp_group)
-            vocab_max = ulysses_gather_output(vocab_max, cp_group)
+        if self._cp_group is not None:
+            logprobs = ulysses_gather_output(logprobs, self._cp_group)
+            entropy = ulysses_gather_output(entropy, self._cp_group)
+            vocab_min = ulysses_gather_output(vocab_min, self._cp_group)
+            vocab_max = ulysses_gather_output(vocab_max, self._cp_group)
 
         if ctx.pad_length > 0:
             logprobs = logprobs[: -ctx.pad_length]
@@ -1410,9 +1200,7 @@ class ArchonEngine(TrainEngine):
                 ctx.trie_node,
                 ctx.mb_input["input_ids"],
                 temperature=self.config.temperature,
-                tp_group=self.parallel_dims.get_group("tp")
-                if self.parallel_dims.tp_enabled
-                else None,
+                tp_group=self._tp_group,
             )
 
         assert ctx.labels is not None
@@ -1420,13 +1208,11 @@ class ArchonEngine(TrainEngine):
             logits,
             ctx.labels,
             temperature=self.config.temperature,
-            tp_group=self.parallel_dims.get_group("tp")
-            if self.parallel_dims.tp_enabled
-            else None,
+            tp_group=self._tp_group,
         )
 
-        if self.parallel_dims.cp_enabled:
-            result = ulysses_gather_output(result, self.parallel_dims.get_group("cp"))
+        if self._cp_group is not None:
+            result = ulysses_gather_output(result, self._cp_group)
         if ctx.pad_length > 0:
             result = result[: -ctx.pad_length]
 
@@ -1440,8 +1226,8 @@ class ArchonEngine(TrainEngine):
         """Compute critic values with CP gather and pad trimming."""
         values = logits.squeeze(-1)
 
-        if self.parallel_dims.cp_enabled:
-            values = ulysses_gather_output(values, self.parallel_dims.get_group("cp"))
+        if self._cp_group is not None:
+            values = ulysses_gather_output(values, self._cp_group)
         if ctx.pad_length > 0:
             values = values[: -ctx.pad_length]
 

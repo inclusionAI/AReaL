@@ -16,6 +16,7 @@ import areal.utils.logging as logging
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
+    InferenceEngineConfig,
     RecoverConfig,
     SGLangConfig,
     parse_cli_args,
@@ -376,6 +377,7 @@ def ray_main(config, run_id: int = 0):
     actor_spec = get_scheduling_spec(config.actor)
 
     if allocation_mode.gen_backend in ("sglang", "vllm"):
+        config.rollout = to_structured_cfg(config.rollout, InferenceEngineConfig)
         rollout_spec = get_scheduling_spec(config.rollout)
 
     if not is_recover_run:
