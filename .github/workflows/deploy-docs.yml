@@ -47,6 +47,7 @@ jobs:
       - name: Build the book
         run: |
           cd docs
+          chmod +x ./build_all.sh
           ./build_all.sh
 
       - name: Setup Pages
