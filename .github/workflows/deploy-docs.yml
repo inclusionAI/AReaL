@@ -2,7 +2,7 @@ name: Deploy Jupyter Book to GitHub Pages
 
 on:
   push:
-    branches: [ main, add_chinese_doc ]
+    branches: [ add_chinese_doc ]
 
 # Allow one concurrent deployment
 concurrency:
