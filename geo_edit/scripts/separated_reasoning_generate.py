@@ -33,6 +33,7 @@ from geo_edit.prompts.system_prompts import (
     SEPARATED_REASONING_ONLY_PROMPT,
     SEPARATED_TOOL_CALL_ONLY_PROMPT,
     SEPARATED_FINAL_ANSWER_PROMPT,
+    SEPARATED_USER_PROMPT,
 )
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter
@@ -177,6 +178,8 @@ def _run_one_task(task_payload: dict):
     text_prompt = task_payload["prompt"]
     text_only = task_payload.get("text_only", False)
 
+    formatted_text_prompt = SEPARATED_USER_PROMPT.format(Question=text_prompt)
+
     meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
     if os.path.exists(meta_path):
         with open(meta_path, "r", encoding="utf-8") as f:
@@ -198,7 +201,7 @@ def _run_one_task(task_payload: dict):
 
     task = _WORKER_TASK_CLASS(
         task_id=task_id,
-        task_prompt=text_prompt,
+        task_prompt=formatted_text_prompt,
         task_answer=answer,
         task_image_path=image_path,
         tool_functions=tool_functions,

@@ -69,7 +69,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
     def _append_initial_observation(self) -> None:
         """Append initial user message with prompt and image."""
         if self._use_responses_format:
-            content = [{"type": "input_text", "text": self.task_prompt}]
+            content = []
             if self.image_list:
                 image = self.image_list[0]
                 image_url = image_to_data_url(image)
@@ -79,9 +79,10 @@ class OpenAICompatibleVisionQATask(VisionQATask):
                     {"type": "input_text", "text": "Observation 0:"},
                     {"type": "input_image", "image_url": image_url, "detail": "auto"},
                 ])
+            content.append({"type": "input_text", "text": self.task_prompt})
             self.contents["input"].append({"role": "user", "content": content})
         else:
-            content = [{"type": "text", "text": self.task_prompt}]
+            content = []
             if self.image_list:
                 image = self.image_list[0]
                 image_url = image_to_data_url(image)
@@ -91,6 +92,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
                     {"type": "text", "text": "Observation 0:"},
                     {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}},
                 ])
+            content.append({"type": "text", "text": self.task_prompt})
             self.contents.append({"role": "user", "content": content})
 
     def _stringify_observation_item(self, item: Any) -> Any:

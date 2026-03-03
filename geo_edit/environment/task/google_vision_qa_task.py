@@ -38,7 +38,7 @@ class GoogleVisionQATask(VisionQATask):
             logger.info("Initializing GoogleVisionQATask in text only mode.")
             self.contents = [self.task_prompt]
         else:
-            self.contents = [self.task_prompt, "Observation 0:", self.image_list[0]]
+            self.contents = ["Observation 0:", self.image_list[0], self.task_prompt]
 
     def _stringify_observation_item(self, item: Any) -> Any:
         from google.genai import types
