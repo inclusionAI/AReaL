@@ -13,6 +13,7 @@ import pytest
 from areal.api.cli_args import AgentServiceSpec
 from areal.experimental.agent_service.agent_controller import (
     _GATEWAY_ROLE,
+    _ROUTER_ROLE,
     _WORKER_ROLE,
     AgentController,
 )
@@ -22,11 +23,16 @@ from areal.experimental.agent_service.config import GatewayConfig
 def _make_mock_scheduler(
     gateway_ip="127.0.0.1",
     gateway_port=8300,
+    router_ip="127.0.0.1",
+    router_port=9000,
     worker_ip="127.0.0.1",
     worker_port=8301,
 ):
     """Create a mock Scheduler for testing."""
     scheduler = MagicMock()
+    router_worker = MagicMock()
+    router_worker.ip = router_ip
+    router_worker.worker_ports = [router_port]
     gateway_worker = MagicMock()
     gateway_worker.ip = gateway_ip
     gateway_worker.worker_ports = [gateway_port]
@@ -35,7 +41,9 @@ def _make_mock_scheduler(
     agent_worker.worker_ports = [worker_port]
 
     def get_workers(role, timeout=None):
-        if role == _GATEWAY_ROLE:
+        if role == _ROUTER_ROLE:
+            return [router_worker]
+        elif role == _GATEWAY_ROLE:
             return [gateway_worker]
         elif role == _WORKER_ROLE:
             return [agent_worker]

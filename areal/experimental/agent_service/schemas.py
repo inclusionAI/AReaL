@@ -1,41 +1,63 @@
 """Data models for the Agent Service Gateway and Worker.
 
 These Pydantic models define the request/response schemas for:
-- Gateway-Worker communication and worker registration.
+- Submit/poll pattern via /submit and /result/{task_id} endpoints (ZMQ-based worker registration).
 - Worker RPC server endpoints (/run_episode, /health, /configure).
 """
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from pydantic import BaseModel
 
 # ------------------------------------------------------------------
-# Gateway / Worker-pool models
+# Async submit/result models (ZMQ worker pattern)
 # ------------------------------------------------------------------
 
 
-class WorkerInfo(BaseModel):
-    """Information about a registered Agent Worker."""
+class SubmitEpisodeResponse(BaseModel):
+    """Response from submitting an episode for execution.
 
-    worker_id: str
-    address: str
-    status: str = "healthy"  # "healthy", "unhealthy"
-    last_heartbeat: float = 0.0
+    The Gateway returns a task_id that can be polled via /result/{task_id}
+    to retrieve the result when ready.
+    """
 
-    @classmethod
-    def create(cls, worker_id: str, address: str) -> WorkerInfo:
-        """Create a new WorkerInfo with current timestamp."""
-        return cls(worker_id=worker_id, address=address, last_heartbeat=time.time())
+    task_id: str
+    status: str = "submitted"
 
 
-class RegisterWorkerRequest(BaseModel):
-    """Request from Agent Worker to register with Gateway."""
+class TaskResultResponse(BaseModel):
+    """Response with the result of a submitted task.
 
-    worker_id: str
-    address: str
+    Returned by /result/{task_id} endpoint. Status field indicates
+    the current state: 'pending' (not done), 'completed' (success),
+    'error' (execution failed), or 'timeout' (took too long).
+    """
+
+    task_id: str
+    status: str  # "pending", "completed", "error", "timeout"
+    result: float | dict[str, float] | None = None
+    error: str | None = None
+
+
+class CollectResultsRequest(BaseModel):
+    """Request to collect results for multiple tasks (batch operation).
+
+    Used for batch polling of results across multiple task_ids.
+    Supports future scalability for bulk result retrieval.
+    """
+
+    task_ids: list[str]
+
+
+class CollectResultsResponse(BaseModel):
+    """Response containing results for multiple tasks.
+
+    Returns a mapping of task_id -> TaskResultResponse for bulk operations.
+    """
+
+    results: dict[str, TaskResultResponse]
 
 
 # ------------------------------------------------------------------
@@ -68,13 +90,11 @@ class RunEpisodeResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Response for health check endpoint.
 
-    Used by both Gateway (/health with workers stats) and
+    Used by both Gateway (/health with agent info) and
     Worker (/health with running/agent info).
     """
 
     status: str
-    # Gateway fields
-    workers: dict[str, int] | None = None
     # Worker fields
     running: bool | None = None
     agent_import_path: str | None = None

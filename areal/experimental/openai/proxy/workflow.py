@@ -4,6 +4,7 @@ import asyncio
 import atexit
 import os
 import threading
+import time
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any
 
@@ -166,43 +167,79 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         raise ValueError(f"Unsupported mode: {self.mode}")
 
     async def _run_in_service(self, session_url: str, data: dict) -> Any:
-        """Execute agent via Agent Service HTTP call.
+        """Execute agent via Agent Service submit+poll pattern.
 
-        Parameters
-        ----------
-        session_url : str
-            The Proxy Server session URL for this episode.
-        data : dict
-            Input data for the agent.
-
-        Returns
-        -------
-        Any
-            The result from agent.run() (typically rewards dict or float).
+        Submits the task to POST /submit, then polls GET /result/{task_id}
+        with exponential backoff until the task completes.
         """
         http_session = await workflow_context.get_aiohttp_session()
+        addr = self.agent_service_addr
+
+        task_id = None  # Set in submit block, used in except handler
+        # Submit the task
         try:
             async with http_session.post(
-                f"{self.agent_service_addr}/run_episode",
+                f"{addr}/submit",
                 json={
                     "data": data,
                     "session_url": session_url,
                     "agent_kwargs": self.agent_kwargs,
                 },
-                timeout=aiohttp.ClientTimeout(total=self.agent_service_timeout),
+                timeout=aiohttp.ClientTimeout(total=30.0),  # submit should be fast
             ) as resp:
                 resp.raise_for_status()
-                result = await resp.json()
-                if result.get("status") == "error":
-                    raise RuntimeError(
-                        f"Agent Service error at {self.agent_service_addr}: "
-                        f"{result.get('error', 'Unknown error')}"
-                    )
-                return result.get("result")
+                submit_data = await resp.json()
+                task_id = submit_data["task_id"]
         except aiohttp.ClientError as e:
-            raise RuntimeError(
-                f"Agent Service communication error at {self.agent_service_addr}: {e}"
-            ) from e
+            raise RuntimeError(f"Agent Service submit error at {addr}: {e}") from e
+
+        # Poll for result with exponential backoff
+        deadline = time.monotonic() + self.agent_service_timeout
+        backoff = 0.01  # start at 10ms
+        max_backoff = 2.0  # cap at 2s
+        poll_timeout = aiohttp.ClientTimeout(total=10.0)  # each poll is fast
+
+        try:
+            while True:
+                if time.monotonic() > deadline:
+                    raise RuntimeError(
+                        f"Agent Service poll timed out after {self.agent_service_timeout:.0f}s "
+                        f"(task_id={task_id})"
+                    )
+                try:
+                    async with http_session.get(
+                        f"{addr}/result/{task_id}",
+                        timeout=poll_timeout,
+                    ) as resp:
+                        resp.raise_for_status()
+                        result_data = await resp.json()
+                except aiohttp.ClientError as e:
+                    raise RuntimeError(
+                        f"Agent Service poll error at {addr}: {e}"
+                    ) from e
+
+                status = result_data.get("status")
+                if status == "completed":
+                    return result_data.get("result")
+                elif status == "error":
+                    raise RuntimeError(
+                        f"Agent Service error at {addr}: "
+                        f"{result_data.get('error', 'Unknown error')}"
+                    )
+                elif status == "timeout":
+                    raise RuntimeError(
+                        f"Agent Service task timed out at {addr}: "
+                        f"{result_data.get('error', 'Task timed out')}"
+                    )
+                # status == "pending" — keep polling
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
+        except Exception:
+            logger.warning(
+                "Task %s orphaned in Agent Service (client giving up, no cancel signal sent)",
+                task_id,
+            )
+            raise
 
     async def _grant_capacity(self, session: aiohttp.ClientSession) -> None:
         """Grant capacity via HTTP."""
@@ -249,8 +286,8 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             if isinstance(rewards, dict):
                 for completion_id, reward in rewards.items():
                     await proxy_client.set_reward(completion_id, reward)
-            elif isinstance(rewards, float):
-                await proxy_client.set_last_reward(rewards)
+            elif isinstance(rewards, (int, float)):
+                await proxy_client.set_last_reward(float(rewards))
             else:
                 raise ValueError(f"Invalid reward type: {type(rewards)}")
 

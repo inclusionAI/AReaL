@@ -27,6 +27,7 @@ from areal.api.cli_args import AgentServiceSpec, SchedulingSpec
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.infra.scheduler.exceptions import WorkerTimeoutError
 from areal.utils import logging
+from areal.utils.network import find_free_ports
 
 from .config import GatewayConfig
 
@@ -35,6 +36,7 @@ logger = logging.getLogger("AgentController")
 # Role names used for scheduler registration
 _GATEWAY_ROLE = "agent_gateway"
 _WORKER_ROLE = "agent_worker"
+_ROUTER_ROLE = "agent_router"
 
 
 class AgentController:
@@ -51,6 +53,7 @@ class AgentController:
 
     _GATEWAY_ROLE = _GATEWAY_ROLE
     _WORKER_ROLE = _WORKER_ROLE
+    _ROUTER_ROLE = _ROUTER_ROLE
 
     def __init__(self, config: GatewayConfig, scheduler: Scheduler) -> None:
         """Initialize the AgentController.
@@ -71,6 +74,12 @@ class AgentController:
         self._gateway_addr: str | None = None
         self._gateway_started: bool = False
 
+        self._router_started: bool = False
+        self._router_req_frontend_addr: str | None = None
+        self._router_req_backend_addr: str | None = None
+        self._router_res_frontend_addr: str | None = None
+        self._router_res_backend_addr: str | None = None
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -85,15 +94,81 @@ class AgentController:
         """True if the Gateway process has been started."""
         return self._gateway_started
 
+    @property
+    def router_started(self) -> bool:
+        """True if the Router process has been started."""
+        return self._router_started
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def start(self, spec: AgentServiceSpec) -> str:
-        """Start Gateway + Workers. Returns gateway_addr.
+    def start_router(self) -> None:
+        """Start the ZMQ Router process via the scheduler.
 
-        Convenience method that calls :meth:`start_gateway` then
-        :meth:`start_workers`.
+        The Router binds four ZMQ sockets for request/result routing:
+
+        - PULL (req_frontend): receives requests from Gateway
+        - ROUTER (req_backend): distributes tasks to Workers
+        - PULL (res_frontend): receives results from Workers
+        - PUSH (res_backend): forwards results to Gateway
+        """
+        if self._router_started:
+            logger.warning("Router already started")
+            return
+
+        zmq_ports = find_free_ports(4)
+
+        cmd = (
+            "python -m areal.experimental.agent_service.router"
+            f" --req-frontend-addr tcp://*:{zmq_ports[0]}"
+            f" --req-backend-addr tcp://*:{zmq_ports[1]}"
+            f" --res-frontend-addr tcp://*:{zmq_ports[2]}"
+            f" --res-backend-addr tcp://*:{zmq_ports[3]}"
+        )
+
+        spec = SchedulingSpec(
+            cpu=1,
+            gpu=0,
+            mem=1,
+            port_count=1,
+            cmd=cmd,
+            env_vars={},
+        )
+        job = Job(role=self._ROUTER_ROLE, replicas=1, tasks=[spec])
+
+        worker_ids = self._scheduler.create_workers(job=job)
+        logger.info("Router worker created: %s", worker_ids)
+
+        try:
+            router_workers = self._scheduler.get_workers(
+                role=self._ROUTER_ROLE, timeout=30
+            )
+        except WorkerTimeoutError as e:
+            raise RuntimeError(f"Router failed to start: {e}") from e
+
+        rw = router_workers[0]
+        host = rw.ip
+
+        self._router_req_frontend_addr = f"tcp://{host}:{zmq_ports[0]}"
+        self._router_req_backend_addr = f"tcp://{host}:{zmq_ports[1]}"
+        self._router_res_frontend_addr = f"tcp://{host}:{zmq_ports[2]}"
+        self._router_res_backend_addr = f"tcp://{host}:{zmq_ports[3]}"
+        self._router_started = True
+
+        logger.info(
+            "Router started (req_fe=%s, req_be=%s, res_fe=%s, res_be=%s)",
+            self._router_req_frontend_addr,
+            self._router_req_backend_addr,
+            self._router_res_frontend_addr,
+            self._router_res_backend_addr,
+        )
+
+    def start(self, spec: AgentServiceSpec) -> str:
+        """Start Router + Gateway + Workers. Returns gateway_addr.
+
+        Convenience method that calls :meth:`start_router`, then
+        :meth:`start_gateway`, then :meth:`start_workers`.
 
         Args:
             spec: Agent service specification (import path, reuse, workers, etc.).
@@ -101,6 +176,7 @@ class AgentController:
         Returns:
             HTTP address of the Gateway (e.g., ``'http://host:8300'``).
         """
+        self.start_router()
         self.start_gateway()
         self.start_workers(spec)
         return self.gateway_addr
@@ -116,6 +192,15 @@ class AgentController:
             assert self._gateway_addr is not None
             return self._gateway_addr
 
+        if not self._router_started:
+            raise RuntimeError(
+                "Router must be started before starting gateway. "
+                "Call start_router() first."
+            )
+
+        assert self._router_req_frontend_addr is not None
+        assert self._router_res_backend_addr is not None
+
         cmd = "python -m areal.experimental.agent_service.gateway"
 
         spec = SchedulingSpec(
@@ -124,7 +209,10 @@ class AgentController:
             mem=self._config.gateway_mem,
             port_count=1,
             cmd=cmd,
-            env_vars={},
+            env_vars={
+                "AREAL_ZMQ_REQ_FRONTEND_ADDR": self._router_req_frontend_addr,
+                "AREAL_ZMQ_RES_BACKEND_ADDR": self._router_res_backend_addr,
+            },
         )
         job = Job(
             role=self._GATEWAY_ROLE,
@@ -152,7 +240,7 @@ class AgentController:
     def start_workers(self, spec: AgentServiceSpec) -> list[str]:
         """Start N Agent Worker processes via the scheduler.
 
-        Each worker is configured to register with the Gateway on startup.
+        Each worker connects to the Router via ZMQ for task distribution.
 
         Args:
             spec: Agent service specification containing import path,
@@ -162,13 +250,21 @@ class AgentController:
             List of worker addresses (e.g., ``['http://host:8301', ...]``).
 
         Raises:
-            RuntimeError: If the Gateway has not been started yet.
+            RuntimeError: If the Router or Gateway has not been started yet.
         """
+        if not self._router_started:
+            raise RuntimeError(
+                "Router must be started before starting workers. "
+                "Call start_router() first."
+            )
         if not self._gateway_started or self._gateway_addr is None:
             raise RuntimeError(
                 "Gateway must be started before starting workers. "
                 "Call start_gateway() first."
             )
+
+        assert self._router_req_backend_addr is not None
+        assert self._router_res_frontend_addr is not None
 
         agent_init_kwargs_str = (
             json.dumps(spec.agent_init_kwargs) if spec.agent_init_kwargs else ""
@@ -181,7 +277,8 @@ class AgentController:
             port_count=1,
             cmd="python -m areal.experimental.agent_service.worker_server",
             env_vars={
-                "AREAL_AGENT_GATEWAY_ADDR": self._gateway_addr,
+                "AREAL_ZMQ_TASK_ADDR": self._router_req_backend_addr,
+                "AREAL_ZMQ_RESULT_ADDR": self._router_res_frontend_addr,
                 "AREAL_AGENT_IMPORT_PATH_INTERNAL": spec.agent_import_path or "",
                 "AREAL_AGENT_REUSE_INTERNAL": "true" if spec.agent_reuse else "false",
                 "AREAL_AGENT_INIT_KWARGS_INTERNAL": agent_init_kwargs_str,
@@ -215,26 +312,38 @@ class AgentController:
         return addrs
 
     def stop(self) -> None:
-        """Stop all Gateway and Worker processes. Idempotent.
+        """Stop all Router, Gateway, and Worker processes. Idempotent.
 
-        Deletes workers first (so they can unregister from the Gateway),
-        then deletes the Gateway. Each deletion is wrapped in a try/except
-        so that calling ``stop()`` twice does not raise.
+        Stops in reverse startup order: Workers first, then Gateway,
+        then Router. Each deletion is wrapped in a try/except so that
+        calling ``stop()`` twice does not raise.
         """
-        # Delete workers first (before gateway)
+        # Delete workers first
         try:
             self._scheduler.delete_workers(self._WORKER_ROLE)
         except Exception as e:
             logger.warning("Failed to delete agent workers: %s", e)
 
+        # Delete gateway second
         try:
             self._scheduler.delete_workers(self._GATEWAY_ROLE)
         except Exception as e:
             logger.warning("Failed to delete gateway: %s", e)
 
+        # Delete router last
+        try:
+            self._scheduler.delete_workers(self._ROUTER_ROLE)
+        except Exception as e:
+            logger.warning("Failed to delete router: %s", e)
+
         self._gateway_started = False
         self._gateway_addr = None
         self._agent_workers = []
+        self._router_started = False
+        self._router_req_frontend_addr = None
+        self._router_req_backend_addr = None
+        self._router_res_frontend_addr = None
+        self._router_res_backend_addr = None
 
     def scale_workers(
         self,

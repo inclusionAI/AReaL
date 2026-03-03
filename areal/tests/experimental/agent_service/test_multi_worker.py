@@ -1,267 +1,329 @@
-"""Unit tests for Agent Service multi-worker support."""
+"""Integration tests for multiple WorkerZMQ instances with a real Router.
+
+Unlike test_integration.py (which uses simulated raw-ZMQ workers), these
+tests instantiate *real* :class:`WorkerZMQ` objects backed by a stub
+AgentService, verifying multi-worker coordination through the Router.
+
+Architecture under test::
+
+    Test PUSH → Router PULL → ROUTER/DEALER → WorkerZMQ (DEALER)
+                                                    ↓
+    Test PULL ← Router PUSH ← PULL ← WorkerZMQ (PUSH)
+
+ZMQ port mapping (5 ports from ``find_free_ports``):
+  [0] req_frontend  — Test PUSH  → Router PULL
+  [1] req_backend   — Router ROUTER → WorkerZMQ DEALER
+  [2] res_frontend  — WorkerZMQ PUSH → Router PULL
+  [3] res_backend   — Router PUSH   → Test PULL
+  [4] Router HTTP health port (required by constructor)
+"""
 
 from __future__ import annotations
 
-import os
-from unittest.mock import patch
+import asyncio
+import threading
+import time
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+import zmq
 
-from areal.experimental.agent_service.worker_server import (
-    ENV_AGENT_HOST,
-    ENV_AGENT_IMPORT_PATH_INTERNAL,
-    ENV_AGENT_INIT_KWARGS_INTERNAL,
-    ENV_AGENT_PORT,
-    ENV_AGENT_REUSE_INTERNAL,
-    _get_agent_config_from_env,
-    create_app,
-)
+from areal.experimental.agent_service.router import RoundRobinStrategy, Router
+from areal.experimental.agent_service.worker_server import WorkerZMQ
+from areal.utils.network import find_free_ports
+
+# ---------------------------------------------------------------------------
+# Stub AgentService
+# ---------------------------------------------------------------------------
 
 
-class TestGetAgentConfigFromEnv:
-    """Tests for _get_agent_config_from_env function."""
+class _MockService:
+    """Stub AgentService for testing multi-worker scenarios."""
 
-    def test_returns_defaults_when_no_env_vars(self):
-        """Should return defaults when env vars are not set."""
-        with patch.dict(os.environ, {}, clear=True):
-            agent_import_path, agent_reuse, agent_init_kwargs = (
-                _get_agent_config_from_env()
-            )
+    def __init__(
+        self,
+        return_value: float = 1.0,
+        raise_error: Exception | None = None,
+        delay: float = 0.0,
+    ) -> None:
+        self.return_value = return_value
+        self.raise_error = raise_error
+        self.delay = delay
+        self.call_count = 0
 
-            assert agent_import_path is None
-            assert agent_reuse is False
-            assert agent_init_kwargs == {}
-
-    def test_reads_agent_import_path(self):
-        """Should read AREAL_AGENT_IMPORT_PATH_INTERNAL env var."""
-        with patch.dict(
-            os.environ, {ENV_AGENT_IMPORT_PATH_INTERNAL: "mymodule.MyAgent"}
-        ):
-            agent_import_path, _, _ = _get_agent_config_from_env()
-            assert agent_import_path == "mymodule.MyAgent"
-
-    def test_empty_import_path_returns_none(self):
-        """Empty import path should return None."""
-        with patch.dict(os.environ, {ENV_AGENT_IMPORT_PATH_INTERNAL: ""}):
-            agent_import_path, _, _ = _get_agent_config_from_env()
-            assert agent_import_path is None
-
-    def test_reads_agent_reuse_true(self):
-        """Should read AREAL_AGENT_REUSE_INTERNAL=true."""
-        with patch.dict(os.environ, {ENV_AGENT_REUSE_INTERNAL: "true"}):
-            _, agent_reuse, _ = _get_agent_config_from_env()
-            assert agent_reuse is True
-
-    def test_reads_agent_reuse_one(self):
-        """Should read AREAL_AGENT_REUSE_INTERNAL=1 as True."""
-        with patch.dict(os.environ, {ENV_AGENT_REUSE_INTERNAL: "1"}):
-            _, agent_reuse, _ = _get_agent_config_from_env()
-            assert agent_reuse is True
-
-    def test_reads_agent_reuse_false(self):
-        """Should read AREAL_AGENT_REUSE_INTERNAL=false."""
-        with patch.dict(os.environ, {ENV_AGENT_REUSE_INTERNAL: "false"}):
-            _, agent_reuse, _ = _get_agent_config_from_env()
-            assert agent_reuse is False
-
-    def test_reads_agent_init_kwargs(self):
-        """Should parse JSON from AREAL_AGENT_INIT_KWARGS_INTERNAL."""
-        with patch.dict(
-            os.environ,
-            {ENV_AGENT_INIT_KWARGS_INTERNAL: '{"model": "gpt-4", "temperature": 0.7}'},
-        ):
-            _, _, agent_init_kwargs = _get_agent_config_from_env()
-            assert agent_init_kwargs == {"model": "gpt-4", "temperature": 0.7}
-
-    def test_invalid_json_returns_empty_dict(self):
-        """Invalid JSON in init kwargs should return empty dict."""
-        with patch.dict(os.environ, {ENV_AGENT_INIT_KWARGS_INTERNAL: "not valid json"}):
-            _, _, agent_init_kwargs = _get_agent_config_from_env()
-            assert agent_init_kwargs == {}
+    async def run_episode(
+        self,
+        data,
+        session_url,
+        agent_kwargs=None,
+        agent_import_path=None,
+    ):
+        self.call_count += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.raise_error:
+            raise self.raise_error
+        return self.return_value
 
 
-class TestCreateAppFactory:
-    """Tests for create_app factory function."""
-
-    @pytest.fixture
-    def mock_env_vars(self, mock_agent_import_path):
-        """Set up environment variables for create_app tests."""
-        env_vars = {
-            ENV_AGENT_HOST: "127.0.0.1",
-            ENV_AGENT_PORT: "8300",
-            ENV_AGENT_IMPORT_PATH_INTERNAL: mock_agent_import_path,
-            ENV_AGENT_REUSE_INTERNAL: "false",
-            ENV_AGENT_INIT_KWARGS_INTERNAL: "",
-        }
-        with patch.dict(os.environ, env_vars):
-            yield
-
-    @pytest.mark.asyncio
-    async def test_create_app_returns_fastapi(self, mock_env_vars):
-        """create_app should return a FastAPI application."""
-        from fastapi import FastAPI
-
-        app = create_app()
-        assert isinstance(app, FastAPI)
-        assert app.title == "Agent Service RPC Server"
-
-    @pytest.mark.asyncio
-    async def test_create_app_has_health_route(self, mock_env_vars):
-        """create_app should include /health route."""
-        app = create_app()
-        routes = [route.path for route in app.routes]
-        assert "/health" in routes
-
-    @pytest.mark.asyncio
-    async def test_create_app_has_run_episode_route(self, mock_env_vars):
-        """create_app should include /run_episode route."""
-        app = create_app()
-        routes = [route.path for route in app.routes]
-        assert "/run_episode" in routes
-
-    @pytest.mark.asyncio
-    async def test_create_app_with_lifespan(self, mock_agent_import_path):
-        """Test create_app with lifespan context properly initialized."""
-        import areal.experimental.agent_service.worker_server as rpc_module
-
-        env_vars = {
-            ENV_AGENT_HOST: "127.0.0.1",
-            ENV_AGENT_PORT: "8300",
-            ENV_AGENT_IMPORT_PATH_INTERNAL: mock_agent_import_path,
-            ENV_AGENT_REUSE_INTERNAL: "false",
-            ENV_AGENT_INIT_KWARGS_INTERNAL: "",
-        }
-
-        with patch.dict(os.environ, env_vars):
-            app = create_app()
-
-            # Manually trigger lifespan
-            async with app.router.lifespan_context(app):
-                # Now _service should be initialized
-                assert rpc_module._service is not None
-                assert rpc_module._service.is_running
-
-                transport = ASGITransport(app=app)
-                async with AsyncClient(
-                    transport=transport, base_url="http://test"
-                ) as client:
-                    response = await client.get("/health")
-                    assert response.status_code == 200
-                    data = response.json()
-                    assert data["status"] == "ok"
-                    assert data["running"] is True
-
-            # After lifespan exits, service should be stopped
-            assert rpc_module._service is None or not rpc_module._service.is_running
-
-        # Clean up global state
-        rpc_module._service = None
-
-    @pytest.mark.asyncio
-    async def test_create_app_run_episode_with_lifespan(self, mock_agent_import_path):
-        """Test run_episode endpoint with lifespan properly initialized."""
-        import areal.experimental.agent_service.worker_server as rpc_module
-
-        env_vars = {
-            ENV_AGENT_HOST: "127.0.0.1",
-            ENV_AGENT_PORT: "8300",
-            ENV_AGENT_IMPORT_PATH_INTERNAL: mock_agent_import_path,
-            ENV_AGENT_REUSE_INTERNAL: "false",
-            ENV_AGENT_INIT_KWARGS_INTERNAL: "",
-        }
-
-        with patch.dict(os.environ, env_vars):
-            app = create_app()
-
-            async with app.router.lifespan_context(app):
-                transport = ASGITransport(app=app)
-                async with AsyncClient(
-                    transport=transport, base_url="http://test"
-                ) as client:
-                    response = await client.post(
-                        "/run_episode",
-                        json={
-                            "data": {"test": "data"},
-                            "session_url": "http://localhost:8000/session/test",
-                        },
-                    )
-                    assert response.status_code == 200
-                    data = response.json()
-                    assert data["status"] == "success"
-                    assert data["result"] == 1.0
-
-        # Clean up global state
-        rpc_module._service = None
-
-    @pytest.mark.asyncio
-    async def test_create_app_shared_mode_with_lifespan(self, mock_agent_import_path):
-        """Test create_app in shared mode with lifespan."""
-        import areal.experimental.agent_service.worker_server as rpc_module
-
-        env_vars = {
-            ENV_AGENT_HOST: "127.0.0.1",
-            ENV_AGENT_PORT: "8300",
-            ENV_AGENT_IMPORT_PATH_INTERNAL: mock_agent_import_path,
-            ENV_AGENT_REUSE_INTERNAL: "true",
-            ENV_AGENT_INIT_KWARGS_INTERNAL: '{"shared": true}',
-        }
-
-        with patch.dict(os.environ, env_vars):
-            app = create_app()
-
-            async with app.router.lifespan_context(app):
-                transport = ASGITransport(app=app)
-                async with AsyncClient(
-                    transport=transport, base_url="http://test"
-                ) as client:
-                    response = await client.get("/health")
-                    assert response.status_code == 200
-                    data = response.json()
-                    assert data["agent_reuse"] is True
-
-        # Clean up global state
-        rpc_module._service = None
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
-class TestParseArgsWorkers:
-    """Tests for --workers CLI argument parsing."""
+@pytest.fixture
+def zmq_ports():
+    """Allocate 5 free ports: 4 ZMQ channels + 1 Router HTTP."""
+    return find_free_ports(5)
 
-    def test_default_workers_is_one(self):
-        """Default workers should be 1."""
-        from areal.experimental.agent_service.__main__ import _parse_args
 
-        with patch("sys.argv", ["worker_server"]):
-            args = _parse_args()
-            assert args.workers == 1
+@pytest.fixture
+def router(zmq_ports):
+    """Start a Router bound to the allocated ZMQ ports."""
+    p = zmq_ports
+    r = Router(
+        req_frontend_addr=f"tcp://127.0.0.1:{p[0]}",
+        req_backend_addr=f"tcp://127.0.0.1:{p[1]}",
+        res_frontend_addr=f"tcp://127.0.0.1:{p[2]}",
+        res_backend_addr=f"tcp://127.0.0.1:{p[3]}",
+        strategy=RoundRobinStrategy(),
+        http_port=p[4],
+    )
+    r.start()
+    time.sleep(0.3)  # let threads spin up and sockets bind
+    yield r
+    r.stop()
 
-    def test_workers_argument_parsed(self):
-        """--workers argument should be parsed correctly."""
-        from areal.experimental.agent_service.__main__ import _parse_args
 
-        with patch("sys.argv", ["worker_server", "--workers", "4"]):
-            args = _parse_args()
-            assert args.workers == 4
+def _start_worker(
+    zmq_ports: list[int],
+    service: _MockService,
+    worker_id: str,
+) -> tuple[WorkerZMQ, threading.Thread]:
+    """Create a WorkerZMQ and run it in a daemon thread.
 
-    def test_workers_with_other_args(self):
-        """--workers should work with other arguments."""
-        from areal.experimental.agent_service.__main__ import _parse_args
+    Returns the worker instance and its thread so the caller can
+    stop the worker and join the thread during teardown.
+    """
+    worker = WorkerZMQ(
+        task_addr=f"tcp://127.0.0.1:{zmq_ports[1]}",
+        result_addr=f"tcp://127.0.0.1:{zmq_ports[2]}",
+        service=service,
+        worker_id=worker_id,
+    )
+    thread = threading.Thread(target=worker.start, daemon=True, name=f"t-{worker_id}")
+    thread.start()
+    return worker, thread
 
-        with patch(
-            "sys.argv",
-            [
-                "worker_server",
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "9000",
-                "--workers",
-                "8",
-                "--agent-reuse",
-            ],
-        ):
-            args = _parse_args()
-            assert args.workers == 8
-            assert args.host == "0.0.0.0"
-            assert args.port == 9000
-            assert args.agent_reuse is True
+
+def _inject_tasks(zmq_ports: list[int], count: int) -> list[str]:
+    """Push *count* tasks into the Router's req_frontend and return task IDs."""
+    ctx = zmq.Context()
+    push = ctx.socket(zmq.PUSH)
+    push.setsockopt(zmq.LINGER, 0)
+    push.connect(f"tcp://127.0.0.1:{zmq_ports[0]}")
+    time.sleep(0.1)  # let socket connect
+
+    task_ids: list[str] = []
+    for i in range(count):
+        tid = f"task-{i}"
+        push.send_json(
+            {
+                "task_id": tid,
+                "data": {"question": f"q{i}"},
+                "session_url": "http://localhost:8000",
+            }
+        )
+        task_ids.append(tid)
+
+    push.close()
+    ctx.term()
+    return task_ids
+
+
+def _collect_results(
+    zmq_ports: list[int], expected: int, timeout: float = 10.0
+) -> list[dict]:
+    """Pull up to *expected* results from the Router's res_backend."""
+    ctx = zmq.Context()
+    pull = ctx.socket(zmq.PULL)
+    pull.setsockopt(zmq.LINGER, 0)
+    pull.setsockopt(zmq.RCVTIMEO, int(timeout * 1000))
+    pull.connect(f"tcp://127.0.0.1:{zmq_ports[3]}")
+    time.sleep(0.1)  # let socket connect
+
+    results: list[dict] = []
+    for _ in range(expected):
+        try:
+            data = pull.recv_json()
+            results.append(data)
+        except zmq.Again:
+            break
+
+    pull.close()
+    ctx.term()
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestMultiWorkerIntegration:
+    """Integration tests for multiple WorkerZMQ instances with a real Router."""
+
+    def test_two_workers_each_process_tasks(self, zmq_ports, router):
+        """Test that 2 WorkerZMQ instances process 4 tasks between them."""
+        svc_a = _MockService(return_value=1.0)
+        svc_b = _MockService(return_value=2.0)
+
+        w_a, t_a = _start_worker(zmq_ports, svc_a, "worker-a")
+        w_b, t_b = _start_worker(zmq_ports, svc_b, "worker-b")
+        time.sleep(0.5)  # let workers register with Router
+
+        task_ids = _inject_tasks(zmq_ports, 4)
+        results = _collect_results(zmq_ports, expected=4)
+
+        # All 4 tasks completed
+        assert len(results) == 4
+        returned_task_ids = sorted(r["task_id"] for r in results)
+        assert returned_task_ids == sorted(task_ids)
+        # Every result is a success
+        for r in results:
+            assert r["status"] == "success"
+
+        # Both workers were called
+        assert svc_a.call_count + svc_b.call_count == 4
+        assert svc_a.call_count > 0
+        assert svc_b.call_count > 0
+
+        # Teardown
+        w_a.stop()
+        w_b.stop()
+        t_a.join(timeout=5)
+        t_b.join(timeout=5)
+
+    def test_three_workers_process_six_tasks(self, zmq_ports, router):
+        """Test that 3 workers share 6 tasks successfully."""
+        services = [_MockService(return_value=float(i)) for i in range(3)]
+
+        workers_threads = [
+            _start_worker(zmq_ports, services[i], f"worker-{i}") for i in range(3)
+        ]
+        time.sleep(0.5)
+
+        task_ids = _inject_tasks(zmq_ports, 6)
+        results = _collect_results(zmq_ports, expected=6)
+
+        assert len(results) == 6
+        returned_ids = sorted(r["task_id"] for r in results)
+        assert returned_ids == sorted(task_ids)
+
+        total_calls = sum(s.call_count for s in services)
+        assert total_calls == 6
+        # With round-robin each of the 3 workers should get exactly 2 tasks
+        for s in services:
+            assert s.call_count == 2
+
+        for w, t in workers_threads:
+            w.stop()
+            t.join(timeout=5)
+
+    def test_tasks_distributed_across_workers_by_return_value(self, zmq_ports, router):
+        """Test round-robin distribution by checking distinct return values."""
+        svc_a = _MockService(return_value=10.0)
+        svc_b = _MockService(return_value=20.0)
+
+        w_a, t_a = _start_worker(zmq_ports, svc_a, "worker-a")
+        w_b, t_b = _start_worker(zmq_ports, svc_b, "worker-b")
+        time.sleep(0.5)
+
+        _inject_tasks(zmq_ports, 4)
+        results = _collect_results(zmq_ports, expected=4)
+
+        assert len(results) == 4
+        result_values = sorted(set(r["result"] for r in results))
+        # Both return values must appear — proving distribution
+        assert 10.0 in result_values
+        assert 20.0 in result_values
+
+        # With round-robin, each worker should get exactly 2 tasks
+        count_10 = sum(1 for r in results if r["result"] == 10.0)
+        count_20 = sum(1 for r in results if r["result"] == 20.0)
+        assert count_10 == 2
+        assert count_20 == 2
+
+        w_a.stop()
+        w_b.stop()
+        t_a.join(timeout=5)
+        t_b.join(timeout=5)
+
+    def test_worker_error_does_not_block_other_workers(self, zmq_ports, router):
+        """Test that one worker's errors don't prevent others from succeeding."""
+        svc_ok = _MockService(return_value=42.0)
+        svc_err = _MockService(raise_error=RuntimeError("boom"))
+
+        w_ok, t_ok = _start_worker(zmq_ports, svc_ok, "worker-ok")
+        w_err, t_err = _start_worker(zmq_ports, svc_err, "worker-err")
+        time.sleep(0.5)
+
+        _inject_tasks(zmq_ports, 2)
+        results = _collect_results(zmq_ports, expected=2)
+
+        assert len(results) == 2
+
+        statuses = {r["status"] for r in results}
+        assert "success" in statuses
+        assert "error" in statuses
+
+        success_results = [r for r in results if r["status"] == "success"]
+        error_results = [r for r in results if r["status"] == "error"]
+
+        assert len(success_results) == 1
+        assert success_results[0]["result"] == 42.0
+
+        assert len(error_results) == 1
+        assert "boom" in error_results[0]["error"]
+
+        w_ok.stop()
+        w_err.stop()
+        t_ok.join(timeout=5)
+        t_err.join(timeout=5)
+
+    def test_workers_stop_cleanly_router_survives(self, zmq_ports, router):
+        """Test that workers stop cleanly and the Router remains alive."""
+        svc = _MockService(return_value=99.0)
+
+        w1, t1 = _start_worker(zmq_ports, svc, "worker-lifecycle")
+        time.sleep(0.5)
+
+        # Process one task
+        _inject_tasks(zmq_ports, 1)
+        results = _collect_results(zmq_ports, expected=1)
+
+        assert len(results) == 1
+        assert results[0]["status"] == "success"
+        assert results[0]["result"] == 99.0
+
+        # Stop the worker
+        w1.stop()
+        t1.join(timeout=5)
+        assert not t1.is_alive(), "Worker thread did not exit cleanly"
+
+        # Router should still be running
+        assert router._running is True
+
+        # Start a fresh worker and process another task
+        svc2 = _MockService(return_value=100.0)
+        w2, t2 = _start_worker(zmq_ports, svc2, "worker-lifecycle-2")
+        time.sleep(0.5)
+
+        _inject_tasks(zmq_ports, 1)
+        results2 = _collect_results(zmq_ports, expected=1)
+
+        assert len(results2) == 1
+        assert results2[0]["status"] == "success"
+        assert results2[0]["result"] == 100.0
+
+        w2.stop()
+        t2.join(timeout=5)

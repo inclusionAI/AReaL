@@ -1,299 +1,308 @@
-"""Integration tests for the full Gateway + Worker flow.
+"""Integration tests for the full Gateway → Router → Worker flow.
 
-Tests the complete request path:
-  Caller → Gateway (/run_episode) → Worker (/run_episode) → Agent → result
+Tests the complete ZMQ request path:
+  Client → Gateway (HTTP) → [ZMQ PUSH] → Router (PULL)
+         → [ZMQ ROUTER/DEALER] → Simulated Worker (DEALER)
+  Client ← Gateway (HTTP) ← [ZMQ PULL] ← Router (PUSH)
+         ← [ZMQ PUSH] ← Simulated Worker (PUSH)
 
-All components run in-process using ASGI test transport (no real network ports).
+Workers are simulated with raw ZMQ DEALER+PUSH sockets — no real
+AgentService instances are needed.  This keeps tests self-contained.
+
+ZMQ port mapping (indices into ``zmq_ports`` fixture):
+  [0] req_frontend  — Gateway PUSH  → Router PULL
+  [1] req_backend   — Router ROUTER → Worker DEALER
+  [2] res_frontend  — Worker PUSH   → Router PULL
+  [3] res_backend   — Router PUSH   → Gateway PULL
+  [4] Router HTTP health port
 """
 
 from __future__ import annotations
 
-import os
-from unittest.mock import AsyncMock, patch
+import asyncio
+import json
+import threading
+import time
 
 import pytest
+import pytest_asyncio
+import zmq
 from httpx import ASGITransport, AsyncClient
 
-from areal.experimental.agent_service.config import GatewayConfig
-from areal.experimental.agent_service.gateway import Gateway
+from areal.experimental.agent_service.gateway import create_app
+from areal.experimental.agent_service.router import RoundRobinStrategy, Router
+from areal.utils.network import find_free_ports
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_EPISODE_BODY = {
+    "data": {"question": "What is 2+2?"},
+    "session_url": "http://localhost:8000",
+}
+
+
+# ---------------------------------------------------------------------------
+# Simulated worker (raw ZMQ sockets, no AgentService)
+# ---------------------------------------------------------------------------
+
+
+def _run_simulated_worker(
+    zmq_ports: list[int],
+    worker_id: str,
+    max_tasks: int = 1,
+    result_value: float = 1.0,
+    error_msg: str | None = None,
+    received_tasks: list | None = None,
+) -> None:
+    """Simulated worker thread: DEALER + PUSH, processes up to *max_tasks*.
+
+    Parameters
+    ----------
+    zmq_ports : list[int]
+        Port list from the ``zmq_ports`` fixture.
+    worker_id : str
+        ZMQ DEALER identity string.
+    max_tasks : int
+        Number of tasks to process before exiting.
+    result_value : float
+        Value to return in successful results.
+    error_msg : str | None
+        If set, send an error result instead of a success result.
+    received_tasks : list | None
+        If provided, ``(worker_id, task_id)`` tuples are appended here.
+    """
+    ctx = zmq.Context()
+
+    # DEALER — receives tasks from Router's ROUTER socket
+    dealer = ctx.socket(zmq.DEALER)
+    dealer.setsockopt(zmq.IDENTITY, worker_id.encode())
+    dealer.setsockopt(zmq.LINGER, 0)
+    dealer.setsockopt(zmq.RCVTIMEO, 5000)
+    dealer.connect(f"tcp://127.0.0.1:{zmq_ports[1]}")  # req_backend
+
+    # PUSH — sends results to Router's res_frontend (PULL)
+    push = ctx.socket(zmq.PUSH)
+    push.setsockopt(zmq.LINGER, 0)
+    push.connect(f"tcp://127.0.0.1:{zmq_ports[2]}")  # res_frontend
+
+    # Register with Router
+    dealer.send_multipart([b"", json.dumps({"type": "READY"}).encode()])
+
+    processed = 0
+    try:
+        while processed < max_tasks:
+            try:
+                frames = dealer.recv_multipart()
+            except zmq.Again:
+                break  # timed out waiting for a task
+
+            if len(frames) < 2:
+                continue
+
+            task = json.loads(frames[1])
+            task_id = task.get("task_id")
+
+            if received_tasks is not None:
+                received_tasks.append((worker_id, task_id))
+
+            if error_msg:
+                push.send_json(
+                    {"task_id": task_id, "status": "error", "error": error_msg}
+                )
+            else:
+                push.send_json({"task_id": task_id, "result": result_value})
+
+            processed += 1
+    finally:
+        dealer.close()
+        push.close()
+        ctx.term()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def zmq_ports():
+    """Allocate 5 free ports: 4 ZMQ channels + 1 Router HTTP."""
+    return find_free_ports(5)
+
+
+@pytest.fixture
+def router(zmq_ports):
+    """Start a Router bound to the allocated ZMQ ports."""
+    p = zmq_ports
+    r = Router(
+        req_frontend_addr=f"tcp://127.0.0.1:{p[0]}",
+        req_backend_addr=f"tcp://127.0.0.1:{p[1]}",
+        res_frontend_addr=f"tcp://127.0.0.1:{p[2]}",
+        res_backend_addr=f"tcp://127.0.0.1:{p[3]}",
+        strategy=RoundRobinStrategy(),
+        http_port=p[4],
+    )
+    r.start()
+    time.sleep(0.2)  # let threads spin up and sockets bind
+    yield r
+    r.stop()
+
+
+@pytest_asyncio.fixture
+async def gateway_client(zmq_ports, router):
+    """Start a Gateway connected to the Router, yield ``(client, zmq_ports)``."""
+    p = zmq_ports
+    app = create_app(
+        req_frontend_addr=f"tcp://127.0.0.1:{p[0]}",
+        res_backend_addr=f"tcp://127.0.0.1:{p[3]}",
+        task_timeout=10.0,
+        result_ttl=60.0,
+    )
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client, zmq_ports
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_gateway(
-    worker_timeout: float = 5.0,
-    max_retries: int = 3,
-) -> Gateway:
-    """Create a Gateway with test-friendly defaults."""
-    config = GatewayConfig(
-        worker_timeout=worker_timeout,
-        max_retries=max_retries,
-    )
-    return Gateway(config=config)
-
-
-def _make_worker_env(
-    gateway_addr: str = "http://gateway",
-    agent_import_path: str = "areal.tests.experimental.agent_service.conftest.MockAgent",
-    agent_reuse: bool = False,
-) -> dict[str, str]:
-    """Build env vars for a Worker process."""
-    from areal.experimental.agent_service.worker_server import (
-        ENV_AGENT_GATEWAY_ADDR,
-        ENV_AGENT_HOST,
-        ENV_AGENT_IMPORT_PATH_INTERNAL,
-        ENV_AGENT_INIT_KWARGS_INTERNAL,
-        ENV_AGENT_PORT,
-        ENV_AGENT_REUSE_INTERNAL,
-    )
-
-    return {
-        ENV_AGENT_HOST: "127.0.0.1",
-        ENV_AGENT_PORT: "8301",
-        ENV_AGENT_IMPORT_PATH_INTERNAL: agent_import_path,
-        ENV_AGENT_REUSE_INTERNAL: "true" if agent_reuse else "false",
-        ENV_AGENT_INIT_KWARGS_INTERNAL: "",
-        ENV_AGENT_GATEWAY_ADDR: gateway_addr,
-    }
+async def _poll_until_done(
+    client: AsyncClient,
+    task_id: str,
+    max_iters: int = 30,
+    interval: float = 0.1,
+) -> dict:
+    """Poll ``GET /result/{task_id}`` until status != pending or timeout."""
+    body: dict = {}
+    for _ in range(max_iters):
+        await asyncio.sleep(interval)
+        resp = await client.get(f"/result/{task_id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        if body["status"] != "pending":
+            return body
+    return body
 
 
 # ---------------------------------------------------------------------------
-# Integration tests
+# Tests
 # ---------------------------------------------------------------------------
 
 
-class TestGatewayWorkerIntegration:
-    """End-to-end tests for Gateway + Worker flow."""
+class TestFullFlow:
+    """Integration tests for the complete Gateway → Router → Worker pipeline."""
 
     @pytest.mark.asyncio
-    async def test_full_flow_gateway_forwards_to_worker(self):
-        """Full flow: Gateway receives request, forwards to Worker, returns result."""
-        import areal.experimental.agent_service.worker_server as rpc_module
+    async def test_full_flow_submit_to_result(self, gateway_client):
+        """Test full round-trip: submit → route → worker → result."""
+        client, zmq_ports = gateway_client
 
-        gateway = _make_gateway()
-        gateway_app = gateway.create_app()
+        # Start a simulated worker that returns 42.0
+        worker_thread = threading.Thread(
+            target=_run_simulated_worker,
+            args=(zmq_ports, "worker-1"),
+            kwargs={"result_value": 42.0},
+            daemon=True,
+        )
+        worker_thread.start()
+        time.sleep(0.3)  # let Router register the worker
 
-        # Start Gateway
-        async with gateway_app.router.lifespan_context(gateway_app):
-            # Start Worker in-process
-            env_vars = _make_worker_env()
-            with patch.dict(os.environ, env_vars):
-                from areal.experimental.agent_service.worker_server import create_app
+        # Submit a task via Gateway HTTP
+        resp = await client.post("/submit", json=_EPISODE_BODY)
+        assert resp.status_code == 200
+        task_id = resp.json()["task_id"]
+        assert task_id  # non-empty
 
-                worker_app = create_app()
-                async with worker_app.router.lifespan_context(worker_app):
-                    # Manually register the worker with the Gateway pool
-                    await gateway._pool.register_worker("worker-0", "http://worker-0")
+        # Poll until the result arrives
+        body = await _poll_until_done(client, task_id)
 
-                    # Pre-call the worker to get its response data.
-                    worker_transport = ASGITransport(app=worker_app)
+        assert body["status"] == "completed"
+        assert body["result"] == 42.0
 
-                    async with AsyncClient(
-                        transport=worker_transport,
-                        base_url="http://worker-0",
-                        timeout=5.0,
-                    ) as worker_client:
-                        worker_resp = await worker_client.post(
-                            "/run_episode",
-                            json={
-                                "data": {"prompt": "hello"},
-                                "session_url": "http://proxy/session/abc",
-                            },
-                        )
-                        worker_data = worker_resp.json()
-
-                    # Mock session.post to return a context manager (not async).
-                    def mock_post(url, **kwargs):
-                        mock_resp = AsyncMock()
-                        mock_resp.status = 200
-                        mock_resp.json = AsyncMock(return_value=worker_data)
-                        mock_ctx = AsyncMock()
-                        mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-                        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-                        return mock_ctx
-
-                    with patch.object(gateway._session, "post", side_effect=mock_post):
-                        # Send request to Gateway
-                        gateway_transport = ASGITransport(app=gateway_app)
-                        async with AsyncClient(
-                            transport=gateway_transport,
-                            base_url="http://gateway",
-                            timeout=5.0,
-                        ) as gateway_client:
-                            response = await gateway_client.post(
-                                "/run_episode",
-                                json={
-                                    "data": {"prompt": "hello"},
-                                    "session_url": "http://proxy/session/abc",
-                                },
-                            )
-
-        rpc_module._service = None
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
-        assert data["result"] == 1.0  # MockAgent returns 1.0
-        assert data["error"] is None
+        worker_thread.join(timeout=5)
 
     @pytest.mark.asyncio
-    async def test_multiple_workers_round_robin_dispatch(self):
-        """Multiple workers should receive requests in round-robin order."""
-        gateway = _make_gateway()
-        gateway_app = gateway.create_app()
+    async def test_multiple_workers_round_robin(self, gateway_client):
+        """Test that 4 tasks are distributed across 2 workers via round-robin."""
+        client, zmq_ports = gateway_client
+        received_tasks: list[tuple[str, str]] = []
 
-        # Track which worker handled each request
-        handled_by: list[str] = []
+        # Start 2 simulated workers, each handles up to 2 tasks
+        w1 = threading.Thread(
+            target=_run_simulated_worker,
+            args=(zmq_ports, "w1"),
+            kwargs={
+                "max_tasks": 2,
+                "result_value": 10.0,
+                "received_tasks": received_tasks,
+            },
+            daemon=True,
+        )
+        w2 = threading.Thread(
+            target=_run_simulated_worker,
+            args=(zmq_ports, "w2"),
+            kwargs={
+                "max_tasks": 2,
+                "result_value": 20.0,
+                "received_tasks": received_tasks,
+            },
+            daemon=True,
+        )
+        w1.start()
+        w2.start()
+        time.sleep(0.5)  # let both workers register with Router
 
-        async with gateway_app.router.lifespan_context(gateway_app):
-            # Register 3 workers
-            for i in range(3):
-                await gateway._pool.register_worker(f"worker-{i}", f"http://worker-{i}")
+        # Submit 4 tasks
+        task_ids: list[str] = []
+        for _ in range(4):
+            resp = await client.post("/submit", json=_EPISODE_BODY)
+            assert resp.status_code == 200
+            task_ids.append(resp.json()["task_id"])
 
-            def tracking_post(url, **kwargs):
-                # Extract worker from URL
-                for i in range(3):
-                    if f"worker-{i}" in url:
-                        handled_by.append(f"worker-{i}")
-                        break
-                mock_resp = AsyncMock()
-                mock_resp.status = 200
-                mock_resp.json = AsyncMock(
-                    return_value={"status": "success", "result": 1.0, "error": None}
-                )
-                mock_ctx = AsyncMock()
-                mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-                mock_ctx.__aexit__ = AsyncMock(return_value=False)
-                return mock_ctx
+        # Wait for worker threads to finish processing
+        w1.join(timeout=10)
+        w2.join(timeout=10)
 
-            with patch.object(gateway._session, "post", side_effect=tracking_post):
-                gateway_transport = ASGITransport(app=gateway_app)
-                async with AsyncClient(
-                    transport=gateway_transport,
-                    base_url="http://gateway",
-                    timeout=5.0,
-                ) as client:
-                    # Send 3 requests
-                    for _ in range(3):
-                        resp = await client.post(
-                            "/run_episode",
-                            json={
-                                "data": {"prompt": "test"},
-                                "session_url": "http://proxy/session/1",
-                            },
-                        )
-                        assert resp.status_code == 200
+        # Poll all results until completed
+        for tid in task_ids:
+            body = await _poll_until_done(client, tid)
+            assert body["status"] == "completed", f"task {tid} status={body['status']}"
 
-        # All 3 workers should have been used (round-robin)
-        assert len(handled_by) == 3
-        assert set(handled_by) == {"worker-0", "worker-1", "worker-2"}
-
-    @pytest.mark.asyncio
-    async def test_worker_failure_handled_gracefully(self):
-        """Gateway should handle worker failure and return 503 after retries."""
-        gateway = _make_gateway(max_retries=2)
-        gateway_app = gateway.create_app()
-
-        async with gateway_app.router.lifespan_context(gateway_app):
-            # Register 2 workers (both will fail)
-            await gateway._pool.register_worker("worker-0", "http://worker-0")
-            await gateway._pool.register_worker("worker-1", "http://worker-1")
-
-            def always_fail(url, **kwargs):
-                raise ConnectionError("Worker unreachable")
-
-            with patch.object(gateway._session, "post", side_effect=always_fail):
-                gateway_transport = ASGITransport(app=gateway_app)
-                async with AsyncClient(
-                    transport=gateway_transport,
-                    base_url="http://gateway",
-                    timeout=5.0,
-                ) as client:
-                    response = await client.post(
-                        "/run_episode",
-                        json={
-                            "data": {"prompt": "test"},
-                            "session_url": "http://proxy/session/1",
-                        },
-                    )
-
-        assert response.status_code == 503
-        data = response.json()
-        assert "failed" in data["detail"].lower()
+        # Verify round-robin distribution: each worker got exactly 2 tasks
+        w1_tasks = [t for w, t in received_tasks if w == "w1"]
+        w2_tasks = [t for w, t in received_tasks if w == "w2"]
+        assert len(w1_tasks) == 2, f"w1 got {len(w1_tasks)} tasks, expected 2"
+        assert len(w2_tasks) == 2, f"w2 got {len(w2_tasks)} tasks, expected 2"
 
     @pytest.mark.asyncio
-    async def test_worker_registration_visible_in_gateway(self):
-        """Worker registration should be visible via Gateway's /workers endpoint."""
-        gateway = _make_gateway()
-        gateway_app = gateway.create_app()
+    async def test_error_propagation(self, gateway_client):
+        """Test that a worker error propagates back to the Gateway caller."""
+        client, zmq_ports = gateway_client
 
-        async with gateway_app.router.lifespan_context(gateway_app):
-            # Register workers directly (simulating Worker startup)
-            await gateway._pool.register_worker("worker-0", "http://worker-0:8301")
-            await gateway._pool.register_worker("worker-1", "http://worker-1:8302")
+        # Start a worker that returns errors
+        worker_thread = threading.Thread(
+            target=_run_simulated_worker,
+            args=(zmq_ports, "error-worker"),
+            kwargs={"error_msg": "intentional test error"},
+            daemon=True,
+        )
+        worker_thread.start()
+        time.sleep(0.3)  # let Router register the worker
 
-            gateway_transport = ASGITransport(app=gateway_app)
-            async with AsyncClient(
-                transport=gateway_transport, base_url="http://gateway"
-            ) as client:
-                response = await client.get("/workers")
+        # Submit a task
+        resp = await client.post("/submit", json=_EPISODE_BODY)
+        assert resp.status_code == 200
+        task_id = resp.json()["task_id"]
 
-        assert response.status_code == 200
-        workers = response.json()
-        assert len(workers) == 2
-        worker_ids = {w["worker_id"] for w in workers}
-        assert worker_ids == {"worker-0", "worker-1"}
+        # Poll until the error result arrives
+        body = await _poll_until_done(client, task_id)
 
-    @pytest.mark.asyncio
-    async def test_multiple_requests_use_all_workers(self):
-        """Multiple sequential requests should be dispatched across all workers."""
-        gateway = _make_gateway()
-        gateway_app = gateway.create_app()
+        assert body["status"] == "error"
+        assert body["error"] == "intentional test error"
 
-        # Track which workers handled requests
-        handled_by: list[str] = []
-
-        async with gateway_app.router.lifespan_context(gateway_app):
-            # Register 3 workers
-            for i in range(3):
-                await gateway._pool.register_worker(f"worker-{i}", f"http://worker-{i}")
-
-            def tracking_post(url, **kwargs):
-                for i in range(3):
-                    if f"worker-{i}" in url:
-                        handled_by.append(f"worker-{i}")
-                        break
-                mock_resp = AsyncMock()
-                mock_resp.status = 200
-                mock_resp.json = AsyncMock(
-                    return_value={"status": "success", "result": 1.0, "error": None}
-                )
-                mock_ctx = AsyncMock()
-                mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-                mock_ctx.__aexit__ = AsyncMock(return_value=False)
-                return mock_ctx
-
-            with patch.object(gateway._session, "post", side_effect=tracking_post):
-                gateway_transport = ASGITransport(app=gateway_app)
-                async with AsyncClient(
-                    transport=gateway_transport,
-                    base_url="http://gateway",
-                    timeout=5.0,
-                ) as client:
-                    # Send 3 requests sequentially
-                    for i in range(3):
-                        resp = await client.post(
-                            "/run_episode",
-                            json={
-                                "data": {"prompt": f"test-{i}"},
-                                "session_url": f"http://proxy/session/{i}",
-                            },
-                        )
-                        assert resp.status_code == 200
-                        assert resp.json()["status"] == "success"
-
-        # All 3 workers should have been used (round-robin)
-        assert len(handled_by) == 3
-        assert set(handled_by) == {"worker-0", "worker-1", "worker-2"}
+        worker_thread.join(timeout=5)

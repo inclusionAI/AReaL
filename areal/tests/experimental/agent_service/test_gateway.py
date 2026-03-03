@@ -1,406 +1,307 @@
-"""Unit tests for the Agent Service Gateway (reverse proxy)."""
+"""Tests for the stateless HTTP↔ZMQ Gateway.
+
+Verifies: submit, result polling, 404 for unknown tasks, health, metrics, configure.
+Uses real ZMQ sockets (PULL absorber + PUSH injector) to avoid mocking transport.
+"""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import asyncio
 
 import pytest
+import pytest_asyncio
+import zmq
 from httpx import ASGITransport, AsyncClient
 
-from areal.experimental.agent_service.config import GatewayConfig
-from areal.experimental.agent_service.gateway import Gateway
+from areal.experimental.agent_service.gateway import create_app
+from areal.utils.network import find_free_ports
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+# Valid body for POST /submit
+_EPISODE_BODY = {
+    "data": {"question": "What is 2+2?"},
+    "session_url": "http://localhost:8000",
+}
 
 
-def _make_gateway(
-    worker_timeout: float = 5.0,
-    max_retries: int = 3,
-) -> Gateway:
-    """Create a Gateway instance with test-friendly defaults."""
-    config = GatewayConfig(
-        worker_timeout=worker_timeout,
-        max_retries=max_retries,
+@pytest.fixture
+def zmq_addrs():
+    """Allocate free ports and bind absorber/injector ZMQ sockets.
+
+    * absorber (PULL) — binds to req_frontend; absorbs Gateway PUSH messages.
+    * injector (PUSH) — binds to res_backend; injects results to Gateway PULL.
+    """
+    ports = find_free_ports(2)
+    req_frontend = f"tcp://127.0.0.1:{ports[0]}"
+    res_backend = f"tcp://127.0.0.1:{ports[1]}"
+
+    ctx = zmq.Context()
+
+    absorber = ctx.socket(zmq.PULL)
+    absorber.setsockopt(zmq.LINGER, 0)
+    absorber.setsockopt(zmq.RCVTIMEO, 1000)
+    absorber.bind(req_frontend)
+
+    injector = ctx.socket(zmq.PUSH)
+    injector.setsockopt(zmq.LINGER, 0)
+    injector.bind(res_backend)
+
+    yield req_frontend, res_backend, absorber, injector
+
+    absorber.close()
+    injector.close()
+    ctx.term()
+
+
+@pytest_asyncio.fixture
+async def gateway_client(zmq_addrs):
+    """Create a Gateway FastAPI app and yield (client, absorber, injector)."""
+    req_frontend, res_backend, absorber, injector = zmq_addrs
+    app = create_app(
+        req_frontend_addr=req_frontend,
+        res_backend_addr=res_backend,
+        task_timeout=5.0,
+        result_ttl=60.0,
     )
-    return Gateway(config=config)
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client, absorber, injector
 
 
-class TestGatewayHealth:
-    """Tests for GET /health endpoint."""
+# ---------------------------------------------------------------------------
+# Submit
+# ---------------------------------------------------------------------------
 
-    @pytest.mark.asyncio
-    async def test_health_returns_ok_when_initialized(self):
-        """GET /health should return status='ok' after Gateway starts."""
-        gateway = _make_gateway()
-        app = gateway.create_app()
 
-        async with app.router.lifespan_context(app):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
-                response = await client.get("/health")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-        assert "workers" in data
-        assert data["workers"]["total"] == 0
+class TestGatewaySubmit:
+    """Tests for POST /submit endpoint."""
 
     @pytest.mark.asyncio
-    async def test_health_reflects_registered_workers(self):
-        """GET /health should show correct worker count after registration."""
-        gateway = _make_gateway()
-        app = gateway.create_app()
+    async def test_submit_returns_task_id(self, gateway_client):
+        """Test that POST /submit returns 200 with task_id and status=submitted."""
+        client, _absorber, _injector = gateway_client
 
-        async with app.router.lifespan_context(app):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
-                # Register a worker
-                await client.post(
-                    "/register_worker",
-                    json={"worker_id": "w1", "address": "http://localhost:9001"},
-                )
-                response = await client.get("/health")
+        resp = await client.post("/submit", json=_EPISODE_BODY)
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["workers"]["total"] == 1
-        assert data["workers"]["healthy"] == 1
-
-
-class TestGatewayWorkerRegistration:
-    """Tests for /register_worker and /unregister_worker endpoints."""
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["task_id"]  # non-empty string
+        assert body["status"] == "submitted"
 
     @pytest.mark.asyncio
-    async def test_register_worker_adds_to_pool(self):
-        """POST /register_worker should add worker to pool."""
-        gateway = _make_gateway()
-        app = gateway.create_app()
+    async def test_submit_increments_metrics(self, gateway_client):
+        """Test that submitting 3 tasks increments total_submitted to 3."""
+        client, _absorber, _injector = gateway_client
 
-        async with app.router.lifespan_context(app):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
-                response = await client.post(
-                    "/register_worker",
-                    json={"worker_id": "w1", "address": "http://localhost:9001"},
-                )
-                assert response.status_code == 200
-                assert response.json()["status"] == "ok"
+        for _ in range(3):
+            resp = await client.post("/submit", json=_EPISODE_BODY)
+            assert resp.status_code == 200
 
-                # Verify via /workers
-                workers_resp = await client.get("/workers")
-                workers = workers_resp.json()
-                assert len(workers) == 1
-                assert workers[0]["worker_id"] == "w1"
-                assert workers[0]["address"] == "http://localhost:9001"
+        resp = await client.get("/metrics")
+        assert resp.status_code == 200
+        assert resp.json()["total_submitted"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Result polling
+# ---------------------------------------------------------------------------
+
+
+class TestGatewayResult:
+    """Tests for GET /result/{task_id} endpoint."""
 
     @pytest.mark.asyncio
-    async def test_unregister_worker_removes_from_pool(self):
-        """POST /unregister_worker should remove worker from pool."""
-        gateway = _make_gateway()
-        app = gateway.create_app()
+    async def test_result_pending_before_completion(self, gateway_client):
+        """Test that GET /result returns pending before any result arrives."""
+        client, _absorber, _injector = gateway_client
 
-        async with app.router.lifespan_context(app):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
-                # Register then unregister
-                await client.post(
-                    "/register_worker",
-                    json={"worker_id": "w1", "address": "http://localhost:9001"},
-                )
-                response = await client.post(
-                    "/unregister_worker",
-                    json={"worker_id": "w1", "address": "http://localhost:9001"},
-                )
-                assert response.status_code == 200
+        resp = await client.post("/submit", json=_EPISODE_BODY)
+        task_id = resp.json()["task_id"]
 
-                workers_resp = await client.get("/workers")
-                assert workers_resp.json() == []
+        resp = await client.get(f"/result/{task_id}")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["task_id"] == task_id
+        assert body["status"] == "pending"
 
     @pytest.mark.asyncio
-    async def test_list_workers_returns_all_registered(self):
-        """GET /workers should list all registered workers."""
-        gateway = _make_gateway()
-        app = gateway.create_app()
+    async def test_result_completed_after_result_arrives(self, gateway_client):
+        """Test that GET /result returns completed after ZMQ result injection."""
+        client, _absorber, injector = gateway_client
 
-        async with app.router.lifespan_context(app):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
-                for i in range(3):
-                    await client.post(
-                        "/register_worker",
-                        json={
-                            "worker_id": f"w{i}",
-                            "address": f"http://localhost:900{i}",
-                        },
-                    )
+        resp = await client.post("/submit", json=_EPISODE_BODY)
+        task_id = resp.json()["task_id"]
 
-                response = await client.get("/workers")
-                workers = response.json()
-                assert len(workers) == 3
-                worker_ids = {w["worker_id"] for w in workers}
-                assert worker_ids == {"w0", "w1", "w2"}
+        # Inject result via ZMQ PUSH → Gateway's receiver thread (PULL)
+        injector.send_json({"task_id": task_id, "result": 1.0})
+        await asyncio.sleep(0.2)  # let receiver thread process
 
+        resp = await client.get(f"/result/{task_id}")
 
-class TestGatewayRunEpisode:
-    """Tests for POST /run_episode endpoint (reverse proxy)."""
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert body["result"] == 1.0
 
     @pytest.mark.asyncio
-    async def test_run_episode_returns_503_when_no_workers(self):
-        """POST /run_episode should return 503 when no workers are registered."""
-        gateway = _make_gateway(max_retries=1)
-        app = gateway.create_app()
+    async def test_result_unknown_task_id_returns_404(self, gateway_client):
+        """Test that GET /result with unknown task_id returns 404."""
+        client, _absorber, _injector = gateway_client
 
-        async with app.router.lifespan_context(app):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test", timeout=5.0
-            ) as client:
-                response = await client.post(
-                    "/run_episode",
-                    json={
-                        "data": {"prompt": "test"},
-                        "session_url": "http://proxy/session/1",
-                    },
-                )
-                assert response.status_code == 503
-                assert "workers failed" in response.json()["detail"].lower()
+        resp = await client.get("/result/nonexistent-id")
+
+        assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_run_episode_forwards_to_worker(self):
-        """POST /run_episode should forward to a registered worker and return result."""
-        gateway = _make_gateway()
-        app = gateway.create_app()
+    async def test_result_not_evicted_before_retrieval(self):
+        """Test that a result completed near the TTL boundary is not prematurely evicted.
 
-        async with app.router.lifespan_context(app):
-            # Register a fake worker
-            await gateway._pool.register_worker("w1", "http://localhost:9001")
+        Uses a short result_ttl (2.0s) and a short task_timeout (10.0s).
+        Submits a task, injects a result at ~0.5s, waits 1.5s more (total ~2.0s from
+        submission but only ~1.5s from completion), then asserts the result is still
+        accessible (not 404).
+        """
+        ports = find_free_ports(2)
+        req_frontend = f"tcp://127.0.0.1:{ports[0]}"
+        res_backend = f"tcp://127.0.0.1:{ports[1]}"
 
-            # Mock the aiohttp session to return a success response
-            mock_resp = AsyncMock()
-            mock_resp.status = 200
-            mock_resp.json = AsyncMock(
-                return_value={"status": "success", "result": 0.75, "error": None}
-            )
+        ctx = zmq.Context()
+        absorber = ctx.socket(zmq.PULL)
+        absorber.setsockopt(zmq.LINGER, 0)
+        absorber.setsockopt(zmq.RCVTIMEO, 1000)
+        absorber.bind(req_frontend)
 
-            mock_ctx = AsyncMock()
-            mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-            mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        injector = ctx.socket(zmq.PUSH)
+        injector.setsockopt(zmq.LINGER, 0)
+        injector.bind(res_backend)
 
-            with patch.object(
-                gateway._session,
-                "post",
-                return_value=mock_ctx,
-            ):
+        app = create_app(
+            req_frontend_addr=req_frontend,
+            res_backend_addr=res_backend,
+            task_timeout=10.0,
+            result_ttl=2.0,
+        )
+        try:
+            async with app.router.lifespan_context(app):
                 transport = ASGITransport(app=app)
                 async with AsyncClient(
-                    transport=transport, base_url="http://test", timeout=5.0
+                    transport=transport, base_url="http://test"
                 ) as client:
-                    response = await client.post(
-                        "/run_episode",
-                        json={
-                            "data": {"prompt": "hello"},
-                            "session_url": "http://proxy/session/abc",
-                        },
+                    # Submit task
+                    resp = await client.post("/submit", json=_EPISODE_BODY)
+                    assert resp.status_code == 200
+                    task_id = resp.json()["task_id"]
+
+                    # Wait 0.5s, then inject result (simulates slow task)
+                    await asyncio.sleep(0.5)
+                    injector.send_json({"task_id": task_id, "result": 42.0})
+                    await asyncio.sleep(0.2)  # let receiver thread process
+
+                    # Wait 1.5s more — total 2.2s from submission, but only 1.7s from completion
+                    # With TTL measured from completed_at, result should still be alive
+                    await asyncio.sleep(1.5)
+
+                    resp = await client.get(f"/result/{task_id}")
+                    assert resp.status_code == 200, (
+                        f"Result was prematurely evicted (status={resp.status_code}). "
+                        "TTL should be measured from completion time, not submission time."
                     )
+                    assert resp.json()["status"] == "completed"
+        finally:
+            absorber.close()
+            injector.close()
+            ctx.term()
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
-        assert data["result"] == 0.75
-        assert data["error"] is None
 
-    @pytest.mark.asyncio
-    async def test_run_episode_retries_on_worker_failure(self):
-        """POST /run_episode should retry on next worker when first fails."""
-        gateway = _make_gateway(max_retries=3)
-        app = gateway.create_app()
+# ---------------------------------------------------------------------------
+# Health / Metrics / Configure
+# ---------------------------------------------------------------------------
 
-        async with app.router.lifespan_context(app):
-            await gateway._pool.register_worker("w1", "http://localhost:9001")
-            await gateway._pool.register_worker("w2", "http://localhost:9002")
 
-            call_count = 0
-
-            def mock_post(url, **kwargs):
-                nonlocal call_count
-                call_count += 1
-
-                if call_count == 1:
-                    # First call fails
-                    raise ConnectionError("Worker w1 unreachable")
-
-                # Second call succeeds
-                mock_resp = AsyncMock()
-                mock_resp.status = 200
-                mock_resp.json = AsyncMock(
-                    return_value={"status": "success", "result": 0.9, "error": None}
-                )
-                mock_ctx = AsyncMock()
-                mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-                mock_ctx.__aexit__ = AsyncMock(return_value=False)
-                return mock_ctx
-
-            with patch.object(gateway._session, "post", side_effect=mock_post):
-                transport = ASGITransport(app=app)
-                async with AsyncClient(
-                    transport=transport, base_url="http://test", timeout=5.0
-                ) as client:
-                    response = await client.post(
-                        "/run_episode",
-                        json={
-                            "data": {"prompt": "test"},
-                            "session_url": "http://proxy/session/1",
-                        },
-                    )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
-        assert data["result"] == 0.9
-        assert call_count == 2
+class TestGatewayEndpoints:
+    """Tests for /health, /metrics, and /configure endpoints."""
 
     @pytest.mark.asyncio
-    async def test_run_episode_returns_503_after_all_retries_exhausted(self):
-        """POST /run_episode should return 503 when all workers fail."""
-        gateway = _make_gateway(max_retries=2)
-        app = gateway.create_app()
+    async def test_health_endpoint(self, gateway_client):
+        """Test that GET /health returns ok with pending and completed counts."""
+        client, _absorber, _injector = gateway_client
 
-        async with app.router.lifespan_context(app):
-            await gateway._pool.register_worker("w1", "http://localhost:9001")
-            await gateway._pool.register_worker("w2", "http://localhost:9002")
+        resp = await client.get("/health")
 
-            def always_fail(url, **kwargs):
-                raise ConnectionError("Worker unreachable")
-
-            with patch.object(gateway._session, "post", side_effect=always_fail):
-                transport = ASGITransport(app=app)
-                async with AsyncClient(
-                    transport=transport, base_url="http://test", timeout=5.0
-                ) as client:
-                    response = await client.post(
-                        "/run_episode",
-                        json={
-                            "data": {"prompt": "test"},
-                            "session_url": "http://proxy/session/1",
-                        },
-                    )
-
-        assert response.status_code == 503
-        assert "failed" in response.json()["detail"].lower()
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert "pending" in body
+        assert "completed" in body
 
     @pytest.mark.asyncio
-    async def test_run_episode_marks_failed_worker_unhealthy(self):
-        """Worker that fails should be marked unhealthy in the pool."""
-        gateway = _make_gateway(max_retries=2)
-        app = gateway.create_app()
+    async def test_metrics_endpoint(self, gateway_client):
+        """Test that GET /metrics returns the correct structure."""
+        client, _absorber, _injector = gateway_client
 
-        async with app.router.lifespan_context(app):
-            await gateway._pool.register_worker("w1", "http://localhost:9001")
-            await gateway._pool.register_worker("w2", "http://localhost:9002")
+        resp = await client.get("/metrics")
 
-            def always_fail(url, **kwargs):
-                raise ConnectionError("Unreachable")
-
-            with patch.object(gateway._session, "post", side_effect=always_fail):
-                transport = ASGITransport(app=app)
-                async with AsyncClient(
-                    transport=transport, base_url="http://test", timeout=5.0
-                ) as client:
-                    await client.post(
-                        "/run_episode",
-                        json={
-                            "data": {"prompt": "test"},
-                            "session_url": "http://proxy/session/1",
-                        },
-                    )
-
-        stats = await gateway._pool.get_stats()
-        assert stats["unhealthy"] >= 1
-
-
-class TestGatewayMetrics:
-    """Tests for GET /metrics endpoint."""
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "total_submitted" in body
+        assert "total_completed" in body
+        assert "total_errors" in body
+        assert "avg_latency_s" in body
 
     @pytest.mark.asyncio
-    async def test_metrics_initially_zero(self):
-        """GET /metrics should return zeros when no requests have been made."""
-        gateway = _make_gateway()
-        app = gateway.create_app()
+    async def test_configure_endpoint(self, gateway_client):
+        """Test that POST /configure returns ok."""
+        client, _absorber, _injector = gateway_client
 
-        async with app.router.lifespan_context(app):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
-                response = await client.get("/metrics")
+        resp = await client.post("/configure")
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total_requests"] == 0
-        assert data["total_success"] == 0
-        assert data["total_errors"] == 0
-
-    @pytest.mark.asyncio
-    async def test_metrics_tracks_successful_requests(self):
-        """GET /metrics should count successful requests."""
-        gateway = _make_gateway()
-        app = gateway.create_app()
-
-        async with app.router.lifespan_context(app):
-            await gateway._pool.register_worker("w1", "http://localhost:9001")
-
-            mock_resp = AsyncMock()
-            mock_resp.status = 200
-            mock_resp.json = AsyncMock(
-                return_value={"status": "success", "result": 1.0, "error": None}
-            )
-            mock_ctx = AsyncMock()
-            mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-            mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-            with patch.object(gateway._session, "post", return_value=mock_ctx):
-                transport = ASGITransport(app=app)
-                async with AsyncClient(
-                    transport=transport, base_url="http://test", timeout=5.0
-                ) as client:
-                    await client.post(
-                        "/run_episode",
-                        json={
-                            "data": {"prompt": "test"},
-                            "session_url": "http://proxy/session/1",
-                        },
-                    )
-                    metrics_resp = await client.get("/metrics")
-
-        data = metrics_resp.json()
-        assert data["total_requests"] == 1
-        assert data["total_success"] == 1
-        assert data["total_errors"] == 0
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
 
 
-class TestGatewayConfigure:
-    """Tests for POST /configure endpoint."""
+# ---------------------------------------------------------------------------
+# Metrics double-counting check
+# ---------------------------------------------------------------------------
+
+
+class TestMetricsNotDoubleCounted:
+    """Tests to verify metrics are not double-counted on repeated polling."""
 
     @pytest.mark.asyncio
-    async def test_configure_returns_success(self):
-        """POST /configure should return success (no-op for Gateway)."""
-        gateway = _make_gateway()
-        app = gateway.create_app()
+    async def test_metrics_not_double_counted(self, gateway_client):
+        """Test that polling /result/{task_id} 5 times doesn't increment metrics 5x."""
+        client, _absorber, injector = gateway_client
 
-        async with app.router.lifespan_context(app):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
-                response = await client.post("/configure")
+        # Submit a task
+        resp = await client.post("/submit", json=_EPISODE_BODY)
+        assert resp.status_code == 200
+        task_id = resp.json()["task_id"]
 
-        assert response.status_code == 200
-        assert response.json()["status"] == "success"
+        # Inject completed result
+        injector.send_json({"task_id": task_id, "result": 1.5})
+        await asyncio.sleep(0.2)  # let receiver thread process
+
+        # Poll /result/{task_id} 5 times
+        for i in range(5):
+            resp = await client.get(f"/result/{task_id}")
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["status"] == "completed"
+            await asyncio.sleep(0.05)  # small delay between polls
+
+        # Verify metrics: total_completed should be 1, not 5
+        resp = await client.get("/metrics")
+        assert resp.status_code == 200
+        metrics = resp.json()
+        assert metrics["total_completed"] == 1, (
+            f"Expected total_completed=1 after 5 polls, got {metrics['total_completed']}"
+        )
+        # Verify latency is reasonable (not 5x inflated)
+        avg_latency = metrics["avg_latency_s"]
+        assert avg_latency > 0, "Average latency should be positive"
+        assert avg_latency < 10.0, "Average latency seems inflated"

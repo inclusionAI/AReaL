@@ -16,7 +16,6 @@ import json
 from typing import Any
 
 from areal.utils import logging
-from areal.utils.network import find_free_ports, gethostip
 
 logger = logging.getLogger("AgentService")
 
@@ -31,9 +30,6 @@ def _parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Agent Service")
 
-    # Server config
-    parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8300)
     parser.add_argument(
         "--workers",
         type=int,
@@ -138,11 +134,8 @@ def main() -> None:
 
     args = _parse_args()
     agent_import_path, agent_reuse, agent_init_kwargs = _get_agent_config(args)
-    host = gethostip() if args.host == "0.0.0.0" else args.host
-    port = args.port if args.port != 0 else find_free_ports(1)[0]
     workers = args.workers
 
-    # Create scheduler
     scheduler_type = args.scheduler_type
     if scheduler_type == "local":
         log_dir = args.log_dir or "/tmp/areal/agent-service/logs"
@@ -156,10 +149,7 @@ def main() -> None:
             "Slurm scheduler requires cluster config; use Trainer integration"
         )
 
-    config = GatewayConfig(
-        host=host,
-        port=port,
-    )
+    config = GatewayConfig()
     controller = AgentController(config=config, scheduler=scheduler)
 
     spec = AgentServiceSpec(

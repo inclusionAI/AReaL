@@ -27,52 +27,63 @@ class AgentServiceConfig:
         default=8300,
         metadata={"help": "Port number for the Agent Service."},
     )
+    task_timeout: float = field(
+        default=300.0,
+        metadata={
+            "help": "Timeout in seconds for a single run_episode() call. Workers send an error result if exceeded."
+        },
+    )
 
     def __post_init__(self):
         """Validate configuration values."""
         if self.port <= 0 or self.port > 65535:
             raise ValueError(f"port must be between 1 and 65535, got {self.port}")
+        if self.task_timeout <= 0:
+            raise ValueError(f"task_timeout must be positive, got {self.task_timeout}")
 
 
 @dataclass
 class GatewayConfig:
-    """Configuration for the Agent Service Gateway.
+    """Configuration for the Agent Service Gateway with ZMQ bridge architecture.
 
-    The Gateway acts as a transparent reverse proxy, forwarding
-    /run_episode requests to Agent Worker processes via round-robin
-    load balancing with health checks and request-level retry.
-
-    Attributes:
-        host: Host address to bind the Gateway.
-        port: Port number for the Gateway HTTP server.
-        worker_timeout: Timeout in seconds for Worker HTTP responses.
-        health_check_interval: Interval in seconds for active health checks.
-        max_retries: Maximum retry attempts per request (try next worker on failure).
-        gateway_cpu: CPU cores for the Gateway process.
-        gateway_mem: Memory (GB) for the Gateway process.
-        worker_cpu: CPU cores per Agent Worker process.
-        worker_mem: Memory (GB) per Agent Worker process.
+    The Gateway acts as a transparent reverse proxy with ZMQ-based request/response
+    routing. It distributes requests from clients to Agent Worker processes via
+    a ZMQ Router (DEALER pattern) and collects results via another ZMQ Router.
     """
 
-    host: str = field(
-        default="0.0.0.0",
-        metadata={"help": "Host address to bind the Gateway."},
-    )
-    port: int = field(
-        default=8300,
-        metadata={"help": "Port number for the Gateway."},
-    )
-    worker_timeout: float = field(
+    task_timeout: float = field(
         default=300.0,
-        metadata={"help": "Timeout in seconds for Worker HTTP responses."},
+        metadata={"help": "Timeout in seconds for Worker tasks to complete."},
     )
-    health_check_interval: float = field(
-        default=30.0,
-        metadata={"help": "Interval in seconds between active health checks."},
+    result_ttl: float = field(
+        default=300.0,
+        metadata={
+            "help": "Time-to-live in seconds for completed results before cleanup."
+        },
     )
-    max_retries: int = field(
-        default=3,
-        metadata={"help": "Maximum retry attempts per request."},
+    zmq_req_frontend_addr: str = field(
+        default="tcp://*:0",
+        metadata={
+            "help": "ZMQ Router PULL socket address for incoming requests from Gateway."
+        },
+    )
+    zmq_req_backend_addr: str = field(
+        default="tcp://*:0",
+        metadata={
+            "help": "ZMQ Router ROUTER socket address for Workers to connect via DEALER."
+        },
+    )
+    zmq_res_frontend_addr: str = field(
+        default="tcp://*:0",
+        metadata={
+            "help": "ZMQ Router PULL socket address for incoming results from Workers."
+        },
+    )
+    zmq_res_backend_addr: str = field(
+        default="tcp://*:0",
+        metadata={
+            "help": "ZMQ Router PUSH socket address for Gateway to pull results."
+        },
     )
     gateway_cpu: int = field(
         default=2,
@@ -92,12 +103,7 @@ class GatewayConfig:
     )
 
     def __post_init__(self):
-        """Validate configuration values."""
-        if self.port <= 0 or self.port > 65535:
-            raise ValueError(f"port must be between 1 and 65535, got {self.port}")
-        if self.worker_timeout <= 0:
-            raise ValueError(
-                f"worker_timeout must be positive, got {self.worker_timeout}"
-            )
-        if self.max_retries < 1:
-            raise ValueError(f"max_retries must be at least 1, got {self.max_retries}")
+        if self.task_timeout <= 0:
+            raise ValueError(f"task_timeout must be positive, got {self.task_timeout}")
+        if self.result_ttl <= 0:
+            raise ValueError(f"result_ttl must be positive, got {self.result_ttl}")
