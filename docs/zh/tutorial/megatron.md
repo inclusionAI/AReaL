@@ -1,10 +1,12 @@
 # 大型 MoE 模型微调
 
-与 PyTorch FSDP 相比，Megatron-LM 支持完整的 5D 并行性，提供更好的扩展性和效率。AReaL 完全支持使用 Megatron-LM 作为后端进行自定义 RL 训练。本指南将解释如何利用 Megatron 训练后端，并为您的应用训练大型 MoE 模型。
+与 PyTorch FSDP 相比，Megatron-LM 支持完整的 5D 并行性，提供更好的扩展性和效率。AReaL 完全支持使用 Megatron-LM
+作为后端进行自定义 RL 训练。本指南将解释如何利用 Megatron 训练后端，并为您的应用训练大型 MoE 模型。
 
 ## 在 `allocation_mode` 中启用 Megatron
 
-从 FSDP 切换到 Megatron 只需要更改一行：将 `allocation_mode` 字段从 `sglang:d4+fsdp:d4` 改为 `sglang:d4+megatron:d4`。
+从 FSDP 切换到 Megatron 只需要更改一行：将 `allocation_mode` 字段从 `sglang:d4+fsdp:d4` 改为
+`sglang:d4+megatron:d4`。
 
 有关分配模式语法、并行维度 和 GPU 计算的完整指南，请参阅[分配模式参考](../reference/alloc_mode.md)。
 
@@ -16,7 +18,8 @@
 megatron:(attn:d1p4t2c2|ffn:d1p4t1e4)
 ```
 
-这个 16-GPU 配置使用 PP=4，注意力模块使用 TP=2 和 CP=2，而专家模块使用 TP=1 和 EP=4。请参阅[MoE 并行折叠](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core/transformer/moe#moe-parallel-folding)了解此功能的详细信息。
+这个 16-GPU 配置使用 PP=4，注意力模块使用 TP=2 和 CP=2，而专家模块使用 TP=1 和
+EP=4。请参阅[MoE 并行折叠](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core/transformer/moe#moe-parallel-folding)了解此功能的详细信息。
 
 **调优指南：**
 
@@ -25,7 +28,9 @@ megatron:(attn:d1p4t2c2|ffn:d1p4t1e4)
 
 ## 对齐推理和训练精度
 
-由于 MoE 模型的稀疏性，推理和训练期间前向传递计算的 logits 可能会严重不对齐，导致训练不稳定。为了缓解这种不稳定，强烈建议设置 `actor.megatron.use_deterministic_algorithms=True` 以禁用 Megatron 中的非确定性计算，尽管这可能会导致训练步骤减慢约 10-20%。
+由于 MoE 模型的稀疏性，推理和训练期间前向传递计算的 logits 可能会严重不对齐，导致训练不稳定。为了缓解这种不稳定，强烈建议设置
+`actor.megatron.use_deterministic_algorithms=True` 以禁用 Megatron 中的非确定性计算，尽管这可能会导致训练步骤减慢约
+10-20%。
 
 例如，您可以直接使用以下命令在 Qwen3 30B-A3B MoE 模型和 GSM8K 数据集上运行 GRPO（在 32-GPU ray 集群上）：
 

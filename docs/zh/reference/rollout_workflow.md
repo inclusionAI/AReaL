@@ -4,9 +4,11 @@
 
 **注意：**
 
-1. 本页面向希望深入理解代码库的开发者。对于代理 RL 训练，请使用 [Agentic RL Guide](../tutorial/agentic_rl.md) 中描述的高级 API。
+1. 本页面向希望深入理解代码库的开发者。对于代理 RL 训练，请使用 [Agentic RL Guide](../tutorial/agentic_rl.md) 中描述的高级
+   API。
 
-1. **遗留模式**：直接子类化 `RolloutWorkflow` 被视为遗留方式，不应主动使用。对于新的代理 RL 工作流，请使用带有 `async def run()` 的[代理工作流模式](./agent_workflow.md)。
+1. **遗留模式**：直接子类化 `RolloutWorkflow` 被视为遗留方式，不应主动使用。对于新的代理 RL 工作流，请使用带有 `async def run()`
+   的[代理工作流模式](./agent_workflow.md)。
 
 ## 概述
 
@@ -33,33 +35,33 @@ class RolloutWorkflow(ABC):
 
 ### 参数
 
-| 参数    | 类型               | 描述                        |
-| ------- | ------------------ | -------------------------- |
-| `engine`| `InferenceEngine`  | 用于生成模型回复的推理引擎   |
-| `data`  | `dict[str, Any]`   | 数据加载器的单个样本        |
+| 参数     | 类型              | 描述                       |
+| -------- | ----------------- | -------------------------- |
+| `engine` | `InferenceEngine` | 用于生成模型回复的推理引擎 |
+| `data`   | `dict[str, Any]`  | 数据加载器的单个样本       |
 
 ### 返回类型
 
 `arun_episode` 方法支持三种返回类型：
 
-| 返回类型                                  | 描述                                                                                        |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `dict[str, torch.Tensor]`                 | 用于训练的标准张量格式                                                                      |
-| `dict[str, InteractionWithTokenLogpReward]` | Token 级别的交互（自动转换为张量）；由高级 `ArealOpenAI` API 生成                        |
-| `None`                                   | 拒绝的轨迹，排除在训练之外                                                                   |
+| 返回类型                                    | 描述                                                              |
+| ------------------------------------------- | ----------------------------------------------------------------- |
+| `dict[str, torch.Tensor]`                   | 用于训练的标准张量格式                                            |
+| `dict[str, InteractionWithTokenLogpReward]` | Token 级别的交互（自动转换为张量）；由高级 `ArealOpenAI` API 生成 |
+| `None`                                      | 拒绝的轨迹，排除在训练之外                                        |
 
 ## 张量字典格式
 
 返回张量字典时，预期包含以下字段：
 
-| 字段            | 形状                    | 类型    | 必需 | 描述                       |
-| --------------- | ----------------------- | ------- | ---- | ------------------------- |
-| `input_ids`     | `[batch_size, seq_len]` | int32   | 是   | Token ID（提示 + 生成内容）|
-| `attention_mask`| `[batch_size, seq_len]`| bool    | 是   | 有效 token 掩码            |
-| `loss_mask`     | `[batch_size, seq_len]`| int32   | 否   | 生成内容 token 掩码（1 = 训练）|
-| `logprobs`      | `[batch_size, seq_len]`| float32 | 否   | 每个 token 的对数概率      |
-| `rewards`       | `[batch_size]`          | float32 | 否   | 每序列奖励                 |
-| `versions`      | `[batch_size, seq_len]`| int32   | 否   | 生成 token 时的权重版本    |
+| 字段             | 形状                    | 类型    | 必需 | 描述                            |
+| ---------------- | ----------------------- | ------- | ---- | ------------------------------- |
+| `input_ids`      | `[batch_size, seq_len]` | int32   | 是   | Token ID（提示 + 生成内容）     |
+| `attention_mask` | `[batch_size, seq_len]` | bool    | 是   | 有效 token 掩码                 |
+| `loss_mask`      | `[batch_size, seq_len]` | int32   | 否   | 生成内容 token 掩码（1 = 训练） |
+| `logprobs`       | `[batch_size, seq_len]` | float32 | 否   | 每个 token 的对数概率           |
+| `rewards`        | `[batch_size]`          | float32 | 否   | 每序列奖励                      |
+| `versions`       | `[batch_size, seq_len]` | int32   | 否   | 生成 token 时的权重版本         |
 
 返回值示例：
 
@@ -171,11 +173,11 @@ rollout:
 当 `group_size > 1` 时，工作流被包装在 `GroupedRolloutWorkflow` 中：
 
 1. 包装器使用 `asyncio.gather` 并发运行 `arun_episode` `group_size` 次
-2. 根据类型合并结果：
+1. 根据类型合并结果：
    - **张量字典**：沿批次维度连接
    - **InteractionWithTokenLogpReward 字典**：合并为单个字典
-3. 如果某些运行返回 `None`（拒绝），仅保留有效结果
-4. 如果所有运行都返回 `None`，则整个分组结果为 `None`
+1. 如果某些运行返回 `None`（拒绝），仅保留有效结果
+1. 如果所有运行都返回 `None`，则整个分组结果为 `None`
 
 ### 输出形状
 
@@ -259,12 +261,12 @@ trainer.train(
 
 工作流可以通过多种方式指定：
 
-| 格式           | 示例                          | 描述                 |
-| -------------- | ---------------------------- | ------------------- |
-| 实例           | `MyWorkflow(...)`            | 预实例化的工作流     |
-| 类             | `MyWorkflow`                 | 类（需要 kwargs）    |
-| 字符串路径     | `"my_module.MyWorkflow"`     | 动态导入             |
-| 代理工作流     | 任何带 `async def run()` 的类 | 带代理支持封装       |
+| 格式       | 示例                          | 描述              |
+| ---------- | ----------------------------- | ----------------- |
+| 实例       | `MyWorkflow(...)`             | 预实例化的工作流  |
+| 类         | `MyWorkflow`                  | 类（需要 kwargs） |
+| 字符串路径 | `"my_module.MyWorkflow"`      | 动态导入          |
+| 代理工作流 | 任何带 `async def run()` 的类 | 带代理支持封装    |
 
 训练系统自动将这些解析为 `RolloutWorkflow` 实例。
 

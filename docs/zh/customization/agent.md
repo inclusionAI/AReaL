@@ -1,6 +1,7 @@
 # 自定义 Agent Workflow
 
-本指南介绍如何为 RL 训练创建自定义 Agent。AReaL 支持任何 Agent 框架（OpenAI Agents SDK、LangChain、CAMEL-AI 等），只需少量集成工作。
+本指南介绍如何为 RL 训练创建自定义 Agent。AReaL 支持任何 Agent 框架（OpenAI Agents SDK、LangChain、CAMEL-AI
+等），只需少量集成工作。
 
 **注意**：
 
@@ -10,7 +11,8 @@
 
 ## 快速开始
 
-Agent Workflow 是任何具有 `async def run(data, **extra_kwargs)` 方法并返回奖励的类。AReaL 自动为其包装以便进行 RL 训练。
+Agent Workflow 是任何具有 `async def run(data, **extra_kwargs)` 方法并返回奖励的类。AReaL 自动为其包装以便进行 RL
+训练。
 
 ```python
 class MyAgent:
@@ -51,22 +53,22 @@ trainer.train(workflow="my_module.MyAgent")
 async def run(self, data: dict, **extra_kwargs) -> float | dict[str, float]
 ```
 
-| 参数      | 描述                                           |
-| -------------- | ----------------------------------------------------- |
-| `data`         | 来自数据集的样本（包含数据键的字典） |
-| `extra_kwargs` | AReaL 注入的参数（见下文）                  |
-| **返回**     | `float`：最后一个补全的奖励                   |
-|                | `dict[str, float]`：将补全 ID 映射到奖励    |
+| 参数           | 描述                                     |
+| -------------- | ---------------------------------------- |
+| `data`         | 来自数据集的样本（包含数据键的字典）     |
+| `extra_kwargs` | AReaL 注入的参数（见下文）               |
+| **返回**       | `float`：最后一个补全的奖励              |
+|                | `dict[str, float]`：将补全 ID 映射到奖励 |
 
 ### 注入的参数
 
 AReaL 通过 `extra_kwargs` 注入这些参数：
 
-| 键           | 类型                | 描述                                  |
-| ------------- | ------------------- | -------------------------------------------- |
-| `base_url`    | `str`               | AReaL 代理服务器的 URL                    |
-| `api_key`     | `str`               | AReaL 代理服务器的会话级 API 密钥          |
-| `http_client` | `httpx.AsyncClient` | 共享 HTTP 客户端（减少开销）               |
+| 键            | 类型                | 描述                              |
+| ------------- | ------------------- | --------------------------------- |
+| `base_url`    | `str`               | AReaL 代理服务器的 URL            |
+| `api_key`     | `str`               | AReaL 代理服务器的会话级 API 密钥 |
+| `http_client` | `httpx.AsyncClient` | 共享 HTTP 客户端（减少开销）      |
 
 ## 执行模式
 
@@ -133,7 +135,8 @@ class MySyncAgent:
         return compute_reward(response, data["answer"])
 ```
 
-**注意**：即使在子进程模式下，方法签名仍然是 `async def run(...)`，但 AReaL 会在内部用 `asyncio.run()` 包装调用。您可以在方法内部使用同步代码。
+**注意**：即使在子进程模式下，方法签名仍然是 `async def run(...)`，但 AReaL 会在内部用 `asyncio.run()`
+包装调用。您可以在方法内部使用同步代码。
 
 **权衡**：
 
@@ -187,12 +190,12 @@ rollout:
     subproc_max_workers: 4    # Process pool size (subproc mode only)
 ```
 
-| 字段                 | 默认      | 描述                               |
-| --------------------- | ------------ | ----------------------------------------- |
-| `mode`                | `inline`     | 执行模式                            |
-| `turn_discount`       | `1.0`        | 多轮奖励的几何折扣                |
-| `export_style`        | `individual` | 如何导出交互以进行训练          |
-| `subproc_max_workers` | `4`          | 子进程模式的最大工作进程数       |
+| 字段                  | 默认         | 描述                       |
+| --------------------- | ------------ | -------------------------- |
+| `mode`                | `inline`     | 执行模式                   |
+| `turn_discount`       | `1.0`        | 多轮奖励的几何折扣         |
+| `export_style`        | `individual` | 如何导出交互以进行训练     |
+| `subproc_max_workers` | `4`          | 子进程模式的最大工作进程数 |
 
 ## 另请参阅
 

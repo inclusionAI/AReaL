@@ -6,13 +6,15 @@
 
 1. 本页面向希望深入理解代码库的开发者。实践指南请参见 [Agentic RL Guide](../tutorial/agentic_rl.md)。
 
-1. 首先阅读 [`RolloutWorkflow` 参考](../reference/rollout_workflow.md)，因为代理工作流建立在 `RolloutWorkflow` 之上。
+1. 首先阅读 [`RolloutWorkflow` 参考](../reference/rollout_workflow.md)，因为代理工作流建立在
+   `RolloutWorkflow` 之上。
 
 1. **调度器兼容性**：代理工作流仅在 `local` 和 `slurm` 调度器上受支持。`ray` 调度器与 HTTP 代理架构不兼容。
 
 ## 概述
 
-代理工作流允许使用流行的代理框架（OpenAI Agents SDK、CAMEL-AI、LangChain 等）训练模型，而无需修改其核心逻辑。AReaL 自动捕获 RL 训练所需的 token 级别信息，同时保留代理的原始行为。
+代理工作流允许使用流行的代理框架（OpenAI Agents SDK、CAMEL-AI、LangChain 等）训练模型，而无需修改其核心逻辑。AReaL 自动捕获 RL
+训练所需的 token 级别信息，同时保留代理的原始行为。
 
 主要优势：
 
@@ -23,9 +25,9 @@
 挑战在于代理框架通过不暴露 token ID 和对数概率的高级 API 与 LLM 交互。AReaL 通过以下方式解决此问题：
 
 1. **拦截 LLM 调用**通过代理服务器或直接客户端
-2. **跟踪 token 级别数据**在 `InteractionCache` 中
-3. **构建对话树**用于多轮奖励传播
-4. **导出训练就绪的张量**并正确归因奖励
+1. **跟踪 token 级别数据**在 `InteractionCache` 中
+1. **构建对话树**用于多轮奖励传播
+1. **导出训练就绪的张量**并正确归因奖励
 
 ## 与 RolloutWorkflow 的关系
 
@@ -49,14 +51,14 @@
 
 AReaL 提供两种集成代理框架的方法：
 
-| 方面                 | 代理方式                              | 直接方式                            |
-| ------------------- | ----------------------------------- | ----------------------------------|
-| **代码修改**         | 无（仅更改 `base_url` 和 `api_key`）| 必须接受 `ArealOpenAI` 客户端       |
-| **通信**            | 通过代理服务器的 HTTP                  | 直接引擎调用                        |
-| **框架支持**         | 任何 OpenAI 兼容框架                  | 接受自定义客户端的框架               |
-| **性能**            | HTTP 开销（最小）                      | 无 HTTP 开销                       |
-| **引擎状态访问**     | 有限                                  | 完全访问                           用于**         |
-| **推荐 | 现有代理、第三方框架                   | 遗留代码。**不要主动使用。**        |
+| 方面             | 代理方式                             | 直接方式                                    |
+| ---------------- | ------------------------------------ | ------------------------------------------- |
+| **代码修改**     | 无（仅更改 `base_url` 和 `api_key`） | 必须接受 `ArealOpenAI` 客户端               |
+| **通信**         | 通过代理服务器的 HTTP                | 直接引擎调用                                |
+| **框架支持**     | 任何 OpenAI 兼容框架                 | 接受自定义客户端的框架                      |
+| **性能**         | HTTP 开销（最小）                    | 无 HTTP 开销                                |
+| **引擎状态访问** | 有限                                 | 完全访问                           用于\*\* |
+| \*\*推荐         | 现有代理、第三方框架                 | 遗留代码。**不要主动使用。**                |
 
 具体示例见 [Agentic RL Guide](../tutorial/agentic_rl.md)。
 
@@ -93,9 +95,11 @@ class MyAgent:
 
 ### 直接方式
 
-> **遗留模式**：使用 `ArealOpenAI` 和 `RolloutWorkflow` 的直接方式被视为遗留方式，不应用于新项目。请优先使用上述代理方式，使代理代码独立于 AReaL 内部实现。
+> **遗留模式**：使用 `ArealOpenAI` 和 `RolloutWorkflow`
+> 的直接方式被视为遗留方式，不应用于新项目。请优先使用上述代理方式，使代理代码独立于 AReaL 内部实现。
 
-直接方式使用 `ArealOpenAI`，它扩展了 `AsyncOpenAI` 并直接绑定到推理引擎。此方式需要工作流继承 `RolloutWorkflow` 并使用 `arun_episode` 中的引擎。
+直接方式使用 `ArealOpenAI`，它扩展了 `AsyncOpenAI` 并直接绑定到推理引擎。此方式需要工作流继承 `RolloutWorkflow` 并使用
+`arun_episode` 中的引擎。
 
 ```python
 from areal.experimental.openai import ArealOpenAI
@@ -125,7 +129,8 @@ class MyWorkflow(RolloutWorkflow):
 
 ### 内联模式（默认）
 
-代理在 Rollout 工作器的同一进程中运行。AReaL 直接调用代理的 `run` 方法作为异步协程，通过 `extra_kwargs` 传递 `base_url`、`api_key` 和 `http_client`。
+代理在 Rollout 工作器的同一进程中运行。AReaL 直接调用代理的 `run` 方法作为异步协程，通过 `extra_kwargs` 传递
+`base_url`、`api_key` 和 `http_client`。
 
 ```yaml
 rollout:
@@ -309,16 +314,16 @@ class MySyncAgent:
 
 ### 代理端点
 
-| 端点                      | 认证                        | 用途                          |
-| ------------------------- | -------------------------- | ---------------------------- |
-| `POST /grant_capacity`   | Admin 密钥                  | 预留槽位（过期控制）           |
-| `POST /rl/start_session`  | Admin 密钥                  | 创建唯一会话 ID               |
-| `POST /v1/chat/completions`| Session 密钥               | OpenAI chat completions API  |
-| `POST /v1/responses`      | Session 密钥               | OpenAI responses API         |
-| `POST /v1/messages`       | Session 密钥               | Anthropic Messages API       |
-| `POST /rl/set_reward`     | Session 密钥               | 为交互分配奖励                |
-| `POST /rl/end_session`    | Session 密钥               | 标记会话完成                  |
-| `POST /export_trajectories`| Admin 密钥 + body 中的 `session_id`| 导出带奖励折扣的轨迹     |
+| 端点                        | 认证                                | 用途                        |
+| --------------------------- | ----------------------------------- | --------------------------- |
+| `POST /grant_capacity`      | Admin 密钥                          | 预留槽位（过期控制）        |
+| `POST /rl/start_session`    | Admin 密钥                          | 创建唯一会话 ID             |
+| `POST /v1/chat/completions` | Session 密钥                        | OpenAI chat completions API |
+| `POST /v1/responses`        | Session 密钥                        | OpenAI responses API        |
+| `POST /v1/messages`         | Session 密钥                        | Anthropic Messages API      |
+| `POST /rl/set_reward`       | Session 密钥                        | 为交互分配奖励              |
+| `POST /rl/end_session`      | Session 密钥                        | 标记会话完成                |
+| `POST /export_trajectories` | Admin 密钥 + body 中的 `session_id` | 导出带奖励折扣的轨迹        |
 
 ## 会话生命周期
 
@@ -357,7 +362,8 @@ class MySyncAgent:
 
 ### InteractionCache
 
-`InteractionCache`（扩展 `OrderedDict`）存储以 completion ID 为键的 `InteractionWithTokenLogpReward` 对象。
+`InteractionCache`（扩展 `OrderedDict`）存储以 completion ID 为键的
+`InteractionWithTokenLogpReward` 对象。
 
 **关键文件：** `areal/experimental/openai/cache.py`
 
@@ -518,21 +524,21 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
 
 ### 关键方法
 
-| 方法                                 | 描述                             |
-| ------------------------------------ | -------------------------------- |
-| `chat.completions.create(...)`        | OpenAI 兼容聊天 API               |
-| `responses.create(...)`              | OpenAI responses API             |
-| `set_reward(id, reward)`             | 为特定交互设置奖励                 |
-| `set_last_reward(reward)`            | 为最后交互设置奖励                 |
-| `apply_reward_discount(turn_discount)`| 应用反向奖励折扣                   |
-| `export_interactions(style)`          | 导出用于训练                      |
+| 方法                                   | 描述                 |
+| -------------------------------------- | -------------------- |
+| `chat.completions.create(...)`         | OpenAI 兼容聊天 API  |
+| `responses.create(...)`                | OpenAI responses API |
+| `set_reward(id, reward)`               | 为特定交互设置奖励   |
+| `set_last_reward(reward)`              | 为最后交互设置奖励   |
+| `apply_reward_discount(turn_discount)` | 应用反向奖励折扣     |
+| `export_interactions(style)`           | 导出用于训练         |
 
 ### 导出样式
 
-| 样式        | 描述                                                                                                            |
-| ------------| ----------------------------------------------------------------------------------------------------------------|
-| `individual`| 将所有交互作为单独条目返回。轨迹可能共享前缀。                                                                    |
-| `concat`    | 构建对话树，仅返回叶子节点。仅对具有匹配 token 序列的线性对话有效。                                                |
+| 样式         | 描述                                                                |
+| ------------ | ------------------------------------------------------------------- |
+| `individual` | 将所有交互作为单独条目返回。轨迹可能共享前缀。                      |
+| `concat`     | 构建对话树，仅返回叶子节点。仅对具有匹配 token 序列的线性对话有效。 |
 
 ## 公共 API
 
@@ -559,7 +565,8 @@ from areal.experimental.openai import (
 
 ### Token 一致性保证
 
-由于 AReaL 存储推理期间使用的实际 token（而非重新分词的文本），Rollout 和训练之间不存在分词不匹配的风险。发送到推理引擎的 token 正是用于梯度计算的 token。
+由于 AReaL 存储推理期间使用的实际 token（而非重新分词的文本），Rollout 和训练之间不存在分词不匹配的风险。发送到推理引擎的 token 正是用于梯度计算的
+token。
 
 ### 使用树注意力高效训练
 

@@ -1,6 +1,7 @@
 # 快速入门
 
-欢迎阅读 **AReaL** 快速入门指南！本指南将演示如何使用 AReaL 运行一个使用 GRPO 算法和基于函数的奖励来训练 LLM 的实验，数据集为 GSM8K。在继续之前，请确保已完成[安装和环境设置](installation.md)。
+欢迎阅读 **AReaL** 快速入门指南！本指南将演示如何使用 AReaL 运行一个使用 GRPO 算法和基于函数的奖励来训练 LLM 的实验，数据集为
+GSM8K。在继续之前，请确保已完成[安装和环境设置](installation.md)。
 
 ## 运行实验（单节点）
 
@@ -27,8 +28,7 @@ python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml schedul
 1. 直接编辑 YAML 文件
    [examples/math/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_grpo.yaml)。
 1. 添加命令行选项：
-   - 对于 YAML 文件中已存在的选项，直接添加：
-     `actor.path=Qwen/Qwen3-1.7B`。
+   - 对于 YAML 文件中已存在的选项，直接添加： `actor.path=Qwen/Qwen3-1.7B`。
    - 对于 `cli_args.py` 中存在但不在 YAML 文件中的选项，使用前缀 "+" 添加：
      `+sglang.attention_backend=triton`。
 
@@ -79,11 +79,12 @@ python3 examples/math/gsm8k_rl.py \
 其他参考：
 
 - 有关调度器的更多选项，请查看
-  [areal/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py)中的 `SchedulerConfig`。
+  [areal/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py)中的
+  `SchedulerConfig`。
 - 有关如何设置 Ray 集群的指南，请参阅安装文档中的分布式设置部分。
 
 > **重要提示**：确保 `allocation_mode` 与您的集群配置匹配
->（`#GPU == cluster.n_nodes * cluster.n_gpus_per_node`）
+> （`#GPU == cluster.n_nodes * cluster.n_gpus_per_node`）
 
 <!--
 > **Notes**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`.
@@ -92,9 +93,11 @@ python3 examples/math/gsm8k_rl.py \
 
 ## 传统模式：使用专用启动器的 SPMD 模式
 
-AReaL 还支持通过专用启动器使用 SPMD（单程序多数据）模式。此模式是为向后兼容性而维护的，但现在推荐使用单控制器模式（直接使用 `scheduler.type` 执行脚本）来处理大多数用例。
+AReaL 还支持通过专用启动器使用 SPMD（单程序多数据）模式。此模式是为向后兼容性而维护的，但现在推荐使用单控制器模式（直接使用 `scheduler.type`
+执行脚本）来处理大多数用例。
 
-在 SPMD 模式下，启动器通过 `torchrun` 管理进程生成，并设置 `AREAL_SPMD_MODE=1`。每个 GPU worker 独立运行完整的训练脚本，通过 PyTorch 分布式原语进行协调。
+在 SPMD 模式下，启动器通过 `torchrun` 管理进程生成，并设置 `AREAL_SPMD_MODE=1`。每个 GPU worker 独立运行完整的训练脚本，通过
+PyTorch 分布式原语进行协调。
 
 ```bash
 # 使用本地启动器的 SPMD 模式（传统）
@@ -109,7 +112,9 @@ python3 -m areal.infra.launcher.slurm examples/math/gsm8k_rl.py --config example
 
 ## 使用 SkyPilot 在云或 K8s 上运行分布式实验
 
-如果您想直接在云或自己的 Kubernetes 基础设施上运行实验，我们建议您使用 SkyPilot。安装和设置 SkyPilot 后（请参阅 {ref}`安装 SkyPilot <install-skypilot>`），您可以基于我们的 SkyPilot 示例（两个 8xA100 GPU 节点）使用一行命令启动分布式实验：
+如果您想直接在云或自己的 Kubernetes 基础设施上运行实验，我们建议您使用 SkyPilot。安装和设置 SkyPilot 后（请参阅
+{ref}`安装 SkyPilot <install-skypilot>`），您可以基于我们的 SkyPilot 示例（两个 8xA100 GPU
+节点）使用一行命令启动分布式实验：
 
 ```bash
 # 在 GCP 上启动
@@ -122,9 +127,8 @@ sky launch -c areal-test examples/skypilot/ray_cluster.sky.yaml --infra k8s
 
 查看
 [使用 SkyPilot 运行 AReaL](https://github.com/inclusionAI/AReaL/blob/main/examples/skypilot/README.md)
-了解更多示例详情。查看
-[SkyPilot 文档](https://docs.skypilot.co/en/latest/docs/index.html)
-了解更多关于 SkyPilot 的信息。
+了解更多示例详情。查看 [SkyPilot 文档](https://docs.skypilot.co/en/latest/docs/index.html) 了解更多关于
+SkyPilot 的信息。
 
 ## 下一步
 

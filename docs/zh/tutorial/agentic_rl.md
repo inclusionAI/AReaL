@@ -1,28 +1,35 @@
 # 智能体强化学习
 
-本指南演示如何使用 AReaL 配合流行的智能体框架（如 [CAMEL-AI](https://github.com/camel-ai/camel)、[OpenAI Agents SDK](https://github.com/openai/openai-agents-python) 等）来训练智能体模型，使您能够利用它们的智能体编排能力，同时使用 AReaL 的分布式强化学习训练系统。
+本指南演示如何使用 AReaL 配合流行的智能体框架（如
+[CAMEL-AI](https://github.com/camel-ai/camel)、[OpenAI Agents SDK](https://github.com/openai/openai-agents-python)
+等）来训练智能体模型，使您能够利用它们的智能体编排能力，同时使用 AReaL 的分布式强化学习训练系统。
 
 ## 概述
 
-AReaL 中智能体 RL 的核心设计理念是**统一的训练和部署**。换句话说，我们期望用户使用相同的代码进行训练和评估，无需任何更改。然而，这通常很困难，因为智能体框架存在以下问题：
+AReaL 中智能体 RL
+的核心设计理念是**统一的训练和部署**。换句话说，我们期望用户使用相同的代码进行训练和评估，无需任何更改。然而，这通常很困难，因为智能体框架存在以下问题：
 
-1. **缺乏 token 级别访问**：智能体框架通过高级 API（如 OpenAI 的聊天补全 API）与语言模型交互，这些 API 不公开 RL 训练所需的 token ID 和对数概率。
+1. **缺乏 token 级别访问**：智能体框架通过高级 API（如 OpenAI 的聊天补全 API）与语言模型交互，这些 API 不公开 RL 训练所需的 token
+   ID 和对数概率。
 
-2. **没有奖励机制**：智能体框架专为推理设计，没有内置的奖励函数。RL 训练需要奖励信号来指导策略优化。
+1. **没有奖励机制**：智能体框架专为推理设计，没有内置的奖励函数。RL 训练需要奖励信号来指导策略优化。
 
-3. **并行化有限**：标准智能体使用涉及顺序执行，难以高效收集 RL 训练所需的多样化轨迹。
+1. **并行化有限**：标准智能体使用涉及顺序执行，难以高效收集 RL 训练所需的多样化轨迹。
 
 AReaL 通过提供以下功能来解决这些限制：
 
-1. **带 token 级别跟踪的代理模型客户端**：AReaL 设置了一个 HTTP 代理服务器，将所有 LLM 调用路由到 AReaL 的推理引擎（SGLang 或 vLLM）。每次交互都会自动跟踪完整的 token 级别信息。
+1. **带 token 级别跟踪的代理模型客户端**：AReaL 设置了一个 HTTP 代理服务器，将所有 LLM 调用路由到 AReaL 的推理引擎（SGLang 或
+   vLLM）。每次交互都会自动跟踪完整的 token 级别信息。
 
-2. **奖励分配和传播**：AReaL 提供灵活的奖励系统，允许您将奖励分配给特定的交互或整个轨迹。系统自动构建对话树并支持奖励反向传播。
+1. **奖励分配和传播**：AReaL 提供灵活的奖励系统，允许您将奖励分配给特定的交互或整个轨迹。系统自动构建对话树并支持奖励反向传播。
 
-3. **并行轨迹收集**：AReaL 的工作流系统支持多个智能体实例的并发执行，允许您为每个查询收集多样化的轨迹。
+1. **并行轨迹收集**：AReaL 的工作流系统支持多个智能体实例的并发执行，允许您为每个查询收集多样化的轨迹。
 
-我们在下面演示了几个具体示例。更多示例可以在 [`workflow/` 目录](https://github.com/inclusionAI/AReaL/tree/main/areal/workflow)中找到。
+我们在下面演示了几个具体示例。更多示例可以在
+[`workflow/` 目录](https://github.com/inclusionAI/AReaL/tree/main/areal/workflow)中找到。
 
-> **调度器兼容性**：使用代理方法的智能体工作流仅在 `local` 和 `slurm` 调度器上受支持。`ray` 调度器不支持，因为 Ray 的基于 actor 的编程模型与需要 worker 之间持久连接的 HTTP 代理服务器本质上不兼容。
+> **调度器兼容性**：使用代理方法的智能体工作流仅在 `local` 和 `slurm` 调度器上受支持。`ray` 调度器不支持，因为 Ray 的基于 actor
+> 的编程模型与需要 worker 之间持久连接的 HTTP 代理服务器本质上不兼容。
 
 ## 示例
 
@@ -122,7 +129,8 @@ if __name__ == "__main__":
     main(sys.argv[1:])
 ```
 
-完整的 OpenAI Agents 训练示例位于 [**`examples/agent_workflow/`**](https://github.com/inclusionAI/AReaL/blob/main/examples/agent_workflow/)。要在单节点上运行示例：
+完整的 OpenAI Agents 训练示例位于
+[**`examples/agent_workflow/`**](https://github.com/inclusionAI/AReaL/blob/main/examples/agent_workflow/)。要在单节点上运行示例：
 
 ```bash
 python3 examples/agent_workflow/train.py \
@@ -132,7 +140,8 @@ python3 examples/agent_workflow/train.py \
 
 ### 使用 CAMEL-AI 训练
 
-> **旧模式注意**：使用 `ArealOpenAI` 与 `RolloutWorkflow` 的直接方法被视为旧模式。对于新项目，建议使用代理方法（如上方的 OpenAI 智能体示例），这样可以让您的智能体代码独立于 AReaL。
+> **旧模式注意**：使用 `ArealOpenAI` 与 `RolloutWorkflow` 的直接方法被视为旧模式。对于新项目，建议使用代理方法（如上方的 OpenAI
+> 智能体示例），这样可以让您的智能体代码独立于 AReaL。
 
 CAMEL-AI 是一个开源的模块化框架，用于构建智能多智能体系统。它提供灵活的智能体架构，可以处理复杂的对话流程、工具调用和多智能体交互。
 
@@ -287,13 +296,16 @@ workflow = CamelRLVRWorkflow(
 
 除了上述两个示例外，AReaL 还支持与各种其他智能体框架和 SDK 的集成：
 
-- **Claude Agent SDK**：使用 Anthropic 的 Claude Agent SDK 和 MCP 工具训练智能体。请参阅[Claude 示例](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/anthropic/claude_math_agent.py)，了解带有计算器工具的数学智能体。
+- **Claude Agent SDK**：使用 Anthropic 的 Claude Agent SDK 和 MCP
+  工具训练智能体。请参阅[Claude 示例](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/anthropic/claude_math_agent.py)，了解带有计算器工具的数学智能体。
 
-- **LangChain**：将 LangChain 智能体与 AReaL 的训练基础设施集成。请参阅 [LangChain 示例](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/langchain/math_agent.py)了解详情。
+- **LangChain**：将 LangChain 智能体与 AReaL 的训练基础设施集成。请参阅
+  [LangChain 示例](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/langchain/math_agent.py)了解详情。
 
 ## 底层原理
 
-有关 AReaL 智能体训练基础设施的详细解释，包括代理服务器架构、会话生命周期、token 级别跟踪和奖励反向传播，请参阅[智能体工作流参考](../reference/agent_workflow.md)。
+有关 AReaL 智能体训练基础设施的详细解释，包括代理服务器架构、会话生命周期、token
+级别跟踪和奖励反向传播，请参阅[智能体工作流参考](../reference/agent_workflow.md)。
 
 参考文档涵盖的关键主题：
 

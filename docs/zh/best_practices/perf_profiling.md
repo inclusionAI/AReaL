@@ -1,10 +1,12 @@
 # 性能分析
 
-AReaL 通过 `perf_tracer` 提供轻量级分析基础设施，帮助您识别分布式训练 Workflow 中的性能瓶颈。追踪器发出与 Chrome Trace 兼容的事件，可以在 Perfetto 或 chrome://tracing 中可视化，便于跨多个 ranks 关联计算、通信和 I/O。
+AReaL 通过 `perf_tracer` 提供轻量级分析基础设施，帮助您识别分布式训练 Workflow 中的性能瓶颈。追踪器发出与 Chrome Trace
+兼容的事件，可以在 Perfetto 或 chrome://tracing 中可视化，便于跨多个 ranks 关联计算、通信和 I/O。
 
 **关键功能**：
 
-- 灵活的追踪 API：装饰器（`@trace_perf`、`@session_context`、`@trace_session`）、上下文管理器（`trace_scope`/`atrace_scope`、`trace_session_phase`/`atrace_session_phase`）和标记（`instant`）
+- 灵活的追踪
+  API：装饰器（`@trace_perf`、`@session_context`、`@trace_session`）、上下文管理器（`trace_scope`/`atrace_scope`、`trace_session_phase`/`atrace_session_phase`）和标记（`instant`）
 - **每个会话的生命周期追踪**（任务注册 → 会话创建 → 生成 → 奖励 → 最终化），包含派生指标（总时间、生成时间、工具调用时间、奖励计算时间）
 - **任务-会话层级结构**，用于追踪数据集级别的任务及其样本级别的会话
 
@@ -43,7 +45,8 @@ if config.perf_tracer is not None:
 
 ### 3. 运行训练并收集追踪
 
-像往常一样执行训练脚本。追踪器自动将事件写入 `fileroot/logs/.../perf_tracer/traces-r{rank}.jsonl`。对于多 rank 作业，每个 rank 产生自己的文件。
+像往常一样执行训练脚本。追踪器自动将事件写入 `fileroot/logs/.../perf_tracer/traces-r{rank}.jsonl`。对于多 rank
+作业，每个 rank 产生自己的文件。
 
 ```bash
 python examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml scheduler.type=local
@@ -175,7 +178,9 @@ class RLVRWorkflow(RolloutWorkflow):
 
 #### `session_context` 装饰器
 
-`session_context()` 在当前上下文中已存在 `task_id` 时，为每次调用注册一个新会话。在处理单个样本的 Workflow 方法上使用它，以便下游辅助函数（例如 `atrace_session_phase`、`@trace_session`）可以从 contextvars 中读取 `session_id`。
+`session_context()` 在当前上下文中已存在 `task_id` 时，为每次调用注册一个新会话。在处理单个样本的 Workflow
+方法上使用它，以便下游辅助函数（例如 `atrace_session_phase`、`@trace_session`）可以从 contextvars 中读取
+`session_id`。
 
 ```python
 from areal.utils.perf_tracer import atrace_session_phase, session_context
@@ -190,12 +195,13 @@ class MiniWorkflow:
 **工作原理**：
 
 1. `WorkflowExecutor` 在调用 `arun_episode` 之前调用 `perf_tracer.set_task_id()`
-2. `arun_episode` 生成多个 `_collect_samples` 调用（每个样本一个）
-3. 每个 `_collect_samples` 应用 `@perf_tracer.session_context()` 装饰器来自动注册会话并将 `task_id` / `session_id` 放入上下文变量
-4. 上下文变量透明地存储活动任务/会话 ID
-5. 子异步函数自动继承此上下文
-6. `@trace_session("reward")` 读取会话 ID 并记录阶段开始/结束事件
-7. 会话追踪出现在 `session_tracer/sessions-r{rank}.jsonl` 中，包含计算出的指标如 `reward_s`、`generate_s`
+1. `arun_episode` 生成多个 `_collect_samples` 调用（每个样本一个）
+1. 每个 `_collect_samples` 应用 `@perf_tracer.session_context()` 装饰器来自动注册会话并将 `task_id` /
+   `session_id` 放入上下文变量
+1. 上下文变量透明地存储活动任务/会话 ID
+1. 子异步函数自动继承此上下文
+1. `@trace_session("reward")` 读取会话 ID 并记录阶段开始/结束事件
+1. 会话追踪出现在 `session_tracer/sessions-r{rank}.jsonl` 中，包含计算出的指标如 `reward_s`、`generate_s`
 
 ### 模式 4：使用 `atrace_session_phase` 和 `trace_session_phase` 的手动阶段作用域
 
@@ -244,7 +250,8 @@ async def _collect_samples(..., n_attempts: int = 1):
     return filtered, reward, completion_str
 ```
 
-异步作用域发出 `engine.agenerate` 的计时，而同步作用域涵盖任何 CPU 端后处理。两者都共享由 `@session_context()` 装饰器隐式提供的 `session_id`，因此它们的事件出现在同一会话追踪记录中。
+异步作用域发出 `engine.agenerate` 的计时，而同步作用域涵盖任何 CPU 端后处理。两者都共享由 `@session_context()` 装饰器隐式提供的
+`session_id`，因此它们的事件出现在同一会话追踪记录中。
 
 ### 模式 5：使用 `instant()` 添加即时标记
 
@@ -394,13 +401,17 @@ AReaL 的会话追踪器使用两级层级结构来追踪 rollout 执行：
         VALIDATION_END = "validation_end"
    ```
 
-2. 通过在 `SessionRecord.default_phase_configs()` 中追加 `PhaseSpec` 来注册阶段（根据需要设置 `allow_multiple` 或 `ready_on_complete`）。
+1. 通过在 `SessionRecord.default_phase_configs()` 中追加 `PhaseSpec` 来注册阶段（根据需要设置
+   `allow_multiple` 或 `ready_on_complete`）。
 
-3. 如果您希望 JSONL 输出中有 `validation_s`，请添加一个辅助函数如 `_compute_validation_time()` 和在 `SessionRecord.default_field_spec()` 中匹配的 `FieldSpec`。
+1. 如果您希望 JSONL 输出中有 `validation_s`，请添加一个辅助函数如 `_compute_validation_time()` 和在
+   `SessionRecord.default_field_spec()` 中匹配的 `FieldSpec`。
 
-4. 通过更新 `_SESSION_TRACE_METHOD_TO_EVENT` 将 `"mark_validation_start"` 和 `"mark_validation_end"` 指向新的枚举条目来映射追踪方法。
+1. 通过更新 `_SESSION_TRACE_METHOD_TO_EVENT` 将 `"mark_validation_start"` 和
+   `"mark_validation_end"` 指向新的枚举条目来映射追踪方法。
 
-完成这些更改后，`@trace_session("validation")`、`trace_session_phase("validation")` 和 `atrace_session_phase("validation")` 可以直接使用——上下文管理器将发出新事件，会话追踪器将为附加阶段序列化时间以及内置指标。
+完成这些更改后，`@trace_session("validation")`、`trace_session_phase("validation")` 和
+`atrace_session_phase("validation")` 可以直接使用——上下文管理器将发出新事件，会话追踪器将为附加阶段序列化时间以及内置指标。
 
 #### 绘制自定义阶段
 
@@ -418,9 +429,10 @@ AReaL 的会话追踪器使用两级层级结构来追踪 rollout 执行：
 
    时间线渲染器自动拾取追踪负载中存在的每个阶段（它现在将默认的 generate/reward/toolcall 顺序与任何新键结合）。
 
-2. **公开分布指标（可选）** - 如果 `SessionRecord` 发出一个派生的 `validation_s` 字段，将其添加到 `DURATION_COLUMNS` 和 `HISTOGRAM_METRICS`，以便摘要图表显示每个阶段的直方图以及默认值。
+1. **公开分布指标（可选）** - 如果 `SessionRecord` 发出一个派生的 `validation_s` 字段，将其添加到
+   `DURATION_COLUMNS` 和 `HISTOGRAM_METRICS`，以便摘要图表显示每个阶段的直方图以及默认值。
 
-3. **渲染报告** - 将会话 JSONL 文件指向绘图脚本并启用生命周期图表：
+1. **渲染报告** - 将会话 JSONL 文件指向绘图脚本并启用生命周期图表：
 
    ```bash
    python -m areal.tools.plot_session_trace \
@@ -447,9 +459,11 @@ AReaL 的会话追踪器使用两级层级结构来追踪 rollout 执行：
       profile_steps: [49, 99]
   ```
 
-- 当任何 `trace_scope` 或 `atrace_scope` 带有 `args={"global_step": step}` 且 `step` 匹配配置的条目之一时，`perf_tracer` 将检查是否应该为这个 `global_step` 触发分析。
+- 当任何 `trace_scope` 或 `atrace_scope` 带有 `args={"global_step": step}` 且 `step`
+  匹配配置的条目之一时，`perf_tracer` 将检查是否应该为这个 `global_step` 触发分析。
 
-- 将 `enable_profiler=True` 传递给 `trace_scope`/`atrace_scope`：作用域**仅**在*同时*设置了标志且 `global_step` 匹配配置的 `profile_steps` 之一时进行分析。没有计划，手动请求会被忽略；没有标志，计划中的步骤保持休眠状态。
+- 将 `enable_profiler=True` 传递给 `trace_scope`/`atrace_scope`：作用域**仅**在*同时*设置了标志且
+  `global_step` 匹配配置的 `profile_steps` 之一时进行分析。没有计划，手动请求会被忽略；没有标志，计划中的步骤保持休眠状态。
 
 ## 故障排除
 
@@ -459,7 +473,8 @@ A：确保在退出之前运行 `perf_tracer.save(force=True)`。检查 `perf_tr
 
 **Q：会话追踪显示所有 `status: "pending"`**
 
-A：生命周期事件（`mark_finalized`）未被记录。验证 `WorkflowExecutor` 是否正在调用 `trace_session_event()`，或者您的自定义 Workflow 是否实现了完整的生命周期。
+A：生命周期事件（`mark_finalized`）未被记录。验证 `WorkflowExecutor` 是否正在调用
+`trace_session_event()`，或者您的自定义 Workflow 是否实现了完整的生命周期。
 
 **Q：Perfetto 无法打开我的追踪**
 
@@ -471,7 +486,9 @@ python -m areal.tools.perf_trace_converter traces.jsonl trace.json
 
 **Q：某些会话的阶段显示 `end_ts` 为 `null`**
 
-A：这发生在 `engine.agenerate()` 抛出异常并传播到 `arun_episode` 时。协调器然后调用 `trace_session_event("mark_finalized", task_id=task_id, ...)`，这将最终化该任务下的**所有**会话——包括那些阶段在执行中断裂的会话，留下 `end_ts: null`。
+A：这发生在 `engine.agenerate()` 抛出异常并传播到 `arun_episode` 时。协调器然后调用
+`trace_session_event("mark_finalized", task_id=task_id, ...)`，这将最终化该任务下的**所有**会话——包括那些阶段在执行中断裂的会话，留下
+`end_ts: null`。
 
 **解决方案**：远程推理引擎**不应从 `agenerate()` 抛出异常**。在内部处理错误并返回错误响应。
 

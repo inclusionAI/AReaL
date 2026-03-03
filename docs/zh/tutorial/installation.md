@@ -16,15 +16,15 @@
 
 ### 软件要求
 
-| 组件 | 版本 |
-| ------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| 操作系统 | CentOS 7 / Ubuntu 22.04 或满足以下要求的任何系统 |
-| NVIDIA 驱动 | 550.127.08 |
-| CUDA | 12.8 |
-| Git LFS | 用于下载模型、数据集和 AReaL 代码。请参阅[安装指南](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
-| Docker | 27.5.1 |
-| NVIDIA Container Toolkit | 请参阅[安装指南](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) |
-| AReaL 镜像 | `ghcr.io/inclusionai/areal-runtime:v0.5.3`（包含运行时依赖和 Ray 组件）|
+| 组件                     |                                                                                  版本                                                                                  |
+| ------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| 操作系统                 |                                                            CentOS 7 / Ubuntu 22.04 或满足以下要求的任何系统                                                            |
+| NVIDIA 驱动              |                                                                               550.127.08                                                                               |
+| CUDA                     |                                                                                  12.8                                                                                  |
+| Git LFS                  | 用于下载模型、数据集和 AReaL 代码。请参阅[安装指南](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
+| Docker                   |                                                                                 27.5.1                                                                                 |
+| NVIDIA Container Toolkit |                             请参阅[安装指南](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)                              |
+| AReaL 镜像               |                                                `ghcr.io/inclusionai/areal-runtime:v0.5.3`（包含运行时依赖和 Ray 组件）                                                 |
 
 **注意**：本教程不涵盖 NVIDIA 驱动、CUDA 或共享存储挂载的安装，因为这些取决于您具体的节点配置和系统版本。请独立完成这些安装。
 
@@ -52,7 +52,7 @@ uv pip install -e . --no-deps
 
 1. 安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)。
 
-2. 克隆仓库：
+1. 克隆仓库：
 
 ```bash
 git clone https://github.com/inclusionAI/AReaL
@@ -82,9 +82,11 @@ uv sync --extra cuda
 # uv sync --group dev
 ```
 
-这将安装所有 CUDA 依赖的包，包括 SGLang、vLLM、Megatron、Flash Attention 等。这些包需要 Linux x86_64 和 CUDA 12.x 及兼容的 NVIDIA 驱动。
+这将安装所有 CUDA 依赖的包，包括 SGLang、vLLM、Megatron、Flash Attention 等。这些包需要 Linux x86_64 和 CUDA
+12.x 及兼容的 NVIDIA 驱动。
 
-同样的命令也适用于 macOS 和不带 CUDA 支持的 Linux。CUDA 包会通过平台标记自动跳过。但是，需要 CUDA 的训练和推理功能将不可用。此配置仅适用于开发、测试和非 GPU 工作流。
+同样的命令也适用于 macOS 和不带 CUDA 支持的 Linux。CUDA 包会通过平台标记自动跳过。但是，需要 CUDA
+的训练和推理功能将不可用。此配置仅适用于开发、测试和非 GPU 工作流。
 
 您也可以单独安装各个 extra，而不是完整的 `cuda` 捆绑包：
 
@@ -106,35 +108,40 @@ uv sync --extra vllm --extra sglang --extra megatron --extra tms
 
 ### 额外的 CUDA 包（可选，手动安装）
 
-Docker 镜像包含 `pyproject.toml` 中没有的额外编译包。这些包需要 CUDA，必须从源码编译。如果使用自定义环境（非 Docker）且需要这些包的优化（例如 FP8 训练、融合 Adam 内核），请在运行 `uv sync --extra cuda` 后手动安装：
+Docker 镜像包含 `pyproject.toml` 中没有的额外编译包。这些包需要 CUDA，必须从源码编译。如果使用自定义环境（非
+Docker）且需要这些包的优化（例如 FP8 训练、融合 Adam 内核），请在运行 `uv sync --extra cuda` 后手动安装：
 
-| 包 | 用途 | 安装命令 |
-| ----------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| grouped_gemm | Megatron 中的 MoE 模型支持 | `uv pip install --no-build-isolation git+https://github.com/fanshiqing/grouped_gemm@v1.1.4` |
-| NVIDIA apex | Megatron 中的融合 Adam 等 | `NVCC_APPEND_FLAGS="--threads 4" APEX_PARALLEL_BUILD=8 APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install --no-build-isolation git+https://github.com/NVIDIA/apex.git` |
-| TransformerEngine | Megatron 中的 FP8 训练、优化 GEMM | `uv pip install --no-build-isolation git+https://github.com/NVIDIA/TransformerEngine.git@stable` |
-| flash-attn-3 | Flash Attention v3（Hopper） | 从源码构建，请参阅 [Dockerfile](https://github.com/inclusionAI/AReaL/blob/main/Dockerfile) |
+| 包                | 用途                              | 安装命令                                                                                                                                                          |
+| ----------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| grouped_gemm      | Megatron 中的 MoE 模型支持        | `uv pip install --no-build-isolation git+https://github.com/fanshiqing/grouped_gemm@v1.1.4`                                                                       |
+| NVIDIA apex       | Megatron 中的融合 Adam 等         | `NVCC_APPEND_FLAGS="--threads 4" APEX_PARALLEL_BUILD=8 APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install --no-build-isolation git+https://github.com/NVIDIA/apex.git` |
+| TransformerEngine | Megatron 中的 FP8 训练、优化 GEMM | `uv pip install --no-build-isolation git+https://github.com/NVIDIA/TransformerEngine.git@stable`                                                                  |
+| flash-attn-3      | Flash Attention v3（Hopper）      | 从源码构建，请参阅 [Dockerfile](https://github.com/inclusionAI/AReaL/blob/main/Dockerfile)                                                                        |
 
-**重要**：这些包需要 `--no-build-isolation`，因为它们需要访问已安装的 PyTorch 进行 CUDA 编译。先通过 `uv sync --extra cuda` 安装 PyTorch，然后再尝试安装这些包。
+**重要**：这些包需要 `--no-build-isolation`，因为它们需要访问已安装的 PyTorch 进行 CUDA 编译。先通过
+`uv sync --extra cuda` 安装 PyTorch，然后再尝试安装这些包。
 
 ### DeepSeek-V3 优化包（可选）
 
-为了以最佳性能运行 DeepSeek-V3 风格的 MoE 模型，Docker 镜像还包含以下包。这些包有复杂的构建要求和 GPU 架构约束。**请参阅 [Dockerfile](https://github.com/inclusionAI/AReaL/blob/main/Dockerfile) 获取确切的安装命令和环境变量。**
+为了以最佳性能运行 DeepSeek-V3 风格的 MoE 模型，Docker 镜像还包含以下包。这些包有复杂的构建要求和 GPU 架构约束。**请参阅
+[Dockerfile](https://github.com/inclusionAI/AReaL/blob/main/Dockerfile)
+获取确切的安装命令和环境变量。**
 
-| 包 | 用途 | GPU 要求 |
-| ---------------------- | ------------------------------------------- | --------------- |
-| FlashMLA | Multi-head Latent Attention 内核 | SM90+ (Hopper) |
-| DeepGEMM | MoE 的 FP8 GEMM 库 | SM90+ (Hopper) |
-| DeepEP | Expert Parallelism 通信库 | SM80+ (Ampere) |
-| flash-linear-attention | 使用 Triton 内核的线性注意力 | 任意 GPU |
-| NVSHMEM | DeepEP 节点间通信必需 | 任意 GPU |
+| 包                     | 用途                             | GPU 要求       |
+| ---------------------- | -------------------------------- | -------------- |
+| FlashMLA               | Multi-head Latent Attention 内核 | SM90+ (Hopper) |
+| DeepGEMM               | MoE 的 FP8 GEMM 库               | SM90+ (Hopper) |
+| DeepEP                 | Expert Parallelism 通信库        | SM80+ (Ampere) |
+| flash-linear-attention | 使用 Triton 内核的线性注意力     | 任意 GPU       |
+| NVSHMEM                | DeepEP 节点间通信必需            | 任意 GPU       |
 
 **注意**：
 
 - FlashMLA 和 DeepGEMM 需要 Hopper（H100/H800）或更新的 GPU。
 - DeepEP 需要 NVSHMEM 用于节点间和低延迟功能。Docker 镜像通过 pip 安装 `nvidia-nvshmem-cu12`，DeepEP 会自动检测。
 - flash-linear-attention 使用纯 Triton 内核，可在任意 GPU 上运行。
-- 这些包在 Docker 构建期间从 GitHub 克隆和编译。手动安装时，确保为 FlashMLA 和 DeepGEMM 初始化 git 子模块（`git submodule update --init --recursive`），因为它们依赖 CUTLASS。
+- 这些包在 Docker 构建期间从 GitHub 克隆和编译。手动安装时，确保为 FlashMLA 和 DeepGEMM 初始化 git
+  子模块（`git submodule update --init --recursive`），因为它们依赖 CUTLASS。
 
 5. 验证 AReaL 安装：
 
@@ -150,7 +157,9 @@ uv run python3 areal/tools/validate_installation.py
 
 ## （可选）安装 SkyPilot
 
-SkyPilot 帮助您在 17 种以上不同云平台或您自己的 Kubernetes 基础设施上轻松运行 AReaL。有关 SkyPilot 的更多详细信息，请参阅 [SkyPilot 文档](https://docs.skypilot.co/en/latest/overview.html)。以下是 在 GCP 或 Kubernetes 上设置 SkyPilot 的最小步骤。
+SkyPilot 帮助您在 17 种以上不同云平台或您自己的 Kubernetes 基础设施上轻松运行 AReaL。有关 SkyPilot 的更多详细信息，请参阅
+[SkyPilot 文档](https://docs.skypilot.co/en/latest/overview.html)。以下是 在 GCP 或 Kubernetes
+上设置 SkyPilot 的最小步骤。
 
 ### 使用 pip 安装 SkyPilot
 
@@ -178,7 +187,9 @@ gcloud auth application-default login
 
 ### Kubernetes 设置
 
-请参阅 [SkyPilot Kubernetes 设置指南](https://docs.skypilot.co/en/latest/reference/kubernetes/kubernetes-setup.html)，了解如何为 SkyPilot 设置 Kubernetes 集群的详细指南。
+请参阅
+[SkyPilot Kubernetes 设置指南](https://docs.skypilot.co/en/latest/reference/kubernetes/kubernetes-setup.html)，了解如何为
+SkyPilot 设置 Kubernetes 集群的详细指南。
 
 ### 验证
 
@@ -186,7 +197,10 @@ gcloud auth application-default login
 sky check
 ```
 
-如果显示 `GCP: enabled` 或 `Kubernetes: enabled`，您就可以将 SkyPilot 与 AReaL 一起使用了。请参阅 [SkyPilot 示例](https://github.com/inclusionAI/AReaL/blob/main/examples/skypilot/README.md) 获取运行 AReaL 的详细指南。更多选项和详细信息，请参阅官方 [SkyPilot 安装指南](https://docs.skypilot.co/en/latest/getting-started/installation.html)。
+如果显示 `GCP: enabled` 或 `Kubernetes: enabled`，您就可以将 SkyPilot 与 AReaL 一起使用了。请参阅
+[SkyPilot 示例](https://github.com/inclusionAI/AReaL/blob/main/examples/skypilot/README.md)
+获取运行 AReaL 的详细指南。更多选项和详细信息，请参阅官方
+[SkyPilot 安装指南](https://docs.skypilot.co/en/latest/getting-started/installation.html)。
 
 ## （可选）为分布式训练启动 Ray 集群
 

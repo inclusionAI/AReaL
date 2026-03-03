@@ -17,7 +17,9 @@ for global_step in range(start_step, max_steps):
     self.actor.train_lm(batch)
 ```
 
-在这种情况下，`train_lm` 方法需要 "input_ids"、"attention_mask" 和 "loss_mask" 键才能工作。我们首先对数据集进行分词以提取 "input_ids" 和 "loss_mask"。然后，使用 `pad_sequences_to_tensors` 方法来批量处理多个序列并附加 "attention_mask"：
+在这种情况下，`train_lm` 方法需要 "input_ids"、"attention_mask" 和 "loss_mask" 键才能工作。我们首先对数据集进行分词以提取
+"input_ids" 和 "loss_mask"。然后，使用 `pad_sequences_to_tensors` 方法来批量处理多个序列并附加
+"attention_mask"：
 
 ```python
 # areal/dataset/gsm8k.py
@@ -69,13 +71,15 @@ for global_step in range(start_step, max_steps):
     )
 ```
 
-请注意，这里的 `collate_fn` 是一个恒等函数，这意味着它只是将各个数据项的列表作为一个批次返回。在 `prepare_batch` 中，数据随后被分派到 Workflow 的多个并发执行中，其中每个分派的数据对应一个单独的 episode。
+请注意，这里的 `collate_fn` 是一个恒等函数，这意味着它只是将各个数据项的列表作为一个批次返回。在 `prepare_batch` 中，数据随后被分派到
+Workflow 的多个并发执行中，其中每个分派的数据对应一个单独的 episode。
 
 在以下部分中，我们以
 [`RLVRWorkflow`](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/rlvr.py)
 为例。Agent Workflow 使用输入数据的模式相同。只要符合您的 Workflow 实现，您可以随意修改自定义数据集以包含任何键。
 
-`RLVRWorkflow` 实现从数据字典中提取 "messages" 字段作为生成响应的提示。此外，此数据作为关键字参数传递给 `reward_fn`，这允许奖励函数利用数据集中的其他字段，如 "answers"。示例如下：
+`RLVRWorkflow` 实现从数据字典中提取 "messages" 字段作为生成响应的提示。此外，此数据作为关键字参数传递给
+`reward_fn`，这允许奖励函数利用数据集中的其他字段，如 "answers"。示例如下：
 
 ```python
 # areal/workflow/rlvr.py

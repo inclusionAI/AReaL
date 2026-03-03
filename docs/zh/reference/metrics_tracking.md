@@ -1,6 +1,7 @@
 # 指标跟踪
 
-AReaL 提供统一的指标跟踪系统，处理分布式训练和 Rollout 工作器的统计信息收集。该系统支持针对其各自使用场景优化的两种不同范式：**流式指标**用于异步 Rollout 工作流，**批量指标**用于同步训练更新。
+AReaL 提供统一的指标跟踪系统，处理分布式训练和 Rollout 工作器的统计信息收集。该系统支持针对其各自使用场景优化的两种不同范式：**流式指标**用于异步
+Rollout 工作流，**批量指标**用于同步训练更新。
 
 ## 核心组件
 
@@ -134,11 +135,11 @@ def export_stats(self) -> dict[str, float]:
 
 ### 记录方法
 
-| 方法                         | 使用场景                 | 示例                                  |
-| ---------------------------- | ---------------------- | ------------------------------------ |
-| `scalar(**kwargs)`           | 单个浮点值              | `scalar(lr=0.001, eps=0.2)`          |
-| `denominator(**kwargs)`      | 定义布尔掩码            | `denominator(valid=mask.bool())`      |
-| `stat(denominator, **kwargs)`| 带掩码的张量指标         | `stat(loss=tensor, denominator="valid")` |
+| 方法                          | 使用场景         | 示例                                     |
+| ----------------------------- | ---------------- | ---------------------------------------- |
+| `scalar(**kwargs)`            | 单个浮点值       | `scalar(lr=0.001, eps=0.2)`              |
+| `denominator(**kwargs)`       | 定义布尔掩码     | `denominator(valid=mask.bool())`         |
+| `stat(denominator, **kwargs)` | 带掩码的张量指标 | `stat(loss=tensor, denominator="valid")` |
 
 ### 归约类型
 
@@ -151,14 +152,14 @@ stats_tracker.stat(loss=tensor, denominator="valid")
 
 可用的归约类型：
 
-| 类型          | 输出                          | 描述                |
-| ------------- | ---------------------------- | ------------------ |
-| `AVG_MIN_MAX` | `key/avg`, `key/min`, `key/max` | 张量统计的默认值   |
-| `AVG`         | `key`                        | 仅加权平均值        |
-| `SUM`         | `key`                        | 所有元素求和        |
-| `MIN`         | `key`                        | 最小值              |
-| `MAX`         | `key`                        | 最大值              |
-| `SCALAR`      | `key`, `key__count`          | 用于标量值          |
+| 类型          | 输出                            | 描述             |
+| ------------- | ------------------------------- | ---------------- |
+| `AVG_MIN_MAX` | `key/avg`, `key/min`, `key/max` | 张量统计的默认值 |
+| `AVG`         | `key`                           | 仅加权平均值     |
+| `SUM`         | `key`                           | 所有元素求和     |
+| `MIN`         | `key`                           | 最小值           |
+| `MAX`         | `key`                           | 最大值           |
+| `SCALAR`      | `key`, `key__count`             | 用于标量值       |
 
 ### 作用域
 
@@ -238,11 +239,11 @@ RolloutController.export_stats()                 │
 
 ### 支持的后端
 
-| 后端              | 配置                       | 描述                     |
-| ---------------- | ------------------------- | ------------------------|
-| **Weights & Biases**| `config.stats_logger.wandb`| 云端实验跟踪             |
-| **SwanLab**      | `config.stats_logger.swanlab`| 替代实验跟踪            |
-| **TensorBoard**  | `config.stats_logger.tensorboard`| 本地可视化           |
+| 后端                 | 配置                              | 描述         |
+| -------------------- | --------------------------------- | ------------ |
+| **Weights & Biases** | `config.stats_logger.wandb`       | 云端实验跟踪 |
+| **SwanLab**          | `config.stats_logger.swanlab`     | 替代实验跟踪 |
+| **TensorBoard**      | `config.stats_logger.tensorboard` | 本地可视化   |
 
 ### 与 PPOTrainer 集成
 
@@ -310,4 +311,5 @@ stats_logger:
 
 1. **先定义分母**：始终在 `stat()` 之前调用 `denominator()` 来建立掩码关系。
 
-1. **使用命名跟踪器**：使用 `stats_tracker.get(workflow_context.stat_scope()).scalar(...)` 将 Rollout（`"rollout"`）和评估（`"eval-rollout"`）指标与训练指标隔离。
+1. **使用命名跟踪器**：使用 `stats_tracker.get(workflow_context.stat_scope()).scalar(...)` 将
+   Rollout（`"rollout"`）和评估（`"eval-rollout"`）指标与训练指标隔离。

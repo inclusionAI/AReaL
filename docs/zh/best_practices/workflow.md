@@ -2,7 +2,8 @@
 
 本指南涵盖在 AReaL 中实现高效且健壮的 `RolloutWorkflow` 类和 Agent Workflow 的最佳实践。
 
-有关 `RolloutWorkflow` 与 Agent Workflow 之间的区别，请参阅 [Agentic RL 指南](../tutorial/agentic_rl.md)。
+有关 `RolloutWorkflow` 与 Agent Workflow 之间的区别，请参阅
+[Agentic RL 指南](../tutorial/agentic_rl.md)。
 
 ## 最佳实践
 
@@ -36,7 +37,8 @@ async def arun_episode(self, engine, data):
 
 ### 包装开销大的奖励函数
 
-对于涉及 CPU 密集型计算、外部 API 调用或任何阻塞操作的奖励函数，请使用 `AsyncRewardWrapper`。`AsyncRewardWrapper` 将奖励计算分派到专用的进程池。
+对于涉及 CPU 密集型计算、外部 API 调用或任何阻塞操作的奖励函数，请使用 `AsyncRewardWrapper`。`AsyncRewardWrapper`
+将奖励计算分派到专用的进程池。
 
 ```python
 from areal.api.reward_api import AsyncRewardWrapper
@@ -58,7 +60,8 @@ class MyWorkflow(RolloutWorkflow):
 
 ### 避免繁重的初始化
 
-将开销大的设置逻辑放在 `__init__` 中，而不是 `arun_episode` 中。`arun_episode` 方法为每次 rollout 运行，因此重复初始化会浪费资源。
+将开销大的设置逻辑放在 `__init__` 中，而不是 `arun_episode` 中。`arun_episode` 方法为每次 rollout
+运行，因此重复初始化会浪费资源。
 
 ### 通过 Workflow 上下文重用 HTTP 客户端
 

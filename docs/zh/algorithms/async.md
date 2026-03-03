@@ -2,7 +2,8 @@
 
 AReaL原生支持异步强化学习训练，使推理和训练能够在不同的GPU上并行进行，从而最大化GPU利用率。
 
-> **注意：** 本指南适用于启用异步训练时的所有算法（即 `rollout.max_head_offpolicyness > 0`）。设置 `rollout.max_head_offpolicyness=0` 会将AReaL恢复为同步RL。同步设置对调试很有用，但通常比异步训练慢2倍。
+> **注意：** 本指南适用于启用异步训练时的所有算法（即 `rollout.max_head_offpolicyness > 0`）。设置
+> `rollout.max_head_offpolicyness=0` 会将AReaL恢复为同步RL。同步设置对调试很有用，但通常比异步训练慢2倍。
 
 ## 概述
 

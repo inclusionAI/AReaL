@@ -16,17 +16,18 @@
 
 ### 软件要求
 
-| 组件              |                                                                                              版本                                                                                              |
-| ---------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| 操作系统          |                                                                      Ubuntu、EulerOS 或满足以下要求的任何系统                                                                      |
-| 昇腾 HDK         |                                                                                                25.2.1                                                                                              |
-| CANN             |                                                                                               8.3.RC2                                                                                              |
-| Git LFS          | 下载模型、数据集和 AReaL 代码所需。请参阅[安装指南](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
-| Docker           |                                                                                               27.2.0                                                                                              |
-| AReaL 镜像 (A2) |                                                            `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a2`（详见下文）                                                            |
-| AReaL 镜像 (A3) |                                                            `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a3`（详见下文）                                                            |
+| 组件            |                                                                                  版本                                                                                  |
+| --------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| 操作系统        |                                                                Ubuntu、EulerOS 或满足以下要求的任何系统                                                                |
+| 昇腾 HDK        |                                                                                 25.2.1                                                                                 |
+| CANN            |                                                                                8.3.RC2                                                                                 |
+| Git LFS         | 下载模型、数据集和 AReaL 代码所需。请参阅[安装指南](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
+| Docker          |                                                                                 27.2.0                                                                                 |
+| AReaL 镜像 (A2) |                                                `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a2`（详见下文）                                                |
+| AReaL 镜像 (A3) |                                                `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a3`（详见下文）                                                |
 
-**注意**：本教程不涵盖 CANN 的安装或共享存储挂载，因为这些取决于您特定的节点配置和系统版本。请独立完成这些安装。您可以从 vLLM-Ascend 社区查看更多详情[此页面](https://docs.vllm.ai/projects/ascend/en/latest/installation.html)。
+**注意**：本教程不涵盖 CANN 的安装或共享存储挂载，因为这些取决于您特定的节点配置和系统版本。请独立完成这些安装。您可以从 vLLM-Ascend
+社区查看更多详情[此页面](https://docs.vllm.ai/projects/ascend/en/latest/installation.html)。
 
 ## 运行环境
 

@@ -8,7 +8,9 @@
 
 ## 使用持久化推理服务器调试 Agent Workflow
 
-在 AReaL 中，任何具有方法签名 `async def run(self, data, **extra_kwargs)` 的类都被识别为 Agent Workflow。该方法可以在内部使用任意的 Agentic 框架，并且必须返回标量或奖励字典，为每次 LLM 交互分配信用。更多详细信息请参阅 [Agentic RL 指南](../tutorial/agentic_rl.md)。
+在 AReaL 中，任何具有方法签名 `async def run(self, data, **extra_kwargs)` 的类都被识别为 Agent
+Workflow。该方法可以在内部使用任意的 Agentic 框架，并且必须返回标量或奖励字典，为每次 LLM 交互分配信用。更多详细信息请参阅
+[Agentic RL 指南](../tutorial/agentic_rl.md)。
 
 您可以使用官方 OpenAI/Anthropic API 或启动**独立的持久化推理服务器**来运行 Agent 的生成逻辑，从而无需重启系统即可进行重复测试。
 
@@ -74,7 +76,8 @@ asyncio.run(MyAgent().run(data, base_url="https://api.openai.com/v1", api_key="Y
 
 ### 3. 使用多个并发运行调试您的 Agent
 
-RL 训练通常需要生成大批量，因此您应该验证您的 Agent 代码（尤其是内部使用的 Agentic 框架）能够处理高并发性。某些框架针对单线程场景设计，可能无法很好地扩展到 RL 训练。
+RL 训练通常需要生成大批量，因此您应该验证您的 Agent 代码（尤其是内部使用的 Agentic 框架）能够处理高并发性。某些框架针对单线程场景设计，可能无法很好地扩展到
+RL 训练。
 
 ```python
 # Example GRPO configuration
@@ -184,15 +187,19 @@ python3 script.py --config xxx.yaml scheduler.type=local
 **重要提示**：
 
 1. 使用与训练相同的配置文件；不相关的字段会被忽略。
-2. 确保 `max_head_offpolicyness` 和 `max_concurrent_rollouts` 足够大，否则 rollout 进程将因过期控制而无限期阻塞。
+1. 确保 `max_head_offpolicyness` 和 `max_concurrent_rollouts` 足够大，否则 rollout
+   进程将因过期控制而无限期阻塞。
 
 如果步骤 4 通过，您的代码已准备好用于 AReaL。您现在可以将其传递给训练器并开始训练。
 
 ## Rollout 一致性
 
-比较 `transformers` 与您的推理引擎之间的 rollout 结果有助于验证一致性和正确性。虽然大多数模型产生的结果几乎相同，但某些模型可能由于推理后端（如 `sglang`、`vllm`）为加速前向传播而进行的大量优化而表现出显著差异。
+比较 `transformers` 与您的推理引擎之间的 rollout 结果有助于验证一致性和正确性。虽然大多数模型产生的结果几乎相同，但某些模型可能由于推理后端（如
+`sglang`、`vllm`）为加速前向传播而进行的大量优化而表现出显著差异。
 
-如果您怀疑存在差异，或者如果您使用的模型在 Transformers 或 SGLang 中缺乏一流支持，请使用简单的验证脚本对照数据集比较输出。请参阅 `examples/docs/debug/cmp_rollout.py` 以获取完整的示例，比较 `google/gemma-3-4b-it` 在 `BUAADreamer/clevr_count_70k` 数据集上的 rollout 结果。
+如果您怀疑存在差异，或者如果您使用的模型在 Transformers 或 SGLang 中缺乏一流支持，请使用简单的验证脚本对照数据集比较输出。请参阅
+`examples/docs/debug/cmp_rollout.py` 以获取完整的示例，比较 `google/gemma-3-4b-it` 在
+`BUAADreamer/clevr_count_70k` 数据集上的 rollout 结果。
 
 ## 调试训练挂起和死锁
 
@@ -206,17 +213,18 @@ python3 script.py --config xxx.yaml scheduler.type=local
 - **训练无错误退出** - 任务完成（有时甚至打印 "Training completes!"），但实际完成了 0 个训练步骤。进程在清理过程中可能会无限期挂起。
 - **某些 ranks 完成，其他 ranks 挂起** - `nvidia-smi` 显示某些 GPU 空闲，而其他 GPU 仍处于 100% 利用率。
 
-这些症状通常有一个共同的根本原因：**某些 ranks 上的异常或提前退出导致剩余 ranks 永远等待集合操作**（例如 `all_reduce`、`send`/`recv` 或 `destroy_process_group`）。
+这些症状通常有一个共同的根本原因：**某些 ranks 上的异常或提前退出导致剩余 ranks 永远等待集合操作**（例如 `all_reduce`、`send`/`recv`
+或 `destroy_process_group`）。
 
 ### 常见原因
 
-| 原因                           | 发生了什么                                                                                                                                                                                                               |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **部分 ranks 上的异常**  | PP/TP 组的一方遇到错误并退出，而另一方等待永远不会到达的 P2P 或集合操作。异常可能被清理代码吞掉（`__exit__` → `destroy_process_group()` 挂起）。 |
-| **集合调用不匹配** | 代码路径在某些 ranks 上调用 `all_reduce` 但在其他 ranks 上不调用（例如由于跨 ranks 不同的条件分支）。                                                                                                 |
-| **PP 中的形状不匹配**        | 流水线并行阶段期望交换特定形状的张量。如果某个阶段产生意外的形状，`recv` 将永远阻塞。                                                                                    |
-| **NCCL 超时**                | 网络问题或慢 ranks 导致 NCCL 操作超过超时，但默认超时可能很长（30 分钟）。                                                                                           |
-| **初始化中的死锁**  | 模型加载或编译在不同 ranks 上花费不同时间，而在所有 ranks 准备好之前就调用了集合。                                                                                          |
+| 原因                    | 发生了什么                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **部分 ranks 上的异常** | PP/TP 组的一方遇到错误并退出，而另一方等待永远不会到达的 P2P 或集合操作。异常可能被清理代码吞掉（`__exit__` → `destroy_process_group()` 挂起）。 |
+| **集合调用不匹配**      | 代码路径在某些 ranks 上调用 `all_reduce` 但在其他 ranks 上不调用（例如由于跨 ranks 不同的条件分支）。                                            |
+| **PP 中的形状不匹配**   | 流水线并行阶段期望交换特定形状的张量。如果某个阶段产生意外的形状，`recv` 将永远阻塞。                                                            |
+| **NCCL 超时**           | 网络问题或慢 ranks 导致 NCCL 操作超过超时，但默认超时可能很长（30 分钟）。                                                                       |
+| **初始化中的死锁**      | 模型加载或编译在不同 ranks 上花费不同时间，而在所有 ranks 准备好之前就调用了集合。                                                               |
 
 ### 步骤 1：确认挂起
 
@@ -235,7 +243,8 @@ ps aux | grep 'python.*areal' | grep -v grep
 
 ### 步骤 2：使用 `py-spy` 转储调用栈
 
-[py-spy](https://github.com/benfred/py-spy) 是诊断挂起最有效的工具。它附加到正在运行的 Python 进程并转储调用栈而不会中断执行。
+[py-spy](https://github.com/benfred/py-spy) 是诊断挂起最有效的工具。它附加到正在运行的 Python
+进程并转储调用栈而不会中断执行。
 
 ```bash
 # Install py-spy (if not already installed)
@@ -255,7 +264,8 @@ done
 
 调用栈会准确告诉您每个 rank 被阻塞的位置。寻找以下模式：
 
-**模式 A：清理死锁** - 某些 ranks 完成（遇到错误或提前完成）并卡在 `destroy_process_group` 中，而其他 ranks 仍在训练循环中等待通信：
+**模式 A：清理死锁** - 某些 ranks 完成（遇到错误或提前完成）并卡在 `destroy_process_group` 中，而其他 ranks
+仍在训练循环中等待通信：
 
 ```
 # Ranks that exited (e.g., PP Stage 0 hit an exception)
@@ -314,6 +324,7 @@ export CUDA_LAUNCH_BLOCKING=1
 
 ### 提示
 
-- **异常被清理吞掉**：如果 py-spy 显示某些 ranks 在 `destroy_process_group` 中，而其他 ranks 仍在训练循环中，根本原因是退出 ranks 上的异常。
+- **异常被清理吞掉**：如果 py-spy 显示某些 ranks 在 `destroy_process_group` 中，而其他 ranks 仍在训练循环中，根本原因是退出
+  ranks 上的异常。
 - **使用更少的 GPU 重现**：如果可能，使用最少的 GPU 数量（例如 PP=2，2 个 GPU）重现。这会使调用栈更容易阅读。
 - **检查所有 ranks**：始终转储**所有**工作进程的堆栈，而不仅仅是一个。挂起从根本上说是关于 rank 发散——您需要比较跨 ranks 的堆栈以了解谁在等待谁。
