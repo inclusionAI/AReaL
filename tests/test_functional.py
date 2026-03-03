@@ -1,7 +1,11 @@
 import pytest
 import torch
 
-from areal.utils.functional import ppo_actor_loss_fn, sapo_loss_fn, compute_behave_imp_weight
+from areal.utils.functional import (
+    compute_behave_imp_weight,
+    ppo_actor_loss_fn,
+    sapo_loss_fn,
+)
 
 
 class TestPPOActorLossFnSequenceLevel:
@@ -1141,7 +1145,6 @@ class TestSAPOLossFn:
         assert torch.allclose(loss, expected_loss, atol=1e-5)
 
 
-
 class TestComputeBehaveImpWeight:
     """Test cases for compute_behave_imp_weight function."""
 
@@ -1160,7 +1163,9 @@ class TestComputeBehaveImpWeight:
 
     def test_disabled_mode_raises_error(self, basic_2d_data):
         """Test that disabled mode raises ValueError."""
-        with pytest.raises(ValueError, match="should not be called with mode='disabled'"):
+        with pytest.raises(
+            ValueError, match="should not be called with mode='disabled'"
+        ):
             compute_behave_imp_weight(
                 proximal_logprobs=basic_2d_data["proximal_logprobs"],
                 old_logprobs=basic_2d_data["old_logprobs"],
