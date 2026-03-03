@@ -186,6 +186,15 @@ class PPOTrainer:
         self.teacher = None
         if config.teacher is not None:
             self.teacher = self._create_teacher(config.teacher)
+            teacher_allocation_mode = AllocationMode.from_str(
+                config.teacher.allocation_mode
+            )
+            teacher_init_kwargs = {
+                "addr": None,
+                "ft_spec": ft_spec,
+                "alloc_mode": teacher_allocation_mode,
+            }
+            self.teacher.initialize(**teacher_init_kwargs, role="teacher")
 
         # Save initial LoRA weights if enabled (for inference server pre-loading)
         initial_lora_path = self._save_initial_lora_weights()
@@ -662,9 +671,13 @@ class PPOTrainer:
             from areal.engine.megatron_engine import MegatronPPOActor
 
             actor_cls = MegatronPPOActor
+        elif allocation_mode.train_backend == "archon":
+            from areal.experimental.engine.archon_engine import ArchonPPOActor
+
+            actor_cls = ArchonPPOActor
         else:
             raise ValueError(
-                f"Invalid backend: {allocation_mode.train_backend}, expected fsdp or megatron"
+                f"Invalid backend: {allocation_mode.train_backend}, expected fsdp, megatron, or archon"
             )
 
         if is_single_controller():
@@ -673,25 +686,6 @@ class PPOTrainer:
             teacher = actor_cls(config=teacher_config)
 
         teacher.create_process_group(parallel_strategy=allocation_mode.train)
-
-        parallel_strategy = allocation_mode.train
-        assert parallel_strategy is not None
-
-        ft_spec = FinetuneSpec(
-            total_train_epochs=self.config.total_train_epochs,
-            dataset_size=len(self.train_dataloader)
-            * self.config.train_dataset.batch_size,
-            train_batch_size=self.config.train_dataset.batch_size,
-        )
-
-        engine_init_kwargs = {
-            "addr": None,
-            "ft_spec": ft_spec,
-            "alloc_mode": allocation_mode,
-        }
-
-        teacher.initialize(**engine_init_kwargs, role="teacher")
-
         return teacher
 
     def _init_rollout(
