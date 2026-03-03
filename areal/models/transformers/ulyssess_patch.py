@@ -147,6 +147,7 @@ def patch_vlm_for_ulysses_input_slicing(model_class: type):
 def apply_monkey_patch(
     model: PreTrainedModel,
     ulysses_sp_size: int = 1,
+    vision_dp: bool = False,
 ):
     try:
         num_attention_heads, num_key_value_heads = (
@@ -232,9 +233,15 @@ def apply_monkey_patch(
         logger.info(f"Patched {model_class_name}.forward")
 
         # Apply Vision DP: distribute ViT computation across SP ranks
-        from areal.utils.vision_dp import apply_vision_dp_patch
+        if vision_dp:
+            from areal.utils.vision_dp import apply_vision_dp_patch
 
-        apply_vision_dp_patch()
+            apply_vision_dp_patch()
+        else:
+            logger.info(
+                f"Vision DP disabled (vision_dp=False). "
+                f"ViT runs replicated on all {ulysses_sp_size} SP ranks."
+            )
     else:
         from transformers.integrations import flash_attention
 
