@@ -681,4 +681,4 @@ class TraceTrajectoryMaker(Controller):
 
         yield from self.process([task], **kwargs)
 
-        return task.create_scaffolding_output()
+        return task.trace_results

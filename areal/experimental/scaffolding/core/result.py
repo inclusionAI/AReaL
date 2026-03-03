@@ -11,6 +11,7 @@ from typing import Any
 class ScaffoldingOutput:
     text: str
     token_ids: list[int]
+    data: Any = None
 
 
 class ScaffoldingResult:

@@ -448,6 +448,16 @@ class TestResult:
         o = ScaffoldingOutput(text="hello", token_ids=[1, 2, 3])
         assert o.text == "hello"
         assert o.token_ids == [1, 2, 3]
+        assert o.data is None
+
+    def test_scaffolding_output_with_data(self):
+        from areal.experimental.scaffolding.core.result import ScaffoldingOutput
+
+        payload = {"key": "value", "nested": [1, 2, 3]}
+        o = ScaffoldingOutput(text="hello", token_ids=[1, 2, 3], data=payload)
+        assert o.text == "hello"
+        assert o.token_ids == [1, 2, 3]
+        assert o.data is payload
 
     def test_scaffolding_result_set_output(self):
         from areal.experimental.scaffolding.core.result import (

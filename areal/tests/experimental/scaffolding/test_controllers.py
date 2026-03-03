@@ -50,7 +50,6 @@ from areal.experimental.scaffolding.task import (
     TraceGenerationTask,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fake / stub helpers
 # ---------------------------------------------------------------------------
@@ -363,7 +362,9 @@ class TestPipelineTrajectoryMaker:
             prompt_str="",
         )
 
-        task = GenerationTask(input_str="fallback prompt", input_tokens=FAKE_INPUT_TOKENS)
+        task = GenerationTask(
+            input_str="fallback prompt", input_tokens=FAKE_INPUT_TOKENS
+        )
         list(maker.process([task]))
 
         assert received_prompts[0] == "fallback prompt"
@@ -520,9 +521,7 @@ class TestTraceTrajectoryMaker:
         Also wires the class-level ``ChatTracer`` into the fake rollout
         controller so it can call ``before_yield`` / ``after_yield`` hooks.
         """
-        rollout_ctrl = FakeChatRolloutController(
-            n_turns=n_turns, responses=responses
-        )
+        rollout_ctrl = FakeChatRolloutController(n_turns=n_turns, responses=responses)
         reward_ctrl = FakeChatRewardController(
             rewards=rewards, default_reward=default_reward
         )
@@ -608,15 +607,15 @@ class TestTraceTrajectoryMaker:
         assert trace_task.trace_results is None
 
     def test_trace_generation_task_scaffolding_output(self):
-        """create_scaffolding_output should reflect generation_task fields."""
-        gen_task = GenerationTask(
-            output_str="result text", output_tokens=[10, 20, 30]
-        )
+        """create_scaffolding_output should reflect generation_task fields and trace_results."""
+        gen_task = GenerationTask(output_str="result text", output_tokens=[10, 20, 30])
         trace_task = TraceGenerationTask(generation_task=gen_task)
+        trace_task.trace_results = {"id-1": "fake_interaction"}
 
         output = trace_task.create_scaffolding_output()
         assert output.text == "result text"
         assert output.token_ids == [10, 20, 30]
+        assert output.data == {"id-1": "fake_interaction"}
 
     def test_trace_generation_task_scaffolding_output_empty(self):
         """create_scaffolding_output with no generation_task should return empty."""
@@ -624,6 +623,7 @@ class TestTraceTrajectoryMaker:
         output = trace_task.create_scaffolding_output()
         assert output.text == ""
         assert output.token_ids == []
+        assert output.data is None
 
     def test_no_reward_tasks_when_no_traces(self):
         """If rollout produces no traceable outputs, reward step should be skipped."""

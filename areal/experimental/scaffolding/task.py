@@ -177,8 +177,9 @@ class TraceGenerationTask(Task):
             return ScaffoldingOutput(
                 text=self.generation_task.output_str or "",
                 token_ids=list(self.generation_task.output_tokens or []),
+                data=self.trace_results,
             )
-        return ScaffoldingOutput(text="", token_ids=[])
+        return ScaffoldingOutput(text="", token_ids=[], data=self.trace_results)
 
 
 @dataclass
