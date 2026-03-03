@@ -84,7 +84,9 @@ def _init_worker(
     if enabled_agent_names:
         from geo_edit.environment.tool_agents import get_manager
         manager = get_manager()
-        manager.connect_to_existing_agents(enabled_agent_names)
+        # Get agent configs to pass to connect_to_existing_agents
+        agent_configs = _WORKER_TOOL_ROUTER.get_enabled_agent_configs()
+        manager.connect_to_existing_agents(enabled_agent_names, configs=agent_configs)
         logger.info(f"Worker (PID: {os.getpid()}) connected to {len(enabled_agent_names)} Ray actors: {enabled_agent_names}")
 
     if model_type == "Google" and not api_key:

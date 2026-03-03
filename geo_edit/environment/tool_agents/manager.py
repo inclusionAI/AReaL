@@ -34,6 +34,7 @@ class ToolAgentManager:
     def connect_to_existing_agents(
         self,
         agent_names: List[str],
+        configs: Optional[Dict[str, Dict[str, Any]]] = None,
         ray_address: str = "auto",
     ) -> Dict[str, ray.actor.ActorHandle]:
         """Connect to existing Ray actors by name.
@@ -43,6 +44,8 @@ class ToolAgentManager:
 
         Args:
             agent_names: List of agent names to connect to.
+            configs: Optional dict mapping agent names to their configs.
+                     If not provided, will use default configs from agents module.
             ray_address: Ray cluster address.
 
         Returns:
@@ -50,6 +53,11 @@ class ToolAgentManager:
         """
         if not ray.is_initialized():
             ray.init(address=ray_address, namespace="tool_agent", ignore_reinit_error=True)
+
+        # Import AGENT_CONFIGS if configs not provided
+        if configs is None:
+            from geo_edit.tool_definitions.agents import AGENT_CONFIGS
+            configs = AGENT_CONFIGS
 
         for name in agent_names:
             if name in self._actors:
@@ -59,6 +67,9 @@ class ToolAgentManager:
                 # Get actor by name from Ray namespace
                 actor = ray.get_actor(name, namespace="tool_agent")
                 self._actors[name] = actor
+                # Store config for this agent (needed for call() method)
+                if name in configs:
+                    self._configs[name] = configs[name]
                 logger.debug(f"Connected to existing actor: {name}")
             except ValueError:
                 logger.warning(f"Actor {name} not found in Ray cluster")

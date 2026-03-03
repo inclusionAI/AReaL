@@ -38,7 +38,11 @@ def test_worker_process(enabled_agents):
     manager = get_manager()
     print(f"\nAttempting to connect to: {enabled_agents}")
 
-    connected_actors = manager.connect_to_existing_agents(enabled_agents)
+    # Get configs (in real worker, this comes from ToolRouter)
+    from geo_edit.tool_definitions.agents import AGENT_CONFIGS
+    agent_configs = {name: AGENT_CONFIGS[name] for name in enabled_agents if name in AGENT_CONFIGS}
+
+    connected_actors = manager.connect_to_existing_agents(enabled_agents, configs=agent_configs)
 
     print(f"\nConnected actors: {len(connected_actors)}")
     for name, actor in connected_actors.items():
