@@ -4,7 +4,7 @@ trial_name: trial0
 seed: 1
 enable_offload: false
 total_train_epochs: 10
-total_trian_steps: 100
+total_train_steps: 100
 tokenizer_path: ${actor.path}
 
 cluster:
@@ -56,7 +56,7 @@ actor:
   gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 10240
+    max_tokens_per_mb: 15360
   optimizer:
     type: adam
     lr: 1.70e-5
