@@ -823,7 +823,7 @@ class TestImpWeight:
     def test_level5_simulated_imp_weight(
         self, moe_model_outputs: dict[str, Any]
     ) -> None:
-        """DIRECTLY SIMULATE behav_imp_weight.
+        """DIRECTLY SIMULATE behave_imp_weight.
 
         Computes exp(archon_logprobs - hf_logprobs) per token, then averages.
         Reports if it matches the observed 0.6-0.7 range.
@@ -848,13 +848,13 @@ class TestImpWeight:
             -1
         )
 
-        # behav_imp_weight = exp(archon_logprobs - hf_logprobs)
+        # behave_imp_weight = exp(archon_logprobs - hf_logprobs)
         # If Archon is the training engine and HF is the inference engine:
         imp_weights = torch.exp(archon_token_lp - hf_token_lp)
         avg_imp_weight = imp_weights.mean().item()
         median_imp_weight = imp_weights.median().item()
 
-        print("\n[Level 5] Simulated behav_imp_weight")
+        print("\n[Level 5] Simulated behave_imp_weight")
         print("  Formula: exp(archon_logprobs - hf_logprobs)")
         print(f"  Average imp_weight: {avg_imp_weight:.4f}")
         print(f"  Median imp_weight:  {median_imp_weight:.4f}")

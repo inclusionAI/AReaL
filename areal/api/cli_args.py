@@ -1060,29 +1060,31 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "Use the decoupled loss. Implicitly enables recompute_logprob."
         },
     )
-    behav_imp_weight_cap: float | None = field(
+    behave_imp_weight_cap: float | None = field(
         default=5.0,
         metadata={
-            "help": "Filter out tokens/sequences where behav_imp_weight exceeds this cap when computing loss. "
-            "Must be > 1.0 when mode is not 'disable'. use_decoupled_loss must be true. "
-            "Mode controlled by behav_imp_weight_mode (mask/truncate/disable)."
+            "help": "Filter out tokens/sequences where behave_imp_weight exceeds this cap when computing loss. "
+            "Only effective when use_decoupled_loss=True (decoupled/async training). "
+            "Must be > 1.0 when mode is not 'disabled'. "
+            "Mode controlled by behave_imp_weight_mode (mask/truncate/disabled)."
         },
     )
-    behav_imp_weight_mode: str = field(
+    behave_imp_weight_mode: str = field(
         default="token_mask",
         metadata={
             "help": "Mode for importance weight filtering. "
+            "Only effective when use_decoupled_loss=True (decoupled/async training). "
             "'token_truncate': clamp token ratio to [0, cap]. "
             "'token_mask': set token ratio to 0 where ratio > cap. "
             "'sequence_truncate': clamp sequence ratio to [0, cap]. "
             "'sequence_mask': set sequence ratio to 0 where ratio > cap. "
-            "'disable': disable importance weight correction.",
+            "'disabled': disable importance weight correction.",
             "choices": [
                 "token_truncate",
                 "token_mask",
                 "sequence_truncate",
                 "sequence_mask",
-                "disable",
+                "disabled",
             ],
         },
     )
@@ -1136,20 +1138,32 @@ class PPOActorConfig(TrainEngineConfig):
 
     def __post_init__(self):
         """Validate MIS/TIS configuration."""
-        if self.behav_imp_weight_mode == "disable":
-            if self.behav_imp_weight_cap is not None:
+        if self.behave_imp_weight_mode == "disabled":
+            if self.behave_imp_weight_cap is not None:
                 raise ValueError(
-                    f"behav_imp_weight_cap must be None when behav_imp_weight_mode is 'disable', "
-                    f"got {self.behav_imp_weight_cap}."
+                    f"behave_imp_weight_cap must be None when behave_imp_weight_mode is 'disabled', "
+                    f"got {self.behave_imp_weight_cap}."
                 )
         else:
             if (
-                self.behav_imp_weight_cap is not None
-                and self.behav_imp_weight_cap <= 1.0
+                self.behave_imp_weight_cap is not None
+                and self.behave_imp_weight_cap <= 1.0
             ):
                 raise ValueError(
-                    f"behav_imp_weight_cap must be > 1.0 when behav_imp_weight_mode is not 'disable', "
-                    f"got {self.behav_imp_weight_cap}."
+                    f"behave_imp_weight_cap must be > 1.0 when behave_imp_weight_mode is not 'disabled', "
+                    f"got {self.behave_imp_weight_cap}."
+                )
+
+        # Warn if behave_imp_weight settings are configured but use_decoupled_loss is False
+        if not self.use_decoupled_loss:
+            if (
+                self.behave_imp_weight_cap is not None
+                or self.behave_imp_weight_mode != "disabled"
+            ):
+                logger.warning(
+                    "behave_imp_weight_cap and behave_imp_weight_mode are configured but "
+                    "use_decoupled_loss=False. These settings will be ignored. "
+                    "Set use_decoupled_loss=True to enable decoupled loss with importance weight correction."
                 )
 
 

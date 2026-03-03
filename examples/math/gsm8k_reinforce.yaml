@@ -68,7 +68,7 @@ actor:
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true
-  behav_imp_weight_cap: 5.0
+  behave_imp_weight_cap: 5.0
   adv_norm:
     mean_level: batch
     std_level: batch

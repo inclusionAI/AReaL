@@ -94,9 +94,9 @@ class PPOActor:
 
             logger.info("  log_p_theta (π_θ): TRAINING FORWARD PASS (current policy)")
 
-            if config.behav_imp_weight_cap:
+            if config.behave_imp_weight_cap:
                 logger.info(
-                    f"  Importance weight cap: {config.behav_imp_weight_cap:.1f} "
+                    f"  Importance weight cap: {config.behave_imp_weight_cap:.1f} "
                     "(filters out tokens with extreme weights)"
                 )
 
@@ -293,8 +293,8 @@ class PPOActor:
             scalars["use_dual_clip"] = 1
         else:
             scalars["use_dual_clip"] = 0
-        if self.config.behav_imp_weight_cap is not None:
-            scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
+        if self.config.behave_imp_weight_cap is not None:
+            scalars["behave_imp_weight_cap"] = self.config.behave_imp_weight_cap
         stats_tracker.scalar(**scalars)
 
         if self.config.log_agent_stats:
@@ -327,7 +327,7 @@ class PPOActor:
                         eps_clip=self.config.eps_clip,
                         eps_clip_higher=self.config.eps_clip_higher,
                         c_clip=self.config.c_clip,
-                        behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                        behave_imp_weight_cap=self.config.behave_imp_weight_cap,
                         m2_threshold=self.m2_threshold,
                         importance_sampling_level=self.config.importance_sampling_level,
                         current_version=current_version,
@@ -336,7 +336,7 @@ class PPOActor:
                         sapo_tau_pos=self.config.sapo_tau_pos,
                         sapo_tau_neg=self.config.sapo_tau_neg,
                         use_decoupled_loss=self.config.use_decoupled_loss,
-                        behav_imp_weight_mode=self.config.behav_imp_weight_mode,
+                        behave_imp_weight_mode=self.config.behave_imp_weight_mode,
                     ),
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
@@ -361,7 +361,7 @@ def grpo_loss_fn(
     eps_clip: float,
     eps_clip_higher: float | None,
     c_clip: float | None,
-    behav_imp_weight_cap: float | None,
+    behave_imp_weight_cap: float | None,
     m2_threshold: float | None = None,
     importance_sampling_level: str = "token",
     current_version: int | None = None,
@@ -370,7 +370,7 @@ def grpo_loss_fn(
     sapo_tau_pos: float = 1.0,
     sapo_tau_neg: float = 1.05,
     use_decoupled_loss: bool = False,
-    behav_imp_weight_mode: str = "token_mask",
+    behave_imp_weight_mode: str = "token_mask",
     vocab_min_logits: torch.Tensor | None = None,
     vocab_max_logits: torch.Tensor | None = None,
 ):
@@ -424,10 +424,10 @@ def grpo_loss_fn(
             loss_mask=loss_mask,
             c_clip=c_clip,
             proximal_logprobs=prox_logp,
-            behav_imp_weight_cap=behav_imp_weight_cap,
+            behave_imp_weight_cap=behave_imp_weight_cap,
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
-            behav_imp_weight_mode=behav_imp_weight_mode,
+            behave_imp_weight_mode=behave_imp_weight_mode,
         )
 
     # Log training statistics

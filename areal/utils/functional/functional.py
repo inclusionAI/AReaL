@@ -141,13 +141,13 @@ def _compute_sequence_level_ratio_and_advantages(
     return ratio, advantages
 
 
-def compute_behav_imp_weight(
+def compute_behave_imp_weight(
     proximal_logprobs: torch.Tensor,
     old_logprobs: torch.Tensor,
     loss_mask: torch.Tensor,
     cu_seqlens: torch.Tensor | None,
-    behav_imp_weight_mode: str,
-    behav_imp_weight_cap: float | None,
+    behave_imp_weight_mode: str,
+    behave_imp_weight_cap: float | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute behavioural importance weight for decoupled loss correction.
 
@@ -156,27 +156,24 @@ def compute_behav_imp_weight(
         old_logprobs: Log probabilities from inference engine
         loss_mask: Boolean mask indicating valid tokens
         cu_seqlens: Cumulative sequence lengths for packed sequences
-        behav_imp_weight_mode: Mode for importance weight correction
+        behave_imp_weight_mode: Mode for importance weight correction
             - 'token_truncate': clamp token ratio to [0, cap]
             - 'token_mask': set token ratio to 0 where ratio > cap
             - 'sequence_truncate': clamp sequence ratio to [0, cap]
             - 'sequence_mask': set sequence ratio to 0 where ratio > cap
-            - 'disable': skip importance weight correction
-        behav_imp_weight_cap: Cap value for importance weights
+            - 'disabled': skip importance weight correction
+        behave_imp_weight_cap: Cap value for importance weights
 
     Returns:
         Tuple of (behave_imp_weight, behave_approx_kl, behave_mask)
     """
-    if behav_imp_weight_mode == "disable":
-        # Disable mode: return zeros
-        return (
-            torch.zeros_like(loss_mask, dtype=torch.float32),
-            torch.zeros_like(proximal_logprobs),
-            torch.zeros_like(loss_mask, dtype=torch.bool),
+    if behave_imp_weight_mode == "disabled":
+        raise ValueError(
+            "compute_behave_imp_weight should not be called with mode='disabled'. "
+            "The caller should guard this call with 'if behave_imp_weight_mode != \"disabled\"'."
         )
 
-    # Infer level from mode (token vs sequence)
-    is_sequence_level = "sequence" in behav_imp_weight_mode
+    is_sequence_level = "sequence" in behave_imp_weight_mode
     behave_approx_kl = proximal_logprobs - old_logprobs
     behave_imp_weight_log_ratio = behave_approx_kl
 
@@ -195,14 +192,14 @@ def compute_behav_imp_weight(
         behave_imp_weight = behave_imp_weight_log_ratio.exp()
 
     # Apply cap (truncate or mask) based on mode
-    if behav_imp_weight_cap is not None:
-        if "truncate" in behav_imp_weight_mode:
+    if behave_imp_weight_cap is not None:
+        if "truncate" in behave_imp_weight_mode:
             behave_imp_weight = behave_imp_weight.clamp(
-                min=0.0, max=behav_imp_weight_cap
+                min=0.0, max=behave_imp_weight_cap
             )
         else:  # mask
             behave_imp_weight = torch.where(
-                behave_imp_weight > behav_imp_weight_cap, 0.0, behave_imp_weight
+                behave_imp_weight > behave_imp_weight_cap, 0.0, behave_imp_weight
             )
 
     # Apply loss_mask
@@ -222,10 +219,10 @@ def ppo_actor_loss_fn(
     loss_mask: torch.Tensor,
     eps_clip_higher: float | None = None,
     c_clip: float | None = None,
-    behav_imp_weight_cap: float | None = None,
+    behave_imp_weight_cap: float | None = None,
     importance_sampling_level: str = "token",
     cu_seqlens: torch.Tensor | None = None,
-    behav_imp_weight_mode: str = "token_mask",
+    behave_imp_weight_mode: str = "token_mask",
 ) -> tuple[torch.Tensor, dict]:
     """
     When decoupled loss is disabled:
@@ -243,12 +240,12 @@ def ppo_actor_loss_fn(
             Required when inputs are 1D and importance_sampling_level='sequence'.
             Shape: [batch_size + 1], where cu_seqlens[i] marks the start of sequence i.
             Not needed for 2D padded inputs (sequences identified by batch dimension).
-        behav_imp_weight_mode: Mode for importance weight correction (mask or truncate).
+        behave_imp_weight_mode: Mode for importance weight correction (mask or truncate).
             - 'token_truncate': clamp token ratio to [0, cap]
             - 'token_mask': set token ratio to 0 where ratio > cap
             - 'sequence_truncate': clamp sequence ratio to [0, cap]
             - 'sequence_mask': set sequence ratio to 0 where ratio > cap
-            - 'disable': skip importance weight correction
+            - 'disabled': skip importance weight correction
     """
     loss_mask_count = loss_mask.count_nonzero() or 1
 
@@ -287,14 +284,14 @@ def ppo_actor_loss_fn(
 
     # Compute behavioural importance weight only when not disabled
     # When disabled, pg_loss remains unchanged (no behavioural correction applied)
-    if behav_imp_weight_mode != "disable":
-        behave_imp_weight, behave_approx_kl, behave_mask = compute_behav_imp_weight(
+    if behave_imp_weight_mode != "disabled":
+        behave_imp_weight, behave_approx_kl, behave_mask = compute_behave_imp_weight(
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
             loss_mask=loss_mask,
             cu_seqlens=cu_seqlens,
-            behav_imp_weight_mode=behav_imp_weight_mode,
-            behav_imp_weight_cap=behav_imp_weight_cap,
+            behave_imp_weight_mode=behave_imp_weight_mode,
+            behave_imp_weight_cap=behave_imp_weight_cap,
         )
         pg_loss = pg_loss * behave_imp_weight
 
@@ -309,7 +306,7 @@ def ppo_actor_loss_fn(
         clip_mask=clip_mask,
         dual_clip_mask=dual_clip_mask,
     )
-    if proximal_logprobs is not None and behav_imp_weight_mode != "disable":
+    if proximal_logprobs is not None and behave_imp_weight_mode != "disabled":
         stat.update(
             behave_approx_kl=behave_approx_kl.detach(),
             behave_imp_weight=behave_imp_weight.detach(),
