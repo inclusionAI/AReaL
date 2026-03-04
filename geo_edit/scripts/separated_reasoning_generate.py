@@ -442,11 +442,18 @@ def main():
     save_global_meta_info(output_path, meta_info_list)
     logger.info(f"All tasks completed. Total successful: {len(meta_info_list)}")
 
-    # Shutdown Ray tool agents
+    # Shutdown Ray tool agents BEFORE pool closes to avoid SIGTERM conflicts
     if tool_router.is_agent_enabled():
         logger.info("Shutting down shared Ray tool agents...")
         tool_router.shutdown_agents()
         logger.info("Ray tool agents shutdown complete")
+
+    # Explicitly shutdown Ray to avoid atexit conflicts
+    import ray
+    if ray.is_initialized():
+        logger.info("Shutting down Ray...")
+        ray.shutdown()
+        logger.info("Ray shutdown complete")
 
 
 if __name__ == "__main__":
