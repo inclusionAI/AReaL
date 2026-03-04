@@ -223,7 +223,7 @@ def _run_one_task(task_payload: dict):
             logger.info(f"[{task_id}] Step {step} Phase 1: Generating reasoning...")
             _WORKER_AGENT.config.generate_config = _WORKER_REASONING_ONLY_CONFIG
             reasoning_action, reasoning_extra = _WORKER_AGENT.act(task.contents)
-
+            logger.warning(reasoning_action)
             # Extract reasoning text from action
             if _WORKER_API_MODE == "google":
                 text_parts = [p.text for p in reasoning_action.parts if p.text and not p.thought]
