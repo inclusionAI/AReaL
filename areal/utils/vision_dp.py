@@ -138,7 +138,9 @@ def prepare_local_vision_inputs(
     local_pixel_values = pixel_values[start_patch:end_patch]
     local_grid_thw = grid_thw[first_img_idx : last_img_idx + 1]
 
-    expected_patches = end_patch - start_patch
+    # Cross-check: verify extracted slice matches independently computed patch counts
+    independent_counts = get_image_patch_counts(local_grid_thw)
+    expected_patches = sum(independent_counts)
     assert local_pixel_values.shape[0] == expected_patches, (
         f"[Vision DP] Local patch count mismatch: "
         f"extracted={local_pixel_values.shape[0]}, expected={expected_patches}, "
