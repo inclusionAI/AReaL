@@ -178,6 +178,7 @@ All RL algorithms support both asynchronous and synchronous versions by setting
 | **M2PO**                 | [📖 Docs](docs/algorithms/m2po.md)        | [📄 Paper](https://arxiv.org/abs/2510.01161)   | [🔗 GSM8K Example](examples/math/gsm8k_m2po.yaml)            |
 | **RLHF Reward Modeling** | -                                         | -                                              | [🔗 RLHF Example](examples/alignment/)                       |
 | **SFT**                  | -                                         | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)               |
+| **Distillation**                  | [📖 Docs](docs/en/algorithms/distillation.md)                                         |  [📄 Paper](https://arxiv.org/pdf/2506.02208)                                              | [🔗 GSM8K Example](examples/distillation/gsm8k_grpo_distill.yaml)               |
 
 ### Models
 
