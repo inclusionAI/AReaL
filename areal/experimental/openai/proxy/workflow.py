@@ -205,7 +205,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 return None
 
             # Record stats
-            last_id = list(interactions.keys())[-1]
+            last_id = next(reversed(interactions))
             last_reward = interactions[last_id].reward
             stats_tracker.get(workflow_context.stat_scope()).scalar(reward=last_reward)
             return interactions
