@@ -1,13 +1,21 @@
+import abc
 import os
+import shlex
+import subprocess
+import sys
+import time
 import traceback
 from concurrent.futures import Future
 from typing import Any
 
 import ray
+import requests
 
 from areal.api import InferenceEngine, TrainEngine
 from areal.api.cli_args import BaseExperimentConfig
 from areal.infra.rpc.rtensor import RTensor
+from areal.infra.rpc.serialization import deserialize_value, serialize_value
+from areal.infra.utils.proc import kill_process_tree
 from areal.utils import logging, name_resolve, seeding
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -17,25 +25,16 @@ from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports
 
 
-@ray.remote
-class RayRPCServer:
+class RayServer(abc.ABC):
     """
-    Ray engine container. Represents either:
-    - one training world rank, or
-    - one rollout instance
-
-    Supports multiple named engines per worker for colocation scenarios.
-
-    Placement group scheduling is controlled by the scheduler.
-    The actor is only responsible for the engine lifecycle and method calls
-    within this process.
+    Ray actor base class that all Ray actors under RayScheduler should inherit from
     """
 
-    def __init__(self):
+    def __init__(self, config: BaseExperimentConfig, **kwargs):
         self._engines: dict[str, TrainEngine | InferenceEngine] = {}
         self._default_engine_name: str | None = None  # For backward compatibility
         self._allocated_port = set()
-        self.logger = logging.getLogger("RayRPCServer")
+        self.config: BaseExperimentConfig = config
 
     def _get_device(self):
         # lazy resolve the device inside worker process
@@ -82,6 +81,51 @@ class RayRPCServer:
     def set_env(self, env: dict[str, str]) -> None:
         for k, v in env.items():
             os.environ[str(k)] = str(v)
+
+    def post_init(self, **kwargs) -> Any:
+        # the HTTPLauncher needs this, but keeping this here for interface compatibility
+        # launched after the actor has been deployed
+        pass
+
+    @abc.abstractmethod
+    def create_engine(
+        self,
+        engine: str,
+        *init_args,
+        engine_name: str | None = None,
+        **init_kwargs,
+    ) -> None:
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def call(self, method: str, *args, engine_name: str | None = None, **kwargs) -> Any:
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def destroy(self) -> None:
+        raise NotImplementedError()
+
+    def __ray_shutdown__(self):
+        self.destroy()
+
+
+@ray.remote
+class RayRPCServer(RayServer):
+    """
+    Ray engine container. Represents either:
+    - one training world rank, or
+    - one rollout instance
+
+    Supports multiple named engines per worker for colocation scenarios.
+
+    Placement group scheduling is controlled by the scheduler.
+    The actor is only responsible for the engine lifecycle and method calls
+    within this process.
+    """
+
+    def __init__(self, config: BaseExperimentConfig, **kwargs):
+        super().__init__(config, **kwargs)
+        self.logger = logging.getLogger("RayRPCServer")
 
     def create_engine(
         self,
@@ -213,3 +257,171 @@ class RayRPCServer:
         self._engines.clear()
         self._default_engine_name = None
         ray.actor.exit_actor()
+
+
+@ray.remote
+class RayHTTPLauncher(RayServer):
+    """
+    Ray implementation of a launcher to launch proxy servers and any HTTP servers
+    """
+
+    REQUIRED_ARGS = ("command", "worker_index", "role")
+
+    def __init__(self, config: BaseExperimentConfig, **kwargs):
+        super().__init__(config, **kwargs)
+        self.logger = logging.getLogger("RayHTTPLauncher")
+
+        missing = [k for k in self.REQUIRED_ARGS if k not in kwargs]
+        if missing:
+            raise TypeError(f"Missing required kwargs: {missing}")
+
+        self.command = kwargs["command"]
+        self.worker_index = kwargs["worker_index"]
+        self.role = kwargs["role"]
+        self.worker_ip = ray.util.get_node_ip_address()
+        self.worker_port = None
+        self.worker_process: subprocess.Popen | None = None
+
+    def post_init(self, **kwargs):
+        self.worker_port = kwargs.get("port", self.alloc_ports(1)[0])
+        self.worker_process = self.launch_server(port=self.worker_port)
+
+    def create_engine(
+        self,
+        engine: str,
+        *init_args,
+        engine_name: str | None = None,
+        **init_kwargs,
+    ) -> None:
+        self.logger.debug(f"Initializing engine {engine}")
+        payload = {
+            "engine": engine,
+            "engine_name": engine_name,
+            "init_args": serialize_value(list(init_args)),
+            "init_kwargs": serialize_value(init_kwargs),
+        }
+        return self._post_request("create_engine", payload)
+
+    def call(self, method: str, *args, engine_name: str | None = None, **kwargs) -> Any:
+        self.logger.debug(
+            f"Calling {method} on engine '{engine_name}' with arguments {args=} {kwargs=}"
+        )
+
+        payload = {
+            "method": method,
+            "engine_name": engine_name,
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        return self._post_request("call", payload)
+
+    def destroy(self) -> None:
+        if self.worker_process and self.worker_process.poll() is None:
+            kill_process_tree(self.worker_process.pid, timeout=3, graceful=True)
+
+        # Destroy all engines
+        for engine_name, engine in list(self._engines.items()):
+            try:
+                engine.destroy()
+                self.logger.info(f"RayRPCServer Engine '{engine_name}' destroyed")
+            except Exception as e:
+                self.logger.error(
+                    f"RayRPCServer error destroying engine '{engine_name}': {e}"
+                )
+        self._engines.clear()
+        self._default_engine_name = None
+        ray.actor.exit_actor()
+
+    def launch_server(self, port):
+        # keeping this as a separate function to support Awex server launches later
+        if not self.command:
+            raise RuntimeError(
+                f"Command was not given to {self.__class__.__name__}.launch_server. Cannot launch without command."
+            )
+
+        cmd = [sys.executable, "-m"]
+        cmd.extend(shlex.split(self.command))
+        cmd.extend(["--port", str(port)])
+
+        cmd.extend(["--experiment-name", self.config.experiment_name])
+        cmd.extend(["--trial-name", self.config.trial_name])
+        cmd.extend(["--role", self.role])
+        cmd.extend(["--worker-index", str(self.worker_index)])
+
+        cluster_config = self.config.cluster
+        name_resolve = self.config.cluster.name_resolve
+
+        cmd.extend(["--name-resolve-type", name_resolve.type])
+        cmd.extend(["--nfs-record-root", name_resolve.nfs_record_root])
+        cmd.extend(["--etcd3-addr", name_resolve.etcd3_addr])
+        cmd.extend(["--fileroot", str(cluster_config.fileroot)])
+
+        _env = os.environ.copy()
+        self.worker_process = subprocess.Popen(
+            cmd, env=_env, stdout=sys.stdout, stderr=subprocess.STDOUT
+        )
+
+        try:
+            self._check_health()
+        except Exception as e:
+            self.logger.error(e)
+            kill_process_tree(self.worker_process.pid, timeout=3, graceful=True)
+            raise RuntimeError(f"Could not launch server with command {cmd}")
+
+        return self.worker_process
+
+    def _post_request(
+        self,
+        endpoint,
+        payload,
+        http_timeout: float = 7200.0,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+    ):
+        url = f"{self.url}/{endpoint}"
+        # adapted from local scheduler
+        for attempt in range(1, max_retries + 1):
+            if self.worker_process and self.worker_process.poll() is not None:
+                raise RuntimeError("Worker has terminated")
+
+            response = requests.post(url, json=payload, timeout=http_timeout)
+
+            if response.status_code == 200:
+                result = response.json().get("result")
+                deserialized_result = deserialize_value(result)
+                return deserialized_result
+            elif response.status_code in [400, 500]:
+                error_detail = response.json().get("detail", "unknown error")
+                return error_detail
+
+            # otherwise retry
+            if attempt < max_retries:
+                delay = retry_delay * (2 ** (attempt - 1))
+                self.logger.warning(
+                    f"Calling url {url} failed on actor '{ray.runtime_context.get_runtime_context().current_actor}' "
+                    f"(attempt {attempt}/{max_retries}): {response.json()}. "
+                    f"Retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+
+    @property
+    def url(self):
+        return f"http://{self.worker_ip}:{self.worker_port}"
+
+    def _check_health(self, timeout: float = 60.0):
+        url = f"{self.url}/health"
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.worker_process and self.worker_process.poll() is not None:
+                raise RuntimeError("Server process exited before becoming healthy")
+
+            try:
+                r = requests.get(url, timeout=2.0)
+                if r.status_code == 200:
+                    return
+            except requests.RequestException:
+                # expected during startup
+                pass
+            time.sleep(1)
+
+        raise RuntimeError(f"Health check timed out for {url}")
