@@ -124,7 +124,7 @@ class GroundingDINOActor(BaseToolModelActor):
         self.processor = AutoProcessor.from_pretrained(self.model_name)
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained(
             self.model_name,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.float32,
             device_map=self.device_map,
         )
         self.model.eval()
