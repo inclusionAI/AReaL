@@ -36,14 +36,13 @@ as much as you'd enjoy real milk tea. Cheers!
 own 🦞 OpenClaw agent by simply replacing the `base_url` and `api_key` with AReaL's RL
 service - no complicated dependencies, no code changes, works with any agentic runtime!
 
-**\[2026/02/06\]** We are delighted to introduce **EigenData**, a self-evolving data
+**\[2026/02/06\]** We are delighted to introduce **AReaL-SEA**, a self-evolving data
 synthesis engine. Combined with RL training on AReaL, the 235B MoE model surpasses GPT 5
 and achieves comparable performance with Gemini 3.0 Pro on $\\tau^2$-bench! Check out
 the [paper](https://arxiv.org/pdf/2601.22607),
 [model](https://huggingface.co/inclusionAI/AReaL-SEA-235B-A22B),
-[data](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data),
-[code](https://github.com/inclusionAI/AReaL/tree/main/examples/tau2), and
-[announcement on X](https://x.com/Eigen_AI_Labs/status/2018561648022130805?s=20).
+[data](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data), and
+[code](https://github.com/inclusionAI/AReaL/tree/main/examples/tau2).
 
 **\[2026/01/15\]** Congrats to our friends at [CAMEL-AI](https://www.camel-ai.org/) for
 open-sourcing [SETA](https://github.com/camel-ai/seta), their terminal agent RL project
