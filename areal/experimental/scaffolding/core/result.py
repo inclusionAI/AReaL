@@ -2,6 +2,7 @@
 # Vendored from tensorrt_llm.scaffolding.result
 
 import asyncio
+import queue
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -15,9 +16,16 @@ class ScaffoldingOutput:
 
 
 class ScaffoldingResult:
+    """Result object for scaffolding requests.
+
+    Uses a thread-safe ``queue.Queue`` for cross-thread communication so
+    that producers (ScaffoldingLlm loop thread) and consumers
+    (caller's event loop) can safely exchange data.
+    """
+
     def __init__(self):
         super().__init__()
-        self.aqueue = asyncio.Queue()
+        self._queue: queue.Queue = queue.Queue()
         self.outputs = []
         # only support one output for now, so use an empty obj to init
         self.outputs.append(ScaffoldingOutput("", []))
@@ -31,22 +39,30 @@ class ScaffoldingResult:
         self.set_output_streaming(None)
 
     def set_output_streaming(self, output: ScaffoldingOutput | Any):
-        self.aqueue.put_nowait(output)
+        self._queue.put_nowait(output)
 
     def set_task_collections(self, task_collections: Mapping[str, Any]):
         self.task_collections = task_collections
 
     async def _aresult_step(self):
-        obj = await self.aqueue.get()
+        """Asynchronously wait for the next item from the thread-safe queue."""
+        loop = asyncio.get_running_loop()
+        obj = await loop.run_in_executor(None, self._queue.get)
         if obj is None:
             self._done = True
         else:  # obj is ScaffoldingOutput
             self.outputs[0] = obj
 
     def result(self, timeout: float | None = None) -> "ScaffoldingResult":
-        if not self._done:
-            loop = asyncio.get_event_loop()
-            asyncio.run_coroutine_threadsafe(self.aresult(), loop).result()
+        while not self._done:
+            try:
+                obj = self._queue.get(timeout=timeout)
+            except queue.Empty:
+                break
+            if obj is None:
+                self._done = True
+            else:
+                self.outputs[0] = obj
         return self
 
     async def aresult(self) -> "ScaffoldingResult":

@@ -157,9 +157,7 @@ class ChatScaffoldingWorkflow(ScaffoldingWorkflow):
             Trajectory tensors for PPO training.
         """
         if self.worker is None:
-            logger.info("Calling _lazy_init_scaffolding ...")
             self._lazy_init_scaffolding(engine)
-            logger.info("_lazy_init_scaffolding done.")
 
         # Tokenize the original prompt (before multi-turn)
         input_ids = list(
@@ -178,11 +176,8 @@ class ChatScaffoldingWorkflow(ScaffoldingWorkflow):
         self.multi_turn_controller.input_tokens = input_ids
 
         # Run full pipeline via scaffolding_llm
-        logger.info("Calling generate_async ...")
         result = self.scaffolding_llm.generate_async(prompt_str)
-        logger.info("generate_async returned, awaiting result ...")
         await result
-        logger.info("Result received.")
 
         # Extract trace results from ScaffoldingOutput
         scaffolding_output = result.outputs[0]

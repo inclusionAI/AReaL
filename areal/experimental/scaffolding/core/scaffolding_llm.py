@@ -9,14 +9,10 @@ from collections.abc import Generator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from areal.utils import logging as areal_logging
-
 from .controller import Controller, ParallelProcess
 from .result import ScaffoldingResult
 from .task import Task
 from .worker import Worker
-
-_logger = areal_logging.getLogger("ScaffoldingLlm")
 
 
 @dataclass(frozen=True)
@@ -37,15 +33,17 @@ class ScaffoldingLlm:
         self.prototype_controller = prototype_controller
         self.workers = workers
 
-        self.loop = self._get_loop()
-        asyncio.set_event_loop(self.loop)
-        self.task_queue = asyncio.Queue()
-        self.main_loop_stop_event = asyncio.Event()
-        self.shutdown_event = asyncio.Event()
-        if self.own_loop:
-            self._run_main_loop_thread()
-        else:
-            self._run_main_loop_coroutine()
+        # Always create a dedicated event loop in a separate thread.
+        # This avoids deadlocks when ScaffoldingLlm is used inside another
+        # event loop (e.g. AsyncTaskRunner's uvloop), where fire-and-forget
+        # tasks created via create_task() would never get executed.
+        #
+        # asyncio primitives (Queue, Event) are created inside the loop
+        # thread to ensure they are bound to the correct event loop.
+        self.loop = asyncio.new_event_loop()
+        self._ready = threading.Event()
+        self._run_main_loop_thread()
+        self._ready.wait()
 
         # For top scheduler
         self.running_req_count = 0
@@ -60,56 +58,15 @@ class ScaffoldingLlm:
     def __exit__(self):
         self.shutdown()
 
-    def _get_loop(self):
-        try:
-            self.own_loop = False
-            return asyncio.get_running_loop()
-        except RuntimeError:
-            self.own_loop = True
-            return asyncio.new_event_loop()
-        return None
-
-    def _schedule_on_loop(self, coro):
-        """Schedule a coroutine on self.loop.
-
-        Uses create_task when called from within the event loop thread
-        (to avoid deadlocks with run_coroutine_threadsafe on uvloop),
-        and falls back to run_coroutine_threadsafe for cross-thread calls.
-        """
-        try:
-            running = asyncio.get_running_loop()
-        except RuntimeError:
-            running = None
-
-        if running is self.loop:
-            _logger.info("_schedule_on_loop: same loop, create_task for %s", coro.__name__)
-            self.loop.create_task(coro)
-        elif running is not None:
-            _logger.warning(
-                "_schedule_on_loop: different loop! running=%s self.loop=%s",
-                id(running), id(self.loop),
-            )
-            asyncio.run_coroutine_threadsafe(coro, self.loop)
-        else:
-            _logger.info("_schedule_on_loop: no running loop, run_coroutine_threadsafe for %s", coro.__name__)
-            asyncio.run_coroutine_threadsafe(coro, self.loop)
-
     async def _handle_controller_generator(
         self, gen: Generator, request: ScaffoldingRequest = None
     ):
         """Handle a controller generator, processing tasks and parallel processes."""
-        step = 0
         for obj in gen:
             if isinstance(obj, ParallelProcess):
                 await self._handle_parallel_process(obj, request)
             else:
-                step += 1
-                _logger.info(
-                    "Dispatching task list step=%d, tasks=%d, types=%s",
-                    step, len(obj), [type(t).__name__ for t in obj],
-                )
                 await self._handle_task_list(obj, request)
-                _logger.info("Task list step=%d completed.", step)
 
     async def _handle_task_list(
         self, tasks: list[Task], request: ScaffoldingRequest = None
@@ -193,19 +150,21 @@ class ScaffoldingLlm:
 
     async def _main_loop_async_func(self):
         """Main async loop function."""
-        _logger.info("_main_loop_async_func STARTED (loop=%s)", id(asyncio.get_running_loop()))
         handle_event_task = asyncio.create_task(self._handle_event_loop())
         await handle_event_task
         self.main_loop_stop_event.set()
 
-    def _run_main_loop_coroutine(self):
-        self._schedule_on_loop(self._main_loop_async_func())
-
     def _run_main_loop_thread(self):
         def main_loop_thread():
+            asyncio.set_event_loop(self.loop)
+            # Create asyncio primitives inside the loop thread.
+            self.task_queue = asyncio.Queue()
+            self.main_loop_stop_event = asyncio.Event()
+            self.shutdown_event = asyncio.Event()
+            self._ready.set()
             self.loop.run_until_complete(self._main_loop_async_func())
 
-        self.main_loop_thread = threading.Thread(target=main_loop_thread)
+        self.main_loop_thread = threading.Thread(target=main_loop_thread, daemon=True)
         self.main_loop_thread.start()
 
     def generate_async(self, prompt: str) -> ScaffoldingResult:
@@ -227,7 +186,7 @@ class ScaffoldingLlm:
             else:
                 await self.task_queue.put(request)
 
-        self._schedule_on_loop(put_request())
+        asyncio.run_coroutine_threadsafe(put_request(), self.loop)
 
         return result
 
@@ -260,12 +219,8 @@ class ScaffoldingLlm:
             for worker in self.workers.values():
                 await worker.async_shutdown()
 
-        self._schedule_on_loop(stop_task_on_loop())
-
-        if self.own_loop:
-            self.main_loop_thread.join()
-        else:
-            self.shutdown_event.set()
+        asyncio.run_coroutine_threadsafe(stop_task_on_loop(), self.loop)
+        self.main_loop_thread.join()
 
         if shutdown_workers:
             shutdown_workers_func()
