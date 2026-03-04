@@ -185,7 +185,7 @@ class GroundingDINOActor(BaseToolModelActor):
             results = self.processor.post_process_grounded_object_detection(
                 outputs,
                 inputs["input_ids"],
-                box_threshold=BOX_THRESHOLD,
+                threshold=BOX_THRESHOLD,
                 text_threshold=TEXT_THRESHOLD,
                 target_sizes=[(H, W)]  # (height, width)
             )
