@@ -68,6 +68,10 @@ if [ -d "$SCRIPT_DIR/figures" ]; then
   cp -r "$SCRIPT_DIR/figures/"* "$SCRIPT_DIR/_build/zh/figures/" 2>/dev/null || true
 fi
 
+# Clean up temporary _static directories from source tree
+echo "[AReaL] Cleaning up temporary static directories..."
+rm -rf "$SCRIPT_DIR/en/_static" "$SCRIPT_DIR/zh/_static" 2>/dev/null || true
+
 # Also copy top-level js/css directories to _static if they exist (lang-toggle files)
 if [ -d "$SCRIPT_DIR/_build/en/js" ]; then
   mkdir -p "$SCRIPT_DIR/_build/en/_static/js"
