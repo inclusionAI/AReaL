@@ -210,12 +210,10 @@ class SAM2Actor(BaseToolModelActor):
 
     def _auto_segment(self, image) -> Tuple[np.ndarray, np.ndarray]:
         """Automatic mask generation for entire image."""
-        import torch
-
         # Use pipeline for automatic segmentation
         results = self.pipe(image, points_per_batch=64)
 
-        # Extract masks and scores
+        # Extract masks and scores, ensuring consistent types
         masks = []
         scores = []
 
@@ -224,8 +222,9 @@ class SAM2Actor(BaseToolModelActor):
         for result in results['scores']:
             scores.append(result)
 
-        masks = np.array(masks)
-        scores = np.array(scores)
+        # Convert to numpy arrays with explicit dtypes
+        masks = np.array(masks, dtype=np.bool_)
+        scores = np.asarray(scores, dtype=np.float32)
 
         return masks, scores
 
@@ -234,7 +233,7 @@ class SAM2Actor(BaseToolModelActor):
         # Use pipeline with bounding box prompt
         results = self.pipe(image, input_boxes=[bbox])
 
-        # Extract masks and scores
+        # Extract masks and scores, ensuring consistent types
         masks = []
         scores = []
 
@@ -243,14 +242,15 @@ class SAM2Actor(BaseToolModelActor):
         for result in results['scores']:
             scores.append(result)
 
-        masks = np.array(masks)
-        scores = np.array(scores)
+        # Convert to numpy arrays with explicit dtypes
+        masks = np.array(masks, dtype=np.bool_)
+        scores = np.asarray(scores, dtype=np.float32)
 
         # Ensure proper shape
         if masks.ndim == 2:
             masks = masks[np.newaxis, ...]
         if scores.ndim == 0:
-            scores = np.array([float(scores)])
+            scores = np.array([float(scores)], dtype=np.float32)
 
         return masks, scores
 
