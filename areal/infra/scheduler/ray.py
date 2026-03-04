@@ -19,7 +19,7 @@ from areal.api.cli_args import (
     SchedulingSpec,
     SchedulingStrategyType,
 )
-from areal.infra.rpc.ray_rpc_server import RayRPCServer
+from areal.infra.rpc.ray_rpc_server import RayHTTPLauncher, RayRPCServer
 from areal.infra.scheduler.exceptions import (
     EngineCallError,
     WorkerCreationError,
@@ -182,7 +182,7 @@ class RayScheduler(Scheduler):
                 name=worker_id,
                 runtime_env=RuntimeEnv(env_vars=env),
                 scheduling_strategy=pg_scheduling_strategy,
-            ).remote()
+            ).remote(config=self.exp_config)
 
             # 0 needed to pad the list as the trainer takes index 1 for ports
             worker_ports = ["0", str(master_port)]
@@ -209,7 +209,8 @@ class RayScheduler(Scheduler):
         role: str,
         target_role: str,
         target_workers: list[RayWorkerInfo],
-        schedulings,
+        schedulings: list[SchedulingSpec],
+        command: str | None = None,
     ) -> list[str]:
         """Create forked workers on same placement groups as target workers.
 
@@ -238,9 +239,11 @@ class RayScheduler(Scheduler):
 
         worker_info_list: list[RayWorkerInfo] = []
         worker_ids: list[str] = []
+        post_init_tasks: list[ray.ObjectRef] = []
 
         for idx, (target_wi, spec) in enumerate(zip(target_workers, schedulings)):
-            worker_id = f"{role}/{idx}"
+            # include parent in ray name since role and iteration idx alone can cause name collision if forking multiple times
+            worker_id = f"{target_role}/{role}/{idx}"
 
             # Reuse placement group from target worker
             pg = target_wi.placement_group
@@ -266,13 +269,23 @@ class RayScheduler(Scheduler):
                     additional_options = dict(num_gpus=0.01)
                 else:
                     additional_options = {"resources": {device: 0.01}}
-            actor = RayRPCServer.options(
+            if command and "rpc.rpc_server" not in command:
+                actor_cls = RayHTTPLauncher
+            else:
+                actor_cls = RayRPCServer
+            actor = actor_cls.options(
                 **additional_options,
                 num_cpus=0,  # Minimal CPU allocation for forked actor
                 name=worker_id,
                 runtime_env=RuntimeEnv(env_vars=target_wi.env_vars),
                 scheduling_strategy=PlacementGroupSchedulingStrategy(**strategy_kwargs),
-            ).remote()
+            ).remote(
+                config=self.exp_config,
+                # needed for RayHTTPLauncher
+                command=command,
+                worker_index=idx,
+                role=role,
+            )
 
             # Build Worker object with same IP/ports as target
             worker_ports = ray.get(
@@ -280,6 +293,8 @@ class RayScheduler(Scheduler):
                     count=len(target_wi.worker.worker_ports)
                 )
             )
+            # run any post inits needed
+            post_init_tasks.append(actor.post_init.remote(port=worker_ports[0]))
 
             worker = Worker(
                 id=worker_id,
@@ -300,8 +315,9 @@ class RayScheduler(Scheduler):
             worker_info_list.append(wi)
             worker_ids.append(worker_id)
 
+        ray.get(post_init_tasks)
         # Register forked workers
-        self._workers[role] = worker_info_list
+        self._workers.setdefault(role, []).extend(worker_info_list)
         for wi in worker_info_list:
             self._worker_info_by_id[wi.worker.id] = wi
 
@@ -562,11 +578,6 @@ class RayScheduler(Scheduler):
         list[str]
             List of worker IDs created (e.g., ["proxy/0", "proxy/1"])
         """
-        if command is not None:
-            logger.warning(
-                f"RayScheduler.fork_workers: 'command' parameter is ignored. "
-                f"Ray actors always use RayRPCServer. Got command='{command}'"
-            )
 
         if target_role not in self._workers:
             raise WorkerNotFoundError(f"Target role '{target_role}' not found for fork")
@@ -575,10 +586,12 @@ class RayScheduler(Scheduler):
         schedulings = []
         for target_wi in target_workers:
             # Use minimal resources for forked workers
-            schedulings.append(SchedulingSpec(cpu=0, mem=0, gpu=1, port_count=1))
+            # use 0 gpu to prevent any scheduling issues since forks so far only use cpu
+            # future forks that require gpu should change fork implementation to accept a scheduling spec
+            schedulings.append(SchedulingSpec(cpu=0, mem=0, gpu=0, port_count=1))
 
-        worker_ids = self._create_forked_workers(
-            role, target_role, target_workers, schedulings
+        worker_ids = self._create_forked_workers_internal(
+            role, target_role, target_workers, schedulings, command
         )
         self._colocated_roles[role] = target_role
         return worker_ids
