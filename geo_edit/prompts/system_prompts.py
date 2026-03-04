@@ -115,11 +115,13 @@ Instructions:
 3. Never require a tool to directly solve the problem, but rather to analyze the problem and provide more information for you to solve the problem.
 4. You can ONLY call ONE tool in each turn. Plan accordingly and choose the most important tool to call.
 5. DO NOT output any information about final answer, including <answer> and </answer> tags, just focus on tool calling plan.
-
-For example, if the ovr model is the tool you want to call to solve a geo-spatial problem, the output should be:
-
-<think>\nThe task requires interpreting a map to provide a shortest drivable route between markers. Since this is a visual-navigation problem, leveraging an image-grounded reasoning tool would help confirm exact road names, junction geometry, and directionality, reducing ambiguity (e.g., whether the starting spur is part of Dene Road, and the precise turns to Brighton Grove and Wilmslow Road). I should use a geometry-aware visual reasoning tool to analyze the map: identify the blue marker's exact road, nearby intersections, and the optimal path to Wilmslow Road and the red marker. The parameters will include the image index (0) and a prompt requesting identification of the start road name, turn sequence to Brighton Grove, and the final approach to Wilmslow Road at Old Hall Lane.\n</think>
 """
+
+# """
+# For example, if the ovr model is the tool you want to call to solve a geo-spatial problem, the output should be like this:
+
+# <think>\nThe task requires interpreting a map to provide a shortest drivable route between markers. Since this is a visual-navigation problem, leveraging an image-grounded reasoning tool would help confirm exact road names, junction geometry, and directionality, reducing ambiguity (e.g., whether the starting spur is part of Dene Road, and the precise turns to Brighton Grove and Wilmslow Road). I should use a geometry-aware visual reasoning tool to analyze the map: identify the blue marker's exact road, nearby intersections, and the optimal path to Wilmslow Road and the red marker. The parameters will include the image index (0) and a prompt requesting identification of the start road name, turn sequence to Brighton Grove, and the final approach to Wilmslow Road at Old Hall Lane.\n</think>
+# """
 SEPARATED_USER_PROMPT="""
 Question: {Question}
 
