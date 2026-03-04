@@ -27,8 +27,10 @@ agent_config = {
 # Set model_path to a local path or HuggingFace model ID
 LOCAL_MODEL_CONFIG = {
     "model_path": "PaddlePaddle/PaddleOCR-VL-1.5",  # Model path (HuggingFace or local)
-    "torch_dtype": "float32",  # Options: "bfloat16", "float16", "float32"
-    "max_new_tokens": 4096,       # Maximum tokens to generate
+    "tensor_parallel_size": 1,  # Number of GPUs for tensor parallelism
+    "max_model_len": 8192,      # Maximum context length
+    "max_num_seqs": 5,          # Maximum number of sequences to process in parallel
+    "max_new_tokens": 4096,     # Maximum tokens to generate
 }
 
 
@@ -44,7 +46,7 @@ TASK_PROMPTS = {
 
 
 class PaddleOCRActor(BaseToolModelActor):
-    """PaddleOCR Actor using PaddleOCR-VL-1.5 vision-language model."""
+    """PaddleOCR Actor using PaddleOCR-VL-1.5 with vLLM for high-performance inference."""
 
     def __init__(
         self,
@@ -53,40 +55,28 @@ class PaddleOCRActor(BaseToolModelActor):
         gpu_memory_utilization: float = 0.8,
         system_prompt: Optional[str] = None,
     ):
-        import torch
-        from transformers import AutoProcessor, AutoModelForImageTextToText
+        from vllm import LLM, SamplingParams
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
         self.model_name = model_name
         model_path = LOCAL_MODEL_CONFIG["model_path"]
 
-        logger.info("Loading PaddleOCR-VL model: %s", model_path)
+        logger.info("Loading PaddleOCR-VL model with vLLM: %s", model_path)
 
-        # Set device
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Initialize vLLM
+        self.llm = LLM(
+            model=model_path,
+            trust_remote_code=True,
+            tensor_parallel_size=LOCAL_MODEL_CONFIG.get("tensor_parallel_size", 1),
+            max_model_len=LOCAL_MODEL_CONFIG.get("max_model_len", max_model_len),
+            max_num_seqs=LOCAL_MODEL_CONFIG.get("max_num_seqs", 5),
+        )
 
-        # Set torch dtype
-        dtype_str = LOCAL_MODEL_CONFIG.get("torch_dtype", "bfloat16")
-        if dtype_str == "bfloat16":
-            self.torch_dtype = torch.bfloat16
-        elif dtype_str == "float16":
-            self.torch_dtype = torch.float16
-        else:
-            self.torch_dtype = torch.float32
-
-        # Load model and processor
-        self.model = AutoModelForImageTextToText.from_pretrained(
-            model_path,
-            torch_dtype=self.torch_dtype
-        ).to(self.device).eval()
-
-        self.processor = AutoProcessor.from_pretrained(model_path)
-
-        self.max_new_tokens = LOCAL_MODEL_CONFIG.get("max_new_tokens", 512)
+        self.max_new_tokens = LOCAL_MODEL_CONFIG.get("max_new_tokens", 4096)
         self._initialized = True
 
-        logger.info("PaddleOCR-VL initialized on GPU %s: %s", self.gpu_ids, model_path)
+        logger.info("PaddleOCR-VL (vLLM) initialized on GPU %s: %s", self.gpu_ids, model_path)
 
     def analyze(
         self,
@@ -99,17 +89,17 @@ class PaddleOCRActor(BaseToolModelActor):
 
         Args:
             image_b64: Base64-encoded image string.
-            temperature: Unused for OCR.
+            temperature: Temperature for sampling.
             max_tokens: Maximum tokens to generate.
-            **kwargs: Tool-specific parameters, expects 'mode' and optional 'task'.
+            **kwargs: Tool-specific parameters, expects 'task' (ocr, table, formula, chart, spotting, seal).
 
         Returns:
             JSON string with OCR results.
         """
+        from vllm import SamplingParams
         from PIL import Image
 
         # Extract parameters
-        mode = kwargs.get("mode", kwargs.get("question", "text")).strip().lower()
         task = kwargs.get("task", "ocr").strip().lower()  # ocr, table, formula, chart, spotting, seal
 
         if task not in TASK_PROMPTS:
@@ -134,12 +124,9 @@ class PaddleOCRActor(BaseToolModelActor):
                 resample_filter = Image.LANCZOS
             image = image.resize((process_w, process_h), resample_filter)
 
-        # Set max_pixels based on task
-        max_pixels = 2048 * 28 * 28 if task == "spotting" else 1280 * 28 * 28
-
         try:
-            # Prepare messages
-            messages = [
+            # Prepare conversation with image and prompt
+            conversation = [
                 {
                     "role": "user",
                     "content": [
@@ -149,28 +136,23 @@ class PaddleOCRActor(BaseToolModelActor):
                 }
             ]
 
-            # Process inputs
-            inputs = self.processor.apply_chat_template(
-                messages,
-                add_generation_prompt=True,
-                tokenize=True,
-                return_dict=True,
-                return_tensors="pt",
-                images_kwargs={
-                    "size": {
-                        "shortest_edge": self.processor.image_processor.min_pixels,
-                        "longest_edge": max_pixels
-                    }
-                },
-            ).to(self.model.device)
+            # Create sampling parameters
+            sampling_params = SamplingParams(
+                temperature=temperature,
+                max_tokens=self.max_new_tokens,
+            )
 
-            # Generate
-            outputs = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens)
-            result = self.processor.decode(outputs[0][inputs["input_ids"].shape[-1]:-1])
+            # Run inference with vLLM
+            outputs = self.llm.chat(
+                messages=conversation,
+                sampling_params=sampling_params,
+            )
+
+            # Extract result
+            result = outputs[0].outputs[0].text
 
             # Return formatted result
             return json.dumps({
-                "mode": mode,
                 "task": task,
                 "text": result.strip(),
                 "success": True
@@ -180,7 +162,6 @@ class PaddleOCRActor(BaseToolModelActor):
             logger.error("PaddleOCR-VL failed: %s", e)
             return json.dumps({
                 "error": str(e),
-                "mode": mode,
                 "task": task,
                 "text": "",
                 "success": False
@@ -191,7 +172,6 @@ class PaddleOCRActor(BaseToolModelActor):
         return {
             "model": self.model_name,
             "initialized": self._initialized,
-            "device": self.device,
         }
 
 
@@ -215,18 +195,13 @@ Supports multilingual text recognition with high accuracy.""",
                 "type": "integer",
                 "description": "The index of the image to analyze. Each image is assigned an index like 'Observation 0', 'Observation 1', etc."
             },
-            "mode": {
-                "type": "string",
-                "enum": ["text"],
-                "description": "Output format mode. Currently only 'text' mode is supported."
-            },
             "task": {
                 "type": "string",
                 "enum": ["ocr", "table", "formula", "chart", "spotting", "seal"],
                 "description": "Recognition task type. Default is 'ocr' for standard text recognition."
             }
         },
-        "required": ["image_index", "mode"]
+        "required": ["image_index"]
     }
 }
 
