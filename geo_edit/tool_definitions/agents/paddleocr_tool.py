@@ -1,11 +1,9 @@
-"""PaddleOCR Tool Agent - Optical Character Recognition."""
+"""PaddleOCR Tool Agent - Optical Character Recognition using PaddleOCR-VL-1.5."""
 
 import base64
 import json
 from io import BytesIO
 from typing import Optional
-
-import numpy as np
 
 from geo_edit.environment.tool_agents.actor import BaseToolModelActor
 from geo_edit.utils.logger import setup_logger
@@ -17,73 +15,36 @@ SYSTEM_PROMPT = ""
 
 # Model configuration
 agent_config = {
-    "model_name_or_path": "paddleocr",  # Uses default PP-OCRv4
-    "max_model_len": 8192,        # Unused, interface compatibility
-    "gpu_memory_utilization": 0.8, # Unused, interface compatibility
-    "temperature": 0.0,           # Unused
-    "max_tokens": 4096,           # Unused
+    "model_name_or_path": "PaddlePaddle/PaddleOCR-VL-1.5",
+    "max_model_len": 8192,
+    "gpu_memory_utilization": 0.8,
+    "temperature": 0.0,
+    "max_tokens":4096,
     "num_gpus": 1,
 }
 
-
-def format_text_mode(ocr_results) -> str:
-    """Format OCR results as concatenated text.
-
-    Args:
-        ocr_results: PaddleOCR output results.
-
-    Returns:
-        JSON string with concatenated text.
-    """
-    if not ocr_results or not ocr_results[0]:
-        return json.dumps({"mode": "text", "text": "", "num_lines": 0})
-
-    texts = []
-    for line in ocr_results[0]:
-        text = line[1][0]  # Extract text from result
-        texts.append(text)
-
-    full_text = " ".join(texts)
-    return json.dumps({
-        "mode": "text",
-        "text": full_text,
-        "num_lines": len(texts)
-    })
+# Local model configuration
+# Set model_path to a local path or HuggingFace model ID
+LOCAL_MODEL_CONFIG = {
+    "model_path": "PaddlePaddle/PaddleOCR-VL-1.5",  # Model path (HuggingFace or local)
+    "torch_dtype": "float32",  # Options: "bfloat16", "float16", "float32"
+    "max_new_tokens": 4096,       # Maximum tokens to generate
+}
 
 
-def format_lines_mode(ocr_results) -> str:
-    """Format OCR results as structured lines with bboxes.
-
-    Args:
-        ocr_results: PaddleOCR output results.
-
-    Returns:
-        JSON string with structured line data.
-    """
-    if not ocr_results or not ocr_results[0]:
-        return json.dumps({"mode": "lines", "lines": [], "num_lines": 0})
-
-    lines = []
-    for line in ocr_results[0]:
-        bbox = line[0]  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-        text = line[1][0]
-        confidence = float(line[1][1])
-
-        lines.append({
-            "text": text,
-            "bbox": [[int(p[0]), int(p[1])] for p in bbox],
-            "confidence": round(confidence, 3)
-        })
-
-    return json.dumps({
-        "mode": "lines",
-        "lines": lines,
-        "num_lines": len(lines)
-    })
+# Task prompts for PaddleOCR-VL
+TASK_PROMPTS = {
+    "ocr": "OCR:",
+    "table": "Table Recognition:",
+    "formula": "Formula Recognition:",
+    "chart": "Chart Recognition:",
+    "spotting": "Spotting:",
+    "seal": "Seal Recognition:",
+}
 
 
 class PaddleOCRActor(BaseToolModelActor):
-    """PaddleOCR Actor using PaddleOCR library."""
+    """PaddleOCR Actor using PaddleOCR-VL-1.5 vision-language model."""
 
     def __init__(
         self,
@@ -92,24 +53,40 @@ class PaddleOCRActor(BaseToolModelActor):
         gpu_memory_utilization: float = 0.8,
         system_prompt: Optional[str] = None,
     ):
-        from paddleocr import PaddleOCR
+        import torch
+        from transformers import AutoProcessor, AutoModelForImageTextToText
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
         self.model_name = model_name
+        model_path = LOCAL_MODEL_CONFIG["model_path"]
 
-        # Load PaddleOCR immediately (no lazy loading)
-        logger.info("Loading PaddleOCR model: %s", self.model_name)
+        logger.info("Loading PaddleOCR-VL model: %s", model_path)
 
-        self.ocr = PaddleOCR(
-            use_angle_cls=True,
-            lang='ch',
-            use_gpu=True,
-            show_log=False
-        )
+        # Set device
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # Set torch dtype
+        dtype_str = LOCAL_MODEL_CONFIG.get("torch_dtype", "bfloat16")
+        if dtype_str == "bfloat16":
+            self.torch_dtype = torch.bfloat16
+        elif dtype_str == "float16":
+            self.torch_dtype = torch.float16
+        else:
+            self.torch_dtype = torch.float32
+
+        # Load model and processor
+        self.model = AutoModelForImageTextToText.from_pretrained(
+            model_path,
+            torch_dtype=self.torch_dtype
+        ).to(self.device).eval()
+
+        self.processor = AutoProcessor.from_pretrained(model_path)
+
+        self.max_new_tokens = LOCAL_MODEL_CONFIG.get("max_new_tokens", 512)
         self._initialized = True
 
-        logger.info("PaddleOCRActor initialized on GPU %s: %s", self.gpu_ids, model_name)
+        logger.info("PaddleOCR-VL initialized on GPU %s: %s", self.gpu_ids, model_path)
 
     def analyze(
         self,
@@ -118,49 +95,95 @@ class PaddleOCRActor(BaseToolModelActor):
         max_tokens: int = 1024,
         **kwargs,
     ) -> str:
-        """Run PaddleOCR and return JSON with text results.
+        """Run PaddleOCR-VL and return JSON with OCR results.
 
         Args:
             image_b64: Base64-encoded image string.
-            temperature: Unused.
-            max_tokens: Unused.
-            **kwargs: Tool-specific parameters, expects 'mode' ("text" or "lines").
+            temperature: Unused for OCR.
+            max_tokens: Maximum tokens to generate.
+            **kwargs: Tool-specific parameters, expects 'mode' and optional 'task'.
 
         Returns:
-            JSON string with OCR results based on mode.
+            JSON string with OCR results.
         """
         from PIL import Image
 
-        # Extract mode from kwargs (can be 'question' or 'mode')
-        mode = kwargs.get("mode", kwargs.get("question", "")).strip().lower()
-        if mode not in ["text", "lines"]:
+        # Extract parameters
+        mode = kwargs.get("mode", kwargs.get("question", "text")).strip().lower()
+        task = kwargs.get("task", "ocr").strip().lower()  # ocr, table, formula, chart, spotting, seal
+
+        if task not in TASK_PROMPTS:
             return json.dumps({
-                "error": f"Invalid mode: {mode}. Must be 'text' or 'lines'.",
-                "mode": mode
+                "error": f"Invalid task: {task}. Must be one of: {list(TASK_PROMPTS.keys())}",
+                "task": task
             })
 
         # Decode image
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        try:
-            # Run OCR
-            results = self.ocr.ocr(np.array(image), cls=True)
+        # Preprocess image for spotting task
+        orig_w, orig_h = image.size
+        spotting_upscale_threshold = 1500
 
-            # Format output based on mode
-            if mode == "text":
-                return format_text_mode(results)
-            else:  # mode == "lines"
-                return format_lines_mode(results)
+        if task == "spotting" and orig_w < spotting_upscale_threshold and orig_h < spotting_upscale_threshold:
+            process_w, process_h = orig_w * 2, orig_h * 2
+            try:
+                resample_filter = Image.Resampling.LANCZOS
+            except AttributeError:
+                resample_filter = Image.LANCZOS
+            image = image.resize((process_w, process_h), resample_filter)
+
+        # Set max_pixels based on task
+        max_pixels = 2048 * 28 * 28 if task == "spotting" else 1280 * 28 * 28
+
+        try:
+            # Prepare messages
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": TASK_PROMPTS[task]},
+                    ]
+                }
+            ]
+
+            # Process inputs
+            inputs = self.processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+                images_kwargs={
+                    "size": {
+                        "shortest_edge": self.processor.image_processor.min_pixels,
+                        "longest_edge": max_pixels
+                    }
+                },
+            ).to(self.model.device)
+
+            # Generate
+            outputs = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens)
+            result = self.processor.decode(outputs[0][inputs["input_ids"].shape[-1]:-1])
+
+            # Return formatted result
+            return json.dumps({
+                "mode": mode,
+                "task": task,
+                "text": result.strip(),
+                "success": True
+            })
 
         except Exception as e:
-            logger.error("PaddleOCR failed: %s", e)
+            logger.error("PaddleOCR-VL failed: %s", e)
             return json.dumps({
                 "error": str(e),
                 "mode": mode,
-                "text": "" if mode == "text" else None,
-                "lines": [] if mode == "lines" else None,
-                "num_lines": 0
+                "task": task,
+                "text": "",
+                "success": False
             })
 
     def health_check(self) -> dict:
@@ -168,6 +191,7 @@ class PaddleOCRActor(BaseToolModelActor):
         return {
             "model": self.model_name,
             "initialized": self._initialized,
+            "device": self.device,
         }
 
 
@@ -175,11 +199,15 @@ ACTOR_CLASS = PaddleOCRActor
 
 DECLARATION = {
     "name": "paddleocr",
-    "description": """PaddleOCR text recognition tool. Extracts text from images with two output modes:
-- mode='text': Returns concatenated full text as a single string
-- mode='lines': Returns structured data with text, bounding boxes, and confidence scores for each line
+    "description": """PaddleOCR-VL text recognition tool. Advanced vision-language model for OCR with multiple task modes:
+- task='ocr': Standard text recognition (default)
+- task='table': Table structure recognition
+- task='formula': Mathematical formula recognition
+- task='chart': Chart/diagram recognition
+- task='spotting': Text spotting with precise localization
+- task='seal': Seal/stamp recognition
 
-Supports multiple languages (Chinese, English, etc.)""",
+Supports multilingual text recognition with high accuracy.""",
     "parameters": {
         "type": "object",
         "properties": {
@@ -189,8 +217,13 @@ Supports multiple languages (Chinese, English, etc.)""",
             },
             "mode": {
                 "type": "string",
-                "enum": ["text", "lines"],
-                "description": "Output format mode. 'text' returns concatenated full text. 'lines' returns structured line data with bounding boxes."
+                "enum": ["text"],
+                "description": "Output format mode. Currently only 'text' mode is supported."
+            },
+            "task": {
+                "type": "string",
+                "enum": ["ocr", "table", "formula", "chart", "spotting", "seal"],
+                "description": "Recognition task type. Default is 'ocr' for standard text recognition."
             }
         },
         "required": ["image_index", "mode"]
