@@ -236,6 +236,7 @@ def _run_one_task(task_payload: dict):
 
             # Check for <answer> - error if found
             if answer_pattern.search(reasoning_text):
+                logger.warning(reasoning_text)
                 raise ValueError("Reasoning phase should not generate <answer>. Model violated the protocol.")
 
             # ===== Phase 2: Generate tool call =====
