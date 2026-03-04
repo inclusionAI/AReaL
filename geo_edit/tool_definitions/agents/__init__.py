@@ -6,7 +6,7 @@ Execute functions are created dynamically by ToolRouter to avoid circular depend
 
 from typing import Dict, Type
 
-from geo_edit.tool_definitions.agents import multimath, gllava, chartmoe, ovr
+from geo_edit.tool_definitions.agents import multimath, gllava, chartmoe, ovr, sam2
 
 # Agent declarations for API tool definitions
 AGENT_DECLARATIONS: Dict[str, dict] = {
@@ -14,6 +14,7 @@ AGENT_DECLARATIONS: Dict[str, dict] = {
     "gllava": gllava.DECLARATION,
     "chartmoe": chartmoe.DECLARATION,
     "ovr": ovr.DECLARATION,
+    "sam2": sam2.DECLARATION,
 }
 
 # Agent return types
@@ -22,6 +23,7 @@ AGENT_RETURN_TYPES: Dict[str, str] = {
     "gllava": gllava.RETURN_TYPE,
     "chartmoe": chartmoe.RETURN_TYPE,
     "ovr": ovr.RETURN_TYPE,
+    "sam2": sam2.RETURN_TYPE,
 }
 
 # Export model configs for tool_agents manager
@@ -30,6 +32,7 @@ AGENT_CONFIGS: Dict[str, dict] = {
     "gllava": gllava.agent_config,
     "chartmoe": chartmoe.agent_config,
     "ovr": ovr.agent_config,
+    "sam2": sam2.agent_config,
 }
 
 # Export system prompts for tool_agents manager
@@ -38,6 +41,7 @@ AGENT_SYSTEM_PROMPTS: Dict[str, str] = {
     "gllava": gllava.SYSTEM_PROMPT,
     "chartmoe": chartmoe.SYSTEM_PROMPT,
     "ovr": ovr.SYSTEM_PROMPT,
+    "sam2": sam2.SYSTEM_PROMPT,
 }
 
 # Export Actor classes for tool_agents manager
@@ -46,6 +50,7 @@ AGENT_ACTOR_CLASSES: Dict[str, Type] = {
     "gllava": gllava.ACTOR_CLASS,
     "chartmoe": chartmoe.ACTOR_CLASS,
     "ovr": ovr.ACTOR_CLASS,
+    "sam2": sam2.ACTOR_CLASS,
 }
 
 

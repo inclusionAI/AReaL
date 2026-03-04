@@ -230,7 +230,7 @@ def build_api_agent_configs(
     if tools is not None:
         generate_config["tools"] = tools
         generate_config["tool_choice"] = tool_choice
-        generate_config["parallel_tool_calls"] = False
+        generate_config["parallel_tool_calls"] = True
 
     if api_mode == "responses":
         if reasoning_level is not None:

@@ -113,7 +113,7 @@ Instructions:
 1. Analyze the observations, explain your reasoning clearly and determine what tool to call next.
 2. You will be given a list of available tools and their descriptions, but you are not allowed to call tool in this phase, which will be handled in the next phase.
 3.Never require a tool to directly solve the problem, but rather to analyze the problem and provide more information for you to solve the problem.
-4. The following tools are allowed to be called multiple times in one turn: bounding_box, image_crop, draw_line, image_highlight and image_label. Other tools can only be called once per turn. You should plan your tool calling sequence accordingly.
+4. You can Only call one type of tool in each turn. The following tools are allowed to be called multiple times in one turn: bounding_box, image_crop, draw_line, image_highlight and image_label. Other tools can only be called once per turn. You should plan your tool calling sequence accordingly.
 5. Output the reason in <think> and </think> tags.
 6. DO NOT output any information about final answer, including <answer> and </answer> tags, just focus on tool calling plan.
 
