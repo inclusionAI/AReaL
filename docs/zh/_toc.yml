@@ -1,13 +1,11 @@
-# Table of contents
-# Learn more at https://jupyterbook.org/customize/toc.html
-
+# 中文目录
 format: jb-book
 root: intro
 parts:
-  - caption: Version History
+  - caption: 版本历史
     chapters:
     - file: version_history
-  - caption: Tutorial
+  - caption: 教程
     chapters:
     - file: tutorial/installation
     - file: tutorial/installation_npu
@@ -17,28 +15,27 @@ parts:
     - file: tutorial/megatron
     - file: tutorial/archon
     - file: cli_reference
-  - caption: Code Walkthrough
+  - caption: 代码详解
     chapters:
     - file: tutorial/gsm8k_grpo
-  - caption: Best Practices
+  - caption: 最佳实践
     chapters:
     - file: best_practices/algo_perf
     - file: best_practices/workflow
     - file: best_practices/debugging
     - file: best_practices/handling_oom
     - file: best_practices/perf_profiling
-  - caption: Customization
+  - caption: 定制指南
     chapters:
     - file: customization/dataset
     - file: customization/agent
-    - file: customization/algorithm
-  - caption: Algorithms
+  - caption: 算法
     chapters:
     - file: algorithms/async
     - file: algorithms/grpo_series
     - file: algorithms/m2po
     - file: algorithms/prox_approx
-  - caption: Reference
+  - caption: 参考
     chapters:
     - file: reference/checkpointing
     - file: reference/metrics_tracking

@@ -1,26 +1,24 @@
-# Configurations
+# 配置参考
 
-This page provides a comprehensive reference for all configuration parameters available
-in AReaL's command-line interface. These parameters are defined using dataclasses and
-can be specified in YAML configuration files or overridden via command line arguments.
+本页面提供 AReaL 命令行界面所有配置参数的完整参考。这些参数使用 dataclass 定义，可在 YAML 配置文件中指定，也可通过命令行参数覆盖。
 
-## Usage
+## 使用方法
 
-Configuration files are specified using the `--config` parameter:
+使用 `--config` 参数指定配置文件：
 
 ```bash
 python3 train.py --config path/to/config.yaml
 ```
 
-You can override specific parameters from the command line:
+您可以通过命令行覆盖特定参数：
 
 ```bash
 python3 train.py --config path/to/config.yaml actor.lr=1e-4 seed=42
 ```
 
-For detailed examples, see the experiment configurations in the `examples/` directory.
+详细示例请参阅 `examples/` 目录中的实验配置。
 
-## Table of Contents
+## 目录
 
 ### Core Experiment Configurations
 
@@ -945,22 +943,23 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 
 Configuration class: SchedulingSpec
 
-| Parameter              | Type                   | Default                                      | Description                                                                                                                    |
-| ---------------------- | ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `cpu`                  | integer                | `8`                                          | Number of CPU cores required per GPU                                                                                           |
-| `gpu`                  | integer                | `0`                                          | Number of GPU units required. Used only when allocating pods.                                                                  |
-| `mem`                  | integer                | `32`                                         | Amount of memory (GB) required per GPU                                                                                         |
-| `port_count`           | integer                | `2`                                          | Number of ports to expose                                                                                                      |
-| `image`                | string                 | `"/storage/openpsi/images/areal-latest.sif"` | Docker/Singularity container image to use. Currently only used by Slurm. Will be potentially used by Kubernetes in the future. |
-| `task_type`            | string                 | `"worker"`                                   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine`                                                               |
-| `env_vars`             | `dict`                 | **Required**                                 | Environment variables for the container                                                                                        |
-| `cmd`                  | string \| None         | `None`                                       | Command to execute inside the container. Defaults to AReaL's RPC server.                                                       |
-| `srun_additional_args` | string                 | `"--unbuffered --mpi=pmi2 -K --chdir $PWD"`  | Additional arguments to pass to the srun command. Only used by slurm.                                                          |
-| `additional_bash_cmds` | list of string \| None | `None`                                       | Additional bash commands to setup the container before running the torchrun command. Only used by slurm.                       |
-| `container_type`       | string                 | `"apptainer"`                                | Type of containers used in slurm **Choices:** `apptainer`, `none`                                                              |
-| `mount`                | string                 | `"/storage:/storage"`                        | Mount path for slurm.                                                                                                          |
-| `nodelist`             | string \| None         | `None`                                       | sbatch/srun's `--nodelist` option for slurm.                                                                                   |
-| `exclude`              | string \| None         | `None`                                       | sbatch/srun's `--exclude` option for slurm.                                                                                    |
+| Parameter                | Type                   | Default                                      | Description                                                                                                                                                                                                                                                                                                                         |
+| ------------------------ | ---------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cpu`                    | integer                | `8`                                          | Number of CPU cores required per GPU                                                                                                                                                                                                                                                                                                |
+| `gpu`                    | integer                | `0`                                          | Number of GPU units required. Used only when allocating pods.                                                                                                                                                                                                                                                                       |
+| `mem`                    | integer                | `32`                                         | Amount of memory (GB) required per GPU                                                                                                                                                                                                                                                                                              |
+| `port_count`             | integer                | `2`                                          | Number of ports to expose                                                                                                                                                                                                                                                                                                           |
+| `image`                  | string                 | `"/storage/openpsi/images/areal-latest.sif"` | Docker/Singularity container image to use. Currently only used by Slurm. Will be potentially used by Kubernetes in the future.                                                                                                                                                                                                      |
+| `task_type`              | string                 | `"worker"`                                   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine`                                                                                                                                                                                                                                                                    |
+| `env_vars`               | `dict`                 | **Required**                                 | Environment variables for the container                                                                                                                                                                                                                                                                                             |
+| `cmd`                    | string \| None         | `None`                                       | Command to execute inside the container. Defaults to AReaL's RPC server.                                                                                                                                                                                                                                                            |
+| `srun_additional_args`   | string                 | `"--unbuffered --mpi=pmi2 -K --chdir $PWD"`  | Additional arguments to pass to the srun command. Only used by slurm.                                                                                                                                                                                                                                                               |
+| `additional_bash_cmds`   | list of string \| None | `None`                                       | Additional bash commands to setup the container before running the torchrun command. Only used by slurm.                                                                                                                                                                                                                            |
+| `container_type`         | string                 | `"apptainer"`                                | Type of containers used in slurm **Choices:** `apptainer`, `none`                                                                                                                                                                                                                                                                   |
+| `mount`                  | string                 | `"/storage:/storage"`                        | Mount path for slurm.                                                                                                                                                                                                                                                                                                               |
+| `nodelist`               | string \| None         | `None`                                       | sbatch/srun's `--nodelist` option for slurm.                                                                                                                                                                                                                                                                                        |
+| `exclude`                | string \| None         | `None`                                       | sbatch/srun's `--exclude` option for slurm.                                                                                                                                                                                                                                                                                         |
+| `ray_placement_strategy` | string                 | `"shared"`                                   | Which placement strategy to use for Ray scheduling. Shared will produce 1 placement group for all workers in the role (training). Separate will 1 placement group per worker (rollout). Deferred will do the same as separate but defers accelerator scheduling (multinode rollout).  **Choices:** `shared`, `separate`, `deferred` |
 
 (section-scheduling-strategy)=
 
