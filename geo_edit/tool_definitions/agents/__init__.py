@@ -6,7 +6,7 @@ Execute functions are created dynamically by ToolRouter to avoid circular depend
 
 from typing import Dict, Type
 
-from geo_edit.tool_definitions.agents import multimath, gllava, chartmoe, ovr, sam2
+from geo_edit.tool_definitions.agents import multimath, gllava, chartmoe, ovr, sam2, grounding_dino
 
 # Agent declarations for API tool definitions
 AGENT_DECLARATIONS: Dict[str, dict] = {
@@ -15,6 +15,7 @@ AGENT_DECLARATIONS: Dict[str, dict] = {
     "chartmoe": chartmoe.DECLARATION,
     "ovr": ovr.DECLARATION,
     "sam2": sam2.DECLARATION,
+    "grounding_dino": grounding_dino.DECLARATION,
 }
 
 # Agent return types
@@ -24,6 +25,7 @@ AGENT_RETURN_TYPES: Dict[str, str] = {
     "chartmoe": chartmoe.RETURN_TYPE,
     "ovr": ovr.RETURN_TYPE,
     "sam2": sam2.RETURN_TYPE,
+    "grounding_dino": grounding_dino.RETURN_TYPE,
 }
 
 # Export model configs for tool_agents manager
@@ -33,6 +35,7 @@ AGENT_CONFIGS: Dict[str, dict] = {
     "chartmoe": chartmoe.agent_config,
     "ovr": ovr.agent_config,
     "sam2": sam2.agent_config,
+    "grounding_dino": grounding_dino.agent_config,
 }
 
 # Export system prompts for tool_agents manager
@@ -42,6 +45,7 @@ AGENT_SYSTEM_PROMPTS: Dict[str, str] = {
     "chartmoe": chartmoe.SYSTEM_PROMPT,
     "ovr": ovr.SYSTEM_PROMPT,
     "sam2": sam2.SYSTEM_PROMPT,
+    "grounding_dino": grounding_dino.SYSTEM_PROMPT,
 }
 
 # Export Actor classes for tool_agents manager
@@ -51,6 +55,7 @@ AGENT_ACTOR_CLASSES: Dict[str, Type] = {
     "chartmoe": chartmoe.ACTOR_CLASS,
     "ovr": ovr.ACTOR_CLASS,
     "sam2": sam2.ACTOR_CLASS,
+    "grounding_dino": grounding_dino.ACTOR_CLASS,
 }
 
 

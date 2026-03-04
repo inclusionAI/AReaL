@@ -103,25 +103,14 @@ class SAM2Actor(BaseToolModelActor):
         gpu_memory_utilization: float = 0.8,
         system_prompt: Optional[str] = None,
     ):
-        self.setup_gpu()  # Configure GPU based on Ray assignment
-
-        self.model_name = model_name
-        self._initialized = False
-
-        # Lazy loading - model loaded on first inference
-        self.model = None
-        self.processor = None
-
-        logger.info("SAM2Actor created (lazy loading) on GPU %s: %s", self.gpu_ids, model_name)
-
-    def _load_model(self):
-        """Lazy model loading - called on first inference."""
-        if self.model is not None:
-            return
-
         import torch
         from transformers import AutoProcessor, AutoModelForMaskGeneration
 
+        self.setup_gpu()  # Configure GPU based on Ray assignment
+
+        self.model_name = model_name
+
+        # Load model immediately (no lazy loading)
         logger.info("Loading SAM2 model: %s", self.model_name)
 
         self.processor = AutoProcessor.from_pretrained(self.model_name)
@@ -133,7 +122,7 @@ class SAM2Actor(BaseToolModelActor):
         self.model.eval()
         self._initialized = True
 
-        logger.info("SAM2 model loaded successfully on GPU %s", self.gpu_ids)
+        logger.info("SAM2Actor initialized on GPU %s: %s", self.gpu_ids, model_name)
 
     def analyze(
         self,
@@ -155,8 +144,6 @@ class SAM2Actor(BaseToolModelActor):
         """
         import torch
         from PIL import Image
-
-        self._load_model()
 
         # Decode image
         image_bytes = base64.b64decode(image_b64)
@@ -276,7 +263,6 @@ class SAM2Actor(BaseToolModelActor):
         return {
             "model": self.model_name,
             "initialized": self._initialized,
-            "model_loaded": self.model is not None,
         }
 
 
