@@ -112,14 +112,14 @@ You are an advanced AI agent. In this phase, you must plan about what tool to ca
 Instructions:
 1. Analyze the observations, explain your reasoning clearly and determine what tool to call next.
 2. You will be given a list of available tools and their descriptions, but you are not allowed to call tool in this phase, which will be handled in the next phase.
-3.Never require a tool to directly solve the problem, but rather to analyze the problem and provide more information for you to solve the problem.
-4. You can Only call one type of tool in each turn. The following tools are allowed to be called multiple times in one turn: bounding_box, image_crop, draw_line, image_highlight and image_label. Other tools can only be called once per turn. You should plan your tool calling sequence accordingly.
+3. Never require a tool to directly solve the problem, but rather to analyze the problem and provide more information for you to solve the problem.
+4. You can ONLY call ONE tool in each turn. Plan accordingly and choose the most important tool to call.
 5. Output the reason in <think> and </think> tags.
 6. DO NOT output any information about final answer, including <answer> and </answer> tags, just focus on tool calling plan.
 
-For example, if the ovr model is the tool you want to call to solve a geo-spatial problem, the reason should be: 
+For example, if the ovr model is the tool you want to call to solve a geo-spatial problem, the reason should be:
 
-<think>\nThe task requires interpreting a map to provide a shortest drivable route between markers. Since this is a visual-navigation problem, leveraging an image-grounded reasoning tool would help confirm exact road names, junction geometry, and directionality, reducing ambiguity (e.g., whether the starting spur is part of Dene Road, and the precise turns to Brighton Grove and Wilmslow Road). I should use a geometry-aware visual reasoning tool to analyze the map: identify the blue marker's exact road, nearby intersections, and the optimal path to Wilmslow Road and the red marker. The parameters will include the image index (0) and a prompt requesting identification of the start road name, turn sequence to Brighton Grove, and the final approach to Wilmslow Road at Old Hall Lane.\n</think>\nI plan to call: ovr with parameters: {image_index: 0, question: \"Identify the exact road where the blue marker is located, and determine the shortest drivable route to the red marker. Confirm if the start is on Dene Road, the turns needed to reach Brighton Grove, and the final left onto Wilmslow Road toward Old Hall Lane. Provide the sequence of road names and turning actions consistent with driving from the blue marker to the red marker.\"}
+<think>\nThe task requires interpreting a map to provide a shortest drivable route between markers. Since this is a visual-navigation problem, leveraging an image-grounded reasoning tool would help confirm exact road names, junction geometry, and directionality, reducing ambiguity (e.g., whether the starting spur is part of Dene Road, and the precise turns to Brighton Grove and Wilmslow Road). I should use a geometry-aware visual reasoning tool to analyze the map: identify the blue marker's exact road, nearby intersections, and the optimal path to Wilmslow Road and the red marker. The parameters will include the image index (0) and a prompt requesting identification of the start road name, turn sequence to Brighton Grove, and the final approach to Wilmslow Road at Old Hall Lane.\n</think>\nI plan to call: ovr with parameters: {image_index: 0, question: "Identify the exact road where the blue marker is located, and determine the shortest drivable route to the red marker. Confirm if the start is on Dene Road, the turns needed to reach Brighton Grove, and the final left onto Wilmslow Road toward Old Hall Lane."}
 """
 SEPARATED_USER_PROMPT="""
 Question: {Question}
@@ -135,7 +135,7 @@ You are an advanced AI agent. In this phase, you must execute the tool call base
 Instructions:
 1. Based on the reasoning provided, execute the tool call immediately
 2. Do NOT provide any final answer in this phase
-3. Just call the tool with the parameters specified in the reasoning
+3. Do NOT provide any text explanation, just call the tool with the parameters specified in the reasoning
 4. Never require a tool to directly solve the problem, but rather to analyze the problem and provide more information for you to solve the problem.
 """
 
