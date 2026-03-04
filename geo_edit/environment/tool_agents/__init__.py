@@ -38,17 +38,17 @@ def get_manager() -> "ToolAgentManager":
     return _get_manager()
 
 
-def call_agent(tool_name: str, image_list, image_index: int, question: str) -> str:
+def call_agent(tool_name: str, image_list, image_index: int, **kwargs) -> str:
     """Call a Tool Agent to analyze an image.
 
     Args:
         tool_name: Name of the agent tool (e.g., "chartmoe", "multimath").
         image_list: List of PIL images.
         image_index: Index of the image to analyze.
-        question: Question to ask about the image.
+        **kwargs: Tool-specific parameters (e.g., question, text_prompt, mode, etc.).
 
     Returns:
         Analysis result as string.
     """
     from .manager import get_manager as _get_manager
-    return _get_manager().call(tool_name, image_list, image_index, question)
+    return _get_manager().call(tool_name, image_list, image_index, **kwargs)

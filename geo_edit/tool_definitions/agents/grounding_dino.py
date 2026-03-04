@@ -135,17 +135,17 @@ class GroundingDINOActor(BaseToolModelActor):
     def analyze(
         self,
         image_b64: str,
-        question: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        **kwargs,
     ) -> str:
         """Run GroundingDINO detection and return JSON with detections.
 
         Args:
             image_b64: Base64-encoded image string.
-            question: Text prompt with object labels (e.g., "cat. dog. person.")
             temperature: Unused.
             max_tokens: Unused.
+            **kwargs: Tool-specific parameters, expects 'question' with text prompt.
 
         Returns:
             JSON string with image_size, detections, and num_detections.
@@ -158,8 +158,8 @@ class GroundingDINOActor(BaseToolModelActor):
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
         W, H = image.size  # PIL: (W, H)
 
-        # Use question as the text prompt
-        text_prompt = question.strip() if question else ""
+        # Extract text prompt from kwargs
+        text_prompt = kwargs.get("question", "").strip()
         if not text_prompt:
             return json.dumps({
                 "error": "No text prompt provided",
@@ -235,7 +235,7 @@ Detects objects in an image based on text descriptions.
 
 Input:
 - image_index: Index of the image to analyze
-- text_prompt: Object labels to detect, separated by periods (e.g., "cat. dog. red car.")
+- question: Object labels to detect, separated by periods (e.g., "cat. dog. red car.")
 
 Output: JSON with detected objects including bounding boxes (pixel coordinates), confidence scores, and labels.
 Returns up to 20 detections with score >= 0.35, sorted by confidence.""",
@@ -246,12 +246,12 @@ Returns up to 20 detections with score >= 0.35, sorted by confidence.""",
                 "type": "integer",
                 "description": "The index of the image to analyze. Each image is assigned an index like 'Observation 0', 'Observation 1', etc."
             },
-            "text_prompt": {
+            "question": {
                 "type": "string",
                 "description": "Object descriptions to detect, separated by periods. Example: 'a cat. a dog. a red car.'"
             }
         },
-        "required": ["image_index", "text_prompt"]
+        "required": ["image_index", "question"]
     }
 }
 

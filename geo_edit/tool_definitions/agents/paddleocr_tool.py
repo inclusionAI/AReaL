@@ -114,25 +114,25 @@ class PaddleOCRActor(BaseToolModelActor):
     def analyze(
         self,
         image_b64: str,
-        question: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        **kwargs,
     ) -> str:
         """Run PaddleOCR and return JSON with text results.
 
         Args:
             image_b64: Base64-encoded image string.
-            question: Mode parameter ("text" or "lines").
             temperature: Unused.
             max_tokens: Unused.
+            **kwargs: Tool-specific parameters, expects 'mode' ("text" or "lines").
 
         Returns:
             JSON string with OCR results based on mode.
         """
         from PIL import Image
 
-        # Parse mode from question
-        mode = question.strip().lower()
+        # Extract mode from kwargs (can be 'question' or 'mode')
+        mode = kwargs.get("mode", kwargs.get("question", "")).strip().lower()
         if mode not in ["text", "lines"]:
             return json.dumps({
                 "error": f"Invalid mode: {mode}. Must be 'text' or 'lines'.",

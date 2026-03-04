@@ -163,7 +163,7 @@ class ToolAgentManager:
         tool_name: str,
         image_list: List[Image.Image],
         image_index: int,
-        question: str,
+        **kwargs,
     ) -> str:
         """Call a Tool Agent to analyze an image.
 
@@ -171,7 +171,7 @@ class ToolAgentManager:
             tool_name: Name of the tool agent to call.
             image_list: List of PIL images.
             image_index: Index of the image to analyze.
-            question: Question to ask about the image.
+            **kwargs: Tool-specific parameters (e.g., question, text_prompt, mode, etc.).
 
         Returns:
             Analysis result as string.
@@ -196,9 +196,9 @@ class ToolAgentManager:
             result = ray.get(
                 actor.analyze.remote(
                     image_b64,
-                    question,
                     cfg["temperature"],
                     cfg["max_tokens"],
+                    **kwargs,
                 )
             )
             return result

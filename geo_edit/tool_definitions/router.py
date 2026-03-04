@@ -33,9 +33,9 @@ with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
 
 def _make_agent_execute(agent_name: str) -> Callable[[List[Image.Image], int, str], str]:
     """Create an execute function for a specific agent."""
-    def execute(image_list: List[Image.Image], image_index: int, question: str) -> str:
+    def execute(image_list: List[Image.Image], image_index: int, **kwargs) -> str:
         from geo_edit.environment.tool_agents import call_agent
-        return call_agent(agent_name, image_list, image_index, question)
+        return call_agent(agent_name, image_list, image_index, **kwargs)
     return execute
 
 
