@@ -23,3 +23,12 @@ def get_placement_group_master_ip_and_port(
         ),
     )(_master_ip_and_port).remote()
     return ray.get(future)
+
+
+def create_resource_spec(device, cpu: int, gpu: int, mem_in_bytes: int):
+    res = {"num_cpus": cpu, "memory": mem_in_bytes}
+    if device == "GPU":
+        res["num_gpus"] = float(gpu)
+    elif device != "CPU":
+        res["resources"] = {device: float(gpu)}
+    return res

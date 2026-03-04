@@ -5,7 +5,7 @@ from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import uvloop
 import yaml
@@ -853,6 +853,16 @@ class SchedulingSpec:
     )
     exclude: str | None = field(
         default=None, metadata={"help": "sbatch/srun's `--exclude` option for slurm."}
+    )
+    ray_placement_strategy: Literal["shared", "separate", "deferred"] = field(
+        default="shared",
+        metadata={
+            "help": "Which placement strategy to use for Ray scheduling. "
+            "Shared will produce 1 placement group for all workers in the role (training). "
+            "Separate will 1 placement group per worker (rollout). "
+            "Deferred will do the same as separate but defers accelerator scheduling (multinode rollout). ",
+            "choices": ["shared", "separate", "deferred"],
+        },
     )
 
 
