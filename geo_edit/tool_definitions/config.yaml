@@ -4,14 +4,14 @@ image_crop: false
 image_label: false
 draw_line: false
 bounding_box: false
-image_highlight: true
+image_highlight: false
 # VLM analysis tools (agents/)
 multimath: false
 gllava: false
 chartmoe: false
 ovr: false
 sam2: false
-grounding_dino: false
+grounding_dino: true
 paddleocr: false
 
  

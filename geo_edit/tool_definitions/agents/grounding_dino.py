@@ -17,7 +17,7 @@ SYSTEM_PROMPT = ""
 
 # Model configuration
 agent_config = {
-    "model_name_or_path": "IDEA-Research/grounding-dino-base",
+    "model_name_or_path": "/storage/openpsi/models/grounding-dino-base",
     "max_model_len": 8192,        # Unused, interface compatibility
     "gpu_memory_utilization": 0.8, # Unused, interface compatibility
     "temperature": 0.0,           # Unused

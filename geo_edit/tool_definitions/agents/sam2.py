@@ -18,7 +18,7 @@ SYSTEM_PROMPT = ""
 
 # Model configuration
 agent_config = {
-    "model_name_or_path": "facebook/sam2.1-hiera-large",
+    "model_name_or_path": "/storage/openpsi/models/sam2.1-hiera-large",
     "max_model_len": 8192,        # Unused, interface compatibility
     "gpu_memory_utilization": 0.8, # Unused, interface compatibility
     "temperature": 0.0,           # Unused

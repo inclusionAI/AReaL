@@ -13,7 +13,7 @@ from openai import OpenAI
 
 @dataclass
 class EvalConfig:
-    model: str = "gpt-5-mini"
+    model: str = "gpt-5-mini-2025-08-07"
     extract_answer_tags: Optional[str] = "split"
     api_key: Optional[str] = None
     api_base: Optional[str] = None
