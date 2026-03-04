@@ -67,6 +67,24 @@ class NormConfig:
         default=1, metadata={"help": "Group size for group-level normalization"}
     )
 
+    def __post_init__(self):
+        """Validate normalization configuration."""
+        valid_levels = {"batch", "group", None}
+        if self.mean_level not in valid_levels:
+            raise ValueError(
+                f"mean_level must be 'batch', 'group' or None, got {self.mean_level}"
+            )
+        if self.std_level not in valid_levels:
+            raise ValueError(
+                f"std_level must be 'batch', 'group', or None, got {self.std_level}"
+            )
+        if (
+            self.mean_level == "group" or self.std_level == "group"
+        ) and self.group_size < 1:
+            raise ValueError(
+                f"group_size must be a positive integer when using group normalization, got {self.group_size}"
+            )
+
 
 @dataclass
 class MicroBatchSpec:
@@ -1137,7 +1155,8 @@ class PPOActorConfig(TrainEngineConfig):
         )
 
     def __post_init__(self):
-        """Validate MIS/TIS configuration."""
+        """Validate PPO actor configuration."""
+        # Validate MIS/TIS configuration
         if self.behave_imp_weight_mode == "disabled":
             if self.behave_imp_weight_cap is not None:
                 raise ValueError(
@@ -1165,6 +1184,21 @@ class PPOActorConfig(TrainEngineConfig):
                     "use_decoupled_loss=False. These settings will be ignored. "
                     "Set use_decoupled_loss=True to enable decoupled loss with importance weight correction."
                 )
+
+        # Validate SAPO configuration
+        if self.use_sapo_loss:
+            if self.sapo_tau_pos <= 0 or self.sapo_tau_neg <= 0:
+                raise ValueError(
+                    f"SAPO temperatures (sapo_tau_pos, sapo_tau_neg) must be positive. "
+                    f"Got sapo_tau_pos={self.sapo_tau_pos}, sapo_tau_neg={self.sapo_tau_neg}."
+                )
+            if self.use_decoupled_loss:
+                raise ValueError(
+                    "SAPO is not compatible with `use_decoupled_loss=True`. "
+                    "Please set `actor.use_decoupled_loss=false` in your configuration."
+                )
+
+        super().__post_init__()
 
 
 @dataclass
@@ -2062,6 +2096,13 @@ class BaseExperimentConfig:
 
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
+    def __post_init__(self):
+        """Validate training configuration."""
+        if self.total_train_epochs <= 0:
+            raise ValueError(
+                f"total_train_epochs must be positive, got {self.total_train_epochs}"
+            )
+
 
 @dataclass
 class SFTConfig(BaseExperimentConfig):
@@ -2107,6 +2148,7 @@ class PPOConfig(BaseExperimentConfig):
         """Validate the eval generation config."""
         if self.eval_gconfig is None:
             self.eval_gconfig = self.gconfig.new()
+        super().__post_init__()
 
 
 @dataclass

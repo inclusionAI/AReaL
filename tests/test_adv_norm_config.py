@@ -154,11 +154,12 @@ def test_adv_norm_initialization_validation():
         config = NormConfig(mean_level="batch", std_level="invalid", group_size=1)
         Normalization(config)
 
-    # Test missing group_size for group normalization
+    # Test invalid group_size for group normalization
     with pytest.raises(
-        ValueError, match="group_size must be provided if using group normalization"
+        ValueError,
+        match="group_size must be a positive integer when using group normalization",
     ):
-        config = NormConfig(mean_level="group", std_level="batch", group_size=None)
+        config = NormConfig(mean_level="group", std_level="batch", group_size=0)
         Normalization(config)
 
 
