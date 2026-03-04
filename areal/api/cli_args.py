@@ -2182,7 +2182,6 @@ class PPOConfig(BaseExperimentConfig):
             )
         },
     )
-    teacher: TeacherConfig | None = field(default=None)
     dynamic_bs: bool = field(
         default=False,
         metadata={
