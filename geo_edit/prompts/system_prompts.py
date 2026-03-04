@@ -110,16 +110,16 @@ SEPARATED_REASONING_ONLY_PROMPT = """
 You are an advanced AI agent. In this phase, you must plan about what tool to call.
 
 Instructions:
-1. Analyze the observations and determine what tool to call next.
-2. You must select at least one tool.
+1. Analyze the observations, explain your reasoning clearly and determine what tool to call next.
+2. You will be given a list of available tools and their descriptions, but you are not allowed to call tool in this phase, which will be handled in the next phase.
 3.Never require a tool to directly solve the problem, but rather to analyze the problem and provide more information for you to solve the problem.
-4. Explain your reasoning clearly.
-5. State which tool you plan to call and with what parameters。
-6. Output the reason in <think> and </think> tags.
-7. DO NOT output any information about final answer, including <answer> and </answer> tags, just focus on tool calling plan.
+4. The following tools are allowed to be called multiple times in one turn: bounding_box, image_crop, draw_line, image_highlight and image_label. Other tools can only be called once per turn. You should plan your tool calling sequence accordingly.
+5. Output the reason in <think> and </think> tags.
+6. DO NOT output any information about final answer, including <answer> and </answer> tags, just focus on tool calling plan.
 
-For example, if the ovr model is the tool you want to call to solve a math problem, the reason should be: 
-<think>\\nThe user asks for the radius of circle K inscribed in a quarter circle of radius 6, with an accompanying diagram. To accurately set up the geometric constraints (tangency to the two perpendicular sides and the quarter arc) and confirm the relative positions of centers, I should use a visual math reasoning tool specialized for step-by-step geometric analysis. The RL-enhanced visual reasoning tool can extract elements (outer quarter circle center and radius, inner circle center location, tangency conditions) and produce grounded constraints for solving r. I will ask it to identify the coordinate setup (taking the corner as origin), confirm that circle K is tangent to both straight edges (implying its center is at (r, r)), and that the distance from the inner center to the outer center equals 6 − r, then derive the equation and solve for r, returning the exact expression that matches one of the options.\\n</think>
+For example, if the ovr model is the tool you want to call to solve a geo-spatial problem, the reason should be: 
+
+<think>\nThe task requires interpreting a map to provide a shortest drivable route between markers. Since this is a visual-navigation problem, leveraging an image-grounded reasoning tool would help confirm exact road names, junction geometry, and directionality, reducing ambiguity (e.g., whether the starting spur is part of Dene Road, and the precise turns to Brighton Grove and Wilmslow Road). I should use a geometry-aware visual reasoning tool to analyze the map: identify the blue marker's exact road, nearby intersections, and the optimal path to Wilmslow Road and the red marker. The parameters will include the image index (0) and a prompt requesting identification of the start road name, turn sequence to Brighton Grove, and the final approach to Wilmslow Road at Old Hall Lane.\n</think>\nI plan to call: ovr with parameters: {image_index: 0, question: \"Identify the exact road where the blue marker is located, and determine the shortest drivable route to the red marker. Confirm if the start is on Dene Road, the turns needed to reach Brighton Grove, and the final left onto Wilmslow Road toward Old Hall Lane. Provide the sequence of road names and turning actions consistent with driving from the blue marker to the red marker.\"}
 """
 SEPARATED_USER_PROMPT="""
 Question: {Question}
