@@ -202,11 +202,23 @@ class GroundingDINOActor(BaseToolModelActor):
             # Format output
             detections = format_detections(boxes, scores, labels, MAX_DETECTIONS)
 
+            # Parse requested labels from text prompt (separated by periods)
+            requested_labels = [label.strip() for label in text_prompt.split('.') if label.strip()]
+
+            # Identify which labels were found
+            detected_labels = set(det["label"] for det in detections)
+            not_found_labels = [label for label in requested_labels if label not in detected_labels]
+
             output = {
                 "image_size": [H, W],
                 "detections": detections,
                 "num_detections": len(detections)
             }
+
+            # Add not_found field if some labels were not detected
+            if not_found_labels:
+                output["not_found"] = not_found_labels
+
             return json.dumps(output)
 
         except Exception as e:
