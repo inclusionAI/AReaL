@@ -12,5 +12,6 @@ chartmoe: false
 ovr: false
 sam2: false
 grounding_dino: false
+paddleocr: false
 
  
