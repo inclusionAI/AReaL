@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import numpy as np
+import ray
 import torch
 import torch.distributed as dist
 from PIL.Image import Image as ImageObject
@@ -172,6 +173,8 @@ class WeightUpdateMeta:
     nccl_group_name: str | None = None
     weight_chunked_mem_mb: int = 1024
 
+    backend: str | None = None
+
     use_lora: bool = False
     lora_name: str = ""
     lora_int_id: int = 0
@@ -252,6 +255,7 @@ class WeightUpdateMeta:
             type="xccl",
             alloc_mode=allocation_mode,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
+            backend=current_platform.communication_backend,
         )
 
     @classmethod
@@ -272,6 +276,7 @@ class WeightUpdateMeta:
             lora_name=lora_name,
             lora_int_id=lora_int_id,
             base_model_name=base_model_name,
+            backend=current_platform.communication_backend,
         )
 
     @classmethod
@@ -384,7 +389,25 @@ class LocalInfServerInfo:
 
     host: str
     port: int
-    process: subprocess.Popen
+    process: subprocess.Popen | None = None
+    # need to store actors in the case where launch server has actor refs so we can call destructor later
+    actors: list[ray.actor.ActorHandle[Any]] = field(default_factory=list)
+
+    @property
+    def is_ray(self) -> bool:
+        return bool(self.actors)
+
+    @property
+    def is_popen(self) -> bool:
+        return self.process is not None
+
+    @classmethod
+    def from_launch_result(cls, host: str, port: int, ret):
+        if isinstance(ret, subprocess.Popen):
+            return cls(host=host, port=port, process=ret)
+
+        # Must be list[ActorHandle]
+        return cls(host=host, port=port, actors=ret)
 
 
 @dataclass

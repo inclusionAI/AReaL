@@ -33,9 +33,8 @@ from areal.api.cli_args import (
     ValidDatasetConfig,
     vLLMConfig,
 )
-from areal.engine import RemoteSGLangEngine, RemotevLLMEngine
+from areal.engine import RayRemotevLLMEngine, RemoteSGLangEngine, RemotevLLMEngine
 from areal.engine.core.model import get_model_update_meta
-from areal.utils.awex_runtime import prepare_awex_runtime
 from areal.infra import (
     LocalScheduler,
     RayScheduler,
@@ -44,6 +43,7 @@ from areal.infra import (
     current_platform,
 )
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
+from areal.utils.awex_runtime import prepare_awex_runtime
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
@@ -750,7 +750,14 @@ class PPOTrainer:
                 self.config.vllm.lora_modules = [
                     f"{self.config.gconfig.lora_name}-v0={lora_path}"
                 ]
-            engine_cls = RemotevLLMEngine
+            if (
+                self.allocation_mode.gen_instance_size
+                > self.config.cluster.n_gpus_per_node
+            ):
+                # gen instance spans more than 1 node
+                engine_cls = RayRemotevLLMEngine
+            else:
+                engine_cls = RemotevLLMEngine
             server_args = vLLMConfig.build_args(
                 vllm_config=self.config.vllm,
                 tp_size=self.allocation_mode.gen.tp_size,

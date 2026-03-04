@@ -33,6 +33,18 @@ from areal.utils import logging, perf_tracer, stats_tracker
 logger = logging.getLogger("vLLMEngine")
 
 
+def _copy_environ():
+    _env = os.environ.copy()
+    triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
+    _env["TRITON_CACHE_PATH"] = os.path.join(triton_cache_path, str(uuid.uuid4()))
+
+    vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
+    if vllm_cache_path:
+        _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
+    _env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
+    return _env
+
+
 class VLLMBackend:
     """vLLM-specific backend implementation for remote inference."""
 
@@ -203,7 +215,9 @@ class VLLMBackend:
             "master_port": str(meta.nccl_master_port),
             "rank_offset": rank_offset,
             "world_size": meta.alloc_mode.gen.world_size + 1,
-            "backend": current_platform.communication_backend,
+            "backend": meta.backend
+            if meta.backend is not None
+            else current_platform.communication_backend,
             "group_name": meta.nccl_group_name,
         }
         return HttpRequest(endpoint="/areal_init_weights_update_group", payload=payload)
@@ -289,15 +303,7 @@ class VLLMBackend:
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch vLLM server subprocess."""
         cmd = vLLMConfig.build_cmd_from_args(server_args)
-
-        _env = os.environ.copy()
-        triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
-        _env["TRITON_CACHE_PATH"] = os.path.join(triton_cache_path, str(uuid.uuid4()))
-
-        vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
-        if vllm_cache_path:
-            _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
-        _env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
+        _env = _copy_environ()
 
         logger.info(f"Launching vLLM server with command: {' '.join(cmd)}")
         return subprocess.Popen(
@@ -396,7 +402,9 @@ class RemotevLLMEngine(InferenceEngine):
         kwargs: dict | None = None,
     ) -> Future[None]:
         """Update weights via Awex."""
-        return self._engine.update_weights_from_awex(meta, step_id=step_id, kwargs=kwargs)
+        return self._engine.update_weights_from_awex(
+            meta, step_id=step_id, kwargs=kwargs
+        )
 
     def submit(
         self,

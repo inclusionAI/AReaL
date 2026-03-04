@@ -10,6 +10,7 @@ __all__ = [
     "MegatronLMEngine",
     "RemoteSGLangEngine",
     "RemotevLLMEngine",
+    "RayRemotevLLMEngine",
 ]
 
 _LAZY_IMPORTS = {
@@ -24,6 +25,7 @@ _LAZY_IMPORTS = {
     "MegatronLMEngine": "areal.engine.megatron_engine",
     "RemoteSGLangEngine": "areal.engine.sglang_remote",
     "RemotevLLMEngine": "areal.engine.vllm_remote",
+    "RayRemotevLLMEngine": "areal.engine.ray_vllm_remote",
 }
 
 
