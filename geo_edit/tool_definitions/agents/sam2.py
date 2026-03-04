@@ -104,7 +104,7 @@ class SAM2Actor(BaseToolModelActor):
         system_prompt: Optional[str] = None,
     ):
         import torch
-        from transformers import AutoProcessor, AutoModelForMaskGeneration
+        from transformers import pipeline
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
@@ -113,13 +113,15 @@ class SAM2Actor(BaseToolModelActor):
         # Load model immediately (no lazy loading)
         logger.info("Loading SAM2 model: %s", self.model_name)
 
-        self.processor = AutoProcessor.from_pretrained(self.model_name)
-        self.model = AutoModelForMaskGeneration.from_pretrained(
-            self.model_name,
+        # Determine device
+        device = f"cuda:{self.gpu_ids[0]}" if self.gpu_ids else "cpu"
+
+        self.pipe = pipeline(
+            "mask-generation",
+            model=self.model_name,
+            device=device,
             torch_dtype=torch.float16,
-            device_map=self.device_map,
         )
-        self.model.eval()
         self._initialized = True
 
         logger.info("SAM2Actor initialized on GPU %s: %s", self.gpu_ids, model_name)
@@ -210,46 +212,39 @@ class SAM2Actor(BaseToolModelActor):
         """Automatic mask generation for entire image."""
         import torch
 
-        inputs = self.processor(images=image, return_tensors="pt")
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-
-        with torch.no_grad():
-            outputs = self.model.generate_masks(**inputs)
+        # Use pipeline for automatic segmentation
+        results = self.pipe(image, points_per_batch=64)
 
         # Extract masks and scores
-        masks = outputs.pred_masks.cpu().numpy()
-        scores = outputs.iou_scores.cpu().numpy()
+        masks = []
+        scores = []
 
-        # Flatten batch dimension if present
-        if masks.ndim == 4:
-            masks = masks.squeeze(0)
-        if scores.ndim == 2:
-            scores = scores.squeeze(0)
+        for result in results['masks']:
+            masks.append(result)
+        for result in results['scores']:
+            scores.append(result)
+
+        masks = np.array(masks)
+        scores = np.array(scores)
 
         return masks, scores
 
     def _bbox_segment(self, image, bbox: List[int]) -> Tuple[np.ndarray, np.ndarray]:
         """Segment within a bounding box prompt."""
-        import torch
-
-        # Prepare inputs with box prompt
-        inputs = self.processor(
-            images=image,
-            input_boxes=[[[bbox]]],
-            return_tensors="pt"
-        )
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-
-        with torch.no_grad():
-            outputs = self.model(**inputs)
+        # Use pipeline with bounding box prompt
+        results = self.pipe(image, input_boxes=[bbox])
 
         # Extract masks and scores
-        masks = outputs.pred_masks.cpu().numpy()
-        scores = outputs.iou_scores.cpu().numpy()
+        masks = []
+        scores = []
 
-        # Flatten dimensions
-        masks = masks.squeeze()
-        scores = scores.squeeze()
+        for result in results['masks']:
+            masks.append(result)
+        for result in results['scores']:
+            scores.append(result)
+
+        masks = np.array(masks)
+        scores = np.array(scores)
 
         # Ensure proper shape
         if masks.ndim == 2:
