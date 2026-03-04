@@ -57,13 +57,16 @@ class OVRActor(BaseToolModelActor):
     def analyze(
         self,
         image_b64: str,
-        question: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        **kwargs,
     ) -> str:
         """Analyze an image and answer the question using vLLM."""
         from PIL import Image
         from vllm import SamplingParams
+
+        # Extract question from kwargs
+        question = kwargs.get("question", "")
 
         # Decode base64 image
         image_bytes = base64.b64decode(image_b64)

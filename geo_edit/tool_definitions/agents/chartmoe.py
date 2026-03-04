@@ -56,13 +56,16 @@ class ChartMoEActor(BaseToolModelActor):
     def analyze(
         self,
         image_b64: str,
-        question: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        **kwargs,
     ) -> str:
         """Analyze an image and answer the question."""
         import torch
         from PIL import Image
+
+        # Extract question from kwargs
+        question = kwargs.get("question", "")
 
         # Decode base64 image
         image_bytes = base64.b64decode(image_b64)

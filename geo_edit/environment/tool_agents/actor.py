@@ -84,17 +84,17 @@ class BaseToolModelActor(ABC):
     def analyze(
         self,
         image_b64: str,
-        question: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        **kwargs,
     ) -> str:
-        """Analyze an image and answer the question.
+        """Analyze an image with tool-specific parameters.
 
         Args:
             image_b64: Base64-encoded image string.
-            question: Question to ask about the image.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            **kwargs: Tool-specific parameters (e.g., question, text_prompt, mode, bbox, etc.).
 
         Returns:
             Analysis result as string.

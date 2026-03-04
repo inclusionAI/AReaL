@@ -64,9 +64,9 @@ class GLLaVAActor(BaseToolModelActor):
     def analyze(
         self,
         image_b64: str,
-        question: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        **kwargs,
     ) -> str:
         """Analyze an image and answer the question."""
         import torch
@@ -75,6 +75,9 @@ class GLLaVAActor(BaseToolModelActor):
         from geo_edit.models.gllava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
         from geo_edit.models.gllava.conversation import conv_templates
         from geo_edit.models.gllava.mm_utils import tokenizer_image_token, process_images
+
+        # Extract question from kwargs
+        question = kwargs.get("question", "")
 
         # Decode base64 image
         image_bytes = base64.b64decode(image_b64)

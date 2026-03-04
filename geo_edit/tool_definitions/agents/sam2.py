@@ -127,17 +127,17 @@ class SAM2Actor(BaseToolModelActor):
     def analyze(
         self,
         image_b64: str,
-        question: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        **kwargs,
     ) -> str:
         """Run SAM2 segmentation and return JSON with proposals.
 
         Args:
             image_b64: Base64-encoded image string.
-            question: Empty for auto mode, or contains \\boxed{x1,y1,x2,y2} for bbox mode.
             temperature: Unused.
             max_tokens: Unused.
+            **kwargs: Tool-specific parameters, may include 'bounding_box' or 'question'.
 
         Returns:
             JSON string with image_size and proposals.
@@ -150,8 +150,9 @@ class SAM2Actor(BaseToolModelActor):
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
         W, H = image.size  # PIL: (W, H)
 
-        # Parse mode from question
-        bbox = self._parse_bbox(question, W, H)
+        # Parse bounding box from kwargs (can be 'bounding_box' or in 'question')
+        bbox_str = kwargs.get("bounding_box", kwargs.get("question", ""))
+        bbox = self._parse_bbox(bbox_str, W, H)
 
         try:
             if bbox is None:
