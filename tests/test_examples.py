@@ -836,3 +836,182 @@ def test_tau2(tmp_path_factory):
     finally:
         logger.info("Shutting down user LLM server...")
         kill_process_tree(user_llm_proc.pid, graceful=False)
+
+
+@pytest.mark.multi_gpu
+def test_openclaw_online_rl(tmp_path_factory):
+    """Test openclaw online RL training via demo lifecycle (HTTP requests).
+
+    Starts the online RL service, runs 3 episodes via HTTP (start_session →
+    chat/completions → set_reward), and verifies a training step completes.
+    Requires 2 GPUs: 1 for SGLang rollout, 1 for FSDP training.
+    """
+    # Timeout constants
+    GATEWAY_STARTUP_TIMEOUT = 600  # 10 min for model loading + service init
+    SETTLE_TIME = 5  # Wait for gateway to be fully ready
+    HEALTH_CHECK_TIMEOUT = 10
+    SESSION_NEW_TIMEOUT = 30
+    SESSION_REFRESH_TIMEOUT = 130  # Longer timeout for refresh (waits for training)
+    CHAT_TIMEOUT = 30
+    REWARD_TIMEOUT = 10
+    TRAINING_STEP_TIMEOUT = 300  # 5 min for training step
+
+    def wait_for_pattern(process, pattern, timeout, raise_on_exit=True):
+        """Wait for a regex pattern in process stdout.
+
+        Returns the match object if found, None if timeout or process exits.
+        Raises RuntimeError if process exits and raise_on_exit=True.
+        """
+        start_time = time.monotonic()
+        while (time.monotonic() - start_time) < timeout:
+            line = process.stdout.readline()
+            if not line:
+                if process.poll() is not None:
+                    if raise_on_exit:
+                        raise RuntimeError(
+                            f"Process terminated unexpectedly (code {process.returncode})"
+                        )
+                    return None
+                time.sleep(0.1)
+                continue
+            line = line.strip()
+            if line:
+                logger.info(f"[Online RL] {line}")
+            match = pattern.search(line)
+            if match:
+                return match
+        return None
+
+    if current_platform.device_count() < 2:
+        pytest.skip("This test requires at least 2 GPUs to run.")
+
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B"
+    )
+
+    admin_api_key = "test-admin-key"
+    batch_size = 2
+
+    cmd = [
+        "python3",
+        "examples/openclaw/train.py",
+        "--config",
+        "examples/openclaw/config.yaml",
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=1",
+        "gconfig.max_new_tokens=128",
+        "actor.mb_spec.max_tokens_per_mb=2048",
+        f"train_dataset.batch_size={batch_size}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        "scheduler.type=local",
+        f"rollout.openai.admin_api_key={admin_api_key}",
+        "stats_logger.wandb.mode=disabled",
+    ]
+
+    logger.info(f"Starting online RL service: {' '.join(cmd)}")
+    process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+    )
+
+    gateway_pattern = re.compile(r"Proxy gateway available at (http://[0-9.:]+)")
+
+    try:
+        # Wait for gateway URL
+        match = wait_for_pattern(
+            process, gateway_pattern, GATEWAY_STARTUP_TIMEOUT, raise_on_exit=True
+        )
+        if not match:
+            raise RuntimeError("Timed out waiting for gateway URL")
+        gateway_url = match.group(1)
+        logger.info(f"Gateway URL: {gateway_url}")
+
+        time.sleep(SETTLE_TIME)
+
+        import requests
+
+        # Health check
+        health_resp = requests.get(
+            f"{gateway_url}/health", timeout=HEALTH_CHECK_TIMEOUT
+        )
+        assert health_resp.status_code == 200, (
+            f"Health check failed: {health_resp.text}"
+        )
+
+        # Run batch_size + 1 episodes to trigger training
+        session_api_key = None
+        for episode in range(batch_size + 1):
+            logger.info(f"Episode {episode + 1}/{batch_size + 1}")
+
+            # Start/refresh session
+            start_body = {"task_id": "test-task"}
+            if session_api_key is not None:
+                start_body["api_key"] = session_api_key
+            start_resp = requests.post(
+                f"{gateway_url}/rl/start_session",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {admin_api_key}",
+                },
+                json=start_body,
+                timeout=SESSION_REFRESH_TIMEOUT
+                if session_api_key
+                else SESSION_NEW_TIMEOUT,
+            )
+            assert start_resp.status_code == 200, (
+                f"start_session failed (ep {episode + 1}): {start_resp.text}"
+            )
+            session_data = start_resp.json()
+            session_api_key = session_data["api_key"]
+            logger.info(f"Session: {session_data['session_id']}")
+
+            # Chat completion
+            chat_resp = requests.post(
+                f"{gateway_url}/chat/completions",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {session_api_key}",
+                },
+                json={
+                    "model": "default",
+                    "messages": [{"role": "user", "content": "What is 2+2?"}],
+                    "temperature": 0.7,
+                    "top_p": 1.0,
+                    "max_tokens": 128,
+                },
+                timeout=CHAT_TIMEOUT,
+            )
+            assert chat_resp.status_code == 200, (
+                f"chat/completions failed (ep {episode + 1}): {chat_resp.text}"
+            )
+            logger.info(f"Completion: {chat_resp.json().get('id', '')}")
+
+            # Set reward
+            reward_resp = requests.post(
+                f"{gateway_url}/rl/set_reward",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {session_api_key}",
+                },
+                json={"reward": 1.0},
+                timeout=REWARD_TIMEOUT,
+            )
+            assert reward_resp.status_code == 200, (
+                f"set_reward failed (ep {episode + 1}): {reward_resp.text}"
+            )
+
+        # Wait for training step
+        logger.info("Waiting for training step to complete...")
+        match = wait_for_pattern(
+            process, SUCCESS_PATTERN, TRAINING_STEP_TIMEOUT, raise_on_exit=False
+        )
+        assert match is not None, "Training step did not complete within timeout"
+        logger.info("Training step completed!")
+
+    finally:
+        logger.info("Shutting down online RL service...")
+        kill_process_tree(process.pid, graceful=False)
