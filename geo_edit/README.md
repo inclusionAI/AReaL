@@ -530,7 +530,6 @@ python -m geo_edit.evaluation.eval_shortest_path \
 
 ### Registered Datasets
 
-- `sudoku` - Sudoku puzzle solving
 - `mathvisionqa` - Mathematical visual QA
 - `cartomapqa_srn` - Map navigation routes
 - `cartomapqa_stmf_presence` - Map feature presence

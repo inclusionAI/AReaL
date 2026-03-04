@@ -11,8 +11,6 @@ from geo_edit.datasets.input_template import (
     CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
     MATHVISION_INPUT_TEMPLATE,
     MATHVISION_NOTOOL_INPUT_TEMPLATE,
-    SUDOKU_TEXT_INPUT_TEMPLATE,
-    SUDOKU_TOOL_CALL_INPUT_TEMPLATE,
 )
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
@@ -51,38 +49,7 @@ class DatasetSpec:
         return values
 
 
-def _sudoku_total_cells(item: Mapping[str, Any]) -> int:
-    return int(item["rows"]) * int(item["cols"])
-
-
-def _sudoku_initial_board(item: Mapping[str, Any]) -> str:
-    board = item["initial_board"]
-    rows = int(item["rows"])
-    cols = int(item["cols"])
-    lines = []
-    for r in range(rows):
-        line = " ".join(str(board[r * cols + c]) for c in range(cols))
-        lines.append(line)
-    return "\n".join(lines)
-
-
 DATASET_SPECS: Dict[str, DatasetSpec] = {
-    "sudoku": DatasetSpec(
-        name="sudoku",
-        id_key="puzzle_id",
-        answer_key="solution",
-        image_key="board_image",
-        prompt_template=SUDOKU_TOOL_CALL_INPUT_TEMPLATE,
-        notool_prompt_template=SUDOKU_TEXT_INPUT_TEMPLATE,
-        template_fields={
-            "rules": "rules",
-            "rows": "rows",
-            "cols": "cols",
-            "total_cells": _sudoku_total_cells,
-            "initial_board": _sudoku_initial_board,
-            "visual_elements": "visual_elements",
-        },
-    ),
     "cartomapqa_srn": DatasetSpec(
         name="cartomapqa_srn",
         id_key="id",
