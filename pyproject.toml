@@ -185,7 +185,7 @@ dev = [
     "pre-commit",
     "sphinx",
     "sphinx-nefertiti",
-    "jupyter-book<2",
+    "jupyter-book==1.0.4.post1",
 ]
 
 # =============================================================================
