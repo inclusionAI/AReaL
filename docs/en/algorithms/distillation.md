@@ -41,7 +41,7 @@ $$J_{KDRL}(\theta) = J_{GRPO}(\theta) - \beta D_{KL}(\pi_\theta \parallel \pi_T)
 The gradient $\nabla_\theta J_{KDRL}(\theta)$ provides an unbiased estimate of $\nabla_\theta J_{GRPO}( \theta) + \beta \cdot \nabla_\theta J_{RKL}(\theta)$.
 
 - Implementation Detail: In the joint loss case (`rl_loss_weight` > 0), the RKL is treated as a direct penalty. Minimizing the term `logprobs - teacher_logp` is mathematically equivalent to minimizing the Reverse KL objective $D_{KL}(\pi_\theta \parallel \pi_T)$ when sampling from the student distribution $\pi_\theta$. In the code, this is implemented as:
-`loss = rl_loss_weight * loss + distill_loss_weight * teacher_kl`
+`loss = rl_loss_weight * loss + distill_loss_weight * rkl_penalty`
 
 
 
@@ -66,6 +66,8 @@ teacher:
   optimizer: null
   scheduling_spec: ${actor.scheduling_spec}
 ```
+
+Example command using local scheduler:
 
 ```bash
 python3 examples/math/gsm8k_rl.py --config examples/distillation/gsm8k_grpo_distill.yaml scheduler.type=local experiment_name=gsm8k-grpo-distillation trial_name=trial0

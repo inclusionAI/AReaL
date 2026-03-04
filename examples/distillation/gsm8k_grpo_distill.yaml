@@ -67,7 +67,7 @@ actor:
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true
-  behav_imp_weight_cap: 5.0
+  behave_imp_weight_cap: 5.0
   reward_norm:
     mean_level: group
     std_level: group
@@ -84,6 +84,21 @@ actor:
       mem: 32
       cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars: {}
+
+teacher:
+  allocation_mode: d1p1t4
+  rl_loss_weight: 1.0
+  distill_loss_weight: 0.005
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: Qwen/Qwen2.5-14B-Instruct
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  mb_spec:
+    max_tokens_per_mb: 10240
+  optimizer: null
+  scheduling_spec: ${actor.scheduling_spec}
 
 ref:
   experiment_name: ${experiment_name}
@@ -176,18 +191,3 @@ perf_tracer:
   session_tracer:
     enabled: false
   
-teacher:
-  allocation_mode: d1p1t4
-  rl_loss_weight: 1.0
-  distill_loss_weight: 0.005
-  experiment_name: ${experiment_name}
-  trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-14B-Instruct
-  init_from_scratch: false
-  disable_dropout: true
-  dtype: ${actor.dtype}
-  mb_spec:
-    max_tokens_per_mb: 10240
-  optimizer: null
-  scheduling_spec: ${actor.scheduling_spec}
-    

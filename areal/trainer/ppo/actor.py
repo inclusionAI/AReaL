@@ -443,23 +443,31 @@ def grpo_loss_fn(
 
         if rl_loss_weight == 0:
             # Pure KD using reverse KL (importance-sampling)
-            teacher_kl = teacher_logp - logprobs.detach()
-            prob_ratio = torch.exp(logprobs - old_logp)
+            rkl_reward = teacher_logp - logprobs.detach()
+            importance_weight = torch.exp(logprobs - old_logp)
 
-            loss_per_token = prob_ratio * teacher_kl * loss_mask
+            rkl_weighted_term = importance_weight * rkl_reward * loss_mask
+
             kd_coef = -1 * distill_loss_weight
-            loss = kd_coef * loss_per_token.sum() / loss_mask.sum().clamp(min=1)
+            loss = kd_coef * rkl_weighted_term.sum() / loss_mask.sum().clamp(min=1)
 
-            stats_tracker.scalar(teacher_kl_loss=loss.detach())
-
+            stats_tracker.denominator(token=loss_mask)
+            stats_tracker.stat(
+                rkl_loss=-1 * rkl_weighted_term,
+                denominator="token",
+            )
         else:
             # KDRL: Knowledge Distillation + Reinforcement Learning (joint loss)
-            teacher_kl = (logprobs - teacher_logp) * loss_mask
-            teacher_kl = teacher_kl.sum() / loss_mask.sum().clamp(min=1)
+            rkl_penalty_per_token = (logprobs - teacher_logp) * loss_mask
+            rkl_penalty = rkl_penalty_per_token.sum() / loss_mask.sum().clamp(min=1)
 
-            loss = rl_loss_weight * loss + distill_loss_weight * teacher_kl
+            loss = rl_loss_weight * loss + distill_loss_weight * rkl_penalty
 
-            stats_tracker.scalar(teacher_kl=teacher_kl.detach())
+            stats_tracker.denominator(token=loss_mask)
+            stats_tracker.stat(
+                rkl_loss=rkl_penalty_per_token,
+                denominator="token",
+            )
 
     # Log training statistics
     stats_tracker.denominator(

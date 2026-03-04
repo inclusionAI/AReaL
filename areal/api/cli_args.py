@@ -2171,7 +2171,18 @@ class PPOConfig(BaseExperimentConfig):
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig | None = field(default=None)
     critic: PPOCriticConfig | None = field(default=None)
-    teacher: TeacherConfig | None = None
+    teacher: TeacherConfig | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "Optional teacher model configuration used for on-policy "
+                "distillation during PPO training. If provided, the actor "
+                "may be trained to match the teacher in addition to the "
+                "standard PPO objective."
+            )
+        },
+    )
+    teacher: TeacherConfig | None = field(default=None)
     dynamic_bs: bool = field(
         default=False,
         metadata={
