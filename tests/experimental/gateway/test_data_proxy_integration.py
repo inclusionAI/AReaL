@@ -1106,3 +1106,296 @@ class TestPauseResumeIntegration:
             assert len(chunks) >= 2  # role chunk + content/finish
             last = chunks[-1]
             assert last["choices"][0]["finish_reason"] in ("stop", "length")
+
+
+# ---------------------------------------------------------------------------
+# Tests — concurrent pause during in-flight generation (abort/resubmit)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not _has_gpu(), reason="GPU required")
+class TestConcurrentPauseDuringGeneration:
+    """Test the real abort/resubmit cycle by pausing SGLang mid-generation.
+
+    These tests fire a long-running /generate or /chat/completions request
+    and concurrently call /pause_generation + /continue_generation. When
+    SGLang is paused, in-flight requests abort with stop_reason='abort'.
+    The SGLangBackendWithResubmit loop detects this, waits for resume,
+    and resubmits with accumulated tokens — making the cycle transparent
+    to the caller.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pause_during_generate_then_resume(
+        self, sglang_server, model_path
+    ):
+        """Pause SGLang while /generate is in-flight, resume, verify completion.
+
+        Flow:
+          Task A: POST /generate (large max_new_tokens to ensure it takes time)
+          Task B: sleep briefly → POST /pause_generation → sleep → POST /continue_generation
+          After both: verify Task A returned valid SSE with tokens.
+        """
+        import asyncio
+
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+
+            async def do_generate():
+                return await client.post(
+                    "/generate",
+                    json={
+                        "text": "Write a detailed story about a cat exploring a garden.",
+                        "sampling_params": {
+                            "max_new_tokens": 256,
+                            "temperature": 0.7,
+                        },
+                    },
+                    timeout=120.0,
+                )
+
+            async def pause_then_resume():
+                # Give generation time to start and send request to SGLang
+                await asyncio.sleep(0.5)
+                # Pause — SGLang will abort the in-flight request
+                await client.post("/pause_generation")
+                # Keep paused briefly to ensure abort is processed
+                await asyncio.sleep(1.0)
+                # Resume — SGLang accepts requests again
+                await client.post("/continue_generation")
+
+            # Run both concurrently
+            gen_task = asyncio.create_task(do_generate())
+            pause_task = asyncio.create_task(pause_then_resume())
+
+            # Wait for both to complete
+            resp, _ = await asyncio.gather(gen_task, pause_task)
+
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers.get("content-type", "")
+
+            events = _parse_sse_events(resp.content)
+            assert len(events) > 0, "Expected at least one token in response"
+            assert events[-1]["finished"] is True
+            assert events[-1]["stop_reason"] in ("stop", "length")
+
+            # Verify token integrity — every event has required fields
+            for evt in events:
+                assert "token" in evt
+                assert "text" in evt
+                assert "logprob" in evt
+                assert isinstance(evt["token"], int)
+                assert isinstance(evt["text"], str)
+
+    @pytest.mark.asyncio
+    async def test_pause_during_chat_completions_then_resume(
+        self, sglang_server, model_path
+    ):
+        """Pause SGLang while /chat/completions is in-flight, resume, verify.
+
+        Flow:
+          Start session → Task A: POST /chat/completions (large max_completion_tokens)
+          Task B: sleep → /pause_generation → sleep → /continue_generation
+          After: verify Task A returned valid OpenAI ChatCompletion.
+        """
+        import asyncio
+
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Start session
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "concurrent-pause-chat"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201
+            session_api_key = resp.json()["api_key"]
+
+            async def do_chat():
+                return await client.post(
+                    "/chat/completions",
+                    json={
+                        "model": "sglang",
+                        "messages": [
+                            {"role": "user", "content": "Write a long poem about the ocean."},
+                        ],
+                        "max_completion_tokens": 256,
+                        "temperature": 0.7,
+                    },
+                    headers={"Authorization": f"Bearer {session_api_key}"},
+                    timeout=120.0,
+                )
+
+            async def pause_then_resume():
+                await asyncio.sleep(0.5)
+                await client.post("/pause_generation")
+                await asyncio.sleep(1.0)
+                await client.post("/continue_generation")
+
+            chat_task = asyncio.create_task(do_chat())
+            pause_task = asyncio.create_task(pause_then_resume())
+
+            resp, _ = await asyncio.gather(chat_task, pause_task)
+
+            assert resp.status_code == 200
+            completion = resp.json()
+
+            assert completion["object"] == "chat.completion"
+            assert len(completion["choices"]) == 1
+            choice = completion["choices"][0]
+            assert choice["message"]["role"] == "assistant"
+            assert isinstance(choice["message"]["content"], str)
+            assert len(choice["message"]["content"]) > 0
+            assert choice["finish_reason"] in ("stop", "length")
+
+            # Usage should reflect tokens from all resubmit rounds combined
+            assert completion["usage"]["completion_tokens"] > 0
+
+    @pytest.mark.asyncio
+    async def test_pause_during_streaming_chat_then_resume(
+        self, sglang_server, model_path
+    ):
+        """Pause SGLang while streaming /chat/completions, resume, verify SSE.
+
+        Streaming response starts only after resubmit_backend.generate() returns,
+        so the abort/resubmit cycle is fully transparent — the SSE stream
+        contains the combined tokens from all resubmit rounds.
+        """
+        import asyncio
+
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Start session
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "concurrent-pause-stream"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201
+            session_api_key = resp.json()["api_key"]
+
+            async def do_stream_chat():
+                return await client.post(
+                    "/chat/completions",
+                    json={
+                        "model": "sglang",
+                        "messages": [
+                            {"role": "user", "content": "Explain quantum mechanics in detail."},
+                        ],
+                        "max_completion_tokens": 256,
+                        "temperature": 0.7,
+                        "stream": True,
+                    },
+                    headers={"Authorization": f"Bearer {session_api_key}"},
+                    timeout=120.0,
+                )
+
+            async def pause_then_resume():
+                await asyncio.sleep(0.5)
+                await client.post("/pause_generation")
+                await asyncio.sleep(1.0)
+                await client.post("/continue_generation")
+
+            chat_task = asyncio.create_task(do_stream_chat())
+            pause_task = asyncio.create_task(pause_then_resume())
+
+            resp, _ = await asyncio.gather(chat_task, pause_task)
+
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers.get("content-type", "")
+
+            # Parse SSE chunks
+            chunks = []
+            for line in resp.content.decode().strip().split("\n"):
+                line = line.strip()
+                if line.startswith("data: "):
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    chunks.append(json.loads(payload))
+
+            assert len(chunks) >= 2
+
+            # First chunk should have role
+            first = chunks[0]
+            assert first["object"] == "chat.completion.chunk"
+            assert first["choices"][0]["delta"].get("role") == "assistant"
+
+            # Last chunk should have finish_reason
+            last = chunks[-1]
+            assert last["choices"][0]["finish_reason"] in ("stop", "length")
+
+            # At least one chunk should have content
+            content_chunks = [
+                c for c in chunks if c["choices"][0]["delta"].get("content")
+            ]
+            assert len(content_chunks) >= 1
+
+    @pytest.mark.asyncio
+    async def test_multiple_pause_resume_cycles_during_generate(
+        self, sglang_server, model_path
+    ):
+        """Multiple pause/resume cycles during a single long generation.
+
+        Tests that the resubmit loop can handle repeated abort/resubmit rounds
+        and still produce a valid final result.
+        """
+        import asyncio
+
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+
+            async def do_generate():
+                return await client.post(
+                    "/generate",
+                    json={
+                        "text": "Write a very long and detailed essay about the history of mathematics.",
+                        "sampling_params": {
+                            "max_new_tokens": 512,
+                            "temperature": 0.7,
+                        },
+                    },
+                    timeout=180.0,
+                )
+
+            async def multiple_pause_resume():
+                for i in range(3):
+                    await asyncio.sleep(0.3 + i * 0.2)  # stagger timing
+                    await client.post("/pause_generation")
+                    await asyncio.sleep(0.5)
+                    await client.post("/continue_generation")
+
+            gen_task = asyncio.create_task(do_generate())
+            pause_task = asyncio.create_task(multiple_pause_resume())
+
+            resp, _ = await asyncio.gather(gen_task, pause_task)
+
+            assert resp.status_code == 200
+            events = _parse_sse_events(resp.content)
+            assert len(events) > 0
+            assert events[-1]["finished"] is True
+            assert events[-1]["stop_reason"] in ("stop", "length")
+
+            # All tokens should be valid integers
+            for evt in events:
+                assert isinstance(evt["token"], int)
+                assert isinstance(evt["text"], str)
