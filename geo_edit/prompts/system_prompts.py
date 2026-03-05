@@ -110,7 +110,7 @@ SEPARATED_REASONING_ONLY_PROMPT = """
 You are an advanced AI agent. In this phase, you must plan about what tool to call.
 
 Instructions:
-1. Analyze the observations, explain your reasoning clearly, determine what tool to call next and output reason in <tool_call> and <tool_call> tags.
+1. Analyze the observations, explain your reasoning clearly, determine what tool to call next and output reason in <think> and </think> tags.
 2. You will be given a list of available tools and their descriptions, but you are not allowed to call tool in this phase, which will be handled in the next phase.
 3. Never require a tool to directly solve the problem, but rather to analyze the problem and provide more information for you to solve the problem.
 4. You can ONLY call ONE tool in each turn. Plan accordingly and choose the most important tool to call.
