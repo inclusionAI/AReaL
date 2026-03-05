@@ -179,7 +179,7 @@ class ScaffoldingLlm:
                     controller=self.prototype_controller.clone(),
                 )
             except Exception as e:
-                self.task_queue.put(None)
+                await self.task_queue.put(None)
                 print(
                     f"Error: build ScaffoldingRequest failed: {e} \n {traceback.format_exc()}"
                 )
