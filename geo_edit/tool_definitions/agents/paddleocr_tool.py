@@ -19,16 +19,9 @@ agent_config = {
     "max_model_len": 8192,
     "gpu_memory_utilization": 0.8,
     "temperature": 0.0,
-    "max_tokens":4096,
+    "max_tokens": 4096,
     "num_gpus": 1,
-}
-
-# Local model configuration
-# Set model_path to a local path or HuggingFace model ID
-LOCAL_MODEL_CONFIG = {
-    "model_path": "/storage/openpsi/models/PaddleOCR-VL-1.5",  # Model path (HuggingFace or local)
-    "torch_dtype": "float32",  # Options: "bfloat16", "float16", "float32"
-    "max_new_tokens": 4096,       # Maximum tokens to generate
+    "tensor_parallel_size": 1,  # Number of GPUs for tensor parallelism
 }
 
 
@@ -53,38 +46,26 @@ class PaddleOCRActor(BaseToolModelActor):
         gpu_memory_utilization: float = 0.8,
         system_prompt: Optional[str] = None,
     ):
-        import torch
-        from transformers import AutoProcessor, AutoModel
+        from vllm import LLM
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
         self.model_name = model_name
-        model_path = LOCAL_MODEL_CONFIG["model_path"]
+        model_path = agent_config["model_name_or_path"]
 
         logger.info("Loading PaddleOCR-VL model with vLLM: %s", model_path)
 
-        # Set device
-        self.device = "cuda" 
+        # Initialize vLLM with PaddleOCR-VL model
+        self.llm = LLM(
+            model=model_path,
+            trust_remote_code=True,
+            tensor_parallel_size=agent_config.get("tensor_parallel_size", 1),
+            max_model_len=agent_config.get("max_model_len", max_model_len),
+            gpu_memory_utilization=agent_config.get("gpu_memory_utilization", gpu_memory_utilization),
+            limit_mm_per_prompt={"image": 10},  # Allow up to 10 images per prompt
+        )
 
-        # Set torch dtype
-        dtype_str = LOCAL_MODEL_CONFIG.get("torch_dtype", "bfloat16")
-        if dtype_str == "bfloat16":
-            self.torch_dtype = torch.bfloat16
-        elif dtype_str == "float16":
-            self.torch_dtype = torch.float16
-        else:
-            self.torch_dtype = torch.float32
-
-        # Load model and processor
-        self.model = AutoModel.from_pretrained(
-            model_path,
-            torch_dtype=self.torch_dtype,
-            trust_remote_code=True
-        ).to(self.device).eval()
-
-        self.processor = AutoProcessor.from_pretrained(model_path,trust_remote_code=True)
-
-        self.max_new_tokens = LOCAL_MODEL_CONFIG.get("max_new_tokens", 512)
+        self.max_new_tokens = agent_config.get("max_tokens", 4096)
         self._initialized = True
 
         logger.info("PaddleOCR-VL (vLLM) initialized on GPU %s: %s", self.gpu_ids, model_path)
@@ -136,8 +117,9 @@ class PaddleOCRActor(BaseToolModelActor):
             image = image.resize((process_w, process_h), resample_filter)
 
         try:
-            # Prepare conversation with image and prompt
-            conversation = [
+            # Prepare message with image and task prompt
+            # vLLM expects a list of messages with content
+            messages = [
                 {
                     "role": "user",
                     "content": [
@@ -155,11 +137,11 @@ class PaddleOCRActor(BaseToolModelActor):
 
             # Run inference with vLLM
             outputs = self.llm.chat(
-                messages=conversation,
+                messages=messages,
                 sampling_params=sampling_params,
             )
 
-            # Extract result
+            # Extract result from vLLM output
             result = outputs[0].outputs[0].text
 
             # Return formatted result
