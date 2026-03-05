@@ -6,10 +6,10 @@ Adapted from verl PR #5230 tests.
 Test naming convention: test_<what>_<condition>_<expected>()
 """
 
+from unittest.mock import patch
+
 import pytest
 import torch
-
-from unittest.mock import patch
 
 from areal.utils.vision_dp import (
     _patch_vision_class,
@@ -220,9 +220,20 @@ class TestCreateDpVisionForward:
         grid_thw = torch.tensor([[1, 10, 10]])
 
         # Mock Ulysses SP to return sp_size=1
-        with patch("areal.utils.vision_dp.get_ulysses_sequence_parallel_group", return_value=None), \
-             patch("areal.utils.vision_dp.get_ulysses_sequence_parallel_world_size", return_value=1), \
-             patch("areal.utils.vision_dp.get_ulysses_sequence_parallel_rank", return_value=0):
+        with (
+            patch(
+                "areal.utils.vision_dp.get_ulysses_sequence_parallel_group",
+                return_value=None,
+            ),
+            patch(
+                "areal.utils.vision_dp.get_ulysses_sequence_parallel_world_size",
+                return_value=1,
+            ),
+            patch(
+                "areal.utils.vision_dp.get_ulysses_sequence_parallel_rank",
+                return_value=0,
+            ),
+        ):
             result = wrapped(None, hidden_states, grid_thw)
 
         assert call_log == ["original"]
@@ -256,7 +267,9 @@ class TestPatchVisionClass:
 
         # Patch again — should be a no-op
         _patch_vision_class(FakeVisionModel, "FakeVisionModel")
-        assert FakeVisionModel.forward is first_patched  # same wrapper, not double-wrapped
+        assert (
+            FakeVisionModel.forward is first_patched
+        )  # same wrapper, not double-wrapped
 
 
 class TestApplyVisionDpPatch:
@@ -272,9 +285,7 @@ class TestApplyVisionDpPatch:
 
 class TestIntegration:
     def test_full_workflow_all_patches_covered(self):
-        grid_thw = torch.tensor(
-            [[1, 4, 4], [1, 8, 8], [1, 4, 4], [1, 6, 6], [1, 4, 4]]
-        )
+        grid_thw = torch.tensor([[1, 4, 4], [1, 8, 8], [1, 4, 4], [1, 6, 6], [1, 4, 4]])
         total_patches = 16 + 64 + 16 + 36 + 16  # 148
         pixel_values = torch.randn(total_patches, 768)
 

@@ -317,7 +317,9 @@ def create_dp_vision_forward(original_forward):
             )
         else:
             # This rank has no images, create empty tensor with correct hidden size
-            hidden_size = getattr(getattr(self, "config", None), "out_hidden_size", None)
+            hidden_size = getattr(
+                getattr(self, "config", None), "out_hidden_size", None
+            )
             if hidden_size is None:
                 raise RuntimeError(
                     f"Cannot determine hidden_size: self.config.out_hidden_size not found. "
@@ -336,7 +338,10 @@ def create_dp_vision_forward(original_forward):
         local_deepstack = None
         if has_deepstack:
             if isinstance(local_embeddings, tuple):
-                local_embeddings, local_deepstack = local_embeddings[0], local_embeddings[1]
+                local_embeddings, local_deepstack = (
+                    local_embeddings[0],
+                    local_embeddings[1],
+                )
             else:
                 # Empty rank: create matching empty deepstack tensors
                 num_deepstack = len(self.deepstack_merger_list)
