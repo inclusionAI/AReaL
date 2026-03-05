@@ -4,8 +4,10 @@ import functools
 from dataclasses import dataclass, field
 
 import torch.distributed as dist
-from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+from torch.distributed.device_mesh import DeviceMesh
 
+from areal.api.alloc_mode import ParallelStrategy
+from areal.engine.core.topology import DeviceMeshTopology
 from areal.utils import logging
 
 
@@ -117,187 +119,41 @@ class ArchonParallelDims:
     device_type: str = "cuda"
 
     # Internal state
-    _world_mesh: DeviceMesh | None = field(default=None, repr=False)
-    _meshes: dict[str, DeviceMesh] = field(default_factory=dict, repr=False)
+    _topology: DeviceMeshTopology | None = field(default=None, repr=False)
 
     def __post_init__(self):
         if self.dp_shard < 0:
             self.dp_shard = self.world_size // (self.tp * self.cp * self.pp)
 
-        expected_world_size = self.dp_shard * self.tp * self.cp * self.pp
-        if expected_world_size != self.world_size:
-            raise ValueError(
-                f"dp_shard * tp * cp * pp must equal world_size, "
-                f"got {self.dp_shard} * {self.tp} * {self.cp} * {self.pp} = {expected_world_size}, "
-                f"world_size={self.world_size}"
-            )
-
-        # Validate ETP constraints
-        if self.etp not in (1, self.tp):
-            raise ValueError(
-                f"etp must be 1 or equal to tp, got etp={self.etp}, tp={self.tp}"
-            )
-
-        # Validate EP constraints based on ETP mode
-        if self.ep > 1:
-            if self.etp == self.tp:
-                # ETP=TP mode: EP borrows from dp_shard × cp only (not tp)
-                if self.ep % self.cp != 0:
-                    raise ValueError(
-                        f"When etp=tp, ep must be divisible by cp, "
-                        f"got ep={self.ep}, cp={self.cp}"
-                    )
-                if (self.dp_shard * self.cp) % self.ep != 0:
-                    raise ValueError(
-                        f"When etp=tp, dp_shard * cp must be divisible by ep, "
-                        f"got {self.dp_shard} * {self.cp} = {self.dp_shard * self.cp}, ep={self.ep}"
-                    )
-            else:
-                # ETP=1 mode: EP borrows from dp_shard × cp × tp
-                if self.ep % (self.cp * self.tp) != 0:
-                    raise ValueError(
-                        f"When etp=1, ep must be divisible by cp * tp, "
-                        f"got ep={self.ep}, cp={self.cp}, tp={self.tp}"
-                    )
-                if (self.dp_shard * self.cp * self.tp) % self.ep != 0:
-                    raise ValueError(
-                        f"When etp=1, dp_shard * cp * tp must be divisible by ep, "
-                        f"got {self.dp_shard} * {self.cp} * {self.tp} = {self.dp_shard * self.cp * self.tp}, ep={self.ep}"
-                    )
+        # Build a ParallelStrategy to feed into DeviceMeshTopology
+        strategy = ParallelStrategy(
+            tensor_parallel_size=self.tp,
+            pipeline_parallel_size=self.pp,
+            data_parallel_size=self.dp_shard,
+            context_parallel_size=self.cp,
+            expert_parallel_size=self.ep,
+            expert_tensor_parallel_size=self.etp,
+        )
+        # DeviceMeshTopology validates all constraints
+        self._topology = DeviceMeshTopology(strategy, device_type=self.device_type)
 
     # =========================================================================
-    # Mesh Creation
+    # Mesh Creation (delegated to DeviceMeshTopology)
     # =========================================================================
+
+    @property
+    def topology(self) -> DeviceMeshTopology:
+        assert self._topology is not None
+        return self._topology
 
     def build_mesh(self) -> DeviceMesh:
         """Build device mesh for all parallelism dimensions."""
-        if self.ep > 1:
-            return self._build_mesh_with_ep()
-        else:
-            return self._build_mesh_without_ep()
-
-    def _build_mesh_without_ep(self) -> DeviceMesh:
-        """Build mesh when EP is disabled."""
-        # Always include all dimensions, even if size=1
-        # This ensures submeshes like mp (cp × tp) can always be created
-        dims = [self.pp, self.dp_shard, self.cp, self.tp]
-        names = ["pp", "dp_shard", "cp", "tp"]
-
-        _get_logger().info(f"Building 4-D device mesh with {names}, {dims}")
-        mesh = init_device_mesh(
-            self.device_type, tuple(dims), mesh_dim_names=tuple(names)
-        )
-
-        self._meshes["pp"] = mesh["pp"]
-        self._meshes["dp_shard"] = mesh["dp_shard"]
-        self._meshes["cp"] = mesh["cp"]
-        self._meshes["tp"] = mesh["tp"]
-
-        # dp mesh: for data loading
-        self._meshes["dp"] = mesh["dp_shard"]._flatten(mesh_dim_name="dp")
-
-        # dp_shard_cp mesh: for FSDP param sharding
-        self._meshes["dp_shard_cp"] = mesh["dp_shard", "cp"]._flatten(
-            mesh_dim_name="dp_shard_cp"
-        )
-
-        # dp_cp mesh: for loss all-reduce
-        self._meshes["dp_cp"] = mesh["dp_shard", "cp"]._flatten(mesh_dim_name="dp_cp")
-
-        # pp_cp_tp mesh: for PP × CP × TP (context and model parallel group)
-        self._meshes["pp_cp_tp"] = mesh["pp", "cp", "tp"]._flatten(
-            mesh_dim_name="pp_cp_tp"
-        )
-
-        self._world_mesh = mesh
-        return mesh
-
-    def _build_mesh_with_ep(self) -> DeviceMesh:
-        """Build mesh when EP is enabled.
-
-        Handles both etp=1 and etp=tp cases:
-        - etp=1: EP borrows from dp_shard_in_ep * cp * tp
-        - etp=tp: EP borrows from dp_shard_in_ep * cp only (tp independent)
-        """
-        # Calculate dimensions based on ETP mode
-        if self.etp == self.tp:
-            # ETP=TP: ep = dp_shard_in_ep * cp (NOT including tp)
-            dp_shard_mod_ep = self.dp_shard * self.cp // self.ep
-            dp_shard_in_ep = self.ep // self.cp
-        else:
-            # ETP=1: ep = dp_shard_in_ep * cp * tp
-            dp_shard_mod_ep = self.dp_shard * self.cp * self.tp // self.ep
-            dp_shard_in_ep = self.ep // (self.cp * self.tp)
-
-        dims = [self.pp, dp_shard_mod_ep, dp_shard_in_ep, self.cp, self.tp]
-        names = ["pp", "dp_shard_mod_ep", "dp_shard_in_ep", "cp", "tp"]
-
-        _get_logger().info(
-            f"Building 5-D device mesh (etp={self.etp}) with {names}, {dims}"
-        )
-        mesh = init_device_mesh(
-            self.device_type, tuple(dims), mesh_dim_names=tuple(names)
-        )
-
-        # Store base meshes
-        self._meshes["pp"] = mesh["pp"]
-        self._meshes["dp_shard_mod_ep"] = mesh["dp_shard_mod_ep"]
-        self._meshes["dp_shard_in_ep"] = mesh["dp_shard_in_ep"]
-        self._meshes["cp"] = mesh["cp"]
-        self._meshes["tp"] = mesh["tp"]
-
-        # dp mesh: for data loading
-        self._meshes["dp"] = mesh["dp_shard_mod_ep", "dp_shard_in_ep"]._flatten(
-            mesh_dim_name="dp"
-        )
-
-        # dp_shard_cp mesh: for FSDP param sharding
-        self._meshes["dp_shard_cp"] = mesh[
-            "dp_shard_mod_ep", "dp_shard_in_ep", "cp"
-        ]._flatten(mesh_dim_name="dp_shard_cp")
-
-        # dp_cp mesh: for loss all-reduce
-        self._meshes["dp_cp"] = mesh[
-            "dp_shard_mod_ep", "dp_shard_in_ep", "cp"
-        ]._flatten(mesh_dim_name="dp_cp")
-
-        # pp_cp_tp mesh: for PP × CP × TP (context and model parallel group)
-        self._meshes["pp_cp_tp"] = mesh["pp", "cp", "tp"]._flatten(
-            mesh_dim_name="pp_cp_tp"
-        )
-
-        # ep mesh: flatten based on ETP mode
-        if self.etp == self.tp:
-            # ETP=TP: ep = dp_shard_in_ep * cp (NOT including tp)
-            # First flatten to create "ep" dimension, then create 2D ep_tp mesh
-            ep_mesh_dims = ["dp_shard_in_ep"]
-            if self.cp > 1:
-                ep_mesh_dims.append("cp")
-
-            if len(ep_mesh_dims) > 1:
-                mesh[tuple(ep_mesh_dims)]._flatten(mesh_dim_name="ep")
-            else:
-                # If only dp_shard_in_ep, just rename it
-                mesh["dp_shard_in_ep"]._flatten(mesh_dim_name="ep")
-            self._meshes["ep"] = mesh["ep"]
-
-            # ep_tp mesh: 2D mesh [ep, tp] for ExpertTensorParallel
-            self._meshes["ep_tp"] = mesh["ep", "tp"]
-        else:
-            # ETP=1: ep = dp_shard_in_ep * cp * tp
-            self._meshes["ep"] = mesh["dp_shard_in_ep", "cp", "tp"]._flatten(
-                mesh_dim_name="ep"
-            )
-
-        self._world_mesh = mesh
-        return mesh
+        return self.topology.build_mesh()
 
     @property
     def world_mesh(self) -> DeviceMesh:
         """Lazily build and return the device mesh."""
-        if self._world_mesh is None:
-            self._world_mesh = self.build_mesh()
-        return self._world_mesh
+        return self.topology.world_mesh
 
     # =========================================================================
     # Enabled Flags
@@ -354,65 +210,31 @@ class ArchonParallelDims:
         return self.etp > 1
 
     # =========================================================================
-    # Utilities
+    # Utilities (delegated to DeviceMeshTopology)
     # =========================================================================
 
     @property
     def fsdp_gradient_divide_factor(self) -> int:
-        """Gradient divide factor for FSDP (consistent with data parallelism degree).
-
-        This is needed for FSDP-sharded experts when Expert Parallel is enabled.
-        Although the FSDP sharding of experts is done on a mesh of a different size than
-        other parameters, the gradient division factor should be consistent with data.
-        """
-        return self.dp_shard * self.cp
+        """Gradient divide factor for FSDP (consistent with data parallelism degree)."""
+        return self.topology.gradient_divide_factor
 
     @property
     def seq_len_divisor(self) -> int:
-        """Minimum divisor for sequence length (for TP and CP compatibility)."""
+        """Minimum divisor for sequence length (for TP and CP compatibility).
+
+        Note: Archon multiplies by 2 for ring attention compatibility.
+        """
         return self.tp * self.cp * 2
 
     @property
     def context_and_model_parallel_size(self) -> int:
         """Context and model parallel size (cp * tp * pp)."""
-        return self.cp * self.tp * self.pp
+        return self.topology.context_and_model_parallel_size
 
     def get_mesh(self, name: str) -> DeviceMesh | None:
-        """Get submesh by name, return None if not available.
-
-        This method safely retrieves a submesh without throwing an exception
-        if the dimension doesn't exist (e.g., cp=1 means no "cp" mesh).
-
-        Args:
-            name: Mesh dimension name. Available names depend on EP status:
-                - Without EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'pp_cp_tp'
-                - With EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'ep', 'dp_shard_mod_ep',
-                          'dp_shard_in_ep', 'cp', 'tp', 'pp_cp_tp'
-
-        Returns:
-            DeviceMesh for the requested dimension, or None if not available.
-        """
-        # Ensure mesh is built
-        _ = self.world_mesh
-        return self._meshes.get(name)
+        """Get submesh by name, return None if not available."""
+        return self.topology.get_mesh(name)
 
     def get_group(self, name: str) -> dist.ProcessGroup | None:
-        """Get process group by name, return None if not available.
-
-        This method always returns a group if the mesh exists, even if size=1.
-        Use explicit checks like `if self.tp_enabled` before calling this method
-        if you want to skip operations when parallelism is not needed.
-
-        Args:
-            name: Mesh dimension name. Available names depend on EP status:
-                - Without EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'dp_shard', 'cp', 'tp', 'pp_cp_tp'
-                - With EP: 'pp', 'dp', 'dp_shard_cp', 'dp_cp', 'ep', 'dp_shard_mod_ep',
-                          'dp_shard_in_ep', 'cp', 'tp', 'pp_cp_tp'
-
-        Returns:
-            ProcessGroup for the requested dimension, or None if mesh not available.
-        """
-        submesh = self.get_mesh(name)
-        if submesh is None:
-            return None
-        return submesh.get_group()
+        """Get process group by name, return None if not available."""
+        return self.topology.get_group(name)

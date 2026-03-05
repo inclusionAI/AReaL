@@ -1,5 +1,6 @@
 """Core utilities for training engines."""
 
+from areal.engine.core.topology import DeviceMeshTopology, TopologyManager
 from areal.engine.core.train_engine import (
     aggregate_eval_losses,
     compute_total_loss_weight,
@@ -7,6 +8,8 @@ from areal.engine.core.train_engine import (
 )
 
 __all__ = [
+    "DeviceMeshTopology",
+    "TopologyManager",
     "aggregate_eval_losses",
     "compute_total_loss_weight",
     "reorder_and_pad_outputs",

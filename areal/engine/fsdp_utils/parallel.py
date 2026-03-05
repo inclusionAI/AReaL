@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 from torch.distributed import ProcessGroup
-from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import (
@@ -24,8 +24,8 @@ from areal.engine.core.model import (
     is_qwen3_vl_model,
     is_valid_vision_model,
 )
+from areal.engine.core.topology import DeviceMeshTopology
 from areal.engine.fsdp_utils import apply_fsdp2
-from areal.infra.platforms import current_platform
 from areal.models.parallel_styles import ReplicateParallel
 
 __all__ = ["ReplicateParallel", "ParallelHelper", "parallelize_model"]
@@ -33,8 +33,14 @@ __all__ = ["ReplicateParallel", "ParallelHelper", "parallelize_model"]
 
 @dataclass
 class ParallelHelper:
+    """FSDP parallel helper that delegates to DeviceMeshTopology.
+
+    Maintains backward-compatible sp-based naming (sp_size, sp_group, dp_sp, sp_tp)
+    as aliases for the canonical cp-based names.
+    """
+
     _ps: FSDPParallelStrategy
-    _world_mesh: DeviceMesh | None = None
+    _topology: DeviceMeshTopology | None = None
 
     @classmethod
     def from_parallel_strategy(cls, fsdp_ps: FSDPParallelStrategy) -> "ParallelHelper":
@@ -47,150 +53,85 @@ class ParallelHelper:
         return f"(dp={_ps.dp_size}, sp={_ps.cp_size}, tp={_ps.tp_size}, ep={_ps.ep_size}, etp={_ps.etp_size}, world_size={_ps.world_size})"
 
     def __post_init__(self):
-        self._validate()
+        self._topology = DeviceMeshTopology(self._ps)
 
-    def _validate(self):
-        dp, sp, tp, ep, etp, world_size = (
-            self._ps.dp_size,
-            self._ps.cp_size,
-            self._ps.tp_size,
-            self._ps.ep_size,
-            self._ps.etp_size,
-            self._ps.world_size,
-        )
-        for d in (sp, tp, ep, etp):
-            assert d >= 1, "Parallelism degree should be >= 1"
-
-        if dp * sp * tp != world_size:
-            raise ValueError(
-                f"Invalid parallel dims: dp({dp}) * sp({sp}) * tp({tp}) != WORLD_SIZE({world_size})"
-            )
-
-        if ep > 1:
-            assert etp == tp or etp == 1, "Currently we only support ETP=TP or ETP=1"
-            if etp == tp:
-                # ep would borrow all sp and some dp degree
-                assert ep % sp == 0 and (dp * sp) % ep == 0
-            elif etp == 1:
-                # ep would borrow all sp and tp and some dp degree
-                assert ep % (sp * tp) == 0 and (dp * sp * tp) % ep == 0
+    @property
+    def topology(self) -> DeviceMeshTopology:
+        if self._topology is None:
+            self._topology = DeviceMeshTopology(self._ps)
+        return self._topology
 
     def build_mesh(self) -> DeviceMesh:
-        if self._ps.ep_size > 1:
-            return self._build_mesh_with_ep()
-        else:
-            return self._build_mesh_without_ep()
-
-    def _build_mesh_with_ep(self) -> DeviceMesh:
-        dp, sp, tp, ep, etp = (
-            self._ps.dp_size,
-            self._ps.cp_size,
-            self._ps.tp_size,
-            self._ps.ep_size,
-            self._ps.etp_size,
-        )
-
-        # With ep, dp and ep are derived submeshes:
-        # dp = dp_mod_ep * dp_in_ep
-        if etp == tp:
-            # ep = dp_in_ep * sp
-            dp_mod_ep = dp * sp // ep
-            dp_in_ep = ep // sp
-        else:
-            assert etp == 1
-            # ep = dp_in_ep * sp * tp
-            dp_mod_ep = dp * sp * tp // ep
-            dp_in_ep = ep // (sp * tp)
-
-        mesh = init_device_mesh(
-            current_platform.device_type,
-            mesh_shape=(dp_mod_ep, dp_in_ep, sp, tp),
-            mesh_dim_names=("dp_mod_ep", "dp_in_ep", "sp", "tp"),
-        )
-
-        # Create all the submesh here for process groups
-        # Guaranteed dims:
-        #     root mesh: dp_mod_ep, dp_in_ep, sp, tp
-        #     sub  mesh: dp, dp_sp, sp_tp, ep
-        mesh["dp_mod_ep", "dp_in_ep"]._flatten(mesh_dim_name="dp")
-        mesh["dp_mod_ep", "dp_in_ep", "sp"]._flatten(mesh_dim_name="dp_sp")
-        mesh["sp", "tp"]._flatten(mesh_dim_name="sp_tp")
-        ep_mesh_dim_names = ("dp_in_ep", "sp", "tp") if etp == 1 else ("dp_in_ep", "sp")
-        mesh[tuple(ep_mesh_dim_names)]._flatten(mesh_dim_name="ep")
-
-        return mesh
-
-    def _build_mesh_without_ep(self) -> DeviceMesh:
-        dp, sp, tp = (self._ps.dp_size, self._ps.cp_size, self._ps.tp_size)
-
-        mesh = init_device_mesh(
-            current_platform.device_type,
-            mesh_shape=(dp, sp, tp),
-            mesh_dim_names=("dp", "sp", "tp"),
-        )
-
-        # Create all the submesh here for process groups
-        # Guaranteed dims:
-        #     root mesh: dp, sp, tp
-        #     sub  mesh: dp_sp, sp_tp
-        mesh["dp", "sp"]._flatten(mesh_dim_name="dp_sp")
-        mesh["sp", "tp"]._flatten(mesh_dim_name="sp_tp")
-
-        return mesh
+        return self.topology.build_mesh()
 
     @property
     def world_mesh(self) -> DeviceMesh:
-        if self._world_mesh is None:
-            self._world_mesh = self.build_mesh()
-        return self._world_mesh
+        return self.topology.world_mesh
 
+    # Enabled flags
     @property
     def dp_enabled(self) -> bool:
-        return self._ps.dp_size > 1
+        return self.topology.dp_enabled
 
     @property
     def sp_enabled(self) -> bool:
-        return self._ps.cp_size > 1
+        return self.topology.cp_enabled
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self.topology.cp_enabled
 
     @property
     def tp_enabled(self) -> bool:
-        return self._ps.tp_size > 1
+        return self.topology.tp_enabled
 
     @property
     def ep_enabled(self) -> bool:
-        return self._ps.ep_size > 1
+        return self.topology.ep_enabled
 
     @property
     def etp_enabled(self) -> bool:
-        return self._ps.etp_size > 1
+        return self.topology.etp_enabled
 
+    # Size properties
     @property
     def dp_size(self) -> int:
-        return self._ps.dp_size
+        return self.topology.dp_size
 
     @property
     def sp_size(self) -> int:
-        return self._ps.cp_size
+        """Backward-compatible alias for cp_size."""
+        return self.topology.cp_size
+
+    @property
+    def cp_size(self) -> int:
+        return self.topology.cp_size
 
     @property
     def tp_size(self) -> int:
-        return self._ps.tp_size
+        return self.topology.tp_size
 
     @property
     def ep_size(self) -> int:
-        return self._ps.ep_size
+        return self.topology.ep_size
 
     @property
     def etp_size(self) -> int:
-        return self._ps.etp_size
+        return self.topology.etp_size
 
+    # Process groups (backward-compatible sp naming)
     @property
     def dp_group(self) -> ProcessGroup:
         return self.world_mesh["dp"].get_group()
 
     @property
     def sp_group(self) -> ProcessGroup:
+        """Backward-compatible alias for cp group."""
         return self.world_mesh["sp"].get_group()
+
+    @property
+    def cp_group(self) -> ProcessGroup:
+        return self.world_mesh["cp"].get_group()
 
     @property
     def tp_group(self) -> ProcessGroup:
@@ -198,20 +139,15 @@ class ParallelHelper:
 
     @property
     def gradient_div_factor(self) -> int:
-        # This is needed for FSDP-sharded experts when Expert Parallel is enabled.
-        # Although the FSDP sharding of experts is done on a mesh of a different size than
-        # other parameters, the gradient division factor should be consistent with data.
-        return self._ps.dp_size * self._ps.cp_size
+        return self.topology.gradient_divide_factor
 
     @property
     def context_and_model_parallel_size(self) -> int:
-        return self._ps.cp_size * self._ps.tp_size
+        return self.topology.context_and_model_parallel_size
 
     @property
     def seq_len_divisor(self) -> int:
-        # 1. Sequence Parallel requires that seq_len be divisible by TP degree.
-        # 2. Ulysses Sequence Parallel requires that seq_len be divisible by SP degree.
-        return self._ps.tp_size * self._ps.cp_size
+        return self.topology.seq_len_divisor
 
 
 def apply_non_moe_tp(
