@@ -27,6 +27,7 @@ def _assert_all_images_assigned(assignments, num_images):
     all_idx = [i for rank in assignments for i in rank]
     assert sorted(all_idx) == list(range(num_images))
 
+
 class TestGetImagePatchCounts:
     @pytest.mark.parametrize(
         "grid_thw,expected",
@@ -194,6 +195,7 @@ class TestGatherVisionEmbeddings:
         # Verify zero-copy — same storage, not a clone
         assert result.data_ptr() == embeddings.data_ptr()
 
+
 class TestCreateDpVisionForward:
     def test_dp_vision_forward_sp_size_1_calls_original_directly(self):
         """When sp_size <= 1, the wrapper should call original_forward directly."""
@@ -266,6 +268,7 @@ class TestApplyVisionSpShardPatch:
         """ImportError for unavailable models should not crash."""
         apply_vision_sp_shard_patch()  # should not raise
 
+
 class TestIntegration:
     def test_full_workflow_all_patches_covered(self):
         grid_thw = torch.tensor([[1, 4, 4], [1, 8, 8], [1, 4, 4], [1, 6, 6], [1, 4, 4]])
@@ -300,7 +303,6 @@ class TestIntegration:
             assert 12 <= len(assignments[rank]) <= 13
         for load in loads:
             assert load in [768, 832]
-
 
 
 class TestUnpackDeepstack:

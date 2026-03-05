@@ -13,6 +13,7 @@ Backward: all_reduce(SUM) recovers complete gradients → slice by assignment
 """
 
 import importlib
+
 import torch
 import torch.distributed as dist
 from torch.autograd import Function
@@ -136,7 +137,6 @@ def _prepare_local_vision_inputs(
     local_pixel_values = pixel_values[start_patch:end_patch]
     local_grid_thw = grid_thw[first_img_idx : last_img_idx + 1]
 
-
     return local_pixel_values, local_grid_thw, local_indices
 
 
@@ -229,6 +229,7 @@ def _gather_vision_embeddings(
 
     return GatherVisionEmbeddings.apply(local_embeddings, dp_group, all_counts)
 
+
 def _unpack_deepstack(
     model,
     local_embeddings: torch.Tensor | tuple,
@@ -319,7 +320,9 @@ def create_dp_vision_forward(original_forward):
         else:
             # This rank has no images, create empty tensor with correct hidden size
             cfg = getattr(self, "config", None)
-            hidden_size = getattr(cfg, "out_hidden_size", None) or getattr(cfg, "hidden_size", None)
+            hidden_size = getattr(cfg, "out_hidden_size", None) or getattr(
+                cfg, "hidden_size", None
+            )
             if hidden_size is None:
                 raise RuntimeError(
                     f"Cannot determine hidden_size from config. "
