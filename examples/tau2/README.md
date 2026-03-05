@@ -25,7 +25,7 @@ with user's request by both using agent tools and guiding users using their tool
 ### Prerequisites
 
 Please make sure AReaL is setup and working following the
-[installation guide](https://inclusionai.github.io/AReaL/tutorial/installation.html).
+[installation guide](https://inclusionai.github.io/AReaL/en/tutorial/installation.html).
 
 1. Install the (forked) tau2-bench package:
 

@@ -166,7 +166,7 @@ all = [
 [project.urls]
 "Homepage" = "https://github.com/inclusionAI/AReaL"
 "Repository" = "https://github.com/inclusionAI/AReaL"
-"Documentation" = "https://inclusionai.github.io/AReaL/intro.html"
+"Documentation" = "https://inclusionai.github.io/AReaL/en/intro.html"
 "Bug Tracker" = "https://github.com/inclusionAI/AReaL/issues"
 
 [dependency-groups]
