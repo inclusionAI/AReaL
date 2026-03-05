@@ -405,6 +405,14 @@ class FSDPEngineConfig:
         },
     )
 
+    shard_vision_across_sp: bool = field(
+        default=False,
+        metadata={
+            "help": "Shard vision encoder across SP ranks by image. "
+            "Only effective when context_parallel_size > 1."
+        },
+    )
+
 
 @dataclass
 class ArchonEngineConfig:
@@ -934,16 +942,6 @@ class TrainEngineConfig:
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
     archon: ArchonEngineConfig = field(default_factory=ArchonEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
-
-    # Shard vision encoder computation across Ulysses SP ranks by image.
-    # Only effective when context_parallel_size > 1.
-    shard_vision_across_sp: bool = field(
-        default=False,
-        metadata={
-            "help": "Shard vision encoder across SP ranks by image. "
-            "Only effective when context_parallel_size > 1."
-        },
-    )
 
     # Lora
     use_lora: bool = field(

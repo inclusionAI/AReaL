@@ -11,15 +11,15 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from areal.utils.vision_sp_shard import (
+from areal.models.fsdp.vision_sp_shard import (
+    _assign_images_to_dp_ranks,
+    _gather_vision_embeddings,
+    _get_image_embedding_counts,
+    _get_image_patch_counts,
     _patch_vision_class,
+    _prepare_local_vision_inputs,
     apply_vision_sp_shard_patch,
-    assign_images_to_dp_ranks,
     create_dp_vision_forward,
-    gather_vision_embeddings,
-    get_image_embedding_counts,
-    get_image_patch_counts,
-    prepare_local_vision_inputs,
 )
 
 
@@ -34,11 +34,11 @@ class TestGetImagePatchCounts:
         ids=["multi-image", "single-image", "video-frames"],
     )
     def test_patch_counts_various_grids_correct_products(self, grid_thw, expected):
-        counts = get_image_patch_counts(torch.tensor(grid_thw))
+        counts = _get_image_patch_counts(torch.tensor(grid_thw))
         assert counts == expected
 
     def test_patch_counts_empty_input_returns_empty_list(self):
-        counts = get_image_patch_counts(torch.empty((0, 3), dtype=torch.long))
+        counts = _get_image_patch_counts(torch.empty((0, 3), dtype=torch.long))
         assert counts == []
 
 
@@ -55,11 +55,11 @@ class TestGetImageEmbeddingCounts:
     def test_embedding_counts_with_merge_size_correct(
         self, grid_thw, merge_size, expected
     ):
-        counts = get_image_embedding_counts(torch.tensor(grid_thw), merge_size)
+        counts = _get_image_embedding_counts(torch.tensor(grid_thw), merge_size)
         assert counts == expected
 
     def test_embedding_counts_empty_input_returns_empty_list(self):
-        counts = get_image_embedding_counts(torch.empty((0, 3), dtype=torch.long))
+        counts = _get_image_embedding_counts(torch.empty((0, 3), dtype=torch.long))
         assert counts == []
 
 
@@ -76,7 +76,7 @@ class TestAssignImagesToDpRanks:
     def test_assign_all_images_distributed_correctly(
         self, patch_counts, dp_size, expected_all_assigned
     ):
-        assignments, loads = assign_images_to_dp_ranks(patch_counts, dp_size)
+        assignments, loads = _assign_images_to_dp_ranks(patch_counts, dp_size)
         all_assigned = []
         for a in assignments:
             all_assigned.extend(a)
@@ -84,7 +84,7 @@ class TestAssignImagesToDpRanks:
         assert sum(loads) == sum(patch_counts)
 
     def test_assign_fewer_images_than_ranks_all_assigned(self):
-        assignments, loads = assign_images_to_dp_ranks([100, 200], dp_size=4)
+        assignments, loads = _assign_images_to_dp_ranks([100, 200], dp_size=4)
         non_empty = sum(1 for a in assignments if len(a) > 0)
         assert non_empty == 2
         all_assigned = set()
@@ -93,12 +93,12 @@ class TestAssignImagesToDpRanks:
         assert all_assigned == {0, 1}
 
     def test_assign_empty_input_returns_empty_lists(self):
-        assignments, loads = assign_images_to_dp_ranks([], dp_size=4)
+        assignments, loads = _assign_images_to_dp_ranks([], dp_size=4)
         assert all(len(a) == 0 for a in assignments)
         assert all(load == 0 for load in loads)
 
     def test_assign_image_order_preserved_contiguous(self):
-        assignments, _ = assign_images_to_dp_ranks([10, 20, 30, 40, 50], dp_size=2)
+        assignments, _ = _assign_images_to_dp_ranks([10, 20, 30, 40, 50], dp_size=2)
         for rank_assignment in assignments:
             assert rank_assignment == sorted(rank_assignment)
 
@@ -106,7 +106,7 @@ class TestAssignImagesToDpRanks:
         """With unequal patch counts, greedy balancing should reduce imbalance."""
         # 4096 + 256 + 256 + 256 = 4864, target per rank = 2432
         patch_counts = [4096, 256, 256, 256]
-        assignments, loads = assign_images_to_dp_ranks(patch_counts, dp_size=2)
+        assignments, loads = _assign_images_to_dp_ranks(patch_counts, dp_size=2)
         # All images must be assigned
         all_assigned = []
         for a in assignments:
@@ -121,7 +121,7 @@ class TestAssignImagesToDpRanks:
         """All images are covered exactly once across ranks for various dp_size."""
         patch_counts = [10, 20, 30, 40, 50, 60, 70]
         for dp_size in [1, 2, 3, 4, 7]:
-            assignments, _ = assign_images_to_dp_ranks(patch_counts, dp_size)
+            assignments, _ = _assign_images_to_dp_ranks(patch_counts, dp_size)
             all_indices = []
             for a in assignments:
                 all_indices.extend(a)
@@ -135,7 +135,7 @@ class TestPrepareLocalVisionInputs:
         image_assignments = [[0], [1]]
 
         # Rank 0
-        pix, grid, indices = prepare_local_vision_inputs(
+        pix, grid, indices = _prepare_local_vision_inputs(
             pixel_values, grid_thw, image_assignments, dp_rank=0
         )
         assert pix.shape[0] == 36
@@ -144,7 +144,7 @@ class TestPrepareLocalVisionInputs:
         assert torch.allclose(pix, pixel_values[:36])
 
         # Rank 1
-        pix, grid, indices = prepare_local_vision_inputs(
+        pix, grid, indices = _prepare_local_vision_inputs(
             pixel_values, grid_thw, image_assignments, dp_rank=1
         )
         assert pix.shape[0] == 64
@@ -156,7 +156,7 @@ class TestPrepareLocalVisionInputs:
         grid_thw = torch.tensor([[1, 5, 10]] * 4)  # 4 x 50 patches
         image_assignments = [[0, 1], [2, 3]]
 
-        pix, grid, indices = prepare_local_vision_inputs(
+        pix, grid, indices = _prepare_local_vision_inputs(
             pixel_values, grid_thw, image_assignments, dp_rank=0
         )
         assert pix.shape[0] == 100
@@ -169,7 +169,7 @@ class TestPrepareLocalVisionInputs:
         grid_thw = torch.tensor([[1, 10, 10]])
         image_assignments = [[0], []]
 
-        pix, grid, indices = prepare_local_vision_inputs(
+        pix, grid, indices = _prepare_local_vision_inputs(
             pixel_values, grid_thw, image_assignments, dp_rank=1
         )
         assert pix.shape[0] == 0
@@ -181,7 +181,7 @@ class TestPrepareLocalVisionInputs:
         grid_thw = torch.tensor([[1, 5, 5], [2, 5, 5], [3, 5, 5]])  # 25 + 50 + 75
         image_assignments = [[0, 1], [2]]
 
-        _, local_grid, _ = prepare_local_vision_inputs(
+        _, local_grid, _ = _prepare_local_vision_inputs(
             pixel_values, grid_thw, image_assignments, dp_rank=0
         )
         assert local_grid.shape == (2, 3)
@@ -192,14 +192,14 @@ class TestPrepareLocalVisionInputs:
 class TestGatherVisionEmbeddings:
     def test_gather_embeddings_none_group_returns_input_unchanged(self):
         embeddings = torch.randn(10, 64)
-        result = gather_vision_embeddings(embeddings, dp_group=None, all_counts=[10])
+        result = _gather_vision_embeddings(embeddings, dp_group=None, all_counts=[10])
         assert torch.equal(result, embeddings)
 
     def test_gather_embeddings_world_size_1_returns_input_unchanged(self):
         """Single-rank group should short-circuit and return input directly."""
         embeddings = torch.randn(10, 64)
         # dp_group=None triggers the world_size==1 short-circuit
-        result = gather_vision_embeddings(embeddings, dp_group=None, all_counts=[10])
+        result = _gather_vision_embeddings(embeddings, dp_group=None, all_counts=[10])
         assert torch.equal(result, embeddings)
         # Verify it's not a copy — same storage
         assert result.data_ptr() == embeddings.data_ptr()
@@ -222,15 +222,15 @@ class TestCreateDpVisionForward:
         # Mock Ulysses SP to return sp_size=1
         with (
             patch(
-                "areal.utils.vision_sp_shard.get_ulysses_sequence_parallel_group",
+                "areal.models.fsdp.vision_sp_shard.get_ulysses_sequence_parallel_group",
                 return_value=None,
             ),
             patch(
-                "areal.utils.vision_sp_shard.get_ulysses_sequence_parallel_world_size",
+                "areal.models.fsdp.vision_sp_shard.get_ulysses_sequence_parallel_world_size",
                 return_value=1,
             ),
             patch(
-                "areal.utils.vision_sp_shard.get_ulysses_sequence_parallel_rank",
+                "areal.models.fsdp.vision_sp_shard.get_ulysses_sequence_parallel_rank",
                 return_value=0,
             ),
         ):
@@ -289,10 +289,10 @@ class TestIntegration:
         total_patches = 16 + 64 + 16 + 36 + 16  # 148
         pixel_values = torch.randn(total_patches, 768)
 
-        patch_counts = get_image_patch_counts(grid_thw)
+        patch_counts = _get_image_patch_counts(grid_thw)
         assert patch_counts == [16, 64, 16, 36, 16]
 
-        assignments, loads = assign_images_to_dp_ranks(patch_counts, dp_size=2)
+        assignments, loads = _assign_images_to_dp_ranks(patch_counts, dp_size=2)
         all_assigned = []
         for a in assignments:
             all_assigned.extend(a)
@@ -300,7 +300,7 @@ class TestIntegration:
 
         total_local_patches = 0
         for rank in range(2):
-            pix, grid, indices = prepare_local_vision_inputs(
+            pix, grid, indices = _prepare_local_vision_inputs(
                 pixel_values, grid_thw, assignments, dp_rank=rank
             )
             expected = sum(patch_counts[i] for i in indices)
@@ -313,8 +313,8 @@ class TestIntegration:
     def test_same_size_images_4_ranks_balanced(self):
         num_images = 50
         grid_thw = torch.tensor([[1, 8, 8]] * num_images)
-        patch_counts = get_image_patch_counts(grid_thw)
-        assignments, loads = assign_images_to_dp_ranks(patch_counts, dp_size=4)
+        patch_counts = _get_image_patch_counts(grid_thw)
+        assignments, loads = _assign_images_to_dp_ranks(patch_counts, dp_size=4)
 
         for rank in range(4):
             assert 12 <= len(assignments[rank]) <= 13

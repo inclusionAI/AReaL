@@ -1,12 +1,15 @@
 """
-Vision SP Shard utilities for AReaL.
+Vision SP Shard: distribute vision encoder work across Ulysses SP ranks.
 
-Shard vision encoder computation across Ulysses SP ranks by distributing
-whole images (not patches within images). Each rank runs ViT on its assigned
-images, then all-gather combines embeddings. Backward all_reduce(SUM) recovers
-complete gradients before slicing by assignment.
+In VLMs with Ulysses Sequence Parallelism, each SP rank holds a disjoint
+slice of the text sequence but must still produce the *full* set of vision
+embeddings.  This module avoids redundant ViT computation by assigning
+whole images (not sub-image patches) to individual SP ranks, running the
+vision encoder locally, and then all-gathering the results so every rank
+sees the complete embedding sequence.
 
-Adapted from verl PR #5230 (https://github.com/verl-project/verl/pull/5230).
+Forward:  each rank encodes its assigned images → all_gather → full embeddings
+Backward: all_reduce(SUM) recovers complete gradients → slice by assignment
 """
 
 import torch
@@ -23,22 +26,24 @@ from areal.utils import logging
 logger = logging.getLogger("VisionSPShard")
 
 
-def get_image_patch_counts(grid_thw: torch.Tensor) -> list[int]:
+def _get_image_patch_counts(grid_thw: torch.Tensor) -> list[int]:
     """Return [t*h*w for each image] from a [num_images, 3] grid_thw tensor."""
     if grid_thw.numel() == 0:
         return []
+    grid_thw = grid_thw.cpu()
     return (grid_thw[:, 0] * grid_thw[:, 1] * grid_thw[:, 2]).tolist()
 
 
-def get_image_embedding_counts(
+def _get_image_embedding_counts(
     grid_thw: torch.Tensor, spatial_merge_size: int = 1
 ) -> list[int]:
     """Return per-image embedding counts after spatial merging: t * (h/merge) * (w/merge)."""
     if grid_thw.numel() == 0:
         return []
+    grid_thw = grid_thw.cpu()
 
     if spatial_merge_size == 1:
-        return get_image_patch_counts(grid_thw)
+        return _get_image_patch_counts(grid_thw)
 
     t = grid_thw[:, 0]
     h = grid_thw[:, 1] // spatial_merge_size
@@ -46,7 +51,7 @@ def get_image_embedding_counts(
     return (t * h * w).tolist()
 
 
-def assign_images_to_dp_ranks(
+def _assign_images_to_dp_ranks(
     patch_counts: list[int],
     dp_size: int,
 ) -> tuple[list[list[int]], list[int]]:
@@ -94,7 +99,7 @@ def assign_images_to_dp_ranks(
     return image_assignments, rank_loads
 
 
-def prepare_local_vision_inputs(
+def _prepare_local_vision_inputs(
     pixel_values: torch.Tensor,
     grid_thw: torch.Tensor,
     image_assignments: list[list[int]],
@@ -122,7 +127,7 @@ def prepare_local_vision_inputs(
     last_img_idx = local_indices[-1]
 
     # Compute patch offsets using cumsum
-    patch_counts = get_image_patch_counts(grid_thw)
+    patch_counts = _get_image_patch_counts(grid_thw)
     patch_counts_tensor = torch.tensor(
         patch_counts, device=grid_thw.device, dtype=torch.long
     )
@@ -140,7 +145,7 @@ def prepare_local_vision_inputs(
     local_grid_thw = grid_thw[first_img_idx : last_img_idx + 1]
 
     # Cross-check: verify extracted slice matches independently computed patch counts
-    independent_counts = get_image_patch_counts(local_grid_thw)
+    independent_counts = _get_image_patch_counts(local_grid_thw)
     expected_patches = sum(independent_counts)
     assert local_pixel_values.shape[0] == expected_patches, (
         f"[Vision SP Shard] Local patch count mismatch: "
@@ -234,7 +239,7 @@ class GatherVisionEmbeddings(Function):
         return local_grad, None, None
 
 
-def gather_vision_embeddings(
+def _gather_vision_embeddings(
     local_embeddings: torch.Tensor,
     dp_group,
     all_counts: list[int],
@@ -279,7 +284,7 @@ def create_dp_vision_forward(original_forward):
         grid_thw_cpu = grid_thw.cpu()
 
         # Step 1: Get image assignment based on patch counts
-        patch_counts = get_image_patch_counts(grid_thw_cpu)
+        patch_counts = _get_image_patch_counts(grid_thw_cpu)
         total_patches = sum(patch_counts)
 
         assert hidden_states.shape[0] == total_patches, (
@@ -297,14 +302,14 @@ def create_dp_vision_forward(original_forward):
             spatial_merge_size = self.spatial_merge_size
 
         # Calculate embedding counts (after merger) for gather verification
-        embedding_counts = get_image_embedding_counts(grid_thw_cpu, spatial_merge_size)
+        embedding_counts = _get_image_embedding_counts(grid_thw_cpu, spatial_merge_size)
         total_embeddings = sum(embedding_counts)
 
-        image_assignments, _ = assign_images_to_dp_ranks(patch_counts, sp_size)
+        image_assignments, _ = _assign_images_to_dp_ranks(patch_counts, sp_size)
 
         # Step 2: Extract local inputs (use CPU grid_thw to avoid GPU→CPU syncs
         # in metadata helpers; move local_grid_thw back to GPU for original_forward)
-        local_pixels, local_grid_thw, local_indices = prepare_local_vision_inputs(
+        local_pixels, local_grid_thw, local_indices = _prepare_local_vision_inputs(
             hidden_states, grid_thw_cpu, image_assignments, sp_rank
         )
         local_grid_thw = local_grid_thw.to(grid_thw.device)
@@ -362,7 +367,7 @@ def create_dp_vision_forward(original_forward):
             sum(embedding_counts[i] for i in image_assignments[r])
             for r in range(sp_size)
         ]
-        all_embeddings = gather_vision_embeddings(
+        all_embeddings = _gather_vision_embeddings(
             local_embeddings, sp_group, all_counts
         )
 
@@ -375,7 +380,7 @@ def create_dp_vision_forward(original_forward):
         # Step 5: All-gather deepstack embeddings (all ranks must participate)
         if local_deepstack is not None:
             gathered_deepstack = [
-                gather_vision_embeddings(ds, sp_group, all_counts)
+                _gather_vision_embeddings(ds, sp_group, all_counts)
                 for ds in local_deepstack
             ]
             return all_embeddings, gathered_deepstack

@@ -199,11 +199,6 @@ def apply_monkey_patch(
     }
 
     if ulysses_sp_size <= 1:
-        if shard_vision_across_sp:
-            logger.warning(
-                "shard_vision_across_sp=True is ignored because ulysses_sp_size <= 1. "
-                "Set context_parallel_size > 1 to enable Vision SP Shard."
-            )
         return
 
     if model.config.model_type in vl_model_mappings:
@@ -237,22 +232,11 @@ def apply_monkey_patch(
         patch_vlm_for_ulysses_input_slicing(model_class)
         logger.info(f"Patched {model_class_name}.forward")
 
-        # Shard vision encoder across SP ranks
         if shard_vision_across_sp:
-            from areal.utils.vision_sp_shard import apply_vision_sp_shard_patch
+            from areal.models.fsdp.vision_sp_shard import apply_vision_sp_shard_patch
 
             apply_vision_sp_shard_patch()
-        else:
-            logger.info(
-                f"Vision SP Shard disabled (shard_vision_across_sp=False). "
-                f"ViT runs replicated on all {ulysses_sp_size} SP ranks."
-            )
     else:
-        if shard_vision_across_sp:
-            logger.warning(
-                f"shard_vision_across_sp=True is ignored: model_type '{model.config.model_type}' "
-                f"is not a supported VLM ({', '.join(vl_model_mappings.keys())})."
-            )
         from transformers.integrations import flash_attention
 
         flash_attention._flash_attention_forward = _ulysses_flash_attention_forward
