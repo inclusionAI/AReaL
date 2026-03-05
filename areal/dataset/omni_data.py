@@ -93,13 +93,15 @@ def get_omni_rl_dataset(
         if isinstance(text, list):
             text = text[0] if len(text) == 1 else str(text)
 
-        # --- images ---
-        images: list[ImageObject] | None = None
-        if "images" in sample and sample["images"]:
-            raw_images = sample["images"]
+        # --- images: store as base64 strings for RPC-safe transport ---
+        images: list[str] | None = None
+        raw_images = sample.get("images") or sample.get("image")
+        if raw_images is not None:
             if not isinstance(raw_images, list):
                 raw_images = [raw_images]
-            images = raw_images
+            from areal.utils.image import image2base64
+
+            images = image2base64(raw_images)
 
         # --- audios ---
         audios: list[np.ndarray] | None = None
@@ -177,7 +179,7 @@ def get_omni_rl_dataset(
         result: dict[str, Any] = {
             "messages": formatted_text,
             "messages_chat": messages_chat,
-            "answer": sample.get("answer", ""),
+            "answer": sample.get("answer") or sample.get("original_answer", ""),
         }
         if images is not None:
             result["images"] = images
@@ -190,7 +192,12 @@ def get_omni_rl_dataset(
 
         return result
 
-    dataset = dataset.map(process)
+    cols_to_remove = [
+        c
+        for c in dataset.column_names
+        if c not in ("messages", "messages_chat", "answer", "images", "audios", "videos", "video_paths")
+    ]
+    dataset = dataset.map(process, remove_columns=cols_to_remove)
 
     if max_length is not None and processor is not None:
 

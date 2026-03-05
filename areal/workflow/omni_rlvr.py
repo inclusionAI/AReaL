@@ -68,8 +68,22 @@ class OmniRLVRWorkflow(VisionRLVRWorkflow):
             "padding": False,
             "return_tensors": "pt",
         }
+
+        # Images may arrive as base64 strings (RPC-safe) or PIL objects.
+        pil_images = None
+        byte_images = None
         if data.get("images"):
-            proc_kwargs["images"] = data["images"]
+            from areal.utils.image import base642image
+
+            raw_imgs = data["images"]
+            if isinstance(raw_imgs[0], str):
+                byte_images = raw_imgs
+                pil_images = [base642image(b) for b in raw_imgs]
+            else:
+                pil_images = raw_imgs
+                byte_images = image2base64(raw_imgs)
+            proc_kwargs["images"] = pil_images
+
         if data.get("videos"):
             proc_kwargs["videos"] = data["videos"]
         if data.get("audios"):
@@ -77,9 +91,6 @@ class OmniRLVRWorkflow(VisionRLVRWorkflow):
 
         processed_input = processor_callable(**proc_kwargs)
         input_ids: list[int] = processed_input["input_ids"].tolist()[0]
-
-        # --- Build ModelRequest with multimodal data for inference ---
-        byte_images = image2base64(data["images"]) if data.get("images") else None
         byte_audios = audios2base64(data["audios"]) if data.get("audios") else None
         byte_videos = None
         if data.get("video_paths"):

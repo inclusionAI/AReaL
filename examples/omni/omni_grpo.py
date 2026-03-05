@@ -53,12 +53,21 @@ def main(args):
         processor=processor,
     )
 
-    valid_dataset = get_custom_dataset(
-        split="test",
-        dataset_config=config.valid_dataset,
-        tokenizer=tokenizer,
-        processor=processor,
-    )
+    try:
+        valid_dataset = get_custom_dataset(
+            split="test",
+            dataset_config=config.valid_dataset,
+            tokenizer=tokenizer,
+            processor=processor,
+        )
+    except ValueError:
+        # fall back to train dataset if test dataset is not available
+        valid_dataset = get_custom_dataset(
+            split="train",
+            dataset_config=config.valid_dataset,
+            tokenizer=tokenizer,
+            processor=processor,
+        )
 
     workflow_kwargs = dict(
         reward_fn="examples.omni.omni_grpo.omni_reward_fn",
