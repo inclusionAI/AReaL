@@ -1141,7 +1141,9 @@ def cycle_dataloader(dataloader: StatefulDataLoader, num_cycles: int = -1):
     """Cycle through a dataloader indefinitely."""
     epoch = 0
     while True:
-        if isinstance(dataloader.sampler, DistributedSampler):
+        if hasattr(dataloader, "sampler") and isinstance(
+            dataloader.sampler, DistributedSampler
+        ):
             dataloader.sampler.set_epoch(epoch)
         yield from dataloader
         epoch += 1
@@ -1160,19 +1162,6 @@ class Normalization:
     """
 
     def __init__(self, config: NormConfig):
-        if config.mean_level not in {"batch", "group", None}:
-            raise ValueError(
-                f"mean_level must be 'batch', 'group' or None, got {config.mean_level}"
-            )
-        if config.std_level not in {"batch", "group", None}:
-            raise ValueError(
-                f"std_level must be 'batch', 'group', or None, got {config.std_level}"
-            )
-        if (
-            config.mean_level == "group" or config.std_level == "group"
-        ) and config.group_size is None:
-            raise ValueError("group_size must be provided if using group normalization")
-
         self.mean_level = config.mean_level
         self.mean_leave1out = config.mean_leave1out
         self.std_level = config.std_level

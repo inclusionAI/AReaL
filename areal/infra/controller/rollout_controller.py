@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import threading
+import traceback
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -49,7 +50,7 @@ logger = logging.getLogger("RolloutController")
 class _RemoteRolloutTaskInput:
     task_id: int
     data: dict[str, Any]
-    workflow: str
+    workflow: str | None
     workflow_kwargs: dict[str, Any]
     should_accept_fn: str | None
     is_eval: bool = False
@@ -115,6 +116,30 @@ class RolloutController:
         self.proxy_addrs: list[str] = []
         self._proxy_started = False
 
+        # Proxy gateway server (for online/external access)
+        self._proxy_gateway_app = None
+        self._proxy_gateway_server = None
+        self._proxy_gateway_thread: threading.Thread | None = None
+        self._proxy_gateway_port: int | None = None
+        self._proxy_gateway_host: str | None = None
+
+    @property
+    def _proxy_role(self) -> str:
+        """Generate a unique proxy role name based on the worker role.
+
+        This avoids collisions when multiple controllers (e.g., rollout and
+        eval-rollout) each fork proxy workers into the same scheduler.
+        """
+        if not hasattr(self, "_worker_role"):
+            raise RuntimeError(
+                "Cannot access _proxy_role before initialize() is called"
+            )
+        return f"proxy-{self._worker_role}"
+
+    def _proxy_engine_name(self, rank: int) -> str:
+        """Generate engine name for a proxy worker rank."""
+        return f"{self._proxy_role}/{rank}"
+
     def _engine_name(self, rank: int) -> str:
         """Generate engine name for a worker rank.
 
@@ -146,6 +171,14 @@ class RolloutController:
         sch_spec.mem *= alloc_mode.gen_instance_size
         if sch_spec.gpu > 0:
             sch_spec.gpu = alloc_mode.gen_instance_size
+
+        if sch_spec.ray_placement_strategy == "shared":
+            # do not support shared placement for rollout
+            logger.warning(
+                "Placement strategy 'shared' is not supported for rollouts. Forcing to 'separate' strategy"
+            )
+            sch_spec.ray_placement_strategy = "separate"
+
         job = Job(
             replicas=alloc_mode.gen.dp_size,
             tasks=[sch_spec for _ in range(alloc_mode.gen.dp_size)],
@@ -278,22 +311,26 @@ class RolloutController:
         if hasattr(self, "_worker_role"):
             try:
                 self.scheduler.delete_workers(role=self._worker_role)
+                self.workers.clear()
                 logger.info("Workers deleted")
-            except Exception as e:
-                logger.error(f"Error deleting workers: {e}")
+            except Exception:
+                logger.error(f"Error deleting workers: {traceback.format_exc()}")
 
         # Delete proxy workers if initialized
         if self._proxy_started:
             try:
-                self.scheduler.delete_workers(role="proxy")
+                self.scheduler.delete_workers(role=self._proxy_role)
+                self.proxy_workers.clear()
+                self.proxy_addrs.clear()
+                self._proxy_started = False
                 logger.info("Proxy workers deleted")
-            except Exception as e:
-                logger.error(f"Error deleting proxy workers: {e}")
-            self.proxy_workers.clear()
-            self.proxy_addrs.clear()
-            self._proxy_started = False
+            except Exception:
+                logger.error(f"Error deleting proxy workers: {traceback.format_exc()}")
 
-        self.workers.clear()
+        # Shutdown proxy gateway if initialized
+        self._stop_proxy_gateway()
+        with self._futures_lock:
+            self._pending_futures.clear()
 
     def start_proxy(self) -> None:
         """Initialize proxy workers for AgentWorkflow support.
@@ -319,13 +356,13 @@ class RolloutController:
         """Async implementation of proxy worker initialization."""
         command = "areal.experimental.openai.proxy.proxy_rollout_server"
         worker_ids = self.scheduler.fork_workers(
-            role="proxy",
+            role=self._proxy_role,
             target_role=self._worker_role,
             command=command,
         )
         logger.info(f"Proxy workers forked: {worker_ids}")
 
-        self.proxy_workers = self.scheduler.get_workers(role="proxy")
+        self.proxy_workers = self.scheduler.get_workers(role=self._proxy_role)
         logger.info(f"Proxy workers: {[w.id for w in self.proxy_workers]}")
 
         engine_class = f"{self.inf_engine.__module__}.{self.inf_engine.__name__}"
@@ -336,7 +373,7 @@ class RolloutController:
                 self.scheduler.create_engine(
                     worker_id=worker.id,
                     engine=engine_class,
-                    engine_name=f"proxy/{rank}",
+                    engine_name=self._proxy_engine_name(rank),
                     config=self.config,
                 )
             )
@@ -345,13 +382,13 @@ class RolloutController:
 
         init_tasks = []
         for rank, (worker, server_info) in enumerate(
-            zip(self.proxy_workers, self.server_infos)
+            zip(self.proxy_workers, self.server_infos, strict=True)
         ):
             init_tasks.append(
                 self.scheduler.async_call_engine(
                     worker_id=worker.id,
                     method="initialize",
-                    engine_name=f"proxy/{rank}",
+                    engine_name=self._proxy_engine_name(rank),
                     addr=f"{server_info.host}:{server_info.port}",
                 )
             )
@@ -382,6 +419,113 @@ class RolloutController:
                 f"Invalid rank {rank}, only {len(self.proxy_addrs)} proxy workers"
             )
         return self.proxy_addrs[rank]
+
+    def start_proxy_gateway(self) -> None:
+        """Start the proxy gateway for external access.
+
+        Creates a FastAPI server that routes requests to backend proxy
+        workers. Requires ``start_proxy()`` to have been called first.
+        """
+        if not self._proxy_started:
+            raise RuntimeError(
+                "Proxy workers not initialized. Call start_proxy() first."
+            )
+        if self._proxy_gateway_host is not None:
+            logger.warning("Proxy gateway already running")
+            return
+
+        from areal.api.cli_args import OpenAIProxyConfig
+        from areal.experimental.openai.proxy.proxy_gateway import (
+            create_proxy_gateway_app,
+        )
+
+        openai_cfg = self.config.openai or OpenAIProxyConfig()
+
+        app = create_proxy_gateway_app(
+            proxy_addrs=self.proxy_addrs,
+            admin_api_key=openai_cfg.admin_api_key,
+        )
+
+        self._proxy_gateway_port = find_free_ports(1)[0]
+        self._proxy_gateway_host = gethostip()
+        self._proxy_gateway_app = app
+
+        def serve():
+            import uvicorn
+
+            try:
+                config = uvicorn.Config(
+                    app,
+                    host="0.0.0.0",
+                    port=self._proxy_gateway_port,
+                    log_level="warning",
+                )
+                server = uvicorn.Server(config)
+                self._proxy_gateway_server = server
+                server.run()
+            except Exception:
+                logger.error("Proxy gateway thread crashed", exc_info=True)
+
+        self._proxy_gateway_thread = threading.Thread(target=serve, daemon=True)
+        self._proxy_gateway_thread.start()
+
+        # Wait for uvicorn to bind the port before propagating the address
+        # to worker engines via collective RPC.
+        import time
+
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if (
+                self._proxy_gateway_server is not None
+                and self._proxy_gateway_server.started
+            ):
+                break
+            time.sleep(0.05)
+        else:
+            raise RuntimeError(
+                "Proxy gateway failed to start within 10s. "
+                f"Cannot propagate address "
+                f"{self._proxy_gateway_host}:{self._proxy_gateway_port}"
+            )
+
+        logger.info(
+            "Proxy gateway started on "
+            f"{self._proxy_gateway_host}:{self._proxy_gateway_port}"
+        )
+
+        # Propagate proxy_gateway_addr to all rollout worker engines
+        # so that _resolve_workflow can pick it up for online mode.
+        self._collective_rpc(
+            "set_proxy_gateway_addr",
+            addr=self.proxy_gateway_addr,
+        )
+
+    @property
+    def proxy_gateway_addr(self) -> str:
+        """Single URL for external users."""
+        if self._proxy_gateway_host is None:
+            raise RuntimeError("Proxy gateway not started")
+        return f"http://{self._proxy_gateway_host}:{self._proxy_gateway_port}"
+
+    def _stop_proxy_gateway(self) -> None:
+        """Stop the proxy gateway server if running."""
+        if self._proxy_gateway_host is None:
+            return
+        logger.info("Stopping proxy gateway...")
+        if self._proxy_gateway_server is not None:
+            self._proxy_gateway_server.should_exit = True
+        if self._proxy_gateway_thread is not None:
+            self._proxy_gateway_thread.join(timeout=30.0)
+            if self._proxy_gateway_thread.is_alive():
+                logger.warning(
+                    "Proxy gateway thread did not exit within 30s; "
+                    "daemon thread will be killed on process exit"
+                )
+        self._proxy_gateway_app = None
+        self._proxy_gateway_server = None
+        self._proxy_gateway_thread = None
+        self._proxy_gateway_port = None
+        self._proxy_gateway_host = None
 
     def _start_callback_server(self):
         """Start Flask HTTP server to receive callbacks from RolloutCallback."""
@@ -441,18 +585,24 @@ class RolloutController:
             logger.error(f"Callback handler error: {e}")
             return jsonify({"error": str(e)}), 500
 
-        # Configure Werkzeug logging
-        import logging as stdlib_logging
-
-        werkzeug_logger = stdlib_logging.getLogger("werkzeug")
-        werkzeug_logger.setLevel(stdlib_logging.WARNING)
-
         self._callback_port = find_free_ports(1)[0]
         self._callback_host = gethostip()
         self._callback_app = app
         self._callback_server = make_server(
             self._callback_host, self._callback_port, app, threaded=False
         )
+
+        # Suppress Werkzeug access logs (e.g., "POST /callback/rollout_complete 200 -")
+        # Override log_request directly on the request handler class
+        self._callback_server.RequestHandlerClass.log_request = (
+            lambda self, *args, **kwargs: None
+        )
+
+        # Also configure Werkzeug logger level for any other log messages
+        import logging as stdlib_logging
+
+        werkzeug_logger = stdlib_logging.getLogger("werkzeug")
+        werkzeug_logger.setLevel(stdlib_logging.WARNING)
 
         def serve_forever():
             # Create and set event loop for this thread
@@ -505,15 +655,37 @@ class RolloutController:
         return run_async_task(self._collective_rpc_async, method, *args, **kwargs)
 
     async def _collective_rpc_async(self, method: str, *args, **kwargs) -> list[Any]:
+        return await self._generic_collective_rpc_async(
+            method, self.workers, self._engine_name, *args, **kwargs
+        )
+
+    def _proxy_collective_rpc(self, method: str, *args, **kwargs) -> list[Any]:
+        return run_async_task(self._proxy_collective_rpc_async, method, *args, **kwargs)
+
+    async def _proxy_collective_rpc_async(
+        self, method: str, *args, **kwargs
+    ) -> list[Any]:
+        return await self._generic_collective_rpc_async(
+            method, self.proxy_workers, self._proxy_engine_name, *args, **kwargs
+        )
+
+    async def _generic_collective_rpc_async(
+        self,
+        method: str,
+        workers: list[Worker],
+        engine_name_fn: Callable[[int], str],
+        *args,
+        **kwargs,
+    ) -> list[Any]:
         tasks = [
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
                 method=method,
-                engine_name=self._engine_name(rank),
+                engine_name=engine_name_fn(rank),
                 *args,
                 **kwargs,
             )
-            for rank, worker in enumerate(self.workers)
+            for rank, worker in enumerate(workers)
         ]
         return await asyncio.gather(*tasks)
 
@@ -532,11 +704,15 @@ class RolloutController:
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
         return worker, rank
 
-    def _resolve_workflow_str(self, workflow: WorkflowLike) -> str:
+    def _resolve_workflow_str(self, workflow: WorkflowLike | None) -> str | None:
         """Resolve workflow to a string import path.
 
-        Handles RolloutWorkflow, agent workflow instances/classes, and string paths.
+        Handles RolloutWorkflow, agent workflow instances/classes, string paths,
+        and ``None`` (online mode).
         """
+        # None workflow = online mode (config-driven)
+        if workflow is None:
+            return None
 
         # String paths - return as-is
         if isinstance(workflow, str):
@@ -853,6 +1029,10 @@ class RolloutController:
         with self._version_lock:
             self._version = version
             self._collective_rpc("set_version", version=version, http_timeout=60.0)
+            if self._proxy_started:
+                self._proxy_collective_rpc(
+                    "set_version", version=version, http_timeout=60.0
+                )
 
     def get_version(self) -> int:
         with self._version_lock:

@@ -272,7 +272,7 @@ jobs:
           VIRTUAL_ENV: /AReaL/.venv
         run: |
           export PATH="/AReaL/.venv/bin:$PATH"
-          pytest -m "not slow or ci" --durations=20 -s -vv areal/tests/test_*.py areal/tests/experimental/
+          pytest -m "not slow or ci" --durations=20 -s -vv tests/test_*.py tests/experimental/
 
       - name: Run SFT integration tests
         env:
@@ -283,7 +283,7 @@ jobs:
           VIRTUAL_ENV: /AReaL/.venv
         run: |
           export PATH="/AReaL/.venv/bin:$PATH"
-          pytest -s -vv areal/tests/sft/
+          pytest -s -vv tests/sft/
 
       - name: Run GRPO integration tests
         env:
@@ -294,7 +294,7 @@ jobs:
           VIRTUAL_ENV: /AReaL/.venv
         run: |
           export PATH="/AReaL/.venv/bin:$PATH"
-          pytest -s -vv areal/tests/grpo/
+          pytest -s -vv tests/grpo/
 
   cleanup:
     name: Tear down GCP runner

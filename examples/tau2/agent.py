@@ -5,6 +5,7 @@ for OpenAI-compatible API calls during RL training.
 """
 
 import asyncio
+import os
 import time
 from typing import Any
 
@@ -317,6 +318,7 @@ class Tau2AgentWorkflow:
             data: Input data containing task_id, split, and optional econfig/gconfig
             **extra_kwargs: Additional kwargs including:
                 - base_url: Proxy server URL for agent LLM
+                - api_key: Session-wise API key for proxy server authentication
                 - http_client: Optional httpx.AsyncClient for requests
 
         Returns:
@@ -325,7 +327,12 @@ class Tau2AgentWorkflow:
         import httpx
 
         # Get proxy URL from workflow context
-        base_url: str | None = extra_kwargs.get("base_url", None)
+        base_url: str | None = extra_kwargs.get("base_url", None) or os.getenv(
+            "OPENAI_BASE_URL"
+        )
+        api_key: str | None = extra_kwargs.get("api_key", None) or os.getenv(
+            "OPENAI_API_KEY"
+        )
         http_client: httpx.AsyncClient | None = extra_kwargs.get("http_client", None)
 
         if base_url is None:
@@ -350,8 +357,8 @@ class Tau2AgentWorkflow:
         # Create AsyncOpenAI client for agent (pointing to proxy server)
         agent_client = AsyncOpenAI(
             base_url=base_url,
+            api_key=api_key,
             http_client=http_client,
-            api_key="dummy",  # Not used by proxy
             max_retries=0,
         )
 

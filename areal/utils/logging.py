@@ -63,6 +63,7 @@ LOGGER_COLORS_EXACT = {
     "SGLangWrapper": "white",
     "VLLMWrapper": "white",
     "RemoteInfEngine": "white",
+    "vLLMEngine": "white",
     # Dataset - green
     "Dataset": "light_green",
     "CLEVR70KDataset": "light_green",

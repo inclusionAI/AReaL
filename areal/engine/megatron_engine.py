@@ -218,6 +218,8 @@ class MegatronEngine(TrainEngine):
 
         assert addr is None, "FSDPEngine does not support remote initialization."
 
+        self._normalize_adam_bf16_config()
+
         if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
 
@@ -801,6 +803,29 @@ class MegatronEngine(TrainEngine):
 
     def clear_batches(self, *args):
         """Placeholder method of single-controller API."""
+
+    def _normalize_adam_bf16_config(self) -> None:
+        if self.optimizer_config is None or self.optimizer_config.type != "adam_bf16":
+            return
+
+        self.logger.info(
+            "Detected 'adam_bf16' optimizer with Megatron Engine. "
+            "Automatically converting to 'adam' with precision-aware optimizer "
+            "and setting exp_avg_dtype/exp_avg_sq_dtype to 'bfloat16'."
+        )
+
+        self.optimizer_config.type = "adam"
+        self.mcore_config.use_precision_aware_optimizer = True
+        self.mcore_config.exp_avg_dtype = "bfloat16"
+        self.mcore_config.exp_avg_sq_dtype = "bfloat16"
+
+        if self.dtype != torch.bfloat16:
+            self.logger.warning(
+                "Overriding dtype from %s to bfloat16 for adam_bf16 optimizer.",
+                self.config.dtype,
+            )
+            self.dtype = torch.bfloat16
+            self.config.dtype = "bfloat16"
 
     def _check_and_apply_fp8_config(self):
         if not self.enable_fp8:

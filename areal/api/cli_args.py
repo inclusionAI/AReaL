@@ -67,6 +67,24 @@ class NormConfig:
         default=1, metadata={"help": "Group size for group-level normalization"}
     )
 
+    def __post_init__(self):
+        """Validate normalization configuration."""
+        valid_levels = {"batch", "group", None}
+        if self.mean_level not in valid_levels:
+            raise ValueError(
+                f"mean_level must be 'batch', 'group' or None, got {self.mean_level}"
+            )
+        if self.std_level not in valid_levels:
+            raise ValueError(
+                f"std_level must be 'batch', 'group', or None, got {self.std_level}"
+            )
+        if (
+            self.mean_level == "group" or self.std_level == "group"
+        ) and self.group_size < 1:
+            raise ValueError(
+                f"group_size must be a positive integer when using group normalization, got {self.group_size}"
+            )
+
 
 @dataclass
 class MicroBatchSpec:
@@ -173,7 +191,7 @@ class GenerationHyperparameters:
         },
     )
     lora_name: str = field(
-        default="",
+        default="default_lora",
         metadata={"help": "Lora name to be used for this generation."},
     )
     use_beam_search: bool = field(
@@ -289,7 +307,9 @@ class OptimizerConfig:
     type: str = field(
         default="adam",
         metadata={
-            "help": "Optimizer type. Adam_bf16 currently only supported FSDP Engine.",
+            "help": "Optimizer type. For FSDP Engine, adam_bf16 enables memory-efficient BF16 optimizer states. "
+            "For Megatron Engine, adam_bf16 requires dtype=bfloat16 and is automatically converted to adam "
+            "with precision-aware optimizer enabled.",
             "choices": ["adam", "sgd", "adam_bf16"],
         },
     )
@@ -453,7 +473,12 @@ class ArchonEngineConfig:
         default="Interleaved1F1B",
         metadata={
             "help": "Pipeline parallel schedule type.",
-            "choices": ["1F1B", "Interleaved1F1B", "ZBVZeroBubble"],
+            "choices": [
+                "1F1B",
+                "Interleaved1F1B",
+                "InterleavedZeroBubble",
+                "ZBVZeroBubble",
+            ],
         },
     )
     # NOTE: The following three PP layer distribution parameters are advanced options
@@ -466,7 +491,7 @@ class ArchonEngineConfig:
             "help": "Number of transformer layers per (virtual) pipeline stage. "
             "If set, num_virtual_stages is calculated from num_layers. "
             "If None, stages are inferred from schedule type "
-            "(1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B/ZBVZeroBubble).",
+            "(1 stage/rank for 1F1B, 2 stages/rank for Interleaved1F1B/InterleavedZeroBubble/ZBVZeroBubble).",
         },
     )
     pp_first_stage_less_layers: int = field(
@@ -484,6 +509,29 @@ class ArchonEngineConfig:
         },
     )
 
+    # FSDP reshard policy after forward pass
+    reshard_after_forward_policy: str = field(
+        default="default",
+        metadata={
+            "help": "FSDP reshard policy after forward pass. "
+            "'default': reshard when pipeline parallelism is off; keep unsharded when on to avoid repeated all-gather per microbatch. "
+            "'always': always reshard after forward (saves memory). "
+            "'never': never reshard after forward.",
+            "choices": ["default", "always", "never"],
+        },
+    )
+
+    # Deterministic mode
+    use_deterministic_algorithms: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable deterministic algorithms for training reproducibility. "
+            "Sets torch.use_deterministic_algorithms(True, warn_only=True), "
+            "CUBLAS_WORKSPACE_CONFIG, NCCL_ALGO, and TORCH_COMPILE_DETERMINISTIC. "
+            "May reduce performance.",
+        },
+    )
+
     def __post_init__(self):
         if self.pp_layers_per_stage is not None and self.pp_layers_per_stage < 1:
             raise ValueError(
@@ -498,6 +546,12 @@ class ArchonEngineConfig:
             raise ValueError(
                 f"pp_last_stage_less_layers must be >= 0, "
                 f"got {self.pp_last_stage_less_layers}"
+            )
+        valid_reshard_policies = ("default", "always", "never")
+        if self.reshard_after_forward_policy not in valid_reshard_policies:
+            raise ValueError(
+                f"reshard_after_forward_policy must be one of {valid_reshard_policies}, "
+                f"got '{self.reshard_after_forward_policy}'"
             )
 
 
@@ -651,7 +705,14 @@ class MegatronEngineConfig:
     overlap_param_gather_with_optimizer_step: bool = False
 
     # Precision Configuration
-    use_precision_aware_optimizer: bool = False
+    use_precision_aware_optimizer: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable precision-aware optimizer for Megatron. "
+            "When using adam_bf16 optimizer type with Megatron Engine, "
+            "this is automatically enabled with exp_avg_dtype=bfloat16 and exp_avg_sq_dtype=bfloat16."
+        },
+    )
     main_grads_dtype: str = "float32"
     main_params_dtype: str = "float32"
     exp_avg_dtype: str = "float32"
@@ -793,6 +854,25 @@ class SchedulingSpec:
     exclude: str | None = field(
         default=None, metadata={"help": "sbatch/srun's `--exclude` option for slurm."}
     )
+    ray_placement_strategy: str = field(
+        default="shared",
+        metadata={
+            "help": "Which placement strategy to use for Ray scheduling. "
+            "Shared will produce 1 placement group for all workers in the role (training). "
+            "Separate will 1 placement group per worker (rollout). "
+            "Deferred will do the same as separate but defers accelerator scheduling (multinode rollout). ",
+            "choices": ["shared", "separate", "deferred"],
+        },
+    )
+
+    def __post_init__(self):
+        """Validate scheduling spec configuration."""
+        valid_strategies = {"shared", "separate", "deferred"}
+        if self.ray_placement_strategy not in valid_strategies:
+            raise ValueError(
+                f"ray_placement_strategy must be one of {valid_strategies}, "
+                f"got '{self.ray_placement_strategy}'"
+            )
 
 
 @dataclass
@@ -1027,10 +1107,32 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "Use the decoupled loss. Implicitly enables recompute_logprob."
         },
     )
-    behav_imp_weight_cap: float | None = field(
-        default=None,
+    behave_imp_weight_cap: float | None = field(
+        default=5.0,
         metadata={
-            "help": "Filter out tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing loss. Must be > 1.0. use_decoupled_loss must be true."
+            "help": "Filter out tokens/sequences where behave_imp_weight exceeds this cap when computing loss. "
+            "Only effective when use_decoupled_loss=True (decoupled/async training). "
+            "Must be > 1.0 when mode is not 'disabled'. "
+            "Mode controlled by behave_imp_weight_mode (mask/truncate/disabled)."
+        },
+    )
+    behave_imp_weight_mode: str = field(
+        default="token_mask",
+        metadata={
+            "help": "Mode for importance weight filtering. "
+            "Only effective when use_decoupled_loss=True (decoupled/async training). "
+            "'token_truncate': clamp token ratio to [0, cap]. "
+            "'token_mask': set token ratio to 0 where ratio > cap. "
+            "'sequence_truncate': clamp sequence ratio to [0, cap]. "
+            "'sequence_mask': set sequence ratio to 0 where ratio > cap. "
+            "'disabled': disable importance weight correction.",
+            "choices": [
+                "token_truncate",
+                "token_mask",
+                "sequence_truncate",
+                "sequence_mask",
+                "disabled",
+            ],
         },
     )
     importance_sampling_level: str = field(
@@ -1080,6 +1182,52 @@ class PPOActorConfig(TrainEngineConfig):
         return (self.use_decoupled_loss and not method.skips_forward_pass()) or (
             not self.use_decoupled_loss and self.recompute_logprob
         )
+
+    def __post_init__(self):
+        """Validate PPO actor configuration."""
+        # Validate MIS/TIS configuration
+        if self.behave_imp_weight_mode == "disabled":
+            if self.behave_imp_weight_cap is not None:
+                raise ValueError(
+                    f"behave_imp_weight_cap must be None when behave_imp_weight_mode is 'disabled', "
+                    f"got {self.behave_imp_weight_cap}."
+                )
+        else:
+            if (
+                self.behave_imp_weight_cap is not None
+                and self.behave_imp_weight_cap <= 1.0
+            ):
+                raise ValueError(
+                    f"behave_imp_weight_cap must be > 1.0 when behave_imp_weight_mode is not 'disabled', "
+                    f"got {self.behave_imp_weight_cap}."
+                )
+
+        # Warn if behave_imp_weight settings are configured but use_decoupled_loss is False
+        if not self.use_decoupled_loss:
+            if (
+                self.behave_imp_weight_cap is not None
+                or self.behave_imp_weight_mode != "disabled"
+            ):
+                logger.warning(
+                    "behave_imp_weight_cap and behave_imp_weight_mode are configured but "
+                    "use_decoupled_loss=False. These settings will be ignored. "
+                    "Set use_decoupled_loss=True to enable decoupled loss with importance weight correction."
+                )
+
+        # Validate SAPO configuration
+        if self.use_sapo_loss:
+            if self.sapo_tau_pos <= 0 or self.sapo_tau_neg <= 0:
+                raise ValueError(
+                    f"SAPO temperatures (sapo_tau_pos, sapo_tau_neg) must be positive. "
+                    f"Got sapo_tau_pos={self.sapo_tau_pos}, sapo_tau_neg={self.sapo_tau_neg}."
+                )
+            if self.use_decoupled_loss:
+                raise ValueError(
+                    "SAPO is not compatible with `use_decoupled_loss=True`. "
+                    "Please set `actor.use_decoupled_loss=false` in your configuration."
+                )
+
+        super().__post_init__()
 
 
 @dataclass
@@ -1161,8 +1309,11 @@ class vLLMConfig:
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
+    # lora
     enable_lora: bool = False
-    lora_modules: str = ""
+    max_lora_rank: int = 16  # vllm's default
+    max_loras: int = 8  # override default
+    lora_modules: list[str] | None = None  # lora_modules is automatically filled
 
     @staticmethod
     def build_args(
@@ -1187,18 +1338,6 @@ class vLLMConfig:
             args["port"] = port
         if host is not None:
             args["host"] = host
-        # handle lora modules separately
-        lm = args.get("lora_modules")
-        if lm:
-            if isinstance(lm, str):
-                lm = [lm]
-            if isinstance(lm, (list, tuple)):
-                try:
-                    args["lora_modules"] = [
-                        json.dumps(json.loads(s), separators=(",", ":")) for s in lm
-                    ]
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"Invalid JSON string in lora_modules: {e}") from e
         return args
 
     @staticmethod
@@ -1276,10 +1415,8 @@ class SGLangConfig:
     # lora
     enable_lora: bool | None = None
     max_lora_rank: int | None = None
-    lora_target_modules: list[str] | None = None
-    lora_paths: list[str] | None = None
-    max_loaded_loras: int = 1
-    max_loras_per_batch: int = 1
+    max_loaded_loras: int = 8  # override default
+    lora_paths: list[str] | None = None  # lora_paths is automatically filled
     lora_backend: str = "triton"
     # logging
     log_level: str = "warning"
@@ -1295,6 +1432,9 @@ class SGLangConfig:
     # NOTE: These arguments will be parsed into a dict json-string
     # and passed as `model_loader_extra_config` to SGLang.
     enable_multithread_load: bool = False
+
+    # Internal field, not exposed to users.
+    enable_return_routed_experts: bool = False
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
@@ -1346,11 +1486,6 @@ class SGLangConfig:
                 model_loader_extra_config, separators=(",", ":")
             )
         args.pop("enable_multithread_load", None)
-        # Map "all-linear" to "all"
-        if "lora_target_modules" in args and args["lora_target_modules"]:
-            args["lora_target_modules"] = [
-                x.replace("-linear", "") for x in args["lora_target_modules"]
-            ]
 
         args = dict(
             # Model and tokenizer
@@ -1388,17 +1523,18 @@ class OpenAIProxyConfig:
         default="inline",
         metadata={
             "help": (
-                "OpenAI proxy mode: 'inline' (in-process) or 'subproc' (subprocess). "
+                "OpenAI proxy mode: 'inline' (in-process), 'subproc' (subprocess), "
+                "or 'online' (external user sessions for online RL training). "
                 "`inline` mode runs the provided agent workflow directly in the same process. "
-                "It can use the provided `base_url` and `http_client` to reduce overhead. "
-                "`subproc` mode launches a separate process to run the agent with `OPENAI_BASE_URL` environment variable, "
-                "which offers more flexible deployment options at the cost of larger overhead."
+                "`subproc` mode launches a separate process to run the agent. "
+                "`online` mode waits for external users to complete sessions via "
+                "the proxy gateway URL, enabling online RL training."
             ),
-            "choices": ["inline", "subproc"],
+            "choices": ["inline", "subproc", "online"],
         },
     )
     tool_call_parser: str = field(
-        default="qwen3",
+        default="qwen",
         metadata={"help": "Parser for tool calls in model output."},
     )
     reasoning_parser: str = field(
@@ -1443,6 +1579,22 @@ class OpenAIProxyConfig:
             "help": "Session timeout in seconds. Sessions inactive longer than this will be garbage collected."
         },
     )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": (
+                "Admin API key for the proxy server. Used to authenticate management "
+                "operations (grant_capacity, start_session). "
+                "Cannot be used for chat completions. Each session gets a unique "
+                "API key allocated via start_session. "
+                "WARNING: Change this from the default for non-local deployments."
+            ),
+        },
+    )
+
+    def __post_init__(self):
+        if not self.admin_api_key or not self.admin_api_key.strip():
+            raise ValueError("admin_api_key must not be empty or whitespace-only")
 
 
 @dataclass
@@ -1546,6 +1698,12 @@ class InferenceEngineConfig:
         default=None,
         metadata={
             "help": "OpenAI proxy configuration (used when workflow is an agent workflow)."
+        },
+    )
+    return_routed_experts: bool = field(
+        default=False,
+        metadata={
+            "help": "Return routed expert indices for MoE models. Effective only when using SGLang engine with MoE models."
         },
     )
 
@@ -1668,7 +1826,12 @@ class SwanlabConfig:
     config: dict | None = None
     logdir: str | None = None
     mode: str | None = "disabled"
-    api_key: str | None = os.getenv("SWANLAB_API_KEY", None)
+    # set None to prevent info-leak in docs
+    api_key: str | None = None
+
+    def __post_init__(self):
+        if self.api_key is None:
+            self.api_key = os.getenv("SWANLAB_API_KEY")
 
 
 @dataclass
@@ -1962,6 +2125,13 @@ class BaseExperimentConfig:
 
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
+    def __post_init__(self):
+        """Validate training configuration."""
+        if self.total_train_epochs <= 0:
+            raise ValueError(
+                f"total_train_epochs must be positive, got {self.total_train_epochs}"
+            )
+
 
 @dataclass
 class SFTConfig(BaseExperimentConfig):
@@ -2007,6 +2177,7 @@ class PPOConfig(BaseExperimentConfig):
         """Validate the eval generation config."""
         if self.eval_gconfig is None:
             self.eval_gconfig = self.gconfig.new()
+        super().__post_init__()
 
 
 @dataclass
@@ -2056,8 +2227,8 @@ def load_expr_config[ConfigT](
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
     assert isinstance(cfg, config_cls)
-    # Setup environment
 
+    # Setup environment
     name_resolve.reconfigure(cfg.cluster.name_resolve)
 
     from areal.utils.stats_logger import StatsLogger

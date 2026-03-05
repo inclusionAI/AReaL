@@ -22,7 +22,7 @@ overrides = [
     { name = "openai", specifier = ">2.6.1" },
     { name = "outlines-core", specifier = "==0.1.26" },
     { name = "soundfile", specifier = ">=0.12.1,<0.13.0" },
-    { name = "torchao", specifier = ">=0.15.0" },
+    { name = "torchao", specifier = "==0.15.0" },
     { name = "xgrammar", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'", specifier = "==0.1.29" },
 ]
 
@@ -244,7 +244,7 @@ wheels = [
 
 [[package]]
 name = "areal"
-version = "0.5.3"
+version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
@@ -456,7 +456,7 @@ requires-dist = [
     { name = "timeout-decorator" },
     { name = "torch", specifier = ">=2.9.1,<2.10" },
     { name = "torch-memory-saver", marker = "sys_platform == 'linux' and extra == 'tms'", specifier = "==0.0.9" },
-    { name = "torchao", specifier = ">=0.15.0" },
+    { name = "torchao", specifier = "==0.15.0" },
     { name = "torchaudio" },
     { name = "torchdata" },
     { name = "torchvision" },
@@ -475,7 +475,7 @@ provides-extras = ["sglang", "vllm", "tms", "flash-attn", "megatron", "cuda", "a
 dev = [
     { name = "clang-format", specifier = "==19.1.7" },
     { name = "ipython" },
-    { name = "jupyter-book", specifier = "<2" },
+    { name = "jupyter-book", specifier = "==1.0.4.post1" },
     { name = "mdformat", specifier = "==0.7.17" },
     { name = "mdformat-frontmatter" },
     { name = "mdformat-gfm" },

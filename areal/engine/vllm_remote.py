@@ -19,20 +19,23 @@ from areal.api.io_struct import (
     ParamSpec,
     WeightUpdateMeta,
     WeightUpdateRequests,
+    get_versioned_lora_name,
 )
 from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import WorkflowLike
 from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
-from areal.utils import perf_tracer, stats_tracker
+from areal.utils import logging, perf_tracer, stats_tracker
+
+logger = logging.getLogger("vLLMEngine")
 
 
 class VLLMBackend:
     """vLLM-specific backend implementation for remote inference."""
 
     def build_generation_request(
-        self, req: ModelRequest, with_lora: bool
+        self, req: ModelRequest, with_lora: bool, version: int
     ) -> HttpRequest:
         """Build vLLM generation request."""
         gconfig = req.gconfig
@@ -53,8 +56,13 @@ class VLLMBackend:
             "stream": False,
         }
 
-        if with_lora and len(gconfig.lora_name) > 0:
-            payload["model"] = gconfig.lora_name
+        if with_lora:
+            lora_name = gconfig.lora_name
+            if not lora_name:
+                raise ValueError(
+                    "LoRA name (gconfig.lora_name) is required when use_lora is enabled."
+                )
+            payload["model"] = get_versioned_lora_name(lora_name, version)
 
         if req.vision_msg_vllm:
             images = iter(req.image_data)
@@ -111,20 +119,17 @@ class VLLMBackend:
         )
 
     def build_disk_weight_update_requests(
-        self, meta: WeightUpdateMeta, lora_initialized: bool
+        self, meta: WeightUpdateMeta
     ) -> WeightUpdateRequests:
         """Build vLLM disk weight update requests."""
         if meta.use_lora:
-            if not lora_initialized:
-                raise ValueError(
-                    "LoRA update requested, but LoRA is not enabled/initialized in the vLLM engine."
-                )
-            endpoint = "/areal_update_weights_lora"
+            if meta.version is None:
+                raise ValueError("Version is required for LoRA update.")
+            lora_name = get_versioned_lora_name(meta.lora_name, meta.version)
+            endpoint = "/v1/load_lora_adapter"
             payload = {
-                "lora_model_path": str(meta.path),
-                "lora_name": str(meta.lora_name),
-                "lora_int_id": meta.lora_int_id,
-                "base_model_name": str(meta.base_model_name),
+                "lora_path": str(meta.path),
+                "lora_name": lora_name,
             }
         else:
             endpoint = "/areal_update_weights"
@@ -135,7 +140,9 @@ class VLLMBackend:
         )
 
     def build_distributed_weight_update_requests(
-        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
+        self,
+        meta: WeightUpdateMeta,
+        param_specs: list[ParamSpec],
     ) -> WeightUpdateRequests:
         """Build vLLM distributed weight update requests."""
         # vLLM uses two-step process: set metadata, then update
@@ -148,8 +155,11 @@ class VLLMBackend:
         }
 
         if meta.use_lora:
+            if meta.version is None:
+                raise ValueError("Version is required for LoRA update.")
+            lora_name = get_versioned_lora_name(meta.lora_name, meta.version)
             lora_payload = {
-                "lora_name": meta.lora_name,
+                "lora_name": lora_name,
                 "lora_int_id": meta.lora_int_id,
                 "lora_target_modules": meta.peft_config["target_modules"],
                 "lora_rank": meta.peft_config["r"],
@@ -246,7 +256,9 @@ class VLLMBackend:
         vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
         if vllm_cache_path:
             _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
+        _env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
 
+        logger.info(f"Launching vLLM server with command: {' '.join(cmd)}")
         return subprocess.Popen(
             cmd,
             env=_env,
@@ -272,8 +284,6 @@ class RemotevLLMEngine(InferenceEngine):
         self.config = config
         # Pure composition - create internal engine with vLLM backend
         self._engine = RemoteInfEngine(config, VLLMBackend())
-        # lora already initialized when use_lora=true during init, by design, for vLLM
-        self._engine.lora_initialized = config.use_lora
 
     def initialize(
         self,
@@ -304,6 +314,9 @@ class RemotevLLMEngine(InferenceEngine):
     def get_version(self) -> int:
         """Get the current weight version."""
         return self._engine.get_version()
+
+    def set_proxy_gateway_addr(self, addr: str) -> None:
+        self._engine.set_proxy_gateway_addr(addr)
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request."""

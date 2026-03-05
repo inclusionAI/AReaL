@@ -284,7 +284,7 @@ def generate_config_section(
     return doc
 
 
-def generate_cli_documentation():
+def generate_cli_documentation(lang: str = "en"):
     """Generate the complete CLI documentation automatically."""
     # Discover all dataclasses
     all_dataclasses = discover_dataclasses()
@@ -292,8 +292,9 @@ def generate_cli_documentation():
     # Categorize them
     categories = categorize_dataclasses(all_dataclasses)
 
-    # Start building documentation
-    doc = """# Configurations
+    # Header templates for different languages
+    headers = {
+        "en": """# Configurations
 
 This page provides a comprehensive reference for all configuration parameters available in AReaL's command-line interface. These parameters are defined using dataclasses and can be specified in YAML configuration files or overridden via command line arguments.
 
@@ -315,7 +316,34 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 
 ## Table of Contents
 
-"""
+""",
+        "zh": """# 配置参考
+
+本页面提供 AReaL 命令行界面所有配置参数的完整参考。这些参数使用 dataclass 定义，可在 YAML 配置文件中指定，也可通过命令行参数覆盖。
+
+## 使用方法
+
+使用 `--config` 参数指定配置文件：
+
+```bash
+python3 train.py --config path/to/config.yaml
+```
+
+您可以通过命令行覆盖特定参数：
+
+```bash
+python3 train.py --config path/to/config.yaml actor.lr=1e-4 seed=42
+```
+
+详细示例请参阅 `examples/` 目录中的实验配置。
+
+## 目录
+
+""",
+    }
+
+    # Get header for selected language
+    doc = headers.get(lang, headers["en"])
 
     # Generate table of contents automatically
     for category_name, class_list in categories.items():
@@ -341,21 +369,31 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 
 
 def main():
-    """Generate the CLI documentation and save it to a markdown file."""
-    output_path = Path(__file__).parent / "cli_reference.md"
+    """Generate the CLI documentation and save it to markdown files."""
+    docs_dir = Path(__file__).parent
+    output_paths = {
+        "en": docs_dir / "en" / "cli_reference.md",
+        "zh": docs_dir / "zh" / "cli_reference.md",
+    }
 
     try:
-        documentation = generate_cli_documentation()
-        documentation = mdformat.text(
-            documentation,
-            options={"wrap": 88},
-            extensions=["gfm", "tables", "frontmatter"],
-        )
+        for lang in ["en", "zh"]:
+            documentation = generate_cli_documentation(lang)
+            documentation = mdformat.text(
+                documentation,
+                options={"wrap": 88},
+                extensions=["gfm", "tables", "frontmatter"],
+            )
 
-        with open(output_path, "w") as f:
-            f.write(documentation)
+            output_path = output_paths[lang]
+            # Ensure parent directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        print(f"✅ CLI documentation generated successfully at: {output_path}")
+            with open(output_path, "w") as f:
+                f.write(documentation)
+
+            print(f"✅ CLI documentation ({lang}) generated at: {output_path}")
+
         return True
 
     except Exception as e:

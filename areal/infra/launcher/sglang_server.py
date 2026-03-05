@@ -12,6 +12,7 @@ import requests
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
+    InferenceEngineConfig,
     NameResolveConfig,
     SGLangConfig,
     parse_cli_args,
@@ -214,6 +215,7 @@ def launch_sglang_server(argv):
     config.cluster.name_resolve = to_structured_cfg(
         config.cluster.name_resolve, NameResolveConfig
     )
+    config.rollout = to_structured_cfg(config.rollout, InferenceEngineConfig)
     name_resolve.reconfigure(config.cluster.name_resolve)
 
     allocation_mode = config.allocation_mode
@@ -222,6 +224,9 @@ def launch_sglang_server(argv):
 
     # Get CPU per GPU from rollout scheduling spec
     rollout_spec = get_scheduling_spec(config.rollout)
+
+    if config.rollout.return_routed_experts:
+        config.sglang.enable_return_routed_experts = True
 
     sglang_server = SGLangServerWrapper(
         config.experiment_name,

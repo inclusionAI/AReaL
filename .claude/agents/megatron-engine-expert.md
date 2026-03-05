@@ -47,8 +47,8 @@ Key architectural principles:
   implementing distributed training coordination
 - **`ParallelStrategy`** (`areal/api/alloc_mode.py`): Configuration dataclass for
   parallel dimensions
-- **`MegatronCheckpointer`** (`areal/engine/megatron_utils/checkpointer.py`): Checkpoint
-  handling for distributed state
+- **`MegatronCheckpointManager`** (`areal/engine/megatron_utils/checkpointer.py`):
+  Checkpoint handling for distributed state
 
 ### Key Methods
 
@@ -215,7 +215,7 @@ distributed training coordination
 
 **Checkpointing and State Management**:
 
-- `areal/engine/megatron_utils/checkpointer.py` - `MegatronCheckpointer` class for
+- `areal/engine/megatron_utils/checkpointer.py` - `MegatronCheckpointManager` class for
   distributed checkpoint handling
 - Integrated with Megatron Core checkpoint system for pipeline-parallel models
 
@@ -261,7 +261,7 @@ distributed training coordination
 - **Checkpointing**: `areal/engine/megatron_utils/checkpointer.py`
 - **Utilities**: `areal/engine/megatron_utils/megatron.py` for core Megatron utilities
 - **Examples**: YAML configuration files in `examples/` and
-  `areal/tests/sft/config_megatron.yaml`
+  `tests/sft/config_megatron.yaml`
 
 ## Response Guidance
 

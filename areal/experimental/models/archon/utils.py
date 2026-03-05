@@ -137,9 +137,29 @@ def validate_ep_constraints(
         )
 
 
+def is_moe_model_config(model_config: object) -> bool:
+    """Check if a HuggingFace PretrainedConfig represents a Mixture-of-Experts model.
+
+    Inspects common HF config attributes (num_experts, num_local_experts)
+    to determine whether the model uses MoE layers.
+
+    Args:
+        model_config: A HuggingFace PretrainedConfig (or any object with
+            num_experts / num_local_experts attributes).
+
+    Returns:
+        True if the config indicates an MoE model with more than one expert.
+    """
+    num_experts = getattr(model_config, "num_experts", None)
+    if num_experts is None:
+        num_experts = getattr(model_config, "num_local_experts", None)
+    return num_experts is not None and num_experts > 1
+
+
 __all__ = [
     "ModelArgsProtocol",
     "MoEModelArgsProtocol",
+    "is_moe_model_config",
     "validate_cp_constraints",
     "validate_tp_constraints",
     "validate_ep_constraints",

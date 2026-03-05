@@ -37,16 +37,16 @@ Use this agent **when requested** when:
 
 ### Launcher vs. Scheduler
 
-| Component     | Responsibility                                                                          | Key Classes                                                                   | Config Source                               |
-| ------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------- |
-| **Launcher**  | Starts training/inference processes, manages process tree, passes environment variables | `LocalLauncher`, `SlurmLauncher`, `RayLauncher`, `SGLangServer`, `vLLMServer` | `ClusterSpecConfig` (cluster specification) |
-| **Scheduler** | Allocates GPU/port resources, manages worker lifecycle, performs health checks          | `LocalScheduler`, `SlurmScheduler`, `RayScheduler`                            | `SchedulerConfig` (scheduling strategy)     |
+| Component     | Responsibility                                                                          | Key Classes                                                                                 | Config Source                               |
+| ------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| **Launcher**  | Starts training/inference processes, manages process tree, passes environment variables | `LocalLauncher`, `SlurmLauncher`, `RayLauncher`, `SGLangServerWrapper`, `vLLMServerWrapper` | `ClusterSpecConfig` (cluster specification) |
+| **Scheduler** | Allocates GPU/port resources, manages worker lifecycle, performs health checks          | `LocalScheduler`, `SlurmScheduler`, `RayScheduler`                                          | `SchedulerConfig` (scheduling strategy)     |
 
 ### Key Configuration Dataclasses
 
 Located in `areal/api/cli_args.py`:
 
-- **`ClusterSpecConfig`** (`areal/api/cli_args.py:1708`):
+- **`ClusterSpecConfig`** (`areal/api/cli_args.py`):
 
   - `name_resolve`: Name resolving configuration (NFS/Redis)
   - `cluster_name`: Cluster identifier for environment presets
@@ -55,11 +55,11 @@ Located in `areal/api/cli_args.py`:
   - `n_nodes`: Total cluster nodes
   - `n_gpus_per_node`: Physical GPUs per node
 
-- **`SchedulerConfig`** (`areal/api/cli_args.py:1737`):
+- **`SchedulerConfig`** (`areal/api/cli_args.py`)
 
-  - `scheduling_strategy`: `local`, `slurm`, or `ray`
-  - `startup_timeout`: Worker initialization timeout (seconds)
-  - `health_check_interval`: Worker health monitoring frequency
+  - `type`: Scheduler type (`local`, `slurm`, or `ray`)
+  - `endpoint`: Scheduler service endpoint
+  - `deploy_mode`: Deployment mode (e.g., `separation`)
 
 ### Environment Variable Propagation Chain
 

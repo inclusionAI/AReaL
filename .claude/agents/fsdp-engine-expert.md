@@ -91,8 +91,7 @@ FSDPEngine works with all `WorkflowLike` implementations, especially:
 ### Integration Pattern
 
 - Import `FSDPEngine` from `areal.engine.fsdp_engine`
-- Import desired workflow class (e.g., `RLVRWorkflow` from
-  `areal.workflow.rlvr_workflow`)
+- Import desired workflow class (e.g., `RLVRWorkflow` from `areal.workflow.rlvr`)
 - Initialize `FSDPEngine` with configuration
 - Create workflow instance with engine, reward functions, and dataset parameters
 

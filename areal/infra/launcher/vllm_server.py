@@ -12,6 +12,7 @@ import requests
 
 from areal.api.cli_args import (
     ClusterSpecConfig,
+    InferenceEngineConfig,
     NameResolveConfig,
     parse_cli_args,
     to_structured_cfg,
@@ -44,6 +45,7 @@ def launch_server_cmd(
     vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
     if vllm_cache_path:
         _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
+    _env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
 
     if custom_env is not None:
         _env.update(custom_env)
@@ -251,6 +253,7 @@ def launch_vllm_server(argv):
     config.cluster.name_resolve = to_structured_cfg(
         config.cluster.name_resolve, NameResolveConfig
     )
+    config.rollout = to_structured_cfg(config.rollout, InferenceEngineConfig)
     name_resolve.reconfigure(config.cluster.name_resolve)
 
     allocation_mode = config.allocation_mode
