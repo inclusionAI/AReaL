@@ -1,8 +1,6 @@
 """
 Unit tests for Vision SP Shard utilities (CPU-only, no distributed).
 
-Adapted from verl PR #5230 tests.
-
 Test naming convention: test_<what>_<condition>_<expected>()
 """
 
@@ -11,17 +9,23 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from areal.models.fsdp.vision_sp_shard import (
+from areal.models.transformers.vision_sp_shard import (
     _assign_images_to_dp_ranks,
     _gather_vision_embeddings,
     _get_image_embedding_counts,
     _get_image_patch_counts,
     _patch_vision_class,
     _prepare_local_vision_inputs,
+    _unpack_deepstack,
     apply_vision_sp_shard_patch,
     create_dp_vision_forward,
 )
 
+
+def _assert_all_images_assigned(assignments, num_images):
+    """Assert every image index in [0, num_images) appears exactly once."""
+    all_idx = [i for rank in assignments for i in rank]
+    assert sorted(all_idx) == list(range(num_images))
 
 class TestGetImagePatchCounts:
     @pytest.mark.parametrize(
@@ -62,6 +66,11 @@ class TestGetImageEmbeddingCounts:
         counts = _get_image_embedding_counts(torch.empty((0, 3), dtype=torch.long))
         assert counts == []
 
+    def test_embedding_counts_merge_1_equals_patch_counts(self):
+        """merge_size=1 path should produce identical results to _get_image_patch_counts."""
+        grid = torch.tensor([[2, 4, 4], [1, 8, 8], [1, 6, 6]])
+        assert _get_image_embedding_counts(grid, 1) == _get_image_patch_counts(grid)
+
 
 class TestAssignImagesToDpRanks:
     @pytest.mark.parametrize(
@@ -77,20 +86,14 @@ class TestAssignImagesToDpRanks:
         self, patch_counts, dp_size, expected_all_assigned
     ):
         assignments, loads = _assign_images_to_dp_ranks(patch_counts, dp_size)
-        all_assigned = []
-        for a in assignments:
-            all_assigned.extend(a)
-        assert sorted(all_assigned) == list(range(len(patch_counts)))
+        _assert_all_images_assigned(assignments, len(patch_counts))
         assert sum(loads) == sum(patch_counts)
 
     def test_assign_fewer_images_than_ranks_all_assigned(self):
         assignments, loads = _assign_images_to_dp_ranks([100, 200], dp_size=4)
         non_empty = sum(1 for a in assignments if len(a) > 0)
         assert non_empty == 2
-        all_assigned = set()
-        for a in assignments:
-            all_assigned.update(a)
-        assert all_assigned == {0, 1}
+        _assert_all_images_assigned(assignments, 2)
 
     def test_assign_empty_input_returns_empty_lists(self):
         assignments, loads = _assign_images_to_dp_ranks([], dp_size=4)
@@ -107,11 +110,7 @@ class TestAssignImagesToDpRanks:
         # 4096 + 256 + 256 + 256 = 4864, target per rank = 2432
         patch_counts = [4096, 256, 256, 256]
         assignments, loads = _assign_images_to_dp_ranks(patch_counts, dp_size=2)
-        # All images must be assigned
-        all_assigned = []
-        for a in assignments:
-            all_assigned.extend(a)
-        assert sorted(all_assigned) == [0, 1, 2, 3]
+        _assert_all_images_assigned(assignments, len(patch_counts))
         # Load imbalance should be less than the naive count-based split (8.5x)
         max_load = max(loads)
         min_load = min(load for load in loads if load > 0)
@@ -122,10 +121,7 @@ class TestAssignImagesToDpRanks:
         patch_counts = [10, 20, 30, 40, 50, 60, 70]
         for dp_size in [1, 2, 3, 4, 7]:
             assignments, _ = _assign_images_to_dp_ranks(patch_counts, dp_size)
-            all_indices = []
-            for a in assignments:
-                all_indices.extend(a)
-            assert sorted(all_indices) == list(range(len(patch_counts)))
+            _assert_all_images_assigned(assignments, len(patch_counts))
 
 
 class TestPrepareLocalVisionInputs:
@@ -191,19 +187,12 @@ class TestPrepareLocalVisionInputs:
 
 class TestGatherVisionEmbeddings:
     def test_gather_embeddings_none_group_returns_input_unchanged(self):
+        """dp_group=None should short-circuit and return the same tensor (zero-copy)."""
         embeddings = torch.randn(10, 64)
         result = _gather_vision_embeddings(embeddings, dp_group=None, all_counts=[10])
         assert torch.equal(result, embeddings)
-
-    def test_gather_embeddings_world_size_1_returns_input_unchanged(self):
-        """Single-rank group should short-circuit and return input directly."""
-        embeddings = torch.randn(10, 64)
-        # dp_group=None triggers the world_size==1 short-circuit
-        result = _gather_vision_embeddings(embeddings, dp_group=None, all_counts=[10])
-        assert torch.equal(result, embeddings)
-        # Verify it's not a copy — same storage
+        # Verify zero-copy — same storage, not a clone
         assert result.data_ptr() == embeddings.data_ptr()
-
 
 class TestCreateDpVisionForward:
     def test_dp_vision_forward_sp_size_1_calls_original_directly(self):
@@ -222,15 +211,15 @@ class TestCreateDpVisionForward:
         # Mock Ulysses SP to return sp_size=1
         with (
             patch(
-                "areal.models.fsdp.vision_sp_shard.get_ulysses_sequence_parallel_group",
+                "areal.models.transformers.vision_sp_shard.get_ulysses_sequence_parallel_group",
                 return_value=None,
             ),
             patch(
-                "areal.models.fsdp.vision_sp_shard.get_ulysses_sequence_parallel_world_size",
+                "areal.models.transformers.vision_sp_shard.get_ulysses_sequence_parallel_world_size",
                 return_value=1,
             ),
             patch(
-                "areal.models.fsdp.vision_sp_shard.get_ulysses_sequence_parallel_rank",
+                "areal.models.transformers.vision_sp_shard.get_ulysses_sequence_parallel_rank",
                 return_value=0,
             ),
         ):
@@ -275,13 +264,7 @@ class TestPatchVisionClass:
 class TestApplyVisionSpShardPatch:
     def test_apply_patch_import_error_does_not_raise(self):
         """ImportError for unavailable models should not crash."""
-        # apply_vision_sp_shard_patch() tries to import model classes;
-        # if none are available, it should silently skip (no exception).
-        try:
-            apply_vision_sp_shard_patch()
-        except ImportError:
-            pytest.fail("apply_vision_sp_shard_patch() raised ImportError")
-
+        apply_vision_sp_shard_patch()  # should not raise
 
 class TestIntegration:
     def test_full_workflow_all_patches_covered(self):
@@ -293,10 +276,7 @@ class TestIntegration:
         assert patch_counts == [16, 64, 16, 36, 16]
 
         assignments, loads = _assign_images_to_dp_ranks(patch_counts, dp_size=2)
-        all_assigned = []
-        for a in assignments:
-            all_assigned.extend(a)
-        assert sorted(all_assigned) == [0, 1, 2, 3, 4]
+        _assert_all_images_assigned(assignments, len(patch_counts))
 
         total_local_patches = 0
         for rank in range(2):
@@ -320,3 +300,58 @@ class TestIntegration:
             assert 12 <= len(assignments[rank]) <= 13
         for load in loads:
             assert load in [768, 832]
+
+
+
+class TestUnpackDeepstack:
+    def test_unpack_no_deepstack_attr_returns_none(self):
+        """Model without deepstack_merger_list should return None."""
+
+        class FakeModel:
+            pass
+
+        emb = torch.randn(10, 64)
+        hidden = torch.randn(100, 64)
+        assert _unpack_deepstack(FakeModel(), emb, hidden) is None
+
+    def test_unpack_tuple_input_returns_unpacked(self):
+        """Qwen3-VL normal rank: forward returns (embeddings, list[Tensor])."""
+
+        class FakeModel:
+            deepstack_merger_list = [None, None, None]  # 3 deepstack layers
+
+        emb = torch.randn(10, 64)
+        ds = [torch.randn(10, 64) for _ in range(3)]
+        hidden = torch.randn(100, 64)
+
+        result = _unpack_deepstack(FakeModel(), (emb, ds), hidden)
+        assert result is not None
+        unpacked_emb, unpacked_ds = result
+        assert torch.equal(unpacked_emb, emb)
+        assert len(unpacked_ds) == 3
+        for orig, unpacked in zip(ds, unpacked_ds):
+            assert torch.equal(orig, unpacked)
+
+    def test_unpack_empty_rank_creates_grad_tensors(self):
+        """Empty rank must create empty deepstack tensors with requires_grad for NCCL."""
+
+        class FakeModel:
+            deepstack_merger_list = [None, None]  # 2 deepstack layers
+
+        emb = torch.empty(0, 64)  # empty rank, no images
+        hidden = torch.randn(100, 64)
+
+        result = _unpack_deepstack(FakeModel(), emb, hidden)
+        assert result is not None
+        unpacked_emb, unpacked_ds = result
+
+        # Embeddings returned as-is
+        assert torch.equal(unpacked_emb, emb)
+
+        # Deepstack: correct count, empty, correct dtype/device, grad-enabled
+        assert len(unpacked_ds) == 2
+        for ds_tensor in unpacked_ds:
+            assert ds_tensor.shape == (0, 64)
+            assert ds_tensor.dtype == hidden.dtype
+            assert ds_tensor.device == hidden.device
+            assert ds_tensor.requires_grad

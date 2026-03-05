@@ -233,7 +233,7 @@ def apply_monkey_patch(
         logger.info(f"Patched {model_class_name}.forward")
 
         if shard_vision_across_sp:
-            from areal.models.fsdp.vision_sp_shard import apply_vision_sp_shard_patch
+            from areal.models.transformers.vision_sp_shard import apply_vision_sp_shard_patch
 
             apply_vision_sp_shard_patch()
     else:
