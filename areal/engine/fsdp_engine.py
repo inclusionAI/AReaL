@@ -11,6 +11,9 @@ from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from areal.engine.fsdp_utils.optimizer import PerLayerGPUOptimizerStep
+
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
@@ -204,6 +207,7 @@ class FSDPEngine(TrainEngine):
 
         self.is_offload: bool = False
         self.enable_tree_training: bool = self.config.enable_tree_training
+        self._per_layer_optimizer_stepper: PerLayerGPUOptimizerStep | None = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -347,6 +351,24 @@ class FSDPEngine(TrainEngine):
         )
 
         self._create_optimizer(ft_spec)
+
+        if self.config.fsdp.per_layer_optimizer_step and self.optimizer is not None:
+            if self.config.fsdp.offload_params:
+                raise ValueError(
+                    "per_layer_optimizer_step requires offload_params=False."
+                )
+            if self.optimizer_config.type != "adam":
+                raise ValueError(
+                    f"per_layer_optimizer_step only supports 'adam' optimizer, got '{self.optimizer_config.type}'."
+                )
+            from areal.engine.fsdp_utils.optimizer import PerLayerGPUOptimizerStep
+            self._per_layer_optimizer_stepper = PerLayerGPUOptimizerStep(
+                model=self.model,
+                optimizer=self.optimizer,
+                device_id=self.device,
+                prefetch_layers=self.config.fsdp.optimizer_step_prefetch_layers,
+            )
+
         self._initialized = True
 
     @property
@@ -518,17 +540,34 @@ class FSDPEngine(TrainEngine):
         if not math.isfinite(grad_norm):
             self.optimizer_zero_grad()
             update_successful = False
+        elif self._per_layer_optimizer_stepper is not None:
+            with trace_scope("fsdp_engine.step"):
+                self._per_layer_optimizer_stepper.step()
+            update_successful = True
         else:
             with trace_scope("fsdp_engine.step"):
                 self.optimizer.step()
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
-        return dict(
+        metrics = dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
             lr=current_lr,
         )
+
+        if self._per_layer_optimizer_stepper is not None and update_successful:
+            m = self._per_layer_optimizer_stepper.last_step_metrics
+            metrics.update({
+                "perf/optimizer_step_time_s": m["step_time_s"],
+                "perf/optimizer_step_peak_memory_gb": m["peak_memory_gb"],
+                "perf/optimizer_step_avg_h2d_ms": m["avg_h2d_ms"],
+                "perf/optimizer_step_avg_compute_ms": m["avg_compute_ms"],
+                "perf/optimizer_step_avg_d2h_ms": m["avg_d2h_ms"],
+                "perf/optimizer_step_stall_count": m["compute_stall_count"],
+            })
+
+        return metrics
 
     def lr_scheduler_step(self):
         assert self.lr_scheduler is not None
