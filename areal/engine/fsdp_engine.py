@@ -550,24 +550,11 @@ class FSDPEngine(TrainEngine):
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
-        metrics = dict(
+        return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
             lr=current_lr,
         )
-
-        if self._per_layer_optimizer_stepper is not None and update_successful:
-            m = self._per_layer_optimizer_stepper.last_step_metrics
-            metrics.update({
-                "perf/optimizer_step_time_s": m["step_time_s"],
-                "perf/optimizer_step_peak_memory_gb": m["peak_memory_gb"],
-                "perf/optimizer_step_avg_h2d_ms": m["avg_h2d_ms"],
-                "perf/optimizer_step_avg_compute_ms": m["avg_compute_ms"],
-                "perf/optimizer_step_avg_d2h_ms": m["avg_d2h_ms"],
-                "perf/optimizer_step_stall_count": m["compute_stall_count"],
-            })
-
-        return metrics
 
     def lr_scheduler_step(self):
         assert self.lr_scheduler is not None
