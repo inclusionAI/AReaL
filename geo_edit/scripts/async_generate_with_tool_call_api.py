@@ -342,7 +342,7 @@ def main():
                     "traj_id": traj_id,
                     "task_save_dir": traj_save_dir,
                     "prompt": dataset_spec.build_prompt(item, tool_mode != "direct"),
-                    "answer": item[dataset_spec.answer_key],
+                    "answer": dataset_spec.get_answer(item),
                     "image_path": image_path,
                     "text_only": text_only,
                     "task_kwargs": dataset_spec.build_task_kwargs(item),

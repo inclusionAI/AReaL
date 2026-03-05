@@ -118,7 +118,7 @@ def main():
 
         task_save_dir = os.path.join(output_path, id)
         os.makedirs(task_save_dir, exist_ok=True)
-        answer = item[dataset_spec.answer_key]
+        answer = dataset_spec.get_answer(item)
         image_url = None
         text_only = dataset_spec.image_key is None
         if dataset_spec.image_key:

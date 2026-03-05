@@ -73,3 +73,17 @@ You are a visual reasoning AI assistant capable of understanding complex visual 
 
 Please analyze the image carefully and provide your final answer as an integer index (0, 1, 2, 3, etc.) in <answer></answer> tags.
 """
+
+BABYVISION_INPUT_TEMPLATE = """\
+Please solve the visual reasoning problem with provided tools. After you confirm the final answer, put your answer in '<answer></answer>' tags.
+
+{question}
+{options_text}
+"""
+
+BABYVISION_NOTOOL_INPUT_TEMPLATE = """\
+Please solve the visual reasoning problem step by step. After you confirm the final answer, put your answer in '<answer></answer>' tags.
+
+{question}
+{options_text}
+"""

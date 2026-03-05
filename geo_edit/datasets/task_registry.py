@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional
 
 from geo_edit.datasets.input_template import (
+    BABYVISION_INPUT_TEMPLATE,
+    BABYVISION_NOTOOL_INPUT_TEMPLATE,
     CARTOMAPQA_INPUT_TEMPLATE,
     CARTOMAPQA_SRN_INPUT_TEMPLATE,
     CARTOMAPQA_STMF_COUNTING_TEMPLATE,
@@ -22,7 +24,7 @@ FieldSource = str | Callable[[Mapping[str, Any]], Any]
 class DatasetSpec:
     name: str
     id_key: str
-    answer_key: str
+    answer_key: str | Callable[[Mapping[str, Any]], Any]
     prompt_template: str
     template_fields: Dict[str, FieldSource]
     task_kwargs_fields: Dict[str, FieldSource] = field(default_factory=dict)
@@ -49,6 +51,30 @@ class DatasetSpec:
             else:
                 values[key] = item[source] if source in item else None
         return values
+
+    def get_answer(self, item: Mapping[str, Any]) -> Any:
+        """Extract answer from item, supporting both string key and callable."""
+        if callable(self.answer_key):
+            return self.answer_key(item)
+        return item[self.answer_key]
+
+
+def _format_babyvision_options(item: Mapping[str, Any]) -> str:
+    """Format options for BabyVision dataset."""
+    options = item.get("options", [])
+    if not options:
+        return ""
+    option_lines = [f"{chr(65+i)}. {opt}" for i, opt in enumerate(options)]
+    return "Options:\n" + "\n".join(option_lines)
+
+
+def _get_babyvision_answer(item: Mapping[str, Any]) -> str:
+    """Get answer based on answer type (choice or blank)."""
+    if item.get("ansType") == "choice":
+        choice_idx = item.get("choiceAns")
+        if choice_idx is not None:
+            return chr(65 + int(choice_idx))  # Convert to A, B, C, D...
+    return str(item.get("blankAns", ""))
 
 
 DATASET_SPECS: Dict[str, DatasetSpec] = {
@@ -161,6 +187,25 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         task_kwargs_fields={
             "meta_info_extra": lambda item: {
                 "category": item.get("category", ""),
+            },
+        },
+    ),
+    "babyvision": DatasetSpec(
+        name="babyvision",
+        id_key="taskId",
+        answer_key=_get_babyvision_answer,
+        image_key="image",
+        prompt_template=BABYVISION_INPUT_TEMPLATE,
+        notool_prompt_template=BABYVISION_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+            "options_text": _format_babyvision_options,
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "type": item.get("type", ""),
+                "subtype": item.get("subtype", ""),
+                "ansType": item.get("ansType", ""),
             },
         },
     ),
