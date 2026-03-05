@@ -299,6 +299,7 @@ def main():
     parser = argparse.ArgumentParser(description="Separated reasoning generation for Gemini/GPT models.")
     parser.add_argument("--api_key", type=str, default=None, help="API key for Google API.")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
+    parser.add_argument("--dataset_split", type=str, default=None, help="Dataset split name (for HuggingFace datasets with named splits).")
     parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()), help="Dataset adapter name.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-2.5-pro-preview-05-06", help="Model name.")
@@ -327,7 +328,17 @@ def main():
     output_path = args.output_dir
     os.makedirs(output_path, exist_ok=True)
 
-    dataset = load_dataset("parquet", data_files=args.dataset_path)["train"]
+    # Load dataset - support both HuggingFace datasets and local parquet files
+    if args.dataset_path.startswith("thuml/") or "/" in args.dataset_path and not os.path.exists(args.dataset_path):
+        # HuggingFace dataset
+        split = args.dataset_split or "ballgame"  # Default to first split for VisWorld-Eval
+        dataset = load_dataset(args.dataset_path, split=split)
+        logger.info(f"Loaded HuggingFace dataset {args.dataset_path} (split: {split})")
+    else:
+        # Local parquet file
+        dataset = load_dataset("parquet", data_files=args.dataset_path)["train"]
+        logger.info(f"Loaded local parquet file {args.dataset_path}")
+
     logger.info(f"Dataset size: {len(dataset)}")
 
     if args.sample_rate < 1.0:
@@ -404,6 +415,15 @@ def main():
                     image_path = os.path.join(task_base_dir, "input_image.png")
                     if not os.path.exists(image_path):
                         image = item.get(dataset_spec.image_key)
+
+                        # Handle list of images (e.g., VisWorld-Eval)
+                        if isinstance(image, list):
+                            if image:  # Non-empty list
+                                image = image[0]  # Take first image
+                            else:
+                                raise ValueError("Empty image list provided")
+
+                        # Existing handlers
                         if isinstance(image, Image.Image):
                             image.save(image_path)
                         elif isinstance(image, dict) and "bytes" in image:

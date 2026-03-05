@@ -55,3 +55,21 @@ Name_3\n\
 Example format (when no names are available):\n\
 [leave the output blank]\n\
 Strictly follow this format. Do not include any explanation, description, code, or additional text."""
+
+VISWORLD_EVAL_INPUT_TEMPLATE = """\
+You are a visual reasoning AI assistant capable of understanding complex visual scenarios and dynamics.
+
+{prompt}
+
+If you need to analyze the image in detail, you can use the available tools. Otherwise, provide your answer directly.
+
+Please provide your final answer as an integer index (0, 1, 2, 3, etc.) in <answer></answer> tags.
+"""
+
+VISWORLD_EVAL_NOTOOL_INPUT_TEMPLATE = """\
+You are a visual reasoning AI assistant capable of understanding complex visual scenarios and dynamics.
+
+{prompt}
+
+Please analyze the image carefully and provide your final answer as an integer index (0, 1, 2, 3, etc.) in <answer></answer> tags.
+"""

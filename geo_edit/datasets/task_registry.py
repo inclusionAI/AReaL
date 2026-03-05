@@ -11,6 +11,8 @@ from geo_edit.datasets.input_template import (
     CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
     MATHVISION_INPUT_TEMPLATE,
     MATHVISION_NOTOOL_INPUT_TEMPLATE,
+    VISWORLD_EVAL_INPUT_TEMPLATE,
+    VISWORLD_EVAL_NOTOOL_INPUT_TEMPLATE,
 )
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
@@ -144,6 +146,22 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
         task_kwargs_fields={
             "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])} if "level_nodes" in item else {},
+        },
+    ),
+    "visworld_eval": DatasetSpec(
+        name="visworld_eval",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=VISWORLD_EVAL_INPUT_TEMPLATE,
+        notool_prompt_template=VISWORLD_EVAL_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "prompt": "prompt",  # Use the pre-formatted prompt from dataset
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": item.get("category", ""),
+            },
         },
     ),
 }
