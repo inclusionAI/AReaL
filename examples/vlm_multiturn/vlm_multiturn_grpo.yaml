@@ -8,7 +8,7 @@ total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
 # Multi-turn specific configuration
-max_turns: 2
+max_turns: 4
 turn_discount: 0.95
 
 cluster:
@@ -38,7 +38,7 @@ rollout:
   dump_to_file: true
 
 gconfig:
-  n_samples: 1
+  n_samples: 4
   min_new_tokens: 0
   max_new_tokens: 1024
   greedy: false
@@ -48,7 +48,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /path/to/model
+  path: Qwen/Qwen2-VL-2B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -73,7 +73,7 @@ actor:
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true
-  behav_imp_weight_cap: 5.0
+  behave_imp_weight_cap: 5.0
   reward_norm:
     mean_level: group
     std_level: group
@@ -81,6 +81,7 @@ actor:
   adv_norm:
     mean_level: batch
     std_level: batch
+  weight_update_mode: xccl
   max_new_tokens: ${gconfig.max_new_tokens}
   scheduling_spec:
     - task_type: worker
@@ -105,6 +106,16 @@ ref:
     type: colocation
     target: actor
   scheduling_spec: ${actor.scheduling_spec}
+
+# SGLang
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: true
+  dtype: ${actor.dtype}
+  max_running_requests: null
+  context_length: 32768
+  mem_fraction_static: 0.8
 
 vllm:
   model: ${actor.path}
@@ -163,8 +174,6 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
-  tensorboard:
-      path: ${cluster.fileroot}/${experiment_name}/${trial_name}
 
 perf_tracer:
   experiment_name: ${experiment_name}

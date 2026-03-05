@@ -2,14 +2,17 @@
 Multi-turn agentic multi-modal RL training example.
 """
 
+import pathlib
 import re
 import sys
-from dataclasses import dataclass, field
 
+sys.path.append(str(pathlib.Path(__file__).parent))
+
+from configs import VisionMultiTurnGRPOConfig
 from mathruler.grader import extract_boxed_content, grade_answer
 
 from areal import PPOTrainer
-from areal.api.cli_args import GRPOConfig, load_expr_config
+from areal.api.cli_args import load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 
@@ -33,25 +36,6 @@ def geometry3k_reward_fn(
     format_score = 0.1
     score = (1.0 - format_score) * (acc_reward_val) + format_score * format_reward_val
     return score
-
-
-@dataclass
-class VisionMultiTurnGRPOConfig(GRPOConfig):
-    """Config for multi-turn VLM GRPO training."""
-
-    max_turns: int = field(
-        default=2,
-        metadata={
-            "help": "Maximum number of turns for multi-turn agentic interaction."
-        },
-    )
-    turn_discount: float = field(
-        default=0.95,
-        metadata={
-            "help": "Discount factor for rewards at each turn. Used to incentivize "
-            "faster correct answers."
-        },
-    )
 
 
 def main(args):
