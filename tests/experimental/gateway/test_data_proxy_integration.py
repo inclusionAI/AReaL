@@ -212,6 +212,7 @@ class TestDataProxyGenerateIntegration:
         from areal.experimental.gateway.data_proxy.app import create_app
         from areal.experimental.gateway.data_proxy.backend import SGLangBackend
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+        from areal.experimental.gateway.data_proxy.session import SessionStore
         from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
             TokenizerProxy,
         )
@@ -232,6 +233,7 @@ class TestDataProxyGenerateIntegration:
             sglang_server["base_url"], request_timeout=60.0
         )
         app.state.config = config
+        app.state.session_store = SessionStore()
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(
@@ -560,8 +562,7 @@ class TestChatCompletionsIntegration:
 
             # At least one chunk has content
             content_chunks = [
-                c for c in chunks
-                if c["choices"][0]["delta"].get("content")
+                c for c in chunks if c["choices"][0]["delta"].get("content")
             ]
             assert len(content_chunks) >= 1
 

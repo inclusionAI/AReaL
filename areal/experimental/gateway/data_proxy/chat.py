@@ -348,7 +348,7 @@ class ChatCompletionHandler:
         prompt_token_ids = parent_tokens + all_tokens[child_truncate_idx + 1 :]
         return prompt_token_ids
 
-    async def _create_stream(
+    def _create_stream(
         self,
         completion_id: str,
         current_time: int,
