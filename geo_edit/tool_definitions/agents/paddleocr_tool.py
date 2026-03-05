@@ -118,12 +118,12 @@ class PaddleOCRActor(BaseToolModelActor):
 
         try:
             # Prepare message with image and task prompt
-            # vLLM expects a list of messages with content
+            # vLLM expects PIL Image object in the message content
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "image": image},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
                         {"type": "text", "text": TASK_PROMPTS[task]},
                     ]
                 }
