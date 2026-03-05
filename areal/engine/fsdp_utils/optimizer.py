@@ -200,6 +200,7 @@ class PerLayerGPUOptimizerStep:
         self.prefetch_layers = prefetch_layers
         self._layer_param_groups = self._build_layer_groups(model)
         self._init_states_and_pin()
+        self._init_events()
 
     def _build_layer_groups(self, model) -> list:
         """Group params by FSDP2-wrapped sub-modules (excluding root).
@@ -269,9 +270,25 @@ class PerLayerGPUOptimizerStep:
                                 state[key] = local.to("cpu")
                 # Pin optimizer state tensors for async transfers
                 for key in ("exp_avg", "exp_avg_sq", "step"):
-                    local = self._get_local_tensor(state[key])
-                    if local.device.type == "cpu" and not local.is_pinned():
-                        local.data = local.pin_memory()
+                    tensor = self._get_local_tensor(state[key])
+                    if tensor.device.type == "cpu" and not tensor.is_pinned():
+                        state[key] = tensor.pin_memory()
+
+    def _init_events(self):
+        """Pre-allocate CUDA events for pipeline synchronization and timing.
+
+        Events are reused across step() calls to avoid per-step allocation overhead.
+        """
+        num_groups = len(self._layer_param_groups)
+        self._h2d_stream = torch.cuda.Stream(device=self.device)
+        self._d2h_stream = torch.cuda.Stream(device=self.device)
+        self._pre_wait_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
+        self._post_wait_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
+        self._compute_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
+        self._h2d_start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
+        self._h2d_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
+        self._d2h_start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
+        self._d2h_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
 
     def _prefetch_layer(self, layer_idx):
         """H2D: copy layer's optimizer states (and params/grads if on CPU) to GPU.
@@ -390,64 +407,52 @@ class PerLayerGPUOptimizerStep:
         mem_before = torch.cuda.memory_allocated(self.device)
         t_start = time.perf_counter()
 
-        h2d_stream = torch.cuda.Stream(device=self.device)
-        d2h_stream = torch.cuda.Stream(device=self.device)
+        h2d_stream = self._h2d_stream
+        d2h_stream = self._d2h_stream
         compute_stream = torch.cuda.current_stream(self.device)
         num_groups = len(self._layer_param_groups)
         gpu_states = [None] * num_groups
-        h2d_events = [None] * num_groups
 
-        # CUDA events for pipeline timing (always lightweight, ~0 overhead)
-        pre_wait_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
-        post_wait_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
-        compute_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
-        h2d_start_events = [None] * num_groups
-        h2d_end_events = [None] * num_groups
-        d2h_start_events = [None] * num_groups
-        d2h_end_events = [None] * num_groups
+        # Reuse pre-allocated events
+        pre_wait_events = self._pre_wait_events
+        post_wait_events = self._post_wait_events
+        compute_end_events = self._compute_end_events
+        h2d_start_events = self._h2d_start_events
+        h2d_end_events = self._h2d_end_events
+        d2h_start_events = self._d2h_start_events
+        d2h_end_events = self._d2h_end_events
 
         # Prefetch initial layers with per-layer events
         for i in range(min(self.prefetch_layers + 1, num_groups)):
             with torch.cuda.stream(h2d_stream):
-                h2d_start_events[i] = h2d_stream.record_event(torch.cuda.Event(enable_timing=True))
+                h2d_stream.record_event(h2d_start_events[i])
                 gpu_states[i] = self._prefetch_layer(i)
-                ev = torch.cuda.Event(enable_timing=True)
-                h2d_stream.record_event(ev)
-                h2d_events[i] = ev
-                h2d_end_events[i] = ev
+                h2d_stream.record_event(h2d_end_events[i])
 
         # Process each layer
         for i in range(num_groups):
             # Record BEFORE wait — measures actual GPU-side stall time
             compute_stream.record_event(pre_wait_events[i])
-            compute_stream.wait_event(h2d_events[i])
+            compute_stream.wait_event(h2d_end_events[i])
             compute_stream.record_event(post_wait_events[i])
 
             self._run_adam_for_layer(gpu_states[i])
             compute_stream.record_event(compute_end_events[i])
 
-            # Record compute completion for D2H dependency
-            compute_done = compute_end_events[i]
-
             # Prefetch next layer (overlaps with D2H below)
             next_idx = i + self.prefetch_layers + 1
             if next_idx < num_groups:
                 with torch.cuda.stream(h2d_stream):
-                    h2d_start_events[next_idx] = h2d_stream.record_event(
-                        torch.cuda.Event(enable_timing=True)
-                    )
+                    h2d_stream.record_event(h2d_start_events[next_idx])
                     gpu_states[next_idx] = self._prefetch_layer(next_idx)
-                    ev = torch.cuda.Event(enable_timing=True)
-                    h2d_stream.record_event(ev)
-                    h2d_events[next_idx] = ev
-                    h2d_end_events[next_idx] = ev
+                    h2d_stream.record_event(h2d_end_events[next_idx])
 
             # Offload current layer (waits only for this layer's compute)
-            d2h_stream.wait_event(compute_done)
+            d2h_stream.wait_event(compute_end_events[i])
             with torch.cuda.stream(d2h_stream):
-                d2h_start_events[i] = d2h_stream.record_event(torch.cuda.Event(enable_timing=True))
+                d2h_stream.record_event(d2h_start_events[i])
                 self._offload_layer(gpu_states[i])
-                d2h_end_events[i] = d2h_stream.record_event(torch.cuda.Event(enable_timing=True))
+                d2h_stream.record_event(d2h_end_events[i])
             gpu_states[i] = None  # free GPU memory
 
         d2h_stream.synchronize()
@@ -479,10 +484,8 @@ class PerLayerGPUOptimizerStep:
         for i in range(num_groups):
             wait_times.append(pre_wait_events[i].elapsed_time(post_wait_events[i]))
             compute_times.append(post_wait_events[i].elapsed_time(compute_end_events[i]))
-            if h2d_start_events[i] is not None and h2d_end_events[i] is not None:
-                h2d_times.append(h2d_start_events[i].elapsed_time(h2d_end_events[i]))
-            if d2h_start_events[i] is not None and d2h_end_events[i] is not None:
-                d2h_times.append(d2h_start_events[i].elapsed_time(d2h_end_events[i]))
+            h2d_times.append(h2d_start_events[i].elapsed_time(h2d_end_events[i]))
+            d2h_times.append(d2h_start_events[i].elapsed_time(d2h_end_events[i]))
 
         stall_threshold_ms = 0.1
         stall_count = sum(1 for w in wait_times[1:] if w > stall_threshold_ms)
