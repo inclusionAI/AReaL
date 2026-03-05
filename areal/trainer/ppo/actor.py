@@ -432,6 +432,7 @@ def grpo_loss_fn(
 
     # Joint Distillation KL Loss
     teacher_logp = input_data.get("teacher_logp")
+    rkl_stat = None
     if teacher_logp is not None:
         # Coefficients for RL and Knowledge Distillation
         rl_loss_weight = input_data.get("rl_loss_weight", 1.0)
@@ -451,11 +452,7 @@ def grpo_loss_fn(
             kd_coef = -1 * distill_loss_weight
             loss = kd_coef * rkl_weighted_term.sum() / loss_mask.sum().clamp(min=1)
 
-            stats_tracker.denominator(token=loss_mask)
-            stats_tracker.stat(
-                rkl_loss=-1 * rkl_weighted_term,
-                denominator="token",
-            )
+            rkl_stat = -1 * rkl_weighted_term
         else:
             # KDRL: Knowledge Distillation + Reinforcement Learning (joint loss)
             rkl_penalty_per_token = (logprobs - teacher_logp) * loss_mask
@@ -463,11 +460,7 @@ def grpo_loss_fn(
 
             loss = rl_loss_weight * loss + distill_loss_weight * rkl_penalty
 
-            stats_tracker.denominator(token=loss_mask)
-            stats_tracker.stat(
-                rkl_loss=rkl_penalty_per_token,
-                denominator="token",
-            )
+            rkl_stat = rkl_penalty_per_token
 
     # Log training statistics
     stats_tracker.denominator(
@@ -480,6 +473,12 @@ def grpo_loss_fn(
         clipped_tokens=stat["clip_mask"],
         dual_clipped_tokens=stat["dual_clip_mask"],
     )
+
+    if rkl_stat is not None:
+        stats_tracker.stat(
+            rkl_loss=rkl_stat,
+            denominator="n_valid_tokens",
+        )
 
     stats_tracker.stat(
         importance_weight=stat["importance_weight"],
