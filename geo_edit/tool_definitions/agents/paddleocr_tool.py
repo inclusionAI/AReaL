@@ -1,6 +1,7 @@
 """PaddleOCR Tool Agent - Optical Character Recognition using PaddleOCR-VL-1.5."""
-
+import os
 import base64
+import re
 import json
 from io import BytesIO
 from typing import Optional
@@ -54,7 +55,7 @@ class PaddleOCRActor(BaseToolModelActor):
         model_path = agent_config["model_name_or_path"]
 
         logger.info("Loading PaddleOCR-VL model with vLLM: %s", model_path)
-
+        os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"]="True"
         # Initialize vLLM with PaddleOCR-VL model
         self.llm = LLM(
             model=model_path,
@@ -144,11 +145,41 @@ class PaddleOCRActor(BaseToolModelActor):
             # Extract result from vLLM output
             result = outputs[0].outputs[0].text
 
+            if task == "spotting":
+                loc_re = re.compile(r"<\|LOC_(\d+)\|>")
+
+                lines = []
+                for raw in result.splitlines():
+                    s = raw.strip()
+                    if not s:
+                        continue
+
+                    locs = [int(x) for x in loc_re.findall(s)]
+                    text = loc_re.sub("", s).strip()
+
+                    # Need exactly 8 coords -> x1,y1,x2,y2,x3,y3,x4,y4
+                    if len(locs) < 8:
+                        continue
+                    locs = locs[:8]
+
+                    xs = [locs[0], locs[2], locs[4], locs[6]]
+                    ys = [locs[1], locs[3], locs[5], locs[7]]
+                    x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+
+                    lines.append({
+                        "text": text,
+                        "bbox": [x1, y1, x2, y2],
+                    })
+
+                return json.dumps({
+                    "task": task,
+                    "text": lines,
+                })
+
             # Return formatted result
             return json.dumps({
                 "task": task,
                 "text": result.strip(),
-                "success": True
             })
 
         except Exception as e:
@@ -157,7 +188,6 @@ class PaddleOCRActor(BaseToolModelActor):
                 "error": str(e),
                 "task": task,
                 "text": "",
-                "success": False
             })
 
     def health_check(self) -> dict:
@@ -173,11 +203,11 @@ ACTOR_CLASS = PaddleOCRActor
 DECLARATION = {
     "name": "paddleocr",
     "description": """PaddleOCR-VL text recognition tool. Advanced vision-language model for OCR with multiple task modes:
-- task='ocr': Standard text recognition (default)
+- task='spotting': Text recognition with precise localization in the image (Recomended for Map)
+- task='ocr': Standard text recognition
 - task='table': Table structure recognition
 - task='formula': Mathematical formula recognition
 - task='chart': Chart/diagram recognition
-- task='spotting': Text spotting with precise localization
 - task='seal': Seal/stamp recognition
 
 Supports multilingual text recognition with high accuracy.""",
@@ -191,7 +221,7 @@ Supports multilingual text recognition with high accuracy.""",
             "task": {
                 "type": "string",
                 "enum": ["ocr", "table", "formula", "chart", "spotting", "seal"],
-                "description": "Recognition task type. Default is 'ocr' for standard text recognition."
+                "description": "Recognition task type. "
             }
         },
         "required": ["image_index"]
