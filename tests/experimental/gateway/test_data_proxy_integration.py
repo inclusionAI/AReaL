@@ -385,3 +385,376 @@ class TestDataProxyGenerateIntegration:
                     f"Token {evt['token']}: expected {expected_text!r}, "
                     f"got {evt['text']!r}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Tests — /chat/completions endpoint (full session lifecycle)
+# ---------------------------------------------------------------------------
+
+
+def _create_data_proxy_app_with_sessions(sglang_server, model_path):
+    """Create a fully-wired data proxy app with session support."""
+    from areal.experimental.gateway.data_proxy.app import create_app
+    from areal.experimental.gateway.data_proxy.backend import SGLangBackend
+    from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
+    from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+    from areal.experimental.gateway.data_proxy.session import SessionStore
+    from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
+
+    config = DataProxyConfig(
+        host="127.0.0.1",
+        port=0,
+        backend_addr=sglang_server["base_url"],
+        tokenizer_path=model_path,
+        request_timeout=60.0,
+    )
+    app = create_app(config)
+
+    # httpx.ASGITransport does not trigger ASGI lifespan events,
+    # so we must initialize app.state manually.
+    tok = TokenizerProxy(model_path)
+    backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
+    store = SessionStore()
+
+    app.state.tokenizer = tok
+    app.state.backend = backend
+    app.state.config = config
+    app.state.session_store = store
+    app.state.chat_handler = ChatCompletionHandler(backend, tok)
+
+    return app, store
+
+
+ADMIN_KEY = "areal-admin-key"
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not _has_gpu(), reason="GPU required")
+class TestChatCompletionsIntegration:
+    """Test the full /chat/completions endpoint with a real SGLang backend."""
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_chat_completion(self, sglang_server, model_path):
+        """Full lifecycle: start_session → POST /chat/completions → end_session."""
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # --- start session ---
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "integ-chat-ns"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201, resp.text
+            session = resp.json()
+            session_api_key = session["api_key"]
+            session_id = session["session_id"]
+
+            # --- non-streaming chat completion ---
+            resp = await client.post(
+                "/chat/completions",
+                json={
+                    "model": "sglang",
+                    "messages": [{"role": "user", "content": "What is 2+2?"}],
+                    "max_completion_tokens": 64,
+                    "temperature": 0.0,
+                    "stream": False,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=60.0,
+            )
+            assert resp.status_code == 200, resp.text
+            completion = resp.json()
+
+            # Validate OpenAI-compatible structure
+            assert completion["object"] == "chat.completion"
+            assert "id" in completion
+            assert "choices" in completion
+            assert len(completion["choices"]) == 1
+
+            choice = completion["choices"][0]
+            assert "message" in choice
+            assert choice["message"]["role"] == "assistant"
+            assert isinstance(choice["message"]["content"], str)
+            assert len(choice["message"]["content"]) > 0
+            assert choice["finish_reason"] in ("stop", "length")
+
+            # Validate usage
+            assert "usage" in completion
+            usage = completion["usage"]
+            assert usage["prompt_tokens"] > 0
+            assert usage["completion_tokens"] > 0
+            assert usage["total_tokens"] == (
+                usage["prompt_tokens"] + usage["completion_tokens"]
+            )
+
+            # --- end session ---
+            resp = await client.post(
+                "/rl/end_session",
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 200, resp.text
+            end_data = resp.json()
+            assert end_data["interaction_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_streaming_chat_completion(self, sglang_server, model_path):
+        """Streaming: start_session → POST /chat/completions stream=True → SSE chunks."""
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # --- start session ---
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "integ-chat-stream"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201, resp.text
+            session_api_key = resp.json()["api_key"]
+
+            # --- streaming chat completion ---
+            resp = await client.post(
+                "/chat/completions",
+                json={
+                    "model": "sglang",
+                    "messages": [{"role": "user", "content": "Say hello"}],
+                    "max_completion_tokens": 32,
+                    "temperature": 0.0,
+                    "stream": True,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=60.0,
+            )
+            assert resp.status_code == 200, resp.text
+            assert "text/event-stream" in resp.headers.get("content-type", "")
+
+            # Parse SSE events
+            chunks = []
+            for line in resp.content.decode().strip().split("\n"):
+                line = line.strip()
+                if line.startswith("data: "):
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    chunks.append(json.loads(payload))
+
+            assert len(chunks) >= 2  # At least role chunk + finish chunk
+
+            # First chunk: role
+            first = chunks[0]
+            assert first["object"] == "chat.completion.chunk"
+            assert first["choices"][0]["delta"].get("role") == "assistant"
+
+            # Last chunk: finish_reason
+            last = chunks[-1]
+            assert last["choices"][0]["finish_reason"] in ("stop", "length")
+
+            # At least one chunk has content
+            content_chunks = [
+                c for c in chunks
+                if c["choices"][0]["delta"].get("content")
+            ]
+            assert len(content_chunks) >= 1
+
+            # All chunks share the same completion ID
+            ids = {c["id"] for c in chunks}
+            assert len(ids) == 1
+
+            # --- end session ---
+            resp = await client.post(
+                "/rl/end_session",
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 200, resp.text
+
+    @pytest.mark.asyncio
+    async def test_multi_turn_chat_completion(self, sglang_server, model_path):
+        """Multi-turn: two sequential chat completions in the same session."""
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # --- start session ---
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "integ-chat-multi"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201, resp.text
+            session_api_key = resp.json()["api_key"]
+
+            # --- first turn ---
+            resp1 = await client.post(
+                "/chat/completions",
+                json={
+                    "model": "sglang",
+                    "messages": [{"role": "user", "content": "What is 3+5?"}],
+                    "max_completion_tokens": 64,
+                    "temperature": 0.0,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=60.0,
+            )
+            assert resp1.status_code == 200, resp1.text
+            turn1 = resp1.json()
+            turn1_content = turn1["choices"][0]["message"]["content"]
+            assert isinstance(turn1_content, str)
+            assert len(turn1_content) > 0
+
+            # --- second turn (builds on first) ---
+            resp2 = await client.post(
+                "/chat/completions",
+                json={
+                    "model": "sglang",
+                    "messages": [
+                        {"role": "user", "content": "What is 3+5?"},
+                        {"role": "assistant", "content": turn1_content},
+                        {"role": "user", "content": "Now add 2 to that result."},
+                    ],
+                    "max_completion_tokens": 64,
+                    "temperature": 0.0,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=60.0,
+            )
+            assert resp2.status_code == 200, resp2.text
+            turn2 = resp2.json()
+            assert turn2["object"] == "chat.completion"
+            assert len(turn2["choices"][0]["message"]["content"]) > 0
+
+            # Both completions should have different IDs
+            assert turn1["id"] != turn2["id"]
+
+            # --- end session ---
+            resp = await client.post(
+                "/rl/end_session",
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["interaction_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_set_reward_and_export(self, sglang_server, model_path):
+        """Full lifecycle: start → chat → set_reward → end → export_trajectories."""
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # --- start session ---
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "integ-chat-reward"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201, resp.text
+            session = resp.json()
+            session_api_key = session["api_key"]
+            session_id = session["session_id"]
+
+            # --- chat completion ---
+            resp = await client.post(
+                "/chat/completions",
+                json={
+                    "model": "sglang",
+                    "messages": [{"role": "user", "content": "What is 10-3?"}],
+                    "max_completion_tokens": 64,
+                    "temperature": 0.0,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=60.0,
+            )
+            assert resp.status_code == 200, resp.text
+
+            # --- set reward ---
+            resp = await client.post(
+                "/rl/set_reward",
+                json={"reward": 1.0},
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["message"] == "success"
+
+            # --- end session ---
+            resp = await client.post(
+                "/rl/end_session",
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["interaction_count"] == 1
+
+            # --- export trajectories ---
+            resp = await client.post(
+                "/export_trajectories",
+                json={"session_id": session_id},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 200, resp.text
+            export_data = resp.json()
+            assert "interactions" in export_data
+            interactions = export_data["interactions"]
+            assert len(interactions) == 1
+
+            # Each exported interaction should have tensor_dict, reward, interaction_id
+            for key, item in interactions.items():
+                assert "tensor_dict" in item
+                assert "reward" in item
+                assert item["reward"] == 1.0
+                assert "interaction_id" in item
+
+    @pytest.mark.asyncio
+    async def test_auth_rejection(self, sglang_server, model_path):
+        """Verify that invalid API keys are rejected."""
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Missing auth header on start_session
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "no-auth"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 401
+
+            # Wrong admin key on start_session
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "wrong-key"},
+                headers={"Authorization": "Bearer wrong-key"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 403
+
+            # Wrong session key on /chat/completions
+            resp = await client.post(
+                "/chat/completions",
+                json={
+                    "model": "sglang",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                headers={"Authorization": "Bearer fake-session-key"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 401

@@ -1,22 +1,43 @@
 from __future__ import annotations
 
+import hmac
+import inspect
 import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from openai.types.chat.completion_create_params import CompletionCreateParams
 from pydantic import BaseModel
 
 from areal.experimental.gateway.data_proxy.backend import (
     GenerationResult,
     SGLangBackend,
 )
+from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+from areal.experimental.gateway.data_proxy.session import (
+    ExportTrajectoriesRequest,
+    ExportTrajectoriesResponse,
+    SessionStore,
+    SetRewardRequest,
+    StartSessionRequest,
+    StartSessionResponse,
+    serialize_interactions,
+)
 from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
 
 logger = logging.getLogger("DataProxy")
+
+_warned_params: set[str] = set()
+
+
+def _warn_once(msg: str) -> None:
+    if msg not in _warned_params:
+        _warned_params.add(msg)
+        logger.warning(msg)
 
 
 class GenerateRequest(BaseModel):
@@ -45,6 +66,129 @@ async def stream_tokens(result: GenerationResult, tok: TokenizerProxy):
         yield f"data: {json.dumps(chunk)}\n\n".encode()
 
 
+# =============================================================================
+# API Key Authentication helpers
+# =============================================================================
+
+
+def _extract_bearer_token(request: Request) -> str:
+    """Extract API token from Authorization header."""
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    raise HTTPException(
+        status_code=401,
+        detail="Missing or malformed Authorization header. Expected 'Bearer <token>'.",
+    )
+
+
+def _require_admin_key(request: Request, store: SessionStore) -> str:
+    """Validate that the request carries the admin API key."""
+    token = _extract_bearer_token(request)
+    if not hmac.compare_digest(token, store.admin_api_key):
+        raise HTTPException(status_code=403, detail="Invalid admin API key.")
+    return token
+
+
+def _require_session_key(request: Request, store: SessionStore) -> str:
+    """Resolve session_id from the session API key in the Authorization header."""
+    token = _extract_bearer_token(request)
+    session = store.get_session_by_api_key(token)
+    if session is None:
+        raise HTTPException(
+            status_code=401, detail="Invalid or expired session API key."
+        )
+    return session.session_id
+
+
+async def _call_client_create(
+    create_fn,
+    request: dict[str, Any] | CompletionCreateParams,
+    session_data,
+    extra_ignored_args: list[str] | None = None,
+    stream: bool = False,
+):
+    """Common logic for chat completions — mirrors proxy_rollout_server._call_client_create.
+
+    Introspects create_fn signature, filters kwargs, passes areal_cache.
+    """
+    sig = inspect.signature(create_fn)
+    areal_client_ignored_args = ["model"] + (extra_ignored_args or [])
+    areal_client_disallowed_args = ["areal_cache"]
+
+    # Check if the function accepts **kwargs (VAR_KEYWORD).
+    # If so, any key not explicitly ignored/disallowed is allowed through.
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD
+        for p in sig.parameters.values()
+    )
+    if has_var_keyword:
+        areal_client_allowed_args = None  # sentinel: allow everything
+    else:
+        areal_client_allowed_args = list(
+            k
+            for k in sig.parameters.keys()
+        if k not in areal_client_ignored_args and k not in areal_client_disallowed_args
+        )
+
+    if isinstance(request, BaseModel):
+        kwargs = request.model_dump()
+    elif isinstance(request, dict):
+        kwargs = dict(request)
+    else:
+        kwargs = dict(request)
+
+    dropped_args = []
+    for k, v in list(kwargs.items()):
+        # If areal_client_allowed_args is None, only drop ignored/disallowed args
+        if areal_client_allowed_args is not None:
+            if k not in areal_client_allowed_args:
+                dropped_args.append((k, v))
+        elif k in areal_client_ignored_args or k in areal_client_disallowed_args:
+            dropped_args.append((k, v))
+
+    for k, _ in dropped_args:
+        del kwargs[k]
+
+    def _is_default_value(k: str, v: Any) -> bool:
+        if isinstance(request, BaseModel):
+            field_info = type(request).model_fields.get(k)
+            if field_info is not None:
+                return v == field_info.default
+        return False
+
+    dropped_non_default_args = [
+        (k, v)
+        for k, v in dropped_args
+        if k not in areal_client_ignored_args and not _is_default_value(k, v)
+    ]
+    if len(dropped_non_default_args):
+        dropped_args_str = "\n".join(
+            [f"  {k}: {v}" for k, v in dropped_non_default_args]
+        )
+        _warn_once(
+            f"dropped unsupported non-default arguments for data proxy handler:\n"
+            f"{dropped_args_str}"
+        )
+
+    if "temperature" not in kwargs:
+        kwargs["temperature"] = 1.0
+        _warn_once("temperature not set in request, defaulting to 1.0")
+    if "top_p" not in kwargs:
+        kwargs["top_p"] = 1.0
+        _warn_once("top_p not set in request, defaulting to 1.0")
+
+    if stream:
+        kwargs["stream"] = True
+
+    try:
+        return await create_fn(areal_cache=session_data.completions, **kwargs)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
 def create_app(config: DataProxyConfig) -> FastAPI:
     """Factory that creates the FastAPI app with lifespan-managed resources."""
 
@@ -55,17 +199,34 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             config.backend_addr,
             config.tokenizer_path,
         )
-        app.state.tokenizer = TokenizerProxy(config.tokenizer_path)
-        app.state.backend = SGLangBackend(config.backend_addr, config.request_timeout)
+        tok = TokenizerProxy(config.tokenizer_path)
+        backend = SGLangBackend(config.backend_addr, config.request_timeout)
+        app.state.tokenizer = tok
+        app.state.backend = backend
         app.state.config = config
+        app.state.session_store = SessionStore()
+        app.state.chat_handler = ChatCompletionHandler(backend, tok)
         yield
         logger.info("Data proxy shutting down")
 
     app = FastAPI(title="AReaL Data Proxy", lifespan=lifespan)
 
+    # =========================================================================
+    # Health
+    # =========================================================================
+
     @app.get("/health")
     async def health():
-        return {"status": "ok", "backend": config.backend_addr}
+        store: SessionStore = app.state.session_store
+        return {
+            "status": "ok",
+            "backend": config.backend_addr,
+            "sessions": store.session_count,
+        }
+
+    # =========================================================================
+    # Low-level generate (Plan 3a)
+    # =========================================================================
 
     @app.post("/generate")
     async def generate(req: GenerateRequest):
@@ -107,5 +268,148 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    # =========================================================================
+    # Session management (Plan 3b)
+    # =========================================================================
+
+    @app.post("/rl/start_session", status_code=201)
+    async def start_session(
+        body: StartSessionRequest, request: Request
+    ) -> StartSessionResponse:
+        store: SessionStore = app.state.session_store
+        _require_admin_key(request, store)
+        try:
+            session_id, session_api_key = store.start_session(
+                body.task_id, body.api_key
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return StartSessionResponse(session_id=session_id, api_key=session_api_key)
+
+    @app.post("/rl/end_session")
+    async def end_session(request: Request):
+        store: SessionStore = app.state.session_store
+        session_id = _require_session_key(request, store)
+        try:
+            interaction_count = store.end_session(session_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=410, detail="Session already ended or expired"
+            )
+        return {"message": "success", "interaction_count": interaction_count}
+
+    @app.post("/rl/set_reward")
+    async def set_reward(body: SetRewardRequest, request: Request):
+        store: SessionStore = app.state.session_store
+        session_id = _require_session_key(request, store)
+        session_data = store.get_session(session_id)
+        if session_data is None:
+            raise HTTPException(
+                status_code=410, detail="Session already ended or expired"
+            )
+        session_data.update_last_access()
+
+        completions = session_data.completions
+        interaction_id = body.interaction_id
+        if interaction_id is None:
+            if len(completions) == 0:
+                raise HTTPException(
+                    status_code=400, detail="No interactions in session"
+                )
+            interaction_id = completions.last_interaction_id
+        elif interaction_id not in completions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Interaction {interaction_id} not found",
+            )
+        completions.set_reward(interaction_id, body.reward)
+        return {"message": "success"}
+
+    # =========================================================================
+    # Chat completions (Plan 3b) — OpenAI-compatible
+    # =========================================================================
+
+    @app.post("/chat/completions")
+    async def chat_completions(body: CompletionCreateParams, request: Request):
+        store: SessionStore = app.state.session_store
+        session_id = _require_session_key(request, store)
+        session_data = store.get_session(session_id)
+        if session_data is None:
+            raise HTTPException(
+                status_code=410, detail="Session already ended or expired"
+            )
+        session_data.update_last_access()
+
+        chat_handler: ChatCompletionHandler = app.state.chat_handler
+
+        # Determine if streaming before _call_client_create (for SSE wrapping)
+        request_dict = body if isinstance(body, dict) else body
+        is_streaming = False
+        if isinstance(request_dict, BaseModel):
+            dumped = request_dict.model_dump()
+            is_streaming = dumped.get("stream", False) or False
+        elif isinstance(request_dict, dict):
+            is_streaming = request_dict.get("stream", False) or False
+
+        result = await _call_client_create(
+            create_fn=chat_handler.create,
+            request=body,
+            session_data=session_data,
+            stream=is_streaming,
+        )
+
+        if is_streaming:
+            # result is an async generator of ChatCompletionChunk
+
+            async def _sse_stream():
+                async for chunk in result:
+                    yield f"data: {chunk.model_dump_json()}\n\n".encode()
+                yield b"data: [DONE]\n\n"
+
+            return StreamingResponse(
+                _sse_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
+        return result
+
+    # =========================================================================
+    # Trajectory export (Plan 3b)
+    # =========================================================================
+
+    @app.post("/export_trajectories")
+    async def export_trajectories(
+        body: ExportTrajectoriesRequest, request: Request
+    ) -> ExportTrajectoriesResponse:
+        store: SessionStore = app.state.session_store
+        _require_admin_key(request, store)
+
+        session_data = store.get_session(body.session_id)
+        if session_data is None:
+            raise HTTPException(
+                status_code=404, detail=f"Session {body.session_id} not found"
+            )
+
+        # Wait for session to complete (non-blocking)
+        await session_data.wait_for_finish()
+
+        # Export interactions
+        interactions = session_data.export_interactions(
+            discount=body.discount,
+            style=body.style,
+        )
+
+        # Remove session from store
+        store.remove_session(body.session_id)
+
+        # Serialize for HTTP transport
+        serialized = serialize_interactions(interactions)
+        return ExportTrajectoriesResponse(interactions=serialized)
 
     return app

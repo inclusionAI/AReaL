@@ -61,6 +61,11 @@ async def client(config, mock_tokenizer, mock_backend):
     app.state.tokenizer = mock_tokenizer
     app.state.backend = mock_backend
     app.state.config = config
+    # Plan 3b added session_store + chat_handler to app.state
+    from areal.experimental.gateway.data_proxy.session import SessionStore
+
+    app.state.session_store = SessionStore()
+    app.state.chat_handler = MagicMock()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
