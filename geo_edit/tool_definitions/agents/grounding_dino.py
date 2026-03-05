@@ -18,10 +18,6 @@ SYSTEM_PROMPT = ""
 # Model configuration
 agent_config = {
     "model_name_or_path": "/storage/openpsi/models/grounding-dino-base",
-    "max_model_len": 8192,        # Unused, interface compatibility
-    "gpu_memory_utilization": 0.8, # Unused, interface compatibility
-    "temperature": 0.0,           # Unused
-    "max_tokens": 4096,           # Unused
     "num_gpus": 1,
 }
 
@@ -104,13 +100,12 @@ def format_detections(
 class GroundingDINOActor(BaseToolModelActor):
     """GroundingDINO Object Detection Actor using HuggingFace transformers."""
 
-    def __init__(
-        self,
-        model_name: str,
-        max_model_len: int = 8192,
-        gpu_memory_utilization: float = 0.8,
-        system_prompt: Optional[str] = None,
-    ):
+    def __init__(self, model_name: str):
+        """Initialize GroundingDINO actor.
+
+        Args:
+            model_name: Path to GroundingDINO model.
+        """
         import torch
         from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
 

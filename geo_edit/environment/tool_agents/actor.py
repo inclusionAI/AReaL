@@ -59,20 +59,15 @@ class BaseToolModelActor(ABC):
         self.device_map = "cuda:0"
 
     @abstractmethod
-    def __init__(
-        self,
-        model_name: str,
-        max_model_len: int = 8192,
-        gpu_memory_utilization: float = 0.8,
-        system_prompt: Optional[str] = None,
-    ):
-        """Initialize the tool model actor.
+    def __init__(self, **kwargs):
+        """Initialize the tool model actor with flexible parameters.
 
-        Args:
-            model_name: Path or name of the model to load.
-            max_model_len: Maximum sequence length.
-            gpu_memory_utilization: Fraction of GPU memory to use.
-            system_prompt: Optional system prompt for the model.
+        Subclasses can define their own required parameters.
+        Common parameters:
+            model_name (str): Path or name of the model to load.
+            max_model_len (int): Maximum sequence length (for VLM agents).
+            gpu_memory_utilization (float): Fraction of GPU memory to use (for vLLM agents).
+            system_prompt (Optional[str]): System prompt for the model (for VLM agents).
 
         Note:
             Subclasses should call self.setup_gpu() at the beginning of __init__

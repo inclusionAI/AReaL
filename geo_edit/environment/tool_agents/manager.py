@@ -1,6 +1,7 @@
 """Tool Agent Manager - lifecycle management for Ray Actors."""
 
 import base64
+import inspect
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Type
 
@@ -123,18 +124,35 @@ class ToolAgentManager:
             # Get the Actor class for this agent
             ActorClass = get_actor_class(name)
 
+            # Inspect __init__ signature to determine required parameters
+            init_sig = inspect.signature(ActorClass.__init__)
+            init_params = set(init_sig.parameters.keys()) - {'self', 'kwargs'}
+
             # Get system prompt from registry
             system_prompt = get_tool_agent_prompt(name)
+
+            # Build kwargs based on what the actor actually accepts
+            actor_kwargs = {}
+
+            # Map config keys to parameter names
+            param_mapping = {
+                'model_name': cfg.get("model_name_or_path"),
+                'max_model_len': cfg.get("max_model_len"),
+                'gpu_memory_utilization': cfg.get("gpu_memory_utilization"),
+                'temperature': cfg.get("temperature"),
+                'max_tokens': cfg.get("max_tokens"),
+                'system_prompt': system_prompt,
+            }
+
+            # Only include parameters that the actor expects
+            for param_name, param_value in param_mapping.items():
+                if param_name in init_params and param_value is not None:
+                    actor_kwargs[param_name] = param_value
 
             # Create Ray remote actor with the specific Actor class
             # Use name= to make it discoverable via ray.get_actor()
             RemoteActorClass = ray.remote(num_gpus=num_gpus)(ActorClass)
-            actor = RemoteActorClass.options(name=name, **actor_options).remote(
-                model_name=cfg["model_name_or_path"],
-                max_model_len=cfg["max_model_len"],
-                gpu_memory_utilization=cfg["gpu_memory_utilization"],
-                system_prompt=system_prompt,
-            )
+            actor = RemoteActorClass.options(name=name, **actor_options).remote(**actor_kwargs)
 
             self._actors[name] = actor
             new_actors.append((name, actor))

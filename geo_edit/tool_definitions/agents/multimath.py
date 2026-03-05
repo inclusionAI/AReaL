@@ -34,15 +34,18 @@ class MultiMathActor(BaseToolModelActor):
     def __init__(
         self,
         model_name: str,
-        max_model_len: int = 8192,
-        gpu_memory_utilization: float = 0.8,
         system_prompt: Optional[str] = None,
     ):
+        """Initialize MultiMath actor.
+
+        Args:
+            model_name: Path to MultiMath model.
+            system_prompt: Optional system prompt for the model.
+        """
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
         self.model_name = model_name
         self.system_prompt = system_prompt or ""
-        self.max_model_len = max_model_len
 
         # Use LLaVA model builder for proper loading
         from geo_edit.models.multimath.model.builder import load_pretrained_model
