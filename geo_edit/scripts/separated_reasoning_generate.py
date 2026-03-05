@@ -360,7 +360,7 @@ def main():
     n_workers = max(1, int(args.max_concurrent_requests))
     logger.info(f"Starting {n_workers} worker processes (each reuses Agent for all tasks)")
 
-    with ctx.Pool(
+    pool = ctx.Pool(
         processes=n_workers,
         initializer=_init_worker,
         initargs=(
@@ -373,7 +373,9 @@ def main():
             MAX_TOOL_CALLS,
             enabled_agent_names,
         ),
-    ) as pool:
+    )
+
+    try:
         inflight = []
         submit_idx = 0
         pbar = tqdm(total=len(pending_items), desc="processing")
@@ -438,22 +440,24 @@ def main():
                 time.sleep(0.05)
 
         pbar.close()
+    finally:
+        # Close pool cleanly BEFORE shutting down Ray - even if errors occurred
+        logger.info("Closing worker pool...")
+        pool.close()
+        pool.join()
+        logger.info("Worker pool closed successfully")
 
     save_global_meta_info(output_path, meta_info_list)
     logger.info(f"All tasks completed. Total successful: {len(meta_info_list)}")
 
-    # Shutdown Ray tool agents BEFORE pool closes to avoid SIGTERM conflicts
+    # Shutdown Ray tool agents AFTER pool is closed to avoid SIGTERM conflicts
+    # Note: We only shutdown tool agents, NOT Ray itself (Ray cluster remains running)
     if tool_router.is_agent_enabled():
         logger.info("Shutting down shared Ray tool agents...")
         tool_router.shutdown_agents()
         logger.info("Ray tool agents shutdown complete")
 
-    # Explicitly shutdown Ray to avoid atexit conflicts
-    import ray
-    if ray.is_initialized():
-        logger.info("Shutting down Ray...")
-        ray.shutdown()
-        logger.info("Ray shutdown complete")
+    logger.info("Script completed. Ray cluster remains running.")
 
 
 if __name__ == "__main__":
