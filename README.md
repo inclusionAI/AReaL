@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-| <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/en/"><b>Documentation</b></a> | <a href="https://inclusionai.github.io/AReaL/zh/"><b>中文文档</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> | <a href="https://huggingface.co/collections/inclusionAI/"><b>🤗 Models & Data</b></a> |
+| <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://inclusionai.github.io/AReaL/zh/"><b>中文文档</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> | <a href="https://huggingface.co/collections/inclusionAI/"><b>🤗 Models & Data</b></a> |
 <a href="./assets/wechat_qrcode.png" target="_blank"><img src="./assets/wechat_icon.png" width="20" style="vertical-align: middle;"> <b>WeChat (微信) Group</b></a> |
 </p>
 
@@ -212,45 +212,45 @@ Check the [AI Coding Assistant Guide](docs/reference/ai_assisted_dev.md) and
 
 ### Tutorial
 
-- [Installation](https://inclusionai.github.io/AReaL/en/tutorial/installation.html)
-- [Quickstart](https://inclusionai.github.io/AReaL/en/tutorial/quickstart.html)
-- [Agentic RL](https://inclusionai.github.io/AReaL/en/tutorial/agentic_rl.html)
-- [Evaluation](https://inclusionai.github.io/AReaL/en/tutorial/eval.html)
-- [Large MoE with Megatron](https://inclusionai.github.io/AReaL/en/tutorial/megatron.html)
-- [Large MoE with PyTorch Archon](https://inclusionai.github.io/AReaL/en/tutorial/archon.html)
+- [Installation](docs/en/tutorial/installation.md)
+- [Quickstart](docs/en/tutorial/quickstart.md)
+- [Agentic RL](docs/en/tutorial/agentic_rl.md)
+- [Evaluation](docs/en/tutorial/eval.md)
+- [Large MoE with Megatron](docs/en/tutorial/megatron.md)
+- [Large MoE with PyTorch Archon](docs/en/tutorial/archon.md)
 
 ### Code Walkthrough
 
-- [Running GRPO on GSM8K dataset](https://inclusionai.github.io/AReaL/en/tutorial/gsm8k_grpo.html)
+- [Running GRPO on GSM8K dataset](docs/en/tutorial/gsm8k_grpo.md)
 
 ### Best Practices
 
-- [Improving Algorithm Performance](https://inclusionai.github.io/AReaL/en/best_practices/algo_perf.html)
-- [Agent Workflow Best Practices](https://inclusionai.github.io/AReaL/en/best_practices/workflow.html)
-- [Debugging](https://inclusionai.github.io/AReaL/en/best_practices/debugging.html)
-- [Handling OOM Issues](https://inclusionai.github.io/AReaL/en/best_practices/handling_oom.html)
-- [Performance Profiling](https://inclusionai.github.io/AReaL/en/best_practices/perf_profiling.html)
+- [Improving Algorithm Performance](docs/en/best_practices/algo_perf.md)
+- [Agent Workflow Best Practices](docs/en/best_practices/workflow.md)
+- [Debugging](docs/en/best_practices/debugging.md)
+- [Handling OOM Issues](docs/en/best_practices/handling_oom.md)
+- [Performance Profiling](docs/en/best_practices/perf_profiling.md)
 
 ### Customization
 
-- [Customize Dataset](https://inclusionai.github.io/AReaL/en/customization/dataset.html)
-- [Customize Agentic/RVLR Rollout Workflows](https://inclusionai.github.io/AReaL/en/customization/agent.html)
+- [Customize Dataset](docs/en/customization/dataset.md)
+- [Customize Agentic/RVLR Rollout Workflows](docs/en/customization/agent.md)
 
 ### Algorithms
 
-- [Asynchronous RL Explained](https://inclusionai.github.io/AReaL/en/algorithms/async.html)
-- [PPO, GRPO, and Related Algorithms](https://inclusionai.github.io/AReaL/en/algorithms/grpo_series.html)
-- [M2PO](https://inclusionai.github.io/AReaL/en/algorithms/m2po.html)
+- [Asynchronous RL Explained](docs/en/algorithms/async.md)
+- [PPO, GRPO, and Related Algorithms](docs/en/algorithms/grpo_series.md)
+- [M2PO](docs/en/algorithms/m2po.md)
 
 ### Reference
 
-- [CLI Configurations](https://inclusionai.github.io/AReaL/en/cli_reference.html)
-- [Checkpointing](https://inclusionai.github.io/AReaL/en/reference/checkpointing.html)
-- [Metrics Tracking](https://inclusionai.github.io/AReaL/en/reference/metrics_tracking.html)
-- [Allocation Mode](https://inclusionai.github.io/AReaL/en/reference/alloc_mode.html)
-- [Rollout Workflow](https://inclusionai.github.io/AReaL/en/reference/rollout_workflow.html)
-- [Agent Workflow](https://inclusionai.github.io/AReaL/en/reference/agent_workflow.html)
-- [AI-Assisted Development](https://inclusionai.github.io/AReaL/en/reference/ai_assisted_dev.html)
+- [CLI Configurations](docs/en/cli_reference.md)
+- [Checkpointing](docs/en/reference/checkpointing.md)
+- [Metrics Tracking](docs/en/reference/metrics_tracking.md)
+- [Allocation Mode](docs/en/reference/alloc_mode.md)
+- [Rollout Workflow](docs/en/reference/rollout_workflow.md)
+- [Agent Workflow](docs/en/reference/agent_workflow.md)
+- [AI-Assisted Development](docs/en/reference/ai_assisted_dev.md)
 
 ## 🤝 Contributing
 
