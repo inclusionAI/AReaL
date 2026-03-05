@@ -202,4 +202,17 @@ class ScaffoldingWorkflow(RolloutWorkflow):
         scaffolding_output = result.outputs[0]
         interactions = scaffolding_output.data
         interaction = next(iter(interactions.values()))
+
+        # If output_tokens is missing (e.g., SGLang didn't return token_ids),
+        # tokenize the output_str as a fallback so loss_mask is non-zero.
+        resp = interaction.model_response
+        if resp is not None and not resp.output_tokens:
+            output_text = scaffolding_output.text or ""
+            output_tokens = self.tokenizer.encode(
+                output_text, add_special_tokens=False
+            )
+            resp.output_tokens = output_tokens
+            resp.output_logprobs = [0.0] * len(output_tokens)
+            resp.output_versions = [-1] * len(output_tokens)
+
         return interaction.to_tensor_dict()

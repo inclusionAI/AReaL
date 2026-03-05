@@ -79,9 +79,9 @@ def main(args):
         valid_dataset=valid_dataset,
     ) as trainer:
         trainer.train(
-            workflow=GSM8KScaffoldingWorkflow,
+            workflow="examples.scaffolding.gsm8k_rlvr_scaffolding.GSM8KScaffoldingWorkflow",
             workflow_kwargs=workflow_kwargs,
-            eval_workflow=GSM8KScaffoldingWorkflow,
+            eval_workflow="examples.scaffolding.gsm8k_rlvr_scaffolding.GSM8KScaffoldingWorkflow",
             eval_workflow_kwargs=eval_workflow_kwargs,
         )
 

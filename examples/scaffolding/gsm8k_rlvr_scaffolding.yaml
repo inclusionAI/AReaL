@@ -1,5 +1,5 @@
 # RLVR Scaffolding Example Configuration for GSM8K
-# Compatible with GRPOConfig, for 8-GPU setup (4 inference + 4 training)
+# Compatible with GRPOConfig, single-GPU setup (inference + training share 1 GPU)
 
 experiment_name: gsm8k-rlvr-scaffolding
 trial_name: trial0
@@ -11,18 +11,18 @@ tokenizer_path: ${actor.path}
 
 cluster:
   n_nodes: 1
-  n_gpus_per_node: 8
+  n_gpus_per_node: 1
   fileroot: /tmp/areal/experiments
   name_resolve:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang:d4p1t1+d4p1t1
+allocation_mode: sglang:d1+d1
 
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 256
+  max_concurrent_rollouts: 64
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
@@ -108,7 +108,7 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 2048
-  mem_fraction_static: 0.5
+  mem_fraction_static: 0.3
   attention_backend: flashinfer
 
 vllm:
@@ -121,7 +121,7 @@ vllm:
 
 # Datasets
 train_dataset:
-  batch_size: 256
+  batch_size: 64
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -130,7 +130,7 @@ train_dataset:
   max_length: 2048
 
 valid_dataset:
-  batch_size: 256
+  batch_size: 64
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
