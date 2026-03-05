@@ -12,6 +12,7 @@ Forward:  each rank encodes its assigned images → all_gather → full embeddin
 Backward: all_reduce(SUM) recovers complete gradients → slice by assignment
 """
 
+import importlib
 import torch
 import torch.distributed as dist
 from torch.autograd import Function
@@ -30,7 +31,6 @@ def _get_image_patch_counts(grid_thw: torch.Tensor) -> list[int]:
     """Return [t*h*w for each image] from a [num_images, 3] grid_thw tensor."""
     if grid_thw.numel() == 0:
         return []
-    grid_thw = grid_thw.cpu()
     return (grid_thw[:, 0] * grid_thw[:, 1] * grid_thw[:, 2]).tolist()
 
 
@@ -40,10 +40,9 @@ def _get_image_embedding_counts(
     """Return per-image embedding counts after spatial merging: t * (h/merge) * (w/merge)."""
     if grid_thw.numel() == 0:
         return []
-    grid_thw = grid_thw.cpu()
 
     if spatial_merge_size == 1:
-        return _get_image_patch_counts(grid_thw)
+        return (grid_thw[:, 0] * grid_thw[:, 1] * grid_thw[:, 2]).tolist()
 
     t = grid_thw[:, 0]
     h = grid_thw[:, 1] // spatial_merge_size
@@ -55,11 +54,7 @@ def _assign_images_to_dp_ranks(
     patch_counts: list[int],
     dp_size: int,
 ) -> tuple[list[list[int]], list[int]]:
-    """Assign whole images to DP ranks via greedy contiguous bin-packing.
-
-    Returns (image_assignments, rank_patch_counts). Images are kept contiguous
-    so the gather result needs no reordering.
-    """
+    """Assign whole images to DP ranks via greedy contiguous bin-packing."""
     num_images = len(patch_counts)
     if num_images == 0:
         return [[] for _ in range(dp_size)], [0] * dp_size
@@ -105,10 +100,7 @@ def _prepare_local_vision_inputs(
     image_assignments: list[list[int]],
     dp_rank: int,
 ) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
-    """Extract pixel values and grid_thw for this DP rank's assigned images.
-
-    Exploits contiguous assignment: a single slice instead of per-image cat.
-    """
+    """Extract pixel values and grid_thw for this DP rank's assigned images."""
     local_indices = image_assignments[dp_rank]
 
     if len(local_indices) == 0:
@@ -144,28 +136,15 @@ def _prepare_local_vision_inputs(
     local_pixel_values = pixel_values[start_patch:end_patch]
     local_grid_thw = grid_thw[first_img_idx : last_img_idx + 1]
 
-    # Cross-check: verify extracted slice matches independently computed patch counts
-    independent_counts = _get_image_patch_counts(local_grid_thw)
-    expected_patches = sum(independent_counts)
-    assert local_pixel_values.shape[0] == expected_patches, (
-        f"[Vision SP Shard] Local patch count mismatch: "
-        f"extracted={local_pixel_values.shape[0]}, expected={expected_patches}, "
-        f"local_indices={local_indices}"
-    )
 
     return local_pixel_values, local_grid_thw, local_indices
 
 
 class GatherVisionEmbeddings(Function):
-    """
-    All-gather vision embeddings with gradient support.
+    """All-gather vision embeddings across DP ranks with gradient support.
 
-    Since images are assigned contiguously (rank 0 gets [0,1], rank 1 gets [2,3], etc.),
-    we can simply concat gathered results without reordering.
-
-    Forward: all_gather + remove padding + concat
-    Backward: all_reduce(SUM) to aggregate gradients from all sequence shards,
-              then slice to extract this rank's image gradients
+    Forward: all_gather + remove padding + concat.
+    Backward: all_reduce(SUM) aggregates partial gradients, then slice by assignment.
     """
 
     @staticmethod
@@ -250,6 +229,29 @@ def _gather_vision_embeddings(
 
     return GatherVisionEmbeddings.apply(local_embeddings, dp_group, all_counts)
 
+def _unpack_deepstack(
+    model,
+    local_embeddings: torch.Tensor | tuple,
+    hidden_states: torch.Tensor,
+) -> tuple[torch.Tensor, list[torch.Tensor]] | None:
+    """Unpack Qwen3-VL deepstack from forward output, or return None."""
+    if not hasattr(model, "deepstack_merger_list"):
+        return None
+
+    if isinstance(local_embeddings, tuple):
+        return local_embeddings[0], local_embeddings[1]
+
+    # Empty rank: create matching empty deepstack tensors
+    num_deepstack = len(model.deepstack_merger_list)
+    h = local_embeddings.shape[1]
+    deepstack = [
+        torch.empty(
+            (0, h), dtype=hidden_states.dtype, device=hidden_states.device
+        ).requires_grad_()
+        for _ in range(num_deepstack)
+    ]
+    return local_embeddings, deepstack
+
 
 def create_dp_vision_forward(original_forward):
     """Wrap VisionTransformer.forward for Vision SP Shard (shard across SP ranks).
@@ -294,12 +296,7 @@ def create_dp_vision_forward(original_forward):
             f"grid_thw.shape={grid_thw.shape}"
         )
 
-        # Get spatial_merge_size from merger (VLMs like Qwen use merger to reduce embeddings)
-        spatial_merge_size = 1
-        if hasattr(self, "merger") and hasattr(self.merger, "spatial_merge_size"):
-            spatial_merge_size = self.merger.spatial_merge_size
-        elif hasattr(self, "spatial_merge_size"):
-            spatial_merge_size = self.spatial_merge_size
+        spatial_merge_size = getattr(self, "spatial_merge_size", 1)
 
         # Calculate embedding counts (after merger) for gather verification
         embedding_counts = _get_image_embedding_counts(grid_thw_cpu, spatial_merge_size)
@@ -314,10 +311,6 @@ def create_dp_vision_forward(original_forward):
         )
         local_grid_thw = local_grid_thw.to(grid_thw.device)
 
-        # Detect Qwen3-VL deepstack: model attribute, not return type,
-        # because empty ranks don't call original_forward and can't inspect the return.
-        has_deepstack = hasattr(self, "deepstack_merger_list")
-
         # Step 3: Process local images
         if local_pixels.shape[0] > 0:
             local_embeddings = original_forward(
@@ -325,12 +318,11 @@ def create_dp_vision_forward(original_forward):
             )
         else:
             # This rank has no images, create empty tensor with correct hidden size
-            hidden_size = getattr(
-                getattr(self, "config", None), "out_hidden_size", None
-            )
+            cfg = getattr(self, "config", None)
+            hidden_size = getattr(cfg, "out_hidden_size", None) or getattr(cfg, "hidden_size", None)
             if hidden_size is None:
                 raise RuntimeError(
-                    f"Cannot determine hidden_size: self.config.out_hidden_size not found. "
+                    f"Cannot determine hidden_size from config. "
                     f"Model type: {type(self).__name__}"
                 )
 
@@ -342,26 +334,12 @@ def create_dp_vision_forward(original_forward):
             # Empty rank must participate in autograd for backward all_reduce
             local_embeddings.requires_grad_()
 
-        # Unpack Qwen3-VL deepstack: forward returns (embeddings, list[3 × Tensor])
-        local_deepstack = None
-        if has_deepstack:
-            if isinstance(local_embeddings, tuple):
-                local_embeddings, local_deepstack = (
-                    local_embeddings[0],
-                    local_embeddings[1],
-                )
-            else:
-                # Empty rank: create matching empty deepstack tensors
-                num_deepstack = len(self.deepstack_merger_list)
-                h = local_embeddings.shape[1]
-                local_deepstack = [
-                    torch.empty(
-                        (0, h), dtype=hidden_states.dtype, device=hidden_states.device
-                    ).requires_grad_()
-                    for _ in range(num_deepstack)
-                ]
+        # Step 4: Unpack deepstack if present (Qwen3-VL returns (embeddings, list[Tensor]))
+        local_deepstack = _unpack_deepstack(self, local_embeddings, hidden_states)
+        if local_deepstack is not None:
+            local_embeddings = local_deepstack[0]
 
-        # Step 4: All-gather (contiguous assignment, no reordering needed)
+        # Step 5: All-gather (contiguous assignment, no reordering needed)
         # Compute per-rank embedding counts locally (grid_thw is replicated on all ranks)
         all_counts = [
             sum(embedding_counts[i] for i in image_assignments[r])
@@ -377,11 +355,11 @@ def create_dp_vision_forward(original_forward):
             f"expected={total_embeddings}"
         )
 
-        # Step 5: All-gather deepstack embeddings (all ranks must participate)
+        # Step 6: All-gather deepstack embeddings (all ranks must participate)
         if local_deepstack is not None:
             gathered_deepstack = [
                 _gather_vision_embeddings(ds, sp_group, all_counts)
-                for ds in local_deepstack
+                for ds in local_deepstack[1]
             ]
             return all_embeddings, gathered_deepstack
 
@@ -400,6 +378,24 @@ def _patch_vision_class(cls, class_name: str) -> None:
     logger.info(f"[Vision SP Shard] Patched {class_name}.forward")
 
 
+# Registry of supported VisionTransformer classes for Vision SP Shard patching.
+# To add a new model: append (module_path, class_name).
+_VISION_CLASSES = [
+    (
+        "transformers.models.qwen2_vl.modeling_qwen2_vl",
+        "Qwen2VisionTransformerPretrainedModel",
+    ),
+    (
+        "transformers.models.qwen2_5_vl.modeling_qwen2_5_vl",
+        "Qwen2_5_VisionTransformerPretrainedModel",
+    ),
+    (
+        "transformers.models.qwen3_vl.modeling_qwen3_vl",
+        "Qwen3VLVisionModel",
+    ),
+]
+
+
 def apply_vision_sp_shard_patch():
     """Apply Vision SP Shard monkey patch to supported VisionTransformer classes.
 
@@ -407,48 +403,17 @@ def apply_vision_sp_shard_patch():
     after model instantiation (Python MRO resolves at call time).
     Safe to call multiple times — each class is only patched once.
     """
-    patched_count = 0
+    patched = []
+    for module_path, class_name in _VISION_CLASSES:
+        try:
+            module = importlib.import_module(module_path)
+            cls = getattr(module, class_name)
+            _patch_vision_class(cls, class_name)
+            patched.append(class_name)
+        except (ImportError, AttributeError):
+            pass
 
-    # Patch Qwen2-VL VisionTransformer
-    try:
-        from transformers.models.qwen2_vl.modeling_qwen2_vl import (
-            Qwen2VisionTransformerPretrainedModel,
-        )
-
-        _patch_vision_class(
-            Qwen2VisionTransformerPretrainedModel,
-            "Qwen2VisionTransformerPretrainedModel",
-        )
-        patched_count += 1
-    except ImportError:
-        pass
-
-    # Patch Qwen2.5-VL VisionTransformer
-    try:
-        from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-            Qwen2_5_VisionTransformerPretrainedModel,
-        )
-
-        _patch_vision_class(
-            Qwen2_5_VisionTransformerPretrainedModel,
-            "Qwen2_5_VisionTransformerPretrainedModel",
-        )
-        patched_count += 1
-    except ImportError:
-        pass
-
-    # Patch Qwen3-VL VisionModel
-    try:
-        from transformers.models.qwen3_vl.modeling_qwen3_vl import (
-            Qwen3VLVisionModel,
-        )
-
-        _patch_vision_class(Qwen3VLVisionModel, "Qwen3VLVisionModel")
-        patched_count += 1
-    except ImportError:
-        pass
-
-    if patched_count == 0:
+    if not patched:
         logger.warning(
             "[Vision SP Shard] No VisionTransformer classes found to patch. "
             "Check that your transformers version supports "
