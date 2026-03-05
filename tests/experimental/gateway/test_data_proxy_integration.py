@@ -210,7 +210,11 @@ class TestDataProxyGenerateIntegration:
     async def test_generate_streaming_with_text(self, sglang_server, model_path):
         """POST /generate with ``text`` field -> SSE stream of token chunks."""
         from areal.experimental.gateway.data_proxy.app import create_app
+        from areal.experimental.gateway.data_proxy.backend import SGLangBackend
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
+            TokenizerProxy,
+        )
 
         config = DataProxyConfig(
             host="127.0.0.1",
@@ -220,6 +224,14 @@ class TestDataProxyGenerateIntegration:
             request_timeout=60.0,
         )
         app = create_app(config)
+
+        # httpx.ASGITransport does not trigger ASGI lifespan events,
+        # so we must initialize app.state manually.
+        app.state.tokenizer = TokenizerProxy(model_path)
+        app.state.backend = SGLangBackend(
+            sglang_server["base_url"], request_timeout=60.0
+        )
+        app.state.config = config
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(
@@ -268,6 +280,7 @@ class TestDataProxyGenerateIntegration:
     async def test_generate_streaming_with_input_ids(self, sglang_server, model_path):
         """POST /generate with ``input_ids`` -> SSE stream, no tokenization."""
         from areal.experimental.gateway.data_proxy.app import create_app
+        from areal.experimental.gateway.data_proxy.backend import SGLangBackend
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
         from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
             TokenizerProxy,
@@ -284,6 +297,12 @@ class TestDataProxyGenerateIntegration:
             request_timeout=60.0,
         )
         app = create_app(config)
+
+        app.state.tokenizer = tok
+        app.state.backend = SGLangBackend(
+            sglang_server["base_url"], request_timeout=60.0
+        )
+        app.state.config = config
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(
@@ -318,6 +337,7 @@ class TestDataProxyGenerateIntegration:
     ):
         """Verify that each SSE chunk's ``text`` matches decoding its ``token``."""
         from areal.experimental.gateway.data_proxy.app import create_app
+        from areal.experimental.gateway.data_proxy.backend import SGLangBackend
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
         from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
             TokenizerProxy,
@@ -333,6 +353,12 @@ class TestDataProxyGenerateIntegration:
             request_timeout=60.0,
         )
         app = create_app(config)
+
+        app.state.tokenizer = tok
+        app.state.backend = SGLangBackend(
+            sglang_server["base_url"], request_timeout=60.0
+        )
+        app.state.config = config
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(
