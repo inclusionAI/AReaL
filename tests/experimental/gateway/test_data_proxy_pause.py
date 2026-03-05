@@ -358,12 +358,12 @@ class TestSGLangBackendWithResubmit:
 
 
 # =============================================================================
-# Endpoint tests — /pause and /resume
+# Endpoint tests — /pause_generation and /continue_generation
 # =============================================================================
 
 
 class TestPauseResumeEndpoints:
-    """Test POST /pause and POST /resume endpoints."""
+    """Test POST /pause_generation and POST /continue_generation endpoints."""
 
     @pytest.mark.asyncio
     async def test_health_includes_paused_false(self, app_client):
@@ -382,7 +382,7 @@ class TestPauseResumeEndpoints:
     async def test_pause_endpoint(self, mock_pause_backend, app_client):
         client, app, pause_state = app_client
 
-        resp = await client.post("/pause")
+        resp = await client.post("/pause_generation")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
@@ -405,7 +405,7 @@ class TestPauseResumeEndpoints:
         # First pause
         await pause_state.set_paused(True)
 
-        resp = await client.post("/resume")
+        resp = await client.post("/continue_generation")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
@@ -425,7 +425,7 @@ class TestPauseResumeEndpoints:
     async def test_health_paused_true_after_pause(self, mock_pause_backend, app_client):
         client, app, pause_state = app_client
 
-        await client.post("/pause")
+        await client.post("/pause_generation")
 
         resp = await client.get("/health")
         assert resp.status_code == 200

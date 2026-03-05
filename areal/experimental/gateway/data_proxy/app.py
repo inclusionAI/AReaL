@@ -292,15 +292,15 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # Pause/Resume (Plan 3c) — internal control plane
     # =========================================================================
 
-    @app.post("/pause")
-    async def pause():
+    @app.post("/pause_generation")
+    async def pause_generation():
         state: PauseState = app.state.pause_state
         await state.set_paused(True)
         await pause_backend(config.backend_addr)
         return {"status": "ok", "paused": True}
 
-    @app.post("/resume")
-    async def resume():
+    @app.post("/continue_generation")
+    async def continue_generation():
         state: PauseState = app.state.pause_state
         await resume_backend(config.backend_addr)
         await state.set_paused(False)

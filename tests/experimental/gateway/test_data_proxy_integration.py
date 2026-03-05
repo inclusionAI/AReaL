@@ -801,3 +801,308 @@ class TestChatCompletionsIntegration:
                 timeout=10.0,
             )
             assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Tests — /pause_generation and /continue_generation during generation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not _has_gpu(), reason="GPU required")
+class TestPauseResumeIntegration:
+    """Test /pause_generation and /continue_generation with real SGLang backend.
+
+    These tests verify that:
+      1. The pause/continue endpoints return correct responses.
+      2. A paused data proxy blocks /generate until resumed.
+      3. A paused data proxy blocks /chat/completions until resumed.
+      4. After resume, generation completes normally.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pause_continue_endpoints_respond(self, sglang_server, model_path):
+        """Verify /pause_generation and /continue_generation return correct JSON."""
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Health should show paused=False initially
+            resp = await client.get("/health")
+            assert resp.status_code == 200
+            assert resp.json()["paused"] is False
+
+            # Pause — note: this calls real SGLang /pause_generation
+            resp = await client.post("/pause_generation")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert data["paused"] is True
+
+            # Health should show paused=True
+            resp = await client.get("/health")
+            assert resp.json()["paused"] is True
+
+            # Continue — calls real SGLang /continue_generation
+            resp = await client.post("/continue_generation")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert data["paused"] is False
+
+            # Health should show paused=False again
+            resp = await client.get("/health")
+            assert resp.json()["paused"] is False
+
+    @pytest.mark.asyncio
+    async def test_generate_blocked_while_paused(self, sglang_server, model_path):
+        """While PauseState is set, /generate blocks until resumed."""
+        import asyncio
+
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+        pause_state = app.state.pause_state
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Set paused directly (avoid calling real SGLang /pause_generation
+            # which would abort in-flight requests — there are none yet)
+            await pause_state.set_paused(True)
+
+            # Fire /generate in a background task — should block
+            gen_task = asyncio.create_task(
+                client.post(
+                    "/generate",
+                    json={
+                        "text": "What is 1+1?",
+                        "sampling_params": {
+                            "max_new_tokens": 16,
+                            "temperature": 0.0,
+                        },
+                    },
+                    timeout=30.0,
+                )
+            )
+
+            # Give the request time to reach the pause-wait loop
+            await asyncio.sleep(1.0)
+            assert not gen_task.done(), "/generate should be blocked while paused"
+
+            # Resume — the request should now complete
+            await pause_state.set_paused(False)
+            resp = await asyncio.wait_for(gen_task, timeout=30.0)
+
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers.get("content-type", "")
+
+            events = _parse_sse_events(resp.content)
+            assert len(events) > 0
+            assert events[-1]["finished"] is True
+            assert events[-1]["stop_reason"] in ("stop", "length")
+
+    @pytest.mark.asyncio
+    async def test_generate_after_pause_continue_cycle(self, sglang_server, model_path):
+        """Full cycle: pause → continue → /generate works normally."""
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Pause then immediately continue
+            resp = await client.post("/pause_generation")
+            assert resp.status_code == 200
+            resp = await client.post("/continue_generation")
+            assert resp.status_code == 200
+
+            # Generate should work normally after resume
+            resp = await client.post(
+                "/generate",
+                json={
+                    "text": "Hello world",
+                    "sampling_params": {
+                        "max_new_tokens": 8,
+                        "temperature": 0.0,
+                    },
+                },
+                timeout=60.0,
+            )
+            assert resp.status_code == 200
+            events = _parse_sse_events(resp.content)
+            assert len(events) > 0
+            assert events[-1]["finished"] is True
+
+    @pytest.mark.asyncio
+    async def test_chat_completions_blocked_while_paused(
+        self, sglang_server, model_path
+    ):
+        """While PauseState is set, /chat/completions blocks until resumed."""
+        import asyncio
+
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+        pause_state = app.state.pause_state
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Start a session first
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "pause-chat-test"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201
+            session_api_key = resp.json()["api_key"]
+
+            # Set paused
+            await pause_state.set_paused(True)
+
+            # Fire /chat/completions in a background task — should block
+            chat_task = asyncio.create_task(
+                client.post(
+                    "/chat/completions",
+                    json={
+                        "model": "sglang",
+                        "messages": [{"role": "user", "content": "Say hi"}],
+                        "max_completion_tokens": 16,
+                        "temperature": 0.0,
+                    },
+                    headers={"Authorization": f"Bearer {session_api_key}"},
+                    timeout=30.0,
+                )
+            )
+
+            # Give the request time to reach the pause-wait loop
+            await asyncio.sleep(1.0)
+            assert not chat_task.done(), (
+                "/chat/completions should be blocked while paused"
+            )
+
+            # Resume — the request should now complete
+            await pause_state.set_paused(False)
+            resp = await asyncio.wait_for(chat_task, timeout=30.0)
+
+            assert resp.status_code == 200
+            completion = resp.json()
+            assert completion["object"] == "chat.completion"
+            assert len(completion["choices"]) == 1
+            assert completion["choices"][0]["message"]["role"] == "assistant"
+            assert len(completion["choices"][0]["message"]["content"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_chat_completions_after_pause_continue_cycle(
+        self, sglang_server, model_path
+    ):
+        """Full cycle: pause → continue → /chat/completions works normally."""
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Start session
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "pause-chat-cycle"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201
+            session_api_key = resp.json()["api_key"]
+
+            # Pause then immediately continue
+            resp = await client.post("/pause_generation")
+            assert resp.status_code == 200
+            resp = await client.post("/continue_generation")
+            assert resp.status_code == 200
+
+            # Non-streaming chat completion should work normally
+            resp = await client.post(
+                "/chat/completions",
+                json={
+                    "model": "sglang",
+                    "messages": [{"role": "user", "content": "What is 2+2?"}],
+                    "max_completion_tokens": 32,
+                    "temperature": 0.0,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=60.0,
+            )
+            assert resp.status_code == 200
+            completion = resp.json()
+            assert completion["object"] == "chat.completion"
+            assert len(completion["choices"][0]["message"]["content"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_streaming_chat_completions_blocked_while_paused(
+        self, sglang_server, model_path
+    ):
+        """While paused, streaming /chat/completions blocks until resumed."""
+        import asyncio
+
+        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
+        pause_state = app.state.pause_state
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Start session
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "pause-stream-test"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201
+            session_api_key = resp.json()["api_key"]
+
+            # Set paused
+            await pause_state.set_paused(True)
+
+            # Fire streaming /chat/completions in a background task
+            chat_task = asyncio.create_task(
+                client.post(
+                    "/chat/completions",
+                    json={
+                        "model": "sglang",
+                        "messages": [{"role": "user", "content": "Say hello"}],
+                        "max_completion_tokens": 16,
+                        "temperature": 0.0,
+                        "stream": True,
+                    },
+                    headers={"Authorization": f"Bearer {session_api_key}"},
+                    timeout=30.0,
+                )
+            )
+
+            await asyncio.sleep(1.0)
+            assert not chat_task.done(), (
+                "streaming /chat/completions should be blocked while paused"
+            )
+
+            # Resume
+            await pause_state.set_paused(False)
+            resp = await asyncio.wait_for(chat_task, timeout=30.0)
+
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers.get("content-type", "")
+
+            # Parse SSE chunks
+            chunks = []
+            for line in resp.content.decode().strip().split("\n"):
+                line = line.strip()
+                if line.startswith("data: "):
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    chunks.append(json.loads(payload))
+
+            assert len(chunks) >= 2  # role chunk + content/finish
+            last = chunks[-1]
+            assert last["choices"][0]["finish_reason"] in ("stop", "length")
