@@ -405,6 +405,14 @@ class FSDPEngineConfig:
         },
     )
 
+    shard_vision_across_sp: bool = field(
+        default=False,
+        metadata={
+            "help": "Shard vision encoder across SP ranks by image. "
+            "Only effective when context_parallel_size > 1."
+        },
+    )
+
 
 @dataclass
 class ArchonEngineConfig:

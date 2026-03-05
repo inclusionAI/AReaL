@@ -108,10 +108,10 @@ actor:
 | `eps_clip`        | float         | `0.2`  | 下裁剪边界：比率裁剪到 `[1-eps_clip, ...]`                       |
 | `eps_clip_higher` | float \| None | `None` | 上裁剪边界：设置时，比率裁剪到 `[1-eps_clip, 1+eps_clip_higher]` |
 
-当 `eps_clip_higher` 为 `None` 时，使用对称裁剪： $\text{clip}(r, 1-\epsilon, 1+\epsilon)$。
+当 `eps_clip_higher` 为 `None` 时，使用对称裁剪： $\\text{clip}(r, 1-\\epsilon, 1+\\epsilon)$。
 
-当设置 `eps_clip_higher` 时（DAPO风格），使用非对称裁剪： $\text{clip}(r, 1-\epsilon_{\text{low}},
-1+\epsilon_{\text{high}})$。
+当设置 `eps_clip_higher` 时（DAPO风格），使用非对称裁剪： $\\text{clip}(r, 1-\\epsilon\_{\\text{low}},
+1+\\epsilon\_{\\text{high}})$。
 
 ### 重要性采样级别（`actor.importance_sampling_level`）
 
@@ -149,21 +149,33 @@ Vanilla PPO使用学习到的价值函数（critic）通过GAE估计优势。关
 
 ### GRPO
 
-$$ J_{\text{GRPO}}(\theta) = \mathbb{E}_{\substack{q \sim P(Q),\\ \{o_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(O|q)}} \left[ \frac{1}{G} \sum_{i=1}^G \sum_{t=1}^{|o_i|} \min\left( r_{i,t}(\theta) \hat{A}_{i,t},\ \text{clip}\left( r_{i,t}(\theta),\ 1-\epsilon,\ 1+\epsilon \right) \hat{A}_{i,t} \right) - \beta D_{\mathrm{KL}}\left[ \pi_\theta \middle| \pi_{\text{ref}} \right] \right] $$
+$$ J\_{\\text{GRPO}}(\\theta) = \\mathbb{E}_{\\substack{q \\sim P(Q),\\ {o_i}_{i=1}^G
+\\sim \\pi\_{\\theta\_{\\text{old}}}(O|q)}} \\left\[ \\frac{1}{G} \\sum\_{i=1}^G
+\\sum\_{t=1}^{|o_i|} \\min\\left( r\_{i,t}(\\theta) \\hat{A}_{i,t},\\
+\\text{clip}\\left( r_{i,t}(\\theta),\\ 1-\\epsilon,\\ 1+\\epsilon \\right)
+\\hat{A}_{i,t} \\right) - \\beta D_{\\mathrm{KL}}\\left\[ \\pi\_\\theta \\middle|
+\\pi\_{\\text{ref}} \\right\] \\right\] $$
 
 其中：
 
-$$ r_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})}, \quad \hat{A}_{i,t} = \frac{r_i - \text{mean}(\{r_i\}_{i=1}^G)}{\text{std}(\{r_i\}_{i=1}^G)}. $$
+$$ r\_{i,t}(\\theta) = \\frac{\\pi\_\\theta(o\_{i,t} \\mid q,
+o\_{i,\<t})}{\\pi\_{\\theta\_{\\text{old}}}(o\_{i,t} \\mid q, o\_{i,\<t})}, \\quad
+\\hat{A}_{i,t} = \\frac{r_i - \\text{mean}({r_i}_{i=1}^G)}{\\text{std}({r_i}\_{i=1}^G)}.
+$$
 
 ### RLOO (REINFORCE Leave-One-Out)
 
 RLOO通过平均**其他**采样响应的奖励（排除当前响应）来估计基线。这通过设置 `actor.adv_norm.mean_leave1out=true` 实现。
 
-$$ J_{\text{RLOO}}(\theta) = \mathbb{E}_{\substack{q \sim P(Q),\\ \{o_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(O|q)}} \left[ \frac{1}{G} \sum_{i=1}^G \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \min\left( r_{i,t}(\theta) \hat{A}_{i,t},\ \text{clip}\left( r_{i,t}(\theta),\ 1-\epsilon,\ 1+\epsilon \right) \hat{A}_{i,t} \right) \right] $$
+$$ J\_{\\text{RLOO}}(\\theta) = \\mathbb{E}_{\\substack{q \\sim P(Q),\\ {o_i}_{i=1}^G
+\\sim \\pi\_{\\theta\_{\\text{old}}}(O|q)}} \\left\[ \\frac{1}{G} \\sum\_{i=1}^G
+\\frac{1}{|o_i|} \\sum\_{t=1}^{|o_i|} \\min\\left( r\_{i,t}(\\theta) \\hat{A}_{i,t},\\
+\\text{clip}\\left( r_{i,t}(\\theta),\\ 1-\\epsilon,\\ 1+\\epsilon \\right)
+\\hat{A}\_{i,t} \\right) \\right\] $$
 
 其中：
 
-$$ \hat{A}_{i,t} = r_{i} - \frac{1}{G-1} \sum_{j\neq i} r_{j}. $$
+$$ \\hat{A}_{i,t} = r_{i} - \\frac{1}{G-1} \\sum\_{j\\neq i} r\_{j}. $$
 
 ### GSPO (Group Sequence Policy Optimization)
 
@@ -171,11 +183,14 @@ GSPO在序列级别而非token级别计算重要性采样比率。
 
 **标准PPO（token级）：**
 
-$$ r_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})} $$
+$$ r\_{i,t}(\\theta) = \\frac{\\pi\_\\theta(o\_{i,t} \\mid q,
+o\_{i,\<t})}{\\pi\_{\\theta\_{\\text{old}}}(o\_{i,t} \\mid q, o\_{i,\<t})} $$
 
 **GSPO（序列级）：**
 
-$$ r_i(\theta) = \exp\left(\frac{1}{|o_i|}\sum_{t=1}^{|o_i|} \log\frac{\pi_\theta(o_{i,t} \mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})}\right) $$
+$$ r_i(\\theta) = \\exp\\left(\\frac{1}{|o_i|}\\sum\_{t=1}^{|o_i|}
+\\log\\frac{\\pi\_\\theta(o\_{i,t} \\mid q,
+o\_{i,\<t})}{\\pi\_{\\theta\_{\\text{old}}}(o\_{i,t} \\mid q, o\_{i,\<t})}\\right) $$
 
 ### SAPO (Soft Adaptive Policy Optimization)
 
@@ -183,13 +198,16 @@ SAPO用软sigmoid门替换PPO的硬裁剪，提供平滑梯度和非对称控制
 
 **标准PPO：**
 
-$$ L^{\text{PPO}} = -\mathbb{E}_t[\min(r_t A_t, r_t^{\text{clip}} A_t)] $$
+$$ L^{\\text{PPO}} = -\\mathbb{E}\_t\[\\min(r_t A_t, r_t^{\\text{clip}} A_t)\] $$
 
 **SAPO（带软门）：**
 
-- 对于正向优势：$g_t^+ = \frac{4}{\tau_{\text{pos}}} \sigma(\tau_{\text{pos}} (r_t - 1))$
-- 对于负向优势：$g_t^- = \frac{4}{\tau_{\text{neg}}} \sigma(\tau_{\text{neg}} (r_t - 1))$
-- 损失：$L^{\text{SAPO}} = -\mathbb{E}_t[g_t A_t]$，其中如果 $A_t > 0$ 则 $g_t = g_t^+$，否则 $g_t = g_t^-$
+- 对于正向优势：$g_t^+ = \\frac{4}{\\tau\_{\\text{pos}}} \\sigma(\\tau\_{\\text{pos}} (r_t -
+  1))$
+- 对于负向优势：$g_t^- = \\frac{4}{\\tau\_{\\text{neg}}} \\sigma(\\tau\_{\\text{neg}} (r_t -
+  1))$
+- 损失：$L^{\\text{SAPO}} = -\\mathbb{E}\_t\[g_t A_t\]$，其中如果 $A_t > 0$ 则 $g_t = g_t^+$，否则
+  $g_t = g_t^-$
 
 | 参数                  | 类型  | 默认值  | 描述                    |
 | --------------------- | ----- | ------- | ----------------------- |
@@ -211,9 +229,14 @@ actor:
 
 DAPO引入非对称裁剪和动态采样，后者排除所有响应都完全正确或完全错误的样本。
 
-$$ J_{\text{DAPO}}(\theta) = \mathbb{E}_{\substack{(q,a) \sim \mathcal{D}, \\ \{o_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(o|q)}} \left[ \frac{1}{\sum_{i=1}^G |o_i|} \sum_{i=1}^G \sum_{t=1}^{|o_i|} \min\left( r_{i,t}(\theta) \hat{A}_{i,t}, \text{clip}\left( r_{i,t}(\theta), 1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}} \right) \hat{A}_{i,t} \right) \right] $$
+$$ J\_{\\text{DAPO}}(\\theta) = \\mathbb{E}_{\\substack{(q,a) \\sim \\mathcal{D}, \\
+{o_i}_{i=1}^G \\sim \\pi\_{\\theta\_{\\text{old}}}(o|q)}} \\left\[
+\\frac{1}{\\sum\_{i=1}^G |o_i|} \\sum\_{i=1}^G \\sum\_{t=1}^{|o_i|} \\min\\left(
+r\_{i,t}(\\theta) \\hat{A}_{i,t}, \\text{clip}\\left( r_{i,t}(\\theta),
+1-\\epsilon\_{\\text{low}}, 1+\\epsilon\_{\\text{high}} \\right) \\hat{A}\_{i,t}
+\\right) \\right\] $$
 
-其中 $\hat{A}_{i,t}$ 是分组归一化优势，$r_{i,t}(\theta)$ 是token级策略比率。
+其中 $\\hat{A}_{i,t}$ 是分组归一化优势，$r_{i,t}(\\theta)$ 是token级策略比率。
 
 **非对称裁剪参数：**
 
