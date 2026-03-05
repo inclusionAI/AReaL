@@ -4,7 +4,7 @@
 
 ## AReaL-lite（2025年7月）：让 RL 触手可及
 
-*📖 [分步教程](https://inclusionai.github.io/AReaL/tutorial/gsm8k_grpo.html)*
+*📖 [分步教程](https://inclusionai.github.io/AReaL/zh/tutorial/gsm8k_grpo.html)*
 
 AReaL-lite 代表了对研究人员与强化学习系统交互方式的根本性重新思考。源于认识到 AReaL 的系统优先架构为 AI
 研究人员设置了障碍，这个轻量级版本将算法开发置于基础设施复杂性之上。
