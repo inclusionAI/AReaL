@@ -935,12 +935,12 @@ class TrainEngineConfig:
     archon: ArchonEngineConfig = field(default_factory=ArchonEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
 
-    # Vision DP: distribute ViT computation across Ulysses SP ranks by image.
+    # Shard vision encoder computation across Ulysses SP ranks by image.
     # Only effective when context_parallel_size > 1.
-    vision_dp: bool = field(
+    shard_vision_across_sp: bool = field(
         default=False,
         metadata={
-            "help": "Enable Vision DP to distribute ViT computation across SP ranks by image. "
+            "help": "Shard vision encoder across SP ranks by image. "
             "Only effective when context_parallel_size > 1."
         },
     )

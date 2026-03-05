@@ -272,7 +272,7 @@ class FSDPEngine(TrainEngine):
         apply_monkey_patch(
             model=self.model,
             ulysses_sp_size=self.parallel_helper.sp_size,
-            vision_dp=self.config.vision_dp,
+            shard_vision_across_sp=self.config.shard_vision_across_sp,
         )
         # Monkey patch: replace attention's forward() with tree attention.
         patch_fsdp_for_tree_training(enable=self.enable_tree_training)

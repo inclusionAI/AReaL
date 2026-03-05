@@ -1,9 +1,10 @@
 """
-Vision Data Parallel utilities for AReaL.
+Vision SP Shard utilities for AReaL.
 
-Distribute whole images across Ulysses SP ranks, not patches within images.
-Each rank runs ViT on its assigned images, then all-gather combines embeddings.
-Backward all_reduce(SUM) recovers complete gradients before slicing by assignment.
+Shard vision encoder computation across Ulysses SP ranks by distributing
+whole images (not patches within images). Each rank runs ViT on its assigned
+images, then all-gather combines embeddings. Backward all_reduce(SUM) recovers
+complete gradients before slicing by assignment.
 
 Adapted from verl PR #5230 (https://github.com/verl-project/verl/pull/5230).
 """
@@ -19,7 +20,7 @@ from areal.models.fsdp.ulysses import (
 )
 from areal.utils import logging
 
-logger = logging.getLogger("VisionDP")
+logger = logging.getLogger("VisionSPShard")
 
 
 def get_image_patch_counts(grid_thw: torch.Tensor) -> list[int]:
@@ -142,7 +143,7 @@ def prepare_local_vision_inputs(
     independent_counts = get_image_patch_counts(local_grid_thw)
     expected_patches = sum(independent_counts)
     assert local_pixel_values.shape[0] == expected_patches, (
-        f"[Vision DP] Local patch count mismatch: "
+        f"[Vision SP Shard] Local patch count mismatch: "
         f"extracted={local_pixel_values.shape[0]}, expected={expected_patches}, "
         f"local_indices={local_indices}"
     )
@@ -196,7 +197,7 @@ class GatherVisionEmbeddings(Function):
             )
             local_padded = torch.cat([local_embeddings, padding], dim=0)
         else:
-            local_padded = local_embeddings
+            local_padded = local_embeddings.contiguous()
 
         # All-gather
         gathered = [torch.empty_like(local_padded) for _ in range(dp_size)]
@@ -246,7 +247,7 @@ def gather_vision_embeddings(
 
 
 def create_dp_vision_forward(original_forward):
-    """Wrap VisionTransformer.forward for Vision DP (Data Parallel across SP ranks).
+    """Wrap VisionTransformer.forward for Vision SP Shard (shard across SP ranks).
 
     Strategy:
     1. Distribute whole images to SP ranks (not patches within images)
@@ -282,7 +283,7 @@ def create_dp_vision_forward(original_forward):
         total_patches = sum(patch_counts)
 
         assert hidden_states.shape[0] == total_patches, (
-            f"[Vision DP] Input patch count mismatch: "
+            f"[Vision SP Shard] Input patch count mismatch: "
             f"hidden_states.shape[0]={hidden_states.shape[0]}, "
             f"sum(grid_thw products)={total_patches}, "
             f"grid_thw.shape={grid_thw.shape}"
@@ -301,10 +302,12 @@ def create_dp_vision_forward(original_forward):
 
         image_assignments, _ = assign_images_to_dp_ranks(patch_counts, sp_size)
 
-        # Step 2: Extract local inputs
+        # Step 2: Extract local inputs (use CPU grid_thw to avoid GPU→CPU syncs
+        # in metadata helpers; move local_grid_thw back to GPU for original_forward)
         local_pixels, local_grid_thw, local_indices = prepare_local_vision_inputs(
-            hidden_states, grid_thw, image_assignments, sp_rank
+            hidden_states, grid_thw_cpu, image_assignments, sp_rank
         )
+        local_grid_thw = local_grid_thw.to(grid_thw.device)
 
         # Detect Qwen3-VL deepstack: model attribute, not return type,
         # because empty ranks don't call original_forward and can't inspect the return.
@@ -349,7 +352,7 @@ def create_dp_vision_forward(original_forward):
                 local_deepstack = [
                     torch.empty(
                         (0, h), dtype=hidden_states.dtype, device=hidden_states.device
-                    )
+                    ).requires_grad_()
                     for _ in range(num_deepstack)
                 ]
 
@@ -364,7 +367,7 @@ def create_dp_vision_forward(original_forward):
         )
 
         assert all_embeddings.shape[0] == total_embeddings, (
-            f"[Vision DP] Output embedding count mismatch: "
+            f"[Vision SP Shard] Output embedding count mismatch: "
             f"all_embeddings.shape[0]={all_embeddings.shape[0]}, "
             f"expected={total_embeddings}"
         )
@@ -383,21 +386,24 @@ def create_dp_vision_forward(original_forward):
 
 
 def _patch_vision_class(cls, class_name: str) -> None:
-    """Patch a single VisionTransformer class with Vision DP, with idempotency guard."""
-    if getattr(cls, "_vision_dp_patched", False):
+    """Patch a single VisionTransformer class for Vision SP Shard, with idempotency guard."""
+    if getattr(cls, "_vision_sp_shard_patched", False):
         return
     original = cls.forward
     cls.forward = create_dp_vision_forward(original)
-    cls._vision_dp_patched = True
-    logger.info(f"[Vision DP] Patched {class_name}.forward")
+    cls._vision_sp_shard_patched = True
+    logger.info(f"[Vision SP Shard] Patched {class_name}.forward")
 
 
-def apply_vision_dp_patch():
-    """Apply Vision DP monkey patch to supported VisionTransformer classes.
+def apply_vision_sp_shard_patch():
+    """Apply Vision SP Shard monkey patch to supported VisionTransformer classes.
 
-    Should be called BEFORE model loading (patches the class, not instance).
+    Patches the class-level forward method. Works whether called before or
+    after model instantiation (Python MRO resolves at call time).
     Safe to call multiple times — each class is only patched once.
     """
+    patched_count = 0
+
     # Patch Qwen2-VL VisionTransformer
     try:
         from transformers.models.qwen2_vl.modeling_qwen2_vl import (
@@ -408,6 +414,7 @@ def apply_vision_dp_patch():
             Qwen2VisionTransformerPretrainedModel,
             "Qwen2VisionTransformerPretrainedModel",
         )
+        patched_count += 1
     except ImportError:
         pass
 
@@ -421,6 +428,7 @@ def apply_vision_dp_patch():
             Qwen2_5_VisionTransformerPretrainedModel,
             "Qwen2_5_VisionTransformerPretrainedModel",
         )
+        patched_count += 1
     except ImportError:
         pass
 
@@ -431,5 +439,13 @@ def apply_vision_dp_patch():
         )
 
         _patch_vision_class(Qwen3VLVisionModel, "Qwen3VLVisionModel")
+        patched_count += 1
     except ImportError:
         pass
+
+    if patched_count == 0:
+        logger.warning(
+            "[Vision SP Shard] No VisionTransformer classes found to patch. "
+            "Check that your transformers version supports "
+            "Qwen2-VL, Qwen2.5-VL, or Qwen3-VL."
+        )

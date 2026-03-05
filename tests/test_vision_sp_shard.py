@@ -1,5 +1,5 @@
 """
-Unit tests for Vision Data Parallel utilities (CPU-only, no distributed).
+Unit tests for Vision SP Shard utilities (CPU-only, no distributed).
 
 Adapted from verl PR #5230 tests.
 
@@ -11,9 +11,9 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from areal.utils.vision_dp import (
+from areal.utils.vision_sp_shard import (
     _patch_vision_class,
-    apply_vision_dp_patch,
+    apply_vision_sp_shard_patch,
     assign_images_to_dp_ranks,
     create_dp_vision_forward,
     gather_vision_embeddings,
@@ -222,15 +222,15 @@ class TestCreateDpVisionForward:
         # Mock Ulysses SP to return sp_size=1
         with (
             patch(
-                "areal.utils.vision_dp.get_ulysses_sequence_parallel_group",
+                "areal.utils.vision_sp_shard.get_ulysses_sequence_parallel_group",
                 return_value=None,
             ),
             patch(
-                "areal.utils.vision_dp.get_ulysses_sequence_parallel_world_size",
+                "areal.utils.vision_sp_shard.get_ulysses_sequence_parallel_world_size",
                 return_value=1,
             ),
             patch(
-                "areal.utils.vision_dp.get_ulysses_sequence_parallel_rank",
+                "areal.utils.vision_sp_shard.get_ulysses_sequence_parallel_rank",
                 return_value=0,
             ),
         ):
@@ -252,7 +252,7 @@ class TestPatchVisionClass:
         original = FakeVisionModel.forward
         _patch_vision_class(FakeVisionModel, "FakeVisionModel")
         assert FakeVisionModel.forward is not original
-        assert getattr(FakeVisionModel, "_vision_dp_patched", False) is True
+        assert getattr(FakeVisionModel, "_vision_sp_shard_patched", False) is True
 
     def test_patch_vision_class_idempotent_only_wraps_once(self):
         """Calling _patch_vision_class twice should only wrap forward once."""
@@ -272,15 +272,15 @@ class TestPatchVisionClass:
         )  # same wrapper, not double-wrapped
 
 
-class TestApplyVisionDpPatch:
+class TestApplyVisionSpShardPatch:
     def test_apply_patch_import_error_does_not_raise(self):
         """ImportError for unavailable models should not crash."""
-        # apply_vision_dp_patch() tries to import model classes;
+        # apply_vision_sp_shard_patch() tries to import model classes;
         # if none are available, it should silently skip (no exception).
         try:
-            apply_vision_dp_patch()
+            apply_vision_sp_shard_patch()
         except ImportError:
-            pytest.fail("apply_vision_dp_patch() raised ImportError")
+            pytest.fail("apply_vision_sp_shard_patch() raised ImportError")
 
 
 class TestIntegration:
