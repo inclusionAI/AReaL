@@ -120,7 +120,6 @@ class SAM2Actor(BaseToolModelActor):
             "mask-generation",
             model=self.model_name,
             device=device,
-            torch_dtype=torch.float16,
         )
         self._initialized = True
 
@@ -208,50 +207,20 @@ class SAM2Actor(BaseToolModelActor):
 
         return [x1, y1, x2, y2]
 
-    def _auto_segment(self, image) -> Tuple[np.ndarray, np.ndarray]:
-        """Automatic mask generation for entire image."""
-        # Use pipeline for automatic segmentation
-        results = self.pipe(image, points_per_batch=64)
-
-        # Extract masks and scores, ensuring consistent types
-        masks = []
-        scores = []
-
-        for result in results['masks']:
-            masks.append(result)
-        for result in results['scores']:
-            scores.append(result)
-
-        # Convert to numpy arrays with explicit dtypes
-        masks = np.array(masks, dtype=np.bool_)
-        scores = np.asarray(scores, dtype=np.float32)
-
+    def _auto_segment(self, image):
+        out = self.pipe(image, points_per_batch=64)
+        masks = np.asarray(out["masks"], dtype=np.bool_)
+        scores = np.asarray(out["scores"], dtype=np.float32)
         return masks, scores
 
-    def _bbox_segment(self, image, bbox: List[int]) -> Tuple[np.ndarray, np.ndarray]:
-        """Segment within a bounding box prompt."""
-        # Use pipeline with bounding box prompt
-        results = self.pipe(image, input_boxes=[bbox])
-
-        # Extract masks and scores, ensuring consistent types
-        masks = []
-        scores = []
-
-        for result in results['masks']:
-            masks.append(result)
-        for result in results['scores']:
-            scores.append(result)
-
-        # Convert to numpy arrays with explicit dtypes
-        masks = np.array(masks, dtype=np.bool_)
-        scores = np.asarray(scores, dtype=np.float32)
-
-        # Ensure proper shape
+    def _bbox_segment(self, image, bbox):
+        out = self.pipe(image, input_boxes=[bbox])
+        masks = np.asarray(out["masks"], dtype=np.bool_)
+        scores = np.asarray(out["scores"], dtype=np.float32)
         if masks.ndim == 2:
-            masks = masks[np.newaxis, ...]
+            masks = masks[None, ...]
         if scores.ndim == 0:
-            scores = np.array([float(scores)], dtype=np.float32)
-
+            scores = np.asarray([scores], dtype=np.float32)
         return masks, scores
 
     def health_check(self) -> dict:

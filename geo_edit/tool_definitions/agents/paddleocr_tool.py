@@ -15,7 +15,7 @@ SYSTEM_PROMPT = ""
 
 # Model configuration
 agent_config = {
-    "model_name_or_path": "PaddlePaddle/PaddleOCR-VL-1.5",
+    "model_name_or_path": "/storage/openpsi/models/PaddleOCR-VL-1.5",
     "max_model_len": 8192,
     "gpu_memory_utilization": 0.8,
     "temperature": 0.0,
@@ -26,7 +26,7 @@ agent_config = {
 # Local model configuration
 # Set model_path to a local path or HuggingFace model ID
 LOCAL_MODEL_CONFIG = {
-    "model_path": "PaddlePaddle/PaddleOCR-VL-1.5",  # Model path (HuggingFace or local)
+    "model_path": "/storage/openpsi/models/PaddleOCR-VL-1.5",  # Model path (HuggingFace or local)
     "torch_dtype": "float32",  # Options: "bfloat16", "float16", "float32"
     "max_new_tokens": 4096,       # Maximum tokens to generate
 }
@@ -54,7 +54,7 @@ class PaddleOCRActor(BaseToolModelActor):
         system_prompt: Optional[str] = None,
     ):
         import torch
-        from transformers import AutoProcessor, AutoModelForImageTextToText
+        from transformers import AutoProcessor, AutoModel
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
@@ -64,7 +64,7 @@ class PaddleOCRActor(BaseToolModelActor):
         logger.info("Loading PaddleOCR-VL model: %s", model_path)
 
         # Set device
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda" 
 
         # Set torch dtype
         dtype_str = LOCAL_MODEL_CONFIG.get("torch_dtype", "bfloat16")
@@ -76,12 +76,13 @@ class PaddleOCRActor(BaseToolModelActor):
             self.torch_dtype = torch.float32
 
         # Load model and processor
-        self.model = AutoModelForImageTextToText.from_pretrained(
+        self.model = AutoModel.from_pretrained(
             model_path,
-            torch_dtype=self.torch_dtype
+            torch_dtype=self.torch_dtype,
+            trust_remote_code=True
         ).to(self.device).eval()
 
-        self.processor = AutoProcessor.from_pretrained(model_path)
+        self.processor = AutoProcessor.from_pretrained(model_path,trust_remote_code=True)
 
         self.max_new_tokens = LOCAL_MODEL_CONFIG.get("max_new_tokens", 512)
         self._initialized = True

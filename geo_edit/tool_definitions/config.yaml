@@ -11,7 +11,7 @@ gllava: false
 chartmoe: false
 ovr: false
 sam2: false
-grounding_dino: true
-paddleocr: false
+grounding_dino: false
+paddleocr: true
 
  

@@ -26,7 +26,7 @@ agent_config = {
 }
 
 # Detection constants
-BOX_THRESHOLD = 0.35      # Confidence threshold for boxes
+BOX_THRESHOLD = 0.25      # Confidence threshold for boxes
 TEXT_THRESHOLD = 0.25     # Text-image matching threshold
 NMS_THRESHOLD = 0.8       # NMS IoU threshold
 MAX_DETECTIONS = 20       # Maximum detections to return
