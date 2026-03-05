@@ -131,10 +131,24 @@ def mock_chat_handler():
 @pytest_asyncio.fixture
 async def client(config, mock_tokenizer, mock_backend, mock_chat_handler):
     """Create app with mocked deps and yield an httpx async client."""
+    from areal.experimental.gateway.data_proxy.backend import (
+        SGLangBackendWithResubmit,
+    )
+    from areal.experimental.gateway.data_proxy.pause import PauseState
+
     app = create_app(config)
     # Bypass lifespan — inject mocks directly into app.state
+    pause_state = PauseState()
+    resubmit_backend = SGLangBackendWithResubmit(
+        base=mock_backend,
+        pause_state=pause_state,
+        max_resubmit_retries=5,
+        resubmit_wait=0.01,
+    )
     app.state.tokenizer = mock_tokenizer
     app.state.backend = mock_backend
+    app.state.resubmit_backend = resubmit_backend
+    app.state.pause_state = pause_state
     app.state.config = config
     store = SessionStore()
     app.state.session_store = store

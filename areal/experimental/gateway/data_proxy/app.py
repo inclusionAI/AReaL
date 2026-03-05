@@ -15,6 +15,14 @@ from pydantic import BaseModel
 from areal.experimental.gateway.data_proxy.backend import (
     GenerationResult,
     SGLangBackend,
+    SGLangBackendWithResubmit,
+)
+from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
+from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+from areal.experimental.gateway.data_proxy.pause import (
+    PauseState,
+    pause_backend,
+    resume_backend,
 )
 from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
@@ -201,11 +209,20 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         )
         tok = TokenizerProxy(config.tokenizer_path)
         backend = SGLangBackend(config.backend_addr, config.request_timeout)
+        pause_state = PauseState()
+        resubmit_backend = SGLangBackendWithResubmit(
+            base=backend,
+            pause_state=pause_state,
+            max_resubmit_retries=config.max_resubmit_retries,
+            resubmit_wait=config.resubmit_wait,
+        )
         app.state.tokenizer = tok
         app.state.backend = backend
+        app.state.resubmit_backend = resubmit_backend
+        app.state.pause_state = pause_state
         app.state.config = config
         app.state.session_store = SessionStore()
-        app.state.chat_handler = ChatCompletionHandler(backend, tok)
+        app.state.chat_handler = ChatCompletionHandler(resubmit_backend, tok)
         yield
         logger.info("Data proxy shutting down")
 
@@ -218,10 +235,12 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     @app.get("/health")
     async def health():
         store: SessionStore = app.state.session_store
+        pause_state: PauseState = app.state.pause_state
         return {
             "status": "ok",
             "backend": config.backend_addr,
             "sessions": store.session_count,
+            "paused": await pause_state.is_paused(),
         }
 
     # =========================================================================
@@ -237,7 +256,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             )
 
         tok: TokenizerProxy = app.state.tokenizer
-        backend: SGLangBackend = app.state.backend
+        resubmit_backend: SGLangBackendWithResubmit = app.state.resubmit_backend
 
         # Resolve input_ids
         if req.input_ids is not None:
@@ -255,8 +274,8 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         }
         sampling_params = {**defaults, **(req.sampling_params or {})}
 
-        # Call SGLang (non-streaming) — get all tokens at once
-        result = await backend.generate(input_ids, sampling_params)
+        # Call SGLang (with transparent pause/resubmit) — get all tokens at once
+        result = await resubmit_backend.generate(input_ids, sampling_params)
 
         # Stream back one token per SSE chunk
         return StreamingResponse(
@@ -268,6 +287,24 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    # =========================================================================
+    # Pause/Resume (Plan 3c) — internal control plane
+    # =========================================================================
+
+    @app.post("/pause")
+    async def pause():
+        state: PauseState = app.state.pause_state
+        await state.set_paused(True)
+        await pause_backend(config.backend_addr)
+        return {"status": "ok", "paused": True}
+
+    @app.post("/resume")
+    async def resume():
+        state: PauseState = app.state.pause_state
+        await resume_backend(config.backend_addr)
+        await state.set_paused(False)
+        return {"status": "ok", "paused": False}
 
     # =========================================================================
     # Session management (Plan 3b)

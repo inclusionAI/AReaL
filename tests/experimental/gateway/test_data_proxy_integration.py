@@ -210,8 +210,12 @@ class TestDataProxyGenerateIntegration:
     async def test_generate_streaming_with_text(self, sglang_server, model_path):
         """POST /generate with ``text`` field -> SSE stream of token chunks."""
         from areal.experimental.gateway.data_proxy.app import create_app
-        from areal.experimental.gateway.data_proxy.backend import SGLangBackend
+        from areal.experimental.gateway.data_proxy.backend import (
+            SGLangBackend,
+            SGLangBackendWithResubmit,
+        )
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+        from areal.experimental.gateway.data_proxy.pause import PauseState
         from areal.experimental.gateway.data_proxy.session import SessionStore
         from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
             TokenizerProxy,
@@ -228,10 +232,16 @@ class TestDataProxyGenerateIntegration:
 
         # httpx.ASGITransport does not trigger ASGI lifespan events,
         # so we must initialize app.state manually.
-        app.state.tokenizer = TokenizerProxy(model_path)
-        app.state.backend = SGLangBackend(
-            sglang_server["base_url"], request_timeout=60.0
+        tok = TokenizerProxy(model_path)
+        backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
+        pause_state = PauseState()
+        resubmit_backend = SGLangBackendWithResubmit(
+            base=backend, pause_state=pause_state,
         )
+        app.state.tokenizer = tok
+        app.state.backend = backend
+        app.state.resubmit_backend = resubmit_backend
+        app.state.pause_state = pause_state
         app.state.config = config
         app.state.session_store = SessionStore()
 
@@ -282,8 +292,13 @@ class TestDataProxyGenerateIntegration:
     async def test_generate_streaming_with_input_ids(self, sglang_server, model_path):
         """POST /generate with ``input_ids`` -> SSE stream, no tokenization."""
         from areal.experimental.gateway.data_proxy.app import create_app
-        from areal.experimental.gateway.data_proxy.backend import SGLangBackend
+        from areal.experimental.gateway.data_proxy.backend import (
+            SGLangBackend,
+            SGLangBackendWithResubmit,
+        )
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+        from areal.experimental.gateway.data_proxy.pause import PauseState
+        from areal.experimental.gateway.data_proxy.session import SessionStore
         from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
             TokenizerProxy,
         )
@@ -300,11 +315,17 @@ class TestDataProxyGenerateIntegration:
         )
         app = create_app(config)
 
-        app.state.tokenizer = tok
-        app.state.backend = SGLangBackend(
-            sglang_server["base_url"], request_timeout=60.0
+        backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
+        pause_state = PauseState()
+        resubmit_backend = SGLangBackendWithResubmit(
+            base=backend, pause_state=pause_state,
         )
+        app.state.tokenizer = tok
+        app.state.backend = backend
+        app.state.resubmit_backend = resubmit_backend
+        app.state.pause_state = pause_state
         app.state.config = config
+        app.state.session_store = SessionStore()
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(
@@ -339,8 +360,13 @@ class TestDataProxyGenerateIntegration:
     ):
         """Verify that each SSE chunk's ``text`` matches decoding its ``token``."""
         from areal.experimental.gateway.data_proxy.app import create_app
-        from areal.experimental.gateway.data_proxy.backend import SGLangBackend
+        from areal.experimental.gateway.data_proxy.backend import (
+            SGLangBackend,
+            SGLangBackendWithResubmit,
+        )
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+        from areal.experimental.gateway.data_proxy.pause import PauseState
+        from areal.experimental.gateway.data_proxy.session import SessionStore
         from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
             TokenizerProxy,
         )
@@ -356,11 +382,17 @@ class TestDataProxyGenerateIntegration:
         )
         app = create_app(config)
 
-        app.state.tokenizer = tok
-        app.state.backend = SGLangBackend(
-            sglang_server["base_url"], request_timeout=60.0
+        backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
+        pause_state = PauseState()
+        resubmit_backend = SGLangBackendWithResubmit(
+            base=backend, pause_state=pause_state,
         )
+        app.state.tokenizer = tok
+        app.state.backend = backend
+        app.state.resubmit_backend = resubmit_backend
+        app.state.pause_state = pause_state
         app.state.config = config
+        app.state.session_store = SessionStore()
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(
@@ -397,9 +429,13 @@ class TestDataProxyGenerateIntegration:
 def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     """Create a fully-wired data proxy app with session support."""
     from areal.experimental.gateway.data_proxy.app import create_app
-    from areal.experimental.gateway.data_proxy.backend import SGLangBackend
+    from areal.experimental.gateway.data_proxy.backend import (
+        SGLangBackend,
+        SGLangBackendWithResubmit,
+    )
     from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
     from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+    from areal.experimental.gateway.data_proxy.pause import PauseState
     from areal.experimental.gateway.data_proxy.session import SessionStore
     from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
 
@@ -416,13 +452,19 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     # so we must initialize app.state manually.
     tok = TokenizerProxy(model_path)
     backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
+    pause_state = PauseState()
+    resubmit_backend = SGLangBackendWithResubmit(
+        base=backend, pause_state=pause_state,
+    )
     store = SessionStore()
 
     app.state.tokenizer = tok
     app.state.backend = backend
+    app.state.resubmit_backend = resubmit_backend
+    app.state.pause_state = pause_state
     app.state.config = config
     app.state.session_store = store
-    app.state.chat_handler = ChatCompletionHandler(backend, tok)
+    app.state.chat_handler = ChatCompletionHandler(resubmit_backend, tok)
 
     return app, store
 

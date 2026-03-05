@@ -56,14 +56,26 @@ async def client(config, mock_tokenizer, mock_backend):
     The httpx ASGITransport does not run the ASGI lifespan protocol,
     so we set app.state directly with the mocked deps.
     """
-    app = create_app(config)
-    # Bypass lifespan — inject mocks directly into app.state
-    app.state.tokenizer = mock_tokenizer
-    app.state.backend = mock_backend
-    app.state.config = config
-    # Plan 3b added session_store + chat_handler to app.state
+    from areal.experimental.gateway.data_proxy.backend import (
+        SGLangBackendWithResubmit,
+    )
+    from areal.experimental.gateway.data_proxy.pause import PauseState
     from areal.experimental.gateway.data_proxy.session import SessionStore
 
+    app = create_app(config)
+    # Bypass lifespan — inject mocks directly into app.state
+    pause_state = PauseState()
+    resubmit_backend = SGLangBackendWithResubmit(
+        base=mock_backend,
+        pause_state=pause_state,
+        max_resubmit_retries=config.max_resubmit_retries,
+        resubmit_wait=0.01,
+    )
+    app.state.tokenizer = mock_tokenizer
+    app.state.backend = mock_backend
+    app.state.resubmit_backend = resubmit_backend
+    app.state.pause_state = pause_state
+    app.state.config = config
     app.state.session_store = SessionStore()
     app.state.chat_handler = MagicMock()
     transport = httpx.ASGITransport(app=app)
@@ -179,17 +191,36 @@ async def test_generate_custom_sampling_params_override(client, mock_backend):
 
 @pytest.mark.asyncio
 async def test_generate_abort_stop_reason(client, mock_backend):
+    """With SGLangBackendWithResubmit, a single abort followed by stop
+    is handled transparently. The abort is never exposed to the caller.
+    """
     from areal.experimental.gateway.data_proxy.backend import GenerationResult
 
-    mock_backend.generate.return_value = GenerationResult(
+    call_count = 0
+    original_result = GenerationResult(
         output_tokens=[1234],
         output_logprobs=[-0.5],
         stop_reason="abort",
     )
+    stop_result = GenerationResult(
+        output_tokens=[5678],
+        output_logprobs=[-0.3],
+        stop_reason="stop",
+    )
+
+    async def mock_generate(input_ids, params):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return original_result
+        return stop_result
+
+    mock_backend.generate = mock_generate
 
     resp = await client.post("/generate", json={"input_ids": [1, 2, 3]})
     assert resp.status_code == 200
     events = parse_sse_events(resp.content)
-    assert len(events) == 1
-    assert events[0]["finished"] is True
-    assert events[0]["stop_reason"] == "abort"
+    # Resubmit loop: abort(1 token) + stop(1 token) = 2 tokens total
+    assert len(events) == 2
+    assert events[-1]["finished"] is True
+    assert events[-1]["stop_reason"] == "stop"  # abort converted
