@@ -286,13 +286,19 @@ class VisionMultiTurnWorkflow(RolloutWorkflow):
 
             # Amend results
             input_len = len(resp.input_tokens) - len(seq)
-            assert len(seq) == 0 or resp.input_tokens[:-input_len] == seq, (
-                seq,
-                resp.input_tokens[:-input_len],
-                len(seq),
-                len(resp.input_tokens[:-input_len]),
-            )
-            seq += resp.input_tokens[-input_len:] + resp.output_tokens
+            # Guard against input_len == 0: Python's list[-0:] returns full list, not empty
+            if input_len > 0:
+                assert resp.input_tokens[:-input_len] == seq, (
+                    seq,
+                    resp.input_tokens[:-input_len],
+                    len(seq),
+                    len(resp.input_tokens[:-input_len]),
+                )
+                seq += resp.input_tokens[-input_len:]
+                logprobs += [0.0] * input_len
+                loss_mask += [0] * input_len
+                versions += [-1] * input_len
+            seq += resp.output_tokens
             logprobs += resp.output_logprobs
             loss_mask += [1] * len(resp.output_tokens)
             versions += resp.output_versions
@@ -330,7 +336,11 @@ class VisionMultiTurnWorkflow(RolloutWorkflow):
             seq.extend(self.feedback_str_ids)
 
             if messages_chat:
-                messages_chat = messages_chat + [self.feedback_str]
+                feedback_msg = {
+                    "role": "user",
+                    "content": [{"type": "text", "text": self.feedback_str}],
+                }
+                messages_chat = messages_chat + [feedback_msg]
 
             logprobs += [0.0] * len(self.feedback_str_ids)
             loss_mask += [0] * len(self.feedback_str_ids)
