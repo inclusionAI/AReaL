@@ -291,6 +291,6 @@ either entirely correct or entirely incorrect.
     [14B-code](https://huggingface.co/inclusionAI/AReaL-boba-2-14B),
     [8B-code-open](https://huggingface.co/inclusionAI/AReaL-boba-2-8B-subset),
     [14B-code-open](https://huggingface.co/inclusionAI/AReaL-boba-2-14B-subset)
-  - [Evaluation Guide](https://inclusionai.github.io/AReaL/tutorial/eval.html)
+  - [Evaluation Guide](https://inclusionai.github.io/AReaL/en/tutorial/eval.html)
   - [Training configs](https://github.com/inclusionAI/AReaL/tree/main/examples/configs/v0.3-qwen3-code)
-    and [instructions](https://inclusionai.github.io/AReaL/references/reproduce.html)
+    and [instructions](https://inclusionai.github.io/AReaL/en/reference/reproduce.html)

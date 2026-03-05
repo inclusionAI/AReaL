@@ -24,7 +24,7 @@ helping with code reviews. This guide will help you get started.
 1. **Install Development Dependencies:**
 
    Check our
-   [installation guide](https://inclusionai.github.io/AReaL/tutorial/installation.html)
+   [installation guide](https://inclusionai.github.io/AReaL/en/tutorial/installation.html)
    for detailed setup instructions.
 
 1. **Set Up Code Formatting:**
@@ -138,7 +138,7 @@ waste your effort.
 ## Tips for Using AI-Assisted Coding
 
 See the full
-[AI-Assisted Development Guide](https://inclusionai.github.io/AReaL/reference/ai_assisted_dev.html)
+[AI-Assisted Development Guide](https://inclusionai.github.io/AReaL/en/reference/ai_assisted_dev.html)
 for detailed documentation.
 
 ## CI/CD
