@@ -27,7 +27,10 @@ def infer_token_denominator(
         return torch.ones(int(cu_seqlens[-1].item()), **common_kwargs)
 
     input_ids = input_data.get("input_ids")
-    if isinstance(input_ids, torch.Tensor):
+    # Tree-packed batches keep input_ids padded to tree size while token-level
+    # stats stay at packed-token length. Only reuse input_ids when it already
+    # matches the stat tensor shape.
+    if isinstance(input_ids, torch.Tensor) and input_ids.shape == fallback.shape:
         return torch.ones_like(input_ids, **common_kwargs)
 
     return torch.ones_like(fallback, **common_kwargs)
