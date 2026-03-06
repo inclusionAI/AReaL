@@ -680,6 +680,28 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def update_weights_from_tensor(
+        self,
+        named_tensors: list[tuple[str, torch.Tensor]],
+    ) -> Future[None]:
+        """Update weights by directly passing tensors (for colocation mode).
+
+        In colocation mode, training and inference share the same GPU, so
+        NCCL cannot be used. Instead, tensors are passed directly via CUDA IPC
+        or shared memory.
+
+        Parameters
+        ----------
+        named_tensors : list of (name, tensor) tuples
+            Parameter name-tensor pairs to update in the inference engine.
+
+        Returns
+        -------
+        Future[None]
+            A future object representing the asynchronous weight update operation.
+        """
+        raise NotImplementedError()
+
     def set_version(self, version: int) -> None:
         """Set the current weight version in the inference engine.
 

@@ -253,6 +253,18 @@ class PPOTrainer:
                         }
                     )
                 self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(**xccl_kwargs)
+        elif self.config.actor.weight_update_mode == "tensor":
+            # Tensor-based weight update for colocation mode
+            tensor_kwargs = {"allocation_mode": self.allocation_mode}
+            if config.actor.use_lora:
+                tensor_kwargs.update(
+                    {
+                        "use_lora": config.actor.use_lora,
+                        "lora_name": config.gconfig.lora_name,
+                        "base_model_name": config.actor.path,
+                    }
+                )
+            self.weight_update_meta = WeightUpdateMeta.from_colocation(**tensor_kwargs)
         else:
             raise ValueError(
                 f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
