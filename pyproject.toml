@@ -7,7 +7,7 @@ name = "areal"
 description = "AReaL: A Large-Scale Asynchronous Reinforcement Learning System"
 readme = "README.md"
 license = {text = "Apache-2.0"}
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.11,<3.13"
 version = "1.0.1"
 authors = [
     {name = "AReaL Team"},
@@ -34,6 +34,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: System :: Distributed Computing",
@@ -245,7 +246,7 @@ markers = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [

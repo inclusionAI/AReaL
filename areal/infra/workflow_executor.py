@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Protocol
 from collections.abc import Generator
 from collections import deque
 import torch
@@ -250,7 +250,11 @@ class WithTaskID(Protocol):
     task_id: int
 
 
-class BatchTaskDispatcher[TInput: WithTaskID, TResult]:
+TInput = TypeVar("TInput", bound=WithTaskID)
+TResult = TypeVar("TResult")
+
+
+class BatchTaskDispatcher(Generic[TInput, TResult]):
     """Generic dispatcher for asynchronous task execution with staleness control.
 
     Manages background threads for task submission and result collection.
@@ -368,8 +372,10 @@ class BatchTaskDispatcher[TInput: WithTaskID, TResult]:
                     with self._input_cv:
                         self._pending_inputs.appendleft(task_input)
                         self._input_cv.wait_for(
-                            lambda: self._shutdown_event.is_set()
-                            or self._has_runner_capacity()
+                            lambda: (
+                                self._shutdown_event.is_set()
+                                or self._has_runner_capacity()
+                            )
                         )
                     # Allow other threads to make progress before retrying
                     continue
