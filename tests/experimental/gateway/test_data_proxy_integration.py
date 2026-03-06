@@ -128,11 +128,17 @@ class TestSGLangBackendIntegration:
     async def test_generate_non_streaming(self, sglang_server, model_path):
         """Call SGLang /generate non-streaming and verify output structure."""
         from areal.experimental.gateway.data_proxy.backend import SGLangBackend
+        from areal.experimental.gateway.data_proxy.pause import PauseState
         from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
             TokenizerProxy,
         )
 
-        backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
+        pause_state = PauseState()
+        backend = SGLangBackend(
+            backend_addr=sglang_server["base_url"],
+            pause_state=pause_state,
+            request_timeout=60.0,
+        )
         tok = TokenizerProxy(model_path)
 
         input_ids = await tok.tokenize("What is 2+2?")
@@ -173,11 +179,17 @@ class TestSGLangBackendIntegration:
     async def test_generate_with_stop_token_ids(self, sglang_server, model_path):
         """Verify that stop_token_ids causes early stopping."""
         from areal.experimental.gateway.data_proxy.backend import SGLangBackend
+        from areal.experimental.gateway.data_proxy.pause import PauseState
         from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
             TokenizerProxy,
         )
 
-        backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
+        pause_state = PauseState()
+        backend = SGLangBackend(
+            backend_addr=sglang_server["base_url"],
+            pause_state=pause_state,
+            request_timeout=60.0,
+        )
         tok = TokenizerProxy(model_path)
 
         input_ids = await tok.tokenize("Hello")
@@ -233,15 +245,14 @@ class TestDataProxyGenerateIntegration:
         # httpx.ASGITransport does not trigger ASGI lifespan events,
         # so we must initialize app.state manually.
         tok = TokenizerProxy(model_path)
-        backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
         pause_state = PauseState()
-        resubmit_backend = SGLangBackend(
-            base=backend,
+        backend = SGLangBackend(
+            backend_addr=sglang_server["base_url"],
             pause_state=pause_state,
+            request_timeout=60.0,
         )
         app.state.tokenizer = tok
         app.state.backend = backend
-        app.state.resubmit_backend = resubmit_backend
         app.state.pause_state = pause_state
         app.state.config = config
         app.state.session_store = SessionStore()
@@ -317,15 +328,14 @@ class TestDataProxyGenerateIntegration:
         )
         app = create_app(config)
 
-        backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
         pause_state = PauseState()
-        resubmit_backend = SGLangBackend(
-            base=backend,
+        backend = SGLangBackend(
+            backend_addr=sglang_server["base_url"],
             pause_state=pause_state,
+            request_timeout=60.0,
         )
         app.state.tokenizer = tok
         app.state.backend = backend
-        app.state.resubmit_backend = resubmit_backend
         app.state.pause_state = pause_state
         app.state.config = config
         app.state.session_store = SessionStore()
@@ -386,15 +396,14 @@ class TestDataProxyGenerateIntegration:
         )
         app = create_app(config)
 
-        backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
         pause_state = PauseState()
-        resubmit_backend = SGLangBackend(
-            base=backend,
+        backend = SGLangBackend(
+            backend_addr=sglang_server["base_url"],
             pause_state=pause_state,
+            request_timeout=60.0,
         )
         app.state.tokenizer = tok
         app.state.backend = backend
-        app.state.resubmit_backend = resubmit_backend
         app.state.pause_state = pause_state
         app.state.config = config
         app.state.session_store = SessionStore()
@@ -457,21 +466,20 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     # httpx.ASGITransport does not trigger ASGI lifespan events,
     # so we must initialize app.state manually.
     tok = TokenizerProxy(model_path)
-    backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
     pause_state = PauseState()
-    resubmit_backend = SGLangBackend(
-        base=backend,
+    backend = SGLangBackend(
+        backend_addr=sglang_server["base_url"],
         pause_state=pause_state,
+        request_timeout=60.0,
     )
     store = SessionStore()
 
     app.state.tokenizer = tok
     app.state.backend = backend
-    app.state.resubmit_backend = resubmit_backend
     app.state.pause_state = pause_state
     app.state.config = config
     app.state.session_store = store
-    app.state.chat_handler = ChatCompletionHandler(resubmit_backend, tok)
+    app.state.chat_handler = ChatCompletionHandler(backend, tok)
 
     return app, store
 
@@ -797,7 +805,9 @@ class TestChatCompletionsIntegration:
             )
             assert resp.status_code == 403
 
-            # Wrong session key on /chat/completions
+            # Unknown session key on /chat/completions falls through to
+            # standalone mode (no session cache) — the data proxy never
+            # rejects /chat/completions requests.
             resp = await client.post(
                 "/chat/completions",
                 json={
@@ -805,9 +815,9 @@ class TestChatCompletionsIntegration:
                     "messages": [{"role": "user", "content": "hi"}],
                 },
                 headers={"Authorization": "Bearer fake-session-key"},
-                timeout=10.0,
+                timeout=60.0,
             )
-            assert resp.status_code == 401
+            assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
