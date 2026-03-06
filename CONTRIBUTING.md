@@ -75,12 +75,12 @@ helping with code reviews. This guide will help you get started.
    `test_data_redistribution.py`), we use subprocesses to launch distributed experiments
    with `torchrun` and wait for results.
 
-   If you have modified documentation, build it locally and preview it before opening a
-   PR:
+   If you have modified documentation, prepare doc in English and Chinese (use
+   [/translate-doc-zh](../en/reference/ai_assisted_dev.md#commands) if needed), then
+   build the docs and preview locally:
 
    ```bash
-   # Build docs locally (jupyter-book is included in dev dependencies):
-   jb build docs
+   ./docs/build_all.sh
    ```
 
 1. **Submit a Pull Request**

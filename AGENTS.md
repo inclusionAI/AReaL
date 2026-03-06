@@ -222,6 +222,7 @@ ______________________________________________________________________
 | `/create-pr`         | Rebase, squash, create PR                            |
 | `commit-conventions` | Commit message conventions (auto-triggers on commit) |
 | `/review-pr`         | Dynamic agent-allocated PR review                    |
+| `/translate-doc-zh`  | Translate English docs to Chinese                    |
 
 ______________________________________________________________________
 

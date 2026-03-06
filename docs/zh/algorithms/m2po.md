@@ -19,9 +19,15 @@ M2PO的第一步是计算二阶矩： $$
 <img src="../figures/m2po_masking.png" width = "298" height = "217" alt="m2po masking"/>
 </center>
 
-最后一步是优化目标： $$ J\_{\\text{M2PO}}(\\theta) =
-\\frac{1}{\\sum\_{i=1}^G|o_i|}\\sum\_{i=1}^G\\sum\_{t=1}^{|o_i|}M\_{i,t}\\frac{\\pi\_\\theta(o_i|q)}{\\pi\_{\\theta\_{old}}(o_i|q)}A\_{i,t},\~~\~~M\_{i,t}\\in{0,1}.
-$$ 其中 $M$ 在第二步中计算，且 $$ A\_{i,t}=\\frac{r_i-mean({R_i}_{i=1}^G)}{std({R_i}_{i=1}^G)} $$
+最后一步是优化目标：
+
+$$ J\_{\\text{M2PO}}(\\theta) =
+\\frac{1}{\\sum\_{i=1}^G|o_i|}\\sum\_{i=1}^G\\sum\_{t=1}^{|o_i|}M\_{i,t}\\frac{\\pi\_\\theta(o_i|q)}{\\pi\_{\\theta\_{old}}(o_i|q)}A\_{i,t}.
+$$
+
+其中 $M$ 在第二步中计算，且
+
+$$ A\_{i,t}=\\frac{r_i-mean({R_i}_{i=1}^G)}{std({R_i}_{i=1}^G)}. $$
 
 更多详情：
 
