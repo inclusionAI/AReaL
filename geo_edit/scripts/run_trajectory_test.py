@@ -9,14 +9,16 @@ Usage:
     bash geo_edit/scripts/launch_vllm_generate.sh
 
     # 2. Run test
+    gpt-5_grounding_dino gpt-5_label gpt-5_only_crop gpt-5_only_highlight gpt-5_sam  gpt-5_testset
     python -m geo_edit.scripts.run_trajectory_test \
-        --parquet_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/gpt-5_ocr.parquet \
-        --output_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/Qwen3-VL-8B-Thinking/gpt-5_ocr \
-        --model_name /storage/openpsi/models/Qwen3-VL-8B-Thinking \
+        --parquet_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/gpt-5_grounding_dino.parquet \
+        --output_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/InternVL3-8B/gpt-5_grounding_dino\
+        --model_name /storage/openpsi/models/InternVL3-8B \
         --api_base http://127.0.0.1:8000 \
-        --num_workers 8
+        --num_workers 32
 
     # 3. Evaluate with openai_as_judge
+    gpt-5_grounding_dino gpt-5_label gpt-5_only_crop gpt-5_only_highlight gpt-5_sam  gpt-5_testset
     python -m geo_edit.evaluation.openai_as_judge \
         --api_key $OPENAI_API_KEY \
         --result_path /storage/.../test_results/ \

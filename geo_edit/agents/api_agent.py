@@ -123,7 +123,6 @@ class APIBasedAgent(BaseAgent):
         api_kwargs = {"model": self.model, "input": input_payload, **gen_kwargs}
         if previous_response_id is not None:
             api_kwargs["previous_response_id"] = previous_response_id
-
         response = self.client.responses.create(**api_kwargs)
 
         extra_info["original_response"] = str(response)
@@ -181,13 +180,14 @@ class APIBasedAgent(BaseAgent):
                 else:
                     # For GPT models: use reasoning_effort
                     gen_kwargs["reasoning_effort"] = reasoning_level
-
+        print(messages)
+        
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             **gen_kwargs,
         )
-
+        exit(0)
         extra_info["original_response"] = str(response)
 
         if response.usage is not None:

@@ -112,7 +112,7 @@ def evaluate_vispuzzle(
             dataset = load_dataset(dataset_path, split=split)
     else:
         if dataset_name.lower() == "spatial_navigation":
-            dataset = load_dataset("ThinkMorph/Spatial_Navigation", split="train")
+            dataset = load_dataset("/storage/openpsi/data/lcy_image_edit/Spatial_Navigation", split="train")
         else:
             dataset = load_dataset("ThinkMorph/VisPuzzle", split="test")
     if max_samples:
@@ -230,9 +230,9 @@ if __name__ == "__main__":
 
     # Example 3: Spatial_Navigation from HuggingFace
     evaluate_vispuzzle(
-        model_path="D:/models/ThinkMorph-7B",           # 本地模型路径
+        model_path="/storage/openpsi/models/lcy_image_edit/ThinkMorph-7B",           # 本地模型路径
         dataset_name="spatial_navigation",              # 使用 Spatial_Navigation 数据集
-        output_dir="./spatial_nav_results",
+        output_dir="/storage/openpsi/data/lcy_image_edit/spatial_nav_results",
         tensor_parallel_size=1,
         max_samples=10,  # Set to e.g. 10 for quick test
         split="train",                                  # Spatial_Navigation 只有 train split

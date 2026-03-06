@@ -4,9 +4,10 @@ This module reads trajectory.json files from subfolders and packages them into
 a parquet dataset for testing tool call effectiveness.
 
 Usage:
+gpt-5_grounding_dino  gpt-5_label  gpt-5_ocr  gpt-5_ocr.parquet  gpt-5_only_crop  gpt-5_only_highlight  gpt-5_sam  gpt-5_test  gpt-5_testset
     python -m geo_edit.data_preprocess.package_trajectory \
-        --data_dir /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/gpt-5_label/ \
-        --out_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/trajectory_dataset.parquet
+        --data_dir /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/gpt-5_ocr/ \
+        --out_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/gpt-5_ocr.parquet
 """
 
 from __future__ import annotations

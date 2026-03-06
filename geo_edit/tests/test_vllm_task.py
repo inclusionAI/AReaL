@@ -44,7 +44,7 @@ class Args:
 def test_vllm_task() -> None:
     args = Args(
         api_base="http://127.0.0.1:8000",
-        model_name="/storage/openpsi/models/Qwen3-VL-32B-Thinking",
+        model_name="/storage/openpsi/models/InternVL3-8B",
         image_path=Path("./geo_edit/images/173.jpg"),
         prompt=DEFAULT_PROMPT,
         system_prompt=None,
