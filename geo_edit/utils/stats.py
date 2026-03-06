@@ -77,7 +77,7 @@ def compute_tool_combination_statistics(eval_results: List[Dict]) -> str:
         result = item.get("result")
         if isinstance(result, dict) and result.get("is_filter"):
             continue
-        func_counts = item.get("function_call_each_count", {})
+        func_counts = item.get("function_call_each_count") or {}
         used = sorted([t for t, c in func_counts.items() if c > 0])
         category = "+".join(used) if used else "no_tool"
         s = stats[category]
