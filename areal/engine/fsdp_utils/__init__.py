@@ -22,10 +22,13 @@ else:
     )
 
 
+from areal.engine.fsdp_utils.optimizer import PerLayerGPUOptimizerStep
+
 __all__ = [
     "apply_fsdp2",
     "fsdp2_load_full_state_dict",
     "get_cosine_schedule_with_warmup",
+    "PerLayerGPUOptimizerStep",
 ]
 
 

@@ -404,6 +404,20 @@ class FSDPEngineConfig:
             "not used; each rank loads weights independently on CPU."
         },
     )
+    per_layer_optimizer_step: bool = field(
+        default=False,
+        metadata={
+            "help": "Stream optimizer states layer-by-layer to GPU during optimizer step "
+            "instead of materializing all states at once. Reduces peak memory. "
+            "Requires offload_params=False and optimizer type 'adam' (AdamW)."
+        },
+    )
+    optimizer_step_prefetch_layers: int = field(
+        default=1,
+        metadata={
+            "help": "Number of layers to prefetch during per-layer optimizer step."
+        },
+    )
 
     shard_vision_across_sp: bool = field(
         default=False,

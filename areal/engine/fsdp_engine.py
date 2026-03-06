@@ -11,6 +11,9 @@ from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from areal.engine.fsdp_utils.optimizer import PerLayerGPUOptimizerStep
+
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
@@ -204,6 +207,7 @@ class FSDPEngine(TrainEngine):
 
         self.is_offload: bool = False
         self.enable_tree_training: bool = self.config.enable_tree_training
+        self._per_layer_optimizer_stepper: PerLayerGPUOptimizerStep | None = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -348,6 +352,24 @@ class FSDPEngine(TrainEngine):
         )
 
         self._create_optimizer(ft_spec)
+
+        if self.config.fsdp.per_layer_optimizer_step and self.optimizer is not None:
+            if self.config.fsdp.offload_params:
+                raise ValueError(
+                    "per_layer_optimizer_step requires offload_params=False."
+                )
+            if self.optimizer_config.type != "adam":
+                raise ValueError(
+                    f"per_layer_optimizer_step only supports 'adam' optimizer, got '{self.optimizer_config.type}'."
+                )
+            from areal.engine.fsdp_utils.optimizer import PerLayerGPUOptimizerStep
+            self._per_layer_optimizer_stepper = PerLayerGPUOptimizerStep(
+                model=self.model,
+                optimizer=self.optimizer,
+                device_id=self.device,
+                prefetch_layers=self.config.fsdp.optimizer_step_prefetch_layers,
+            )
+
         self._initialized = True
 
     @property
@@ -519,6 +541,10 @@ class FSDPEngine(TrainEngine):
         if not math.isfinite(grad_norm):
             self.optimizer_zero_grad()
             update_successful = False
+        elif self._per_layer_optimizer_stepper is not None:
+            with trace_scope("fsdp_engine.step"):
+                self._per_layer_optimizer_stepper.step()
+            update_successful = True
         else:
             with trace_scope("fsdp_engine.step"):
                 self.optimizer.step()
