@@ -9,7 +9,7 @@ Usage:
     bash geo_edit/scripts/launch_vllm_generate.sh
 
     # 2. Run test
-    python -m geo_edit.data_preprocess.run_trajectory_test \
+    python -m geo_edit.scripts.run_trajectory_test \
         --parquet_path /storage/.../trajectory_dataset.parquet \
         --output_path /storage/.../test_results/ \
         --api_base http://127.0.0.1:8000 \
