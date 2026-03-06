@@ -228,12 +228,12 @@ def _process_single_sample(
         # Inject images into messages
         messages = _inject_images_into_messages(messages, images)
 
-        # Prepend system message
-        if system_prompt:
-            messages.insert(0, {"role": "system", "content": system_prompt})
-
         # Call vLLM
         if api_mode == "chat_completions":
+            # Prepend system message for chat_completions
+            if system_prompt:
+                messages.insert(0, {"role": "system", "content": system_prompt})
+
             response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
@@ -242,13 +242,17 @@ def _process_single_sample(
             )
             output_text = response.choices[0].message.content or ""
         else:
-            # responses API
-            response = client.responses.create(
-                model=model_name,
-                input=messages,
-                max_output_tokens=max_tokens,
-                temperature=temperature,
-            )
+            # responses API - use instructions param for system prompt
+            api_kwargs = {
+                "model": model_name,
+                "input": messages,
+                "max_output_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if system_prompt:
+                api_kwargs["instructions"] = system_prompt
+
+            response = client.responses.create(**api_kwargs)
             output_text = getattr(response, "output_text", "") or ""
 
         # Save result
@@ -405,7 +409,7 @@ def main() -> None:
         type=str,
         default="responses",
         choices=["responses", "chat_completions"],
-        help="API mode (default: responses)."
+        help="API mode: 'responses' for vLLM/OpenAI, 'chat_completions' for SGLang (default: responses)."
     )
     parser.add_argument(
         "--max_tokens",
