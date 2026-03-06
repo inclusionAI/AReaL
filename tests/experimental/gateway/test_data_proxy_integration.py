@@ -236,7 +236,8 @@ class TestDataProxyGenerateIntegration:
         backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
         pause_state = PauseState()
         resubmit_backend = SGLangBackendWithResubmit(
-            base=backend, pause_state=pause_state,
+            base=backend,
+            pause_state=pause_state,
         )
         app.state.tokenizer = tok
         app.state.backend = backend
@@ -264,6 +265,7 @@ class TestDataProxyGenerateIntegration:
                         "temperature": 0.0,
                     },
                 },
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                 timeout=60.0,
             )
             assert resp.status_code == 200
@@ -318,7 +320,8 @@ class TestDataProxyGenerateIntegration:
         backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
         pause_state = PauseState()
         resubmit_backend = SGLangBackendWithResubmit(
-            base=backend, pause_state=pause_state,
+            base=backend,
+            pause_state=pause_state,
         )
         app.state.tokenizer = tok
         app.state.backend = backend
@@ -340,6 +343,7 @@ class TestDataProxyGenerateIntegration:
                         "temperature": 0.0,
                     },
                 },
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                 timeout=60.0,
             )
             assert resp.status_code == 200
@@ -385,7 +389,8 @@ class TestDataProxyGenerateIntegration:
         backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
         pause_state = PauseState()
         resubmit_backend = SGLangBackendWithResubmit(
-            base=backend, pause_state=pause_state,
+            base=backend,
+            pause_state=pause_state,
         )
         app.state.tokenizer = tok
         app.state.backend = backend
@@ -407,6 +412,7 @@ class TestDataProxyGenerateIntegration:
                         "temperature": 0.0,
                     },
                 },
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                 timeout=60.0,
             )
             assert resp.status_code == 200
@@ -454,7 +460,8 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
     pause_state = PauseState()
     resubmit_backend = SGLangBackendWithResubmit(
-        base=backend, pause_state=pause_state,
+        base=backend,
+        pause_state=pause_state,
     )
     store = SessionStore()
 
@@ -883,6 +890,7 @@ class TestPauseResumeIntegration:
                             "temperature": 0.0,
                         },
                     },
+                    headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                     timeout=30.0,
                 )
             )
@@ -928,6 +936,7 @@ class TestPauseResumeIntegration:
                         "temperature": 0.0,
                     },
                 },
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                 timeout=60.0,
             )
             assert resp.status_code == 200
@@ -1127,9 +1136,7 @@ class TestConcurrentPauseDuringGeneration:
     """
 
     @pytest.mark.asyncio
-    async def test_pause_during_generate_then_resume(
-        self, sglang_server, model_path
-    ):
+    async def test_pause_during_generate_then_resume(self, sglang_server, model_path):
         """Pause SGLang while /generate is in-flight, resume, verify completion.
 
         Flow:
@@ -1156,6 +1163,7 @@ class TestConcurrentPauseDuringGeneration:
                             "temperature": 0.7,
                         },
                     },
+                    headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                     timeout=120.0,
                 )
 
@@ -1227,7 +1235,10 @@ class TestConcurrentPauseDuringGeneration:
                     json={
                         "model": "sglang",
                         "messages": [
-                            {"role": "user", "content": "Write a long poem about the ocean."},
+                            {
+                                "role": "user",
+                                "content": "Write a long poem about the ocean.",
+                            },
                         ],
                         "max_completion_tokens": 256,
                         "temperature": 0.7,
@@ -1295,7 +1306,10 @@ class TestConcurrentPauseDuringGeneration:
                     json={
                         "model": "sglang",
                         "messages": [
-                            {"role": "user", "content": "Explain quantum mechanics in detail."},
+                            {
+                                "role": "user",
+                                "content": "Explain quantum mechanics in detail.",
+                            },
                         ],
                         "max_completion_tokens": 256,
                         "temperature": 0.7,
@@ -1374,6 +1388,7 @@ class TestConcurrentPauseDuringGeneration:
                             "temperature": 0.7,
                         },
                     },
+                    headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                     timeout=180.0,
                 )
 
