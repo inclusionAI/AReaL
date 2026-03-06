@@ -4,8 +4,8 @@ import hmac
 import inspect
 import json
 import logging
+import types
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -15,7 +15,6 @@ from pydantic import BaseModel
 
 from areal.experimental.gateway.data_proxy.backend import (
     GenerationResult,
-    SGLangBackend,
     SGLangBackendWithResubmit,
 )
 from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
@@ -74,12 +73,15 @@ async def stream_tokens(result: GenerationResult, tok: TokenizerProxy):
 
 
 # =============================================================================
-# API Key Authentication helpers
+# API Key helpers (for RL control-plane endpoints only)
 # =============================================================================
 
 
 def _extract_bearer_token(request: Request) -> str:
-    """Extract API token from Authorization header."""
+    """Extract API token from Authorization header.
+
+    Raises HTTPException(401) if missing or malformed.
+    """
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         return auth_header[7:].strip()
@@ -108,24 +110,16 @@ def _require_session_key(request: Request, store: SessionStore) -> str:
     return session.session_id
 
 
-@dataclass
-class AuthResult:
-    """Result of admin-or-session key authentication."""
+def _try_extract_bearer_token(request: Request) -> str | None:
+    """Extract bearer token if present. Returns None if missing/malformed.
 
-    is_admin: bool
-    session_id: str | None = None  # Only set if session key
-
-
-def _require_admin_or_session_key(request: Request, store: SessionStore) -> AuthResult:
-    """Authenticate with either admin key or session key.
-    Returns AuthResult indicating which type of key was used."""
-    token = _extract_bearer_token(request)
-    if hmac.compare_digest(token, store.admin_api_key):
-        return AuthResult(is_admin=True)
-    session = store.get_session_by_api_key(token)
-    if session is not None:
-        return AuthResult(is_admin=False, session_id=session.session_id)
-    raise HTTPException(status_code=401, detail="Invalid API key.")
+    Unlike _extract_bearer_token, this never raises — it's for endpoints
+    that accept requests with or without auth.
+    """
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return None
 
 
 async def _call_client_create(
@@ -227,22 +221,21 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             config.tokenizer_path,
         )
         tok = TokenizerProxy(config.tokenizer_path)
-        backend = SGLangBackend(config.backend_addr, config.request_timeout)
         pause_state = PauseState()
-        resubmit_backend = SGLangBackendWithResubmit(
-            base=backend,
+        backend = SGLangBackendWithResubmit(
+            backend_addr=config.backend_addr,
             pause_state=pause_state,
+            request_timeout=config.request_timeout,
             max_resubmit_retries=config.max_resubmit_retries,
             resubmit_wait=config.resubmit_wait,
         )
         app.state.tokenizer = tok
         app.state.backend = backend
-        app.state.resubmit_backend = resubmit_backend
         app.state.pause_state = pause_state
         app.state.config = config
         app.state.session_store = SessionStore()
         app.state.session_store.set_admin_key(config.admin_api_key)
-        app.state.chat_handler = ChatCompletionHandler(resubmit_backend, tok)
+        app.state.chat_handler = ChatCompletionHandler(backend, tok)
         yield
         logger.info("Data proxy shutting down")
 
@@ -264,14 +257,11 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         }
 
     # =========================================================================
-    # Low-level generate (Plan 3a)
+    # Low-level generate — no authentication
     # =========================================================================
 
     @app.post("/generate")
-    async def generate(req: GenerateRequest, request: Request):
-        store: SessionStore = app.state.session_store
-        _require_admin_or_session_key(request, store)
-
+    async def generate(req: GenerateRequest):
         if req.text is None and req.input_ids is None:
             raise HTTPException(
                 status_code=400,
@@ -279,7 +269,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             )
 
         tok: TokenizerProxy = app.state.tokenizer
-        resubmit_backend: SGLangBackendWithResubmit = app.state.resubmit_backend
+        backend: SGLangBackendWithResubmit = app.state.backend
 
         # Resolve input_ids
         if req.input_ids is not None:
@@ -298,7 +288,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         sampling_params = {**defaults, **(req.sampling_params or {})}
 
         # Call SGLang (with transparent pause/resubmit) — get all tokens at once
-        result = await resubmit_backend.generate(input_ids, sampling_params)
+        result = await backend.generate(input_ids, sampling_params)
 
         # Stream back one token per SSE chunk
         return StreamingResponse(
@@ -312,7 +302,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         )
 
     # =========================================================================
-    # Pause/Resume (Plan 3c) — internal control plane
+    # Pause/Resume — internal control plane (no auth at data proxy level)
     # =========================================================================
 
     @app.post("/pause_generation")
@@ -330,7 +320,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         return {"status": "ok", "paused": False}
 
     # =========================================================================
-    # Session management (Plan 3b)
+    # Session management (admin key / session key required)
     # =========================================================================
 
     @app.post("/rl/start_session", status_code=201)
@@ -387,26 +377,32 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         return {"message": "success"}
 
     # =========================================================================
-    # Chat completions (Plan 3b) — OpenAI-compatible
+    # Chat completions — OpenAI-compatible
+    #
+    # If the bearer token is a known session key, use session cache.
+    # Otherwise (no token, admin key, unknown key) → standalone mode.
+    # Data proxy never rejects requests on /chat/completions.
     # =========================================================================
 
     @app.post("/chat/completions")
     async def chat_completions(body: CompletionCreateParams, request: Request):
         store: SessionStore = app.state.session_store
-        auth = _require_admin_or_session_key(request, store)
 
-        if auth.is_admin:
-            # Standalone mode: no session, no caching
-            import types
+        # Try to resolve a session from the bearer token
+        token = _try_extract_bearer_token(request)
+        session_data_obj = None
+        if token is not None:
+            session_obj = store.get_session_by_api_key(token)
+            if session_obj is not None:
+                session_data_obj = session_obj
+                session_data_obj.update_last_access()
 
-            session_data = types.SimpleNamespace(completions=None)
+        if session_data_obj is not None:
+            # Session mode: use session cache
+            session_data = session_data_obj
         else:
-            session_data = store.get_session(auth.session_id)  # type: ignore[arg-type]
-            if session_data is None:
-                raise HTTPException(
-                    status_code=410, detail="Session already ended or expired"
-                )
-            session_data.update_last_access()
+            # Standalone mode: no session, no caching
+            session_data = types.SimpleNamespace(completions=None)
 
         chat_handler: ChatCompletionHandler = app.state.chat_handler
 
@@ -447,7 +443,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         return result
 
     # =========================================================================
-    # Trajectory export (Plan 3b)
+    # Trajectory export (admin key required)
     # =========================================================================
 
     @app.post("/export_trajectories")

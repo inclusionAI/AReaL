@@ -123,23 +123,25 @@ async def app_client(config, mock_tokenizer, mock_backend, mock_chat_handler):
     app = create_app(config)
 
     pause_state = PauseState()
-    resubmit_backend = SGLangBackendWithResubmit(
-        base=mock_backend,
+    backend = SGLangBackendWithResubmit(
+        backend_addr=config.backend_addr,
         pause_state=pause_state,
+        request_timeout=config.request_timeout,
         max_resubmit_retries=config.max_resubmit_retries,
         resubmit_wait=config.resubmit_wait,
     )
+    backend._call_sglang = mock_backend.generate
 
     app.state.tokenizer = mock_tokenizer
-    app.state.backend = mock_backend
-    app.state.resubmit_backend = resubmit_backend
+    app.state.backend = backend
     app.state.pause_state = pause_state
     app.state.config = config
     app.state.session_store = SessionStore()
     app.state.chat_handler = mock_chat_handler
 
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test", headers={"Authorization": "Bearer areal-admin-key"}) as client:
+    # No auth header needed — /generate has no auth at data proxy level
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client, app, pause_state
 
 
@@ -201,36 +203,38 @@ class TestSGLangBackendWithResubmit:
     @pytest.mark.asyncio
     async def test_no_abort_pass_through(self):
         """Normal stop — no resubmit needed."""
-        base = MagicMock()
-        base.generate = AsyncMock(
+        pause_state = PauseState()
+        backend = SGLangBackendWithResubmit(
+            backend_addr="http://mock", pause_state=pause_state
+        )
+        backend._call_sglang = AsyncMock(
             return_value=GenerationResult([100, 101], [-0.5, -0.3], "stop")
         )
-        pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(base, pause_state)
 
         result = await backend.generate([1, 2, 3], {"max_new_tokens": 20})
 
         assert result.output_tokens == [100, 101]
         assert result.output_logprobs == [-0.5, -0.3]
         assert result.stop_reason == "stop"
-        base.generate.assert_called_once()
+        backend._call_sglang.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_single_abort_then_stop(self):
         """One abort, then stop — verify token accumulation and resubmit."""
-        base = MagicMock()
         call_count = 0
 
-        async def mock_generate(input_ids, params):
+        async def mock_call_sglang(input_ids, params):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 return GenerationResult([100, 101], [-0.5, -0.3], "abort")
             return GenerationResult([200, 201], [-0.4, -0.2], "stop")
 
-        base.generate = mock_generate
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(base, pause_state, resubmit_wait=0.01)
+        backend = SGLangBackendWithResubmit(
+            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
+        )
+        backend._call_sglang = mock_call_sglang
 
         result = await backend.generate([1, 2, 3], {"max_new_tokens": 20})
 
@@ -242,18 +246,19 @@ class TestSGLangBackendWithResubmit:
     @pytest.mark.asyncio
     async def test_resubmit_input_ids_extended(self):
         """Verify resubmit passes input_ids + accumulated_output as new input."""
-        base = MagicMock()
         calls = []
 
-        async def mock_generate(input_ids, params):
+        async def mock_call_sglang(input_ids, params):
             calls.append({"input_ids": list(input_ids), "params": dict(params)})
             if len(calls) == 1:
                 return GenerationResult([100, 101], [-0.5, -0.3], "abort")
             return GenerationResult([200], [-0.4], "stop")
 
-        base.generate = mock_generate
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(base, pause_state, resubmit_wait=0.01)
+        backend = SGLangBackendWithResubmit(
+            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
+        )
+        backend._call_sglang = mock_call_sglang
 
         await backend.generate([1, 2, 3], {"max_new_tokens": 20})
 
@@ -268,25 +273,27 @@ class TestSGLangBackendWithResubmit:
     @pytest.mark.asyncio
     async def test_max_new_tokens_exhausted_becomes_length(self):
         """When accumulated tokens reach max_new_tokens, stop_reason='length'."""
-        base = MagicMock()
         call_count = 0
 
-        async def mock_generate(input_ids, params):
+        async def mock_call_sglang(input_ids, params):
             nonlocal call_count
             call_count += 1
             # Always return 5 tokens with abort
             return GenerationResult([10, 11, 12, 13, 14], [-0.1] * 5, "abort")
 
-        base.generate = mock_generate
         pause_state = PauseState()
         backend = SGLangBackendWithResubmit(
-            base, pause_state, max_resubmit_retries=10, resubmit_wait=0.01
+            backend_addr="http://mock",
+            pause_state=pause_state,
+            max_resubmit_retries=10,
+            resubmit_wait=0.01,
         )
+        backend._call_sglang = mock_call_sglang
 
         result = await backend.generate([1, 2], {"max_new_tokens": 10})
 
         # First call returns 5 tokens (abort), second call max_new_tokens=5,
-        # returns 5 more tokens (abort), third call max_new_tokens=0 → break as length
+        # returns 5 more tokens (abort), third call max_new_tokens=0 -> break as length
         assert call_count == 2
         assert len(result.output_tokens) == 10
         assert result.stop_reason == "length"
@@ -294,26 +301,33 @@ class TestSGLangBackendWithResubmit:
     @pytest.mark.asyncio
     async def test_max_retries_final_abort_becomes_length(self):
         """After max retries, final abort is converted to 'length'."""
-        base = MagicMock()
-        base.generate = AsyncMock(return_value=GenerationResult([10], [-0.1], "abort"))
         pause_state = PauseState()
         backend = SGLangBackendWithResubmit(
-            base, pause_state, max_resubmit_retries=3, resubmit_wait=0.01
+            backend_addr="http://mock",
+            pause_state=pause_state,
+            max_resubmit_retries=3,
+            resubmit_wait=0.01,
+        )
+        backend._call_sglang = AsyncMock(
+            return_value=GenerationResult([10], [-0.1], "abort")
         )
 
         result = await backend.generate([1, 2], {"max_new_tokens": 100})
 
-        assert base.generate.call_count == 3
+        assert backend._call_sglang.call_count == 3
         assert result.stop_reason == "length"
         assert len(result.output_tokens) == 3  # 1 token per retry
 
     @pytest.mark.asyncio
     async def test_paused_blocks_until_resumed(self):
         """While paused, generate waits; after resume, it completes."""
-        base = MagicMock()
-        base.generate = AsyncMock(return_value=GenerationResult([100], [-0.5], "stop"))
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(base, pause_state, resubmit_wait=0.01)
+        backend = SGLangBackendWithResubmit(
+            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
+        )
+        backend._call_sglang = AsyncMock(
+            return_value=GenerationResult([100], [-0.5], "stop")
+        )
 
         await pause_state.set_paused(True)
         task = asyncio.create_task(backend.generate([1, 2, 3], {"max_new_tokens": 5}))
@@ -328,33 +342,35 @@ class TestSGLangBackendWithResubmit:
     @pytest.mark.asyncio
     async def test_tool_calls_stop_reason_passthrough(self):
         """stop_reason='tool_calls' exits the loop normally."""
-        base = MagicMock()
-        base.generate = AsyncMock(
+        pause_state = PauseState()
+        backend = SGLangBackendWithResubmit(
+            backend_addr="http://mock", pause_state=pause_state
+        )
+        backend._call_sglang = AsyncMock(
             return_value=GenerationResult([100, 101], [-0.5, -0.3], "tool_calls")
         )
-        pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(base, pause_state)
 
         result = await backend.generate([1, 2], {"max_new_tokens": 20})
 
         assert result.stop_reason == "tool_calls"
         assert result.output_tokens == [100, 101]
-        base.generate.assert_called_once()
+        backend._call_sglang.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_length_stop_reason_passthrough(self):
         """stop_reason='length' exits the loop normally."""
-        base = MagicMock()
-        base.generate = AsyncMock(
+        pause_state = PauseState()
+        backend = SGLangBackendWithResubmit(
+            backend_addr="http://mock", pause_state=pause_state
+        )
+        backend._call_sglang = AsyncMock(
             return_value=GenerationResult([100], [-0.5], "length")
         )
-        pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(base, pause_state)
 
         result = await backend.generate([1, 2], {"max_new_tokens": 20})
 
         assert result.stop_reason == "length"
-        base.generate.assert_called_once()
+        backend._call_sglang.assert_called_once()
 
 
 # =============================================================================
@@ -454,8 +470,8 @@ class TestGenerateWithResubmit:
                 return GenerationResult([100, 101], [-0.5, -0.3], "abort")
             return GenerationResult([200], [-0.4], "stop")
 
-        # Replace the base backend's generate method
-        app.state.backend.generate = mock_generate
+        # Replace the backend's _call_sglang to simulate abort/resubmit
+        app.state.backend._call_sglang = mock_generate
 
         resp = await client.post(
             "/generate",

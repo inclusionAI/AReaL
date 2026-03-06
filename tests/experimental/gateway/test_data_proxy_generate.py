@@ -35,28 +35,14 @@ def mock_tokenizer():
     return tok
 
 
-@pytest.fixture
-def mock_backend():
-    from areal.experimental.gateway.data_proxy.backend import GenerationResult
-
-    backend = MagicMock()
-    backend.generate = AsyncMock(
-        return_value=GenerationResult(
-            output_tokens=[1234, 5678, 2],
-            output_logprobs=[-0.5, -0.3, -0.1],
-            stop_reason="stop",
-        )
-    )
-    return backend
-
-
 @pytest_asyncio.fixture
-async def client(config, mock_tokenizer, mock_backend):
+async def client(config, mock_tokenizer):
     """Create app with mocked deps and yield an httpx async client.
     The httpx ASGITransport does not run the ASGI lifespan protocol,
     so we set app.state directly with the mocked deps.
     """
     from areal.experimental.gateway.data_proxy.backend import (
+        GenerationResult,
         SGLangBackendWithResubmit,
     )
     from areal.experimental.gateway.data_proxy.pause import PauseState
@@ -65,21 +51,30 @@ async def client(config, mock_tokenizer, mock_backend):
     app = create_app(config)
     # Bypass lifespan — inject mocks directly into app.state
     pause_state = PauseState()
-    resubmit_backend = SGLangBackendWithResubmit(
-        base=mock_backend,
+    backend = SGLangBackendWithResubmit(
+        backend_addr=config.backend_addr,
         pause_state=pause_state,
+        request_timeout=config.request_timeout,
         max_resubmit_retries=config.max_resubmit_retries,
         resubmit_wait=0.01,
     )
+    # Mock _call_sglang to return a canned result
+    backend._call_sglang = AsyncMock(
+        return_value=GenerationResult(
+            output_tokens=[1234, 5678, 2],
+            output_logprobs=[-0.5, -0.3, -0.1],
+            stop_reason="stop",
+        )
+    )
     app.state.tokenizer = mock_tokenizer
-    app.state.backend = mock_backend
-    app.state.resubmit_backend = resubmit_backend
+    app.state.backend = backend
     app.state.pause_state = pause_state
     app.state.config = config
     app.state.session_store = SessionStore()
     app.state.chat_handler = MagicMock()
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test", headers={"Authorization": "Bearer areal-admin-key"}) as c:
+    # No auth header needed — /generate has no auth
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
 
@@ -103,7 +98,7 @@ async def test_health(client):
 
 
 @pytest.mark.asyncio
-async def test_generate_with_text(client, mock_tokenizer, mock_backend):
+async def test_generate_with_text(client, mock_tokenizer):
     resp = await client.post(
         "/generate",
         json={"text": "What is 2+2?", "sampling_params": {"max_new_tokens": 10}},
@@ -130,7 +125,7 @@ async def test_generate_with_text(client, mock_tokenizer, mock_backend):
 
 
 @pytest.mark.asyncio
-async def test_generate_with_input_ids(client, mock_tokenizer, mock_backend):
+async def test_generate_with_input_ids(client, mock_tokenizer):
     resp = await client.post(
         "/generate",
         json={"input_ids": [1, 2, 3]},
@@ -142,9 +137,10 @@ async def test_generate_with_input_ids(client, mock_tokenizer, mock_backend):
     # tokenize should NOT be called when input_ids provided
     mock_tokenizer.tokenize.assert_not_called()
 
-    # backend.generate should be called with the provided input_ids
-    mock_backend.generate.assert_called_once()
-    call_args = mock_backend.generate.call_args
+    # _call_sglang should be called with the provided input_ids
+    backend = client._transport.app.state.backend
+    backend._call_sglang.assert_called_once()
+    call_args = backend._call_sglang.call_args
     assert call_args[0][0] == [1, 2, 3]  # input_ids
 
 
@@ -159,11 +155,12 @@ async def test_generate_missing_input(client):
 
 
 @pytest.mark.asyncio
-async def test_generate_default_sampling_params(client, mock_backend):
+async def test_generate_default_sampling_params(client):
     resp = await client.post("/generate", json={"input_ids": [1, 2, 3]})
     assert resp.status_code == 200
 
-    call_args = mock_backend.generate.call_args
+    backend = client._transport.app.state.backend
+    call_args = backend._call_sglang.call_args
     params = call_args[0][1]  # sampling_params
     assert params["max_new_tokens"] == 512
     assert params["temperature"] == 1.0
@@ -172,7 +169,7 @@ async def test_generate_default_sampling_params(client, mock_backend):
 
 
 @pytest.mark.asyncio
-async def test_generate_custom_sampling_params_override(client, mock_backend):
+async def test_generate_custom_sampling_params_override(client):
     resp = await client.post(
         "/generate",
         json={
@@ -182,7 +179,8 @@ async def test_generate_custom_sampling_params_override(client, mock_backend):
     )
     assert resp.status_code == 200
 
-    call_args = mock_backend.generate.call_args
+    backend = client._transport.app.state.backend
+    call_args = backend._call_sglang.call_args
     params = call_args[0][1]
     assert params["max_new_tokens"] == 100
     assert params["temperature"] == 0.7
@@ -190,7 +188,7 @@ async def test_generate_custom_sampling_params_override(client, mock_backend):
 
 
 @pytest.mark.asyncio
-async def test_generate_abort_stop_reason(client, mock_backend):
+async def test_generate_abort_stop_reason(client):
     """With SGLangBackendWithResubmit, a single abort followed by stop
     is handled transparently. The abort is never exposed to the caller.
     """
@@ -208,14 +206,15 @@ async def test_generate_abort_stop_reason(client, mock_backend):
         stop_reason="stop",
     )
 
-    async def mock_generate(input_ids, params):
+    async def mock_call_sglang(input_ids, params):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return original_result
         return stop_result
 
-    mock_backend.generate = mock_generate
+    backend = client._transport.app.state.backend
+    backend._call_sglang = mock_call_sglang
 
     resp = await client.post("/generate", json={"input_ids": [1, 2, 3]})
     assert resp.status_code == 200

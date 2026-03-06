@@ -139,15 +139,16 @@ async def client(config, mock_tokenizer, mock_backend, mock_chat_handler):
     app = create_app(config)
     # Bypass lifespan — inject mocks directly into app.state
     pause_state = PauseState()
-    resubmit_backend = SGLangBackendWithResubmit(
-        base=mock_backend,
+    backend = SGLangBackendWithResubmit(
+        backend_addr=config.backend_addr,
         pause_state=pause_state,
+        request_timeout=config.request_timeout,
         max_resubmit_retries=5,
         resubmit_wait=0.01,
     )
+    backend._call_sglang = mock_backend.generate
     app.state.tokenizer = mock_tokenizer
-    app.state.backend = mock_backend
-    app.state.resubmit_backend = resubmit_backend
+    app.state.backend = backend
     app.state.pause_state = pause_state
     app.state.config = config
     store = SessionStore()
@@ -156,7 +157,6 @@ async def client(config, mock_tokenizer, mock_backend, mock_chat_handler):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
-
 
 def admin_headers():
     return {"Authorization": f"Bearer {ADMIN_KEY}"}
@@ -302,7 +302,7 @@ async def test_chat_completions_without_session_key(client):
             "messages": [{"role": "user", "content": "hi"}],
         },
     )
-    assert resp.status_code == 401
+    assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -315,7 +315,7 @@ async def test_chat_completions_with_invalid_key(client):
         },
         headers={"Authorization": "Bearer fake-key"},
     )
-    assert resp.status_code == 401
+    assert resp.status_code == 200
 
 
 @pytest.mark.asyncio

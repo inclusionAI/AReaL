@@ -22,18 +22,34 @@ class GenerationResult:
     stop_reason: str  # 'stop' | 'abort' | 'length' | 'tool_calls'
 
 
-class SGLangBackend:
-    """Thin HTTP wrapper around SGLang's native /generate endpoint.
+class SGLangBackendWithResubmit:
+    """SGLang HTTP backend with transparent pause/abort/resubmit loop.
 
-    This class is the ONLY place that knows about SGLang's response format.
-    Plan 3c will wrap generate() calls in a pause/resubmit loop — keep this class stateless.
+    Calls SGLang's native /generate endpoint. When SGLang returns
+    stop_reason='abort' (weight update in progress), this backend:
+      1. Accumulates partial output tokens
+      2. Waits for PauseState to clear (resume)
+      3. Resubmits with input_ids + accumulated_output_tokens
+      4. Decrements max_new_tokens by len(accumulated)
+
+    Ported from areal/infra/remote_inf_engine.py:771-843.
     """
 
-    def __init__(self, backend_addr: str, request_timeout: float = 120.0):
+    def __init__(
+        self,
+        backend_addr: str,
+        pause_state: PauseState,
+        request_timeout: float = 120.0,
+        max_resubmit_retries: int = 20,
+        resubmit_wait: float = 0.5,
+    ) -> None:
         self.backend_addr = backend_addr.rstrip("/")
         self.request_timeout = request_timeout
+        self.pause_state = pause_state
+        self.max_resubmit_retries = max_resubmit_retries
+        self.resubmit_wait = resubmit_wait
 
-    async def generate(
+    async def _call_sglang(
         self,
         input_ids: list[int],
         sampling_params: dict[str, Any],
@@ -79,32 +95,6 @@ class SGLangBackend:
             stop_reason=stop_reason,
         )
 
-
-class SGLangBackendWithResubmit:
-    """Wraps SGLangBackend with transparent pause/abort/resubmit loop.
-
-    When SGLang returns stop_reason='abort' (weight update in progress),
-    this wrapper:
-      1. Accumulates partial output tokens
-      2. Waits for PauseState to clear (resume)
-      3. Resubmits with input_ids + accumulated_output_tokens
-      4. Decrements max_new_tokens by len(accumulated)
-
-    Ported from areal/infra/remote_inf_engine.py:771-843.
-    """
-
-    def __init__(
-        self,
-        base: SGLangBackend,
-        pause_state: PauseState,
-        max_resubmit_retries: int = 20,
-        resubmit_wait: float = 0.5,
-    ) -> None:
-        self.base = base
-        self.pause_state = pause_state
-        self.max_resubmit_retries = max_resubmit_retries
-        self.resubmit_wait = resubmit_wait
-
     async def generate(
         self,
         input_ids: list[int],
@@ -141,7 +131,7 @@ class SGLangBackendWithResubmit:
             # Build current input: original + accumulated output
             current_input_ids = list(input_ids) + accumulated_tokens
 
-            result = await self.base.generate(current_input_ids, updated_params)
+            result = await self._call_sglang(current_input_ids, updated_params)
             stop_reason = result.stop_reason
 
             # Always accumulate output tokens

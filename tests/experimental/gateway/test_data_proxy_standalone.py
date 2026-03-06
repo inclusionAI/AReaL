@@ -1,7 +1,9 @@
-"""Unit tests for data proxy standalone mode (admin-key without session).
+"""Unit tests for data proxy standalone mode (no-session requests).
 
-Tests that admin-key callers can use /chat/completions and /generate
-without starting a session first. Session-key flows remain unchanged.
+Tests that /chat/completions and /generate work without a session.
+For /chat/completions: if the bearer token is a known session key, use session
+cache; otherwise (no auth, admin key, unknown key) → standalone mode (no caching).
+For /generate: no authentication at all — always accepted.
 """
 
 from __future__ import annotations
@@ -14,7 +16,10 @@ import pytest
 import pytest_asyncio
 
 from areal.experimental.gateway.data_proxy.app import create_app
-from areal.experimental.gateway.data_proxy.backend import GenerationResult
+from areal.experimental.gateway.data_proxy.backend import (
+    GenerationResult,
+    SGLangBackendWithResubmit,
+)
 from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
 from areal.experimental.gateway.data_proxy.session import SessionStore
@@ -53,19 +58,6 @@ def mock_tokenizer():
 
 
 @pytest.fixture
-def mock_backend():
-    backend = MagicMock()
-    backend.generate = AsyncMock(
-        return_value=GenerationResult(
-            output_tokens=[1234, 5678, 2],
-            output_logprobs=[-0.5, -0.3, -0.1],
-            stop_reason="stop",
-        )
-    )
-    return backend
-
-
-@pytest.fixture
 def mock_chat_handler():
     """Mock ChatCompletionHandler that returns a valid ChatCompletion."""
     from openai.types.chat import ChatCompletion, ChatCompletionMessage
@@ -98,24 +90,28 @@ def mock_chat_handler():
 
 
 @pytest_asyncio.fixture
-async def client(config, mock_tokenizer, mock_backend, mock_chat_handler):
+async def client(config, mock_tokenizer, mock_chat_handler):
     """Create app with mocked deps and yield an httpx async client (no auth header)."""
-    from areal.experimental.gateway.data_proxy.backend import (
-        SGLangBackendWithResubmit,
-    )
     from areal.experimental.gateway.data_proxy.pause import PauseState
 
     app = create_app(config)
     pause_state = PauseState()
-    resubmit_backend = SGLangBackendWithResubmit(
-        base=mock_backend,
+    backend = SGLangBackendWithResubmit(
+        backend_addr=config.backend_addr,
         pause_state=pause_state,
+        request_timeout=config.request_timeout,
         max_resubmit_retries=config.max_resubmit_retries,
         resubmit_wait=0.01,
     )
+    backend._call_sglang = AsyncMock(
+        return_value=GenerationResult(
+            output_tokens=[1234, 5678, 2],
+            output_logprobs=[-0.5, -0.3, -0.1],
+            stop_reason="stop",
+        )
+    )
     app.state.tokenizer = mock_tokenizer
-    app.state.backend = mock_backend
-    app.state.resubmit_backend = resubmit_backend
+    app.state.backend = backend
     app.state.pause_state = pause_state
     app.state.config = config
     app.state.session_store = SessionStore()
@@ -140,17 +136,35 @@ def parse_sse_events(content: bytes) -> list[dict]:
 
 
 # =============================================================================
-# Admin-key standalone /chat/completions
+# Standalone /chat/completions (no session)
 # =============================================================================
 
 
-class TestAdminStandaloneChat:
+class TestStandaloneChat:
     @pytest.mark.asyncio
-    async def test_admin_chat_completions_returns_valid_response(self, client):
-        """Admin key can call /chat/completions without a session."""
+    async def test_no_auth_chat_completions_returns_valid_response(self, client):
+        """No auth header → standalone mode, returns valid response."""
         resp = await client.post(
             "/chat/completions",
-            json={"model": "sglang", "messages": [{"role": "user", "content": "hello"}]},
+            json={
+                "model": "sglang",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == "chatcmpl-standalone-test"
+        assert data["choices"][0]["message"]["content"] == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_admin_key_chat_completions_returns_valid_response(self, client):
+        """Admin key → standalone mode, returns valid response."""
+        resp = await client.post(
+            "/chat/completions",
+            json={
+                "model": "sglang",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
             headers=admin_headers(),
         )
         assert resp.status_code == 200
@@ -159,29 +173,43 @@ class TestAdminStandaloneChat:
         assert data["choices"][0]["message"]["content"] == "Hello!"
 
     @pytest.mark.asyncio
-    async def test_admin_chat_completions_no_session_created(self, client):
-        """Admin-key standalone mode does NOT create a session."""
+    async def test_unknown_key_chat_completions_returns_valid_response(self, client):
+        """Unknown key → standalone mode (not rejected)."""
         resp = await client.post(
             "/chat/completions",
-            json={"model": "sglang", "messages": [{"role": "user", "content": "hello"}]},
-            headers=admin_headers(),
+            json={
+                "model": "sglang",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            headers={"Authorization": "Bearer unknown-key-12345"},
         )
         assert resp.status_code == 200
-        # Verify no sessions were created
-        from areal.experimental.gateway.data_proxy.session import SessionStore
+        data = resp.json()
+        assert data["id"] == "chatcmpl-standalone-test"
 
+    @pytest.mark.asyncio
+    async def test_standalone_chat_no_session_created(self, client):
+        """Standalone mode does NOT create a session."""
+        resp = await client.post(
+            "/chat/completions",
+            json={
+                "model": "sglang",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        assert resp.status_code == 200
         store: SessionStore = client._transport.app.state.session_store  # type: ignore[attr-defined]
         assert store.session_count == 0
 
     @pytest.mark.asyncio
-    async def test_admin_chat_completions_passes_none_cache(
-        self, client, mock_chat_handler
-    ):
-        """Admin-key standalone passes areal_cache=None (no caching)."""
+    async def test_standalone_chat_passes_none_cache(self, client, mock_chat_handler):
+        """Standalone mode passes areal_cache=None (no caching)."""
         resp = await client.post(
             "/chat/completions",
-            json={"model": "sglang", "messages": [{"role": "user", "content": "hello"}]},
-            headers=admin_headers(),
+            json={
+                "model": "sglang",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
         )
         assert resp.status_code == 200
         # Verify create was called with areal_cache=None
@@ -191,18 +219,17 @@ class TestAdminStandaloneChat:
 
 
 # =============================================================================
-# Admin-key standalone /generate
+# Standalone /generate (no auth required)
 # =============================================================================
 
 
-class TestAdminStandaloneGenerate:
+class TestStandaloneGenerate:
     @pytest.mark.asyncio
-    async def test_admin_generate_returns_sse_stream(self, client):
-        """Admin key can call /generate without a session."""
+    async def test_generate_no_auth_returns_sse_stream(self, client):
+        """No auth header → /generate works fine."""
         resp = await client.post(
             "/generate",
             json={"input_ids": [1, 2, 3]},
-            headers=admin_headers(),
         )
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers["content-type"]
@@ -211,12 +238,33 @@ class TestAdminStandaloneGenerate:
         assert events[-1]["finished"] is True
 
     @pytest.mark.asyncio
-    async def test_admin_generate_with_text(self, client, mock_tokenizer):
-        """Admin key can call /generate with text instead of input_ids."""
+    async def test_generate_with_admin_key(self, client):
+        """Admin key on /generate → accepted (auth is ignored)."""
+        resp = await client.post(
+            "/generate",
+            json={"input_ids": [1, 2, 3]},
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+
+    @pytest.mark.asyncio
+    async def test_generate_with_unknown_key(self, client):
+        """Unknown key on /generate → accepted (auth is ignored)."""
+        resp = await client.post(
+            "/generate",
+            json={"input_ids": [1, 2, 3]},
+            headers={"Authorization": "Bearer unknown-key-12345"},
+        )
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+
+    @pytest.mark.asyncio
+    async def test_generate_with_text_no_auth(self, client, mock_tokenizer):
+        """No auth → /generate with text field works."""
         resp = await client.post(
             "/generate",
             json={"text": "What is 2+2?"},
-            headers=admin_headers(),
         )
         assert resp.status_code == 200
         mock_tokenizer.tokenize.assert_called_once_with("What is 2+2?")
@@ -245,7 +293,10 @@ class TestSessionKeyUnchanged:
         # Now use session key for chat completions
         resp = await client.post(
             "/chat/completions",
-            json={"model": "sglang", "messages": [{"role": "user", "content": "hello"}]},
+            json={
+                "model": "sglang",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
             headers={"Authorization": f"Bearer {session_api_key}"},
         )
         assert resp.status_code == 200
@@ -254,7 +305,7 @@ class TestSessionKeyUnchanged:
 
     @pytest.mark.asyncio
     async def test_session_generate_still_works(self, client):
-        """Session key callers can also use /generate."""
+        """Session key callers can also use /generate (auth ignored anyway)."""
         # Start a session
         resp = await client.post(
             "/rl/start_session",
@@ -264,7 +315,7 @@ class TestSessionKeyUnchanged:
         assert resp.status_code == 201
         session_api_key = resp.json()["api_key"]
 
-        # Use session key for generate
+        # Use session key for generate (accepted regardless)
         resp = await client.post(
             "/generate",
             json={"input_ids": [1, 2, 3]},
@@ -272,48 +323,3 @@ class TestSessionKeyUnchanged:
         )
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers["content-type"]
-
-
-# =============================================================================
-# Auth rejection
-# =============================================================================
-
-
-class TestAuthRejection:
-    @pytest.mark.asyncio
-    async def test_unknown_key_rejected_chat(self, client):
-        """Unknown key is rejected with 401 on /chat/completions."""
-        resp = await client.post(
-            "/chat/completions",
-            json={"model": "sglang", "messages": [{"role": "user", "content": "hello"}]},
-            headers={"Authorization": "Bearer unknown-key-12345"},
-        )
-        assert resp.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_unknown_key_rejected_generate(self, client):
-        """Unknown key is rejected with 401 on /generate."""
-        resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
-            headers={"Authorization": "Bearer unknown-key-12345"},
-        )
-        assert resp.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_missing_auth_header_chat(self, client):
-        """Missing Authorization header is rejected with 401."""
-        resp = await client.post(
-            "/chat/completions",
-            json={"model": "sglang", "messages": [{"role": "user", "content": "hello"}]},
-        )
-        assert resp.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_missing_auth_header_generate(self, client):
-        """Missing Authorization header is rejected with 401 on /generate."""
-        resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
-        )
-        assert resp.status_code == 401
