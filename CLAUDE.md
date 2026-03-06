@@ -44,7 +44,7 @@ uv sync --group dev           # Include dev/test packages
 uv run python3 areal/tools/validate_installation.py  # Validate installation
 
 # Pre-commit hooks
-pre-commit install            # Set up hooks (run once)
+pre-commit install --install-hooks  # Set up hooks (run once)
 pre-commit run --all-files    # Format and lint
 
 # Run tests
