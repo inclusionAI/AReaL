@@ -10,7 +10,7 @@
 # Environment
 uv sync --extra cuda            # dependencies (or `uv sync` without CUDA)
 source .venv/bin/activate        # activate venv BEFORE pre-commit or git commit if venv exists
-pre-commit install               # formatting hooks (Ruff, mdformat, clang-format, nbstripout, autoflake)
+pre-commit install --install-hooks  # hooks: Ruff, clang-format, mdformat, nbstripout, conventional-commits
 pre-commit run --all-files       # lint + format everything
 
 # Tests

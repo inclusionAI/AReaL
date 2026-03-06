@@ -1,3 +1,7 @@
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+
 repos:
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v19.1.7
@@ -23,6 +27,9 @@ repos:
         exclude: uv.lock
       - id: check-json
         name: Check JSON files
+
+      - id: detect-private-key
+        name: Detect private keys
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.17
@@ -67,3 +74,22 @@ repos:
         pass_filenames: false
         always_run: false
         require_serial: true
+
+  # Conventional Commits message check
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - feat
+          - fix
+          - docs
+          - style
+          - refactor
+          - perf
+          - test
+          - build
+          - ci
+          - chore
+          - revert
