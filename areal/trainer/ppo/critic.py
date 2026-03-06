@@ -6,6 +6,7 @@ import torch
 from areal.api.cli_args import MicroBatchSpec, PPOCriticConfig
 from areal.api.engine_api import TrainEngine
 from areal.infra import TrainController
+from areal.trainer.ppo.stats import infer_token_denominator
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import ppo_critic_loss_fn
@@ -88,7 +89,7 @@ def ppo_loss_fn(
 
     # Log training statistics
     stats_tracker.denominator(
-        n_tokens=torch.ones(value.shape[0], dtype=torch.bool, device=value.device),
+        n_tokens=infer_token_denominator(input_data, value),
         n_valid_tokens=loss_mask.bool(),
         clipped_tokens=stat["clip_mask"],
     )

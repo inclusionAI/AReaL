@@ -183,6 +183,19 @@ class PPOTrainer:
         if self.ref is not None:
             self.ref.initialize(**engine_init_kwargs, role="ref")
 
+        self.teacher = None
+        if config.teacher is not None:
+            self.teacher = self._create_teacher(config.teacher)
+            teacher_allocation_mode = AllocationMode.from_str(
+                config.teacher.allocation_mode
+            )
+            teacher_init_kwargs = {
+                "addr": None,
+                "ft_spec": ft_spec,
+                "alloc_mode": teacher_allocation_mode,
+            }
+            self.teacher.initialize(**teacher_init_kwargs, role="teacher")
+
         # Save initial LoRA weights if enabled (for inference server pre-loading)
         initial_lora_path = self._save_initial_lora_weights()
 
@@ -370,6 +383,24 @@ class PPOTrainer:
                 ):
                     rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
                     self.ref.get_device_stats().log("ref logp")
+
+            if self.teacher is not None:
+                with (
+                    stats_tracker.record_timing("teacher_logp"),
+                    perf_tracer.trace_scope(
+                        "train.teacher_logp",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    rollout_batch["teacher_logp"] = self.teacher.compute_logp(
+                        rollout_batch
+                    )
+                    rollout_batch["rl_loss_weight"] = self.config.teacher.rl_loss_weight
+                    rollout_batch["distill_loss_weight"] = (
+                        self.config.teacher.distill_loss_weight
+                    )
+                    self.teacher.get_device_stats().log("teacher logp")
 
             with (
                 stats_tracker.record_timing("compute_advantage"),
@@ -628,6 +659,34 @@ class PPOTrainer:
             critic = critic_cls(config=critic_config)
         critic.create_process_group(parallel_strategy=self.allocation_mode.train)
         return critic
+
+    def _create_teacher(self, teacher_config):
+        allocation_mode = AllocationMode.from_str(teacher_config.allocation_mode)
+
+        if allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPPPOActor
+
+            actor_cls = FSDPPPOActor
+        elif allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronPPOActor
+
+            actor_cls = MegatronPPOActor
+        elif allocation_mode.train_backend == "archon":
+            from areal.experimental.engine.archon_engine import ArchonPPOActor
+
+            actor_cls = ArchonPPOActor
+        else:
+            raise ValueError(
+                f"Invalid backend: {allocation_mode.train_backend}, expected fsdp, megatron, or archon"
+            )
+
+        if is_single_controller():
+            teacher = actor_cls.as_controller(teacher_config, self.scheduler)
+        else:
+            teacher = actor_cls(config=teacher_config)
+
+        teacher.create_process_group(parallel_strategy=allocation_mode.train)
+        return teacher
 
     def _init_rollout(
         self,

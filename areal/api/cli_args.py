@@ -2146,6 +2146,23 @@ class RWConfig(BaseExperimentConfig):
 
 
 @dataclass
+class TeacherConfig(PPOActorConfig):
+    allocation_mode: str = field(
+        default="",
+        metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
+    )
+    rl_loss_weight: float = field(
+        default=1.0,
+        metadata={"help": "RL loss weight"},
+    )
+
+    distill_loss_weight: float = field(
+        default=0.005,
+        metadata={"help": "Distillation loss weight"},
+    )
+
+
+@dataclass
 class PPOConfig(BaseExperimentConfig):
     """Configuration for Proximal Policy Optimization (PPO) reinforcement learning experiments."""
 
@@ -2162,6 +2179,17 @@ class PPOConfig(BaseExperimentConfig):
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig | None = field(default=None)
     critic: PPOCriticConfig | None = field(default=None)
+    teacher: TeacherConfig | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "Optional teacher model configuration used for on-policy "
+                "distillation during PPO training. If provided, the actor "
+                "may be trained to match the teacher in addition to the "
+                "standard PPO objective."
+            )
+        },
+    )
     dynamic_bs: bool = field(
         default=False,
         metadata={
