@@ -1,0 +1,238 @@
+"""Router service — stateful routing, session pinning, worker registry.
+
+The Router is a separate FastAPI service from the Gateway.
+It owns worker health state, session→worker mappings, and routing strategy.
+It never proxies traffic — it only answers routing queries.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+import logging
+
+import httpx
+from contextlib import asynccontextmanager
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel
+
+from areal.experimental.gateway.router.config import RouterConfig
+from areal.experimental.gateway.router.state import SessionRegistry, WorkerRegistry
+from areal.experimental.gateway.router.strategies import get_strategy
+
+logger = logging.getLogger("Router")
+
+
+# =============================================================================
+# Auth helpers (same pattern as data proxy)
+# =============================================================================
+
+
+def _extract_bearer_token(request: Request) -> str:
+    """Extract API token from Authorization header."""
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    raise HTTPException(
+        status_code=401,
+        detail="Missing or malformed Authorization header.",
+    )
+
+
+def _require_admin_key(request: Request, admin_key: str) -> str:
+    """Validate that the request carries the admin API key."""
+    token = _extract_bearer_token(request)
+    if not hmac.compare_digest(token, admin_key):
+        raise HTTPException(status_code=403, detail="Invalid admin API key.")
+    return token
+
+
+# =============================================================================
+# Request models
+# =============================================================================
+
+
+class RegisterWorkerRequest(BaseModel):
+    worker_addr: str
+
+
+class DeleteWorkerRequest(BaseModel):
+    worker_addr: str
+
+
+class RouteRequest(BaseModel):
+    api_key: str
+    path: str
+
+
+class RouteBySessionIdRequest(BaseModel):
+    session_id: str
+
+
+class RegisterSessionRequest(BaseModel):
+    session_api_key: str
+    session_id: str
+    worker_addr: str
+
+
+# =============================================================================
+# App factory
+# =============================================================================
+
+
+def create_app(config: RouterConfig) -> FastAPI:
+    """Factory that creates the router FastAPI app."""
+
+    worker_registry = WorkerRegistry()
+    session_registry = SessionRegistry()
+    strategy = get_strategy(config.routing_strategy)
+
+    async def _poll_workers() -> None:
+        """Background task: periodically poll worker /health endpoints."""
+        while True:
+            workers = await worker_registry.get_all_workers()
+            for w in workers:
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=config.worker_health_timeout
+                    ) as client:
+                        resp = await client.get(f"{w.worker_addr}/health")
+                        await worker_registry.update_health(
+                            w.worker_addr, resp.status_code == 200
+                        )
+                except Exception:
+                    await worker_registry.update_health(w.worker_addr, False)
+            await asyncio.sleep(config.poll_interval)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        logger.info(
+            "Router starting — strategy=%s, poll_interval=%.1fs",
+            config.routing_strategy,
+            config.poll_interval,
+        )
+        poll_task = asyncio.create_task(_poll_workers())
+        app.state.worker_registry = worker_registry
+        app.state.session_registry = session_registry
+        app.state.strategy = strategy
+        yield
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Router shutting down")
+
+    app = FastAPI(title="AReaL Router", lifespan=lifespan)
+
+    # Expose registries on app.state for tests that bypass lifespan
+    app.state.worker_registry = worker_registry
+    app.state.session_registry = session_registry
+    app.state.strategy = strategy
+
+    # =========================================================================
+    # Health
+    # =========================================================================
+
+    @app.get("/health")
+    async def health():
+        all_workers = await worker_registry.get_all_workers()
+        session_count = await session_registry.count()
+        return {
+            "status": "ok",
+            "workers": len(all_workers),
+            "sessions": session_count,
+            "strategy": config.routing_strategy,
+        }
+
+    # =========================================================================
+    # Worker management (admin key required)
+    # =========================================================================
+
+    @app.post("/register_worker")
+    async def register_worker(body: RegisterWorkerRequest, request: Request):
+        _require_admin_key(request, config.admin_api_key)
+        await worker_registry.register(body.worker_addr)
+        logger.info("Worker registered: %s", body.worker_addr)
+        return {"status": "ok"}
+
+    @app.delete("/delete_worker")
+    async def delete_worker(body: DeleteWorkerRequest, request: Request):
+        _require_admin_key(request, config.admin_api_key)
+        await worker_registry.deregister(body.worker_addr)
+        revoked = await session_registry.revoke_by_worker(body.worker_addr)
+        logger.info(
+            "Worker deleted: %s (revoked %d sessions)", body.worker_addr, revoked
+        )
+        return {"status": "ok", "sessions_revoked": revoked}
+
+    # =========================================================================
+    # Routing (internal — no auth)
+    # =========================================================================
+
+    @app.post("/route")
+    async def route(body: RouteRequest):
+        # 1. Admin key → pick healthy worker via strategy
+        if hmac.compare_digest(body.api_key, config.admin_api_key):
+            healthy = await worker_registry.get_healthy_workers()
+            if not healthy:
+                raise HTTPException(status_code=503, detail="No healthy workers")
+            worker = strategy.pick(healthy)
+            if worker is None:
+                raise HTTPException(status_code=503, detail="No healthy workers")
+            return {"worker_addr": worker.worker_addr}
+
+        # 2. Session key → pinned worker
+        pinned = await session_registry.lookup_by_key(body.api_key)
+        if pinned is not None:
+            # Check if pinned worker is healthy
+            all_workers = await worker_registry.get_all_workers()
+            worker_map = {w.worker_addr: w for w in all_workers}
+            w = worker_map.get(pinned)
+            if w is None or not w.is_healthy:
+                raise HTTPException(status_code=503, detail="Pinned worker unhealthy")
+            return {"worker_addr": pinned}
+
+        # 3. Unknown key
+        raise HTTPException(status_code=404, detail="Unknown API key")
+
+    @app.post("/route_by_session_id")
+    async def route_by_session_id(body: RouteBySessionIdRequest):
+        worker = await session_registry.lookup_by_id(body.session_id)
+        if worker is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"worker_addr": worker}
+
+    # =========================================================================
+    # Session registration (internal — no auth)
+    # =========================================================================
+
+    @app.post("/register_session")
+    async def register_session(body: RegisterSessionRequest):
+        await session_registry.register_session(
+            body.session_api_key, body.session_id, body.worker_addr
+        )
+        return {"status": "ok"}
+
+    # =========================================================================
+    # Worker listing (admin key required)
+    # =========================================================================
+
+    @app.get("/workers")
+    async def list_workers(request: Request):
+        _require_admin_key(request, config.admin_api_key)
+        all_workers = await worker_registry.get_all_workers()
+        return {
+            "workers": [
+                {
+                    "addr": w.worker_addr,
+                    "healthy": w.is_healthy,
+                    "active_requests": w.active_requests,
+                }
+                for w in all_workers
+            ]
+        }
+
+    return app
