@@ -43,7 +43,7 @@ async def client(config, mock_tokenizer):
     """
     from areal.experimental.gateway.data_proxy.backend import (
         GenerationResult,
-        SGLangBackendWithResubmit,
+        SGLangBackend,
     )
     from areal.experimental.gateway.data_proxy.pause import PauseState
     from areal.experimental.gateway.data_proxy.session import SessionStore
@@ -51,7 +51,7 @@ async def client(config, mock_tokenizer):
     app = create_app(config)
     # Bypass lifespan — inject mocks directly into app.state
     pause_state = PauseState()
-    backend = SGLangBackendWithResubmit(
+    backend = SGLangBackend(
         backend_addr=config.backend_addr,
         pause_state=pause_state,
         request_timeout=config.request_timeout,
@@ -189,7 +189,7 @@ async def test_generate_custom_sampling_params_override(client):
 
 @pytest.mark.asyncio
 async def test_generate_abort_stop_reason(client):
-    """With SGLangBackendWithResubmit, a single abort followed by stop
+    """With SGLangBackend, a single abort followed by stop
     is handled transparently. The abort is never exposed to the caller.
     """
     from areal.experimental.gateway.data_proxy.backend import GenerationResult

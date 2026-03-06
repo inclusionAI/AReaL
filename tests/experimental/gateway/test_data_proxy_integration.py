@@ -212,7 +212,7 @@ class TestDataProxyGenerateIntegration:
         from areal.experimental.gateway.data_proxy.app import create_app
         from areal.experimental.gateway.data_proxy.backend import (
             SGLangBackend,
-            SGLangBackendWithResubmit,
+            SGLangBackend,
         )
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
         from areal.experimental.gateway.data_proxy.pause import PauseState
@@ -235,7 +235,7 @@ class TestDataProxyGenerateIntegration:
         tok = TokenizerProxy(model_path)
         backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
         pause_state = PauseState()
-        resubmit_backend = SGLangBackendWithResubmit(
+        resubmit_backend = SGLangBackend(
             base=backend,
             pause_state=pause_state,
         )
@@ -296,7 +296,7 @@ class TestDataProxyGenerateIntegration:
         from areal.experimental.gateway.data_proxy.app import create_app
         from areal.experimental.gateway.data_proxy.backend import (
             SGLangBackend,
-            SGLangBackendWithResubmit,
+            SGLangBackend,
         )
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
         from areal.experimental.gateway.data_proxy.pause import PauseState
@@ -319,7 +319,7 @@ class TestDataProxyGenerateIntegration:
 
         backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
         pause_state = PauseState()
-        resubmit_backend = SGLangBackendWithResubmit(
+        resubmit_backend = SGLangBackend(
             base=backend,
             pause_state=pause_state,
         )
@@ -366,7 +366,7 @@ class TestDataProxyGenerateIntegration:
         from areal.experimental.gateway.data_proxy.app import create_app
         from areal.experimental.gateway.data_proxy.backend import (
             SGLangBackend,
-            SGLangBackendWithResubmit,
+            SGLangBackend,
         )
         from areal.experimental.gateway.data_proxy.config import DataProxyConfig
         from areal.experimental.gateway.data_proxy.pause import PauseState
@@ -388,7 +388,7 @@ class TestDataProxyGenerateIntegration:
 
         backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
         pause_state = PauseState()
-        resubmit_backend = SGLangBackendWithResubmit(
+        resubmit_backend = SGLangBackend(
             base=backend,
             pause_state=pause_state,
         )
@@ -437,7 +437,7 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     from areal.experimental.gateway.data_proxy.app import create_app
     from areal.experimental.gateway.data_proxy.backend import (
         SGLangBackend,
-        SGLangBackendWithResubmit,
+        SGLangBackend,
     )
     from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
     from areal.experimental.gateway.data_proxy.config import DataProxyConfig
@@ -459,7 +459,7 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     tok = TokenizerProxy(model_path)
     backend = SGLangBackend(sglang_server["base_url"], request_timeout=60.0)
     pause_state = PauseState()
-    resubmit_backend = SGLangBackendWithResubmit(
+    resubmit_backend = SGLangBackend(
         base=backend,
         pause_state=pause_state,
     )
@@ -1130,7 +1130,7 @@ class TestConcurrentPauseDuringGeneration:
     These tests fire a long-running /generate or /chat/completions request
     and concurrently call /pause_generation + /continue_generation. When
     SGLang is paused, in-flight requests abort with stop_reason='abort'.
-    The SGLangBackendWithResubmit loop detects this, waits for resume,
+    The SGLangBackend loop detects this, waits for resume,
     and resubmits with accumulated tokens — making the cycle transparent
     to the caller.
     """

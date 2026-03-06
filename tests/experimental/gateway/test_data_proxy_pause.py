@@ -13,7 +13,7 @@ import pytest_asyncio
 from areal.experimental.gateway.data_proxy.app import create_app
 from areal.experimental.gateway.data_proxy.backend import (
     GenerationResult,
-    SGLangBackendWithResubmit,
+    SGLangBackend,
 )
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
 from areal.experimental.gateway.data_proxy.pause import PauseState
@@ -123,7 +123,7 @@ async def app_client(config, mock_tokenizer, mock_backend, mock_chat_handler):
     app = create_app(config)
 
     pause_state = PauseState()
-    backend = SGLangBackendWithResubmit(
+    backend = SGLangBackend(
         backend_addr=config.backend_addr,
         pause_state=pause_state,
         request_timeout=config.request_timeout,
@@ -193,18 +193,18 @@ class TestPauseState:
 
 
 # =============================================================================
-# SGLangBackendWithResubmit unit tests
+# SGLangBackend unit tests
 # =============================================================================
 
 
-class TestSGLangBackendWithResubmit:
+class TestSGLangBackend:
     """Test the abort/resubmit loop in isolation."""
 
     @pytest.mark.asyncio
     async def test_no_abort_pass_through(self):
         """Normal stop — no resubmit needed."""
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(
+        backend = SGLangBackend(
             backend_addr="http://mock", pause_state=pause_state
         )
         backend._call_sglang = AsyncMock(
@@ -231,7 +231,7 @@ class TestSGLangBackendWithResubmit:
             return GenerationResult([200, 201], [-0.4, -0.2], "stop")
 
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(
+        backend = SGLangBackend(
             backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
         )
         backend._call_sglang = mock_call_sglang
@@ -255,7 +255,7 @@ class TestSGLangBackendWithResubmit:
             return GenerationResult([200], [-0.4], "stop")
 
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(
+        backend = SGLangBackend(
             backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
         )
         backend._call_sglang = mock_call_sglang
@@ -282,7 +282,7 @@ class TestSGLangBackendWithResubmit:
             return GenerationResult([10, 11, 12, 13, 14], [-0.1] * 5, "abort")
 
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(
+        backend = SGLangBackend(
             backend_addr="http://mock",
             pause_state=pause_state,
             max_resubmit_retries=10,
@@ -302,7 +302,7 @@ class TestSGLangBackendWithResubmit:
     async def test_max_retries_final_abort_becomes_length(self):
         """After max retries, final abort is converted to 'length'."""
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(
+        backend = SGLangBackend(
             backend_addr="http://mock",
             pause_state=pause_state,
             max_resubmit_retries=3,
@@ -322,7 +322,7 @@ class TestSGLangBackendWithResubmit:
     async def test_paused_blocks_until_resumed(self):
         """While paused, generate waits; after resume, it completes."""
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(
+        backend = SGLangBackend(
             backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
         )
         backend._call_sglang = AsyncMock(
@@ -343,7 +343,7 @@ class TestSGLangBackendWithResubmit:
     async def test_tool_calls_stop_reason_passthrough(self):
         """stop_reason='tool_calls' exits the loop normally."""
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(
+        backend = SGLangBackend(
             backend_addr="http://mock", pause_state=pause_state
         )
         backend._call_sglang = AsyncMock(
@@ -360,7 +360,7 @@ class TestSGLangBackendWithResubmit:
     async def test_length_stop_reason_passthrough(self):
         """stop_reason='length' exits the loop normally."""
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(
+        backend = SGLangBackend(
             backend_addr="http://mock", pause_state=pause_state
         )
         backend._call_sglang = AsyncMock(

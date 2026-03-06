@@ -18,7 +18,7 @@ import pytest_asyncio
 from areal.experimental.gateway.data_proxy.app import create_app
 from areal.experimental.gateway.data_proxy.backend import (
     GenerationResult,
-    SGLangBackendWithResubmit,
+    SGLangBackend,
 )
 from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
@@ -96,7 +96,7 @@ async def client(config, mock_tokenizer, mock_chat_handler):
 
     app = create_app(config)
     pause_state = PauseState()
-    backend = SGLangBackendWithResubmit(
+    backend = SGLangBackend(
         backend_addr=config.backend_addr,
         pause_state=pause_state,
         request_timeout=config.request_timeout,

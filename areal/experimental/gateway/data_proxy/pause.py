@@ -9,7 +9,7 @@ After the weight update, the controller calls POST /resume:
   1. Calls SGLang POST /continue_generation
   2. Sets the PauseState flag to False
 
-SGLangBackendWithResubmit (backend.py) polls PauseState and transparently
+SGLangBackend (backend.py) polls PauseState and transparently
 resubmits aborted requests once resumed.
 """
 

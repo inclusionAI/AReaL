@@ -132,14 +132,14 @@ def mock_chat_handler():
 async def client(config, mock_tokenizer, mock_backend, mock_chat_handler):
     """Create app with mocked deps and yield an httpx async client."""
     from areal.experimental.gateway.data_proxy.backend import (
-        SGLangBackendWithResubmit,
+        SGLangBackend,
     )
     from areal.experimental.gateway.data_proxy.pause import PauseState
 
     app = create_app(config)
     # Bypass lifespan — inject mocks directly into app.state
     pause_state = PauseState()
-    backend = SGLangBackendWithResubmit(
+    backend = SGLangBackend(
         backend_addr=config.backend_addr,
         pause_state=pause_state,
         request_timeout=config.request_timeout,

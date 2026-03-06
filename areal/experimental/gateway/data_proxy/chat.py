@@ -1,7 +1,7 @@
 """ChatCompletionHandler — chat template → SGLang → InteractionCache → ChatCompletion.
 
 Adapted from areal/experimental/openai/client.py (AsyncCompletionsWithReward).
-Replaces engine.agenerate() with SGLangBackendWithResubmit.generate() via HTTP.
+Replaces engine.agenerate() with SGLangBackend.generate() via HTTP.
 No imports from areal.experimental.openai.
 """
 
@@ -27,7 +27,7 @@ from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
 from openai.types.completion_usage import CompletionUsage
 from openai.types.shared_params.metadata import Metadata
 
-from areal.experimental.gateway.data_proxy.backend import SGLangBackendWithResubmit
+from areal.experimental.gateway.data_proxy.backend import SGLangBackend
 from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
 from areal.experimental.gateway.data_proxy.types import InteractionWithTokenLogpReward
 
@@ -78,7 +78,7 @@ class ChatCompletionHandler:
     This replaces the ArealOpenAI + AsyncCompletionsWithReward chain for the data proxy.
     """
 
-    def __init__(self, backend: SGLangBackendWithResubmit, tok: TokenizerProxy):
+    def __init__(self, backend: SGLangBackend, tok: TokenizerProxy):
         self.backend = backend
         self.tok = tok
 
@@ -106,7 +106,7 @@ class ChatCompletionHandler:
         """Create a chat completion (OpenAI-compatible signature).
 
         Matches AsyncCompletionsWithReward.create() from client.py, but uses
-        SGLangBackendWithResubmit.generate() instead of engine.agenerate().
+        SGLangBackend.generate() instead of engine.agenerate().
         """
         is_streaming = not is_omitted(stream) and stream is True
 

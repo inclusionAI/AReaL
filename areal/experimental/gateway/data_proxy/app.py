@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from areal.experimental.gateway.data_proxy.backend import (
     GenerationResult,
-    SGLangBackendWithResubmit,
+    SGLangBackend,
 )
 from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
@@ -222,7 +222,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         )
         tok = TokenizerProxy(config.tokenizer_path)
         pause_state = PauseState()
-        backend = SGLangBackendWithResubmit(
+        backend = SGLangBackend(
             backend_addr=config.backend_addr,
             pause_state=pause_state,
             request_timeout=config.request_timeout,
@@ -269,7 +269,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             )
 
         tok: TokenizerProxy = app.state.tokenizer
-        backend: SGLangBackendWithResubmit = app.state.backend
+        backend: SGLangBackend = app.state.backend
 
         # Resolve input_ids
         if req.input_ids is not None:

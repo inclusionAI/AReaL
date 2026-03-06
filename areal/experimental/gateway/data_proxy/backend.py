@@ -22,7 +22,7 @@ class GenerationResult:
     stop_reason: str  # 'stop' | 'abort' | 'length' | 'tool_calls'
 
 
-class SGLangBackendWithResubmit:
+class SGLangBackend:
     """SGLang HTTP backend with transparent pause/abort/resubmit loop.
 
     Calls SGLang's native /generate endpoint. When SGLang returns
