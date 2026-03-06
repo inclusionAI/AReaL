@@ -311,4 +311,76 @@ def create_app(config: GatewayConfig) -> FastAPI:
             media_type=resp.headers.get("content-type"),
         )
 
+    # =========================================================================
+    # Weight update broadcasts — admin key ONLY
+    # =========================================================================
+
+    @app.post("/update_weights_from_disk")
+    async def update_weights_from_disk(request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addrs = await get_all_worker_addrs(
+                config.router_addr, config.admin_api_key, config.router_timeout
+            )
+        except RouterUnreachableError as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        results = await broadcast_to_workers(
+            worker_addrs, "/update_weights_from_disk", body, headers
+        )
+        return {"results": results}
+
+    @app.post("/update_weights_from_distributed")
+    async def update_weights_from_distributed(request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addrs = await get_all_worker_addrs(
+                config.router_addr, config.admin_api_key, config.router_timeout
+            )
+        except RouterUnreachableError as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        results = await broadcast_to_workers(
+            worker_addrs, "/update_weights_from_distributed", body, headers
+        )
+        return {"results": results}
+
+    @app.post("/init_weights_update_group")
+    async def init_weights_update_group(request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addrs = await get_all_worker_addrs(
+                config.router_addr, config.admin_api_key, config.router_timeout
+            )
+        except RouterUnreachableError as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        results = await broadcast_to_workers(
+            worker_addrs, "/init_weights_update_group", body, headers
+        )
+        return {"results": results}
+
+    @app.post("/set_version")
+    async def set_version(request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addrs = await get_all_worker_addrs(
+                config.router_addr, config.admin_api_key, config.router_timeout
+            )
+        except RouterUnreachableError as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        results = await broadcast_to_workers(
+            worker_addrs, "/set_version", body, headers
+        )
+        return {"results": results}
+
     return app
