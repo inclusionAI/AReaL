@@ -45,87 +45,45 @@ logger = setup_logger(__name__)
 
 
 def _pil_image_to_data_url(image: Image.Image) -> str:
-    """Convert PIL Image to data URL.
-
-    Args:
-        image: PIL Image object
-
-    Returns:
-        Data URL string like "data:image/png;base64,..."
-    """
-    # Save to buffer
+    """Convert PIL Image to data URL."""
     buffer = io.BytesIO()
     fmt = image.format or "PNG"
     save_fmt = "JPEG" if fmt.upper() in {"JPG", "JPEG"} else "PNG"
     image.save(buffer, format=save_fmt)
-
-    # Encode to base64
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     mime = "image/jpeg" if save_fmt == "JPEG" else "image/png"
-
     return f"data:{mime};base64,{encoded}"
 
 
-def _bytes_to_data_url(image_bytes: bytes) -> str:
-    """Convert image bytes to data URL.
-
-    Args:
-        image_bytes: Raw image bytes
-
-    Returns:
-        Data URL string like "data:image/png;base64,..."
-    """
-    image = Image.open(io.BytesIO(image_bytes))
-    return _pil_image_to_data_url(image)
-
-
 def _image_to_data_url(img_data: Any) -> Optional[str]:
-    """Convert various image formats to data URL.
-
-    Handles:
-    - PIL Image objects (from HuggingFace auto-decode)
-    - Dict with "bytes" key
-    - Raw bytes
-
-    Args:
-        img_data: Image data in various formats
-
-    Returns:
-        Data URL string or None if conversion failed
-    """
+    """Convert various image formats to data URL."""
     try:
         if isinstance(img_data, Image.Image):
-            # PIL Image object (HuggingFace auto-decoded)
             return _pil_image_to_data_url(img_data)
         elif isinstance(img_data, dict):
-            # Dict with "bytes" key
             img_bytes = img_data.get("bytes")
             if img_bytes:
-                return _bytes_to_data_url(img_bytes)
+                image = Image.open(io.BytesIO(img_bytes))
+                return _pil_image_to_data_url(image)
         elif isinstance(img_data, bytes):
-            # Raw bytes
-            return _bytes_to_data_url(img_data)
+            image = Image.open(io.BytesIO(img_data))
+            return _pil_image_to_data_url(image)
     except Exception as e:
         logger.warning("Failed to convert image to data URL: %s", e)
     return None
 
 
-def _inject_images_into_messages(
-    messages: List[Dict[str, Any]],
-    images: List[Any]
-) -> List[Dict[str, Any]]:
-    """Replace [IMAGE_N] placeholders with actual base64 data URLs.
+def _convert_to_responses_format(messages: List[Dict[str, Any]], images: List[Any]) -> List[Dict[str, Any]]:
+    """Convert messages from chat_completions format to responses API format.
 
-    Args:
-        messages: List of conversation messages with placeholders
-        images: List of images (PIL Image, dict with bytes, or raw bytes)
+    chat_completions format:
+        {"type": "text", "text": "..."}
+        {"type": "image_url", "image_url": {"url": "[IMAGE_0]"}}
 
-    Returns:
-        Messages with image placeholders replaced by data URLs
+    responses format:
+        {"type": "input_text", "text": "..."}
+        {"type": "input_image", "image_url": "data:image/png;base64,..."}
     """
-    # Deep copy to avoid modifying original
-    messages = copy.deepcopy(messages)
-
     # Build placeholder to data URL mapping
     image_map: Dict[str, str] = {}
     for idx, img_data in enumerate(images):
@@ -134,41 +92,71 @@ def _inject_images_into_messages(
         if data_url:
             image_map[placeholder] = data_url
 
-    # Replace placeholders in messages
+    converted_messages = []
+
     for msg in messages:
+        new_msg = {"role": msg.get("role")}
+
         content = msg.get("content", [])
+
+        # Handle string content
+        if isinstance(content, str):
+            new_msg["content"] = [{"type": "input_text", "text": content}]
+            converted_messages.append(new_msg)
+            continue
+
+        # Handle list content
         if isinstance(content, list):
+            new_content = []
             for part in content:
                 if not isinstance(part, dict):
+                    new_content.append({"type": "input_text", "text": str(part)})
                     continue
-                if part.get("type") == "image_url":
+
+                part_type = part.get("type", "")
+
+                if part_type == "text":
+                    # text -> input_text
+                    new_content.append({
+                        "type": "input_text",
+                        "text": part.get("text", "")
+                    })
+                elif part_type == "image_url":
+                    # image_url -> input_image
                     image_url_data = part.get("image_url", {})
                     if isinstance(image_url_data, dict):
                         url = image_url_data.get("url", "")
-                        if url in image_map:
-                            part["image_url"]["url"] = image_map[url]
-                    elif isinstance(image_url_data, str) and image_url_data in image_map:
-                        part["image_url"] = {"url": image_map[image_url_data]}
+                    else:
+                        url = str(image_url_data)
 
-    return messages
+                    # Replace placeholder with actual data URL
+                    if url in image_map:
+                        url = image_map[url]
 
+                    new_content.append({
+                        "type": "input_image",
+                        "image_url": url,
+                        "detail": "auto"
+                    })
+                else:
+                    # Keep other types as-is
+                    new_content.append(part)
 
-def _extract_final_answer(output_text: str) -> str:
-    """Extract final answer from model output.
+            new_msg["content"] = new_content
+        else:
+            new_msg["content"] = content
 
-    Looks for content within <answer>...</answer> tags.
+        # Handle tool_calls
+        if "tool_calls" in msg:
+            new_msg["tool_calls"] = msg["tool_calls"]
 
-    Args:
-        output_text: Raw model output text
+        # Handle tool_call_id (for tool messages)
+        if "tool_call_id" in msg:
+            new_msg["tool_call_id"] = msg["tool_call_id"]
 
-    Returns:
-        Extracted answer or full output if no tags found
-    """
-    pattern = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
-    matches = pattern.findall(output_text)
-    if matches:
-        return matches[-1].strip()
-    return output_text.strip()
+        converted_messages.append(new_msg)
+
+    return converted_messages
 
 
 def _save_result(
@@ -178,17 +166,12 @@ def _save_result(
     output_text: str,
     output_path: Path
 ) -> None:
-    """Save result in format compatible with openai_as_judge.
-
-    Creates a subfolder with meta_info.jsonl containing question, answer, and output_text.
-    """
+    """Save result in format compatible with openai_as_judge."""
     sample_dir = output_path / sample_id
     sample_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load meta_info
     meta_info = json.loads(meta_info_str) if meta_info_str else {}
 
-    # Build result record
     result = {
         "question": meta_info.get("question", ""),
         "answer": answer,
@@ -196,7 +179,6 @@ def _save_result(
         "image_path": meta_info.get("image_path", ""),
     }
 
-    # Write to meta_info.jsonl
     meta_path = sample_dir / "meta_info.jsonl"
     with meta_path.open("w", encoding="utf-8") as f:
         f.write(json.dumps(result, ensure_ascii=False) + "\n")
@@ -210,57 +192,38 @@ def _process_single_sample(
     answer: str,
     client: OpenAI,
     model_name: str,
-    api_mode: str,
     max_tokens: int,
     temperature: float,
     system_prompt: Optional[str],
     output_path: Path,
 ) -> Tuple[str, bool, str]:
-    """Process a single sample.
-
-    Returns:
-        Tuple of (sample_id, success, message)
-    """
+    """Process a single sample using responses API."""
     try:
         # Parse messages from JSON string
         messages = json.loads(messages_json)
 
-        # Inject images into messages
-        messages = _inject_images_into_messages(messages, images)
+        # Convert to responses API format and inject images
+        messages = _convert_to_responses_format(messages, images)
 
-        # Call vLLM
-        if api_mode == "chat_completions":
-            # Prepend system message for chat_completions
-            if system_prompt:
-                messages.insert(0, {"role": "system", "content": system_prompt})
+        # Build API kwargs
+        api_kwargs = {
+            "model": model_name,
+            "input": messages,
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system_prompt:
+            api_kwargs["instructions"] = system_prompt
 
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-            output_text = response.choices[0].message.content or ""
-        else:
-            # responses API - use instructions param for system prompt
-            api_kwargs = {
-                "model": model_name,
-                "input": messages,
-                "max_output_tokens": max_tokens,
-                "temperature": temperature,
-            }
-            if system_prompt:
-                api_kwargs["instructions"] = system_prompt
-
-            response = client.responses.create(**api_kwargs)
-            output_text = getattr(response, "output_text", "") or ""
+        # Call vLLM responses API
+        response = client.responses.create(**api_kwargs)
+        output_text = getattr(response, "output_text", "") or ""
 
         # Save result
         _save_result(sample_id, meta_info_str, answer, output_text, output_path)
         return (sample_id, True, f"output length: {len(output_text)}")
 
     except Exception as e:
-        # Save error result
         _save_result(sample_id, meta_info_str, answer, f"ERROR: {str(e)}", output_path)
         return (sample_id, False, str(e))
 
@@ -270,26 +233,12 @@ def run_trajectory_test(
     output_path: Path,
     api_base: str,
     model_name: str,
-    api_mode: str = "responses",
     max_tokens: int = 16384,
     temperature: float = 1.0,
     system_prompt: Optional[str] = None,
     num_workers: int = 8,
 ) -> None:
-    """Run trajectory test on vLLM server with parallel processing.
-
-    Args:
-        parquet_path: Path to parquet dataset
-        output_path: Output directory for results
-        api_base: vLLM server base URL
-        model_name: Model name/path
-        api_mode: API mode ("chat_completions" or "responses")
-        max_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-        system_prompt: Optional system prompt to prepend
-        num_workers: Number of parallel workers
-    """
-    # Load dataset
+    """Run trajectory test on vLLM server with parallel processing."""
     logger.info("Loading dataset from %s", parquet_path)
     ds = Dataset.from_parquet(str(parquet_path))
     logger.info("Loaded %d samples", len(ds))
@@ -300,7 +249,7 @@ def run_trajectory_test(
         api_key="none",
     )
 
-    # Default system prompt if not provided
+    # Default system prompt
     if system_prompt is None:
         system_prompt = (
             "You are an advanced AI assistant capable of complex reasoning. "
@@ -310,7 +259,7 @@ def run_trajectory_test(
 
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Collect samples for parallel processing
+    # Collect samples
     samples = []
     for idx, sample in enumerate(ds):
         samples.append({
@@ -324,7 +273,6 @@ def run_trajectory_test(
 
     logger.info("Starting parallel processing with %d workers", num_workers)
 
-    # Process samples in parallel
     completed = 0
     success_count = 0
     error_count = 0
@@ -341,7 +289,6 @@ def run_trajectory_test(
                 sample_data["answer"],
                 client,
                 model_name,
-                api_mode,
                 max_tokens,
                 temperature,
                 system_prompt,
@@ -356,22 +303,12 @@ def run_trajectory_test(
 
             if success:
                 success_count += 1
-                logger.info(
-                    "[%d/%d] Sample %s completed: %s",
-                    completed, len(samples), sample_id, message
-                )
+                logger.info("[%d/%d] Sample %s completed: %s", completed, len(samples), sample_id, message)
             else:
                 error_count += 1
-                logger.error(
-                    "[%d/%d] Sample %s failed: %s",
-                    completed, len(samples), sample_id, message
-                )
+                logger.error("[%d/%d] Sample %s failed: %s", completed, len(samples), sample_id, message)
 
-    logger.info(
-        "Test completed. Success: %d, Errors: %d, Total: %d",
-        success_count, error_count, len(samples)
-    )
-    logger.info("Results saved to %s", output_path)
+    logger.info("Test completed. Success: %d, Errors: %d, Total: %d", success_count, error_count, len(samples))
     print(f"Test completed. Success: {success_count}, Errors: {error_count}")
     print(f"Results saved to {output_path}")
 
@@ -380,61 +317,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run trajectory test on vLLM server and output results for evaluation."
     )
-    parser.add_argument(
-        "--parquet_path",
-        type=str,
-        required=True,
-        help="Path to parquet dataset."
-    )
-    parser.add_argument(
-        "--output_path",
-        type=str,
-        required=True,
-        help="Output directory for results."
-    )
-    parser.add_argument(
-        "--api_base",
-        type=str,
-        default="http://127.0.0.1:8000",
-        help="vLLM server base URL."
-    )
-    parser.add_argument(
-        "--model_name",
-        type=str,
-        required=True,
-        help="Model name/path (e.g., /storage/openpsi/models/Qwen3-VL-8B-Thinking)."
-    )
-    parser.add_argument(
-        "--api_mode",
-        type=str,
-        default="responses",
-        choices=["responses", "chat_completions"],
-        help="API mode: 'responses' for vLLM/OpenAI, 'chat_completions' for SGLang (default: responses)."
-    )
-    parser.add_argument(
-        "--max_tokens",
-        type=int,
-        default=16384,
-        help="Maximum tokens to generate."
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=1.0,
-        help="Sampling temperature."
-    )
-    parser.add_argument(
-        "--system_prompt",
-        type=str,
-        default=None,
-        help="Optional system prompt."
-    )
-    parser.add_argument(
-        "--num_workers",
-        type=int,
-        default=8,
-        help="Number of parallel workers."
-    )
+    parser.add_argument("--parquet_path", type=str, required=True, help="Path to parquet dataset.")
+    parser.add_argument("--output_path", type=str, required=True, help="Output directory for results.")
+    parser.add_argument("--api_base", type=str, default="http://127.0.0.1:8000", help="vLLM server base URL.")
+    parser.add_argument("--model_name", type=str, required=True, help="Model name/path.")
+    parser.add_argument("--max_tokens", type=int, default=16384, help="Maximum tokens to generate.")
+    parser.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature.")
+    parser.add_argument("--system_prompt", type=str, default=None, help="Optional system prompt.")
+    parser.add_argument("--num_workers", type=int, default=8, help="Number of parallel workers.")
     args = parser.parse_args()
 
     run_trajectory_test(
@@ -442,7 +332,6 @@ def main() -> None:
         output_path=Path(args.output_path),
         api_base=args.api_base,
         model_name=args.model_name,
-        api_mode=args.api_mode,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         system_prompt=args.system_prompt,
