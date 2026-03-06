@@ -20,6 +20,11 @@ mkdir -p "$SCRIPT_DIR/zh/_static/js" "$SCRIPT_DIR/zh/_static/css"
 cp "$SCRIPT_DIR/_static/js/lang-toggle.js" "$SCRIPT_DIR/zh/_static/js/" 2>/dev/null || true
 cp "$SCRIPT_DIR/_static/css/lang-toggle.css" "$SCRIPT_DIR/zh/_static/css/" 2>/dev/null || true
 
+# Copy figures directory to source directories (so Sphinx can find images within source tree)
+echo "[AReaL] Copying figures to source directories..."
+cp -r "$SCRIPT_DIR/figures" "$SCRIPT_DIR/en/" 2>/dev/null || true
+cp -r "$SCRIPT_DIR/figures" "$SCRIPT_DIR/zh/" 2>/dev/null || true
+
 echo "[AReaL] Building English version..."
 uv run --only-dev jupyter-book build "$SCRIPT_DIR/en" --all --path-output "$SCRIPT_DIR/_build/en"
 
@@ -71,6 +76,10 @@ fi
 # Clean up temporary _static directories from source tree
 echo "[AReaL] Cleaning up temporary static directories..."
 rm -rf "$SCRIPT_DIR/en/_static" "$SCRIPT_DIR/zh/_static" 2>/dev/null || true
+
+# Clean up temporary figures directories copied during build
+echo "[AReaL] Cleaning up temporary figures directories..."
+rm -rf "$SCRIPT_DIR/en/figures" "$SCRIPT_DIR/zh/figures" 2>/dev/null || true
 
 # Also copy top-level js/css directories to _static if they exist (lang-toggle files)
 if [ -d "$SCRIPT_DIR/_build/en/js" ]; then

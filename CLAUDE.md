@@ -152,6 +152,7 @@ Commands perform specific actions when invoked:
 - `/create-pr` - Rebase, squash commits, and create/update PR with intelligent messages
 - `/gen-commit-msg` - Generate commit messages from staged changes
 - `/review-pr` - Intelligent PR code review with dynamic agent allocation
+- `/translate-doc-zh` - Translate English documentation to Chinese
 
 ### Rules (Code Quality Standards)
 
