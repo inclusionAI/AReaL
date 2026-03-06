@@ -16,29 +16,18 @@ def infer_token_denominator(
     full logical sequence. Prefer that metadata for ``n_tokens`` so statistics
     stay consistent with and without context parallelism.
     """
+    common_kwargs = {"dtype": torch.bool, "device": fallback.device}
 
     attention_mask = input_data.get("attention_mask")
-    if torch.is_tensor(attention_mask):
-        return torch.ones_like(
-            attention_mask,
-            dtype=torch.bool,
-            device=fallback.device,
-        )
+    if isinstance(attention_mask, torch.Tensor):
+        return torch.ones_like(attention_mask, **common_kwargs)
 
     cu_seqlens = input_data.get("cu_seqlens")
-    if torch.is_tensor(cu_seqlens) and cu_seqlens.numel() > 0:
-        return torch.ones(
-            int(cu_seqlens[-1].item()),
-            dtype=torch.bool,
-            device=fallback.device,
-        )
+    if isinstance(cu_seqlens, torch.Tensor) and cu_seqlens.numel() > 0:
+        return torch.ones(int(cu_seqlens[-1].item()), **common_kwargs)
 
     input_ids = input_data.get("input_ids")
-    if torch.is_tensor(input_ids):
-        return torch.ones_like(
-            input_ids,
-            dtype=torch.bool,
-            device=fallback.device,
-        )
+    if isinstance(input_ids, torch.Tensor):
+        return torch.ones_like(input_ids, **common_kwargs)
 
-    return torch.ones_like(fallback, dtype=torch.bool, device=fallback.device)
+    return torch.ones_like(fallback, **common_kwargs)

@@ -4,6 +4,40 @@ import torch
 
 from areal.trainer.ppo.actor import grpo_loss_fn
 from areal.trainer.ppo.critic import ppo_loss_fn
+from areal.trainer.ppo.stats import infer_token_denominator
+
+
+def test_infer_token_denominator_prefers_attention_mask():
+    input_data = {
+        "attention_mask": torch.tensor([[1, 1, 0], [1, 1, 1]]),
+        "input_ids": torch.tensor([[11, 12], [13, 14]]),
+    }
+
+    n_tokens = infer_token_denominator(input_data, fallback=torch.zeros(5))
+
+    assert n_tokens.shape == torch.Size([2, 3])
+    assert n_tokens.dtype == torch.bool
+    assert torch.all(n_tokens)
+
+
+def test_infer_token_denominator_uses_input_ids_when_attention_mask_missing():
+    input_data = {"input_ids": torch.tensor([[11, 12, 13], [14, 15, 16]])}
+
+    n_tokens = infer_token_denominator(input_data, fallback=torch.zeros(2))
+
+    assert n_tokens.shape == torch.Size([2, 3])
+    assert n_tokens.dtype == torch.bool
+    assert torch.all(n_tokens)
+
+
+def test_infer_token_denominator_falls_back_when_metadata_is_missing():
+    fallback = torch.zeros(4)
+
+    n_tokens = infer_token_denominator({"logprobs": torch.zeros(2)}, fallback=fallback)
+
+    assert n_tokens.shape == torch.Size([4])
+    assert n_tokens.dtype == torch.bool
+    assert torch.all(n_tokens)
 
 
 def test_grpo_loss_fn_uses_full_cu_seqlens_for_n_tokens():
