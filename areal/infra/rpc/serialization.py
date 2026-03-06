@@ -380,6 +380,52 @@ class SerializedTokenizer(BaseModel):
         raise ValueError(msg)
 
 
+class SerializedProcessor(BaseModel):
+    """Pydantic model for serialized Hugging Face processors (e.g. VLM/Omni).
+
+    Processors are serialized identically to tokenizers: ``save_pretrained``
+    into a temp directory, ZIP-archive the files, and base64-encode the blob.
+    """
+
+    type: Literal["processor"] = Field(default="processor")
+    name_or_path: str
+    data: str
+    compression: TokenizerCompression = Field(default="zip")
+
+    @classmethod
+    def from_processor(cls, processor: Any) -> "SerializedProcessor":
+        name_or_path = getattr(processor, "name_or_path", processor.__class__.__name__)
+        blob = SerializedTokenizer._archive_tokenizer(processor)
+        blob, compression = SerializedTokenizer._maybe_compress(blob)
+        data_b64 = base64.b64encode(blob).decode("utf-8")
+        return cls(name_or_path=name_or_path, data=data_b64, compression=compression)
+
+    def to_processor(self) -> Any:
+        blob = base64.b64decode(self.data.encode("utf-8"))
+        if self.compression == "zstd":
+            import zstandard as zstd
+
+            blob = zstd.ZstdDecompressor().decompress(blob)
+        from transformers import AutoProcessor
+
+        zip_buffer = io.BytesIO(blob)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with zipfile.ZipFile(zip_buffer) as zf:
+                zf.extractall(tmpdir)
+            processor = AutoProcessor.from_pretrained(tmpdir, trust_remote_code=True)
+        if hasattr(processor, "name_or_path"):
+            processor.name_or_path = self.name_or_path
+        return processor
+
+    @staticmethod
+    def _is_processor(obj: Any) -> bool:
+        try:
+            from transformers.processing_utils import ProcessorMixin
+        except ImportError:
+            return False
+        return isinstance(obj, ProcessorMixin)
+
+
 def serialize_value(value: Any) -> Any:
     """Recursively serialize a value, converting tensors and dataclasses to serialized dicts.
 
@@ -388,6 +434,7 @@ def serialize_value(value: Any) -> Any:
     - numpy.ndarray -> SerializedNDArray dict
     - dataclass instances -> SerializedDataclass dict (preserves type information)
     - Hugging Face tokenizers -> SerializedTokenizer dict
+    - Hugging Face processors -> SerializedProcessor dict
     - dict -> recursively serialize values
     - list/tuple -> recursively serialize elements
     - primitives (int, float, str, bool, None) -> unchanged
@@ -432,6 +479,10 @@ def serialize_value(value: Any) -> Any:
         tokenizer_payload = SerializedTokenizer.from_tokenizer(value)
         return tokenizer_payload.model_dump()
 
+    if SerializedProcessor._is_processor(value):
+        processor_payload = SerializedProcessor.from_processor(value)
+        return processor_payload.model_dump()
+
     # Handle dict - recursively serialize values
     if isinstance(value, dict):
         return {key: serialize_value(val) for key, val in value.items()}
@@ -460,6 +511,7 @@ def deserialize_value(value: Any) -> Any:
     - SerializedNDArray dict -> numpy.ndarray
     - SerializedDataclass dict -> dataclass instance (reconstructed with original type)
     - SerializedTokenizer dict -> Hugging Face tokenizer
+    - SerializedProcessor dict -> Hugging Face processor
     - dict -> recursively deserialize values
     - list -> recursively deserialize elements
     - primitives -> unchanged
@@ -505,6 +557,16 @@ def deserialize_value(value: Any) -> Any:
             except Exception as e:
                 logger.warning(
                     f"Failed to deserialize tokenizer, treating as regular dict: {e}"
+                )
+
+        # Check for SerializedProcessor marker
+        if value.get("type") == "processor":
+            try:
+                serialized_processor = SerializedProcessor.model_validate(value)
+                return serialized_processor.to_processor()
+            except Exception as e:
+                logger.warning(
+                    f"Failed to deserialize processor, treating as regular dict: {e}"
                 )
 
         # Check for SerializedNDArray marker

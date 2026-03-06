@@ -66,9 +66,12 @@ from areal.engine.core.distributed import (
 from areal.engine.core.model import (
     disable_dropout_in_model,
     is_gemma3_model,
+    is_omni_model,
     is_qwen3_moe_model,
     is_qwen3_vl_model,
+    is_qwen_omni_model,
     is_qwen_vl_model,
+    is_qwen_vl_or_omni_model,
     is_valid_vision_model,
 )
 from areal.engine.fsdp_utils import (
@@ -185,6 +188,7 @@ class FSDPEngine(TrainEngine):
             trust_remote_code=True,
         )
         self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
+        self.is_omni_model = is_omni_model(self.model_config.model_type)
 
         # FSDP-specific initialization
         self.cpu_offload: CPUOffloadPolicy | None = None
@@ -802,16 +806,33 @@ class FSDPEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            # VLM: Use from_pretrained() on loading_device.
-            with torch.device(loading_device):
-                model = AutoModelForImageTextToText.from_pretrained(
-                    pretrained_model_name_or_path=self.config.path,
-                    trust_remote_code=True,
-                    dtype=dtype,
-                    attn_implementation=self.config.attn_impl,
+            if self.is_omni_model:
+                # Omni models: load only the Thinker module (which includes
+                # audio_tower, visual encoder, text model, and lm_head).
+                # The Talker/Code2Wav modules are not needed for RL training.
+                from areal.models.transformers.qwen_omni import (
+                    load_omni_thinker_model,
                 )
-                if self.config.disable_dropout:
-                    disable_dropout_in_model(model)
+
+                with torch.device(loading_device):
+                    model = load_omni_thinker_model(
+                        self.config.path,
+                        dtype=dtype,
+                        attn_implementation=self.config.attn_impl,
+                    )
+                    if self.config.disable_dropout:
+                        disable_dropout_in_model(model)
+            else:
+                # VLM: Use from_pretrained() on loading_device.
+                with torch.device(loading_device):
+                    model = AutoModelForImageTextToText.from_pretrained(
+                        pretrained_model_name_or_path=self.config.path,
+                        trust_remote_code=True,
+                        dtype=dtype,
+                        attn_implementation=self.config.attn_impl,
+                    )
+                    if self.config.disable_dropout:
+                        disable_dropout_in_model(model)
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
             self.processor = None
@@ -881,9 +902,11 @@ class FSDPEngine(TrainEngine):
         beta1 = self.optimizer_config.beta1
         beta2 = self.optimizer_config.beta2
         eps = self.optimizer_config.eps
+        # For Omni models, frozen generator params must be excluded from the optimizer.
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         if self.optimizer_config.type == "adam":
             self.optimizer = torch.optim.AdamW(
-                self.model.parameters(),
+                trainable_params,
                 lr=lr,
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
@@ -893,7 +916,7 @@ class FSDPEngine(TrainEngine):
             )
         elif self.optimizer_config.type == "adam_bf16":
             self.optimizer = AnyPrecisionAdamW(
-                self.model.parameters(),
+                trainable_params,
                 lr=lr,
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
@@ -903,7 +926,7 @@ class FSDPEngine(TrainEngine):
             )
         else:
             self.optimizer = torch.optim.SGD(
-                self.model.parameters(),
+                trainable_params,
                 lr=lr,
                 weight_decay=weight_decay,
             )
@@ -953,7 +976,27 @@ class FSDPEngine(TrainEngine):
 
     def _get_model_name_parameters(self) -> Iterator[tuple[str, nn.Parameter]]:
         name_params_iterator = self.model.named_parameters()
-        if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
+        if self.is_omni_model and is_qwen_omni_model(self.model_config.model_type):
+            # Thinker loaded directly: param names are model.*, lm_head.*,
+            # visual.*, audio_tower.*.  vLLM loads the full Omni model with
+            # thinker.* prefix.  Map FSDP names → vLLM names by adding
+            # "thinker." and adjusting the text model nesting.
+            for name, value in name_params_iterator:
+                if not value.requires_grad:
+                    continue
+                if name.startswith("model."):
+                    # model.layers.* → thinker.model.layers.*
+                    new_name = f"thinker.{name}"
+                elif name.startswith("lm_head."):
+                    new_name = f"thinker.{name}"
+                elif name.startswith("visual."):
+                    new_name = f"thinker.{name}"
+                elif name.startswith("audio_tower."):
+                    new_name = f"thinker.{name}"
+                else:
+                    new_name = f"thinker.{name}"
+                yield new_name, value
+        elif self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
             for name, value in name_params_iterator:
                 new_name = name.replace("model.", "", 1)
                 if new_name.startswith("language_model."):
@@ -1274,7 +1317,7 @@ class FSDPEngine(TrainEngine):
             )
             return mb_list
 
-        if is_qwen_vl_model(self.model_config.model_type):
+        if is_qwen_vl_or_omni_model(self.model_config.model_type):
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
             image_grid_thw = None
@@ -1296,7 +1339,13 @@ class FSDPEngine(TrainEngine):
                 if video_grid_thw_list:
                     video_grid_thw = torch.cat(video_grid_thw_list)
 
-            position_ids, _ = self.model.model.get_rope_index(
+            if is_qwen_omni_model(self.model_config.model_type):
+                # Omni Thinker: get_rope_index lives on the top-level model
+                # (Qwen2_5OmniThinkerForConditionalGeneration), not on model.model.
+                rope_model = self.model
+            else:
+                rope_model = self.model.model
+            position_ids, _ = rope_model.get_rope_index(
                 input_ids, image_grid_thw, video_grid_thw, attn_mask
             )
             position_ids = torch.einsum("ijk->jki", position_ids)
@@ -1316,7 +1365,7 @@ class FSDPEngine(TrainEngine):
             f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}"
         )
         mb_list = unsqueeze_mb_list(mb_list)
-        if is_qwen_vl_model(self.model_config.model_type):
+        if is_qwen_vl_or_omni_model(self.model_config.model_type):
             assert mb_list.padded_mbs is not None
             for mb in mb_list.padded_mbs:
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
@@ -1339,8 +1388,10 @@ class FSDPEngine(TrainEngine):
             ]
             mb["use_cache"] = False
             padded_mb["use_cache"] = False
-            if is_qwen3_moe_model(self.model_config.model_type) or is_qwen3_vl_model(
-                self.model_config.model_type
+            if (
+                is_qwen3_moe_model(self.model_config.model_type)
+                or is_qwen3_vl_model(self.model_config.model_type)
+                or is_qwen_omni_model(self.model_config.model_type)
             ):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
@@ -1374,6 +1425,40 @@ class FSDPEngine(TrainEngine):
                 if video_grid_thw_list:
                     mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
                     padded_mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+                # Video pixel values (separate from image pixel_values)
+                pixel_values_videos_list = [
+                    item["pixel_values_videos"]
+                    for item in mb["multi_modal_input"]
+                    if "pixel_values_videos" in item
+                ]
+                if pixel_values_videos_list:
+                    mb["pixel_values_videos"] = torch.cat(
+                        pixel_values_videos_list, dim=0
+                    )
+                    padded_mb["pixel_values_videos"] = torch.cat(
+                        pixel_values_videos_list, dim=0
+                    )
+                # Audio fields for Omni models
+                input_features_list = [
+                    item["input_features"]
+                    for item in mb["multi_modal_input"]
+                    if "input_features" in item
+                ]
+                if input_features_list:
+                    mb["input_features"] = torch.cat(input_features_list, dim=0)
+                    padded_mb["input_features"] = torch.cat(input_features_list, dim=0)
+                feature_attention_mask_list = [
+                    item["feature_attention_mask"]
+                    for item in mb["multi_modal_input"]
+                    if "feature_attention_mask" in item
+                ]
+                if feature_attention_mask_list:
+                    mb["feature_attention_mask"] = torch.cat(
+                        feature_attention_mask_list, dim=0
+                    )
+                    padded_mb["feature_attention_mask"] = torch.cat(
+                        feature_attention_mask_list, dim=0
+                    )
         return mb_list
 
     def _prepare_mb_inputs(

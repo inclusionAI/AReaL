@@ -323,6 +323,8 @@ class RTensor:
         Any
             Object with tensors converted to RTensors
         """
+        from areal.utils.data import is_multi_modal_key
+
         if isinstance(obj, torch.Tensor):
             return RTensor.from_batched(
                 obj.detach().cpu(), layout=layout, node_addr=node_addr
@@ -330,7 +332,11 @@ class RTensor:
 
         if isinstance(obj, dict):
             return {
-                k: RTensor.remotize(obj=v, layout=layout, node_addr=node_addr)
+                k: (
+                    v
+                    if is_multi_modal_key(k)
+                    else RTensor.remotize(obj=v, layout=layout, node_addr=node_addr)
+                )
                 for k, v in obj.items()
             }
 
@@ -419,9 +425,15 @@ class RTensor:
             return split_rtensors, group_indices
 
         if isinstance(obj, dict):
+            from areal.utils.data import is_multi_modal_key
+
             # Split each value, return list of dicts
             split_values = {
-                k: RTensor.data_parallel_dispatch(v, dp_size, group_indices)[0]
+                k: (
+                    [v] * dp_size
+                    if is_multi_modal_key(k)
+                    else RTensor.data_parallel_dispatch(v, dp_size, group_indices)[0]
+                )
                 for k, v in obj.items()
             }
             return [
@@ -492,12 +504,17 @@ class RTensor:
             return RTensor.cat([rtensors[i] for i in inv_indices])
 
         if isinstance(first, dict):
+            from areal.utils.data import is_multi_modal_key
+
             merged = {}
             for key in first.keys():
-                values = [r[key] for r in results]
-                merged[key] = RTensor.data_parallel_merge(
-                    values, group_indices=group_indices
-                )
+                if is_multi_modal_key(key):
+                    merged[key] = first[key]
+                else:
+                    values = [r[key] for r in results]
+                    merged[key] = RTensor.data_parallel_merge(
+                        values, group_indices=group_indices
+                    )
             return merged
 
         if isinstance(first, list):
