@@ -1,3 +1,10 @@
+# Supports sglang and vllm variants via the VARIANT build argument.
+# All layers before STAGE 3 are shared across variants for cache reuse.
+#
+# Usage:
+#   docker build -t areal-runtime:dev-sglang .                          # default (sglang)
+#   docker build --build-arg VARIANT=vllm -t areal-runtime:dev-vllm .    # vllm variant
+
 FROM lmsysorg/sglang:v0.5.7-cu129-amd64-runtime
 
 WORKDIR /
@@ -155,12 +162,16 @@ RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_D
 # C++ packages that aren't in uv.lock.
 ##############################################################
 
+# Declare VARIANT here (not at top) so all layers above share cache across variants.
+# ARG values affect Docker cache from first usage onwards.
+ARG VARIANT=sglang
+
 # Install the project's dependencies (not the project itself)
 # This adds packages without removing unlisted ones (like our C++ packages)
-# Use --extra cuda to install all CUDA-dependent packages (sglang, vllm, megatron, tms)
+# VARIANT selects the inference backend (sglang or vllm)
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv pip install -r pyproject.toml --extra cuda --group dev
+    uv pip install -r pyproject.toml --extra ${VARIANT} --extra cuda-train --group dev
 
 ##############################################################
 # STAGE 4: Misc fixes and final setup
@@ -191,3 +202,7 @@ RUN uv pip install --no-deps -e /AReaL
 
 # Place executables in the environment at the front of the path
 ENV PATH="/AReaL/.venv/bin:$PATH"
+
+# Reset entrypoint (some base images set custom entrypoints; this ensures /bin/bash)
+ENTRYPOINT []
+CMD ["/bin/bash"]

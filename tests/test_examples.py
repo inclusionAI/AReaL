@@ -120,6 +120,7 @@ async def run_example(
     return success
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_countdown_example(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -179,6 +180,7 @@ def test_countdown_example(tmp_path_factory):
         ("sglang:d1+megatron:d1", True),
     ],
 )
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 @pytest.mark.ci
 def test_gsm8k_grpo(tmp_path_factory, alloc_mode, single_controller):
@@ -266,6 +268,7 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode, single_controller):
     assert success, f"GSM8K SFT example failed (single_controller={single_controller})"
 
 
+@pytest.mark.sglang
 @pytest.mark.gpu
 def test_gsm8k_eval(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -297,6 +300,7 @@ def test_gsm8k_eval(tmp_path_factory):
     assert success, "GSM8K Eval example failed"
 
 
+@pytest.mark.sglang
 @pytest.mark.skip("Currently VLM dataloading is too slow. Needs to be fixed.")
 @pytest.mark.multi_gpu
 def test_vlm_grpo(tmp_path_factory):
@@ -369,6 +373,7 @@ def test_vlm_sft(tmp_path_factory):
     assert success, "CLEVR Count 70k SFT example failed"
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_gsm8k_ppo(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -404,7 +409,10 @@ def test_gsm8k_ppo(tmp_path_factory):
 
 @pytest.mark.parametrize(
     "alloc_mode",
-    ["sglang:d1+fsdp:d1", "vllm:d1+fsdp:d1"],
+    [
+        pytest.param("sglang:d1+fsdp:d1", marks=pytest.mark.sglang),
+        pytest.param("vllm:d1+fsdp:d1", marks=pytest.mark.vllm),
+    ],
 )
 @pytest.mark.multi_gpu
 def test_gsm8k_grpo_lora(tmp_path_factory, alloc_mode):
@@ -440,6 +448,7 @@ def test_gsm8k_grpo_lora(tmp_path_factory, alloc_mode):
     assert success, "GSM8K GRPO LoRA example failed"
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_multi_turn_math(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -502,6 +511,7 @@ def test_hhrlhf_rw(tmp_path_factory):
     assert success, "HH-RLHF Reward Modeling example failed"
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_tir_grpo(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -534,6 +544,7 @@ def test_tir_grpo(tmp_path_factory):
     assert success, "TIR GRPO example failed"
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_search_agent_deepresearch(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -613,6 +624,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
         kill_process_tree(llm_judge_proc.pid, graceful=False)
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_openai_agents(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -644,6 +656,7 @@ def test_openai_agents(tmp_path_factory):
         raise RuntimeError("OpenAI Agents example failed")
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_camel(tmp_path_factory):
     try:
@@ -677,6 +690,7 @@ def test_camel(tmp_path_factory):
         raise RuntimeError("Camel Math example failed")
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_openai_proxy(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -713,6 +727,7 @@ def test_openai_proxy(tmp_path_factory):
         raise RuntimeError("OpenAI Proxy example failed")
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_tau2(tmp_path_factory):
     """Test tau2 airline domain training with a user LLM server.
@@ -838,6 +853,7 @@ def test_tau2(tmp_path_factory):
         kill_process_tree(user_llm_proc.pid, graceful=False)
 
 
+@pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_openclaw_online_rl(tmp_path_factory):
     """Test openclaw online RL training via demo lifecycle (HTTP requests).

@@ -4,7 +4,7 @@ cluster:
   n_nodes: 1
   n_gpus_per_node: 2
   fileroot: /tmp/areal/experiments
-allocation_mode: sglang:d1+fsdp:d1
+allocation_mode: vllm:d1+archon:d1
 seed: 1
 total_train_epochs: 1
 total_train_steps: 16
@@ -30,9 +30,12 @@ recover:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-sglang:
-  model_path: ${actor.path}
-  random_seed: ${seed}
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  max_model_len: 128
+  gpu_memory_utilization: 0.2
 gconfig:
   n_samples: 4
   max_new_tokens: 1024
