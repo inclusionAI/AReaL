@@ -139,7 +139,7 @@ async def app_client(config, mock_tokenizer, mock_backend, mock_chat_handler):
     app.state.chat_handler = mock_chat_handler
 
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", headers={"Authorization": "Bearer areal-admin-key"}) as client:
         yield client, app, pause_state
 
 

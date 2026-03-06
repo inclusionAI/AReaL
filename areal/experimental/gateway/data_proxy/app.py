@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -24,8 +25,6 @@ from areal.experimental.gateway.data_proxy.pause import (
     pause_backend,
     resume_backend,
 )
-from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
-from areal.experimental.gateway.data_proxy.config import DataProxyConfig
 from areal.experimental.gateway.data_proxy.session import (
     ExportTrajectoriesRequest,
     ExportTrajectoriesResponse,
@@ -107,6 +106,25 @@ def _require_session_key(request: Request, store: SessionStore) -> str:
             status_code=401, detail="Invalid or expired session API key."
         )
     return session.session_id
+
+
+@dataclass
+class AuthResult:
+    """Result of admin-or-session key authentication."""
+    is_admin: bool
+    session_id: str | None = None  # Only set if session key
+
+
+def _require_admin_or_session_key(request: Request, store: SessionStore) -> AuthResult:
+    """Authenticate with either admin key or session key.
+    Returns AuthResult indicating which type of key was used."""
+    token = _extract_bearer_token(request)
+    if hmac.compare_digest(token, store.admin_api_key):
+        return AuthResult(is_admin=True)
+    session = store.get_session_by_api_key(token)
+    if session is not None:
+        return AuthResult(is_admin=False, session_id=session.session_id)
+    raise HTTPException(status_code=401, detail="Invalid API key.")
 
 
 async def _call_client_create(
@@ -248,7 +266,10 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # =========================================================================
 
     @app.post("/generate")
-    async def generate(req: GenerateRequest):
+    async def generate(req: GenerateRequest, request: Request):
+        store: SessionStore = app.state.session_store
+        _require_admin_or_session_key(request, store)
+
         if req.text is None and req.input_ids is None:
             raise HTTPException(
                 status_code=400,
@@ -370,13 +391,17 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     @app.post("/chat/completions")
     async def chat_completions(body: CompletionCreateParams, request: Request):
         store: SessionStore = app.state.session_store
-        session_id = _require_session_key(request, store)
-        session_data = store.get_session(session_id)
-        if session_data is None:
-            raise HTTPException(
-                status_code=410, detail="Session already ended or expired"
-            )
-        session_data.update_last_access()
+        auth = _require_admin_or_session_key(request, store)
+
+        if auth.is_admin:
+            # Standalone mode: no session, no caching
+            import types
+            session_data = types.SimpleNamespace(completions=None)
+        else:
+            session_data = store.get_session(auth.session_id)  # type: ignore[arg-type]
+            if session_data is None:
+                raise HTTPException(status_code=410, detail="Session already ended or expired")
+            session_data.update_last_access()
 
         chat_handler: ChatCompletionHandler = app.state.chat_handler
 

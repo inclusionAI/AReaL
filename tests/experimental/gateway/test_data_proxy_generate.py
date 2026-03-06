@@ -79,7 +79,7 @@ async def client(config, mock_tokenizer, mock_backend):
     app.state.session_store = SessionStore()
     app.state.chat_handler = MagicMock()
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", headers={"Authorization": "Bearer areal-admin-key"}) as c:
         yield c
 
 
