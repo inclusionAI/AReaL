@@ -6,6 +6,7 @@ import torch
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.infra import TrainController
+from areal.trainer.ppo.stats import infer_token_denominator
 from areal.utils import logging, stats_tracker
 from areal.utils.constants import (
     PROX_APPROX_METHOD_LINEAR,
@@ -257,7 +258,7 @@ class PPOActor:
             result_denominators["agent"] = agent_denominator
         global_denominators = dict(
             n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
-            n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
+            n_tokens=infer_token_denominator(data, loss_mask),
             n_valid_tokens=loss_mask.bool(),
             **result_denominators,
         )
@@ -432,11 +433,7 @@ def grpo_loss_fn(
 
     # Log training statistics
     stats_tracker.denominator(
-        # NOTE: n_tokens must have shape [batch, seq] to match vocab stats.
-        # Using torch.ones_like(loss_mask) ensures correct shape when this function is called
-        # standalone (e.g., by tests), not just from ppo_update() which already
-        # registers n_tokens.
-        n_tokens=torch.ones_like(loss_mask, dtype=torch.bool, device=logprobs.device),
+        n_tokens=infer_token_denominator(input_data, loss_mask),
         n_valid_tokens=loss_mask.bool(),
         clipped_tokens=stat["clip_mask"],
         dual_clipped_tokens=stat["dual_clip_mask"],
