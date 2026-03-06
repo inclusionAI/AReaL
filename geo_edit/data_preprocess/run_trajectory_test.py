@@ -12,7 +12,8 @@ Usage:
     python -m geo_edit.data_preprocess.run_trajectory_test \
         --parquet_path /storage/.../trajectory_dataset.parquet \
         --output_path /storage/.../test_results/ \
-        --api_base http://127.0.0.1:8000
+        --api_base http://127.0.0.1:8000 \
+        --num_workers 8
 
     # 3. Evaluate with openai_as_judge
     python -m geo_edit.evaluation.openai_as_judge \
@@ -25,11 +26,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import io
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from datasets import Dataset
 from openai import OpenAI
@@ -38,6 +41,28 @@ from PIL import Image
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _pil_image_to_data_url(image: Image.Image) -> str:
+    """Convert PIL Image to data URL.
+
+    Args:
+        image: PIL Image object
+
+    Returns:
+        Data URL string like "data:image/png;base64,..."
+    """
+    # Save to buffer
+    buffer = io.BytesIO()
+    fmt = image.format or "PNG"
+    save_fmt = "JPEG" if fmt.upper() in {"JPG", "JPEG"} else "PNG"
+    image.save(buffer, format=save_fmt)
+
+    # Encode to base64
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    mime = "image/jpeg" if save_fmt == "JPEG" else "image/png"
+
+    return f"data:{mime};base64,{encoded}"
 
 
 def _bytes_to_data_url(image_bytes: bytes) -> str:
@@ -49,37 +74,64 @@ def _bytes_to_data_url(image_bytes: bytes) -> str:
     Returns:
         Data URL string like "data:image/png;base64,..."
     """
-    # Detect image format
     image = Image.open(io.BytesIO(image_bytes))
-    fmt = image.format or "PNG"
+    return _pil_image_to_data_url(image)
 
-    # Encode to base64
-    encoded = base64.b64encode(image_bytes).decode("ascii")
-    mime = "image/jpeg" if fmt.upper() in {"JPG", "JPEG"} else "image/png"
 
-    return f"data:{mime};base64,{encoded}"
+def _image_to_data_url(img_data: Any) -> Optional[str]:
+    """Convert various image formats to data URL.
+
+    Handles:
+    - PIL Image objects (from HuggingFace auto-decode)
+    - Dict with "bytes" key
+    - Raw bytes
+
+    Args:
+        img_data: Image data in various formats
+
+    Returns:
+        Data URL string or None if conversion failed
+    """
+    try:
+        if isinstance(img_data, Image.Image):
+            # PIL Image object (HuggingFace auto-decoded)
+            return _pil_image_to_data_url(img_data)
+        elif isinstance(img_data, dict):
+            # Dict with "bytes" key
+            img_bytes = img_data.get("bytes")
+            if img_bytes:
+                return _bytes_to_data_url(img_bytes)
+        elif isinstance(img_data, bytes):
+            # Raw bytes
+            return _bytes_to_data_url(img_data)
+    except Exception as e:
+        logger.warning("Failed to convert image to data URL: %s", e)
+    return None
 
 
 def _inject_images_into_messages(
     messages: List[Dict[str, Any]],
-    images: List[Dict[str, Any]]
+    images: List[Any]
 ) -> List[Dict[str, Any]]:
     """Replace [IMAGE_N] placeholders with actual base64 data URLs.
 
     Args:
         messages: List of conversation messages with placeholders
-        images: List of image dicts with "bytes" key from HuggingFace dataset
+        images: List of images (PIL Image, dict with bytes, or raw bytes)
 
     Returns:
         Messages with image placeholders replaced by data URLs
     """
+    # Deep copy to avoid modifying original
+    messages = copy.deepcopy(messages)
+
     # Build placeholder to data URL mapping
     image_map: Dict[str, str] = {}
     for idx, img_data in enumerate(images):
         placeholder = f"[IMAGE_{idx}]"
-        img_bytes = img_data.get("bytes")
-        if img_bytes:
-            image_map[placeholder] = _bytes_to_data_url(img_bytes)
+        data_url = _image_to_data_url(img_data)
+        if data_url:
+            image_map[placeholder] = data_url
 
     # Replace placeholders in messages
     for msg in messages:
@@ -119,30 +171,26 @@ def _extract_final_answer(output_text: str) -> str:
 
 
 def _save_result(
-    sample: Dict[str, Any],
+    sample_id: str,
+    meta_info_str: str,
+    answer: str,
     output_text: str,
     output_path: Path
 ) -> None:
     """Save result in format compatible with openai_as_judge.
 
     Creates a subfolder with meta_info.jsonl containing question, answer, and output_text.
-
-    Args:
-        sample: Dataset sample dict
-        output_text: Model output text
-        output_path: Base output directory
     """
-    sample_id = sample["id"]
     sample_dir = output_path / sample_id
     sample_dir.mkdir(parents=True, exist_ok=True)
 
     # Load meta_info
-    meta_info = json.loads(sample["meta_info"]) if sample["meta_info"] else {}
+    meta_info = json.loads(meta_info_str) if meta_info_str else {}
 
     # Build result record
     result = {
         "question": meta_info.get("question", ""),
-        "answer": sample["answer"],
+        "answer": answer,
         "output_text": output_text,
         "image_path": meta_info.get("image_path", ""),
     }
@@ -151,6 +199,65 @@ def _save_result(
     meta_path = sample_dir / "meta_info.jsonl"
     with meta_path.open("w", encoding="utf-8") as f:
         f.write(json.dumps(result, ensure_ascii=False) + "\n")
+
+
+def _process_single_sample(
+    sample_id: str,
+    messages_json: str,
+    images: List[Any],
+    meta_info_str: str,
+    answer: str,
+    client: OpenAI,
+    model_name: str,
+    api_mode: str,
+    max_tokens: int,
+    temperature: float,
+    system_prompt: Optional[str],
+    output_path: Path,
+) -> Tuple[str, bool, str]:
+    """Process a single sample.
+
+    Returns:
+        Tuple of (sample_id, success, message)
+    """
+    try:
+        # Parse messages from JSON string
+        messages = json.loads(messages_json)
+
+        # Inject images into messages
+        messages = _inject_images_into_messages(messages, images)
+
+        # Prepend system message
+        if system_prompt:
+            messages.insert(0, {"role": "system", "content": system_prompt})
+
+        # Call vLLM
+        if api_mode == "chat_completions":
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            output_text = response.choices[0].message.content or ""
+        else:
+            # responses API
+            response = client.responses.create(
+                model=model_name,
+                input=messages,
+                max_output_tokens=max_tokens,
+                temperature=temperature,
+            )
+            output_text = getattr(response, "output_text", "") or ""
+
+        # Save result
+        _save_result(sample_id, meta_info_str, answer, output_text, output_path)
+        return (sample_id, True, f"output length: {len(output_text)}")
+
+    except Exception as e:
+        # Save error result
+        _save_result(sample_id, meta_info_str, answer, f"ERROR: {str(e)}", output_path)
+        return (sample_id, False, str(e))
 
 
 def run_trajectory_test(
@@ -162,8 +269,9 @@ def run_trajectory_test(
     max_tokens: int = 16384,
     temperature: float = 1.0,
     system_prompt: Optional[str] = None,
+    num_workers: int = 8,
 ) -> None:
-    """Run trajectory test on vLLM server.
+    """Run trajectory test on vLLM server with parallel processing.
 
     Args:
         parquet_path: Path to parquet dataset
@@ -174,6 +282,7 @@ def run_trajectory_test(
         max_tokens: Maximum tokens to generate
         temperature: Sampling temperature
         system_prompt: Optional system prompt to prepend
+        num_workers: Number of parallel workers
     """
     # Load dataset
     logger.info("Loading dataset from %s", parquet_path)
@@ -196,53 +305,70 @@ def run_trajectory_test(
 
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Process each sample
+    # Collect samples for parallel processing
+    samples = []
     for idx, sample in enumerate(ds):
-        sample_id = sample["id"]
-        logger.info("Processing sample %d/%d: %s", idx + 1, len(ds), sample_id)
+        samples.append({
+            "sample_id": sample["id"],
+            "messages_json": sample["messages"],
+            "images": sample["images"],
+            "meta_info_str": sample["meta_info"],
+            "answer": sample["answer"],
+            "idx": idx,
+        })
 
-        try:
-            # Parse messages from JSON string
-            messages = json.loads(sample["messages"])
+    logger.info("Starting parallel processing with %d workers", num_workers)
 
-            # Inject images into messages
-            images = sample["images"]
-            messages = _inject_images_into_messages(messages, images)
+    # Process samples in parallel
+    completed = 0
+    success_count = 0
+    error_count = 0
 
-            # Prepend system message
-            if system_prompt:
-                messages.insert(0, {"role": "system", "content": system_prompt})
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = {}
+        for sample_data in samples:
+            future = executor.submit(
+                _process_single_sample,
+                sample_data["sample_id"],
+                sample_data["messages_json"],
+                sample_data["images"],
+                sample_data["meta_info_str"],
+                sample_data["answer"],
+                client,
+                model_name,
+                api_mode,
+                max_tokens,
+                temperature,
+                system_prompt,
+                output_path,
+            )
+            futures[future] = sample_data["idx"]
 
-            # Call vLLM
-            if api_mode == "chat_completions":
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
+        for future in as_completed(futures):
+            idx = futures[future]
+            sample_id, success, message = future.result()
+            completed += 1
+
+            if success:
+                success_count += 1
+                logger.info(
+                    "[%d/%d] Sample %s completed: %s",
+                    completed, len(samples), sample_id, message
                 )
-                output_text = response.choices[0].message.content or ""
             else:
-                # responses API
-                response = client.responses.create(
-                    model=model_name,
-                    input=messages,
-                    max_output_tokens=max_tokens,
-                    temperature=temperature,
+                error_count += 1
+                logger.error(
+                    "[%d/%d] Sample %s failed: %s",
+                    completed, len(samples), sample_id, message
                 )
-                output_text = getattr(response, "output_text", "") or ""
 
-            # Save result
-            _save_result(sample, output_text, output_path)
-            logger.info("Sample %s completed, output length: %d", sample_id, len(output_text))
-
-        except Exception as e:
-            logger.error("Error processing sample %s: %s", sample_id, e)
-            # Save error result
-            _save_result(sample, f"ERROR: {str(e)}", output_path)
-
-    logger.info("Test completed. Results saved to %s", output_path)
-    print(f"Test completed. Results saved to {output_path}")
+    logger.info(
+        "Test completed. Success: %d, Errors: %d, Total: %d",
+        success_count, error_count, len(samples)
+    )
+    logger.info("Results saved to %s", output_path)
+    print(f"Test completed. Success: {success_count}, Errors: {error_count}")
+    print(f"Results saved to {output_path}")
 
 
 def main() -> None:
@@ -298,6 +424,12 @@ def main() -> None:
         default=None,
         help="Optional system prompt."
     )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=8,
+        help="Number of parallel workers."
+    )
     args = parser.parse_args()
 
     run_trajectory_test(
@@ -309,6 +441,7 @@ def main() -> None:
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         system_prompt=args.system_prompt,
+        num_workers=args.num_workers,
     )
 
 
