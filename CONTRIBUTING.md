@@ -27,13 +27,13 @@ helping with code reviews. This guide will help you get started.
    [installation guide](https://inclusionai.github.io/AReaL/en/tutorial/installation.html)
    for detailed setup instructions.
 
-1. **Set Up Code Formatting:**
+1. **Set Up Pre-commit Hooks:**
 
    ```bash
-   pip install pre-commit
-   pre-commit install
-   # Subsequent commits will automatically format your files:
-   git commit -a -m 'my change'
+   # Install hooks (includes formatting, linting, and commit message checks)
+   pre-commit install --install-hooks
+   # Subsequent commits will automatically check your files and commit messages:
+   git commit -a -m 'feat: my change'
    ```
 
 1. **Find an Issue:**
@@ -143,22 +143,16 @@ for detailed documentation.
 
 ## CI/CD
 
-### Format Check
+### Pre-commit Checks
 
-The format check runs automatically whenever a PR is opened. Your PR will pass the
-format check as long as you have properly run the formatting tools using `pre-commit`.
+Pre-commit checks run automatically on every PR. CI executes
+`pre-commit run --all-files` to verify formatting (Ruff, clang-format, mdformat) and
+linting. Commit messages are also validated against
+[Conventional Commits](https://www.conventionalcommits.org/) format (e.g., `feat: ...`,
+`fix: ...`, `docs: ...`).
 
-**Important Note on Formatting Tools:**
-
-We are gradually transitioning our Python formatting tool from `black` to `ruff`.
-Currently, the CI format check still uses `black` for Python file formatting, while
-`pre-commit` uses `ruff`. Please note that `ruff check` will fail on files in `areal/`
-and `examples/` because these directories have not been fully re-formatted yet.
-
-`black` and `ruff` have known conflicts when handling long assertions. To pass the CI
-format check, you should manually convert long assertions to `if`-`raise` statements.
-See [this issue](https://github.com/inclusionAI/AReaL/issues/503) for detailed
-information.
+As long as you have `pre-commit install --install-hooks` set up locally, your code will
+be checked before each commit and your commit messages will be validated automatically.
 
 ### Tests
 

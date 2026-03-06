@@ -1,10 +1,13 @@
 import functools
 from collections.abc import Callable
+from typing import TypeVar
 
 import torch
 from torch import distributed as dist
 
 from areal.infra.platforms import is_npu_available
+
+T = TypeVar("T", torch.Tensor, tuple[torch.Tensor, torch.Tensor])
 
 
 def _gather_logprobs(
@@ -33,7 +36,7 @@ if _should_use_torch_compile():
     _gather_logprobs_entropy = torch.compile(_gather_logprobs_entropy)
 
 
-def _chunked_apply[T: (torch.Tensor, tuple[torch.Tensor, torch.Tensor])](
+def _chunked_apply(
     fn: Callable[[torch.Tensor, torch.Tensor], T],
     logits: torch.Tensor,
     labels: torch.Tensor,
