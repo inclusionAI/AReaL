@@ -18,6 +18,8 @@ from areal.api.workflow_api import WorkflowLike
 from areal.infra.rpc.rtensor import RTensor
 from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, stats_tracker
+from areal.utils.data import concat_padded_tensors
+from areal.utils.datapack import data_parallel_dispatch, data_parallel_merge
 from areal.utils.network import find_free_ports
 
 from .rollout_callback import RolloutCallback
@@ -323,8 +325,24 @@ class TrainController:
         return self._merge_results(results, group_indices)
 
     def _dispatch_inputs(self, *args, **kwargs):
-        """Split RTensors across DP groups, replicate other args."""
-        results, group_indices = RTensor.data_parallel_dispatch(
+        """Split RTensors across DP groups, replicate other args.
+
+        If rollout returns list[dict], concat them first before dispatching.
+        """
+        # Concat trajectories from rollout (list[dict] -> dict[str, Tensor])
+        args = tuple(
+            concat_padded_tensors(a)
+            if isinstance(a, list) and a and isinstance(a[0], dict)
+            else a
+            for a in args
+        )
+        kwargs = {
+            k: concat_padded_tensors(v)
+            if isinstance(v, list) and v and isinstance(v[0], dict)
+            else v
+            for k, v in kwargs.items()
+        }
+        results, group_indices = data_parallel_dispatch(
             (args, kwargs), dp_size=self.parallel_strategy.dp_size
         )
         # results is list of (args_tuple, kwargs_dict) pairs, one per DP group
@@ -386,8 +404,8 @@ class TrainController:
         return await asyncio.gather(*tasks)
 
     def _merge_results(self, results, group_indices):
-        """Merge RTensor results from DP heads using RTensor.merge()."""
-        return RTensor.data_parallel_merge(results, group_indices)
+        """Merge RTensor results from DP heads."""
+        return data_parallel_merge(results, group_indices)
 
     def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
         if self.rollout is not None and self.rollout != rollout:

@@ -11,7 +11,11 @@ from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import AllocationMode
 from areal.infra import TrainController
 from areal.infra.rpc.rtensor import RTensor, TensorShardInfo
-from areal.utils.datapack import balanced_greedy_partition, ffd_allocate
+from areal.utils.datapack import (
+    balanced_greedy_partition,
+    data_parallel_dispatch,
+    ffd_allocate,
+)
 
 # =============================================================================
 # Test Data Generators
@@ -452,22 +456,21 @@ class TestFFDAllocate:
 # =============================================================================
 
 
-class TestRTensorDataParallelDispatchIntegration:
-    """Integration tests for RTensor.data_parallel_dispatch with balanced_greedy_partition.
+class TestDataParallelDispatchIntegration:
+    """Integration tests for data_parallel_dispatch with balanced_greedy_partition.
 
     These tests verify that global batches are split into equal sizes for different
-    DP ranks when processed through the RTensor dispatch mechanism.
+    DP ranks when processed through the standalone dispatch mechanism.
     """
 
     def _create_rtensor_with_seqlens(self, seqlens: list[int]):
         """Helper to create an RTensor with specified sequence lengths."""
-        shards = [
-            TensorShardInfo(size=1, seqlens=[slen], shard_id=str(i), node_addr="")
-            for i, slen in enumerate(seqlens)
-        ]
+        shard = TensorShardInfo(
+            size=len(seqlens), seqlens=seqlens, shard_id="test", node_addr=""
+        )
         max_len = max(seqlens) if seqlens else 1
         data = torch.zeros(len(seqlens), max_len)
-        return RTensor(shards=shards, data=data)
+        return RTensor(shard=shard, data=data)
 
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_uniform_distribution(self, dp_size):
@@ -476,17 +479,15 @@ class TestRTensorDataParallelDispatchIntegration:
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=1000, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         # Verify equal split sizes
         assert group_indices is not None
         assert len(split_rtensors) == dp_size
         expected_size = n_seqs // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size, (
-                f"DP rank {i} got {len(rt.shards)} shards, expected {expected_size}"
+            assert rt.shard.size == expected_size, (
+                f"DP rank {i} got {rt.shard.size} shards, expected {expected_size}"
             )
             assert len(group_indices[i]) == expected_size
 
@@ -503,14 +504,12 @@ class TestRTensorDataParallelDispatchIntegration:
         )
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         # Verify equal split sizes
         expected_size = n_seqs // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size
+            assert rt.shard.size == expected_size
 
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_skewed_distribution(self, dp_size):
@@ -519,13 +518,11 @@ class TestRTensorDataParallelDispatchIntegration:
         seqlens = generate_skewed_seqlens(n=n_seqs, max_len=2000, skew=3.0, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size
+            assert rt.shard.size == expected_size
 
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_exponential_distribution(self, dp_size):
@@ -534,13 +531,11 @@ class TestRTensorDataParallelDispatchIntegration:
         seqlens = generate_exponential_seqlens(n=n_seqs, scale=500.0, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size
+            assert rt.shard.size == expected_size
 
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_code_distribution(self, dp_size):
@@ -549,13 +544,11 @@ class TestRTensorDataParallelDispatchIntegration:
         seqlens = generate_code_seqlens(n=n_seqs, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size
+            assert rt.shard.size == expected_size
 
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_chat_distribution(self, dp_size):
@@ -564,13 +557,11 @@ class TestRTensorDataParallelDispatchIntegration:
         seqlens = generate_chat_seqlens(n=n_seqs, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size
+            assert rt.shard.size == expected_size
 
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_math_distribution(self, dp_size):
@@ -579,13 +570,11 @@ class TestRTensorDataParallelDispatchIntegration:
         seqlens = generate_math_seqlens(n=n_seqs, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size
+            assert rt.shard.size == expected_size
 
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_equal_split_power_law_distribution(self, dp_size):
@@ -594,13 +583,11 @@ class TestRTensorDataParallelDispatchIntegration:
         seqlens = generate_power_law_seqlens(n=n_seqs, alpha=2.0, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size
+            assert rt.shard.size == expected_size
 
     @pytest.mark.parametrize("seed", [42, 123, 456, 789, 1000, 2024, 3141, 9999])
     def test_equal_split_various_seeds(self, seed):
@@ -616,13 +603,11 @@ class TestRTensorDataParallelDispatchIntegration:
         )
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size
+            assert rt.shard.size == expected_size
 
     def test_all_indices_preserved_after_split(self):
         """Test that all original indices are preserved after dispatch."""
@@ -631,7 +616,7 @@ class TestRTensorDataParallelDispatchIntegration:
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=500, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        _, group_indices = RTensor.data_parallel_dispatch(rtensor, dp_size=dp_size)
+        _, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
         assert group_indices is not None
 
         # All indices should be present exactly once
@@ -650,7 +635,7 @@ class TestRTensorDataParallelDispatchIntegration:
         )
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        _, group_indices = RTensor.data_parallel_dispatch(rtensor, dp_size=dp_size)
+        _, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
         assert group_indices is not None
 
         # Compute total tokens per rank
@@ -679,13 +664,11 @@ class TestRTensorDataParallelDispatchIntegration:
         seqlens = generate_uniform_seqlens(n=batch_size, low=100, high=2000, seed=42)
         rtensor = self._create_rtensor_with_seqlens(seqlens)
 
-        split_rtensors, group_indices = RTensor.data_parallel_dispatch(
-            rtensor, dp_size=dp_size
-        )
+        split_rtensors, group_indices = data_parallel_dispatch(rtensor, dp_size=dp_size)
 
         expected_size = batch_size // dp_size
         for i, rt in enumerate(split_rtensors):
-            assert len(rt.shards) == expected_size
+            assert rt.shard.size == expected_size
 
     def test_dispatch_with_nested_dict(self):
         """Test equal split when RTensor is in a nested dict structure."""
@@ -700,13 +683,13 @@ class TestRTensorDataParallelDispatchIntegration:
             "metadata": {"batch_size": n_seqs, "dp_size": dp_size},
         }
 
-        split_results, group_indices = RTensor.data_parallel_dispatch(
+        split_results, group_indices = data_parallel_dispatch(
             nested_data, dp_size=dp_size
         )
 
         expected_size = n_seqs // dp_size
         for i, result in enumerate(split_results):
-            assert len(result["input_ids"].shards) == expected_size
+            assert result["input_ids"].shard.size == expected_size
             # Scalar values should be replicated
             assert result["metadata"]["batch_size"] == n_seqs
 
@@ -725,14 +708,12 @@ class TestRTensorDataParallelDispatchIntegration:
             "labels": labels_rtensor,
         }
 
-        split_results, group_indices = RTensor.data_parallel_dispatch(
-            data, dp_size=dp_size
-        )
+        split_results, group_indices = data_parallel_dispatch(data, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, result in enumerate(split_results):
-            assert len(result["input_ids"].shards) == expected_size
-            assert len(result["labels"].shards) == expected_size
+            assert result["input_ids"].shard.size == expected_size
+            assert result["labels"].shard.size == expected_size
 
 
 class TestTrainControllerDispatchIntegration:
@@ -760,13 +741,12 @@ class TestTrainControllerDispatchIntegration:
 
     def _create_rtensor_with_seqlens(self, seqlens: list[int]):
         """Helper to create an RTensor with specified sequence lengths."""
-        shards = [
-            TensorShardInfo(size=1, seqlens=[slen], shard_id=str(i), node_addr="")
-            for i, slen in enumerate(seqlens)
-        ]
+        shard = TensorShardInfo(
+            size=len(seqlens), seqlens=seqlens, shard_id="test", node_addr=""
+        )
         max_len = max(seqlens) if seqlens else 1
         data = torch.zeros(len(seqlens), max_len)
-        return RTensor(shards=shards, data=data)
+        return RTensor(shard=shard, data=data)
 
     @pytest.mark.parametrize("dp_size", [2, 4, 8])
     def test_train_controller_dispatch_equal_split(

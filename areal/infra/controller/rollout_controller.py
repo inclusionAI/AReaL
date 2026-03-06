@@ -33,7 +33,7 @@ from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
 from areal.infra.rpc.serialization import deserialize_value
 from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, perf_tracer
-from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.utils.data import cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
@@ -902,7 +902,7 @@ class RolloutController:
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         perf_tracer.instant(
             "rollout_controller.rollout_batch",
             category="scheduler",
@@ -917,8 +917,8 @@ class RolloutController:
                 group_size=group_size,
             )
         results = self.wait(count=len(data))
-        # Concatenate into batch tensor format
-        return concat_padded_tensors([r for r in results if r is not None])
+        # Return list of trajectories
+        return [r for r in results if r is not None]
 
     @trace_perf("rollout_controller.prepare_batch", category="scheduler")
     def prepare_batch(
@@ -929,7 +929,7 @@ class RolloutController:
         should_accept_fn: str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Prepare a batch with controlled staleness.
 
         Continuously submits from dataloader and waits for results, ensuring at least
@@ -963,9 +963,9 @@ class RolloutController:
             self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
         )
 
-        # Extract trajectories and concatenate
+        # Return list of trajectories instead of concatenated tensor
         trajectories = [r.trajectory if r is not None else None for r in results]
-        return concat_padded_tensors([t for t in trajectories if t is not None])
+        return [t for t in trajectories if t is not None]
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.

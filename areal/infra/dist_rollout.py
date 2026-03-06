@@ -12,7 +12,6 @@ from areal.infra.platforms import current_platform
 from areal.utils.data import (
     all_gather_tensor_container,
     broadcast_tensor_container,
-    concat_padded_tensors,
     tensor_container_to,
 )
 from areal.utils.datapack import ffd_allocate
@@ -21,7 +20,7 @@ from areal.utils.datapack import ffd_allocate
 @dataclass
 class RedistributedData:
     all_data: list[dict[str, Any]]
-    data: dict[str, Any]
+    data: list[dict[str, Any]]
     rank: int
     group_indices: list[list[int]]
 
@@ -71,7 +70,7 @@ def redistribute_trajectories(
     RedistributedData
         Contains:
         - all_data: All trajectories gathered from all ranks (with padding removed)
-        - data: Concatenated trajectories assigned to the local rank
+        - data: List of trajectories assigned to the local rank
         - rank: Local rank in the group
         - group_indices: Assignment of trajectory indices to each rank
     """
@@ -97,8 +96,8 @@ def redistribute_trajectories(
     )
     local_indices = group_indices[dist.get_rank(group=group)]
 
-    # Concatenate assigned trajectories for this rank
-    data = concat_padded_tensors([all_data[i] for i in local_indices])
+    # Select assigned trajectories for this rank (no concatenation — deferred to train side)
+    data = [all_data[i] for i in local_indices]
     return RedistributedData(
         all_data=all_data,
         data=data,
@@ -115,7 +114,7 @@ class DistRolloutCoordinator:
     def _broadcast_and_redistribute_trajectories(
         self,
         trajectories: list[dict[str, Any]] | None,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Broadcast and redistribute trajectories across distributed workers.
 
         This helper encapsulates:
@@ -132,8 +131,8 @@ class DistRolloutCoordinator:
 
         Returns
         -------
-        dict[str, Any]
-            Redistributed and broadcast batch available on all ranks (concatenated)
+        list[dict[str, Any]]
+            Redistributed and broadcast batch available on all ranks (list of trajs)
         """
         if trajectories is not None:
             redist = redistribute_trajectories(

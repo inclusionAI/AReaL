@@ -4,6 +4,7 @@ from typing import Any
 
 import numba
 import numpy as np
+import torch
 
 
 def flat2d(arr: list[list[Any]]) -> list[Any]:
@@ -255,6 +256,219 @@ def balanced_greedy_partition(nums: list[int], K: int) -> list[list[int]]:
         counts[chosen_group] += 1
 
     return groups
+
+
+# =============================================================================
+# Data Parallel Dispatch/Merge Utilities (standalone, no RTensor method calls)
+# =============================================================================
+
+
+def _pad_cat_dim0(tensors: list[torch.Tensor]) -> torch.Tensor:
+    """Pad tensors to same non-batch dims and concatenate along dim 0."""
+    # Get the maximum shape for dims 1 to N-1
+    shape = [0 for _ in range(tensors[0].ndim - 1)]
+    for t in tensors:
+        if t.ndim != len(shape) + 1:
+            raise ValueError(
+                f"Shard dimension mismatch: expected {len(shape) + 1}, got {t.ndim}"
+            )
+        for i in range(1, t.ndim):
+            shape[i - 1] = max(shape[i - 1], t.shape[i])
+
+    # Pad tensors
+    padded_tensors = []
+    for t in tensors:
+        pad_sizes = []
+        for i in range(1, t.ndim):
+            pad_size = shape[i - 1] - t.shape[i]
+            pad_sizes.append(pad_size)
+        if any(pad_sizes):
+            pad = []
+            for pad_size in reversed(pad_sizes):
+                pad.extend([0, pad_size])
+            pt = torch.nn.functional.pad(t, tuple(pad), "constant", 0)
+            padded_tensors.append(pt)
+            continue
+        padded_tensors.append(t)
+
+    return torch.cat(padded_tensors, dim=0)
+
+
+def _find_in_structure(obj: Any, type_: type) -> Any | None:
+    """Find first instance of type_ in a nested structure."""
+    if isinstance(obj, type_):
+        return obj
+    if isinstance(obj, dict):
+        for v in obj.values():
+            result = _find_in_structure(v, type_)
+            if result is not None:
+                return result
+    if isinstance(obj, (tuple, list)):
+        for item in obj:
+            result = _find_in_structure(item, type_)
+            if result is not None:
+                return result
+    return None
+
+
+def data_parallel_dispatch(
+    obj: Any, dp_size: int, group_indices: list[list[int]] | None = None
+) -> tuple[list[Any], list[list[int]] | None]:
+    """Split data for data parallel processing. Standalone version (no RTensor methods needed).
+
+    Parameters
+    ----------
+    obj : Any
+        Object to split. May contain RTensor instances.
+    dp_size : int
+        Number of data parallel groups.
+    group_indices : list[list[int]] | None
+        Pre-computed group assignments. Computed from RTensor shards if None.
+
+    Returns
+    -------
+    tuple[list[Any], list[list[int]] | None]
+        Split objects (one per DP group) and group indices.
+    """
+    from areal.infra.rpc.rtensor import RTensor  # Lazy import to avoid circular dep
+
+    if group_indices is None:
+        layout_rtensor = _find_in_structure(obj, RTensor)
+        if layout_rtensor is not None:
+            seqlens = layout_rtensor.shard.seqlens
+            # Use balanced greedy partition to allocate shards to DP groups
+            group_indices = balanced_greedy_partition(seqlens, K=dp_size)
+        # else: no RTensors found, will replicate scalars without group_indices
+
+    if isinstance(obj, RTensor):
+        # Single-shard RTensor: split batch data by group indices
+        assert group_indices is not None
+        from areal.infra.rpc.rtensor import TensorShardInfo
+
+        split_rtensors = []
+        for group_idxs in group_indices:
+            group_data = obj.data[group_idxs]
+            group_shard = TensorShardInfo(
+                size=len(group_idxs),
+                seqlens=[obj.shard.seqlens[i] for i in group_idxs],
+                shard_id=obj.shard.shard_id,
+                node_addr=obj.shard.node_addr,
+            )
+            split_rtensors.append(RTensor(shard=group_shard, data=group_data))
+        return split_rtensors, group_indices
+
+    if isinstance(obj, dict):
+        # Split each value, return list of dicts
+        split_values = {
+            k: data_parallel_dispatch(v, dp_size, group_indices)[0]
+            for k, v in obj.items()
+        }
+        return [
+            {k: split_values[k][i] for k in obj.keys()} for i in range(dp_size)
+        ], group_indices
+
+    if isinstance(obj, list):
+        # Split each element
+        split_elements = [
+            data_parallel_dispatch(elem, dp_size, group_indices)[0] for elem in obj
+        ]
+        return [
+            [split_elements[j][i] for j in range(len(obj))] for i in range(dp_size)
+        ], group_indices
+
+    if isinstance(obj, tuple):
+        # Split each element
+        split_elements = [
+            data_parallel_dispatch(elem, dp_size, group_indices)[0] for elem in obj
+        ]
+        return [
+            tuple(split_elements[j][i] for j in range(len(obj))) for i in range(dp_size)
+        ], group_indices
+
+    # Non-RTensor objects: replicate to all groups
+    return [obj] * dp_size, group_indices
+
+
+def data_parallel_merge(
+    results: list[Any], group_indices: list[list[int]] | None
+) -> Any:
+    """Merge results from data parallel processing. Standalone version.
+
+    Parameters
+    ----------
+    results : list[Any]
+        Results from each DP group.
+    group_indices : list[list[int]] | None
+        Group assignments used during dispatch.
+
+    Returns
+    -------
+    Any
+        Merged result with original ordering restored.
+    """
+    from areal.infra.rpc.rtensor import RTensor  # Lazy import to avoid circular dep
+
+    if not results:
+        return None
+
+    first = results[0]
+
+    # Check for raw tensors - not allowed
+    if isinstance(first, torch.Tensor):
+        raise TypeError(
+            "Regular tensors not allowed in merge - only RTensors. "
+            "Engine outputs should be automatically converted to RTensors."
+        )
+
+    if isinstance(first, RTensor):
+        assert group_indices is not None
+        from areal.infra.rpc.rtensor import TensorShardInfo
+
+        # Each result is a single-shard RTensor; reorder sequences back
+        indices = flat2d(group_indices)
+        # Collect all data rows and seqlens in group order
+        all_data = []
+        all_seqlens = []
+        for r in results:
+            all_data.append(r.data)
+            all_seqlens.extend(r.shard.seqlens)
+        cat_data = _pad_cat_dim0(all_data)
+        # Reorder to original sequence order
+        inv_indices = np.zeros(len(indices), dtype=np.int64)
+        inv_indices[indices] = np.arange(len(indices))
+        reordered_data = cat_data[inv_indices]
+        reordered_seqlens = [all_seqlens[i] for i in inv_indices]
+        merged_shard = TensorShardInfo(
+            size=len(indices),
+            seqlens=reordered_seqlens,
+            shard_id=first.shard.shard_id,
+            node_addr=first.shard.node_addr,
+        )
+        return RTensor(shard=merged_shard, data=reordered_data)
+
+    if isinstance(first, dict):
+        merged = {}
+        for key in first.keys():
+            values = [r[key] for r in results]
+            merged[key] = data_parallel_merge(values, group_indices=group_indices)
+        return merged
+
+    if isinstance(first, list):
+        merged = []
+        for i in range(len(first)):
+            elements = [r[i] for r in results]
+            merged.append(data_parallel_merge(elements, group_indices=group_indices))
+        return merged
+
+    if isinstance(first, tuple):
+        merged = []
+        for i in range(len(first)):
+            elements = [r[i] for r in results]
+            merged.append(data_parallel_merge(elements, group_indices=group_indices))
+        return tuple(merged)
+
+    # Scalars: return first (assume synchronized)
+    return first
 
 
 if __name__ == "__main__":
