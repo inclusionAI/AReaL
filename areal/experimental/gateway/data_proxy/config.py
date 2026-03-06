@@ -11,3 +11,4 @@ class DataProxyConfig:
     request_timeout: float = 120.0  # seconds per SGLang call
     max_resubmit_retries: int = 20  # max abort/resubmit cycles before giving up
     resubmit_wait: float = 0.5  # seconds between is_paused polls
+    admin_api_key: str = "areal-admin-key"  # admin key for authentication

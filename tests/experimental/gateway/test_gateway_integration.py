@@ -176,6 +176,7 @@ def gateway_stack(sglang_server, model_path):
         backend_addr=sglang_server["base_url"],
         tokenizer_path=model_path,
         request_timeout=60.0,
+        admin_api_key=ADMIN_KEY,
     )
     dp_app = create_dp_app(dp_config)
 

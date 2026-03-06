@@ -111,6 +111,7 @@ def _require_session_key(request: Request, store: SessionStore) -> str:
 @dataclass
 class AuthResult:
     """Result of admin-or-session key authentication."""
+
     is_admin: bool
     session_id: str | None = None  # Only set if session key
 
@@ -145,8 +146,7 @@ async def _call_client_create(
     # Check if the function accepts **kwargs (VAR_KEYWORD).
     # If so, any key not explicitly ignored/disallowed is allowed through.
     has_var_keyword = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD
-        for p in sig.parameters.values()
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
     )
     if has_var_keyword:
         areal_client_allowed_args = None  # sentinel: allow everything
@@ -154,7 +154,8 @@ async def _call_client_create(
         areal_client_allowed_args = list(
             k
             for k in sig.parameters.keys()
-        if k not in areal_client_ignored_args and k not in areal_client_disallowed_args
+            if k not in areal_client_ignored_args
+            and k not in areal_client_disallowed_args
         )
 
     if isinstance(request, BaseModel):
@@ -240,6 +241,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         app.state.pause_state = pause_state
         app.state.config = config
         app.state.session_store = SessionStore()
+        app.state.session_store.set_admin_key(config.admin_api_key)
         app.state.chat_handler = ChatCompletionHandler(resubmit_backend, tok)
         yield
         logger.info("Data proxy shutting down")
@@ -396,11 +398,14 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         if auth.is_admin:
             # Standalone mode: no session, no caching
             import types
+
             session_data = types.SimpleNamespace(completions=None)
         else:
             session_data = store.get_session(auth.session_id)  # type: ignore[arg-type]
             if session_data is None:
-                raise HTTPException(status_code=410, detail="Session already ended or expired")
+                raise HTTPException(
+                    status_code=410, detail="Session already ended or expired"
+                )
             session_data.update_last_access()
 
         chat_handler: ChatCompletionHandler = app.state.chat_handler
