@@ -39,6 +39,25 @@ class Qwen2StateDictAdapter(BaseStateDictAdapter):
             "model.layers.{}.post_attention_layernorm.weight": "layers.{}.ffn_norm.weight",
             "model.norm.weight": "norm.weight",
             "lm_head.weight": "output.weight",
+            # LoRA adapter key mappings (Attention)
+            "model.layers.{}.self_attn.q_proj.lora_A.weight": "layers.{}.attention.wq.lora_a.weight",
+            "model.layers.{}.self_attn.q_proj.lora_B.weight": "layers.{}.attention.wq.lora_b.weight",
+            "model.layers.{}.self_attn.k_proj.lora_A.weight": "layers.{}.attention.wk.lora_a.weight",
+            "model.layers.{}.self_attn.k_proj.lora_B.weight": "layers.{}.attention.wk.lora_b.weight",
+            "model.layers.{}.self_attn.v_proj.lora_A.weight": "layers.{}.attention.wv.lora_a.weight",
+            "model.layers.{}.self_attn.v_proj.lora_B.weight": "layers.{}.attention.wv.lora_b.weight",
+            "model.layers.{}.self_attn.o_proj.lora_A.weight": "layers.{}.attention.wo.lora_a.weight",
+            "model.layers.{}.self_attn.o_proj.lora_B.weight": "layers.{}.attention.wo.lora_b.weight",
+            # LoRA adapter key mappings (MLP)
+            "model.layers.{}.mlp.gate_proj.lora_A.weight": "layers.{}.feed_forward.w1.lora_a.weight",
+            "model.layers.{}.mlp.gate_proj.lora_B.weight": "layers.{}.feed_forward.w1.lora_b.weight",
+            "model.layers.{}.mlp.up_proj.lora_A.weight": "layers.{}.feed_forward.w3.lora_a.weight",
+            "model.layers.{}.mlp.up_proj.lora_B.weight": "layers.{}.feed_forward.w3.lora_b.weight",
+            "model.layers.{}.mlp.down_proj.lora_A.weight": "layers.{}.feed_forward.w2.lora_a.weight",
+            "model.layers.{}.mlp.down_proj.lora_B.weight": "layers.{}.feed_forward.w2.lora_b.weight",
+            # LoRA adapter key mappings (LM Head)
+            "lm_head.lora_A.weight": "output.lora_a.weight",
+            "lm_head.lora_B.weight": "output.lora_b.weight",
         }
 
         # Build reverse mapping
@@ -48,6 +67,19 @@ class Qwen2StateDictAdapter(BaseStateDictAdapter):
                 self.to_hf_map[archon_key] = hf_key
 
         self.enable_weight_tying = getattr(model_config, "tie_word_embeddings", False)
+
+        # Archon module names to HF PEFT module names for LoRA adapters
+        # Used when generating adapter_config.json
+        self.to_peft_module_map = {
+            "wq": "q_proj",
+            "wk": "k_proj",
+            "wv": "v_proj",
+            "wo": "o_proj",
+            "w1": "gate_proj",
+            "w2": "down_proj",
+            "w3": "up_proj",
+            "output": "lm_head",
+        }
 
     def to_hf(self, state_dict: dict[str, Any]) -> dict[str, Any]:
         hf_state_dict = {}
