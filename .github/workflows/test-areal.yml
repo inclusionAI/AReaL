@@ -51,7 +51,7 @@ jobs:
 
       - name: Fetch GitHub runner token
         id: runner-token
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         with:
@@ -194,7 +194,7 @@ jobs:
         run: rm -f startup-script.sh runner-token.txt
 
       - name: Wait for runner to register
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           INSTANCE_NAME: ${{ steps.vars.outputs.instance_name }}
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -255,7 +255,7 @@ jobs:
       # Activate the venv created in the Docker image
       VIRTUAL_ENV: /AReaL/.venv
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Validate Docker installation
         run: |

@@ -68,7 +68,7 @@ jobs:
           fi
 
       - name: Wait for builder runner to be online
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           INSTANCE_NAME: areal-docker-builder
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -118,7 +118,7 @@ jobs:
     runs-on: [self-hosted, areal-docker-builder]
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

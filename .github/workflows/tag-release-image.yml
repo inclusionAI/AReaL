@@ -67,7 +67,7 @@ jobs:
           fi
 
       - name: Wait for builder runner to be online
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           INSTANCE_NAME: areal-docker-builder
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -121,7 +121,7 @@ jobs:
       release_tag: ${{ steps.get-version.outputs.release_tag }}
     steps:
       - name: Checkout code at release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
 
