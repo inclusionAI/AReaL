@@ -5,6 +5,7 @@ VisPuzzle Benchmark Inference and Evaluation with ThinkMorph vLLM
 import os
 import json
 import re
+from typing import Optional
 from PIL import Image
 from datasets import load_dataset
 from tqdm import tqdm
@@ -30,15 +31,17 @@ def extract_answer(text: str) -> str:
 
 def evaluate_vispuzzle(
     model_path: str = "ThinkMorph/ThinkMorph-7B",
+    dataset_path: Optional[str] = None,
     output_dir: str = "./vispuzzle_results",
     tensor_parallel_size: int = 1,
-    max_samples: int = None,
+    max_samples: Optional[int] = None,
 ):
     """
     Run inference and evaluation on VisPuzzle benchmark.
 
     Args:
-        model_path: Path to ThinkMorph model
+        model_path: Path to ThinkMorph model (local path or HuggingFace model ID)
+        dataset_path: Path to dataset (local path, or None to use HuggingFace)
         output_dir: Directory to save results
         tensor_parallel_size: Number of GPUs for tensor parallelism
         max_samples: Limit number of samples (None for all)
@@ -47,7 +50,17 @@ def evaluate_vispuzzle(
 
     # Load VisPuzzle dataset
     print("Loading VisPuzzle dataset...")
-    dataset = load_dataset("ThinkMorph/VisPuzzle", split="test")
+    if dataset_path:
+        # Load from local path
+        if dataset_path.endswith('.json') or dataset_path.endswith('.jsonl'):
+            dataset = load_dataset("json", data_files=dataset_path, split="train")
+        elif dataset_path.endswith('.parquet'):
+            dataset = load_dataset("parquet", data_files=dataset_path, split="train")
+        else:
+            # Assume it's a local directory in HuggingFace format
+            dataset = load_dataset(dataset_path, split="test")
+    else:
+        dataset = load_dataset("ThinkMorph/VisPuzzle", split="test")
     if max_samples:
         dataset = dataset.select(range(min(max_samples, len(dataset))))
     print(f"Loaded {len(dataset)} samples")
@@ -127,9 +140,19 @@ def evaluate_vispuzzle(
 
 
 if __name__ == "__main__":
+    # Example 1: Load from HuggingFace (default)
+    # evaluate_vispuzzle(
+    #     model_path="ThinkMorph/ThinkMorph-7B",
+    #     output_dir="./vispuzzle_results",
+    #     tensor_parallel_size=1,
+    #     max_samples=None,
+    # )
+
+    # Example 2: Load from local paths
     evaluate_vispuzzle(
-        model_path="ThinkMorph/ThinkMorph-7B",
+        model_path="D:/models/ThinkMorph-7B",           # 本地模型路径
+        dataset_path="D:/datasets/VisPuzzle",           # 本地数据集路径 (目录、.json、.jsonl 或 .parquet)
         output_dir="./vispuzzle_results",
         tensor_parallel_size=1,
-        max_samples=None,  # Set to e.g. 10 for quick test
+        max_samples=10,  # Set to e.g. 10 for quick test
     )
