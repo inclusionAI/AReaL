@@ -748,11 +748,13 @@ class MegatronEngine(TrainEngine):
                 res = reorder_and_pad_outputs(
                     outputs, output_seqlens, mb_list, aggregate_fn
                 )
-        res = broadcast_tensor(
-            res,
-            src_rank=mpu.get_pipeline_model_parallel_last_rank(),
-            group=mpu.get_pipeline_model_parallel_group(),
-        )
+        # Skip broadcast when pipeline parallel is not used (pp=1)
+        if mpu.get_pipeline_model_parallel_world_size() > 1:
+            res = broadcast_tensor(
+                res,
+                src_rank=mpu.get_pipeline_model_parallel_last_rank(),
+                group=mpu.get_pipeline_model_parallel_group(),
+            )
         return res
 
     def export_stats(self) -> dict[str, float]:
@@ -1040,28 +1042,34 @@ class MegatronEngine(TrainEngine):
 
         self.engine_lock.acquire()
 
-        param_specs = [
-            ParamSpec(
-                name=name,
-                shape=tuple(tensor.shape),
-                dtype=str(tensor.dtype).split("torch.")[1],
-            )
-            for name, tensor in converted_named_tensors
-        ]
-
-        fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
-
-        handles = []
-        for _, param in converted_named_tensors:
-            handles.append(
-                dist.broadcast(
-                    param.data, 0, group=self.weight_update_group, async_op=True
+        with trace_scope("megatron_engine.bucket_broadcast"):
+            param_specs = [
+                ParamSpec(
+                    name=name,
+                    shape=tuple(tensor.shape),
+                    dtype=str(tensor.dtype).split("torch.")[1],
                 )
-            )
-        for handle in handles:
-            handle.wait()
+                for name, tensor in converted_named_tensors
+            ]
 
-        fut.result()
+            fut = self.rollout_engine.update_weights_from_distributed(
+                meta, param_specs
+            )
+
+            handles = []
+            for _, param in converted_named_tensors:
+                handles.append(
+                    dist.broadcast(
+                        param.data,
+                        0,
+                        group=self.weight_update_group,
+                        async_op=True,
+                    )
+                )
+            for handle in handles:
+                handle.wait()
+
+            fut.result()
 
         converted_named_tensors.clear()
 
@@ -1108,7 +1116,8 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
-        param, param_size = self._collect_param(name, param)
+        with trace_scope("megatron_engine.collect_param"):
+            param, param_size = self._collect_param(name, param)
 
         if not self.is_pipeline_parallel_head():
             return buffer_size
@@ -1117,16 +1126,17 @@ class MegatronEngine(TrainEngine):
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             buffer_size = 0
 
-        converted_named_tensors.extend(
-            convert_to_hf(
-                self.tf_config,
-                self.hf_config.model_type,
-                name,
-                param,
-                quantization_config=self.quantization_config,
-                fp8_direct_convert=self.fp8_direct_convert,
+        with trace_scope("megatron_engine.convert_to_hf"):
+            converted_named_tensors.extend(
+                convert_to_hf(
+                    self.tf_config,
+                    self.hf_config.model_type,
+                    name,
+                    param,
+                    quantization_config=self.quantization_config,
+                    fp8_direct_convert=self.fp8_direct_convert,
+                )
             )
-        )
         buffer_size += param_size
         return buffer_size
 
@@ -1271,6 +1281,7 @@ class MegatronEngine(TrainEngine):
         dist.barrier(group=self.cpu_group)
 
         num_moe_experts = self.tf_config.num_moe_experts
+        has_experts = bool(num_moe_experts)
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
         buffer_size = 0
@@ -1292,26 +1303,30 @@ class MegatronEngine(TrainEngine):
         if converted_named_tensors:
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
 
-        dist.barrier(group=self.cpu_group)
+        # Only synchronize between non-expert and expert params when experts exist
+        if has_experts:
+            dist.barrier(group=self.cpu_group)
 
-        buffer_size = 0
-        named_tensors = []
+            buffer_size = 0
+            named_tensors = []
 
-        for name, param in get_named_parameters(self.model, num_moe_experts):
-            if ".experts." not in name:
-                continue
-            buffer_size = self._impl_update_expert_weight_from_distributed(
-                meta,
-                name,
-                param,
-                named_tensors,
-                buffer_size,
-                weight_chunked_mem_size,
-            )
+            for name, param in get_named_parameters(self.model, num_moe_experts):
+                if ".experts." not in name:
+                    continue
+                buffer_size = self._impl_update_expert_weight_from_distributed(
+                    meta,
+                    name,
+                    param,
+                    named_tensors,
+                    buffer_size,
+                    weight_chunked_mem_size,
+                )
 
-        if named_tensors:
-            # This function will early return if not pipeline parallel head
-            self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
+            if named_tensors:
+                # This function will early return if not pipeline parallel head
+                self._update_bucket_expert_weights_from_distributed(
+                    meta, named_tensors
+                )
 
         dist.barrier(group=self.cpu_group)
 
