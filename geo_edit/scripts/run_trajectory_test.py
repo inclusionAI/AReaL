@@ -298,9 +298,11 @@ def run_trajectory_test(
     # Default system prompt
     if system_prompt is None:
         system_prompt = (
-            "You are an advanced AI assistant capable of complex reasoning. "
-            "Based on the conversation history, provide the final answer. "
-            "Wrap your reasoning in <think>...</think> tags and your final answer in <answer>...</answer> tags."
+            "You are an advanced AI agent capable of reasoning. "
+            "The conversation history contains your previous analysis and tool call results. "
+            "Based on the information gathered from your prior reasoning and the observations returned by tool calls, "
+            "provide the final answer to the user's question. "
+            "Wrap your new reasoning in <think>...</think> tags and your final answer in <answer>...</answer> tags."
         )
 
     output_path.mkdir(parents=True, exist_ok=True)
