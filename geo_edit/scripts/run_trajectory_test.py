@@ -9,9 +9,9 @@ Usage:
     bash geo_edit/scripts/launch_vllm_generate.sh
 
     # 2. Run test
-    python -m geo_edit.scripts.run_trajectory_test \
-        --parquet_path /storage/.../trajectory_dataset.parquet \
-        --output_path /storage/.../test_results/ \
+        python -m geo_edit.scripts.run_trajectory_test \
+        --parquet_path  /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/gpt-5_ocr.parquet \
+        --output_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/Qwen3-VL-8B-Thinking/gpt-5_ocr \
         --api_base http://127.0.0.1:8000 \
         --num_workers 8
 
