@@ -77,12 +77,15 @@ def _convert_to_responses_format(messages: List[Dict[str, Any]], images: List[An
     """Convert messages from chat_completions format to responses API format.
 
     chat_completions format:
-        {"type": "text", "text": "..."}
-        {"type": "image_url", "image_url": {"url": "[IMAGE_0]"}}
+        {"role": "user", "content": [{"type": "text", "text": "..."}, {"type": "image_url", ...}]}
+        {"role": "assistant", "content": "...", "tool_calls": [...]}
+        {"role": "tool", "tool_call_id": "...", "content": "..."}
 
-    responses format:
-        {"type": "input_text", "text": "..."}
-        {"type": "input_image", "image_url": "data:image/png;base64,..."}
+    responses format (flat list of items):
+        {"type": "message", "role": "user", "content": [{"type": "input_text", ...}, {"type": "input_image", ...}]}
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "..."}]}
+        {"type": "function_call", "call_id": "...", "name": "...", "arguments": "..."}
+        {"type": "function_call_output", "call_id": "...", "output": "..."}
     """
     # Build placeholder to data URL mapping
     image_map: Dict[str, str] = {}
@@ -92,22 +95,73 @@ def _convert_to_responses_format(messages: List[Dict[str, Any]], images: List[An
         if data_url:
             image_map[placeholder] = data_url
 
-    converted_messages = []
+    converted_items = []
 
     for msg in messages:
-        new_msg = {"role": msg.get("role")}
+        role = msg.get("role")
+        content = msg.get("content", "")
 
-        content = msg.get("content", [])
+        # Handle tool messages -> function_call_output
+        if role == "tool":
+            call_id = msg.get("tool_call_id", "")
+            # Content can be string or list
+            if isinstance(content, str):
+                output = content
+            elif isinstance(content, list):
+                # Extract text from content parts
+                texts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") in ("text", "input_text"):
+                        texts.append(part.get("text", ""))
+                output = "\n".join(texts) if texts else json.dumps(content)
+            else:
+                output = json.dumps(content) if content else ""
 
-        # Handle string content
-        if isinstance(content, str):
-            new_msg["content"] = [{"type": "input_text", "text": content}]
-            converted_messages.append(new_msg)
+            converted_items.append({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": output,
+            })
             continue
 
-        # Handle list content
-        if isinstance(content, list):
-            new_content = []
+        # Handle assistant messages with tool_calls
+        if role == "assistant" and "tool_calls" in msg:
+            # First add the assistant message content if any
+            if content:
+                text_content = content if isinstance(content, str) else ""
+                if isinstance(content, list):
+                    texts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") in ("text", "input_text")]
+                    text_content = "\n".join(texts)
+                if text_content:
+                    converted_items.append({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text_content}],
+                    })
+
+            # Then add function_call items
+            for tool_call in msg.get("tool_calls", []):
+                call_id = tool_call.get("id", "")
+                func = tool_call.get("function", {})
+                name = func.get("name", "")
+                arguments = func.get("arguments", "{}")
+                if isinstance(arguments, dict):
+                    arguments = json.dumps(arguments)
+
+                converted_items.append({
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": arguments,
+                })
+            continue
+
+        # Handle regular user/assistant messages
+        new_content = []
+
+        if isinstance(content, str):
+            new_content.append({"type": "input_text", "text": content})
+        elif isinstance(content, list):
             for part in content:
                 if not isinstance(part, dict):
                     new_content.append({"type": "input_text", "text": str(part)})
@@ -115,14 +169,12 @@ def _convert_to_responses_format(messages: List[Dict[str, Any]], images: List[An
 
                 part_type = part.get("type", "")
 
-                if part_type == "text":
-                    # text -> input_text
+                if part_type in ("text", "input_text"):
                     new_content.append({
                         "type": "input_text",
                         "text": part.get("text", "")
                     })
                 elif part_type == "image_url":
-                    # image_url -> input_image
                     image_url_data = part.get("image_url", {})
                     if isinstance(image_url_data, dict):
                         url = image_url_data.get("url", "")
@@ -138,25 +190,19 @@ def _convert_to_responses_format(messages: List[Dict[str, Any]], images: List[An
                         "image_url": url,
                         "detail": "auto"
                     })
-                else:
-                    # Keep other types as-is
+                elif part_type == "input_image":
+                    # Already in responses format
                     new_content.append(part)
+                else:
+                    new_content.append({"type": "input_text", "text": str(part)})
 
-            new_msg["content"] = new_content
-        else:
-            new_msg["content"] = content
+        converted_items.append({
+            "type": "message",
+            "role": role,
+            "content": new_content,
+        })
 
-        # Handle tool_calls
-        if "tool_calls" in msg:
-            new_msg["tool_calls"] = msg["tool_calls"]
-
-        # Handle tool_call_id (for tool messages)
-        if "tool_call_id" in msg:
-            new_msg["tool_call_id"] = msg["tool_call_id"]
-
-        converted_messages.append(new_msg)
-
-    return converted_messages
+    return converted_items
 
 
 def _save_result(
