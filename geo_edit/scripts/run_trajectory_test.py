@@ -9,9 +9,10 @@ Usage:
     bash geo_edit/scripts/launch_vllm_generate.sh
 
     # 2. Run test
-        python -m geo_edit.scripts.run_trajectory_test \
-        --parquet_path  /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/gpt-5_ocr.parquet \
+    python -m geo_edit.scripts.run_trajectory_test \
+        --parquet_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/gpt-5_ocr.parquet \
         --output_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/Qwen3-VL-8B-Thinking/gpt-5_ocr \
+        --model_name /storage/openpsi/models/Qwen3-VL-8B-Thinking \
         --api_base http://127.0.0.1:8000 \
         --num_workers 8
 
@@ -265,7 +266,7 @@ def run_trajectory_test(
     output_path: Path,
     api_base: str,
     model_name: str,
-    api_mode: str = "chat_completions",
+    api_mode: str = "responses",
     max_tokens: int = 16384,
     temperature: float = 1.0,
     system_prompt: Optional[str] = None,
@@ -396,15 +397,15 @@ def main() -> None:
     parser.add_argument(
         "--model_name",
         type=str,
-        default="/storage/openpsi/models/Qwen3-VL-32B-Thinking",
-        help="Model name/path."
+        required=True,
+        help="Model name/path (e.g., /storage/openpsi/models/Qwen3-VL-8B-Thinking)."
     )
     parser.add_argument(
         "--api_mode",
         type=str,
-        default="chat_completions",
-        choices=["chat_completions", "responses"],
-        help="API mode."
+        default="responses",
+        choices=["responses", "chat_completions"],
+        help="API mode (default: responses)."
     )
     parser.add_argument(
         "--max_tokens",
