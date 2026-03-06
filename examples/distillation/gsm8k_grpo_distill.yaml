@@ -190,4 +190,3 @@ perf_tracer:
   enabled: false
   session_tracer:
     enabled: false
-  
