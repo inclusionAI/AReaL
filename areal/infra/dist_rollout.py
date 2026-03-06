@@ -6,8 +6,7 @@ import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.engine_api import InferenceEngine, TrainEngine
-from areal.api.workflow_api import WorkflowLike
+from areal.api import InferenceEngine, TrainEngine, WorkflowLike
 from areal.infra.platforms import current_platform
 from areal.utils.data import (
     all_gather_tensor_container,

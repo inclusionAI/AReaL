@@ -1,7 +1,7 @@
 import torch
 
+from areal.api import AllocationMode, WeightUpdateMeta
 from areal.api.cli_args import BaseExperimentConfig
-from areal.api.io_struct import AllocationMode, WeightUpdateMeta
 
 VALID_VISION_MODELS = [
     "qwen2_vl",

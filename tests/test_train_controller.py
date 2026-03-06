@@ -10,16 +10,16 @@ from unittest.mock import Mock
 import pytest
 import torch
 
-from areal.api.alloc_mode import ParallelStrategy
-from areal.api.cli_args import SchedulingSpec, TrainEngineConfig
-from areal.api.engine_api import TrainEngine
-from areal.api.io_struct import (
+from areal.api import (
     AllocationMode,
     FinetuneSpec,
+    ParallelStrategy,
     SaveLoadMeta,
+    TrainEngine,
     WeightUpdateMeta,
+    Worker,
 )
-from areal.api.scheduler_api import Worker
+from areal.api.cli_args import SchedulingSpec, TrainEngineConfig
 from areal.infra import TrainController
 
 

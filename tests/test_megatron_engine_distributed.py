@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode
 from areal.infra.platforms import current_platform
 from areal.utils.network import find_free_ports
 

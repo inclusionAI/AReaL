@@ -151,3 +151,9 @@ def get_custom_dataset(
         processor=processor,
         **kwargs,
     )
+
+
+__all__ = [
+    "VALID_DATASETS",
+    "get_custom_dataset",
+]

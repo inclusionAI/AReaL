@@ -8,15 +8,14 @@ import torch.distributed as dist
 
 from tests.utils import get_model_path
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, FinetuneSpec
 from areal.api.cli_args import (
     FSDPEngineConfig,
     MicroBatchSpec,
     OptimizerConfig,
     TrainEngineConfig,
 )
-from areal.api.io_struct import FinetuneSpec
-from areal.engine.fsdp_engine import FSDPEngine
+from areal.engine import FSDPEngine
 from areal.infra.platforms import current_platform
 
 MODEL_PATH = get_model_path(

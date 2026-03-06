@@ -4,11 +4,10 @@ import sys
 import torch.distributed as dist
 
 from areal import current_platform
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, FinetuneSpec, StepInfo
 from areal.api.cli_args import RWConfig, load_expr_config
-from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
-from areal.engine.fsdp_engine import FSDPRWEngine
+from areal.engine import FSDPRWEngine
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,

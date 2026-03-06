@@ -12,16 +12,15 @@ import torch
 import torch.nn.functional as F
 from megatron.core import parallel_state as mpu
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, FinetuneSpec
 from areal.api.cli_args import (
     FP8EngineConfig,
     MegatronEngineConfig,
     OptimizerConfig,
     TrainEngineConfig,
 )
-from areal.api.io_struct import FinetuneSpec
+from areal.engine import MegatronEngine
 from areal.engine.core.train_engine import reorder_and_pad_outputs
-from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import logging
 from areal.utils.data import (
     broadcast_tensor,

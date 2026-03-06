@@ -1,6 +1,4 @@
-from areal.reward import get_math_verify_worker
-from areal.reward.geometry3k import geometry3k_reward_fn
-from areal.reward.gsm8k import gsm8k_reward_fn
+from areal.reward import geometry3k_reward_fn, get_math_verify_worker, gsm8k_reward_fn
 
 
 class TestGSM8KRewardFn:

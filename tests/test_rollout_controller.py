@@ -7,16 +7,20 @@ import torch
 
 from tests.utils import get_model_path
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import (
+    AllocationMode,
+    ModelRequest,
+    ParamSpec,
+    WeightUpdateMeta,
+    Worker,
+)
 from areal.api.cli_args import (
     GenerationHyperparameters,
     InferenceEngineConfig,
     SchedulingSpec,
     SGLangConfig,
 )
-from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
-from areal.api.scheduler_api import Worker
-from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine import RemoteSGLangEngine
 from areal.infra import RolloutController
 from areal.infra.scheduler.local import LocalScheduler
 from areal.utils.hf_utils import load_hf_tokenizer

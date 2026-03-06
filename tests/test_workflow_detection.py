@@ -4,7 +4,7 @@ import warnings
 
 import pytest
 
-from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow
+from areal.api import AgentWorkflow, RolloutWorkflow
 
 
 class DummyRolloutWorkflow(RolloutWorkflow):

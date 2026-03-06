@@ -3,8 +3,8 @@ from typing import Any
 
 import torch
 
+from areal.api import TrainEngine
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
-from areal.api.engine_api import TrainEngine
 from areal.infra import TrainController
 from areal.trainer.ppo.stats import infer_token_denominator
 from areal.utils import logging, stats_tracker

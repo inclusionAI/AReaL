@@ -18,8 +18,8 @@ import requests
 from flask import Flask, Response, jsonify, request
 from werkzeug.serving import make_server
 
+from areal.api import InferenceEngine, TrainEngine
 from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
-from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.infra.platforms import current_platform
 from areal.infra.rpc import rtensor
 from areal.infra.rpc.rtensor import RTensor

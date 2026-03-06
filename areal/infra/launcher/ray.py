@@ -13,7 +13,7 @@ from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 import areal.utils.logging as logging
-from areal.api.alloc_mode import AllocationMode, AllocationType
+from areal.api import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
     InferenceEngineConfig,
