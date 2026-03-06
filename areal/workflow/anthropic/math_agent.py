@@ -1,10 +1,9 @@
 import os
 
+import anthropic
 from math_verify import parse, verify
 
-import anthropic
-
-from areal.api.reward_api import AsyncRewardWrapper
+from areal.api import AsyncRewardWrapper
 
 
 def math_reward_fn(completions: str, answer: str) -> float:

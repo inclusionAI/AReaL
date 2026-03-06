@@ -8,16 +8,19 @@ import torch
 from transformers import PreTrainedTokenizerFast
 
 from areal import workflow_context
+from areal.api import (
+    AsyncRewardWrapper,
+    InferenceEngine,
+    ModelRequest,
+    ModelResponse,
+    RolloutWorkflow,
+)
 from areal.api.cli_args import (
     GenerationHyperparameters,
     GRPOConfig,
     dataclass,
     field,
 )
-from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import ModelRequest, ModelResponse
-from areal.api.reward_api import AsyncRewardWrapper
-from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, stats_tracker
 
 from prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT  # isort: skip

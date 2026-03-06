@@ -7,7 +7,7 @@ from openai.types.chat import ChatCompletion
 from openai.types.responses.response import Response
 from openai.types.responses.response_input_param import ResponseInputParam
 
-from areal.api.io_struct import ModelResponse
+from areal.api import ModelResponse
 from areal.utils import logging
 
 logger = logging.getLogger("TokenLogpReward")

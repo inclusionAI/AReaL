@@ -10,7 +10,7 @@ from openai.types.chat import ChatCompletionToolParam
 
 from tests.utils import get_model_path
 
-from areal.api.io_struct import ModelResponse
+from areal.api import ModelResponse
 from areal.experimental.openai.client import (
     concat_prompt_token_ids_with_parent,
 )

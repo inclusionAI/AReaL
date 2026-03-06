@@ -8,8 +8,8 @@ import torch.distributed as dist
 import wandb
 from tensorboardX import SummaryWriter
 
+from areal.api import FinetuneSpec
 from areal.api.cli_args import BaseExperimentConfig, StatsLoggerConfig
-from areal.api.io_struct import FinetuneSpec
 from areal.utils import logging
 from areal.utils.printing import tabulate_stats
 from areal.version import version_info

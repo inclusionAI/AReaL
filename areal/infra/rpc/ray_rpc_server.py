@@ -5,8 +5,8 @@ from typing import Any
 
 import ray
 
+from areal.api import InferenceEngine, TrainEngine
 from areal.api.cli_args import BaseExperimentConfig
-from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.infra.rpc.rtensor import RTensor
 from areal.utils import logging, name_resolve, seeding
 from areal.utils.data import (

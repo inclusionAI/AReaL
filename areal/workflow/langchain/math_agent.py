@@ -7,13 +7,12 @@ proxy-based training infrastructure via the AgentWorkflow pattern.
 import math
 import os
 
+from langchain.agents import create_agent
+from langchain.tools import tool
 from langchain_openai import ChatOpenAI
 from math_verify import parse, verify
 
-from langchain.agents import create_agent
-from langchain.tools import tool
-
-from areal.api.reward_api import AsyncRewardWrapper
+from areal.api import AsyncRewardWrapper
 
 
 def math_reward_fn(completions: str, answer: str) -> float:

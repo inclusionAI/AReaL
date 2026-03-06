@@ -10,14 +10,13 @@ from transformers import AutoTokenizer
 
 from tests.utils import get_model_path
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, FinetuneSpec, SaveLoadMeta
 from areal.api.cli_args import (
     MegatronEngineConfig,
     OptimizerConfig,
     TrainEngineConfig,
 )
-from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
-from areal.engine.megatron_engine import MegatronEngine
+from areal.engine import MegatronEngine
 from areal.infra.platforms import current_platform
 from areal.utils import logging
 

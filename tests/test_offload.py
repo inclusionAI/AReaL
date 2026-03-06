@@ -11,11 +11,9 @@ import torch.distributed as dist
 
 from tests.utils import get_model_path
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, FinetuneSpec
 from areal.api.cli_args import MegatronEngineConfig, OptimizerConfig, TrainEngineConfig
-from areal.api.io_struct import FinetuneSpec
-from areal.engine.fsdp_engine import FSDPEngine
-from areal.engine.megatron_engine import MegatronEngine
+from areal.engine import FSDPEngine, MegatronEngine
 from areal.infra.platforms import current_platform
 from areal.utils.network import find_free_ports
 from areal.utils.offload import get_tms_env_vars

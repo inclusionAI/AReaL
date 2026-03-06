@@ -9,7 +9,7 @@ from copy import deepcopy
 
 import requests
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
     InferenceEngineConfig,

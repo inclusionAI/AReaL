@@ -7,7 +7,7 @@ import sys
 import time
 
 import areal.utils.logging as logging
-from areal.api.alloc_mode import AllocationMode, AllocationType
+from areal.api import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
     InferenceEngineConfig,

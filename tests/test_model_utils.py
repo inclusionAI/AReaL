@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from areal.api import WeightUpdateMeta
 from areal.api.cli_args import (
     BaseExperimentConfig,
     ClusterSpecConfig,
@@ -15,7 +16,6 @@ from areal.api.cli_args import (
     SFTConfig,
     TrainEngineConfig,
 )
-from areal.api.io_struct import WeightUpdateMeta
 from areal.engine.core.model import get_model_update_meta
 
 

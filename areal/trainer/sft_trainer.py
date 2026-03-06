@@ -7,15 +7,13 @@ import torch.distributed as dist
 from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, FinetuneSpec, Scheduler, StepInfo
 from areal.api.cli_args import (
     SFTConfig,
     TrainDatasetConfig,
     TrainEngineConfig,
     ValidDatasetConfig,
 )
-from areal.api.io_struct import FinetuneSpec, StepInfo
-from areal.api.scheduler_api import Scheduler
 from areal.infra import (
     LocalScheduler,
     RayScheduler,
@@ -39,8 +37,7 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 if TYPE_CHECKING:
-    from areal.engine.fsdp_engine import FSDPLMEngine
-    from areal.engine.megatron_engine import MegatronLMEngine
+    from areal.engine import FSDPLMEngine, MegatronLMEngine
     from areal.experimental.engine.archon_engine import ArchonLMEngine
     from areal.trainer.sft.lm_engine import LMController
 
@@ -288,11 +285,11 @@ class SFTTrainer:
         self, actor_config: TrainEngineConfig
     ) -> FSDPLMEngine | MegatronLMEngine | ArchonLMEngine | LMController:
         if self.allocation_mode.train_backend == "fsdp":
-            from areal.engine.fsdp_engine import FSDPLMEngine
+            from areal.engine import FSDPLMEngine
 
             actor_cls = FSDPLMEngine
         elif self.allocation_mode.train_backend == "megatron":
-            from areal.engine.megatron_engine import MegatronLMEngine
+            from areal.engine import MegatronLMEngine
 
             actor_cls = MegatronLMEngine
         elif self.allocation_mode.train_backend == "archon":

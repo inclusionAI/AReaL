@@ -8,9 +8,15 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
+from areal.api import (
+    FinetuneSpec,
+    InferenceEngine,
+    SaveLoadMeta,
+    StepInfo,
+    TrainEngine,
+    WeightUpdateMeta,
+)
 from areal.api.cli_args import RecoverConfig
-from areal.api.engine_api import InferenceEngine, TrainEngine
-from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
 from areal.infra import TrainController
 from areal.utils import logging, timeutil
 from areal.utils.evaluator import Evaluator

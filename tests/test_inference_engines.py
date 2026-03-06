@@ -7,14 +7,13 @@ import torch.distributed as dist
 
 from tests.utils import get_model_path
 
+from areal.api import RolloutWorkflow, WeightUpdateMeta
 from areal.api.cli_args import (
     GenerationHyperparameters,
     InferenceEngineConfig,
     SGLangConfig,
     vLLMConfig,
 )
-from areal.api.io_struct import WeightUpdateMeta
-from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import network
 from areal.utils.data import concat_padded_tensors, get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -81,12 +80,12 @@ def inference_engine(request):
 
     # Launch remote server and initialize engine
     if backend == "vllm":
-        from areal.engine.vllm_remote import RemotevLLMEngine
+        from areal.engine import RemotevLLMEngine
 
         engine_class = RemotevLLMEngine
         server_args = vllm_args
     else:  # sglang
-        from areal.engine.sglang_remote import RemoteSGLangEngine
+        from areal.engine import RemoteSGLangEngine
 
         engine_class = RemoteSGLangEngine
         server_args = sglang_args
@@ -128,7 +127,7 @@ def inference_engine(request):
 @pytest.mark.ci
 def test_rollout(inference_engine, n_samples):
     """Test engine rollout with different sample sizes."""
-    from areal.workflow.rlvr import RLVRWorkflow
+    from areal.workflow import RLVRWorkflow
 
     config = InferenceEngineConfig(
         experiment_name=inference_engine["expr_name"],
@@ -184,7 +183,7 @@ def test_rollout(inference_engine, n_samples):
 @pytest.mark.ci
 def test_staleness_control(inference_engine, bs, ofp, n_samples):
     """Test engine staleness control mechanism."""
-    from areal.workflow.rlvr import RLVRWorkflow
+    from areal.workflow import RLVRWorkflow
 
     config = InferenceEngineConfig(
         experiment_name=inference_engine["expr_name"],
@@ -248,7 +247,7 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
 @pytest.mark.ci
 def test_wait_for_task(inference_engine):
     """Test wait_for_task functionality with real inference engines."""
-    from areal.workflow.rlvr import RLVRWorkflow
+    from areal.workflow import RLVRWorkflow
 
     config = InferenceEngineConfig(
         experiment_name=inference_engine["expr_name"],
@@ -326,9 +325,9 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine
     """Test disk-based weight updates from FSDP engine to inference engine."""
 
     # setup FSDP engine
+    from areal.api import FinetuneSpec
     from areal.api.cli_args import OptimizerConfig, TrainEngineConfig
-    from areal.api.io_struct import FinetuneSpec
-    from areal.engine.fsdp_engine import FSDPEngine
+    from areal.engine import FSDPEngine
 
     os.environ["WORLD_SIZE"] = "1"
     os.environ["RANK"] = "0"

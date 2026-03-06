@@ -56,7 +56,7 @@ from .server import (
 )
 
 if TYPE_CHECKING:
-    from areal.api.engine_api import InferenceEngine
+    from areal.api import InferenceEngine
 
 
 logger = getLogger("ProxyRolloutServer")

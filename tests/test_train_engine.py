@@ -10,8 +10,8 @@ from transformers import AutoTokenizer
 
 from tests.utils import get_model_path
 
+from areal.api import FinetuneSpec, SaveLoadMeta
 from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
-from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.infra.platforms import current_platform
 
 VOCAB_SIZE = 100
@@ -52,7 +52,7 @@ def mock_input(
 
 
 def get_engine(engine_type: str, model_path: str):
-    from areal.engine.fsdp_engine import FSDPEngine
+    from areal.engine import FSDPEngine
 
     engine_cls = {"fsdp": FSDPEngine}[engine_type]
 

@@ -5,16 +5,14 @@ import torch.distributed as dist
 
 from tests.utils import get_model_path
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, FinetuneSpec, WeightUpdateMeta
 from areal.api.cli_args import (
     InferenceEngineConfig,
     OptimizerConfig,
     SGLangConfig,
     TrainEngineConfig,
 )
-from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
-from areal.engine.fsdp_engine import FSDPEngine
-from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine import FSDPEngine, RemoteSGLangEngine
 from areal.utils import network
 
 EXPR_NAME = "test_fsdp_engine_nccl"

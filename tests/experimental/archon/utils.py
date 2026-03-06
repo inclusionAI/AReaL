@@ -11,10 +11,9 @@ import torch.distributed as dist
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM
 
-from areal.api.alloc_mode import ParallelStrategy
+from areal.api import FinetuneSpec, ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
-from areal.api.io_struct import FinetuneSpec
-from areal.engine.fsdp_engine import FSDPLMEngine
+from areal.engine import FSDPLMEngine
 from areal.experimental.engine.archon_engine import ArchonLMEngine
 from areal.infra.platforms import current_platform
 from areal.utils.data import pad_sequences_to_tensors

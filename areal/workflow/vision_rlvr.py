@@ -6,10 +6,8 @@ import torch
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal import workflow_context
+from areal.api import AsyncRewardWrapper, InferenceEngine, ModelRequest, ModelResponse
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import ModelRequest, ModelResponse
-from areal.api.reward_api import AsyncRewardWrapper
 from areal.utils import logging, stats_tracker
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.image import image2base64

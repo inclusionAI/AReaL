@@ -9,14 +9,14 @@ from datasets import load_dataset
 from transformers import PreTrainedTokenizerFast
 
 from areal import PPOTrainer, workflow_context
+from areal.api import RolloutWorkflow
 from areal.api.cli_args import (
     GenerationHyperparameters,
     GRPOConfig,
     InferenceEngineConfig,
     load_expr_config,
 )
-from areal.api.workflow_api import RolloutWorkflow
-from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import logging, stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer

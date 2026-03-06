@@ -49,8 +49,8 @@ from openai.types.responses.response_usage import (
 from openai.types.responses.tool_param import ToolParam
 from openai.types.shared_params.metadata import Metadata
 
+from areal.api import ModelRequest, ModelResponse
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 from areal.experimental.openai.types import InteractionWithTokenLogpReward

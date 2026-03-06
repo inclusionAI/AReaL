@@ -10,6 +10,7 @@ from copy import deepcopy
 
 import requests
 
+from areal.api import AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
     InferenceEngineConfig,
@@ -18,7 +19,6 @@ from areal.api.cli_args import (
     to_structured_cfg,
     vLLMConfig,
 )
-from areal.api.io_struct import AllocationMode
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH, get_scheduling_spec
 from areal.infra.utils.proc import kill_process_tree

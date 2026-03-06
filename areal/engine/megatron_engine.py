@@ -28,21 +28,20 @@ from torch import nn
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
-from areal.api.alloc_mode import (
+from areal.api import (
     AllocationMode,
+    FinetuneSpec,
+    InferenceEngine,
     MegatronParallelStrategy,
     ParallelStrategy,
-)
-from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
-from areal.api.engine_api import InferenceEngine, TrainEngine
-from areal.api.io_struct import (
-    DeviceRuntimeInfo,
-    FinetuneSpec,
     ParamSpec,
     SaveLoadMeta,
+    TrainEngine,
     WeightUpdateMeta,
+    WorkflowLike,
 )
-from areal.api.workflow_api import WorkflowLike
+from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
+from areal.api.io_struct import DeviceRuntimeInfo
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_total_loss_weight,
@@ -105,8 +104,8 @@ from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
 
 if TYPE_CHECKING:
+    from areal.api import Scheduler
     from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
-    from areal.api.scheduler_api import Scheduler
 
 
 class _MegatronModelList(list):

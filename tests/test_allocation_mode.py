@@ -1,7 +1,7 @@
 import pytest
 
+from areal.api import AllocationMode
 from areal.api.alloc_mode import (
-    AllocationMode,
     AllocationValidationError,
     InvalidAllocationModeError,
     ModelAllocation,

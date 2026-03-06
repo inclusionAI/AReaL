@@ -10,7 +10,7 @@ import torch.distributed as dist
 from torch import nn
 from torch.distributed.tensor import DTensor
 
-from areal.api.io_struct import ParamSpec, WeightUpdateMeta
+from areal.api import ParamSpec, WeightUpdateMeta
 from areal.engine.core.distributed import init_custom_process_group
 from areal.experimental.engine.archon_checkpoint import save_model_to_hf
 from areal.infra.platforms import current_platform
@@ -21,7 +21,7 @@ from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
 
 if TYPE_CHECKING:
-    from areal.api.engine_api import InferenceEngine
+    from areal.api import InferenceEngine
     from areal.experimental.engine.archon_engine import ArchonEngine
 
 

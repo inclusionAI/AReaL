@@ -76,7 +76,7 @@ def tokenizer():
 @pytest.fixture
 def openai_client(sglang_server, tokenizer):
     from areal.api.cli_args import InferenceEngineConfig
-    from areal.engine.sglang_remote import RemoteSGLangEngine
+    from areal.engine import RemoteSGLangEngine
 
     config = InferenceEngineConfig(
         experiment_name=EXPR_NAME,

@@ -5,8 +5,8 @@ from unittest.mock import Mock, patch
 import pytest
 from ray.util.state import summarize_actors
 
-from areal.api.cli_args import BaseExperimentConfig, SchedulingStrategy
-from areal.api.scheduler_api import Job, SchedulingSpec, Worker
+from areal.api import Job, Worker
+from areal.api.cli_args import BaseExperimentConfig, SchedulingSpec, SchedulingStrategy
 from areal.infra.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
 from areal.infra.utils.ray_placement_group import _create_bundle_specs_split
 

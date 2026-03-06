@@ -7,10 +7,10 @@ import torch.distributed as dist
 from areal import PPOTrainer
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
-from areal.reward.gsm8k import gsm8k_reward_fn
+from areal.reward import gsm8k_reward_fn
 from areal.utils import stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.workflow.rlvr import RLVRWorkflow
+from areal.workflow import RLVRWorkflow
 
 
 class MinimalPPOTrainer(PPOTrainer):

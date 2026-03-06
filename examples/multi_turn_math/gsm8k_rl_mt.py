@@ -6,9 +6,8 @@ from openai.types.chat import ChatCompletion
 from transformers import PreTrainedTokenizerFast
 
 from areal import PPOTrainer, workflow_context
+from areal.api import AsyncRewardWrapper, RolloutWorkflow
 from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
-from areal.api.reward_api import AsyncRewardWrapper
-from areal.api.workflow_api import RolloutWorkflow
 from areal.dataset import get_custom_dataset
 from areal.experimental.openai import ArealOpenAI
 from areal.reward import get_math_verify_worker

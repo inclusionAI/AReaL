@@ -6,15 +6,13 @@ import torch
 from tests.utils import get_model_path
 
 import areal
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, FinetuneSpec
 from areal.api.cli_args import (
     MicroBatchSpec,
     OptimizerConfig,
     TrainEngineConfig,
 )
-from areal.api.io_struct import FinetuneSpec
-from areal.engine.fsdp_engine import FSDPEngine
-from areal.engine.megatron_engine import MegatronEngine
+from areal.engine import FSDPEngine, MegatronEngine
 from areal.experimental.engine.archon_engine import ArchonEngine
 from areal.infra.platforms import current_platform
 from areal.models.tree_attn.module import restore_patch_fsdp_for_tree_training
