@@ -189,14 +189,20 @@ class PerLayerGPUOptimizerStep:
     Instead of running Adam on CPU for all ~67GB of optimizer states,
     streams 1-2 layers at a time (~1.5GB each) to GPU, achieving ~50-80x speedup.
 
-    Works with both:
-    - CPUOffloadPolicy (all tensors on CPU after backward)
-    - param_offload only (params/grads on GPU, optimizer states on CPU)
+    Requires:
+    - optimizer_offload=True (optimizer states on CPU between steps)
+    - offload_policy=False (params and grads MUST remain on GPU)
+
+    If CPUOffloadPolicy is used (params/grads on CPU), raises ValueError at config level.
     """
 
     def __init__(self, model, optimizer, device_id, prefetch_layers=1):
         self.optimizer = optimizer
-        self.device = torch.device(f"cuda:{device_id}") if isinstance(device_id, int) else torch.device(device_id)
+        self.device = (
+            torch.device(f"cuda:{device_id}")
+            if isinstance(device_id, int)
+            else torch.device(device_id)
+        )
         self.prefetch_layers = prefetch_layers
         self._layer_param_groups = self._build_layer_groups(model)
         self._init_states_and_pin()
@@ -217,14 +223,20 @@ class PerLayerGPUOptimizerStep:
         assigned = set()
         groups = []
         for module in fsdp_children:
-            params = [p for p in module.parameters() if p.requires_grad and id(p) not in assigned]
+            params = [
+                p
+                for p in module.parameters()
+                if p.requires_grad and id(p) not in assigned
+            ]
             if params:
                 groups.append(params)
                 for p in params:
                     assigned.add(id(p))
 
         # Residual: final norm, lm_head, etc.
-        residual = [p for p in model.parameters() if p.requires_grad and id(p) not in assigned]
+        residual = [
+            p for p in model.parameters() if p.requires_grad and id(p) not in assigned
+        ]
         if residual:
             groups.append(residual)
         return groups
@@ -282,13 +294,27 @@ class PerLayerGPUOptimizerStep:
         num_groups = len(self._layer_param_groups)
         self._h2d_stream = torch.cuda.Stream(device=self.device)
         self._d2h_stream = torch.cuda.Stream(device=self.device)
-        self._pre_wait_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
-        self._post_wait_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
-        self._compute_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
-        self._h2d_start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
-        self._h2d_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
-        self._d2h_start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
-        self._d2h_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_groups)]
+        self._pre_wait_events = [
+            torch.cuda.Event(enable_timing=True) for _ in range(num_groups)
+        ]
+        self._post_wait_events = [
+            torch.cuda.Event(enable_timing=True) for _ in range(num_groups)
+        ]
+        self._compute_end_events = [
+            torch.cuda.Event(enable_timing=True) for _ in range(num_groups)
+        ]
+        self._h2d_start_events = [
+            torch.cuda.Event(enable_timing=True) for _ in range(num_groups)
+        ]
+        self._h2d_end_events = [
+            torch.cuda.Event(enable_timing=True) for _ in range(num_groups)
+        ]
+        self._d2h_start_events = [
+            torch.cuda.Event(enable_timing=True) for _ in range(num_groups)
+        ]
+        self._d2h_end_events = [
+            torch.cuda.Event(enable_timing=True) for _ in range(num_groups)
+        ]
 
     def _prefetch_layer(self, layer_idx):
         """H2D: copy layer's optimizer states (and params/grads if on CPU) to GPU.
@@ -380,7 +406,7 @@ class PerLayerGPUOptimizerStep:
             buf["cpu_v"].copy_(buf["gpu_v"], non_blocking=True)
             state = buf["state"]
             if isinstance(state["step"], torch.Tensor):
-                state["step"].copy_(buf["gpu_step"])
+                state["step"].copy_(buf["gpu_step"], non_blocking=True)
 
     @torch.no_grad()
     def step(self):
@@ -483,7 +509,9 @@ class PerLayerGPUOptimizerStep:
         h2d_times, compute_times, d2h_times, wait_times = [], [], [], []
         for i in range(num_groups):
             wait_times.append(pre_wait_events[i].elapsed_time(post_wait_events[i]))
-            compute_times.append(post_wait_events[i].elapsed_time(compute_end_events[i]))
+            compute_times.append(
+                post_wait_events[i].elapsed_time(compute_end_events[i])
+            )
             h2d_times.append(h2d_start_events[i].elapsed_time(h2d_end_events[i]))
             d2h_times.append(d2h_start_events[i].elapsed_time(d2h_end_events[i]))
 

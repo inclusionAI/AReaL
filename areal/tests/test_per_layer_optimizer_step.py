@@ -3,7 +3,6 @@
 Tests correctness of per-layer GPU optimizer step against baseline CPU/GPU optimizer.step().
 Uses mp.spawn pattern.
 """
-import os
 
 import pytest
 import torch
@@ -15,6 +14,8 @@ from transformers import AutoModelForCausalLM, Qwen2Config
 
 from areal.engine.fsdp_utils import PerLayerGPUOptimizerStep, apply_fsdp2
 from areal.engine.fsdp_utils.grad import fsdp2_clip_grad_norm
+
+CUDA_AVAILABLE = torch.cuda.is_available()
 
 
 def _create_tiny_config():
@@ -109,74 +110,15 @@ def _test_layer_grouping_worker(rank, world_size, rendezvous_file):
     )
 
     if rank == 0:
-        print(f"Layer grouping test passed: {len(groups)} groups, {len(model_params)} params")
+        print(
+            f"Layer grouping test passed: {len(groups)} groups, {len(model_params)} params"
+        )
 
     dist.destroy_process_group()
 
 
 # =============================================================================
-# Test 2: Correctness - CPU offload mode
-# =============================================================================
-def _test_correctness_cpu_offload_worker(rank, world_size, rendezvous_file):
-    device_mesh = _setup_distributed(rank, world_size, rendezvous_file)
-    config = _create_tiny_config()
-
-    # --- Baseline: standard optimizer.step() on CPU (with CPUOffloadPolicy) ---
-    torch.manual_seed(42)
-    model_baseline = _create_model_and_fsdp(config, device_mesh, use_cpu_offload=True)
-    optimizer_baseline = torch.optim.AdamW(model_baseline.parameters(), lr=1e-3)
-
-    torch.manual_seed(100 + rank)
-    input_ids = torch.randint(0, config.vocab_size, (2, 32), device=f"cuda:{rank}")
-
-    loss = model_baseline(input_ids=input_ids).logits.mean()
-    loss.backward()
-    _clip_grad_norm(model_baseline, device_mesh)
-    optimizer_baseline.step()
-    optimizer_baseline.zero_grad()
-
-    # Collect baseline param values
-    baseline_params = {}
-    for n, p in model_baseline.named_parameters():
-        local = p._local_tensor if hasattr(p, "_local_tensor") else p
-        baseline_params[n] = local.detach().float().cpu().clone()
-
-    del model_baseline, optimizer_baseline
-    torch.cuda.empty_cache()
-
-    # --- Per-layer GPU optimizer step ---
-    torch.manual_seed(42)
-    model_perlayer = _create_model_and_fsdp(config, device_mesh, use_cpu_offload=True)
-    optimizer_perlayer = torch.optim.AdamW(model_perlayer.parameters(), lr=1e-3)
-
-    torch.manual_seed(100 + rank)
-    input_ids = torch.randint(0, config.vocab_size, (2, 32), device=f"cuda:{rank}")
-
-    loss = model_perlayer(input_ids=input_ids).logits.mean()
-    loss.backward()
-    _clip_grad_norm(model_perlayer, device_mesh)
-    stepper = PerLayerGPUOptimizerStep(model_perlayer, optimizer_perlayer, device_id=rank, prefetch_layers=1)
-    stepper.step()
-    optimizer_perlayer.zero_grad()
-
-    # Compare — CPU vs GPU Adam will have bf16 rounding differences, use relaxed threshold
-    max_diff = 0.0
-    for n, p in model_perlayer.named_parameters():
-        local = p._local_tensor if hasattr(p, "_local_tensor") else p
-        perlayer_val = local.detach().float().cpu()
-        diff = (perlayer_val - baseline_params[n]).abs().max().item()
-        max_diff = max(max_diff, diff)
-        assert diff < 1e-2, f"Param {n} diff={diff:.6e} exceeds threshold"
-
-    if rank == 0:
-        print(f"CPU offload correctness test passed. Max diff: {max_diff:.6e}")
-
-    del model_perlayer, optimizer_perlayer
-    dist.destroy_process_group()
-
-
-# =============================================================================
-# Test 3: Correctness - GPU baseline (no offload)
+# Test 2: Correctness - GPU baseline (no offload)
 # =============================================================================
 def _test_correctness_gpu_baseline_worker(rank, world_size, rendezvous_file):
     device_mesh = _setup_distributed(rank, world_size, rendezvous_file)
@@ -220,7 +162,9 @@ def _test_correctness_gpu_baseline_worker(rank, world_size, rendezvous_file):
     _offload_optimizer_states(optimizer_perlayer)
     torch.cuda.synchronize()
 
-    stepper = PerLayerGPUOptimizerStep(model_perlayer, optimizer_perlayer, device_id=rank, prefetch_layers=1)
+    stepper = PerLayerGPUOptimizerStep(
+        model_perlayer, optimizer_perlayer, device_id=rank, prefetch_layers=1
+    )
     stepper.step()
     optimizer_perlayer.zero_grad()
 
@@ -247,7 +191,7 @@ def _test_multi_step_worker(rank, world_size, rendezvous_file):
     device_mesh = _setup_distributed(rank, world_size, rendezvous_file)
     config = _create_tiny_config()
 
-    model = _create_model_and_fsdp(config, device_mesh, use_cpu_offload=True)
+    model = _create_model_and_fsdp(config, device_mesh, use_cpu_offload=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
     losses = []
@@ -258,7 +202,11 @@ def _test_multi_step_worker(rank, world_size, rendezvous_file):
         loss.backward()
         _clip_grad_norm(model, device_mesh)
 
-        stepper = PerLayerGPUOptimizerStep(model, optimizer, device_id=rank, prefetch_layers=1)
+        _offload_optimizer_states(optimizer)
+        torch.cuda.synchronize()
+        stepper = PerLayerGPUOptimizerStep(
+            model, optimizer, device_id=rank, prefetch_layers=1
+        )
         stepper.step()
         optimizer.zero_grad()
         losses.append(loss.item())
@@ -276,7 +224,7 @@ def _test_prefetch_layers_worker(rank, world_size, rendezvous_file, prefetch_lay
     device_mesh = _setup_distributed(rank, world_size, rendezvous_file)
     config = _create_tiny_config()
 
-    model = _create_model_and_fsdp(config, device_mesh, use_cpu_offload=True)
+    model = _create_model_and_fsdp(config, device_mesh, use_cpu_offload=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
     torch.manual_seed(42 + rank)
@@ -285,7 +233,11 @@ def _test_prefetch_layers_worker(rank, world_size, rendezvous_file, prefetch_lay
     loss.backward()
     _clip_grad_norm(model, device_mesh)
 
-    stepper = PerLayerGPUOptimizerStep(model, optimizer, device_id=rank, prefetch_layers=prefetch_layers)
+    _offload_optimizer_states(optimizer)
+    torch.cuda.synchronize()
+    stepper = PerLayerGPUOptimizerStep(
+        model, optimizer, device_id=rank, prefetch_layers=prefetch_layers
+    )
     stepper.step()
     optimizer.zero_grad()
 
@@ -307,8 +259,11 @@ def _test_prefetch_layers_worker(rank, world_size, rendezvous_file, prefetch_lay
 # =============================================================================
 # Pytest entry points
 # =============================================================================
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 @pytest.mark.parametrize("world_size", [2])
 def test_layer_grouping(world_size, tmp_path):
+    if torch.cuda.device_count() < world_size:
+        pytest.skip(f"Need {world_size} GPUs")
     rendezvous_file = str(tmp_path / "rdzv_file")
     mp.spawn(
         fn=_test_layer_grouping_worker,
@@ -318,19 +273,11 @@ def test_layer_grouping(world_size, tmp_path):
     )
 
 
-@pytest.mark.parametrize("world_size", [2])
-def test_correctness_cpu_offload(world_size, tmp_path):
-    rendezvous_file = str(tmp_path / "rdzv_file")
-    mp.spawn(
-        fn=_test_correctness_cpu_offload_worker,
-        args=(world_size, rendezvous_file),
-        nprocs=world_size,
-        join=True,
-    )
-
-
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 @pytest.mark.parametrize("world_size", [2])
 def test_correctness_gpu_baseline(world_size, tmp_path):
+    if torch.cuda.device_count() < world_size:
+        pytest.skip(f"Need {world_size} GPUs")
     rendezvous_file = str(tmp_path / "rdzv_file")
     mp.spawn(
         fn=_test_correctness_gpu_baseline_worker,
@@ -340,8 +287,11 @@ def test_correctness_gpu_baseline(world_size, tmp_path):
     )
 
 
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 @pytest.mark.parametrize("world_size", [2])
 def test_multi_step(world_size, tmp_path):
+    if torch.cuda.device_count() < world_size:
+        pytest.skip(f"Need {world_size} GPUs")
     rendezvous_file = str(tmp_path / "rdzv_file")
     mp.spawn(
         fn=_test_multi_step_worker,
@@ -351,8 +301,11 @@ def test_multi_step(world_size, tmp_path):
     )
 
 
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 @pytest.mark.parametrize("world_size,prefetch_layers", [(2, 0), (2, 1), (2, 2)])
 def test_prefetch_layers(world_size, prefetch_layers, tmp_path):
+    if torch.cuda.device_count() < world_size:
+        pytest.skip(f"Need {world_size} GPUs")
     rendezvous_file = str(tmp_path / "rdzv_file")
     mp.spawn(
         fn=_test_prefetch_layers_worker,

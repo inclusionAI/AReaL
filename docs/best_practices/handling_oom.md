@@ -144,7 +144,28 @@ allocation_mode: sglang:d4+archon:d2p2e2
 We recommend pipeline and expert parallelism over tensor/context parallelism. Check
 [Allocation Mode Reference](../reference/alloc_mode.md) for more details.
 
-### 4. Switch to a Lightweight Optimizer
+### 4. Enable Per-Layer GPU Optimizer Step
+
+When using optimizer state offloading (`optimizer_offload: true`), the default CPU Adam
+step can be very slow (~300s for 32B models). Enable per-layer GPU optimizer step to
+stream optimizer states per-layer to GPU for ~50-80x speedup:
+
+```yaml
+actor:
+  fsdp:
+    per_layer_optimizer_step: true
+    optimizer_step_prefetch_layers: 1  # Number of layers to prefetch (default: 1)
+```
+
+This streams 1-2 layers at a time (~1.5GB each) to GPU instead of loading all optimizer
+states at once (~67GB), keeping memory usage low while achieving GPU-speed Adam updates.
+
+**Requirements:**
+
+- `optimizer_offload: true` (optimizer states on CPU between steps)
+- `offload_policy: false` (model params and gradients must remain on GPU)
+
+### 5. Switch to a Lightweight Optimizer
 
 AReaL supports different optimizers depending on the training engine.
 
@@ -158,7 +179,7 @@ AReaL supports different optimizers depending on the training engine.
 `actor.optimizer.type: <name>` in your YAML configuration file (e.g.,
 `actor.optimizer.type: sgd`).
 
-### 5. Use Memory-Efficient Model Loading
+### 6. Use Memory-Efficient Model Loading
 
 If OOM occurs during model initialization (before training starts), enable
 memory-efficient loading:
