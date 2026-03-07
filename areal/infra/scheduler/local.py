@@ -630,9 +630,10 @@ class LocalScheduler(Scheduler):
                 env = get_env_vars(
                     ",".join([f"{k}={v}" for k, v in scheduling.env_vars.items()]),
                 )
-                env[current_platform.device_control_env_var] = ",".join(
-                    map(str, gpu_devices)
-                )
+                if current_platform.device_control_env_var:
+                    env[current_platform.device_control_env_var] = ",".join(
+                        map(str, gpu_devices)
+                    )
 
                 thread_env = get_thread_env_vars(
                     cpus_per_task=scheduling.cpu,
