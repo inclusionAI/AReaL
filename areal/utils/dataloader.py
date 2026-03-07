@@ -6,6 +6,11 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.cli_args import _DatasetConfig
 
 
+def _identity_collate(batch):
+    """Pass-through collate; must be module-level for multiprocessing pickle."""
+    return batch
+
+
 def create_dataloader(
     dataset,
     rank: int,
@@ -38,5 +43,5 @@ def create_dataloader(
         ),
         drop_last=dataset_config.drop_last,
         num_workers=dataset_config.num_workers,
-        collate_fn=collate_fn or (lambda x: x),
+        collate_fn=collate_fn or _identity_collate,
     )
