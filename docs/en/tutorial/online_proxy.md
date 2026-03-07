@@ -210,9 +210,9 @@ When you call `start_session` with an API key that already has an active session
 gateway performs a **session refresh**:
 
 1. The existing session is ended
-1. If no reward was set, a default reward of 0 is assigned
-1. The trajectory is exported to the RL training pipeline
-1. A new session starts bound to the same API key
+2. If no reward was set, a default reward of 0 is assigned
+3. The trajectory is exported to the RL training pipeline
+4. A new session starts bound to the same API key
 
 This allows continuous data collection without restarting the external application.
 
@@ -316,11 +316,11 @@ a few seconds (default timeout is 120 seconds).
 Training runs **asynchronously** under the hood:
 
 1. External applications interact with the model through the gateway
-1. Each session's interactions are recorded with token-level data
-1. When a session ends (via refresh or explicit end), its trajectory is exported
-1. Once enough trajectories are collected (controlled by `train_dataset.batch_size`),
+2. Each session's interactions are recorded with token-level data
+3. When a session ends (via refresh or explicit end), its trajectory is exported
+4. Once enough trajectories are collected (controlled by `train_dataset.batch_size`),
    AReaL performs a training step
-1. Updated model weights are transparently served to subsequent sessions
+5. Updated model weights are transparently served to subsequent sessions
 
 The model improves silently as you collect more episodes. For details on asynchronous
 training and staleness control, see the [Asynchronous RL Guide](../algorithms/async.md).
