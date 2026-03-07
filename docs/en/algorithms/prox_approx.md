@@ -18,9 +18,9 @@ Standard decoupled PPO requires recomputing π_proximal via a full forward pass 
 training step. This feature **approximates** π_proximal using version-aware
 interpolation between cached π_behave and computed π_θ:
 
-$$ \\alpha = \\frac{v\_{proximal} - v\_{behave}}{v\_{\\theta} - v\_{behave}}, \\quad
-\\log \\pi\_{proximal} \\approx \\log \\pi\_{behave} + \\alpha \\cdot (\\log
-\\pi\_{\\theta} - \\log \\pi\_{behave}) $$
+$$ \alpha = \frac{v_{proximal} - v_{behave}}{v_{\theta} - v_{behave}}, \quad
+\log \pi_{proximal} \approx \log \pi_{behave} + \alpha \cdot (\log
+\pi_{\theta} - \log \pi_{behave}) $$
 
 where $v$ denotes the policy version when each token was generated.
 
@@ -110,8 +110,8 @@ ______________________________________________________________________
 
 **`"loglinear"` (Recommended)**
 
-- Formula: $\\log \\pi\_{prox} = \\log \\pi\_{behave} + \\alpha \\cdot (\\log
-  \\pi\_{\\theta} - \\log \\pi\_{behave})$
+- Formula: $\log \pi_{prox} = \log \pi_{behave} + \alpha \cdot (\log
+  \pi_{\theta} - \log \pi_{behave})$
 - Linear interpolation in log-space (geometric mean in probability space)
 - Simple, fast, stable
 - Best evaluation reward (0.799 on GSM8K)
@@ -119,8 +119,8 @@ ______________________________________________________________________
 
 **`"linear"` (Alternative)**
 
-- Formula: $\\log \\pi\_{prox} = \\log\[(1-\\alpha) \\cdot \\pi\_{behave} + \\alpha
-  \\cdot \\pi\_{\\theta}\]$
+- Formula: $\log \pi_{prox} = \log[(1-\alpha) \cdot \pi_{behave} + \alpha
+  \cdot \pi_{\theta}]$
 - Linear interpolation in probability space (arithmetic mean), then converts to log
   space
 - Better task reward (0.944 on GSM8K)
@@ -128,7 +128,7 @@ ______________________________________________________________________
 
 **`"rollout"` (Metrics Baseline)**
 
-- Formula: $\\log \\pi\_{prox} = \\log \\pi\_{behave}$
+- Formula: $\log \pi_{prox} = \log \pi_{behave}$
 - Uses behavior policy directly as proximal policy (no interpolation)
 - Only used internally for metrics comparison when `prox_logp_method="metrics"`
 - Not available as a user-facing configuration option (use `use_decoupled_loss=false`

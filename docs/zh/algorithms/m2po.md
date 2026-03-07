@@ -10,8 +10,8 @@
 2025）是一种RL方法，即使数据至少落后256个模型更新也能实现稳定的离策略训练，并通过约束重要性权重的二阶矩来抑制极端异常值同时保留信息丰富的更新，从而匹配on-policy性能。
 
 M2PO的第一步是计算二阶矩： $$
-\\hat{M_2}=\\frac{1}{N}\\sum\_{i=1}^NM\_{2,i}=\\frac{1}{N}\\sum\_{i=1}^N(\\log{r_i})^2=\\frac{1}{N}\\sum\_{i=1}^N\\left(\\log\\frac{\\pi\_\\theta
-(a_i|s_i)}{\\pi\_{behav}(a_i|s_i)}\\right)^2 $$
+\hat{M_2}=\frac{1}{N}\sum_{i=1}^NM_{2,i}=\frac{1}{N}\sum_{i=1}^N(\log{r_i})^2=\frac{1}{N}\sum_{i=1}^N\left(\log\frac{\pi_\theta
+(a_i|s_i)}{\pi_{behav}(a_i|s_i)}\right)^2 $$
 
 第二步是计算二阶矩掩码：
 
@@ -21,13 +21,13 @@ M2PO的第一步是计算二阶矩： $$
 
 最后一步是优化目标：
 
-$$ J\_{\\text{M2PO}}(\\theta) =
-\\frac{1}{\\sum\_{i=1}^G|o_i|}\\sum\_{i=1}^G\\sum\_{t=1}^{|o_i|}M\_{i,t}\\frac{\\pi\_\\theta(o_i|q)}{\\pi\_{\\theta\_{old}}(o_i|q)}A\_{i,t}.
+$$ J_{\text{M2PO}}(\theta) =
+\frac{1}{\sum_{i=1}^G|o_i|}\sum_{i=1}^G\sum_{t=1}^{|o_i|}M_{i,t}\frac{\pi_\theta(o_i|q)}{\pi_{\theta_{old}}(o_i|q)}A_{i,t}.
 $$
 
 其中 $M$ 在第二步中计算，且
 
-$$ A\_{i,t}=\\frac{r_i-mean({R_i}_{i=1}^G)}{std({R_i}_{i=1}^G)}. $$
+$$ A_{i,t}=\frac{r_i-mean(\{R_i\}_{i=1}^G)}{std(\{R_i\}_{i=1}^G)}. $$
 
 更多详情：
 
@@ -37,7 +37,7 @@ $$ A\_{i,t}=\\frac{r_i-mean({R_i}_{i=1}^G)}{std({R_i}_{i=1}^G)}. $$
 
 ## 核心参数
 
-- `actor.m2_threshold`：二阶矩均值的阈值，用于计算M2PO掩码，形式为 $\\tau\_{M_2}$
+- `actor.m2_threshold`：二阶矩均值的阈值，用于计算M2PO掩码，形式为 $\tau_{M_2}$
 
 ## 示例用法
 

@@ -76,12 +76,12 @@ With `use_decoupled_loss=true`, the loss function separates three policies:
 
 The decoupled PPO loss combines two importance weights:
 
-$$L = -\\mathbb{E}\\left\[
-\\underbrace{\\frac{\\pi\_{\\text{proximal}}}{\\pi\_{\\text{behave}}}}_{\\text{behave_imp_weight}}
-\\cdot \\min\\left(
-\\underbrace{\\frac{\\pi_\\theta}{\\pi\_{\\text{proximal}}}}_{\\text{importance_weight}}
-A, \\text{clip}\\left(\\frac{\\pi_\\theta}{\\pi\_{\\text{proximal}}}, 1-\\epsilon,
-1+\\epsilon\\right) A \\right) \\right\]$$
+$$L = -\mathbb{E}\left[
+\underbrace{\frac{\pi_{\text{proximal}}}{\pi_{\text{behave}}}}_{\text{behave_imp_weight}}
+\cdot \min\left(
+\underbrace{\frac{\pi_\theta}{\pi_{\text{proximal}}}}_{\text{importance_weight}}
+A, \text{clip}\left(\frac{\pi_\theta}{\pi_{\text{proximal}}}, 1-\epsilon,
+1+\epsilon\right) A \right) \right]$$
 
 | Metric                               | Formula               | Description                                                       |
 | ------------------------------------ | --------------------- | ----------------------------------------------------------------- |

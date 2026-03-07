@@ -57,12 +57,12 @@ actor:
 
 解耦 PPO 损失结合两个重要性权重：
 
-$$L = -\\mathbb{E}\\left\[
-\\underbrace{\\frac{\\pi\_{\\text{proximal}}}{\\pi\_{\\text{behave}}}}_{\\text{behave_imp_weight}}
-\\cdot \\min\\left(
-\\underbrace{\\frac{\\pi_\\theta}{\\pi\_{\\text{proximal}}}}_{\\text{importance_weight}}
-A, \\text{clip}\\left(\\frac{\\pi_\\theta}{\\pi\_{\\text{proximal}}}, 1-\\epsilon,
-1+\\epsilon\\right) A \\right) \\right\]$$
+$$L = -\mathbb{E}\left[
+\underbrace{\frac{\pi_{\text{proximal}}}{\pi_{\text{behave}}}}_{\text{behave_imp_weight}}
+\cdot \min\left(
+\underbrace{\frac{\pi_\theta}{\pi_{\text{proximal}}}}_{\text{importance_weight}}
+A, \text{clip}\left(\frac{\pi_\theta}{\pi_{\text{proximal}}}, 1-\epsilon,
+1+\epsilon\right) A \right) \right]$$
 
 | 指标                                 | 公式                  | 描述                                  |
 | ------------------------------------ | --------------------- | ------------------------------------- |

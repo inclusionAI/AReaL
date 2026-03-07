@@ -124,7 +124,7 @@ When `eps_clip_higher` is `None`, symmetric clipping is used: $\\text{clip}(r,
 1-\\epsilon, 1+\\epsilon)$.
 
 When `eps_clip_higher` is set (DAPO-style), asymmetric clipping is used:
-$\\text{clip}(r, 1-\\epsilon\_{\\text{low}}, 1+\\epsilon\_{\\text{high}})$.
+$\text{clip}(r, 1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}})$.
 
 ### Importance Sampling Level (`actor.importance_sampling_level`)
 
@@ -167,18 +167,18 @@ See `examples/math/gsm8k_ppo.yaml` for a complete configuration example.
 
 ### GRPO
 
-$$ J\_{\\text{GRPO}}(\\theta) = \\mathbb{E}_{\\substack{q \\sim P(Q),\\ {o_i}_{i=1}^G
-\\sim \\pi\_{\\theta\_{\\text{old}}}(O|q)}} \\left\[ \\frac{1}{G} \\sum\_{i=1}^G
-\\sum\_{t=1}^{|o_i|} \\min\\left( r\_{i,t}(\\theta) \\hat{A}_{i,t},\\
-\\text{clip}\\left( r_{i,t}(\\theta),\\ 1-\\epsilon,\\ 1+\\epsilon \\right)
-\\hat{A}_{i,t} \\right) - \\beta D_{\\mathrm{KL}}\\left\[ \\pi\_\\theta \\middle|
-\\pi\_{\\text{ref}} \\right\] \\right\] $$
+$$ J_{\text{GRPO}}(\theta) = \mathbb{E}_{\substack{q \sim P(Q),\ \{o_i\}_{i=1}^G
+\sim \pi_{\theta_{\text{old}}}(O|q)}} \left[ \frac{1}{G} \sum_{i=1}^G
+\sum_{t=1}^{|o_i|} \min\left( r_{i,t}(\theta) \hat{A}_{i,t},\
+\text{clip}\left( r_{i,t}(\theta),\ 1-\epsilon,\ 1+\epsilon \right)
+\hat{A}_{i,t} \right) - \beta D_{\mathrm{KL}}\left[ \pi_\theta \middle|
+\pi_{\text{ref}} \right] \right] $$
 
 where:
 
-$$ r\_{i,t}(\\theta) = \\frac{\\pi\_\\theta(o\_{i,t} \\mid q,
-o\_{i,\<t})}{\\pi\_{\\theta\_{\\text{old}}}(o\_{i,t} \\mid q, o\_{i,\<t})}, \\quad
-\\hat{A}_{i,t} = \\frac{r_i - \\text{mean}({r_i}_{i=1}^G)}{\\text{std}({r_i}\_{i=1}^G)}.
+$$ r_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q,
+o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})}, \quad
+\hat{A}_{i,t} = \frac{r_i - \text{mean}(\{r_i\}_{i=1}^G)}{\text{std}(\{r_i\}_{i=1}^G)}.
 $$
 
 ### RLOO (REINFORCE Leave-One-Out)
@@ -187,15 +187,15 @@ RLOO estimates the baseline by averaging rewards of **other** sampled responses
 (excluding the current one). This is achieved by setting
 `actor.adv_norm.mean_leave1out=true`.
 
-$$ J\_{\\text{RLOO}}(\\theta) = \\mathbb{E}_{\\substack{q \\sim P(Q),\\ {o_i}_{i=1}^G
-\\sim \\pi\_{\\theta\_{\\text{old}}}(O|q)}} \\left\[ \\frac{1}{G} \\sum\_{i=1}^G
-\\frac{1}{|o_i|} \\sum\_{t=1}^{|o_i|} \\min\\left( r\_{i,t}(\\theta) \\hat{A}_{i,t},\\
-\\text{clip}\\left( r_{i,t}(\\theta),\\ 1-\\epsilon,\\ 1+\\epsilon \\right)
-\\hat{A}\_{i,t} \\right) \\right\] $$
+$$ J_{\text{RLOO}}(\theta) = \mathbb{E}_{\substack{q \sim P(Q),\ {o_i}_{i=1}^G
+\sim \pi_{\theta_{\text{old}}}(O|q)}} \left[ \frac{1}{G} \sum_{i=1}^G
+\frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \min\left( r_{i,t}(\theta) \hat{A}_{i,t},\
+\text{clip}\left( r_{i,t}(\theta),\ 1-\epsilon,\ 1+\epsilon \right)
+\hat{A}_{i,t} \right) \right] $$
 
 where:
 
-$$ \\hat{A}_{i,t} = r_{i} - \\frac{1}{G-1} \\sum\_{j\\neq i} r\_{j}. $$
+$$ \hat{A}_{i,t} = r_{i} - \frac{1}{G-1} \sum_{j\neq i} r_{j}. $$
 
 ### GSPO (Group Sequence Policy Optimization)
 
@@ -204,14 +204,14 @@ level.
 
 **Standard PPO (token-level):**
 
-$$ r\_{i,t}(\\theta) = \\frac{\\pi\_\\theta(o\_{i,t} \\mid q,
-o\_{i,\<t})}{\\pi\_{\\theta\_{\\text{old}}}(o\_{i,t} \\mid q, o\_{i,\<t})} $$
+$$ r_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q,
+o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})} $$
 
 **GSPO (sequence-level):**
 
-$$ r_i(\\theta) = \\exp\\left(\\frac{1}{|o_i|}\\sum\_{t=1}^{|o_i|}
-\\log\\frac{\\pi\_\\theta(o\_{i,t} \\mid q,
-o\_{i,\<t})}{\\pi\_{\\theta\_{\\text{old}}}(o\_{i,t} \\mid q, o\_{i,\<t})}\\right) $$
+$$ r_i(\theta) = \exp\left(\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}
+\log\frac{\pi_\theta(o_{i,t} \mid q,
+o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})}\right) $$
 
 ### SAPO (Soft Adaptive Policy Optimization)
 
@@ -220,7 +220,7 @@ and asymmetric control.
 
 **Standard PPO:**
 
-$$ L^{\\text{PPO}} = -\\mathbb{E}\_t\[\\min(r_t A_t, r_t^{\\text{clip}} A_t)\] $$
+$$ L^{\text{PPO}} = -\mathbb{E}_t[\min(r_t A_t, r_t^{\text{clip}} A_t)] $$
 
 **SAPO (with soft gates):**
 
@@ -228,7 +228,7 @@ $$ L^{\\text{PPO}} = -\\mathbb{E}\_t\[\\min(r_t A_t, r_t^{\\text{clip}} A_t)\] $
   \\sigma(\\tau\_{\\text{pos}} (r_t - 1))$
 - For negative advantages: $g_t^- = \\frac{4}{\\tau\_{\\text{neg}}}
   \\sigma(\\tau\_{\\text{neg}} (r_t - 1))$
-- Loss: $L^{\\text{SAPO}} = -\\mathbb{E}\_t\[g_t A_t\]$ where $g_t = g_t^+$ if $A_t >
+- Loss: $L^{\text{SAPO}} = -\mathbb{E}_t[g_t A_t]$ where $g_t = g_t^+$ if $A_t >
   0$, else $g_t^-$
 
 | Parameter             | Type  | Default | Description                              |
@@ -252,14 +252,14 @@ actor:
 DAPO introduces asymmetric clipping and dynamic sampling, which excludes samples where
 all responses are uniformly correct or incorrect.
 
-$$ J\_{\\text{DAPO}}(\\theta) = \\mathbb{E}_{\\substack{(q,a) \\sim \\mathcal{D}, \\
-{o_i}_{i=1}^G \\sim \\pi\_{\\theta\_{\\text{old}}}(o|q)}} \\left\[
-\\frac{1}{\\sum\_{i=1}^G |o_i|} \\sum\_{i=1}^G \\sum\_{t=1}^{|o_i|} \\min\\left(
-r\_{i,t}(\\theta) \\hat{A}_{i,t}, \\text{clip}\\left( r_{i,t}(\\theta),
-1-\\epsilon\_{\\text{low}}, 1+\\epsilon\_{\\text{high}} \\right) \\hat{A}\_{i,t}
-\\right) \\right\] $$
+$$ J_{\text{DAPO}}(\theta) = \mathbb{E}_{\substack{(q,a) \sim \mathcal{D}, \
+\{o_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(o|q)}} \left[
+\frac{1}{\sum_{i=1}^G |o_i|} \sum_{i=1}^G \sum_{t=1}^{|o_i|} \min\left(
+r_{i,t}(\theta) \hat{A}_{i,t}, \text{clip}\left( r_{i,t}(\theta),
+1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}} \right) \hat{A}_{i,t}
+\right) \right] $$
 
-where $\\hat{A}_{i,t}$ is the group-normalized advantage and $r_{i,t}(\\theta)$ is the
+where $\hat{A}_{i,t}$ is the group-normalized advantage and $r_{i,t}(\theta)$ is the
 token-level policy ratio.
 
 **Asymmetric clipping parameters:**
