@@ -20,8 +20,6 @@ from areal.api.cli_args import (
     SchedulingSpec,
     SGLangConfig,
 )
-from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
-from areal.api.scheduler_api import Worker
 from areal.infra import RolloutController
 from areal.infra.scheduler.local import LocalScheduler
 from areal.utils.hf_utils import load_hf_tokenizer

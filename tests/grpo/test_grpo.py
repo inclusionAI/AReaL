@@ -1,18 +1,18 @@
 import json
 import os
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 import yaml
-from sh import Command
 
 from tests.utils import get_dataset_path, get_model_path
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 
-# Each (training_backend, inference_backend) pair maps to a config file and pytest mark.
+# Each (training_backend, inference_backend) pair and its pytest mark.
 _SGLANG_CASES = [
     pytest.param("fsdp", "sglang", id="fsdp-sglang", marks=pytest.mark.sglang),
     pytest.param("megatron", "sglang", id="megatron-sglang", marks=pytest.mark.sglang),
@@ -24,21 +24,21 @@ _VLLM_CASES = [
     pytest.param("archon", "vllm", id="archon-vllm", marks=pytest.mark.vllm),
 ]
 
+# Megatron uses a smaller learning rate and weight decay than FSDP/Archon.
+_MEGATRON_OVERRIDES = [
+    "actor.optimizer.lr=3e-6",
+    "actor.optimizer.weight_decay=0.003",
+]
+
 
 @pytest.mark.parametrize(("backend", "inference"), _SGLANG_CASES + _VLLM_CASES)
 def test_grpo(tmp_path: Path, backend: str, inference: str) -> None:
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, "config.yaml")
 
-    # Select config file based on inference backend
-    if inference == "vllm":
-        config_path = os.path.join(base_dir, f"config_{backend}_vllm.yaml")
-    else:
-        config_path = os.path.join(base_dir, f"config_{backend}.yaml")
-
-    # Wrap over the original config to use local models/datasets if possible
+    # Load unified config and resolve local model/dataset paths
     config, _ = load_expr_config(["--config", config_path], GRPOConfig)
 
-    # Use get_model_path to check local or download from HuggingFace
     local_model_path = config.actor.path.replace("/", "__")
     model_path = get_model_path(
         os.path.join("/storage/openpsi/models", local_model_path),
@@ -47,14 +47,9 @@ def test_grpo(tmp_path: Path, backend: str, inference: str) -> None:
     config.actor.path = model_path
     config.ref.path = model_path
     config.tokenizer_path = model_path
+    config.sglang.model_path = model_path
+    config.vllm.model = model_path
 
-    # Set inference engine model path based on backend
-    if inference == "vllm":
-        config.vllm.model = model_path
-    else:
-        config.sglang.model_path = model_path
-
-    # Use get_dataset_path to check local or download from HuggingFace
     local_dataset_path = config.train_dataset.path.replace("/", "__")
     dataset_path = get_dataset_path(
         os.path.join("/storage/openpsi/data", local_dataset_path),
@@ -62,7 +57,7 @@ def test_grpo(tmp_path: Path, backend: str, inference: str) -> None:
     )
     config.train_dataset.path = dataset_path
 
-    # save new config
+    # Save resolved config (model/dataset paths baked in)
     os.makedirs(os.path.join(tmp_path, "config"), exist_ok=True)
     with open(os.path.join(tmp_path, "config", "config.yaml"), "w") as f:
         yaml.dump(
@@ -72,19 +67,25 @@ def test_grpo(tmp_path: Path, backend: str, inference: str) -> None:
             sort_keys=False,
         )
 
-    cmd = (
-        Command("python")
-        .bake(m="areal.infra.launcher.local")
-        .bake(os.path.join(base_dir, "entrypoint.py"))
-    )
+    # Build CLI overrides for backend-specific values
+    cli_overrides = [
+        f"allocation_mode='{inference}:d1+{backend}:d1'",
+    ]
+    if backend == "megatron":
+        cli_overrides.extend(_MEGATRON_OVERRIDES)
 
-    cmd(
+    cmd = [
+        sys.executable,
+        os.path.join(base_dir, "entrypoint.py"),
+        "--config",
+        os.path.join(tmp_path, "config", "config.yaml"),
         f"cluster.fileroot={tmp_path}",
-        config=os.path.join(tmp_path, "config", "config.yaml"),
-        _err=sys.stderr,
-        _out=sys.stdout,
-        _env=os.environ,
-        _ok_code=1,  # AReaL exits with code 1 even when successful.
+        *cli_overrides,
+    ]
+
+    result = subprocess.run(cmd, stdout=sys.stdout, stderr=sys.stderr, env=os.environ)
+    assert result.returncode == 0, (
+        f"GRPO subprocess failed with exit code {result.returncode}"
     )
 
     with open(os.path.join(tmp_path, "rewards.json")) as f:

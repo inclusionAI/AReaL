@@ -157,9 +157,11 @@ cuda-train = [
     "areal[megatron]",
     "areal[flash-attn]",
 ]
-# Backward-compatible alias: cuda -> cuda-train
+# Backward-compatible: `uv sync --extra cuda` installs training packages + sglang.
+# For vllm instead, use: uv sync --extra cuda-train --extra vllm
 cuda = [
     "areal[cuda-train]",
+    "areal[sglang]",
 ]
 
 [project.urls]
@@ -207,6 +209,11 @@ environments = [
 conflicts = [
     [
         { extra = "sglang" },
+        { extra = "vllm" },
+    ],
+    # cuda includes sglang, so it also conflicts with vllm
+    [
+        { extra = "cuda" },
         { extra = "vllm" },
     ],
 ]

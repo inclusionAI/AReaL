@@ -110,7 +110,13 @@ class DockerInstallationValidator(BaseInstallationValidator):
             self.add_additional_package("vllm", required=False)
 
         if not has_sglang and not has_vllm:
-            print("  ⚠ WARNING: Docker image should have sglang OR vllm installed")
+            print(
+                "  ⚠ ERROR: Neither sglang nor vllm detected"
+                " — Docker image must have exactly one"
+            )
+            self.critical_failures.append(
+                "No inference backend installed (need either sglang or vllm)"
+            )
 
         self.add_additional_package("megatron-core", "==0.13.1", required=True)
         self.add_additional_package("mbridge", "==0.13.0", required=True)
