@@ -47,6 +47,7 @@ from areal.infra.utils.proc import kill_process_tree
 from areal.utils import logging, name_resolve, names
 from areal.utils.data import concat_padded_tensors
 from areal.utils.dynamic_import import import_from_string
+from areal.utils.environ import is_single_controller
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
 
@@ -697,7 +698,7 @@ class RemoteInfEngine(InferenceEngine):
         NotImplementedError
             If schedule policy other than round-robin is used
         """
-        if self.config.schedule_policy == "round_robin":
+        if self.config.schedule_policy == "round_robin" or is_single_controller():
             server = self.addresses[self.server_idx]
             self.server_idx = (self.server_idx + 1) % len(self.addresses)
             return server
