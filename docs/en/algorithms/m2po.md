@@ -13,8 +13,8 @@ importance weights to suppress only extreme outliers while preserving informativ
 updates.
 
 The first step of M2PO is to compute the second momentum: $$
-\\hat{M_2}=\\frac{1}{N}\\sum\_{i=1}^NM\_{2,i}=\\frac{1}{N}\\sum\_{i=1}^N(\\log{r_i})^2=\\frac{1}{N}\\sum\_{i=1}^N\\left(\\log\\frac{\\pi\_\\theta
-(a_i|s_i)}{\\pi\_{behav}(a_i|s_i)}\\right)^2 $$
+\hat{M_2}=\frac{1}{N}\sum_{i=1}^NM_{2,i}=\frac{1}{N}\sum_{i=1}^N(\log{r_i})^2=\frac{1}{N}\sum_{i=1}^N\left(\log\frac{\pi_\theta
+(a_i|s_i)}{\pi_{behav}(a_i|s_i)}\right)^2 $$
 
 The second step is to compute the second momentum mask:
 
@@ -24,13 +24,13 @@ The second step is to compute the second momentum mask:
 
 The final step is to optimize the objective:
 
-$$ J\_{\\text{M2PO}}(\\theta) =
-\\frac{1}{\\sum\_{i=1}^G|o_i|}\\sum\_{i=1}^G\\sum\_{t=1}^{|o_i|}M\_{i,t}\\frac{\\pi\_\\theta(o_i|q)}{\\pi\_{\\theta\_{old}}(o_i|q)}A\_{i,t}.
+$$ J_{\text{M2PO}}(\theta) =
+\frac{1}{\sum_{i=1}^G|o_i|}\sum_{i=1}^G\sum_{t=1}^{|o_i|}M_{i,t}\frac{\pi_\theta(o_i|q)}{\pi_{\theta_{old}}(o_i|q)}A_{i,t}.
 $$
 
 Where $M$ is computed in the second step and
 
-$$ A\_{i,t}=\\frac{r_i-mean({R_i}_{i=1}^G)}{std({R_i}_{i=1}^G)}. $$
+$$ A_{i,t}=\frac{r_i-mean({R_i}_{i=1}^G)}{std({R_i}_{i=1}^G)}. $$
 
 For more details:
 
@@ -41,7 +41,7 @@ For more details:
 ## Core Parameters
 
 - `actor.m2_threshold`: The threshold for the mean of the second momentum, used in
-  computing the M2PO mask as $\\tau\_{M_2}$
+  computing the M2PO mask as $\tau_{M_2}$
 
 ## Example Usage
 
