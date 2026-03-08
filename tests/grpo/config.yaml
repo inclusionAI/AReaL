@@ -1,10 +1,14 @@
+# Unified GRPO test config.
+# Backend-specific values (allocation_mode, optimizer) are overridden via CLI.
 experiment_name: tests-grpo
 trial_name: trial
+scheduler:
+  type: local
 cluster:
   n_nodes: 1
   n_gpus_per_node: 2
   fileroot: /tmp/areal/experiments
-allocation_mode: sglang:d1+archon:d1
+allocation_mode: sglang:d1+fsdp:d1
 seed: 1
 total_train_epochs: 1
 total_train_steps: 16
@@ -33,6 +37,10 @@ recover:
 sglang:
   model_path: ${actor.path}
   random_seed: ${seed}
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
 gconfig:
   n_samples: 4
   max_new_tokens: 1024
@@ -42,6 +50,7 @@ rollout:
   trial_name: ${trial_name}
   consumer_batch_size: ${train_dataset.batch_size}
   scheduling_spec: ${actor.scheduling_spec}
+  max_head_offpolicyness: 2
 
 actor:
   experiment_name: ${experiment_name}

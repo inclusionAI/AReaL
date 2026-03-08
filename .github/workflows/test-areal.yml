@@ -5,6 +5,21 @@ on:
     branches: [main]
     types: [labeled]
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to use for testing'
+        required: false
+        type: string
+        default: 'dev'
+      variant:
+        description: 'Image variant to test'
+        required: false
+        type: choice
+        options:
+          - both
+          - sglang
+          - vllm
+        default: 'both'
   workflow_call:
     inputs:
       image_tag:
@@ -12,34 +27,59 @@ on:
         required: false
         type: string
         default: 'dev'
+      variant:
+        description: 'Image variant (sglang or vllm)'
+        required: false
+        type: string
+        default: 'both'
 
 concurrency:
-  group: areal-unit-tests-${{ github.ref }}
+  group: areal-unit-tests-${{ github.ref }}-${{ inputs.variant || 'both' }}
   cancel-in-progress: true
 
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  RUNNER_LABELS: gcp-a2-highgpu-2g
-  RUNNER_VERSION: '2.317.0'
+  RUNNER_VERSION: '2.332.0'
   GCP_OS_IMAGE: areal-cicd-test-202602030
-  CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:${{ inputs.image_tag || 'dev' }}
 
 jobs:
+  determine-variants:
+    name: Determine test variants
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set variant matrix
+        id: set-matrix
+        run: |
+          VARIANT="${{ inputs.variant || 'both' }}"
+          if [ "$VARIANT" = "both" ]; then
+            echo 'matrix=["sglang","vllm"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=[\"$VARIANT\"]" >> "$GITHUB_OUTPUT"
+          fi
+
   provision-runner:
     if: |
       github.event_name == 'workflow_call' ||
       contains(github.event.pull_request.labels.*.name, 'safe-to-test') ||
       github.event_name == 'workflow_dispatch'
-    name: Provision GCP runner with 2 A100 GPUs
+    needs:
+      - determine-variants
+    name: Provision GCP runner (${{ matrix.variant }})
     runs-on: ubuntu-latest
-    outputs:
-      instance_name: ${{ steps.vars.outputs.instance_name }}
-      instance_zone: ${{ steps.create-instance.outputs.zone }}
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJson(needs.determine-variants.outputs.matrix) }}
+    env:
+      CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:${{ inputs.image_tag || 'dev' }}-${{ matrix.variant }}
+      RUNNER_LABELS: gcp-a2-highgpu-2g,variant-${{ matrix.variant }}
     steps:
       - name: Set instance variables
         id: vars
         run: |
-          echo "instance_name=gcp-runner-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "instance_name=gcp-runner-${{ github.run_id }}-${{ matrix.variant }}" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -176,7 +216,7 @@ jobs:
               --max-run-duration "2h" \
               --instance-termination-action DELETE \
               --scopes "https://www.googleapis.com/auth/cloud-platform" \
-              --metadata repo=${{ github.repository }},runner_labels=${RUNNER_LABELS} \
+              --metadata "^::^repo=${{ github.repository }}::runner_labels=${RUNNER_LABELS}" \
               --metadata-from-file startup-script=startup-script.sh,runner_token=runner-token.txt
             then
               echo "Successfully created instance in $zone."
@@ -243,17 +283,26 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe-to-test') ||
       github.event_name == 'workflow_dispatch'
     needs:
+      - determine-variants
       - provision-runner
-    name: Run AReaL tests
+    name: Run AReaL tests (${{ matrix.variant }})
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJson(needs.determine-variants.outputs.matrix) }}
     environment:
       name: AReaL-unittests
     permissions:
       contents: read
-    runs-on: [self-hosted, gcp-a2-highgpu-2g]
+    runs-on:
+      - self-hosted
+      - gcp-a2-highgpu-2g
+      - "variant-${{ matrix.variant }}"
     timeout-minutes: 120
     env:
       # Activate the venv created in the Docker image
       VIRTUAL_ENV: /AReaL/.venv
+      EXCLUDE_BACKEND: ${{ matrix.variant == 'sglang' && 'vllm' || 'sglang' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -272,7 +321,7 @@ jobs:
           VIRTUAL_ENV: /AReaL/.venv
         run: |
           export PATH="/AReaL/.venv/bin:$PATH"
-          pytest -m "not slow or ci" --durations=20 -s -vv tests/test_*.py tests/experimental/
+          pytest -m "(not slow or ci) and not ${EXCLUDE_BACKEND}" --durations=20 -s -vv tests/test_*.py tests/experimental/
 
       - name: Run SFT integration tests
         env:
@@ -283,7 +332,7 @@ jobs:
           VIRTUAL_ENV: /AReaL/.venv
         run: |
           export PATH="/AReaL/.venv/bin:$PATH"
-          pytest -s -vv tests/sft/
+          pytest -m "not ${EXCLUDE_BACKEND}" -s -vv tests/sft/
 
       - name: Run GRPO integration tests
         env:
@@ -294,18 +343,20 @@ jobs:
           VIRTUAL_ENV: /AReaL/.venv
         run: |
           export PATH="/AReaL/.venv/bin:$PATH"
-          pytest -s -vv tests/grpo/
+          pytest -m "not ${EXCLUDE_BACKEND}" -s -vv tests/grpo/
 
   cleanup:
-    name: Tear down GCP runner
+    name: Tear down GCP runner (${{ matrix.variant }})
     needs:
+      - determine-variants
       - unit-tests
       - provision-runner
-    if: always()
+    if: always() && needs.determine-variants.result != 'skipped' && needs.provision-runner.result != 'skipped'
     runs-on: ubuntu-latest
-    env:
-      INSTANCE_NAME: ${{ needs.provision-runner.outputs.instance_name }}
-      INSTANCE_ZONE: ${{ needs.provision-runner.outputs.instance_zone }}
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJson(needs.determine-variants.outputs.matrix) }}
     steps:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -316,9 +367,22 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Delete runner instance
+        env:
+          INSTANCE_NAME: gcp-runner-${{ github.run_id }}-${{ matrix.variant }}
         run: |
-          if [ -z "$INSTANCE_NAME" ] || [ -z "$INSTANCE_ZONE" ]; then
-            echo "No instance details recorded; skipping cleanup."
+          # Look up instance zone dynamically since matrix job outputs
+          # cannot be consumed per-element by downstream matrix jobs.
+          # Only suppress "not found" — propagate real errors.
+          INSTANCE_ZONE=$(gcloud compute instances list \
+            --project "$GCP_PROJECT_ID" \
+            --filter="name=$INSTANCE_NAME" \
+            --format="value(zone)") || {
+            echo "⚠️ gcloud lookup failed (exit $?), instance may need manual cleanup"
+            INSTANCE_ZONE=""
+          }
+
+          if [ -z "$INSTANCE_ZONE" ]; then
+            echo "Instance $INSTANCE_NAME not found; skipping cleanup."
             exit 0
           fi
 

@@ -43,20 +43,29 @@ class DockerInstallationValidator(BaseInstallationValidator):
     }
 
     # Add Docker-specific packages to critical list
+    # Note: sglang/vllm are NOT listed here — they are mutually exclusive
+    # and are added dynamically in parse_pyproject() based on what's installed
     CRITICAL_PACKAGES = {
         *BaseInstallationValidator.CRITICAL_PACKAGES,
         "grouped_gemm",
         "apex",
         "transformer_engine",
         "flash_attn_3",
-        "vllm",
-        "sglang",
         "megatron-core",
         "mbridge",
     }
 
     def __init__(self, pyproject_path: Path | None = None):
         super().__init__(pyproject_path)
+
+    @staticmethod
+    def _is_package_importable(name: str) -> bool:
+        """Check if a package can be actually imported (not just spec-found)."""
+        try:
+            __import__(name)
+            return True
+        except (ImportError, ModuleNotFoundError):
+            return False
 
     def parse_pyproject(self):
         """Parse pyproject.toml and add Docker-specific packages."""
@@ -72,9 +81,43 @@ class DockerInstallationValidator(BaseInstallationValidator):
         self.add_additional_package("transformer_engine", required=True)
         self.add_additional_package("flash_attn_3", required=False)
 
-        # Add optional extras that are installed in Docker via --extra flags
-        self.add_additional_package("sglang", "==0.5.7", required=True)
-        self.add_additional_package("vllm", "==0.14.0", required=True)
+        # Auto-detect which inference backend variant is installed.
+        # Each Docker image has exactly one of sglang or vllm.
+        has_sglang = self._is_package_importable("sglang")
+        has_vllm = self._is_package_importable("vllm")
+
+        if has_sglang and has_vllm:
+            print(
+                "  ⚠ ERROR: Both sglang and vllm detected"
+                " — Docker image should have exactly one"
+            )
+            self.critical_failures.append(
+                "Both sglang and vllm installed (should be mutually exclusive)"
+            )
+
+        if has_sglang:
+            self.add_additional_package("sglang", "==0.5.7", required=True)
+            self.CRITICAL_PACKAGES = {*self.CRITICAL_PACKAGES, "sglang"}
+            print("  Detected variant: sglang")
+        else:
+            self.add_additional_package("sglang", required=False)
+
+        if has_vllm:
+            self.add_additional_package("vllm", "==0.14.0", required=True)
+            self.CRITICAL_PACKAGES = {*self.CRITICAL_PACKAGES, "vllm"}
+            print("  Detected variant: vllm")
+        else:
+            self.add_additional_package("vllm", required=False)
+
+        if not has_sglang and not has_vllm:
+            print(
+                "  ⚠ ERROR: Neither sglang nor vllm detected"
+                " — Docker image must have exactly one"
+            )
+            self.critical_failures.append(
+                "No inference backend installed (need either sglang or vllm)"
+            )
+
         self.add_additional_package("megatron-core", "==0.13.1", required=True)
         self.add_additional_package("mbridge", "==0.13.0", required=True)
 

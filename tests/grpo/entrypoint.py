@@ -7,8 +7,6 @@ import torch.distributed as dist
 from areal import PPOTrainer
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
-from areal.reward import gsm8k_reward_fn
-from areal.utils import stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.workflow import RLVRWorkflow
 
@@ -22,7 +20,7 @@ class MinimalPPOTrainer(PPOTrainer):
 
     def _export_and_commit_stats(self, epoch, epoch_step, global_step):
         # Collect stats before committing
-        stats = stats_tracker.export_all(reduce_group=self.actor.data_parallel_group)
+        stats = self.actor.export_stats()
         self.rewards_history.append(stats["ppo_actor/task_reward/avg"])
 
 
@@ -41,14 +39,15 @@ def main() -> None:
         train_dataset=train_dataset,
         valid_dataset=None,
     ) as trainer:
-        workflow = RLVRWorkflow(
-            reward_fn=gsm8k_reward_fn,
+        workflow = RLVRWorkflow
+        workflow_kwargs = dict(
+            reward_fn="areal.reward.gsm8k_reward_fn",
             gconfig=config.gconfig,
             tokenizer=trainer.tokenizer,
             enable_thinking=False,
         )
 
-        trainer.train(workflow)
+        trainer.train(workflow, workflow_kwargs=workflow_kwargs)
 
         # Save rewards to JSON for test assertions
         if dist.get_rank() == 0:

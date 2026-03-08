@@ -17,6 +17,7 @@ repos:
     hooks:
       - id: check-yaml
         files: \.(yaml|yml)$
+        exclude: \.github/workflows/
       - id: end-of-file-fixer
         files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh|ipynb)$
       - id: trailing-whitespace
