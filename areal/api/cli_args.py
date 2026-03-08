@@ -542,6 +542,17 @@ class ArchonEngineConfig:
         },
     )
 
+    # MoE
+    moe_router_dtype: str | None = field(
+        default="fp32",
+        metadata={
+            "help": "Data type for MoE router gate GEMM computation. "
+            "'fp32' runs gate linear in float32 for numerical stability. "
+            "None uses model dtype (no override).",
+            "choices": ["fp32", None],
+        },
+    )
+
     def __post_init__(self):
         if self.pp_layers_per_stage is not None and self.pp_layers_per_stage < 1:
             raise ValueError(
@@ -562,6 +573,12 @@ class ArchonEngineConfig:
             raise ValueError(
                 f"reshard_after_forward_policy must be one of {valid_reshard_policies}, "
                 f"got '{self.reshard_after_forward_policy}'"
+            )
+        valid_router_dtypes = ("fp32", None)
+        if self.moe_router_dtype not in valid_router_dtypes:
+            raise ValueError(
+                f"moe_router_dtype must be one of {valid_router_dtypes}, "
+                f"got '{self.moe_router_dtype}'"
             )
 
 
