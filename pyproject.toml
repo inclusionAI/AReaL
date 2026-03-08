@@ -136,9 +136,15 @@ dependencies = [
 # Platform markers ensure they're skipped on unsupported platforms
 sglang = [
     "sglang[tracing]==0.5.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 vllm = [
     "vllm==0.17.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torch==2.10.0+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 tms = [
     "torch_memory_saver==0.0.9; sys_platform == 'linux'",
@@ -162,6 +168,9 @@ cuda-train = [
 cuda = [
     "areal[cuda-train]",
     "areal[sglang]",
+    "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [project.urls]
@@ -223,6 +232,28 @@ override-dependencies = [
     # - litellm requires soundfile>=0.12.1,<0.13.0, sglang pins soundfile==0.13.1
     "openai>=2.8.0",
     "soundfile>=0.12.1,<0.13.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu129", extra = "sglang" },
+    { index = "pytorch-cu129", extra = "vllm" },
+    { index = "pytorch-cu129", extra = "cuda" },
+]
+torchaudio = [
+    { index = "pytorch-cu129", extra = "sglang" },
+    { index = "pytorch-cu129", extra = "vllm" },
+    { index = "pytorch-cu129", extra = "cuda" },
+]
+torchvision = [
+    { index = "pytorch-cu129", extra = "sglang" },
+    { index = "pytorch-cu129", extra = "vllm" },
+    { index = "pytorch-cu129", extra = "cuda" },
 ]
 
 [tool.uv.extra-build-dependencies]
