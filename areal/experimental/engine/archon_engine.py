@@ -937,12 +937,11 @@ class ArchonEngine(TrainEngine):
             yield from m.named_parameters()
 
     def _create_device_model(self):
+        current_platform.set_device(int(os.environ["LOCAL_RANK"]))
         if current_platform.device_type == "cpu":
             self.device = torch.device("cpu")
         else:
-            local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-            current_platform.set_device(local_rank)
-            self.device = torch.device(local_rank)
+            self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
