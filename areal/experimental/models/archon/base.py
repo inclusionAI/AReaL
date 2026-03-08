@@ -58,6 +58,9 @@ class BaseStateDictAdapter(ABC):
         self.to_hf_map: dict[str, str] = {}
         self.hf_assets_path = hf_assets_path
         self.fqn_to_index_mapping = None
+        # Model-specific mapping from Archon module names to PEFT module names
+        # Subclasses should define this mapping for LoRA adapter config generation
+        self.to_peft_module_map: dict[str, str] = {}
 
         if hf_assets_path:
             self._load_safetensors_index(hf_assets_path)
@@ -114,6 +117,43 @@ class BaseStateDictAdapter(ABC):
     def convert_single_to_hf(
         self, name: str, tensor: torch.Tensor
     ) -> list[tuple[str, torch.Tensor]]: ...
+
+    def create_peft_adapter_config(
+        self, lora_config: Any, base_model_path: str | None = None
+    ) -> dict:
+        """Generate adapter_config.json for PEFT format checkpoint.
+
+        Args:
+            lora_config: LoRA configuration object with rank, alpha, target_modules
+            base_model_path: Optional path to base model
+
+        Returns:
+            Dictionary containing PEFT adapter configuration
+        """
+        # Convert Archon module names to PEFT names using model-specific mapping
+        peft_target_modules = [
+            self.to_peft_module_map.get(name, name)
+            for name in lora_config.target_modules
+        ]
+
+        return {
+            "peft_type": "LORA",
+            "auto_mapping": None,
+            "base_model_name_or_path": base_model_path or "",
+            "revision": None,
+            "task_type": "CAUSAL_LM",
+            "inference_mode": False,
+            "r": lora_config.rank,
+            "lora_alpha": int(lora_config.alpha),
+            "lora_dropout": 0.0,
+            "target_modules": peft_target_modules,
+            "fan_in_fan_out": False,
+            "bias": "none",
+            "modules_to_save": None,
+            "init_lora_weights": True,
+            "layers_to_transform": None,
+            "layers_pattern": None,
+        }
 
 
 class BaseArchonModel(nn.Module, ABC):
