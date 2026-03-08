@@ -166,7 +166,11 @@ curl http://<gateway>/rl/set_reward \
 
 ### 步骤 6：开始下一轮
 
-刷新会话以开始新一轮。旧会话会自动结束，其轨迹导出用于训练，然后使用相同的 API 密钥启动新会话：
+根据使用场景，有两种方式。
+
+**会话刷新**（适用于个性化 agent，如 OpenClaw）：
+
+使用相同的 API 密钥调用 `start_session` 来刷新会话。旧会话会自动结束，其轨迹导出用于训练， 然后使用相同的 API 密钥启动新会话：
 
 ```bash
 python examples/openclaw/start_session.py http://<gateway> \
@@ -174,7 +178,13 @@ python examples/openclaw/start_session.py http://<gateway> \
     --api-key sk-sess-xxxxxxxxxxxx
 ```
 
-两轮之间无需重新配置您的应用程序。
+两轮之间无需重新配置您的应用程序。此方式专为聊天过程中无法切换 API 密钥的个性化 agent 设计。
+
+**批量采样**（适用于评测流水线）：
+
+对每条 agent 轨迹，执行 `start_session` → agent 评测代码 → `set_reward` →
+`end_session`。批次中的每个样本获得独立的 API 密钥，网关通过不同密钥区分各 session
+的补全结果。此方式更适合已有的批量评测代码，每个样本可独立并行处理。
 
 ## 会话生命周期
 
@@ -202,9 +212,9 @@ start_session（管理员认证）
 当您使用已有活跃会话的 API 密钥调用 `start_session` 时，网关会执行**会话刷新**：
 
 1. 现有会话被结束
-2. 如果未设置奖励，将分配默认奖励 0
-3. 轨迹被导出到 RL 训练流水线
-4. 使用相同 API 密钥启动新会话
+1. 如果未设置奖励，将分配默认奖励 0
+1. 轨迹被导出到 RL 训练流水线
+1. 使用相同 API 密钥启动新会话
 
 这允许在不重启外部应用程序的情况下持续收集数据。
 
@@ -285,7 +295,7 @@ Anthropic Messages API 端点，用于 Claude 兼容客户端。
 
 #### `POST /rl/end_session`
 
-显式结束会话。通常不需要，因为使用已有 `api_key` 调用 `start_session` 会自动处理。
+显式结束会话并导出其轨迹。用于**批量采样**模式（每个样本使用独立 API 密钥）。使用会话刷新时不需要调用此接口。
 
 ## 错误处理
 
@@ -304,10 +314,10 @@ Anthropic Messages API 端点，用于 Claude 兼容客户端。
 训练在底层**异步**运行：
 
 1. 外部应用程序通过网关与模型交互
-2. 每个会话的交互都以 token 级别数据记录
-3. 会话结束时（通过刷新或显式结束），其轨迹被导出
-4. 收集到足够的轨迹后（由 `train_dataset.batch_size` 控制），AReaL 执行一次训练步骤
-5. 更新后的模型权重会透明地提供给后续会话
+1. 每个会话的交互都以 token 级别数据记录
+1. 会话结束时（通过刷新或显式结束），其轨迹被导出
+1. 收集到足够的轨迹后（由 `train_dataset.batch_size` 控制），AReaL 执行一次训练步骤
+1. 更新后的模型权重会透明地提供给后续会话
 
 随着收集更多轮次，模型会静默地改进。有关异步训练和新鲜度控制的详细信息，请参阅 [异步 RL 指南](../algorithms/async.md)。
 

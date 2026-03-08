@@ -172,8 +172,13 @@ curl http://<gateway>/rl/set_reward \
 
 ### Step 6: Start the Next Episode
 
-Refresh the session to begin a new episode. The old session is automatically ended, its
-trajectory exported for training, and a new session starts with the same API key:
+There are two approaches depending on your use case.
+
+**Session refresh** (for personalized agents like OpenClaw):
+
+Refresh the session by calling `start_session` with the same API key. The old session is
+automatically ended, its trajectory exported for training, and a new session starts with
+the same API key:
 
 ```bash
 python examples/openclaw/start_session.py http://<gateway> \
@@ -181,7 +186,16 @@ python examples/openclaw/start_session.py http://<gateway> \
     --api-key sk-sess-xxxxxxxxxxxx
 ```
 
-No reconfiguration of your application is needed between episodes.
+No reconfiguration of your application is needed between episodes. This is designed for
+personalized agents where the application cannot switch API keys during chats.
+
+**Batched sampling** (for evaluation pipelines):
+
+For each agent trajectory, run `start_session` → agent eval code → `set_reward` →
+`end_session`. Each sample in the batch gets its own unique API key, so the gateway can
+differentiate which session a completion belongs to. This is more convenient for batched
+sampling with existing evaluation code, where each sample can be processed independently
+and in parallel.
 
 ## Session Lifecycle
 
@@ -210,9 +224,9 @@ When you call `start_session` with an API key that already has an active session
 gateway performs a **session refresh**:
 
 1. The existing session is ended
-2. If no reward was set, a default reward of 0 is assigned
-3. The trajectory is exported to the RL training pipeline
-4. A new session starts bound to the same API key
+1. If no reward was set, a default reward of 0 is assigned
+1. The trajectory is exported to the RL training pipeline
+1. A new session starts bound to the same API key
 
 This allows continuous data collection without restarting the external application.
 
@@ -295,8 +309,8 @@ If `interaction_id` is null, the reward is assigned to the last interaction.
 
 #### `POST /rl/end_session`
 
-Explicitly end a session. Usually not needed since `start_session` with an existing
-`api_key` handles this automatically.
+Explicitly end a session and export its trajectory. Used in the **batched sampling**
+pattern where each sample has its own API key. Not needed when using session refresh.
 
 ## Error Handling
 
@@ -316,11 +330,11 @@ a few seconds (default timeout is 120 seconds).
 Training runs **asynchronously** under the hood:
 
 1. External applications interact with the model through the gateway
-2. Each session's interactions are recorded with token-level data
-3. When a session ends (via refresh or explicit end), its trajectory is exported
-4. Once enough trajectories are collected (controlled by `train_dataset.batch_size`),
+1. Each session's interactions are recorded with token-level data
+1. When a session ends (via refresh or explicit end), its trajectory is exported
+1. Once enough trajectories are collected (controlled by `train_dataset.batch_size`),
    AReaL performs a training step
-5. Updated model weights are transparently served to subsequent sessions
+1. Updated model weights are transparently served to subsequent sessions
 
 The model improves silently as you collect more episodes. For details on asynchronous
 training and staleness control, see the [Asynchronous RL Guide](../algorithms/async.md).
