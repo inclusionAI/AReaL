@@ -198,7 +198,7 @@ RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_D
 # VARIANT selects the inference backend (sglang or vllm)
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv pip install -r pyproject.toml --extra ${VARIANT} --extra cuda-train --group dev
+    uv pip install --no-build-isolation -r pyproject.toml --extra ${VARIANT} --extra cuda-train --group dev
 
 ##############################################################
 # STAGE 4: Misc fixes and final setup

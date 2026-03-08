@@ -75,11 +75,11 @@ default = true
 
 ```bash
 # 在 Linux 上使用 CUDA 时添加 `--extra cuda` 以获得完整功能
-uv sync --extra cuda
+uv sync --no-build-isolation --extra cuda
 # 或者不带 CUDA 支持
-# uv sync
+# uv sync --no-build-isolation
 # 或者包含开发和测试的额外包
-# uv sync --group dev
+# uv sync --no-build-isolation --group dev
 ```
 
 这将安装 CUDA 依赖的训练包（Megatron、Flash Attention、Torch Memory Saver）以及 **SGLang**
@@ -88,7 +88,7 @@ uv sync --extra cuda
 如果您希望使用 **vLLM** 作为推理后端而非 SGLang：
 
 ```bash
-uv sync --extra cuda-train --extra vllm
+uv sync --no-build-isolation --extra cuda-train --extra vllm
 ```
 
 同样的命令也适用于 macOS 和不带 CUDA 支持的 Linux。CUDA 包会通过平台标记自动跳过。但是，需要 CUDA
@@ -108,15 +108,15 @@ uv sync --extra cuda-train --extra vllm
 
 ```bash
 # vLLM 仅带 flash-attn（不含 megatron 和 tms）
-uv sync --extra vllm --extra flash-attn
+uv sync --no-build-isolation --extra vllm --extra flash-attn
 # vLLM 加所有训练包
-uv sync --extra cuda-train --extra vllm
+uv sync --no-build-isolation --extra cuda-train --extra vllm
 ```
 
 ### 额外的 CUDA 包（可选，手动安装）
 
 Docker 镜像包含 `pyproject.toml` 中没有的额外编译包。这些包需要 CUDA，必须从源码编译。如果使用自定义环境（非
-Docker）且需要这些包的优化（例如 FP8 训练、融合 Adam 内核），请在运行 `uv sync --extra cuda` 后手动安装：
+Docker）且需要这些包的优化（例如 FP8 训练、融合 Adam 内核），请在运行 `uv sync --no-build-isolation --extra cuda` 后手动安装：
 
 | 包                | 用途                              | 安装命令                                                                                                                                                          |
 | ----------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -126,7 +126,7 @@ Docker）且需要这些包的优化（例如 FP8 训练、融合 Adam 内核）
 | flash-attn-3      | Flash Attention v3（Hopper）      | 从源码构建，请参阅 [Dockerfile](https://github.com/inclusionAI/AReaL/blob/main/Dockerfile)                                                                        |
 
 **重要**：这些包需要 `--no-build-isolation`，因为它们需要访问已安装的 PyTorch 进行 CUDA 编译。先通过
-`uv sync --extra cuda` 安装 PyTorch，然后再尝试安装这些包。
+`uv sync --no-build-isolation --extra cuda` 安装 PyTorch，然后再尝试安装这些包。
 
 ### DeepSeek-V3 优化包（可选）
 

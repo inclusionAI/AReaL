@@ -80,11 +80,11 @@ If your network connection is stable, you can skip this step.
 
 ```bash
 # Use `--extra cuda` on Linux with CUDA for full functionality
-uv sync --extra cuda
+uv sync --no-build-isolation --extra cuda
 # Or without CUDA support
-# uv sync
+# uv sync --no-build-isolation
 # Or with additional packages for development and testing
-# uv sync --group dev
+# uv sync --no-build-isolation --group dev
 ```
 
 After installation, activate the virtual environment:
@@ -104,7 +104,7 @@ x86_64 with CUDA 12.x and compatible NVIDIA drivers.
 If you prefer **vLLM** as the inference backend instead of SGLang:
 
 ```bash
-uv sync --extra cuda-train --extra vllm
+uv sync --no-build-isolation --extra cuda-train --extra vllm
 ```
 
 The same command also works on macOS and Linux without CUDA support. CUDA packages are
@@ -127,9 +127,9 @@ You can also install individual extras instead of the full `cuda` bundle:
 
 ```bash
 # vLLM with just flash-attn (no megatron, no tms)
-uv sync --extra vllm --extra flash-attn
+uv sync --no-build-isolation --extra vllm --extra flash-attn
 # vLLM with all training packages
-uv sync --extra cuda-train --extra vllm
+uv sync --no-build-isolation --extra cuda-train --extra vllm
 ```
 
 ### Additional CUDA Packages (Optional, Manual Installation)
@@ -137,7 +137,7 @@ uv sync --extra cuda-train --extra vllm
 The Docker image includes additional compiled packages that are NOT in `pyproject.toml`.
 These packages require CUDA and must be compiled from source. If you are using a custom
 environment (not Docker) and need optimizations from these packages (e.g., FP8 training,
-fused Adam kernel), install them manually after running `uv sync --extra cuda`:
+fused Adam kernel), install them manually after running `uv sync --no-build-isolation --extra cuda`:
 
 | Package           | Purpose                                  | Installation Command                                                                                                                                              |
 | ----------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -148,7 +148,7 @@ fused Adam kernel), install them manually after running `uv sync --extra cuda`:
 
 **Important**: These packages require `--no-build-isolation` because they need access to
 the already-installed PyTorch for CUDA compilation. Install PyTorch first via
-`uv sync --extra cuda` before attempting to install these packages.
+`uv sync --no-build-isolation --extra cuda` before attempting to install these packages.
 
 ### DeepSeek-V3 Optimization Packages (Optional)
 

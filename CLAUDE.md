@@ -39,8 +39,8 @@ python --version              # Requires 3.12+
 uv --version                  # Install: https://docs.astral.sh/uv/
 
 # Sync dependencies
-uv sync --extra cuda          # CUDA + SGLang inference (default)
-uv sync --group dev           # Include dev/test packages
+uv sync --no-build-isolation --extra cuda          # CUDA + SGLang inference (default)
+uv sync --no-build-isolation --group dev           # Include dev/test packages
 uv run python3 areal/tools/validate_installation.py  # Validate installation
 
 # Pre-commit hooks

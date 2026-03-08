@@ -163,8 +163,8 @@ cuda-train = [
     "areal[megatron]",
     "areal[flash-attn]",
 ]
-# Backward-compatible: `uv sync --extra cuda` installs training packages + sglang.
-# For vllm instead, use: uv sync --extra cuda-train --extra vllm
+# Backward-compatible: `uv sync --no-build-isolation --extra cuda` installs training packages + sglang.
+# For vllm instead, use: uv sync --no-build-isolation --extra cuda-train --extra vllm
 cuda = [
     "areal[cuda-train]",
     "areal[sglang]",
