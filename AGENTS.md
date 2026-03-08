@@ -18,6 +18,11 @@ uv run pytest tests/test_<topic>.py
 
 # CLI docs
 uv run python docs/generate_cli_docs.py
+
+# Docs build (canonical, release-aligned)
+./docs/build_all.sh
+# Do NOT use `jupyter-book build docs/en|docs/zh` directly for final preview/release,
+# because it skips AReaL-specific static setup and output packaging.
 ```
 
 **Hard rules** -- never violate:

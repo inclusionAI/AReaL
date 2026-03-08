@@ -112,8 +112,9 @@ GPUs.
 
 ## Implementation
 
-See [`examples/math/gsm8k_eval.py`](../../examples/math/gsm8k_eval.py) for a complete
-example. The key pattern:
+See
+[`examples/math/gsm8k_eval.py`](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_eval.py)
+for a complete example. The key pattern:
 
 ```python
 from areal.api.alloc_mode import AllocationMode

@@ -125,6 +125,8 @@ Archon 特定的选项在 `actor.archon.*` 下配置：
 
 请参阅[性能调优](#performance-tuning)获取这些选项的详细指南。
 
+(performance-tuning)=
+
 ## 性能调优
 
 ### torch.compile
@@ -190,6 +192,8 @@ Initialized Archon engine with parallel dims: pp=2, dp_shard=4, tp=2, cp=1, ep=1
 ```bash
 +actor.archon.ac_debug=True
 ```
+
+(deterministic-mode)=
 
 ### 确定性模式
 
