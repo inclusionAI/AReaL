@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+import torch
+
 if TYPE_CHECKING:
     from transformers import PretrainedConfig
 
@@ -25,6 +27,8 @@ class MoEArgs:
         route_norm: Whether to normalize routing scores.
         route_scale: Scale factor for routing scores.
         score_before_experts: Whether to apply scores before or after expert computation.
+        router_dtype: Data type for router gate GEMM computation.
+            If None, defaults to torch.float32 for numerical stability.
 
         num_expert_groups: Number of expert groups for node-limited routing.
             If None, standard top-k routing is used.
@@ -51,6 +55,7 @@ class MoEArgs:
     route_norm: bool = False
     route_scale: float = 1.0
     score_before_experts: bool = False
+    router_dtype: torch.dtype | None = None
 
     # Node-limited routing (optional)
     num_expert_groups: int | None = None
