@@ -42,7 +42,7 @@ classifiers = [
 
 dependencies = [
     # Core ML/AI libraries
-    "torch>=2.9.1,<2.10",
+    "torch>=2.9.1,<2.11",
     "torchaudio",
     "torchvision",
     "torchdata",
@@ -92,7 +92,7 @@ dependencies = [
     "pybind11>=2.10.0",
     "networkx==3.3",
     "aiofiles",
-    "aiohttp>=3.11.10",
+    "aiohttp>=3.13.3,<4",
     "httpx>=0.28.1",
     "pyzmq",
     "regex",
@@ -135,10 +135,10 @@ dependencies = [
 # CUDA-dependent extras - these packages only have Linux x86_64 wheels
 # Platform markers ensure they're skipped on unsupported platforms
 sglang = [
-    "sglang[tracing]==0.5.7; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sglang[tracing]==0.5.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 vllm = [
-    "vllm==0.14.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "vllm==0.17.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 tms = [
     "torch_memory_saver==0.0.9; sys_platform == 'linux'",
@@ -147,8 +147,8 @@ flash-attn = [
     "flash-attn==2.8.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 megatron = [
-    "megatron-core==0.13.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "mbridge==0.13.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "megatron-core==0.16.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "mbridge==0.15.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 # Convenience extra for CUDA training packages (no inference backend)
 # Install with --extra sglang or --extra vllm for a complete setup
@@ -226,7 +226,7 @@ override-dependencies = [
 ]
 
 [tool.uv.extra-build-dependencies]
-flash-attn = ["torch>=2.9.1,<2.10"]
+flash-attn = ["torch>=2.9.1,<2.11"]
 
 # =============================================================================
 # Tool configurations: pytest

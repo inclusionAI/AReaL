@@ -1,11 +1,21 @@
 # Supports sglang and vllm variants via the VARIANT build argument.
-# All layers before STAGE 3 are shared across variants for cache reuse.
+# VARIANT is declared early so each variant gets the correct torch version
+# and C++ extensions compiled against it.
 #
 # Usage:
 #   docker build -t areal-runtime:dev-sglang .                          # default (sglang)
 #   docker build --build-arg VARIANT=vllm -t areal-runtime:dev-vllm .    # vllm variant
+#   docker build --build-arg SKIP_CPP=true -t areal-runtime:dev-quick .  # skip C++ builds
 
-FROM lmsysorg/sglang:v0.5.7-cu129-amd64-runtime
+FROM lmsysorg/sglang:v0.5.9-cu129-amd64-runtime
+
+# Inference backend selector: sglang (default) or vllm
+# Declared early so torch version and C++ builds match the chosen backend.
+ARG VARIANT=sglang
+
+# Set to "true" to skip all C++ compilations (STAGE 2) for quick validation.
+# The resulting image will NOT have GPU-accelerated extensions but builds much faster.
+ARG SKIP_CPP=false
 
 WORKDIR /
 
@@ -63,14 +73,15 @@ ENV VIRTUAL_ENV=/AReaL/.venv
 
 ##############################################################
 # STAGE 1: Install base torch FIRST
-# Torch rarely changes and is needed for C++ compilation
+# Torch version depends on VARIANT (sglang=2.9.1, vllm=2.10.0)
 ##############################################################
 
-# Create venv and install torch with CUDA support (pinned version, rarely changes)
-# We install from PyTorch CUDA index since pyproject.toml uses platform-agnostic torch
+# Create venv and install torch with CUDA support
+# Version is variant-specific: sglang pins 2.9.1, vllm pins 2.10.0
 RUN uv venv $VIRTUAL_ENV \
+    && if [ "$VARIANT" = "vllm" ]; then TORCH_VER="2.10.0"; else TORCH_VER="2.9.1"; fi \
     && uv pip install --index-url https://download.pytorch.org/whl/cu129 \
-    "torch==2.9.1+cu129" "torchaudio" "torchvision"
+    "torch==${TORCH_VER}+cu129" "torchaudio" "torchvision"
 
 RUN uv pip install "setuptools>=77.0.3,<80" pybind11 nvidia-mathdx
 
@@ -79,62 +90,82 @@ RUN uv pip install "setuptools>=77.0.3,<80" pybind11 nvidia-mathdx
 # These require only torch and rarely change.
 # Moving these BEFORE uv sync prevents recompilation when
 # pyproject.toml/uv.lock changes (C++ packages stay cached).
+#
+# Set SKIP_CPP=true to skip all compilations for quick builds.
 ##############################################################
 
 # Install torch memory saver
-RUN uv pip install --no-build-isolation --no-cache-dir --force-reinstall \
-    git+https://github.com/fzyzcjy/torch_memory_saver.git
+RUN if [ "$SKIP_CPP" != "true" ]; then \
+    uv pip install --no-build-isolation --no-cache-dir --force-reinstall \
+    git+https://github.com/fzyzcjy/torch_memory_saver.git \
+    ; fi
 
 # Install grouped_gemm (for MoE models)
-RUN uv pip install --no-build-isolation \
-    git+https://github.com/fanshiqing/grouped_gemm@v1.1.4
+RUN if [ "$SKIP_CPP" != "true" ]; then \
+    uv pip install --no-build-isolation \
+    git+https://github.com/fanshiqing/grouped_gemm@v1.1.4 \
+    ; fi
 
 # Install apex (NVIDIA apex for mixed precision training)
-RUN NVCC_APPEND_FLAGS="--threads 4" APEX_PARALLEL_BUILD=8 APEX_CPP_EXT=1 APEX_CUDA_EXT=1 \
+RUN if [ "$SKIP_CPP" != "true" ]; then \
+    NVCC_APPEND_FLAGS="--threads 4" APEX_PARALLEL_BUILD=8 APEX_CPP_EXT=1 APEX_CUDA_EXT=1 \
     uv pip -v install --disable-pip-version-check --no-cache-dir --no-build-isolation \
-    git+https://github.com/NVIDIA/apex.git
+    git+https://github.com/NVIDIA/apex.git \
+    ; fi
 
 # Install transformer engine (for FP8 training)
-RUN uv pip -v install --no-build-isolation \
-    git+https://github.com/NVIDIA/TransformerEngine.git@stable
+RUN if [ "$SKIP_CPP" != "true" ]; then \
+    uv pip -v install --no-build-isolation \
+    git+https://github.com/NVIDIA/TransformerEngine.git@stable \
+    ; fi
 
 # Install flash-attn-3
 ENV CUDA_HOME=/usr/local/cuda
-RUN git clone https://github.com/Dao-AILab/flash-attention -b v2.8.3 /flash-attention \
+RUN if [ "$SKIP_CPP" != "true" ]; then \
+    git clone https://github.com/Dao-AILab/flash-attention -b v2.8.3 /flash-attention \
     && cd /flash-attention/hopper/ && python3 setup.py sdist bdist_wheel \
     && uv pip install --no-build-isolation --no-cache-dir /flash-attention/hopper/dist/flash_attn_3-3.0.0b1-cp39-abi3-linux_x86_64.whl \
     && mkdir -p $VIRTUAL_ENV/lib/python3.12/site-packages/flash_attn_3/ \
     && cp /flash-attention/hopper/flash_attn_interface.py $VIRTUAL_ENV/lib/python3.12/site-packages/flash_attn_3/ \
     && touch $VIRTUAL_ENV/lib/python3.12/site-packages/flash_attn_3/__init__.py \
-    && rm -rf /flash-attention
+    && rm -rf /flash-attention \
+    ; fi
 
 # FlashMLA (Multi-head Latent Attention for DeepSeek-V3)
-RUN git clone https://github.com/deepseek-ai/FlashMLA.git /flash-mla \
+RUN if [ "$SKIP_CPP" != "true" ]; then \
+    git clone https://github.com/deepseek-ai/FlashMLA.git /flash-mla \
     && cd /flash-mla \
     && git submodule update --init --recursive \
     && uv pip install -v . --no-build-isolation \
-    && rm -rf /flash-mla
+    && rm -rf /flash-mla \
+    ; fi
 
 # DeepGEMM (FP8 GEMM library for DeepSeek-V3)
-RUN git clone https://github.com/deepseek-ai/DeepGEMM /DeepGEMM \
+RUN if [ "$SKIP_CPP" != "true" ]; then \
+    git clone https://github.com/deepseek-ai/DeepGEMM /DeepGEMM \
     && cd /DeepGEMM \
     && git submodule update --init --recursive \
     && uv pip install . --no-build-isolation \
-    && rm -rf /DeepGEMM
+    && rm -rf /DeepGEMM \
+    ; fi
 
 # DeepEP (Expert Parallelism communication library for MoE)
 # Note: TORCH_CUDA_ARCH_LIST="9.0" enables SM90 features and aggressive PTX instructions
 # The NVSHMEM path is auto-detected from nvidia.nvshmem module installed above
-RUN git clone https://github.com/deepseek-ai/DeepEP /DeepEP \
+RUN if [ "$SKIP_CPP" != "true" ]; then \
+    git clone https://github.com/deepseek-ai/DeepEP /DeepEP \
     && cd /DeepEP \
     && TORCH_CUDA_ARCH_LIST="9.0 9.0a" uv pip install -v . --no-build-isolation \
-    && rm -rf /DeepEP
+    && rm -rf /DeepEP \
+    ; fi
 
 # flash-linear-attention (pure Triton kernels, no CUDA extensions)
-RUN git clone https://github.com/fla-org/flash-linear-attention /flash-linear-attention \
+RUN if [ "$SKIP_CPP" != "true" ]; then \
+    git clone https://github.com/fla-org/flash-linear-attention /flash-linear-attention \
     && cd /flash-linear-attention \
     && uv pip install -v . \
-    && rm -rf /flash-linear-attention
+    && rm -rf /flash-linear-attention \
+    ; fi
 
 ##############################################################
 # STAGE 2.5: Install Node.js and npm-based tools
@@ -161,10 +192,6 @@ RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_D
 # Using `uv pip install` instead of `uv sync` to avoid removing
 # C++ packages that aren't in uv.lock.
 ##############################################################
-
-# Declare VARIANT here (not at top) so all layers above share cache across variants.
-# ARG values affect Docker cache from first usage onwards.
-ARG VARIANT=sglang
 
 # Install the project's dependencies (not the project itself)
 # This adds packages without removing unlisted ones (like our C++ packages)
