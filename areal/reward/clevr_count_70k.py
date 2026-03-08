@@ -1,5 +1,9 @@
 import re
 
+from areal.utils import logging
+
+logger = logging.getLogger("CLEVR70KReward")
+
 
 def extract_answer(pred_str, data_name, use_last_number=True):
     match = re.findall(r"\[([0-9\.]+)\]", pred_str)
@@ -21,7 +25,7 @@ def clevr_count_70k_reward_fn(
         return 0
 
     if sol.strip() == ans.strip():
-        print(f"completions: {completions}, answer: {answer}")
+        logger.info(f"completions: {completions}, answer: {answer}")
         return 1
 
     return 0
