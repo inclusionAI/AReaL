@@ -76,6 +76,7 @@ class MoE(nn.Module):
             score_func=moe_args.score_func,
             route_norm=moe_args.route_norm,
             route_scale=moe_args.route_scale,
+            router_dtype=moe_args.router_dtype,
             num_expert_groups=moe_args.num_expert_groups,
             num_limited_groups=moe_args.num_limited_groups,
             _debug_force_load_balance=moe_args._debug_force_load_balance,

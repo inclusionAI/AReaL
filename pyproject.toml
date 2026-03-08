@@ -43,7 +43,6 @@ classifiers = [
 dependencies = [
     # Core ML/AI libraries
     "torch>=2.9.1,<2.10",
-    "torchao==0.15.0",
     "torchaudio",
     "torchvision",
     "torchdata",
@@ -151,17 +150,18 @@ megatron = [
     "megatron-core==0.13.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "mbridge==0.13.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
-# Convenience extra for all CUDA packages (requires Linux x86_64 with CUDA)
-cuda = [
-    "areal[vllm]",
-    "areal[sglang]",
+# Convenience extra for CUDA training packages (no inference backend)
+# Install with --extra sglang or --extra vllm for a complete setup
+cuda-train = [
     "areal[tms]",
     "areal[megatron]",
     "areal[flash-attn]",
 ]
-# 'all' extra - kept for compatibility, CUDA packages skipped on non-Linux via markers
-all = [
-    "areal[cuda]",
+# Backward-compatible: `uv sync --extra cuda` installs training packages + sglang.
+# For vllm instead, use: uv sync --extra cuda-train --extra vllm
+cuda = [
+    "areal[cuda-train]",
+    "areal[sglang]",
 ]
 
 [project.urls]
@@ -206,15 +206,23 @@ environments = [
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
     "sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
+conflicts = [
+    [
+        { extra = "sglang" },
+        { extra = "vllm" },
+    ],
+    # cuda includes sglang, so it also conflicts with vllm
+    [
+        { extra = "cuda" },
+        { extra = "vllm" },
+    ],
+]
 override-dependencies = [
-    "torchao==0.15.0",
-    "openai>2.6.1",
+    # litellm[proxy] conflicts with sglang's exact pins:
+    # - litellm requires openai>=2.8.0, sglang pins openai==2.6.1
+    # - litellm requires soundfile>=0.12.1,<0.13.0, sglang pins soundfile==0.13.1
+    "openai>=2.8.0",
     "soundfile>=0.12.1,<0.13.0",
-    "outlines-core==0.1.26",
-    "grpcio>=1.76.0",
-    "grpcio-reflection>=1.76.0",
-    "xgrammar == 0.1.29; platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 's390x' or platform_machine == 'ppc64le'",
-    "llguidance >= 1.3.0, < 1.4.0; platform_machine == 'x86_64' or platform_machine == 'arm64' or platform_machine == 'aarch64' or platform_machine == 's390x' or platform_machine == 'ppc64le'",
 ]
 
 [tool.uv.extra-build-dependencies]
@@ -238,6 +246,8 @@ markers = [
     "ci: mark test as must-run in CI (only marked for slow tests).",
     "gpu: mark test that uses a single GPU",
     "multi_gpu: mark test that uses more than one GPU",
+    "sglang: mark test that requires the SGLang inference backend",
+    "vllm: mark test that requires the vLLM inference backend",
 ]
 
 # =============================================================================

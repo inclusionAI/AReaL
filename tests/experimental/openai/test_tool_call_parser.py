@@ -1,7 +1,13 @@
-# Tools constructed as Iterable[ChatCompletionToolParam]
-from openai.types.chat import ChatCompletionToolParam
+import pytest
 
-from areal.experimental.openai.tool_call_parser import process_tool_calls
+# This module requires sglang (tool_call_parser imports sglang internals)
+pytest.importorskip("sglang", reason="sglang is required for tool_call_parser tests")
+pytestmark = pytest.mark.sglang
+
+# Tools constructed as Iterable[ChatCompletionToolParam]
+from openai.types.chat import ChatCompletionToolParam  # noqa: E402
+
+from areal.experimental.openai.tool_call_parser import process_tool_calls  # noqa: E402
 
 tools: list[ChatCompletionToolParam] = [
     {

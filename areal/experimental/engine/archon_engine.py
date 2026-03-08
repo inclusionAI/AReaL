@@ -938,7 +938,10 @@ class ArchonEngine(TrainEngine):
 
     def _create_device_model(self):
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.device(int(os.environ["LOCAL_RANK"]))
+        if current_platform.device_type == "cpu":
+            self.device = torch.device("cpu")
+        else:
+            self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
@@ -973,10 +976,15 @@ class ArchonEngine(TrainEngine):
             )
             attn_type = "varlen"
 
+        # Map moe_router_dtype string config to torch.dtype; None means no override
+        router_dtype = (
+            torch.float32 if self.config.archon.moe_router_dtype == "fp32" else None
+        )
         model_args = self.spec.model_args_class.from_hf_config(
             self.model_config,
             is_critic=self.config.is_critic,
             attn_type=attn_type,
+            router_dtype=router_dtype,
         )
         return self.spec.model_class(model_args)
 

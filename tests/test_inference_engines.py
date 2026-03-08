@@ -24,6 +24,7 @@ MODEL_PATH = get_model_path(
 )
 
 IS_VLLM_INSTALLED = is_available("vllm")
+IS_SGLANG_INSTALLED = is_available("sglang")
 
 
 def _dummy_reward_fn(*args, **kwargs):
@@ -31,7 +32,13 @@ def _dummy_reward_fn(*args, **kwargs):
     return 1.0
 
 
-@pytest.fixture(params=["vllm", "sglang"], scope="module")
+@pytest.fixture(
+    params=[
+        pytest.param("vllm", marks=pytest.mark.vllm),
+        pytest.param("sglang", marks=pytest.mark.sglang),
+    ],
+    scope="module",
+)
 def inference_engine(request):
     """Fixture for remote inference engines only (vLLM and SGLang)."""
     backend = request.param
@@ -50,19 +57,21 @@ def inference_engine(request):
     dist_port = network.find_free_ports(1)[0]
     host = network.gethostip()
 
-    # Configure SGLang
-    sglang_config = SGLangConfig(
-        skip_tokenizer_init=True,
-        model_path=MODEL_PATH,
-        mem_fraction_static=0.2,
-        context_length=128,
-    )
-    sglang_args = SGLangConfig.build_args(
-        sglang_config=sglang_config,
-        tp_size=1,
-        base_gpu_id=0,
-        dist_init_addr=f"{host}:{dist_port}",
-    )
+    # Configure SGLang (only when sglang is installed)
+    sglang_args = None
+    if IS_SGLANG_INSTALLED:
+        sglang_config = SGLangConfig(
+            skip_tokenizer_init=True,
+            model_path=MODEL_PATH,
+            mem_fraction_static=0.2,
+            context_length=128,
+        )
+        sglang_args = SGLangConfig.build_args(
+            sglang_config=sglang_config,
+            tp_size=1,
+            base_gpu_id=0,
+            dist_init_addr=f"{host}:{dist_port}",
+        )
 
     # Configure vLLM
     vllm_config = vLLMConfig(
@@ -85,7 +94,9 @@ def inference_engine(request):
         engine_class = RemotevLLMEngine
         server_args = vllm_args
     else:  # sglang
-        from areal.engine import RemoteSGLangEngine
+        if not IS_SGLANG_INSTALLED:
+            pytest.skip("SGLang is not installed")
+        from areal.engine.sglang_remote import RemoteSGLangEngine
 
         engine_class = RemoteSGLangEngine
         server_args = sglang_args

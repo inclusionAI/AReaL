@@ -33,6 +33,7 @@ parts:
   - caption: 算法
     chapters:
     - file: algorithms/async
+    - file: algorithms/distillation
     - file: algorithms/grpo_series
     - file: algorithms/m2po
     - file: algorithms/prox_approx

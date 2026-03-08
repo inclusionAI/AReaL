@@ -15,9 +15,9 @@ approximation）是一种用于**解耦PPO**的优化技术，消除了计算近
 
 标准解耦PPO需要每步通过完整前向传播重新计算π_proximal。此特性**近似**π_proximal，使用版本感知插值在缓存的π_behave和计算的π_θ之间进行：
 
-$$ \\alpha = \\frac{v\_{proximal} - v\_{behave}}{v\_{\\theta} - v\_{behave}}, \\quad
-\\log \\pi\_{proximal} \\approx \\log \\pi\_{behave} + \\alpha \\cdot (\\log
-\\pi\_{\\theta} - \\log \\pi\_{behave}) $$
+$$ \alpha = \frac{v_{proximal} - v_{behave}}{v_{\theta} - v_{behave}}, \quad
+\log \pi_{proximal} \approx \log \pi_{behave} + \alpha \cdot (\log
+\pi_{\theta} - \log \pi_{behave}) $$
 
 其中 $v$ 表示生成每个token时的策略版本。
 
@@ -100,8 +100,8 @@ ______________________________________________________________________
 
 **`"loglinear"`（推荐）**
 
-- 公式：$\\log \\pi\_{prox} = \\log \\pi\_{behave} + \\alpha \\cdot (\\log \\pi\_{\\theta}
-  \- \\log \\pi\_{behave})$
+- 公式：$\log \pi_{prox} = \log \pi_{behave} + \alpha \cdot (\log \pi_{\theta}
+  - \log \pi_{behave})$
 - 对数空间中的线性插值（概率空间中的几何平均）
 - 简单、快速、稳定
 - 最佳评估奖励（GSM8K上0.799）
@@ -109,15 +109,15 @@ ______________________________________________________________________
 
 **`"linear"`（替代方案）**
 
-- 公式：$\\log \\pi\_{prox} = \\log\[(1-\\alpha) \\cdot \\pi\_{behave} + \\alpha \\cdot
-  \\pi\_{\\theta}\]$
+- 公式：$\log \pi_{prox} = \log[(1-\alpha) \cdot \pi_{behave} + \alpha \cdot
+  \pi_{\theta}]$
 - 概率空间中的线性插值（算术平均），然后转换为对数空间
 - 更好的任务奖励（GSM8K上0.944）
 - 在Qwen2.5-1.5B-Instruct的GSM8K上也被证明有效
 
 **`"rollout"`（指标基线）**
 
-- 公式：$\\log \\pi\_{prox} = \\log \\pi\_{behave}$
+- 公式：$\log \pi_{prox} = \log \pi_{behave}$
 - 直接使用行为策略作为近端策略（无插值）
 - 仅在内部用于 `prox_logp_method="metrics"` 时的指标比较
 - 不可作为用户可用的配置选项（类似行为请使用 `use_decoupled_loss=false`）
