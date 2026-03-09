@@ -329,8 +329,12 @@ class RTensor:
             )
 
         if isinstance(obj, dict):
+            from areal.utils.data import is_multi_modal_key
+
             return {
-                k: RTensor.remotize(obj=v, layout=layout, node_addr=node_addr)
+                k: v
+                if is_multi_modal_key(k)
+                else RTensor.remotize(obj=v, layout=layout, node_addr=node_addr)
                 for k, v in obj.items()
             }
 
@@ -419,11 +423,23 @@ class RTensor:
             return split_rtensors, group_indices
 
         if isinstance(obj, dict):
-            # Split each value, return list of dicts
-            split_values = {
-                k: RTensor.data_parallel_dispatch(v, dp_size, group_indices)[0]
-                for k, v in obj.items()
-            }
+            from areal.utils.data import is_multi_modal_key
+
+            # Split each value; multi-modal keys are per-sample lists and
+            # must be split by group_indices (not replicated).
+            split_values = {}
+            for k, v in obj.items():
+                if is_multi_modal_key(k):
+                    if group_indices is not None and isinstance(v, list):
+                        split_values[k] = [
+                            [v[i] for i in group_idxs] for group_idxs in group_indices
+                        ]
+                    else:
+                        split_values[k] = [v] * dp_size
+                else:
+                    split_values[k] = RTensor.data_parallel_dispatch(
+                        v, dp_size, group_indices
+                    )[0]
             return [
                 {k: split_values[k][i] for k in obj.keys()} for i in range(dp_size)
             ], group_indices
@@ -492,12 +508,19 @@ class RTensor:
             return RTensor.cat([rtensors[i] for i in inv_indices])
 
         if isinstance(first, dict):
+            from areal.utils.data import is_multi_modal_key
+
             merged = {}
             for key in first.keys():
-                values = [r[key] for r in results]
-                merged[key] = RTensor.data_parallel_merge(
-                    values, group_indices=group_indices
-                )
+                if is_multi_modal_key(key):
+                    # Multi-modal data was replicated during dispatch;
+                    # just take the first copy.
+                    merged[key] = first[key]
+                else:
+                    values = [r[key] for r in results]
+                    merged[key] = RTensor.data_parallel_merge(
+                        values, group_indices=group_indices
+                    )
             return merged
 
         if isinstance(first, list):

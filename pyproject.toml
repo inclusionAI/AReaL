@@ -103,6 +103,7 @@ dependencies = [
     "prettytable",
     "h5py",
     "mathruler==0.1.0",
+    "pylatexenc",
 
     # Monitoring and logging
     "wandb",
@@ -129,6 +130,8 @@ dependencies = [
     "cookiecutter>2.1.1",
     "distro-info>=1.0",
     "python-debian>=0.1.49",
+
+    "nvidia-cudnn-cu12>=9.16.0.29",
 ]
 
 [project.optional-dependencies]

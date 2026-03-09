@@ -388,6 +388,8 @@ def serialize_value(value: Any) -> Any:
     - numpy.ndarray -> SerializedNDArray dict
     - dataclass instances -> SerializedDataclass dict (preserves type information)
     - Hugging Face tokenizers -> SerializedTokenizer dict
+    - PIL Image -> base64-encoded JPEG dict
+    - bytes -> base64-encoded dict
     - dict -> recursively serialize values
     - list/tuple -> recursively serialize elements
     - primitives (int, float, str, bool, None) -> unchanged
@@ -431,6 +433,24 @@ def serialize_value(value: Any) -> Any:
     if SerializedTokenizer._is_tokenizer(value):
         tokenizer_payload = SerializedTokenizer.from_tokenizer(value)
         return tokenizer_payload.model_dump()
+
+    # Handle PIL Image -> base64-encoded JPEG string
+    try:
+        from PIL.Image import Image as _PILImage
+
+        if isinstance(value, _PILImage):
+            buf = io.BytesIO()
+            value.save(buf, format="JPEG")
+            return {
+                "type": "pil_image",
+                "data": base64.b64encode(buf.getvalue()).decode("utf-8"),
+            }
+    except ImportError:
+        pass
+
+    # Handle raw bytes -> base64-encoded string
+    if isinstance(value, bytes):
+        return {"type": "bytes", "data": base64.b64encode(value).decode("utf-8")}
 
     # Handle dict - recursively serialize values
     if isinstance(value, dict):
@@ -526,6 +546,16 @@ def deserialize_value(value: Any) -> Any:
                 logger.warning(
                     f"Failed to deserialize tensor, treating as regular dict: {e}"
                 )
+
+        # Check for PIL Image marker
+        if value.get("type") == "pil_image":
+            from PIL import Image as _PILImageModule
+
+            return _PILImageModule.open(io.BytesIO(base64.b64decode(value["data"])))
+
+        # Check for bytes marker
+        if value.get("type") == "bytes":
+            return base64.b64decode(value["data"])
 
         # Regular dict - recursively deserialize values
         return {key: deserialize_value(val) for key, val in value.items()}

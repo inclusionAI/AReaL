@@ -20,7 +20,8 @@ def convert_image(
     image: dict[str, Any] | ImageObject | str,
     fixed_width: int | None = None,
     fixed_height: int | None = None,
-) -> ImageObject:
+) -> bytes:
+    """Convert a PIL image to JPEG bytes."""
     if (
         fixed_width is not None
         and fixed_height is not None
@@ -28,7 +29,7 @@ def convert_image(
     ):
         preprocess = transforms.Compose(
             [
-                transforms.CenterCrop((fixed_width, fixed_height)),  # <─ 核心操作
+                transforms.CenterCrop((fixed_width, fixed_height)),
             ]
         )
         image = preprocess(image)
