@@ -130,16 +130,12 @@ class GroundingDINOActor(BaseToolModelActor):
     def analyze(
         self,
         image_b64: str,
-        temperature: float = 0.0,
-        max_tokens: int = 1024,
         **kwargs,
     ) -> str:
         """Run GroundingDINO detection and return JSON with detections.
 
         Args:
             image_b64: Base64-encoded image string.
-            temperature: Unused.
-            max_tokens: Unused.
             **kwargs: Tool-specific parameters, expects 'question' with text prompt.
 
         Returns:

@@ -122,16 +122,12 @@ class SAM2Actor(BaseToolModelActor):
     def analyze(
         self,
         image_b64: str,
-        temperature: float = 0.0,
-        max_tokens: int = 1024,
         **kwargs,
     ) -> str:
         """Run SAM2 segmentation and return JSON with proposals.
 
         Args:
             image_b64: Base64-encoded image string.
-            temperature: Unused.
-            max_tokens: Unused.
             **kwargs: Tool-specific parameters, may include 'bounding_box' or 'question'.
 
         Returns:
