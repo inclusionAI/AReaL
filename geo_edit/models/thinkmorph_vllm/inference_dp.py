@@ -192,10 +192,11 @@ def _worker_fn(
 
     logger.info(f"[GPU {rank}] Loading model...")
 
-    # Initialize inferencer
+    # Initialize inferencer with specific device
     inferencer = ThinkMorphBatchInference(
         model_path=model_path,
         max_mem_per_gpu=max_mem_per_gpu,
+        device=rank,  # Load model only on this GPU
     )
 
     logger.info(f"[GPU {rank}] Processing {len(indexed_samples)} samples...")

@@ -69,6 +69,7 @@ class ThinkMorphBatchInference:
         max_mem_per_gpu: str = "40GiB",
         use_dp: bool = True,  # Enable DataParallel
         config: BatchInferenceConfig = None,
+        device: Optional[int] = None,  # Specific GPU device (for DP workers)
     ):
         """
         Initialize batch inference.
@@ -78,12 +79,17 @@ class ThinkMorphBatchInference:
             max_mem_per_gpu: Maximum GPU memory per device
             use_dp: Whether to use DataParallel for multi-GPU
             config: Batch inference configuration
+            device: Specific GPU device index (None = use all available GPUs)
         """
-        logger.info(f"Initializing ThinkMorphBatchInference with model: {model_path}")
-        logger.info(f"Available GPUs: {torch.cuda.device_count()}")
+        self.device = device
+        if device is not None:
+            logger.info(f"Initializing ThinkMorphBatchInference on GPU {device}")
+        else:
+            logger.info(f"Initializing ThinkMorphBatchInference with model: {model_path}")
+            logger.info(f"Available GPUs: {torch.cuda.device_count()}")
 
         self.model_path = model_path
-        self.use_dp = use_dp and torch.cuda.device_count() > 1
+        self.use_dp = use_dp and torch.cuda.device_count() > 1 and device is None
         self.config = config or BatchInferenceConfig()
 
         # Load model components
@@ -108,7 +114,11 @@ class ThinkMorphBatchInference:
         # 2. Load VAE
         logger.info("Loading VAE...")
         self.vae_model, vae_config = load_ae(local_path=os.path.join(model_path, "ae.safetensors"))
-        self.vae_model = self.vae_model.cuda().to(torch.bfloat16).eval()
+        # Use specific device if set, otherwise default cuda
+        if self.device is not None:
+            self.vae_model = self.vae_model.to(f"cuda:{self.device}").to(torch.bfloat16).eval()
+        else:
+            self.vae_model = self.vae_model.cuda().to(torch.bfloat16).eval()
 
         # 3. Create Bagel config
         config = BagelConfig(
@@ -142,13 +152,28 @@ class ThinkMorphBatchInference:
 
         # 7. Load weights with device map
         logger.info("Loading model weights...")
-        num_gpus = torch.cuda.device_count()
 
-        device_map = infer_auto_device_map(
-            model,
-            max_memory={i: max_mem_per_gpu for i in range(num_gpus)},
-            no_split_module_classes=["Bagel", "Qwen2MoTDecoderLayer"],
-        )
+        # Determine device map based on whether a specific device is set
+        if self.device is not None:
+            # Single GPU mode: load everything on the specified device
+            target_device = f"cuda:{self.device}"
+            device_map = infer_auto_device_map(
+                model,
+                max_memory={self.device: max_mem_per_gpu},
+                no_split_module_classes=["Bagel", "Qwen2MoTDecoderLayer"],
+            )
+            # Force all modules to the target device
+            for key in list(device_map.keys()):
+                device_map[key] = target_device
+            num_gpus = 1
+        else:
+            # Multi-GPU mode: distribute across all available GPUs
+            num_gpus = torch.cuda.device_count()
+            device_map = infer_auto_device_map(
+                model,
+                max_memory={i: max_mem_per_gpu for i in range(num_gpus)},
+                no_split_module_classes=["Bagel", "Qwen2MoTDecoderLayer"],
+            )
 
         # Ensure modules on same device
         same_device_modules = [
@@ -161,7 +186,10 @@ class ThinkMorphBatchInference:
             'vit_pos_embed'
         ]
 
-        first_device = device_map.get(same_device_modules[0], "cuda:0")
+        if self.device is not None:
+            first_device = f"cuda:{self.device}"
+        else:
+            first_device = device_map.get(same_device_modules[0], "cuda:0")
         for k in same_device_modules:
             device_map[k] = first_device
 
@@ -176,7 +204,10 @@ class ThinkMorphBatchInference:
         )
         self.model = self.model.eval()
 
-        logger.info(f"Model loaded across {num_gpus} GPU(s)")
+        if self.device is not None:
+            logger.info(f"Model loaded on GPU {self.device}")
+        else:
+            logger.info(f"Model loaded across {num_gpus} GPU(s)")
 
     def _init_gen_context(self):
         """Initialize generation context."""
