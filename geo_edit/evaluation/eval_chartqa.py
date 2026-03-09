@@ -87,7 +87,8 @@ def main() -> None:
             record_id = os.path.basename(os.path.dirname(meta_path))
 
             for record in load_records(meta_path):
-                qtype = record.get("meta_info_extra", {}).get("type", "unknown")
+                # type may be in meta_info_extra or directly in record
+                qtype = record.get("type") or record.get("meta_info_extra", {}).get("type", "unknown")
                 ground_truth = str(record.get("answer", ""))
 
                 # Extract predicted answer

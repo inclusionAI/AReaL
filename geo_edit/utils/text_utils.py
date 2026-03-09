@@ -12,6 +12,18 @@ def parse_score(text: str) -> str:
     return match.group(1) if match else ""
 
 
+def parse_leakage_score(text: str) -> str:
+    """Parse leakage detection result from judge response.
+
+    Looks for 'Leakage: 0' or 'Leakage: 1' pattern.
+
+    Returns:
+        '0' if no leakage, '1' if leakage detected, '' if not found.
+    """
+    match = re.search(r"\bleakage\s*:\s*([01])\b", text, re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
 def extract_answer(text: str, mode: str) -> Optional[str]:
     parts = ANSWER_TEMPLATE.split("{}")
     if mode == "split":

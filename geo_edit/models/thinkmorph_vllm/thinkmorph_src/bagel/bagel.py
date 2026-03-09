@@ -942,13 +942,18 @@ class Bagel(PreTrainedModel):
         step = 0
         generated_sequence = []
         curr_tokens = packed_start_tokens
+        batch_size = len(key_values_lens)
+
+        # Track which samples have finished (for batch support)
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=curr_tokens.device)
+
         while step < max_length:
             generated_sequence.append(curr_tokens)
             packed_text_embedding = self.language_model.model.embed_tokens(curr_tokens)
             query_lens = torch.ones_like(curr_tokens)
             packed_query_indexes = torch.cumsum(key_values_lens, dim=0) + torch.arange(
-                0, len(key_values_lens), 
-                device=key_values_lens.device, 
+                0, len(key_values_lens),
+                device=key_values_lens.device,
                 dtype=key_values_lens.dtype
             )
 
@@ -993,8 +998,11 @@ class Bagel(PreTrainedModel):
             packed_query_position_ids = packed_query_position_ids + 1
             step += 1
 
-            if end_token_id is not None and curr_tokens[0] == end_token_id: # only support batch=1
-                break
+            # Check if each sample has finished (batch support)
+            if end_token_id is not None:
+                finished = finished | (curr_tokens == end_token_id)
+                if finished.all():
+                    break
 
         output_device = generated_sequence[0].device
         return torch.stack([i.to(output_device) for i in generated_sequence], dim=0)

@@ -171,7 +171,7 @@ version = {attr = "areal.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["areal*"]
+include = ["areal*", "geo_edit*"]
 exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*"]
 
 [tool.uv]

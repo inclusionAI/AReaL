@@ -352,6 +352,145 @@ class ThinkMorphBatchInference:
         """Callable interface for single sample."""
         return self.infer_single(image=image, text=text, **kwargs)
 
+    def _init_batch_gen_context(self, batch_size: int):
+        """Initialize generation context for batch processing."""
+        return {
+            'kv_lens': [0] * batch_size,
+            'ropes': [0] * batch_size,
+            'past_key_values': NaiveCache(self.model.config.llm_config.num_hidden_layers),
+        }
+
+    @torch.no_grad()
+    def _update_batch_context_text(self, texts: List[str], gen_context):
+        """Update context with batch of texts."""
+        past_key_values = gen_context['past_key_values']
+        kv_lens = gen_context['kv_lens']
+        ropes = gen_context['ropes']
+
+        generation_input, kv_lens, ropes = self.model.prepare_prompts(
+            curr_kvlens=kv_lens,
+            curr_rope=ropes,
+            prompts=texts,
+            tokenizer=self.tokenizer,
+            new_token_ids=self.new_token_ids,
+        )
+
+        past_key_values = self.model.forward_cache_update_text(past_key_values, **generation_input)
+        gen_context['kv_lens'] = kv_lens
+        gen_context['ropes'] = ropes
+        gen_context['past_key_values'] = past_key_values
+
+        return gen_context
+
+    @torch.no_grad()
+    def _gen_batch_text(self, gen_context, max_length: int = 500, do_sample: bool = True, temperature: float = 1.0):
+        """Generate text for batch."""
+        gen_context = deepcopy(gen_context)
+        past_key_values = gen_context['past_key_values']
+        kv_lens = gen_context['kv_lens']
+        ropes = gen_context['ropes']
+
+        generation_input = self.model.prepare_start_tokens(kv_lens, ropes, self.new_token_ids)
+        unpacked_latent = self.model.generate_text(
+            past_key_values=past_key_values,
+            max_length=max_length,
+            do_sample=do_sample,
+            temperature=temperature,
+            end_token_id=self.new_token_ids['eos_token_id'],
+            **generation_input,
+        )
+
+        # Decode each sample in batch
+        batch_size = len(kv_lens)
+        outputs = []
+        for i in range(batch_size):
+            output = self.tokenizer.decode(unpacked_latent[:, i])
+            # Parse output
+            if '<|im_end|>' in output:
+                output = output.split('<|im_end|>')[0]
+            if '<|im_start|>' in output:
+                output = output.split('<|im_start|>')[-1]
+            outputs.append(output)
+
+        return outputs
+
+    @torch.no_grad()
+    def infer_batch_parallel(
+        self,
+        samples: List[Dict[str, Any]],
+        think: bool = True,
+        understanding_output: bool = True,
+        show_progress: bool = True,
+    ) -> List[List[Union[str, Image.Image]]]:
+        """
+        True batch inference: process multiple samples simultaneously.
+
+        This method processes multiple samples in a single forward pass,
+        providing better GPU utilization than sequential processing.
+
+        Args:
+            samples: List of dicts with 'image' and/or 'text' keys
+            think: Enable thinking mode
+            understanding_output: Text-only output
+            show_progress: Show progress bar
+
+        Returns:
+            List of outputs for each sample
+        """
+        if not samples:
+            return []
+
+        batch_size = len(samples)
+        results = [[] for _ in range(batch_size)]
+
+        with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
+            # Initialize batch context
+            gen_context = self._init_batch_gen_context(batch_size)
+
+            # Add system prompt if thinking
+            if think:
+                system_prompts = [VLM_THINK_SYSTEM_PROMPT] * batch_size
+                gen_context = self._update_batch_context_text(system_prompts, gen_context)
+
+            # Process images individually (images have different sizes)
+            for i, sample in enumerate(samples):
+                image = sample.get('image')
+                if image is not None:
+                    # For batch processing with images, we need to handle them one at a time
+                    # because image sizes may differ
+                    image_input = self.vae_transform.resize_transform(pil_img2rgb(image))
+                    # Create single-sample context for image
+                    single_ctx = {
+                        'kv_lens': [gen_context['kv_lens'][i]],
+                        'ropes': [gen_context['ropes'][i]],
+                        'past_key_values': gen_context['past_key_values'],  # Shared
+                    }
+                    single_ctx = self._update_context_image(
+                        image_input, single_ctx, vae=not understanding_output
+                    )
+                    gen_context['kv_lens'][i] = single_ctx['kv_lens'][0]
+                    gen_context['ropes'][i] = single_ctx['ropes'][0]
+
+            # Batch process text prompts
+            texts = [sample.get('text', '') for sample in samples]
+            # Filter empty texts
+            non_empty_texts = [t if t else ' ' for t in texts]  # Use space for empty
+            gen_context = self._update_batch_context_text(non_empty_texts, gen_context)
+
+            # Generate text in batch
+            gen_texts = self._gen_batch_text(
+                gen_context,
+                do_sample=self.config.do_sample,
+                temperature=self.config.text_temperature,
+                max_length=self.config.max_think_tokens
+            )
+
+            # Collect results
+            for i, text in enumerate(gen_texts):
+                results[i].append(text)
+
+        return results
+
 
 def run_batch_evaluation(
     model_path: str,

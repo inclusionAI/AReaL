@@ -38,11 +38,15 @@ print(files[:30])
 ```
 
 确定以下关键字段：
-- `id_key`: 用作唯一标识的字段
+- `id_key`: 用作唯一标识的字段（如果没有需要在预处理时添加）
 - `image_key`: 图片字段名（如果图片需要单独下载，记录路径字段）
 - `answer_key`: 答案字段名
 - `question/prompt 字段`: 问题或提示文本字段
-- 其他相关字段（如 options、classification 等）
+- 其他相关字段（如 options、classification、type 等）
+
+**重要**：查看数据集的官方文档或示例代码，确认：
+- 选项编号格式（0-indexed 还是 1-indexed）
+- answer 字段的含义（是否有特殊值如 0 表示无答案）
 
 ### 2. 在 input_template.py 添加提示词模板
 
@@ -95,7 +99,10 @@ def _format_<dataset_name>_options(item: Mapping[str, Any]) -> str:
     options = item.get("options", [])
     if not options:
         return ""
-    option_lines = [f"{i}. {opt}" for i, opt in enumerate(options)]
+    # 注意：根据数据集的 answer 格式选择正确的起始索引
+    # 如果 answer=0 表示无答案，选项从 1 开始：enumerate(options, start=1)
+    # 如果 answer 直接对应选项索引，从 0 开始：enumerate(options)
+    option_lines = [f"{i}. {opt}" for i, opt in enumerate(options, start=1)]
     return "\n".join(option_lines)
 ```
 
@@ -114,7 +121,7 @@ def _format_<dataset_name>_options(item: Mapping[str, Any]) -> str:
     },
     task_kwargs_fields={
         "meta_info_extra": lambda item: {
-            # 需要传递给任务的额外元信息
+            # 需要传递给任务的额外元信息（如 classification, type 等）
         },
     },
 ),
@@ -122,75 +129,58 @@ def _format_<dataset_name>_options(item: Mapping[str, Any]) -> str:
 
 ### 4. 创建数据预处理脚本（如需要）
 
-如果数据集的图片需要单独下载，创建 `geo_edit/data_preprocess/package_<dataset_name>.py`:
+如果数据集图片已内嵌且只需添加 id 字段，可以简化：
 
 ```python
 """Package <dataset_name> dataset to parquet format."""
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
-
-from datasets import Dataset, Features, Image as HFImage, Sequence, Value, load_dataset
-from huggingface_hub import hf_hub_download
-from tqdm import tqdm
+from datasets import load_dataset
 
 
-def package_<dataset_name>(out_dir: Path) -> Path:
-    out_parquet = out_dir / "<dataset_name>_dataset.parquet"
+def package_<dataset_name>(out_dir: Path, split: str = "test") -> Path:
+    out_parquet = out_dir / f"<dataset_name>_{split}_dataset.parquet"
 
-    ds = load_dataset("<huggingface_path>")["<split>"]
-    examples = []
+    ds = load_dataset("<huggingface_path>")[split]
 
-    for i, item in enumerate(tqdm(ds, desc="Processing")):
-        # 下载图片（如需要）
-        image_path = hf_hub_download(
-            repo_id="<huggingface_path>",
-            filename=item["<image_path_field>"],
-            repo_type="dataset",
-        )
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
+    # 添加 id 列（如果原数据集没有）
+    ds = ds.add_column("id", list(range(len(ds))))
 
-        examples.append({
-            "id": i,
-            # ... 其他字段
-            "image": {"bytes": image_bytes, "path": None},
-        })
-
-    features = Features({
-        "id": Value("int64"),
-        # ... 定义所有字段类型
-        "image": HFImage(),
-    })
-
-    dataset = Dataset.from_list(examples, features=features)
-    dataset.to_parquet(str(out_parquet))
+    ds.to_parquet(str(out_parquet))
     return out_parquet
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", type=str, default=None)
-    args = parser.parse_args()
-
-    out_dir = Path(args.out_dir or ".").resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    package_<dataset_name>(out_dir)
-
-
-if __name__ == "__main__":
-    main()
 ```
 
-### 5. 验证注册
+如果图片需要单独下载，参考 `package_mapeval_visual.py`。
+
+### 5. 创建评估脚本
+
+文件: `geo_edit/evaluation/eval_<dataset_name>.py`
+
+参考 `eval_mapeval_visual.py` 或 `eval_chartqa.py` 创建评估脚本。
+
+**重要注意事项**：
+1. 字段位置：`classification`、`type` 等字段可能直接在 record 顶层，也可能在 `meta_info_extra` 中，需要兼容两种情况：
+   ```python
+   classification = record.get("classification") or record.get("meta_info_extra", {}).get("classification", "unknown")
+   ```
+
+2. 答案提取：`output_text` 可能没有 `<answer>` 标签，需要 fallback：
+   ```python
+   extracted = extract_answer(output_str)
+   predicted = parse_answer(extracted if extracted else output_str)
+   ```
+
+3. 使用 `iter_meta_info_files` 遍历每个子目录的 `meta_info.jsonl`，而不是读取 `global_meta_info.jsonl`
+
+### 6. 验证注册
 
 ```bash
 python -c "from geo_edit.datasets.task_registry import get_dataset_spec; print(get_dataset_spec('<dataset_name>'))"
 ```
 
-### 6. 清理本地缓存
+### 7. 清理本地缓存
 
 探索完成后，删除下载的 HuggingFace 数据集缓存：
 
@@ -198,13 +188,40 @@ python -c "from geo_edit.datasets.task_registry import get_dataset_spec; print(g
 rm -rf ~/.cache/huggingface/hub/datasets--<org>--<dataset_name>
 ```
 
-例如：
-```bash
-rm -rf ~/.cache/huggingface/hub/datasets--MapEval--MapEval-Visual
-```
+## 常见问题避坑
+
+### 选项编号格式
+- **问题**：不同数据集选项编号方式不同
+- **解决**：查看官方文档确认 answer 字段含义
+  - MapEval-Visual: 选项从 1 开始，answer=0 表示无答案
+  - 其他数据集可能从 0 开始
+
+### 评估脚本字段读取
+- **问题**：`classification`、`type` 等字段位置不固定
+- **解决**：同时检查顶层和 `meta_info_extra`：
+  ```python
+  field = record.get("field") or record.get("meta_info_extra", {}).get("field", "unknown")
+  ```
+
+### 答案解析
+- **问题**：模型输出可能没有 `<answer>` 标签
+- **解决**：先尝试从标签提取，失败则解析原文：
+  ```python
+  extracted = extract_answer(text)
+  result = parse(extracted if extracted else text)
+  ```
+
+### 数据集无 id 字段
+- **问题**：原数据集没有 id 字段
+- **解决**：在预处理脚本中添加：
+  ```python
+  ds = ds.add_column("id", list(range(len(ds))))
+  ```
 
 ## 关键文件
 
 - `geo_edit/datasets/task_registry.py` - 数据集注册
 - `geo_edit/datasets/input_template.py` - 提示词模板
 - `geo_edit/data_preprocess/` - 数据预处理脚本
+- `geo_edit/evaluation/` - 评估脚本
+- `geo_edit/utils/io_utils.py` - `iter_meta_info_files`, `load_records` 工具函数

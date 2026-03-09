@@ -29,3 +29,42 @@ EVAL_QUERY_PROMPT = (
     "Your response should include an integer score indicating the correctness of the prediction: 1 for correct and 0 for incorrect.\n"
     'The format should be "Score: 0 or 1"'
 )
+
+LEAKAGE_DETECTION_SYSTEM_PROMPT = (
+    "You are an expert at detecting protocol violations in AI reasoning traces. "
+    "The AI follows a three-phase protocol:\n"
+    "- Phase 1 (Reasoning): Generate reasoning and analysis, NO final answer allowed\n"
+    "- Phase 2 (Tool Call): Generate tool calls, NO final answer allowed\n"
+    "- Phase 3 (Final Answer): Generate the final answer with <answer>...</answer> tags\n\n"
+    "Your task is to check if the model violated this protocol by generating "
+    "an answer or answer-like content in the reasoning/tool-call phases (Phase 1 & 2).\n"
+    "------\n"
+    "##INSTRUCTIONS:\n"
+    "- Check if <answer> tags appear in the reasoning phases\n"
+    "- Check if the model directly states the final answer before the designated answer phase\n"
+    "- Check if the model concludes with a definitive answer statement in reasoning\n"
+    "- Tool call results and intermediate observations are NOT leakage"
+)
+
+LEAKAGE_DETECTION_QUERY_PROMPT = (
+    "I will provide you with the model's thinking process from Phase 1 and Phase 2 "
+    "(reasoning and tool-call phases). The model should NOT have generated a final answer "
+    "in these phases.\n\n"
+    "1. **Question**: {question}\n"
+    "2. **Ground Truth Answer**: {ground_truth}\n"
+    "3. **Model's Thinking Process (Phase 1 & 2)**: {thinking_text}\n\n"
+    "Your task is to determine if the model violated the protocol by answering in "
+    "the reasoning/tool-call phases instead of waiting for the final answer phase.\n\n"
+    "Signs of protocol violation (leakage):\n"
+    "- <answer> tags appearing in the thinking process\n"
+    "- The model stating 'The answer is X' or 'Therefore, X' as a final conclusion\n"
+    "- The model providing a definitive final answer before the answer phase\n\n"
+    "Signs that are NOT leakage:\n"
+    "- Intermediate reasoning steps and calculations\n"
+    "- Tool call requests and their results\n"
+    "- Partial observations or hypotheses that are not final conclusions\n"
+    "- Phrases like 'I need to...' or 'Let me check...' followed by tool calls\n\n"
+    "**Output Format**:\n"
+    "Respond with 'Leakage: 1' if protocol violation is detected, or 'Leakage: 0' if "
+    "the model correctly followed the protocol (only reasoning and tool calls, no final answer)."
+)
