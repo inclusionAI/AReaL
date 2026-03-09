@@ -10,6 +10,7 @@ from concurrent.futures import Future
 from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+import mindspeed.megatron_adaptor
 
 import mbridge
 import torch
@@ -138,6 +139,7 @@ class MegatronEngine(TrainEngine):
         self.device = None
         self.optimizer_config = config.optimizer
         self.mcore_config = config.megatron
+        self.mindspeed_config = config.mindspeed
         self.parallel_strategy = None
         self.optimizer = None
         self.lr_scheduler = None
@@ -174,6 +176,9 @@ class MegatronEngine(TrainEngine):
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
         self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
+        # need to patch mindspeed here as it needs access to parallel strategy to init various internal groups
+        # as well as patch depending on parallelism sizes
+        self._patch_mindspeed(parallel_strategy)
         backend = current_platform.communication_backend
         if not dist.is_initialized():
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
@@ -260,9 +265,30 @@ class MegatronEngine(TrainEngine):
             self.hf_config, self.tf_config = make_hf_and_mcore_config(
                 self.config.path, dtype=self.dtype, bridge=self.bridge
             )
-            self.tf_config = configure_pipeline_layer_splits(
-                self.parallel_strategy, self.hf_config, self.tf_config
-            )
+
+            if (
+                self.mcore_config.num_layers_in_first_pipeline_stage
+                or self.mcore_config.num_layers_in_last_pipeline_stage
+                or self.mcore_config.account_for_embedding_in_pipeline_split
+                or self.mcore_config.account_for_loss_in_pipeline_split
+            ):
+                self.bridge.config.num_layers_in_first_pipeline_stage = (
+                    self.mcore_config.num_layers_in_first_pipeline_stage
+                )
+                self.bridge.config.num_layers_in_last_pipeline_stage = (
+                    self.mcore_config.num_layers_in_last_pipeline_stage
+                )
+                self.bridge.config.account_for_embedding_in_pipeline_split = (
+                    self.mcore_config.account_for_embedding_in_pipeline_split
+                )
+                self.bridge.config.account_for_loss_in_pipeline_split = (
+                    self.mcore_config.account_for_loss_in_pipeline_split
+                )
+
+            else:
+                self.tf_config = configure_pipeline_layer_splits(
+                    self.parallel_strategy, self.hf_config, self.tf_config
+                )
 
             # Get quantization_config from hf_config if available (for FP8 weight updates)
             self.quantization_config = getattr(
@@ -621,9 +647,7 @@ class MegatronEngine(TrainEngine):
                 return loss, {}
 
             model_vp_stage = getattr(model, "vp_stage", 0)
-            if mpu.is_pipeline_last_stage(
-                ignore_virtual=False, vp_stage=model_vp_stage
-            ):
+            if mpu.is_pipeline_last_stage(ignore_virtual=False):
                 output = unpad_logits(
                     output,
                     padding_length=mb_input.padding_length,
@@ -972,7 +996,6 @@ class MegatronEngine(TrainEngine):
             use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
             params_dtype=self.dtype,
             clip_grad=self.optimizer_config.gradient_clipping,
-            fp8_recipe=(self.fp8_config.recipe if self.enable_fp8 else None),
         )
         mcore_opt_config.overlap_param_gather_with_optimizer_step = (
             self.mcore_config.overlap_param_gather_with_optimizer_step
@@ -1401,6 +1424,29 @@ class MegatronEngine(TrainEngine):
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
+
+    def _patch_mindspeed(self, parallel_strategy: ParallelStrategy):
+        from mindspeed.megatron_adaptor import repatch
+
+        config = self.mindspeed_config.as_dict()
+        megatron_config = self.mcore_config
+        config_overrides = {
+            "context_parallel_size": getattr(
+                parallel_strategy, "context_parallel_size", 1
+            ),
+            "expert_model_parallel_size": getattr(
+                parallel_strategy, "expert_model_parallel_size", 1
+            ),
+            "tensor_model_parallel_size": getattr(
+                parallel_strategy, "tensor_parallel_size", 1
+            ),
+            "recompute_method": megatron_config.recompute_method,
+            "recompute_granularity": megatron_config.recompute_granularity,
+            "recompute_num_layers": megatron_config.recompute_num_layers,
+        }
+
+        config.update(config_overrides)
+        repatch(config)
 
     def _save_model_to_hf(
         self,

@@ -164,9 +164,7 @@ def packed_context_parallel_forward(
         ) from e
 
     model_vp_stage = getattr(model, "vp_stage", None)
-    is_pipeline_last_stage = mpu.is_pipeline_last_stage(
-        ignore_virtual=False, vp_stage=model_vp_stage
-    )
+    is_pipeline_last_stage = mpu.is_pipeline_last_stage(ignore_virtual=False)
     output = postprocess_packed_seqs_context_parallel(
         output, cu_seqlens, is_pipeline_last_stage
     )
