@@ -21,7 +21,6 @@ import re
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
-from PIL import Image
 from datasets import load_dataset, Dataset
 from tqdm import tqdm
 
@@ -239,7 +238,8 @@ def run_inference(
         understanding_output=understanding_output,
     )
 
-    # Process results
+    # Process results and save in openai_as_judge compatible format
+    # Format: output_dir/<sample_id>/meta_info.jsonl
     results = []
     correct = 0
     total = 0
@@ -262,10 +262,14 @@ def run_inference(
             correct += 1
         total += 1
 
+        sample_id = str(sample.get('id', idx))
+
+        # Create result in openai_as_judge compatible format
         result = {
-            "id": sample.get('id'),
-            "question": sample.get('text'),
-            "gt_answer": gt_answer,
+            "id": sample_id,
+            "question": sample.get('text'),  # Required by openai_as_judge
+            "answer": str(gt_answer),  # Required by openai_as_judge (ground truth)
+            "output_text": text_outputs,  # Required by openai_as_judge (model output)
             "pred_answer": pred_answer,
             "correct": is_correct,
             "full_response": full_response,
@@ -278,16 +282,17 @@ def run_inference(
 
         results.append(result)
 
-        # Save generated images
-        img_outputs = [o for o in outputs if isinstance(o, Image.Image)]
-        for i, img in enumerate(img_outputs):
-            img_path = os.path.join(output_dir, f"{sample.get('id')}_gen_{i}.png")
-            img.save(img_path)
+        # Save to subdirectory format for openai_as_judge
+        sample_dir = os.path.join(output_dir, sample_id)
+        os.makedirs(sample_dir, exist_ok=True)
+        meta_info_path = os.path.join(sample_dir, "meta_info.jsonl")
+        with open(meta_info_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
     # Calculate accuracy
     accuracy = correct / total * 100 if total > 0 else 0
 
-    # Save results
+    # Also save a summary results.json for convenience
     results_path = os.path.join(output_dir, "results.json")
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump({
