@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # ThinkMorph generic inference script with task registry support
+# Outputs results in openai_as_judge compatible format
 #
 # Usage:
 #   python -m geo_edit.models.thinkmorph_vllm.run_thinkmorph \
@@ -17,113 +18,17 @@ import os
 import json
 import argparse
 import logging
-import re
 from typing import Any, Dict, List, Optional
-from pathlib import Path
 
+from PIL import Image
 from datasets import load_dataset, Dataset
 from tqdm import tqdm
 
-from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec, DatasetSpec
+from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.models.thinkmorph_vllm import ThinkMorphDP
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def extract_answer(text: str, answer_type: str = "text") -> str:
-    """
-    Extract answer from model output.
-
-    Supports multiple formats:
-    - <answer>...</answer> tags
-    - \\boxed{...} format
-    - Direction sequences (UDLR)
-    - Multiple choice (A-D)
-    """
-    result = text
-
-    # Try to find answer in <answer>...</answer> tags
-    answer_tag = re.search(r'<answer>(.*?)</answer>', result, re.DOTALL | re.IGNORECASE)
-    if answer_tag:
-        result = answer_tag.group(1).strip()
-
-    # Try to find answer in \boxed{} format
-    boxed = re.search(r'\\boxed\{([^}]+)\}', result)
-    if boxed:
-        result = boxed.group(1).strip()
-        if answer_type == "direction":
-            dirs = re.findall(r'[UDLR]', result.upper())
-            return ','.join(dirs)
-        return result
-
-    if answer_tag:
-        return result
-
-    # Fallback extraction based on answer type
-    if answer_type == "direction":
-        dir_pattern = re.search(r'([UDLR](?:[,\s]*[UDLR])*)', text.upper())
-        if dir_pattern:
-            dirs = re.findall(r'[UDLR]', dir_pattern.group(1))
-            return ','.join(dirs)
-    elif answer_type == "choice":
-        match = re.search(r'\b([A-D])\b', text.split('\n')[-1])
-        if match:
-            return match.group(1)
-    elif answer_type == "number":
-        # Try to extract a number
-        match = re.search(r'[-+]?\d*\.?\d+', result)
-        if match:
-            return match.group(0)
-
-    lines = [l.strip() for l in text.strip().split('\n') if l.strip()]
-    return lines[-1] if lines else ""
-
-
-def normalize_answer(answer: str, answer_type: str = "text") -> str:
-    """Normalize answer for comparison."""
-    answer = str(answer).strip()
-
-    if answer_type == "direction":
-        dirs = re.findall(r'[UDLRudlr]', answer)
-        return ','.join(d.upper() for d in dirs)
-    elif answer_type == "choice":
-        return answer.upper()
-    elif answer_type == "number":
-        try:
-            return str(float(answer))
-        except ValueError:
-            return answer
-    else:
-        return answer.lower()
-
-
-def check_answer(pred: str, gt: str, answer_type: str = "text") -> bool:
-    """Check if prediction matches ground truth."""
-    pred_norm = normalize_answer(pred, answer_type)
-    gt_norm = normalize_answer(gt, answer_type)
-
-    if answer_type == "number":
-        try:
-            return abs(float(pred_norm) - float(gt_norm)) < 1e-6
-        except ValueError:
-            return pred_norm == gt_norm
-
-    return pred_norm == gt_norm
-
-
-def infer_answer_type(task_name: str) -> str:
-    """Infer answer type from task name."""
-    task_lower = task_name.lower()
-
-    if "srn" in task_lower or "navigation" in task_lower or "path" in task_lower:
-        return "direction"
-    elif "choice" in task_lower or "qa" in task_lower:
-        return "choice"
-    elif "counting" in task_lower:
-        return "number"
-    else:
-        return "text"
 
 
 def run_inference(
@@ -142,6 +47,7 @@ def run_inference(
 ):
     """
     Run ThinkMorph inference on a registered task.
+    Saves results in openai_as_judge compatible format.
 
     Args:
         model_path: Path to ThinkMorph model
@@ -167,10 +73,6 @@ def run_inference(
         logger.error(f"Unknown task: {task}")
         logger.info(f"Available tasks: {list(DATASET_SPECS.keys())}")
         return None
-
-    # Infer answer type
-    answer_type = infer_answer_type(task)
-    logger.info(f"Answer type: {answer_type}")
 
     # Load dataset
     logger.info(f"Loading dataset...")
@@ -213,7 +115,7 @@ def run_inference(
             'text': prompt,
             'id': sample_id,
             'gt_answer': gt_answer,
-            'original_item': dict(item),  # Keep original for metadata
+            'original_item': dict(item),
         })
 
     # Initialize DP inferencer
@@ -241,28 +143,16 @@ def run_inference(
     # Process results and save in openai_as_judge compatible format
     # Format: output_dir/<sample_id>/meta_info.jsonl
     results = []
-    correct = 0
-    total = 0
 
-    for dp_result in tqdm(dp_results, desc="Processing results"):
+    for dp_result in tqdm(dp_results, desc="Saving results"):
         idx = dp_result['original_idx']
         sample = samples[idx]
         outputs = dp_result.get('output', [])
 
         # Extract text outputs
         text_outputs = [o for o in outputs if isinstance(o, str)]
-        full_response = "\n".join(text_outputs)
-        pred_answer = extract_answer(full_response, answer_type=answer_type)
-
-        # Check correctness
-        gt_answer = sample.get('gt_answer', '')
-        is_correct = check_answer(pred_answer, str(gt_answer), answer_type)
-
-        if is_correct:
-            correct += 1
-        total += 1
-
         sample_id = str(sample.get('id', idx))
+        gt_answer = sample.get('gt_answer', '')
 
         # Create result in openai_as_judge compatible format
         result = {
@@ -270,9 +160,6 @@ def run_inference(
             "question": sample.get('text'),  # Required by openai_as_judge
             "answer": str(gt_answer),  # Required by openai_as_judge (ground truth)
             "output_text": text_outputs,  # Required by openai_as_judge (model output)
-            "pred_answer": pred_answer,
-            "correct": is_correct,
-            "full_response": full_response,
         }
 
         # Add task-specific metadata
@@ -285,40 +172,45 @@ def run_inference(
         # Save to subdirectory format for openai_as_judge
         sample_dir = os.path.join(output_dir, sample_id)
         os.makedirs(sample_dir, exist_ok=True)
+
+        # Save generated images
+        img_outputs = [o for o in outputs if isinstance(o, Image.Image)]
+        img_paths = []
+        for i, img in enumerate(img_outputs):
+            img_filename = f"gen_{i}.png"
+            img_path = os.path.join(sample_dir, img_filename)
+            img.save(img_path)
+            img_paths.append(img_filename)
+        if img_paths:
+            result["generated_images"] = img_paths
+
         meta_info_path = os.path.join(sample_dir, "meta_info.jsonl")
         with open(meta_info_path, "w", encoding="utf-8") as f:
             f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-    # Calculate accuracy
-    accuracy = correct / total * 100 if total > 0 else 0
-
-    # Also save a summary results.json for convenience
+    # Save summary
     results_path = os.path.join(output_dir, "results.json")
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump({
             "task": task,
-            "accuracy": accuracy,
-            "correct": correct,
-            "total": total,
+            "total": len(results),
             "num_gpus": num_gpus,
             "models_per_gpu": models_per_gpu,
             "total_parallelism": total_parallelism,
             "think": think,
             "understanding_output": understanding_output,
-            "answer_type": answer_type,
-            "results": results
         }, f, ensure_ascii=False, indent=2)
 
     # Print summary
     print(f"\n{'='*60}")
     print(f"Task: {task}")
+    print(f"Samples: {len(results)}")
     print(f"GPUs: {num_gpus}, Models/GPU: {models_per_gpu}, Total parallelism: {total_parallelism}")
     print(f"Visual thinking: {not understanding_output}")
-    print(f"Accuracy: {accuracy:.2f}% ({correct}/{total})")
-    print(f"Results saved to: {results_path}")
+    print(f"Results saved to: {output_dir}")
     print(f"{'='*60}")
 
-    return accuracy, results
+    return results
 
 
 def main():
