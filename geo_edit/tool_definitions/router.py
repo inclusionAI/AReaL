@@ -231,17 +231,28 @@ class ToolRouter:
         return {name: _TOOL_REGISTRY[name][3] for name in self._get_enabled_tool_names()}
 
     def get_enabled_agents(self) -> List[str]:
-        """Get list of enabled agent tool names (for Ray Actor initialization)."""
-        return [
-            name for name in self._get_enabled_tool_names()
-            if _TOOL_REGISTRY[name][2] == "agent"
-        ]
+        """Get list of unique base agent names for Ray Actor initialization.
+
+        Maps fine-grained tool names to their base agents and deduplicates.
+        E.g., [text_ocr, text_spotting, auto_segment] -> [paddleocr, sam2]
+        """
+        base_agents = set()
+        for name in self._get_enabled_tool_names():
+            if _TOOL_REGISTRY[name][2] != "agent":
+                continue
+            # Check if this is a multi-tool with a base_agent
+            if name in MULTI_TOOL_DECLARATIONS:
+                base_agents.add(MULTI_TOOL_DECLARATIONS[name]["base_agent"])
+            elif name in AGENT_CONFIGS:
+                # Legacy single-tool agent (e.g., gllava, ovr)
+                base_agents.add(name)
+        return list(base_agents)
 
     def get_enabled_agent_configs(self) -> Dict[str, dict]:
-        """Get configs for enabled agent tools.
+        """Get configs for enabled base agents.
 
         Returns:
-            Dict mapping agent name to its config dict.
+            Dict mapping base agent name to its config dict.
         """
         return {
             name: AGENT_CONFIGS[name]
