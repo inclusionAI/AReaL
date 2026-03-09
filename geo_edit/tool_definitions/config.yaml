@@ -27,7 +27,7 @@ text_ocr: false          # General text recognition
 table_ocr: false         # Table structure recognition
 formula_ocr: false       # Math formula to LaTeX
 chart_text_ocr: false    # Chart text extraction
-text_spotting: false     # Text localization (recommended for maps)
+text_spotting: false     # Text localization 
 seal_ocr: false          # Seal/stamp recognition
 
 # SAM2 multi-tools (2 tools from sam2 base agent)

@@ -138,20 +138,26 @@ class ThinkMorphDP:
             p.start()
             processes.append(p)
 
-        # Collect results from queue (one result per worker with samples)
-        # Note: Do this BEFORE p.join() to avoid deadlock with large queues
+        # Collect results from queue - each sample updates progress immediately
+        # Workers send each result individually, then None when done
         from tqdm import tqdm
 
         all_results = []
         num_workers_with_samples = sum(1 for c in chunks if c)
+        workers_done = 0
         total_samples = len(samples)
 
         # Show single progress bar for total samples
         pbar = tqdm(total=total_samples, desc="DP Inference", disable=not show_progress)
-        for _ in range(num_workers_with_samples):
-            results = output_queue.get()  # Blocks until worker finishes
-            all_results.extend(results)
-            pbar.update(len(results))
+        while workers_done < num_workers_with_samples:
+            result = output_queue.get()  # Blocks until data available
+            if result is None:
+                # Worker finished
+                workers_done += 1
+            else:
+                # Got a single sample result
+                all_results.append(result)
+                pbar.update(1)
         pbar.close()
 
         # Wait for all processes to complete
@@ -207,9 +213,7 @@ def _worker_fn(
 
     logger.info(f"[GPU {rank}] Processing {len(indexed_samples)} samples...")
 
-    results = []
-
-    # Process samples sequentially (no per-GPU progress bar - total progress shown in main process)
+    # Process samples sequentially, send each result immediately for real-time progress
     for original_idx, sample in indexed_samples:
         try:
             # Run single-sample inference with full interleaved generation
@@ -220,7 +224,8 @@ def _worker_fn(
                 understanding_output=kwargs.get('understanding_output', False),
             )
 
-            results.append({
+            # Send result immediately (for real-time progress bar)
+            output_queue.put({
                 'original_idx': original_idx,
                 'id': sample.get('id', original_idx),
                 'output': output,
@@ -228,12 +233,12 @@ def _worker_fn(
 
         except Exception as e:
             logger.error(f"[GPU {rank}] Error processing sample {original_idx}: {e}")
-            results.append({
+            output_queue.put({
                 'original_idx': original_idx,
                 'id': sample.get('id', original_idx),
                 'output': [f"Error: {str(e)}"],
             })
 
-    # Send results back through queue
-    output_queue.put(results)
+    # Signal that this worker is done
+    output_queue.put(None)
     logger.info(f"[GPU {rank}] Done!")
