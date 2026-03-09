@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # ThinkMorph inference wrapper using manual model loading (like original ThinkMorph)
+# ThinkMorph source code is integrated into thinkmorph_src subdirectory
 
 import os
-import sys
 import json
 import logging
 from copy import deepcopy
@@ -19,54 +19,14 @@ from accelerate import infer_auto_device_map, load_checkpoint_and_dispatch, init
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# ThinkMorph Path Setup
-# ============================================================================
-
-def _find_thinkmorph_path():
-    """Find ThinkMorph source path from environment or common locations."""
-    # Priority 1: Environment variable
-    if "THINKMORPH_PATH" in os.environ:
-        path = os.environ["THINKMORPH_PATH"]
-        if os.path.exists(path):
-            return path
-
-    # Priority 2: Common locations
-    common_paths = [
-        "/storage/openpsi/users/lichangye.lcy/antoinegg1/ThinkMorph",
-        "/ThinkMorph",
-        os.path.expanduser("~/ThinkMorph"),
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "ThinkMorph"),
-    ]
-
-    for path in common_paths:
-        path = os.path.abspath(path)
-        if os.path.exists(path) and os.path.exists(os.path.join(path, "modeling", "bagel")):
-            return path
-
-    return None
-
-THINKMORPH_PATH = _find_thinkmorph_path()
-if THINKMORPH_PATH is None:
-    raise ImportError(
-        "Could not find ThinkMorph source directory. Please set THINKMORPH_PATH environment variable:\n"
-        "  export THINKMORPH_PATH=/path/to/ThinkMorph\n"
-        "The directory should contain 'modeling/bagel' and 'data' subdirectories."
-    )
-
-logger.info(f"Using ThinkMorph from: {THINKMORPH_PATH}")
-if THINKMORPH_PATH not in sys.path:
-    sys.path.insert(0, THINKMORPH_PATH)
-
-# Import from ThinkMorph
-from data.transforms import ImageTransform
-from data.data_utils import pil_img2rgb, add_special_tokens
-from modeling.bagel import (
-    BagelConfig, Bagel, Qwen2Config, Qwen2ForCausalLM, SiglipVisionConfig, SiglipVisionModel
+# Import from local thinkmorph_src (integrated ThinkMorph source)
+from .thinkmorph_src.transforms import ImageTransform
+from .thinkmorph_src.data_utils import pil_img2rgb, add_special_tokens
+from .thinkmorph_src.bagel import (
+    BagelConfig, Bagel, Qwen2Config, Qwen2ForCausalLM, SiglipVisionConfig, SiglipVisionModel, NaiveCache
 )
-from modeling.qwen2 import Qwen2Tokenizer
-from modeling.bagel.qwen2_navit import NaiveCache
-from modeling.autoencoder import load_ae
+from .thinkmorph_src.qwen2 import Qwen2Tokenizer
+from .thinkmorph_src.autoencoder import load_ae
 
 
 # ============================================================================
