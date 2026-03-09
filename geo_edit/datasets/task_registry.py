@@ -13,8 +13,10 @@ from geo_edit.datasets.input_template import (
     CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
     CHARTQA_INPUT_TEMPLATE,
     CHARTQA_NOTOOL_INPUT_TEMPLATE,
+    MAPEVAL_VISUAL_ANSWER_FORMAT,
     MAPEVAL_VISUAL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE,
+    MAPEVAL_VISUAL_SEPARATED_TEMPLATE,
     MATHVISION_INPUT_TEMPLATE,
     MATHVISION_NOTOOL_INPUT_TEMPLATE,
     VISWORLD_EVAL_INPUT_TEMPLATE,
@@ -34,17 +36,25 @@ class DatasetSpec:
     task_kwargs_fields: Dict[str, FieldSource] = field(default_factory=dict)
     notool_prompt_template: Optional[str] = None
     image_key: Optional[str] = None
+    # Separated reasoning mode: question only (no role/answer format)
+    separated_prompt_template: Optional[str] = None
+    # Answer format instruction (added only in final answer phase)
+    answer_format: Optional[str] = None
 
-    def build_prompt(self, item: Mapping[str, Any], use_tools: bool) -> str:
+    def build_prompt(self, item: Mapping[str, Any], use_tools: bool, separated: bool = False) -> str:
         values: Dict[str, Any] = {}
         for template_key, source in self.template_fields.items():
             if callable(source):
                 values[template_key] = source(item)
             else:
                 values[template_key] = item[source] if source in item else ""
-        template = self.prompt_template
-        if not use_tools and self.notool_prompt_template:
+        # Choose template based on mode
+        if separated and self.separated_prompt_template:
+            template = self.separated_prompt_template
+        elif not use_tools and self.notool_prompt_template:
             template = self.notool_prompt_template
+        else:
+            template = self.prompt_template
         return template.format(**values)
 
     def build_task_kwargs(self, item: Mapping[str, Any]) -> Dict[str, Any]:
@@ -242,6 +252,8 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
                 "classification": item.get("classification", ""),
             },
         },
+        separated_prompt_template=MAPEVAL_VISUAL_SEPARATED_TEMPLATE,
+        answer_format=MAPEVAL_VISUAL_ANSWER_FORMAT,
     ),
     "chartqa": DatasetSpec(
         name="chartqa",
