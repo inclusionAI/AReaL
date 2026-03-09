@@ -120,6 +120,18 @@ Select the best option by choosing its number. If none of the options are correc
 Please provide your final answer as a single number in <answer></answer> tags.
 """
 
+# Separated version: question only, no role/answer format (for separated reasoning mode)
+MAPEVAL_VISUAL_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+Options:
+{options_text}
+
+Select the best option by choosing its number. If none of the options are correct or the question cannot be answered, respond with 0.
+"""
+
+MAPEVAL_VISUAL_ANSWER_FORMAT = "Please provide your final answer as a single number in <answer></answer> tags."
+
 CHARTQA_INPUT_TEMPLATE = """\
 You are a chart understanding assistant specialized in analyzing charts and graphs.
 

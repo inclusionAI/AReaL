@@ -179,6 +179,7 @@ def _run_one_task(task_payload: dict):
     image_path = task_payload["image_path"]
     text_prompt = task_payload["prompt"]
     text_only = task_payload.get("text_only", False)
+    answer_format = task_payload.get("answer_format")  # Answer format instruction for Phase 3
 
     formatted_text_prompt = SEPARATED_USER_PROMPT.format(Question=text_prompt)
 
@@ -276,6 +277,9 @@ def _run_one_task(task_payload: dict):
         # ===== Phase 3: Generate final answer =====
         if task.state:
             logger.info(f"[{task_id}] Phase 3: Generating final answer...")
+            # Inject answer format instruction before generating final answer
+            if answer_format:
+                task.append_prompt(answer_format)
             _WORKER_AGENT.config.generate_config = _WORKER_FINAL_ANSWER_CONFIG
             action, extra_info = _WORKER_AGENT.act(task.contents)
             _WORKER_AGENT.config.generate_config = original_generate_config
@@ -449,11 +453,12 @@ def main():
                     "id": task_id,
                     "traj_id": traj_id,
                     "task_save_dir": traj_save_dir,
-                    "prompt": dataset_spec.build_prompt(item, True),  # Always use tool prompt for force mode
+                    "prompt": dataset_spec.build_prompt(item, True, separated=True),  # Use separated prompt (no role/answer format)
                     "answer": dataset_spec.get_answer(item),
                     "image_path": image_path,
                     "text_only": text_only,
                     "task_kwargs": dataset_spec.build_task_kwargs(item),
+                    "answer_format": dataset_spec.answer_format,  # Added only in final answer phase
                 }
 
                 ar = pool.apply_async(_run_one_task, (payload,))
