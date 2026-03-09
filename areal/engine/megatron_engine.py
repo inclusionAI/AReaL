@@ -10,8 +10,8 @@ from concurrent.futures import Future
 from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
-import mindspeed.megatron_adaptor
 
+import mindspeed.megatron_adaptor  # noqa: F401, isort: skip
 import mbridge
 import torch
 import torch.distributed as dist
@@ -408,6 +408,11 @@ class MegatronEngine(TrainEngine):
         assert self.process_group_initialized
         return mpu.get_data_parallel_group()
 
+    @property
+    def data_parallel_group_gloo(self) -> dist.ProcessGroup:
+        assert self.process_group_initialized
+        return mpu.get_data_parallel_group_gloo()
+
     def current_data_parallel_head(self) -> int:
         """Get the rank of the head of the current data parallel group."""
         assert self.process_group_initialized
@@ -793,7 +798,10 @@ class MegatronEngine(TrainEngine):
         return res
 
     def export_stats(self) -> dict[str, float]:
-        data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        data = stats_tracker.export_all(
+            reduce_group=self.data_parallel_group,
+            gloo_group=self.data_parallel_group_gloo,
+        )
         if mpu.get_pipeline_model_parallel_world_size() > 1:
             # Some log info only exist in last pipeline rank
             data_list = [data]
