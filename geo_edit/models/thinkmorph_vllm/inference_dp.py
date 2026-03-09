@@ -138,15 +138,17 @@ class ThinkMorphDP:
             p.start()
             processes.append(p)
 
+        # Collect results from queue (one result per worker with samples)
+        # Note: Do this BEFORE p.join() to avoid deadlock with large queues
+        all_results = []
+        num_workers_with_samples = sum(1 for c in chunks if c)
+        for _ in range(num_workers_with_samples):
+            results = output_queue.get()  # Blocks until data available
+            all_results.extend(results)
+
         # Wait for all processes to complete
         for p in processes:
             p.join()
-
-        # Collect results from queue
-        all_results = []
-        while not output_queue.empty():
-            results = output_queue.get()
-            all_results.extend(results)
 
         # Sort by original index
         all_results.sort(key=lambda x: x['original_idx'])
