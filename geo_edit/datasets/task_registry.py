@@ -11,6 +11,8 @@ from geo_edit.datasets.input_template import (
     CARTOMAPQA_STMF_COUNTING_TEMPLATE,
     CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
     CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
+    MAPEVAL_VISUAL_INPUT_TEMPLATE,
+    MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE,
     MATHVISION_INPUT_TEMPLATE,
     MATHVISION_NOTOOL_INPUT_TEMPLATE,
     VISWORLD_EVAL_INPUT_TEMPLATE,
@@ -75,6 +77,15 @@ def _get_babyvision_answer(item: Mapping[str, Any]) -> str:
         if choice_idx is not None:
             return chr(65 + int(choice_idx))  # Convert to A, B, C, D...
     return str(item.get("blankAns", ""))
+
+
+def _format_mapeval_visual_options(item: Mapping[str, Any]) -> str:
+    """Format options for MapEval-Visual dataset."""
+    options = item.get("options", [])
+    if not options:
+        return ""
+    option_lines = [f"{i}. {opt}" for i, opt in enumerate(options)]
+    return "\n".join(option_lines)
 
 
 DATASET_SPECS: Dict[str, DatasetSpec] = {
@@ -206,6 +217,23 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
                 "type": item.get("type", ""),
                 "subtype": item.get("subtype", ""),
                 "ansType": item.get("ansType", ""),
+            },
+        },
+    ),
+    "mapeval_visual": DatasetSpec(
+        name="mapeval_visual",
+        id_key="id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=MAPEVAL_VISUAL_INPUT_TEMPLATE,
+        notool_prompt_template=MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+            "options_text": _format_mapeval_visual_options,
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "classification": item.get("classification", ""),
             },
         },
     ),

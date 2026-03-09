@@ -87,3 +87,31 @@ Please solve the visual reasoning problem step by step. After you confirm the fi
 {question}
 {options_text}
 """
+
+MAPEVAL_VISUAL_INPUT_TEMPLATE = """\
+You are a map understanding assistant specialized in analyzing map images and answering location-based questions.
+
+Look at the map image and answer the following question. Choose the correct option from the provided choices.
+
+Question: {question}
+
+Options:
+{options_text}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Please provide your final answer as the option index (0, 1, 2, 3, etc.) in <answer></answer> tags.
+"""
+
+MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE = """\
+You are a map understanding assistant specialized in analyzing map images and answering location-based questions.
+
+Look at the map image carefully and answer the following question. Choose the correct option from the provided choices.
+
+Question: {question}
+
+Options:
+{options_text}
+
+Please analyze the map image and provide your final answer as the option index (0, 1, 2, 3, etc.) in <answer></answer> tags.
+"""
