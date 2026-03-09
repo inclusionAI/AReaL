@@ -13,7 +13,7 @@ from PIL import Image
 from datasets import load_dataset
 from tqdm import tqdm
 
-from geo_edit.models.thinkmorph_vllm import ThinkMorphDP, ThinkMorphBatchInference
+from geo_edit.models.thinkmorph_vllm import ThinkMorphDP, ThinkMorphBatchInference, ThinkMorphInference
 
 
 def extract_answer(text: str, answer_type: str = "choice") -> str:
@@ -54,13 +54,16 @@ def evaluate_with_dp(
     dataset_name: str = "vispuzzle",
     output_dir: str = "./dp_results",
     num_gpus: int = 8,
-    batch_size: int = 8,
     max_mem_per_gpu: str = "140GiB",
     max_samples: Optional[int] = None,
     split: str = "test",
+    understanding_output: bool = False,
 ):
     """
     Run inference and evaluation using multi-GPU Data Parallel.
+
+    Each GPU runs one sample at a time with full interleaved text-image
+    generation support (visual thinking).
 
     Args:
         model_path: Path to ThinkMorph model
@@ -68,10 +71,10 @@ def evaluate_with_dp(
         dataset_name: Dataset type ("vispuzzle" or "spatial_navigation")
         output_dir: Directory to save results
         num_gpus: Number of GPUs to use
-        batch_size: Total batch size (divided among GPUs)
         max_mem_per_gpu: Maximum GPU memory per device
         max_samples: Limit number of samples (None for all)
         split: Dataset split to use
+        understanding_output: If True, only generate text; if False, enable visual thinking
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -140,20 +143,19 @@ def evaluate_with_dp(
         })
 
     # Initialize DP inferencer
-    print(f"Initializing ThinkMorphDP with {num_gpus} GPUs, batch_size={batch_size}...")
+    print(f"Initializing ThinkMorphDP with {num_gpus} GPUs...")
     dp = ThinkMorphDP(
         model_path=model_path,
         num_gpus=num_gpus,
-        batch_size=batch_size,
         max_mem_per_gpu=max_mem_per_gpu,
     )
 
-    # Run DP inference
-    print("Running DP inference...")
+    # Run DP inference with full interleaved generation
+    print(f"Running DP inference (understanding_output={understanding_output})...")
     dp_results = dp.infer_samples(
         samples,
         think=True,
-        understanding_output=True,
+        understanding_output=understanding_output,
     )
 
     # Process results
@@ -208,13 +210,13 @@ def evaluate_with_dp(
             "correct": correct,
             "total": len(results),
             "num_gpus": num_gpus,
-            "batch_size": batch_size,
+            "understanding_output": understanding_output,
             "results": results
         }, f, ensure_ascii=False, indent=2)
 
     print(f"\n{'='*50}")
     print(f"{dataset_name} DP Evaluation Complete")
-    print(f"GPUs: {num_gpus}, Batch size: {batch_size}")
+    print(f"GPUs: {num_gpus}, Visual thinking: {not understanding_output}")
     print(f"Accuracy: {accuracy:.2f}% ({correct}/{len(results)})")
     print(f"Results saved to: {results_path}")
     print(f"{'='*50}")
@@ -369,7 +371,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="ThinkMorph DP/Batch Inference Test")
     parser.add_argument('--mode', type=str, default='dp', choices=['dp', 'batch'],
-                        help='Inference mode: dp (multi-GPU) or batch (single GPU)')
+                        help='Inference mode: dp (multi-GPU with visual thinking) or batch (single GPU text-only)')
     parser.add_argument('--model_path', type=str,
                         default='/storage/openpsi/models/lcy_image_edit/ThinkMorph-7B',
                         help='Path to ThinkMorph model')
@@ -380,29 +382,29 @@ if __name__ == "__main__":
                         help='Output directory')
     parser.add_argument('--num_gpus', type=int, default=8,
                         help='Number of GPUs (for DP mode)')
-    parser.add_argument('--batch_size', type=int, default=8,
-                        help='Total batch size')
     parser.add_argument('--max_samples', type=int, default=10,
                         help='Maximum samples to process')
     parser.add_argument('--max_mem_per_gpu', type=str, default='140GiB',
                         help='Maximum memory per GPU')
+    parser.add_argument('--understanding_output', action='store_true',
+                        help='Text-only output (disable visual thinking)')
 
     args = parser.parse_args()
 
     if args.mode == 'dp':
-        # Multi-GPU DP inference
+        # Multi-GPU DP inference with full interleaved generation
         evaluate_with_dp(
             model_path=args.model_path,
             dataset_name=args.dataset_name,
             output_dir=args.output_dir,
             num_gpus=args.num_gpus,
-            batch_size=args.batch_size,
             max_mem_per_gpu=args.max_mem_per_gpu,
             max_samples=args.max_samples,
             split="train" if args.dataset_name == "spatial_navigation" else "test",
+            understanding_output=args.understanding_output,
         )
     else:
-        # Single GPU batch inference
+        # Single GPU batch inference (text-only)
         evaluate_single_gpu_batch(
             model_path=args.model_path,
             dataset_name=args.dataset_name,

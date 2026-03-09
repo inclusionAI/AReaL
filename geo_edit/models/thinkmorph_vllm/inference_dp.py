@@ -20,12 +20,12 @@ class ThinkMorphDP:
     Multi-process Data Parallel inference for ThinkMorph.
 
     Distributes samples across multiple GPUs, with each GPU running
-    an independent model instance. Supports HuggingFace Dataset input.
+    an independent model instance. Each GPU processes samples sequentially
+    to support full interleaved text-image generation (visual thinking).
 
     Args:
         model_path: Path to ThinkMorph model
         num_gpus: Number of GPUs to use
-        batch_size: Total batch size (divided among GPUs)
         max_mem_per_gpu: Maximum memory per GPU
     """
 
@@ -33,20 +33,16 @@ class ThinkMorphDP:
         self,
         model_path: str,
         num_gpus: int = 8,
-        batch_size: int = 8,
         max_mem_per_gpu: str = "140GiB",
     ):
         self.model_path = model_path
         self.num_gpus = min(num_gpus, torch.cuda.device_count())
-        self.batch_size = batch_size
-        self.batch_per_gpu = max(1, batch_size // self.num_gpus)
         self.max_mem_per_gpu = max_mem_per_gpu
 
         logger.info(f"ThinkMorphDP initialized:")
         logger.info(f"  Model: {model_path}")
         logger.info(f"  GPUs: {self.num_gpus}")
-        logger.info(f"  Total batch size: {batch_size}")
-        logger.info(f"  Batch per GPU: {self.batch_per_gpu}")
+        logger.info(f"  Parallelism: {self.num_gpus} samples concurrently")
 
     def infer_dataset(
         self,
@@ -135,7 +131,6 @@ class ThinkMorphDP:
                     self.model_path,
                     self.max_mem_per_gpu,
                     chunks[rank],
-                    self.batch_per_gpu,
                     output_queue,
                     worker_kwargs,
                 )
@@ -165,19 +160,20 @@ def _worker_fn(
     model_path: str,
     max_mem_per_gpu: str,
     indexed_samples: List,
-    batch_per_gpu: int,
     output_queue: mp.Queue,
     kwargs: Dict[str, Any],
 ):
     """
     Worker function for each GPU process.
 
+    Each worker processes samples sequentially using ThinkMorphInference,
+    which supports full interleaved text-image generation (visual thinking).
+
     Args:
         rank: GPU rank (0 to num_gpus-1)
         model_path: Path to model
         max_mem_per_gpu: Memory limit per GPU
         indexed_samples: List of (original_idx, sample) tuples
-        batch_per_gpu: Batch size for this GPU
         output_queue: Queue to send results back
         kwargs: Inference parameters
     """
@@ -187,13 +183,13 @@ def _worker_fn(
     # Set device for this process
     torch.cuda.set_device(rank)
 
-    # Import here to avoid issues with multiprocessing
-    from .inference_batch import ThinkMorphBatchInference
+    # Import ThinkMorphInference for full interleaved generation support
+    from .inference import ThinkMorphInference
 
     logger.info(f"[GPU {rank}] Loading model...")
 
     # Initialize inferencer with specific device
-    inferencer = ThinkMorphBatchInference(
+    inferencer = ThinkMorphInference(
         model_path=model_path,
         max_mem_per_gpu=max_mem_per_gpu,
         device=rank,  # Load model only on this GPU
@@ -203,45 +199,35 @@ def _worker_fn(
 
     results = []
 
-    # Process in batches
+    # Process samples sequentially (each supports full interleaved generation)
     show_progress = kwargs.get('show_progress', True) and rank == 0
-    iterator = range(0, len(indexed_samples), batch_per_gpu)
+    iterator = indexed_samples
     if show_progress:
-        iterator = tqdm(iterator, desc=f"GPU {rank}", total=len(indexed_samples) // batch_per_gpu + 1)
+        iterator = tqdm(iterator, desc=f"GPU {rank}")
 
-    for i in iterator:
-        batch = indexed_samples[i:i + batch_per_gpu]
-
-        # Extract samples and indices
-        batch_indices = [idx for idx, _ in batch]
-        batch_samples = [sample for _, sample in batch]
-
+    for original_idx, sample in iterator:
         try:
-            # Run batch inference
-            outputs = inferencer.infer_batch_parallel(
-                batch_samples,
+            # Run single-sample inference with full interleaved generation
+            output = inferencer.infer_single(
+                image=sample.get('image'),
+                text=sample.get('text'),
                 think=kwargs.get('think', True),
-                understanding_output=kwargs.get('understanding_output', True),
-                show_progress=False,  # Don't show per-batch progress
+                understanding_output=kwargs.get('understanding_output', False),
             )
 
-            # Collect results with original indices
-            for idx, sample, output in zip(batch_indices, batch_samples, outputs):
-                results.append({
-                    'original_idx': idx,
-                    'id': sample.get('id', idx),
-                    'output': output,
-                })
+            results.append({
+                'original_idx': original_idx,
+                'id': sample.get('id', original_idx),
+                'output': output,
+            })
 
         except Exception as e:
-            logger.error(f"[GPU {rank}] Error processing batch: {e}")
-            # Add error results
-            for idx, sample in zip(batch_indices, batch_samples):
-                results.append({
-                    'original_idx': idx,
-                    'id': sample.get('id', idx),
-                    'output': [f"Error: {str(e)}"],
-                })
+            logger.error(f"[GPU {rank}] Error processing sample {original_idx}: {e}")
+            results.append({
+                'original_idx': original_idx,
+                'id': sample.get('id', original_idx),
+                'output': [f"Error: {str(e)}"],
+            })
 
     # Send results back through queue
     output_queue.put(results)

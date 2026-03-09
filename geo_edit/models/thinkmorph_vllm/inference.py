@@ -71,6 +71,7 @@ class ThinkMorphInference:
         cfg_renorm_type: str = "text_channel",
         image_shapes: tuple = (1024, 1024),
         max_rounds: int = 3,
+        device: Optional[int] = None,  # Specific GPU device (for DP workers)
     ):
         """
         Initialize ThinkMorphInference with manual component loading.
@@ -90,8 +91,13 @@ class ThinkMorphInference:
             cfg_renorm_type: Type of CFG renormalization (global/channel/text_channel)
             image_shapes: Default image generation size (H, W)
             max_rounds: Maximum rounds of interleaved generation
+            device: Specific GPU device index (None = use all available GPUs)
         """
-        logger.info(f"[{self._timestamp()}] INFO inference.py: Initializing ThinkMorphInference with model: {model_path}")
+        self.device = device
+        if device is not None:
+            logger.info(f"[{self._timestamp()}] INFO inference.py: Initializing ThinkMorphInference on GPU {device}")
+        else:
+            logger.info(f"[{self._timestamp()}] INFO inference.py: Initializing ThinkMorphInference with model: {model_path}")
 
         self.model_path = model_path
 
@@ -125,6 +131,23 @@ class ThinkMorphInference:
         from datetime import datetime
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    def _get_target_device(self):
+        """Get the target device for tensor operations."""
+        if self.device is not None:
+            return torch.device(f"cuda:{self.device}")
+        return torch.device("cuda:0")
+
+    def _move_to_device(self, data):
+        """Move tensors in a dict/list to the target device."""
+        target_device = self._get_target_device()
+        if isinstance(data, dict):
+            return {k: self._move_to_device(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._move_to_device(v) for v in data]
+        elif isinstance(data, torch.Tensor):
+            return data.to(target_device)
+        return data
+
     def _load_model_components(self, model_path: str, max_mem_per_gpu: str):
         """
         Load model components separately, like original ThinkMorph.
@@ -151,6 +174,11 @@ class ThinkMorphInference:
         # 3. Load VAE
         logger.info(f"[{self._timestamp()}] INFO inference.py: Loading VAE from ae.safetensors...")
         self.vae_model, vae_config = load_ae(local_path=os.path.join(model_path, "ae.safetensors"))
+        # Move VAE to specific device if set
+        if self.device is not None:
+            self.vae_model = self.vae_model.to(f"cuda:{self.device}").to(torch.bfloat16).eval()
+        else:
+            self.vae_model = self.vae_model.cuda().to(torch.bfloat16).eval()
 
         # 4. Create Bagel config
         logger.info(f"[{self._timestamp()}] INFO inference.py: Creating BagelConfig...")
@@ -186,11 +214,26 @@ class ThinkMorphInference:
 
         # 8. Setup device map and load weights
         logger.info(f"[{self._timestamp()}] INFO inference.py: Setting up device map (max_mem_per_gpu={max_mem_per_gpu})...")
-        device_map = infer_auto_device_map(
-            model,
-            max_memory={i: max_mem_per_gpu for i in range(torch.cuda.device_count())},
-            no_split_module_classes=["Bagel", "Qwen2MoTDecoderLayer"],
-        )
+
+        # Determine device map based on whether a specific device is set
+        if self.device is not None:
+            # Single GPU mode: load everything on the specified device
+            target_device = f"cuda:{self.device}"
+            device_map = infer_auto_device_map(
+                model,
+                max_memory={self.device: max_mem_per_gpu},
+                no_split_module_classes=["Bagel", "Qwen2MoTDecoderLayer"],
+            )
+            # Force all modules to the target device
+            for key in list(device_map.keys()):
+                device_map[key] = target_device
+        else:
+            # Multi-GPU mode: distribute across all available GPUs
+            device_map = infer_auto_device_map(
+                model,
+                max_memory={i: max_mem_per_gpu for i in range(torch.cuda.device_count())},
+                no_split_module_classes=["Bagel", "Qwen2MoTDecoderLayer"],
+            )
         logger.info(f"[{self._timestamp()}] INFO inference.py: Device map: {device_map}")
 
         # Ensure certain modules are on same device
@@ -204,18 +247,18 @@ class ThinkMorphInference:
             'vit_pos_embed'
         ]
 
-        if torch.cuda.device_count() == 1:
+        if self.device is not None:
+            first_device = f"cuda:{self.device}"
+        elif torch.cuda.device_count() == 1:
             first_device = device_map.get(same_device_modules[0], "cuda:0")
-            for k in same_device_modules:
-                if k in device_map:
-                    device_map[k] = first_device
-                else:
-                    device_map[k] = "cuda:0"
         else:
             first_device = device_map.get(same_device_modules[0])
-            for k in same_device_modules:
-                if k in device_map:
-                    device_map[k] = first_device
+
+        for k in same_device_modules:
+            if k in device_map:
+                device_map[k] = first_device
+            elif self.device is not None or torch.cuda.device_count() == 1:
+                device_map[k] = first_device
 
         # 9. Load checkpoint
         logger.info(f"[{self._timestamp()}] INFO inference.py: Loading model weights from model.safetensors...")
@@ -229,7 +272,10 @@ class ThinkMorphInference:
             offload_folder="/tmp/offload"
         )
         self.model = self.model.eval()
-        logger.info(f"[{self._timestamp()}] INFO inference.py: Model loaded successfully!")
+        if self.device is not None:
+            logger.info(f"[{self._timestamp()}] INFO inference.py: Model loaded on GPU {self.device}")
+        else:
+            logger.info(f"[{self._timestamp()}] INFO inference.py: Model loaded successfully!")
 
     def _init_gen_context(self):
         """Initialize generation context for interleaved inference."""
@@ -254,6 +300,8 @@ class ThinkMorphInference:
             tokenizer=self.tokenizer,
             new_token_ids=self.new_token_ids,
         )
+        # Move tensors to target device
+        generation_input = self._move_to_device(generation_input)
 
         past_key_values = self.model.forward_cache_update_text(past_key_values, **generation_input)
         gen_context['kv_lens'] = kv_lens
@@ -278,6 +326,8 @@ class ThinkMorphInference:
                 transforms=self.vae_transform,
                 new_token_ids=self.new_token_ids,
             )
+            # Move tensors to target device
+            generation_input = self._move_to_device(generation_input)
             past_key_values = self.model.forward_cache_update_vae(self.vae_model, past_key_values, **generation_input)
 
         if vit:
@@ -288,6 +338,8 @@ class ThinkMorphInference:
                 transforms=self.vit_transform,
                 new_token_ids=self.new_token_ids,
             )
+            # Move tensors to target device
+            generation_input = self._move_to_device(generation_input)
             past_key_values = self.model.forward_cache_update_vit(past_key_values, **generation_input)
 
         gen_context['kv_lens'] = kv_lens
@@ -323,6 +375,8 @@ class ThinkMorphInference:
             image_sizes=[image_shape],
             new_token_ids=self.new_token_ids,
         )
+        # Move tensors to target device
+        generation_input = self._move_to_device(generation_input)
 
         # Text CFG
         cfg_text_past_key_values = cfg_text_precontext['past_key_values']
@@ -333,6 +387,8 @@ class ThinkMorphInference:
             curr_rope=ropes_cfg,
             image_sizes=[image_shape],
         )
+        # Move tensors to target device
+        generation_input_cfg_text = self._move_to_device(generation_input_cfg_text)
 
         # Image CFG
         cfg_img_past_key_values = cfg_img_precontext['past_key_values']
@@ -343,6 +399,8 @@ class ThinkMorphInference:
             curr_rope=ropes_cfg,
             image_sizes=[image_shape],
         )
+        # Move tensors to target device
+        generation_input_cfg_img = self._move_to_device(generation_input_cfg_img)
 
         unpacked_latent = self.model.generate_image(
             past_key_values=past_key_values,
@@ -393,6 +451,8 @@ class ThinkMorphInference:
         ropes = gen_context['ropes']
 
         generation_input = self.model.prepare_start_tokens(kv_lens, ropes, self.new_token_ids)
+        # Move tensors to target device
+        generation_input = self._move_to_device(generation_input)
         unpacked_latent = self.model.generate_text(
             past_key_values=past_key_values,
             max_length=max_length,
