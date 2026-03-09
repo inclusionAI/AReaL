@@ -227,33 +227,6 @@ class SAM2Actor(BaseToolModelActor):
 
 
 ACTOR_CLASS = SAM2Actor
-
-# Legacy single declaration (kept for backward compatibility)
-DECLARATION = {
-    "name": "sam2",
-    "description": """SAM2 (Segment Anything Model 2) automatic segmentation tool.
-- Mode 1 (auto): Input image_index only → returns automatic mask proposals for entire image
-- Mode 2 (bbox): Input image_index + bounding_box → returns refined mask within bounding box
-
-The bounding_box should be provided in the format "\\boxed{x1,y1,x2,y2}" where (x1, y1) is the top-left corner and (x2, y2) is the bottom-right corner. All (x,y) values should be between 0-1000 (normalized coordinates).
-
-Returns JSON with mask proposals including scores, bounding boxes, areas, and centroids. Max 20 proposals with score >= 0.25.""",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "image_index": {
-                "type": "integer",
-                "description": "The index of the image to segment. Each image is assigned an index like 'Observation 0', 'Observation 1', etc."
-            },
-            "bounding_box": {
-                "type": "string",
-                "description": "Optional. Bounding box coordinates in format '\\boxed{x1,y1,x2,y2}' to constrain segmentation. If omitted, performs automatic full-image segmentation."
-            }
-        },
-        "required": ["image_index"]
-    }
-}
-
 RETURN_TYPE = "text"
 
 # Multi-tool declarations - split by segmentation mode

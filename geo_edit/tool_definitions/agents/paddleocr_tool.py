@@ -199,36 +199,6 @@ class PaddleOCRActor(BaseToolModelActor):
 
 
 ACTOR_CLASS = PaddleOCRActor
-
-# Legacy single declaration (kept for backward compatibility)
-DECLARATION = {
-    "name": "paddleocr",
-    "description": """PaddleOCR-VL text recognition tool. Advanced vision-language model for OCR with multiple task modes:
-- task='spotting': Text recognition with precise localization in the image (Recomended for Map)
-- task='ocr': Standard text recognition
-- task='table': Table structure recognition
-- task='formula': Mathematical formula recognition
-- task='chart': Chart/diagram recognition
-- task='seal': Seal/stamp recognition
-
-Supports multilingual text recognition with high accuracy.""",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "image_index": {
-                "type": "integer",
-                "description": "The index of the image to analyze. Each image is assigned an index like 'Observation 0', 'Observation 1', etc."
-            },
-            "task": {
-                "type": "string",
-                "enum": ["ocr", "table", "formula", "chart", "spotting", "seal"],
-                "description": "Recognition task type. "
-            }
-        },
-        "required": ["image_index"]
-    }
-}
-
 RETURN_TYPE = "text"
 
 # Multi-tool declarations - each tool has a fixed task mode

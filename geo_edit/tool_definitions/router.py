@@ -5,6 +5,7 @@ Controls tool availability based on:
 2. tool_mode - runtime mode ("auto", "force", "direct")
    - "auto"/"force": use enabled tools from config
    - "direct": disable ALL tools (no tool system prompt)
+3. enable_tools parameter - runtime override to enable specific tools
 """
 
 from pathlib import Path
@@ -32,7 +33,48 @@ with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
     _TOOL_CONFIG: Dict[str, bool] = yaml.safe_load(f)
 
 
-def _make_agent_execute(agent_name: str, fixed_params: Optional[Dict[str, Any]] = None) -> Callable[[List[Image.Image], int, str], str]:
+# =============================================================================
+# Tool Category Presets
+# =============================================================================
+
+TOOL_CATEGORIES = {
+    "general": ["image_crop", "image_label", "draw_line", "bounding_box", "image_highlight",
+                "text_ocr", "auto_segment", "bbox_segment", "grounding_dino"],
+    "math": ["math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath", "ovr"],
+    "table": ["table_ocr"],
+    "chart": ["chart_data_extract", "chart_trend_analysis", "chart_text_ocr", "chartmoe"],
+    "map": ["text_spotting"],
+    "document": ["seal_ocr"],
+    "ocr": ["text_ocr", "table_ocr", "formula_ocr", "chart_text_ocr", "text_spotting", "seal_ocr"],
+    "segment": ["auto_segment", "bbox_segment"],
+}
+
+
+def get_all_tool_names() -> List[str]:
+    """Get all available tool names."""
+    return list(_build_tool_registry().keys())
+
+
+def expand_tool_names(tool_specs: List[str]) -> List[str]:
+    """Expand tool specifications (names or categories) to actual tool names.
+
+    Args:
+        tool_specs: List of tool names or category names (e.g., ["math", "text_ocr", "chart"])
+
+    Returns:
+        List of expanded tool names.
+    """
+    expanded = set()
+    for spec in tool_specs:
+        spec_lower = spec.lower().strip()
+        if spec_lower in TOOL_CATEGORIES:
+            expanded.update(TOOL_CATEGORIES[spec_lower])
+        else:
+            expanded.add(spec_lower)
+    return list(expanded)
+
+
+def _make_agent_execute(agent_name: str, fixed_params: Optional[Dict[str, Any]] = None) -> Callable[..., str]:
     """Create an execute function for a specific agent.
 
     Args:
@@ -111,6 +153,8 @@ class ToolRouter:
 
     Args:
         tool_mode: "auto"/"force" to use enabled tools, "direct" to disable all tools.
+        enable_tools: List of tool names/categories to enable (overrides config.yaml).
+            Supports category names: "general", "math", "table", "chart", "map", "document", "ocr", "segment".
         node_resource: Ray custom resource name to schedule agents on specific nodes.
             E.g., "tool_agent" will add {"tool_agent": 1} to each agent's resources.
         ray_address: Ray cluster address for agent initialization.
@@ -121,6 +165,7 @@ class ToolRouter:
     def __init__(
         self,
         tool_mode: Literal["auto", "force", "direct"] = "auto",
+        enable_tools: Optional[List[str]] = None,
         node_resource: str = "tool_agent",
         ray_address: str = "auto",
         skip_agent_init: bool = False,
@@ -128,14 +173,26 @@ class ToolRouter:
         self.tool_mode = tool_mode
         self._agents: Dict[str, Any] = {}
 
+        # Override config with enable_tools if provided
+        self._tool_override: Optional[List[str]] = None
+        if enable_tools:
+            self._tool_override = expand_tool_names(enable_tools)
+            logger.info(f"Tool override enabled: {self._tool_override}")
+
         # Auto-initialize agents if any are enabled (unless explicitly skipped)
         if not skip_agent_init and self.get_enabled_agents():
             self._agents = self._create_agents(ray_address, node_resource)
 
     def _get_enabled_tool_names(self) -> List[str]:
-        """Get names of all enabled tools (respects tool_mode and config.yaml)."""
+        """Get names of all enabled tools (respects tool_mode, config.yaml, and overrides)."""
         if self.tool_mode == "direct":
             return []
+
+        # If override is set, use only those tools
+        if self._tool_override is not None:
+            return [name for name in self._tool_override if name in _TOOL_REGISTRY]
+
+        # Otherwise use config.yaml
         return [name for name in _TOOL_REGISTRY if _TOOL_CONFIG.get(name, False)]
 
     def _create_agents(

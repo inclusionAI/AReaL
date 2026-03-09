@@ -1,44 +1,52 @@
-# Tool Enable Configuration - set true/false to enable/disable
-# Image editing tools (functions/)
-image_crop: true
-image_label: false
-draw_line: false
-bounding_box: false
-image_highlight: false
-
 # =============================================================================
-# Legacy VLM analysis tools (agents/) - kept for backward compatibility
-# =============================================================================
-multimath: false
-gllava: false
-chartmoe: false
-ovr: false
-sam2: false
-grounding_dino: false
-paddleocr: false
-
-# =============================================================================
-# Fine-grained multi-tools (new)
-# These provide specialized functionality from base agents
+# Tool Enable Configuration
+# Set true/false to enable/disable each tool
+# Tools are organized by task category for easier management
 # =============================================================================
 
-# PaddleOCR multi-tools (6 tools from paddleocr base agent)
-text_ocr: false          # General text recognition
-table_ocr: false         # Table structure recognition
-formula_ocr: false       # Math formula to LaTeX
-chart_text_ocr: false    # Chart text extraction
-text_spotting: false     # Text localization 
-seal_ocr: false          # Seal/stamp recognition
+# =============================================================================
+# GENERAL TOOLS - Image editing and general-purpose tools
+# =============================================================================
+image_crop: false          # Crop image by bounding box
+image_label: false         # Add text labels to image
+draw_line: false           # Draw lines on image
+bounding_box: false        # Draw bounding boxes on image
+image_highlight: false     # Highlight regions on image
+text_ocr: false            # General text recognition (111 languages)
+auto_segment: false        # Automatic full-image segmentation (SAM2)
+bbox_segment: false        # Region-constrained segmentation (SAM2)
+grounding_dino: false      # Open-vocabulary object detection
 
-# SAM2 multi-tools (2 tools from sam2 base agent)
-auto_segment: false      # Automatic full-image segmentation
-bbox_segment: false      # Region-constrained segmentation
+# =============================================================================
+# MATH TOOLS - Mathematical expressions and geometry
+# =============================================================================
+math_latex_ocr: false      # Math expression → LaTeX conversion
+math_image_describe: false # Detailed math image description
+formula_ocr: false         # Math formula recognition (PaddleOCR)
+gllava: false              # Geometry diagram analysis (G-LLaVA)
+multimath: false           # [Legacy] Multi-purpose math tool
+ovr: false                 # RL-enhanced visual reasoning
 
-# Multimath multi-tools (2 tools from multimath base agent)
-math_latex_ocr: false    # Math expression to LaTeX
-math_image_describe: false  # Math image detailed description
+# =============================================================================
+# TABLE TOOLS - Table structure recognition
+# =============================================================================
+table_ocr: false           # Table structure and data extraction
 
-# ChartMoE multi-tools (2 tools from chartmoe base agent)
-chart_data_extract: false    # Extract chart data to structured format
-chart_trend_analysis: false  # Analyze chart trends and insights
+# =============================================================================
+# CHART TOOLS - Chart and diagram analysis
+# =============================================================================
+chart_data_extract: false  # Extract chart data to structured format
+chart_trend_analysis: false # Analyze chart trends and insights
+chart_text_ocr: false      # Extract text from charts (PaddleOCR)
+chartmoe: false            # [Legacy] General chart analysis
+
+# =============================================================================
+# MAP TOOLS - Map and location-based tools
+# =============================================================================
+text_spotting: false       # Text localization with coordinates (recommended for maps)
+
+# =============================================================================
+# DOCUMENT TOOLS - Specialized document processing
+# =============================================================================
+seal_ocr: false            # Seal/stamp recognition
 

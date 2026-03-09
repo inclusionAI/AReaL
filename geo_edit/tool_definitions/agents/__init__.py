@@ -10,15 +10,14 @@ from typing import Dict, Type, Any
 
 from geo_edit.tool_definitions.agents import multimath, gllava, chartmoe, ovr, sam2, grounding_dino, paddleocr_tool
 
-# Legacy agent declarations for API tool definitions (backward compatibility)
+# Agent declarations for API tool definitions
+# Note: paddleocr and sam2 legacy tools removed - use fine-grained multi-tools instead
 AGENT_DECLARATIONS: Dict[str, dict] = {
     "multimath": multimath.DECLARATION,
     "gllava": gllava.DECLARATION,
     "chartmoe": chartmoe.DECLARATION,
     "ovr": ovr.DECLARATION,
-    "sam2": sam2.DECLARATION,
     "grounding_dino": grounding_dino.DECLARATION,
-    "paddleocr": paddleocr_tool.DECLARATION,
 }
 
 # Agent return types
@@ -27,9 +26,7 @@ AGENT_RETURN_TYPES: Dict[str, str] = {
     "gllava": gllava.RETURN_TYPE,
     "chartmoe": chartmoe.RETURN_TYPE,
     "ovr": ovr.RETURN_TYPE,
-    "sam2": sam2.RETURN_TYPE,
     "grounding_dino": grounding_dino.RETURN_TYPE,
-    "paddleocr": paddleocr_tool.RETURN_TYPE,
 }
 
 # Export model configs for tool_agents manager

@@ -310,6 +310,10 @@ def main():
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
     parser.add_argument("--n_trajectories", type=int, default=1, help="Number of trajectories per task.")
     parser.add_argument("--node_resource", type=str, default=None, help="Ray custom resource name (default: 'tool_agent').")
+    parser.add_argument("--enable_tools", type=str, nargs="+", default=None,
+                        help="Tool names or categories to enable (overrides config.yaml). "
+                             "Categories: general, math, table, chart, map, document, ocr, segment. "
+                             "Examples: --enable_tools math chart, --enable_tools text_ocr formula_ocr")
     args = parser.parse_args()
 
     if args.model_type == "Google" and not args.api_key:
@@ -317,8 +321,15 @@ def main():
 
     # Initialize Ray tool agents in main process (shared by all workers)
     # Ray will auto-connect to local cluster or start one if needed
-    tool_router = ToolRouter(tool_mode="force", node_resource=args.node_resource or "tool_agent")
+    tool_router = ToolRouter(
+        tool_mode="force",
+        enable_tools=args.enable_tools,
+        node_resource=args.node_resource or "tool_agent"
+    )
     enabled_agent_names = tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
+
+    if args.enable_tools:
+        logger.info(f"Tool override from command line: {args.enable_tools}")
 
     if enabled_agent_names:
         logger.info(f"Initialized {len(enabled_agent_names)} shared Ray tool agents in main process: {enabled_agent_names}")
