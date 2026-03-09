@@ -1,48 +1,34 @@
-"""Package MapEval-Visual dataset to parquet format.
-
-Downloads the dataset and images from HuggingFace and packages them into a parquet file.
-
-Usage:
-    python geo_edit/data_preprocess/package_mapeval_visual.py --out_dir /path/to/output
-"""
-from __future__ import annotations
-
-import argparse
 import os
+import argparse
 from pathlib import Path
 
-from datasets import Dataset, Features, Image as HFImage, Sequence, Value, load_dataset
-from huggingface_hub import hf_hub_download
 from tqdm import tqdm
+from datasets import load_dataset, Dataset, Features, Value, Sequence, Image as HFImage
 
 
 def package_mapeval_visual(out_dir: Path) -> Path:
     """Package MapEval-Visual dataset with images into parquet format."""
-    out_parquet = out_dir / "mapeval_visual_dataset.parquet"
+    out_parquet = out_dir / "mapeval_visual.parquet"
 
-    # Load dataset metadata from HuggingFace
-    print("Loading MapEval-Visual dataset from HuggingFace...")
-    ds = load_dataset("MapEval/MapEval-Visual")["test"]
+    dataset_root = Path("/storage/openpsi/data/lcy_image_edit/MapEval-Visual")
+
+    print("Loading MapEval-Visual dataset from local disk...")
+    ds = load_dataset(str(dataset_root))["test"]
 
     examples = []
-    print("Downloading images and packaging dataset...")
+    print("Reading local images and packaging dataset...")
 
     for i, item in enumerate(tqdm(ds, desc="Processing")):
-        # Download image from HuggingFace repo
-        context = item["context"]  # e.g., "Vdata/ID_308.PNG"
-        try:
-            image_path = hf_hub_download(
-                repo_id="MapEval/MapEval-Visual",
-                filename=context,
-                repo_type="dataset",
-            )
-            with open(image_path, "rb") as f:
-                image_bytes = f.read()
-        except Exception as e:
-            print(f"Warning: Failed to download image {context}: {e}")
+        context = item["context"]  # e.g. "Vdata/ID_308.PNG"
+        image_path = dataset_root / context
+
+        if not image_path.exists():
+            print(f"Warning: Image not found: {image_path}")
             continue
 
-        # Extract ID from context (e.g., "Vdata/ID_308.PNG" -> "ID_308")
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+
         image_id = os.path.splitext(os.path.basename(context))[0]
 
         examples.append(
@@ -58,7 +44,6 @@ def package_mapeval_visual(out_dir: Path) -> Path:
             }
         )
 
-    # Define features
     features = Features(
         {
             "id": Value("int64"),
@@ -72,9 +57,9 @@ def package_mapeval_visual(out_dir: Path) -> Path:
         }
     )
 
-    # Create dataset and save to parquet
     dataset = Dataset.from_list(examples, features=features)
     dataset.to_parquet(str(out_parquet))
+
     print(f"Saved parquet: {out_parquet}")
     print(f"Total examples: {len(examples)}")
 
@@ -86,12 +71,12 @@ def main() -> None:
     parser.add_argument(
         "--out_dir",
         type=str,
-        default=None,
-        help="Output directory. Defaults to current directory.",
+        default="/storage/openpsi/data/lcy_image_edit/",
+        help="Output directory.",
     )
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir).resolve() if args.out_dir else Path.cwd()
+    out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     package_mapeval_visual(out_dir)
