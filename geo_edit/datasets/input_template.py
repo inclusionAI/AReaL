@@ -115,3 +115,25 @@ Options:
 
 Please analyze the map image and provide your final answer as the option index (0, 1, 2, 3, etc.) in <answer></answer> tags.
 """
+
+CHARTQA_INPUT_TEMPLATE = """\
+You are a chart understanding assistant specialized in analyzing charts and graphs.
+
+Look at the chart image and answer the following question. Provide a precise and concise answer.
+
+Question: {question}
+
+If you need to analyze the chart in detail, you can use the available tools.
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+CHARTQA_NOTOOL_INPUT_TEMPLATE = """\
+You are a chart understanding assistant specialized in analyzing charts and graphs.
+
+Look at the chart image carefully and answer the following question. Provide a precise and concise answer.
+
+Question: {question}
+
+Please analyze the chart and provide your final answer in <answer></answer> tags.
+"""

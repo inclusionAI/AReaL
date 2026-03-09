@@ -19,8 +19,42 @@ from accelerate import infer_auto_device_map, load_checkpoint_and_dispatch, init
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Add ThinkMorph to path if needed
-THINKMORPH_PATH = os.environ.get("THINKMORPH_PATH", "/storage/openpsi/users/lichangye.lcy/antoinegg1/ThinkMorph")
+# ============================================================================
+# ThinkMorph Path Setup
+# ============================================================================
+
+def _find_thinkmorph_path():
+    """Find ThinkMorph source path from environment or common locations."""
+    # Priority 1: Environment variable
+    if "THINKMORPH_PATH" in os.environ:
+        path = os.environ["THINKMORPH_PATH"]
+        if os.path.exists(path):
+            return path
+
+    # Priority 2: Common locations
+    common_paths = [
+        "/storage/openpsi/users/lichangye.lcy/antoinegg1/ThinkMorph",
+        "/ThinkMorph",
+        os.path.expanduser("~/ThinkMorph"),
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "ThinkMorph"),
+    ]
+
+    for path in common_paths:
+        path = os.path.abspath(path)
+        if os.path.exists(path) and os.path.exists(os.path.join(path, "modeling", "bagel")):
+            return path
+
+    return None
+
+THINKMORPH_PATH = _find_thinkmorph_path()
+if THINKMORPH_PATH is None:
+    raise ImportError(
+        "Could not find ThinkMorph source directory. Please set THINKMORPH_PATH environment variable:\n"
+        "  export THINKMORPH_PATH=/path/to/ThinkMorph\n"
+        "The directory should contain 'modeling/bagel' and 'data' subdirectories."
+    )
+
+logger.info(f"Using ThinkMorph from: {THINKMORPH_PATH}")
 if THINKMORPH_PATH not in sys.path:
     sys.path.insert(0, THINKMORPH_PATH)
 

@@ -6,7 +6,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-
+# python geo_edit/evaluation/eval_mapeval_visual.py --output_dir /path/to/inference_output
 def extract_answer(text: str) -> str:
     """Extract answer from <answer> tags."""
     match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL)

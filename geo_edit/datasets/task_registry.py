@@ -11,6 +11,8 @@ from geo_edit.datasets.input_template import (
     CARTOMAPQA_STMF_COUNTING_TEMPLATE,
     CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
     CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
+    CHARTQA_INPUT_TEMPLATE,
+    CHARTQA_NOTOOL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE,
     MATHVISION_INPUT_TEMPLATE,
@@ -234,6 +236,22 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         task_kwargs_fields={
             "meta_info_extra": lambda item: {
                 "classification": item.get("classification", ""),
+            },
+        },
+    ),
+    "chartqa": DatasetSpec(
+        name="chartqa",
+        id_key="id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=CHARTQA_INPUT_TEMPLATE,
+        notool_prompt_template=CHARTQA_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "type": item.get("type", ""),
             },
         },
     ),
