@@ -308,7 +308,7 @@ def main():
     parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "SGLang", "OpenAI"], help="Model provider.")
     parser.add_argument("--api_base", type=str, default=None, help="Base URL for matrixllm server.")
     parser.add_argument("--port", type=int, default=None, help="Port for server.")
-    parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes.")
+    parser.add_argument("--max_concurrent_requests", type=int, default=16, help="Number of worker processes.")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
     parser.add_argument("--n_trajectories", type=int, default=1, help="Number of trajectories per task.")
     parser.add_argument("--node_resource", type=str, default=None, help="Ray custom resource name (default: 'tool_agent').")

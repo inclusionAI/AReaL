@@ -137,8 +137,6 @@ Rules:
 
 SEPARATED_USER_PROMPT="""
 Question: {Question}
-
-Tool Calling Plan:
 """
 
 
