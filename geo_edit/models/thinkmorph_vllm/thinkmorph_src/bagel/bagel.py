@@ -676,6 +676,7 @@ class Bagel(PreTrainedModel):
         cfg_type: str = "parallel",
         # cache_args
         enable_taylorseer=False,
+        show_progress=False,  # Whether to show diffusion progress bar
     ):
         if enable_taylorseer:
             self.language_model.model.enable_taylorseer = True
@@ -687,7 +688,7 @@ class Bagel(PreTrainedModel):
             model_pred_cache_dic, model_pred_current = None, None
             model_pred_text_cache_dic, model_pred_text_current = None, None
             model_pred_img_cache_dic, model_pred_img_current = None, None
-    
+
         x_t = packed_init_noises
 
         timesteps = torch.linspace(1, 0, num_timesteps, device=x_t.device)
@@ -695,7 +696,7 @@ class Bagel(PreTrainedModel):
         dts =  timesteps[:-1] - timesteps[1:]
         timesteps = timesteps[:-1]
 
-        for i, t in tqdm(enumerate(timesteps), total=len(timesteps)):
+        for i, t in tqdm(enumerate(timesteps), total=len(timesteps), disable=not show_progress):
 
             timestep = torch.tensor([t] * x_t.shape[0], device=x_t.device)
             if t > cfg_interval[0] and t <= cfg_interval[1]:

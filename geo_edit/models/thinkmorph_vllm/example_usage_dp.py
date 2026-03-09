@@ -18,16 +18,28 @@ from geo_edit.models.thinkmorph_vllm import ThinkMorphDP, ThinkMorphBatchInferen
 
 def extract_answer(text: str, answer_type: str = "choice") -> str:
     """Extract answer from model output."""
+    result = text
+
     # Try to find answer in <answer>...</answer> tags
-    answer_tag = re.search(r'<answer>(.*?)</answer>', text, re.DOTALL | re.IGNORECASE)
+    answer_tag = re.search(r'<answer>(.*?)</answer>', result, re.DOTALL | re.IGNORECASE)
     if answer_tag:
-        return answer_tag.group(1).strip()
+        result = answer_tag.group(1).strip()
 
-    # Try to find answer in \boxed{} format
-    boxed = re.search(r'\\boxed\{([^}]+)\}', text)
+    # Try to find answer in \boxed{} format (handles nested case like <answer>\boxed{X}</answer>)
+    boxed = re.search(r'\\boxed\{([^}]+)\}', result)
     if boxed:
-        return boxed.group(1).strip()
+        result = boxed.group(1).strip()
+        # For direction type, normalize the extracted answer
+        if answer_type == "direction":
+            dirs = re.findall(r'[UDLR]', result.upper())
+            return ','.join(dirs)
+        return result
 
+    # If we found an answer tag, return its content
+    if answer_tag:
+        return result
+
+    # Fallback extraction for direction type
     if answer_type == "direction":
         dir_pattern = re.search(r'([UDLR](?:[,\s]*[UDLR])*)', text.upper())
         if dir_pattern:

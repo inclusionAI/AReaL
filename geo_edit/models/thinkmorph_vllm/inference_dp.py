@@ -140,11 +140,19 @@ class ThinkMorphDP:
 
         # Collect results from queue (one result per worker with samples)
         # Note: Do this BEFORE p.join() to avoid deadlock with large queues
+        from tqdm import tqdm
+
         all_results = []
         num_workers_with_samples = sum(1 for c in chunks if c)
+        total_samples = len(samples)
+
+        # Show single progress bar for total samples
+        pbar = tqdm(total=total_samples, desc="DP Inference", disable=not show_progress)
         for _ in range(num_workers_with_samples):
-            results = output_queue.get()  # Blocks until data available
+            results = output_queue.get()  # Blocks until worker finishes
             all_results.extend(results)
+            pbar.update(len(results))
+        pbar.close()
 
         # Wait for all processes to complete
         for p in processes:
@@ -201,13 +209,8 @@ def _worker_fn(
 
     results = []
 
-    # Process samples sequentially (each supports full interleaved generation)
-    show_progress = kwargs.get('show_progress', True) and rank == 0
-    iterator = indexed_samples
-    if show_progress:
-        iterator = tqdm(iterator, desc=f"GPU {rank}")
-
-    for original_idx, sample in iterator:
+    # Process samples sequentially (no per-GPU progress bar - total progress shown in main process)
+    for original_idx, sample in indexed_samples:
         try:
             # Run single-sample inference with full interleaved generation
             output = inferencer.infer_single(
