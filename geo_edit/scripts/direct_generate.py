@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Async direct generation script without tool calls.
 
 Supports vLLM/SGLang via OpenAI-compatible API with custom api_base.
@@ -13,7 +14,6 @@ python geo_edit/scripts/direct_generate.py \
     --api_mode chat_completions \
     --max_concurrent_requests 8
 """
-from __future__ import annotations
 
 import json
 import multiprocessing as mp
@@ -84,6 +84,7 @@ def _init_worker(
         api_mode=api_mode,
         temperature=TEMPERATURE,
         system_prompt=SYSTEM_PROMPT.strip(),
+        reasoning_level="low"
     )
 
     config = AgentConfig(

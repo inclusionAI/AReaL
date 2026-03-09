@@ -9,8 +9,7 @@ from typing import Optional
 from PIL import Image
 from datasets import load_dataset
 from tqdm import tqdm
-from thinkmorph_vllm import VLLMInterleavedInference
-
+from geo_edit.models.thinkmorph_vllm import VLLMInterleavedInference
 
 def extract_answer(text: str, answer_type: str = "choice") -> str:
     """Extract answer from model output.
