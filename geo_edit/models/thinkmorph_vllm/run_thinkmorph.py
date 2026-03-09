@@ -33,6 +33,7 @@ from geo_edit.models.thinkmorph_vllm.configs import (
     REASONING_CONFIG,
     EDITING_CONFIG,
 )
+from geo_edit.models.thinkmorph_vllm.prompts import CARTOMAPQA_SRN_VISUAL_TEMPLATE
 
 # Available config presets
 CONFIG_PRESETS = {
@@ -61,6 +62,7 @@ def run_inference(
     max_mem_per_gpu: str = "140GiB",
     use_tools: bool = False,
     config_preset: str = "default",
+    visual_prompt: str = None,
 ):
     """
     Run ThinkMorph inference on a registered task.
@@ -80,8 +82,15 @@ def run_inference(
         max_mem_per_gpu: Maximum GPU memory per device
         use_tools: Use tool-enabled prompt template
         config_preset: Inference config preset (default, fast, high_quality, reasoning, editing)
+        visual_prompt: Use visual thinking prompt template (encourages model to draw)
     """
     os.makedirs(output_dir, exist_ok=True)
+
+    # Get visual thinking template if specified
+    visual_template = None
+    if visual_prompt:
+        visual_template = CARTOMAPQA_SRN_VISUAL_TEMPLATE
+        logger.info(f"Using visual thinking prompt for cartomapqa_srn")
 
     # Get inference config
     if config_preset not in CONFIG_PRESETS:
@@ -125,8 +134,11 @@ def run_inference(
     # Prepare samples using DatasetSpec
     samples = []
     for idx, item in enumerate(dataset):
-        # Build prompt from spec
-        prompt = spec.build_prompt(item, use_tools=use_tools)
+        # Build prompt - use visual template if specified, otherwise use spec
+        if visual_template:
+            prompt = visual_template
+        else:
+            prompt = spec.build_prompt(item, use_tools=use_tools)
 
         # Get image
         image = None
@@ -318,6 +330,10 @@ def main():
         choices=list(CONFIG_PRESETS.keys()),
         help=f'Inference config preset: {list(CONFIG_PRESETS.keys())} (default: default)'
     )
+    parser.add_argument(
+        '--visual_prompt', action='store_true',
+        help='Use visual thinking prompt (encourages model to draw routes on map)'
+    )
 
     args = parser.parse_args()
 
@@ -335,6 +351,7 @@ def main():
         max_mem_per_gpu=args.max_mem_per_gpu,
         use_tools=args.use_tools,
         config_preset=args.config,
+        visual_prompt=args.visual_prompt,
     )
 
 
