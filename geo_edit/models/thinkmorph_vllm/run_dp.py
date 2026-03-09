@@ -10,7 +10,7 @@
 #       --dataset_path ./test_dataset.parquet \
 #       --output_dir ./outputs \
 #       --num_gpus 8 \
-#       --batch_size 16
+#       --models_per_gpu 4
 
 import os
 import json
@@ -51,10 +51,10 @@ def main():
         help='Number of GPUs to use (default: 8)'
     )
     parser.add_argument(
-        '--batch_size',
+        '--models_per_gpu',
         type=int,
-        default=8,
-        help='Total batch size across all GPUs (default: 8)'
+        default=1,
+        help='Number of model instances per GPU (default: 1, max ~4 for 140GB GPU)'
     )
     parser.add_argument(
         '--image_field',
@@ -143,7 +143,7 @@ def main():
     dp = ThinkMorphDP(
         model_path=args.model_path,
         num_gpus=args.num_gpus,
-        batch_size=args.batch_size,
+        models_per_gpu=args.models_per_gpu,
         max_mem_per_gpu=args.max_mem_per_gpu,
     )
 
