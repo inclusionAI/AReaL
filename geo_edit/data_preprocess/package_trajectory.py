@@ -9,17 +9,19 @@ Features:
   - Wrong answer filtering: removes trajectories with incorrect final answers (requires API)
   - Answer leakage filtering: removes trajectories with <answer> tags in thinking/tool-call phases
     (follows three-phase protocol: Phase 1=reasoning, Phase 2=tool call, Phase 3=final answer)
+  - Tool mismatch filtering: removes trajectories where Phase 1 tool plan doesn't match Phase 2 calls
 
 Usage (basic, no filtering):
     python -m geo_edit.data_preprocess.package_trajectory \
         --data_dir /path/to/trajectories \
         --out_path /path/to/output.parquet
 
-Usage (with leakage filtering only - fast, no API needed):
+Usage (with leakage and tool mismatch filtering - fast, no API needed):
     python -m geo_edit.data_preprocess.package_trajectory \
         --data_dir /path/to/trajectories \
         --out_path /path/to/output.parquet \
         --filter_answer_leakage \
+        --filter_tool_mismatch \
         --leakage_check_mode quick
 
 Usage (with all filtering - requires API):
@@ -30,6 +32,7 @@ Usage (with all filtering - requires API):
         --api_key YOUR_API_KEY \
         --filter_wrong_answers \
         --filter_answer_leakage \
+        --filter_tool_mismatch \
         --leakage_check_mode full \
         --max_workers 32
 """
@@ -49,6 +52,7 @@ from geo_edit.evaluation.trajectory_judge import (
     FilterStats,
     TrajectoryFilterConfig,
     TrajectoryJudge,
+    check_tool_plan_mismatch,
     quick_leakage_check,
 )
 from geo_edit.utils.logger import setup_logger
@@ -381,6 +385,20 @@ def _process_subfolder(
                                 stats.api_errors += 1
                             # Fail-open: continue processing on API error
 
+            # Filter 3: Tool plan mismatch check
+            # Check if Phase 1 reasoning declares tools that match Phase 2 actual calls
+            if config.filter_tool_mismatch:
+                has_mismatch, reason = check_tool_plan_mismatch(trajectory)
+                if has_mismatch:
+                    logger.info(
+                        "Filtered %s: tool plan mismatch - %s",
+                        subfolder.name,
+                        reason,
+                    )
+                    if stats:
+                        stats.filtered_tool_mismatch += 1
+                    return None
+
         # Extract turns (excluding final answer)
         turns = _extract_turns_except_last(trajectory)
 
@@ -472,6 +490,9 @@ def package_trajectory_dataset(
     if config and config.filter_answer_leakage and config.leakage_check_mode == "quick":
         logger.info("Quick leakage filtering enabled (regex only, no API needed)")
 
+    if config and config.filter_tool_mismatch:
+        logger.info("Tool mismatch filtering enabled (no API needed)")
+
     # Traverse all subfolders
     subfolders = sorted([d for d in data_dir.iterdir() if d.is_dir()])
     stats.total = len(subfolders)
@@ -480,7 +501,7 @@ def package_trajectory_dataset(
     # Use ThreadPoolExecutor for parallel processing when filtering is enabled
     max_workers = config.max_workers if config else 1
     use_parallel = max_workers > 1 and config and (
-        config.filter_wrong_answers or config.filter_answer_leakage
+        config.filter_wrong_answers or config.filter_answer_leakage or config.filter_tool_mismatch
     )
 
     if use_parallel:
@@ -537,7 +558,7 @@ def package_trajectory_dataset(
     print(f"Saved parquet: {out_path} ({len(ds)} records)")
 
     # Log filtering statistics if filtering was enabled
-    if config and (config.filter_wrong_answers or config.filter_answer_leakage):
+    if config and (config.filter_wrong_answers or config.filter_answer_leakage or config.filter_tool_mismatch):
         # Recalculate stats for parallel mode
         if use_parallel:
             stats.passed = len(records)
@@ -601,6 +622,11 @@ def main() -> None:
         help="Filter trajectories where thinking contains <answer> tags (protocol violation).",
     )
     parser.add_argument(
+        "--filter_tool_mismatch",
+        action="store_true",
+        help="Filter trajectories where Phase 1 tool plan doesn't match Phase 2 tool calls.",
+    )
+    parser.add_argument(
         "--leakage_check_mode",
         type=str,
         default="quick",
@@ -623,13 +649,14 @@ def main() -> None:
 
     # Build filter config if filtering is requested
     config = None
-    if args.filter_wrong_answers or args.filter_answer_leakage:
+    if args.filter_wrong_answers or args.filter_answer_leakage or args.filter_tool_mismatch:
         config = TrajectoryFilterConfig(
             model=args.model,
             api_key=args.api_key,
             api_base=args.api_base,
             filter_wrong_answers=args.filter_wrong_answers,
             filter_answer_leakage=args.filter_answer_leakage,
+            filter_tool_mismatch=args.filter_tool_mismatch,
             leakage_check_mode=args.leakage_check_mode,
             max_workers=args.max_workers,
         )

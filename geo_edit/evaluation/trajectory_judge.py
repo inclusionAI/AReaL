@@ -237,3 +237,106 @@ def quick_leakage_check(thinking_text: str) -> Tuple[bool, str]:
     if ANSWER_TAG_PATTERN.search(thinking_text):
         return True, "Found <answer> tag in thinking/tool-call phase"
     return False, "No <answer> tag found"
+
+
+def extract_planned_tools(reasoning_text: str) -> set:
+    """Extract tool names mentioned in Phase 1 reasoning text.
+
+    Args:
+        reasoning_text: The model's reasoning text from Phase 1.
+
+    Returns:
+        Set of tool names mentioned in the text.
+    """
+    matches = TOOL_NAME_PATTERN.findall(reasoning_text)
+    # Normalize to lowercase for comparison
+    return {name.lower() for name in matches}
+
+
+def extract_actual_tools_from_trajectory(trajectory: list) -> list:
+    """Extract the sequence of tool calls from trajectory.
+
+    For each step, returns the set of tools called in Phase 2.
+
+    Args:
+        trajectory: List of message dicts from trajectory.json.
+
+    Returns:
+        List of (reasoning_text, tool_set) tuples for each step.
+        reasoning_text is the Phase 1 content, tool_set is the Phase 2 tools.
+    """
+    steps = []
+    i = 0
+    while i < len(trajectory):
+        msg = trajectory[i]
+        # Look for assistant message without tool_calls (Phase 1 reasoning)
+        if msg.get("role") == "assistant" and not msg.get("tool_calls"):
+            reasoning_content = msg.get("content", "")
+            if isinstance(reasoning_content, list):
+                # Extract text from content parts
+                reasoning_text = ""
+                for part in reasoning_content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        reasoning_text += part.get("text", "") + "\n"
+                    elif isinstance(part, str):
+                        reasoning_text += part + "\n"
+            else:
+                reasoning_text = str(reasoning_content) if reasoning_content else ""
+
+            # Look for the next assistant message with tool_calls (Phase 2)
+            tool_set = set()
+            j = i + 1
+            while j < len(trajectory):
+                next_msg = trajectory[j]
+                if next_msg.get("role") == "assistant" and next_msg.get("tool_calls"):
+                    # Found Phase 2 tool calls
+                    for tc in next_msg.get("tool_calls", []):
+                        func = tc.get("function", {})
+                        name = func.get("name", "")
+                        if name:
+                            tool_set.add(name.lower())
+                    break
+                elif next_msg.get("role") == "assistant":
+                    # Another assistant message without tool_calls - might be final answer
+                    break
+                j += 1
+
+            if reasoning_text.strip() and tool_set:
+                steps.append((reasoning_text, tool_set))
+            i = j + 1 if j < len(trajectory) else i + 1
+        else:
+            i += 1
+
+    return steps
+
+
+def check_tool_plan_mismatch(trajectory: list) -> Tuple[bool, str]:
+    """Check if Phase 1 tool plans match Phase 2 actual tool calls.
+
+    Args:
+        trajectory: List of message dicts from trajectory.json.
+
+    Returns:
+        Tuple of (has_mismatch, reason).
+        has_mismatch is True if there's a mismatch or no plan declared.
+    """
+    steps = extract_actual_tools_from_trajectory(trajectory)
+
+    if not steps:
+        # No reasoning + tool call pairs found
+        return False, "No Phase 1/Phase 2 pairs found"
+
+    for i, (reasoning_text, actual_tools) in enumerate(steps):
+        planned_tools = extract_planned_tools(reasoning_text)
+
+        if not planned_tools:
+            # Phase 1 didn't declare any tools but Phase 2 called tools
+            return True, f"Step {i+1}: No tools declared in Phase 1, but called: {actual_tools}"
+
+        # Check if actual tools are subset of planned tools
+        # (model might plan multiple tools but only call some)
+        if not actual_tools.issubset(planned_tools):
+            unexpected = actual_tools - planned_tools
+            return True, f"Step {i+1}: Unexpected tools {unexpected}, planned: {planned_tools}"
+
+    return False, "Tool plans match"
