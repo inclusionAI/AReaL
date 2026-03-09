@@ -278,37 +278,42 @@ def _extract_thinking_text(trajectory: List[Dict[str, Any]]) -> str:
     return "\n\n".join(texts)
 
 
+# Filter result constants for tracking
+FILTER_PASSED = "passed"
+FILTER_WRONG_ANSWER = "wrong_answer"
+FILTER_LEAKAGE = "leakage"
+FILTER_TOOL_MISMATCH = "tool_mismatch"
+FILTER_FAILED = "failed"
+FILTER_API_ERROR = "api_error"
+
+
 def _process_subfolder(
     subfolder: Path,
     judge: Optional[TrajectoryJudge] = None,
     config: Optional[TrajectoryFilterConfig] = None,
-    stats: Optional[FilterStats] = None,
-) -> Optional[Dict[str, Any]]:
+) -> Tuple[Optional[Dict[str, Any]], str]:
     """Process a single subfolder and return a dataset record.
 
     Args:
         subfolder: Path to subfolder containing trajectory.json and meta_info.jsonl
         judge: Optional TrajectoryJudge for filtering
         config: Optional TrajectoryFilterConfig for filtering settings
-        stats: Optional FilterStats to track filtering statistics
 
     Returns:
-        Dataset record dict or None if processing failed or filtered
+        Tuple of (record, filter_reason):
+        - record: Dataset record dict or None if processing failed or filtered
+        - filter_reason: One of FILTER_* constants indicating result
     """
     trajectory_path = subfolder / "trajectory.json"
     meta_path = subfolder / "meta_info.jsonl"
 
     if not trajectory_path.exists():
         logger.warning("Missing trajectory.json in %s", subfolder.name)
-        if stats:
-            stats.failed += 1
-        return None
+        return None, FILTER_FAILED
 
     if not meta_path.exists():
         logger.warning("Missing meta_info.jsonl in %s", subfolder.name)
-        if stats:
-            stats.failed += 1
-        return None
+        return None, FILTER_FAILED
 
     try:
         # Load data
@@ -339,18 +344,16 @@ def _process_subfolder(
                                 prediction[:50],
                                 str(ground_truth)[:50],
                             )
-                            if stats:
-                                stats.filtered_wrong_answer += 1
-                            return None
+                            return None, FILTER_WRONG_ANSWER
                     except Exception as e:
                         logger.warning(
                             "API error checking correctness for %s: %s",
                             subfolder.name,
                             e,
                         )
-                        if stats:
-                            stats.api_errors += 1
                         # Fail-open: continue processing on API error
+                        # but track API error for statistics
+                        # We continue instead of returning to allow other filters to run
 
             # Filter 2: Answer leakage check
             # Leakage = <answer> tags appearing in Phase 1/2 (thinking/tool-call)
@@ -375,9 +378,7 @@ def _process_subfolder(
                                 )
                             else:
                                 logger.info("Filtered %s: %s", subfolder.name, reason)
-                            if stats:
-                                stats.filtered_leakage += 1
-                            return None
+                            return None, FILTER_LEAKAGE
                     elif judge:
                         # Full mode: use AI judge for more subtle detection
                         try:
@@ -397,17 +398,13 @@ def _process_subfolder(
                                     str(ground_truth)[:100],
                                     snippet,
                                 )
-                                if stats:
-                                    stats.filtered_leakage += 1
-                                return None
+                                return None, FILTER_LEAKAGE
                         except Exception as e:
                             logger.warning(
                                 "API error checking leakage for %s: %s",
                                 subfolder.name,
                                 e,
                             )
-                            if stats:
-                                stats.api_errors += 1
                             # Fail-open: continue processing on API error
 
             # Filter 3: Tool plan mismatch check
@@ -420,9 +417,7 @@ def _process_subfolder(
                         subfolder.name,
                         reason,
                     )
-                    if stats:
-                        stats.filtered_tool_mismatch += 1
-                    return None
+                    return None, FILTER_TOOL_MISMATCH
 
         # Extract turns (excluding final answer)
         turns = _extract_turns_except_last(trajectory)
@@ -450,21 +445,14 @@ def _process_subfolder(
             "meta_info": json.dumps(meta_info, ensure_ascii=False),
         }
 
-        if stats:
-            stats.passed += 1
-
-        return record
+        return record, FILTER_PASSED
 
     except json.JSONDecodeError as e:
         logger.error("Invalid JSON in %s: %s", subfolder.name, e)
-        if stats:
-            stats.failed += 1
-        return None
+        return None, FILTER_FAILED
     except Exception as e:
         logger.error("Error processing %s: %s", subfolder.name, e)
-        if stats:
-            stats.failed += 1
-        return None
+        return None, FILTER_FAILED
 
 
 def package_trajectory_dataset(
@@ -534,7 +522,7 @@ def package_trajectory_dataset(
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(
-                    _process_subfolder, subfolder, judge, config, None
+                    _process_subfolder, subfolder, judge, config
                 ): subfolder
                 for subfolder in subfolders
             }
@@ -542,21 +530,40 @@ def package_trajectory_dataset(
             for future in as_completed(futures):
                 subfolder = futures[future]
                 try:
-                    record = future.result()
+                    record, filter_reason = future.result()
                     if record:
                         records.append(record)
+                    # Aggregate stats based on filter_reason
+                    if filter_reason == FILTER_PASSED:
                         stats.passed += 1
-                    # Note: stats for filtered/failed are tracked inside _process_subfolder
-                    # but not thread-safe here, so we count passed separately
+                    elif filter_reason == FILTER_WRONG_ANSWER:
+                        stats.filtered_wrong_answer += 1
+                    elif filter_reason == FILTER_LEAKAGE:
+                        stats.filtered_leakage += 1
+                    elif filter_reason == FILTER_TOOL_MISMATCH:
+                        stats.filtered_tool_mismatch += 1
+                    elif filter_reason == FILTER_FAILED:
+                        stats.failed += 1
                 except Exception as e:
                     logger.error("Error processing %s: %s", subfolder.name, e)
                     stats.failed += 1
     else:
         # Sequential processing (original behavior or no filtering)
         for subfolder in subfolders:
-            record = _process_subfolder(subfolder, judge, config, stats)
+            record, filter_reason = _process_subfolder(subfolder, judge, config)
             if record:
                 records.append(record)
+            # Aggregate stats based on filter_reason
+            if filter_reason == FILTER_PASSED:
+                stats.passed += 1
+            elif filter_reason == FILTER_WRONG_ANSWER:
+                stats.filtered_wrong_answer += 1
+            elif filter_reason == FILTER_LEAKAGE:
+                stats.filtered_leakage += 1
+            elif filter_reason == FILTER_TOOL_MISMATCH:
+                stats.filtered_tool_mismatch += 1
+            elif filter_reason == FILTER_FAILED:
+                stats.failed += 1
 
     if not records:
         logger.error("No valid records found")
@@ -584,19 +591,6 @@ def package_trajectory_dataset(
 
     # Log filtering statistics if filtering was enabled
     if config and (config.filter_wrong_answers or config.filter_answer_leakage or config.filter_tool_mismatch):
-        # Recalculate stats for parallel mode
-        if use_parallel:
-            stats.passed = len(records)
-            # In parallel mode, we can't track individual filter reasons accurately
-            # so we report total filtered
-            total_filtered = stats.total - stats.passed - stats.failed
-            logger.info(
-                "Parallel mode stats: total=%d, passed=%d, filtered=%d, failed=%d",
-                stats.total,
-                stats.passed,
-                total_filtered,
-                stats.failed,
-            )
         logger.info("\n%s", stats.summary())
         print(stats.summary())
 
