@@ -82,11 +82,15 @@ def _get_babyvision_answer(item: Mapping[str, Any]) -> str:
 
 
 def _format_mapeval_visual_options(item: Mapping[str, Any]) -> str:
-    """Format options for MapEval-Visual dataset."""
+    """Format options for MapEval-Visual dataset.
+
+    Options are 1-indexed. Answer=0 means unanswerable/none of the above.
+    """
     options = item.get("options", [])
     if not options:
         return ""
-    option_lines = [f"{i}. {opt}" for i, opt in enumerate(options)]
+    # Options start from 1, answer=0 means unanswerable
+    option_lines = [f"{i}. {opt}" for i, opt in enumerate(options, start=1)]
     return "\n".join(option_lines)
 
 

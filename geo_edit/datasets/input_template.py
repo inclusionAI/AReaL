@@ -91,7 +91,7 @@ Please solve the visual reasoning problem step by step. After you confirm the fi
 MAPEVAL_VISUAL_INPUT_TEMPLATE = """\
 You are a map understanding assistant specialized in analyzing map images and answering location-based questions.
 
-Look at the map image and answer the following question. Choose the correct option from the provided choices.
+Look at the map image and answer the following question by selecting the correct option.
 
 Question: {question}
 
@@ -100,20 +100,24 @@ Options:
 
 If you need to analyze the image in detail, you can use the available tools.
 
-Please provide your final answer as the option index (0, 1, 2, 3, etc.) in <answer></answer> tags.
+Select the best option by choosing its number. If none of the options are correct or the question cannot be answered, respond with 0.
+
+Please provide your final answer as a single number in <answer></answer> tags.
 """
 
 MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE = """\
 You are a map understanding assistant specialized in analyzing map images and answering location-based questions.
 
-Look at the map image carefully and answer the following question. Choose the correct option from the provided choices.
+Look at the map image carefully and answer the following question by selecting the correct option.
 
 Question: {question}
 
 Options:
 {options_text}
 
-Please analyze the map image and provide your final answer as the option index (0, 1, 2, 3, etc.) in <answer></answer> tags.
+Select the best option by choosing its number. If none of the options are correct or the question cannot be answered, respond with 0.
+
+Please provide your final answer as a single number in <answer></answer> tags.
 """
 
 CHARTQA_INPUT_TEMPLATE = """\
