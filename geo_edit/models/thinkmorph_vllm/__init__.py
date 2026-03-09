@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-ThinkMorph vLLM Inference Package
+ThinkMorph Inference Package
 
-Simplified inference wrapper for ThinkMorph using vLLM backend.
-Provides efficient interleaved image-text generation capabilities.
+Manual loading inference wrapper for ThinkMorph (like original implementation).
+Provides interleaved image-text generation capabilities without vLLM dependency.
 """
 
-from .inference import VLLMInterleavedInference
+from .inference import ThinkMorphInference, VLLMInterleavedInference
 from .configs import (
     DEFAULT_CONFIG,
     FAST_CONFIG,
@@ -19,7 +19,8 @@ from .configs import (
 
 __version__ = "0.1.0"
 __all__ = [
-    "VLLMInterleavedInference",
+    "ThinkMorphInference",
+    "VLLMInterleavedInference",  # Alias for backward compatibility
     "DEFAULT_CONFIG",
     "FAST_CONFIG",
     "HIGH_QUALITY_CONFIG",

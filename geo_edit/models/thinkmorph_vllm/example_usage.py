@@ -59,7 +59,7 @@ def evaluate_vispuzzle(
     dataset_path: Optional[str] = None,
     dataset_name: str = "vispuzzle",
     output_dir: str = "./vispuzzle_results",
-    tensor_parallel_size: int = 1,
+    max_mem_per_gpu: str = "40GiB",
     max_samples: Optional[int] = None,
     split: str = "test",
 ):
@@ -71,7 +71,7 @@ def evaluate_vispuzzle(
         dataset_path: Path to dataset (local path, or None to use HuggingFace)
         dataset_name: Dataset type ("vispuzzle" or "spatial_navigation")
         output_dir: Directory to save results
-        tensor_parallel_size: Number of GPUs for tensor parallelism
+        max_mem_per_gpu: Maximum GPU memory per device (e.g., "40GiB", "80GiB")
         max_samples: Limit number of samples (None for all)
         split: Dataset split to use ("train" or "test")
     """
@@ -118,11 +118,11 @@ def evaluate_vispuzzle(
         dataset = dataset.select(range(min(max_samples, len(dataset))))
     print(f"Loaded {len(dataset)} samples")
 
-    # Initialize inferencer
-    print("Initializing ThinkMorph vLLM...")
+    # Initialize inferencer (manual loading, not vLLM)
+    print("Initializing ThinkMorph...")
     inferencer = VLLMInterleavedInference(
         model_path=model_path,
-        tensor_parallel_size=tensor_parallel_size,
+        max_mem_per_gpu=max_mem_per_gpu,
     )
 
     # Helper to get field value with fallback
@@ -213,7 +213,7 @@ if __name__ == "__main__":
     #     model_path="ThinkMorph/ThinkMorph-7B",
     #     dataset_name="vispuzzle",
     #     output_dir="./vispuzzle_results",
-    #     tensor_parallel_size=1,
+    #     max_mem_per_gpu="40GiB",
     #     max_samples=None,
     # )
 
@@ -223,7 +223,7 @@ if __name__ == "__main__":
     #     dataset_path="D:/datasets/VisPuzzle",           # 本地数据集路径 (目录、.json、.jsonl 或 .parquet)
     #     dataset_name="vispuzzle",
     #     output_dir="./vispuzzle_results",
-    #     tensor_parallel_size=1,
+    #     max_mem_per_gpu="40GiB",
     #     max_samples=10,  # Set to e.g. 10 for quick test
     # )
 
@@ -232,7 +232,7 @@ if __name__ == "__main__":
         model_path="/storage/openpsi/models/lcy_image_edit/ThinkMorph-7B",           # 本地模型路径
         dataset_name="spatial_navigation",              # 使用 Spatial_Navigation 数据集
         output_dir="/storage/openpsi/data/lcy_image_edit/spatial_nav_results",
-        tensor_parallel_size=1,
+        max_mem_per_gpu="40GiB",
         max_samples=10,  # Set to e.g. 10 for quick test
         split="train",                                  # Spatial_Navigation 只有 train split
     )
@@ -243,7 +243,7 @@ if __name__ == "__main__":
     #     dataset_path="D:/datasets/Spatial_Navigation",  # 或者 HuggingFace ID: "ThinkMorph/Spatial_Navigation"
     #     dataset_name="spatial_navigation",
     #     output_dir="./spatial_nav_results",
-    #     tensor_parallel_size=1,
+    #     max_mem_per_gpu="40GiB",
     #     max_samples=10,
     #     split="train",
     # )
