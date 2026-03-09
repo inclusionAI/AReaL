@@ -234,12 +234,66 @@ class GatewayInfEngine:
 
     # -- Workflow resolution helpers ------------------------------------
 
+    def _wrap_openai_agent(self, agent: Any, proxy_addr: str):
+        """Wrap an agent workflow in OpenAIProxyWorkflow (HTTP mode only).
+
+        Parameters
+        ----------
+        agent : Any | None
+            The agent workflow to wrap (any class with async run() method).
+            ``None`` is valid when ``mode='online'``.
+        proxy_addr : str
+            HTTP address of the proxy server (required)
+        """
+        from areal.experimental.openai import OpenAIProxyWorkflow
+
+        openai_cfg = self.config.openai
+        # Use config attributes if provided, otherwise fall back to
+        # OpenAIProxyConfig defaults (avoids importing areal.api.cli_args
+        # which triggers PEP 695 syntax errors on Python < 3.12).
+        mode = getattr(openai_cfg, "mode", "inline")
+        admin_api_key = getattr(openai_cfg, "admin_api_key", "areal-admin-key")
+        turn_discount = getattr(openai_cfg, "turn_discount", 1.0)
+        export_style = getattr(openai_cfg, "export_style", "individual")
+        subproc_max_workers = getattr(openai_cfg, "subproc_max_workers", 4)
+
+        return OpenAIProxyWorkflow(
+            mode=mode,
+            agent=agent,
+            proxy_addr=proxy_addr,
+            admin_api_key=admin_api_key,
+            discount=turn_discount,
+            export_style=export_style,
+            subproc_max_workers=subproc_max_workers,
+            proxy_gateway_addr=self.gateway_addr,
+        )
+
     @staticmethod
-    def _resolve_workflow(workflow, workflow_kwargs=None, group_size=1):
+    def _resolve_workflow(
+        workflow,
+        workflow_kwargs=None,
+        group_size=1,
+        proxy_addr=None,
+        engine=None,
+    ):
         """Resolve a WorkflowLike to a RolloutWorkflow instance.
 
-        Simplified version of RemoteInfEngine._resolve_workflow that handles
-        the common cases: string import paths, classes, and instances.
+        Handles both RolloutWorkflow types (cases 1-3) and agent-like
+        workflows that need wrapping in OpenAIProxyWorkflow (cases 4-5).
+
+        Parameters
+        ----------
+        workflow : WorkflowLike
+            A RolloutWorkflow instance, class, import path string,
+            agent class, or agent instance.
+        workflow_kwargs : dict, optional
+            Keyword arguments passed to the workflow/agent constructor.
+        group_size : int
+            Number of times to run the workflow per input.
+        proxy_addr : str, optional
+            HTTP address of the proxy server, required for agent workflows.
+        engine : GatewayInfEngine, optional
+            The engine instance, required for agent workflows (_wrap_openai_agent).
         """
         from areal.api.workflow_api import RolloutWorkflow
         from areal.utils.dynamic_import import import_from_string
@@ -249,12 +303,17 @@ class GatewayInfEngine:
 
         resolved: RolloutWorkflow
 
+        # 1. Already a RolloutWorkflow instance
         if isinstance(workflow, RolloutWorkflow):
             resolved = workflow
+
+        # 2. RolloutWorkflow class
         elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
             if workflow_kwargs is None:
                 raise ValueError("workflow_kwargs required when workflow is a class")
             resolved = workflow(**workflow_kwargs)
+
+        # 3. String import path
         elif isinstance(workflow, str):
             imported = import_from_string(workflow)
             if isinstance(imported, type) and issubclass(imported, RolloutWorkflow):
@@ -264,9 +323,38 @@ class GatewayInfEngine:
             elif isinstance(imported, RolloutWorkflow):
                 resolved = imported
             else:
-                raise ValueError(f"Imported {workflow!r} is not a RolloutWorkflow")
+                # Treat as agent-like workflow (needs proxy wrapping)
+                if proxy_addr is None or engine is None:
+                    raise ValueError(
+                        f"proxy_addr and engine are required for agent workflows "
+                        f"(non-RolloutWorkflow). Got workflow={workflow!r}"
+                    )
+                if isinstance(imported, type):
+                    agent = imported(**(workflow_kwargs or {}))
+                else:
+                    agent = imported
+                resolved = engine._wrap_openai_agent(agent, proxy_addr=proxy_addr)
+
+        # 4. Callable class (agent-like workflow)
+        elif isinstance(workflow, type):
+            if proxy_addr is None or engine is None:
+                raise ValueError(
+                    "proxy_addr and engine are required for agent workflows "
+                    "(non-RolloutWorkflow). "
+                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                )
+            agent = workflow(**(workflow_kwargs or {}))
+            resolved = engine._wrap_openai_agent(agent, proxy_addr=proxy_addr)
+
+        # 5. Instance of agent-like workflow
         else:
-            raise TypeError(f"Unsupported workflow type: {type(workflow)}")
+            if proxy_addr is None or engine is None:
+                raise ValueError(
+                    "proxy_addr and engine are required for agent workflows "
+                    "(non-RolloutWorkflow). "
+                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                )
+            resolved = engine._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
 
         if group_size > 1:
             from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
@@ -303,10 +391,14 @@ class GatewayInfEngine:
         group_size: int = 1,
         task_id: int | None = None,
         is_eval: bool = False,
+        proxy_addr: str | None = None,
         **kwargs: Any,
     ) -> int:
+        if proxy_addr is None:
+            proxy_addr = self.gateway_addr
         resolved_workflow = self._resolve_workflow(
-            workflow, workflow_kwargs, group_size
+            workflow, workflow_kwargs, group_size,
+            proxy_addr=proxy_addr, engine=self,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         return self.workflow_executor.submit(
@@ -341,9 +433,13 @@ class GatewayInfEngine:
         workflow,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
+        proxy_addr: str | None = None,
     ) -> list[dict[str, Any]]:
+        if proxy_addr is None:
+            proxy_addr = self.gateway_addr
         resolved_workflow = self._resolve_workflow(
-            workflow, workflow_kwargs, group_size
+            workflow, workflow_kwargs, group_size,
+            proxy_addr=proxy_addr, engine=self,
         )
         return self.workflow_executor.rollout_batch(
             data=data, workflow=resolved_workflow
@@ -357,9 +453,13 @@ class GatewayInfEngine:
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        proxy_addr: str | None = None,
     ) -> list[dict[str, Any]]:
+        if proxy_addr is None:
+            proxy_addr = self.gateway_addr
         resolved_workflow = self._resolve_workflow(
-            workflow, workflow_kwargs, group_size
+            workflow, workflow_kwargs, group_size,
+            proxy_addr=proxy_addr, engine=self,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         return self.workflow_executor.prepare_batch(

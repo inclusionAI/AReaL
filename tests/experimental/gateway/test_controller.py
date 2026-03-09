@@ -125,10 +125,9 @@ class TestGatewayInfEngine:
             _ = engine.workflow_executor
 
     def test_resolve_workflow_with_instance(self):
-        """Test _resolve_workflow correctly passes through instances."""
-        # We can't import RolloutWorkflow on Python 3.10 due to areal/__init__.py
-        # syntax. Instead, test that unsupported types raise TypeError.
-        with pytest.raises(TypeError, match="Unsupported workflow type"):
+        """Test _resolve_workflow raises for non-RolloutWorkflow instances without proxy."""
+        # Non-RolloutWorkflow instances hit case 5 (agent-like) and need proxy_addr + engine.
+        with pytest.raises(ValueError, match="proxy_addr and engine are required"):
             GatewayInfEngine._resolve_workflow(12345)
 
     def test_resolve_workflow_none_raises(self):
@@ -142,6 +141,38 @@ class TestGatewayInfEngine:
         fn = lambda x: True  # noqa: E731
         assert GatewayInfEngine._resolve_should_accept_fn(fn) is fn
 
+    @pytest.mark.skip(
+        reason="OpenAIProxyWorkflow requires Python 3.12 (PEP 695 syntax in areal.experimental.openai)"
+    )
+    def test_resolve_workflow_with_agent_class(self):
+        """Test _resolve_workflow wraps agent-like classes in OpenAIProxyWorkflow."""
+        cfg = GatewayControllerConfig()
+        engine = GatewayInfEngine("http://test:8080", cfg)
+
+        class MockAgent:
+            async def run(self, data, **kwargs):
+                return 1.0
+
+        resolved = GatewayInfEngine._resolve_workflow(
+            MockAgent,
+            workflow_kwargs={},
+            proxy_addr="http://test:8080",
+            engine=engine,
+        )
+        # Avoid importing areal.experimental.openai at module/test level
+        # (PEP 695 syntax in that package breaks Python 3.10-3.12 collection).
+        assert type(resolved).__name__ == "OpenAIProxyWorkflow"
+        assert hasattr(resolved, "arun_episode")
+
+    def test_resolve_workflow_agent_class_without_proxy_raises(self):
+        """Test _resolve_workflow raises when agent class given without proxy_addr."""
+
+        class MockAgent:
+            async def run(self, data, **kwargs):
+                return 1.0
+
+        with pytest.raises(ValueError, match="proxy_addr and engine are required"):
+            GatewayInfEngine._resolve_workflow(MockAgent, workflow_kwargs={})
 
 # =============================================================================
 # GatewayRolloutController — API surface

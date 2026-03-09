@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from areal.api.cli_args import OpenAIProxyConfig
 
 
 @dataclass
@@ -64,3 +68,6 @@ class GatewayControllerConfig:
     scheduling_spec: tuple = field(default_factory=tuple)
     scheduling_strategy: str | None = None
     pause_grace_period: float = 0.5
+
+    # -- OpenAI proxy configuration (for agent-like workflows) ---------------
+    openai: OpenAIProxyConfig | None = None  # Optional; lazy import to avoid PEP 695 issues
