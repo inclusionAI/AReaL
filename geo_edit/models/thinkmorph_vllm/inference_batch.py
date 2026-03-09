@@ -209,6 +209,23 @@ class ThinkMorphBatchInference:
         else:
             logger.info(f"Model loaded across {num_gpus} GPU(s)")
 
+    def _get_target_device(self):
+        """Get the target device for tensor operations."""
+        if self.device is not None:
+            return torch.device(f"cuda:{self.device}")
+        return torch.device("cuda:0")
+
+    def _move_to_device(self, data):
+        """Move tensors in a dict/list to the target device."""
+        target_device = self._get_target_device()
+        if isinstance(data, dict):
+            return {k: self._move_to_device(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._move_to_device(v) for v in data]
+        elif isinstance(data, torch.Tensor):
+            return data.to(target_device)
+        return data
+
     def _init_gen_context(self):
         """Initialize generation context."""
         return {
@@ -231,6 +248,8 @@ class ThinkMorphBatchInference:
             tokenizer=self.tokenizer,
             new_token_ids=self.new_token_ids,
         )
+        # Move tensors to target device
+        generation_input = self._move_to_device(generation_input)
 
         past_key_values = self.model.forward_cache_update_text(past_key_values, **generation_input)
         gen_context['kv_lens'] = kv_lens
@@ -254,6 +273,8 @@ class ThinkMorphBatchInference:
                 transforms=self.vae_transform,
                 new_token_ids=self.new_token_ids,
             )
+            # Move tensors to target device
+            generation_input = self._move_to_device(generation_input)
             past_key_values = self.model.forward_cache_update_vae(self.vae_model, past_key_values, **generation_input)
 
         if vit:
@@ -264,6 +285,8 @@ class ThinkMorphBatchInference:
                 transforms=self.vit_transform,
                 new_token_ids=self.new_token_ids,
             )
+            # Move tensors to target device
+            generation_input = self._move_to_device(generation_input)
             past_key_values = self.model.forward_cache_update_vit(past_key_values, **generation_input)
 
         gen_context['kv_lens'] = kv_lens
@@ -281,6 +304,8 @@ class ThinkMorphBatchInference:
         ropes = gen_context['ropes']
 
         generation_input = self.model.prepare_start_tokens(kv_lens, ropes, self.new_token_ids)
+        # Move tensors to target device
+        generation_input = self._move_to_device(generation_input)
         unpacked_latent = self.model.generate_text(
             past_key_values=past_key_values,
             max_length=max_length,
@@ -405,6 +430,8 @@ class ThinkMorphBatchInference:
             tokenizer=self.tokenizer,
             new_token_ids=self.new_token_ids,
         )
+        # Move tensors to target device
+        generation_input = self._move_to_device(generation_input)
 
         past_key_values = self.model.forward_cache_update_text(past_key_values, **generation_input)
         gen_context['kv_lens'] = kv_lens
@@ -433,6 +460,8 @@ class ThinkMorphBatchInference:
                 transforms=self.vae_transform,
                 new_token_ids=self.new_token_ids,
             )
+            # Move tensors to target device
+            generation_input = self._move_to_device(generation_input)
             past_key_values = self.model.forward_cache_update_vae(self.vae_model, past_key_values, **generation_input)
 
         if vit:
@@ -443,6 +472,8 @@ class ThinkMorphBatchInference:
                 transforms=self.vit_transform,
                 new_token_ids=self.new_token_ids,
             )
+            # Move tensors to target device
+            generation_input = self._move_to_device(generation_input)
             past_key_values = self.model.forward_cache_update_vit(past_key_values, **generation_input)
 
         gen_context['kv_lens'] = kv_lens
@@ -460,6 +491,8 @@ class ThinkMorphBatchInference:
         ropes = gen_context['ropes']
 
         generation_input = self.model.prepare_start_tokens(kv_lens, ropes, self.new_token_ids)
+        # Move tensors to target device
+        generation_input = self._move_to_device(generation_input)
         unpacked_latent = self.model.generate_text(
             past_key_values=past_key_values,
             max_length=max_length,
