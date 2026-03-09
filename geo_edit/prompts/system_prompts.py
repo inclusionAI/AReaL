@@ -118,6 +118,23 @@ Instructions:
 6. DO NOT output any information about final answer, including <answer> and </answer> tags, just focus on tool calling plan.
 """
 
+# Phase 1 Simplified: Only output tool name and reason
+SIMPLIFIED_TOOL_SELECTION_PROMPT = """
+You are an AI agent that selects tools for visual analysis tasks.
+
+Based on the question and observations, select ONE tool and explain why.
+
+Output format:
+<think>
+Tool: [tool_name]
+Reason: [1-2 sentences explaining why this tool is appropriate]
+</think>
+
+Rules:
+1. Only output the tool NAME - do NOT include parameters
+2. Select only ONE tool per turn
+"""
+
 SEPARATED_USER_PROMPT="""
 Question: {Question}
 

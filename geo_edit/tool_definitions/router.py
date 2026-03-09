@@ -17,6 +17,7 @@ from geo_edit.tool_definitions.agents import (
     AGENT_DECLARATIONS,
     AGENT_RETURN_TYPES,
     AGENT_CONFIGS,
+    MULTI_TOOL_DECLARATIONS,
 )
 from geo_edit.utils.logger import setup_logger
 
@@ -31,25 +32,68 @@ with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
     _TOOL_CONFIG: Dict[str, bool] = yaml.safe_load(f)
 
 
-def _make_agent_execute(agent_name: str) -> Callable[[List[Image.Image], int, str], str]:
-    """Create an execute function for a specific agent."""
+def _make_agent_execute(agent_name: str, fixed_params: Optional[Dict[str, Any]] = None) -> Callable[[List[Image.Image], int, str], str]:
+    """Create an execute function for a specific agent.
+
+    Args:
+        agent_name: Name of the base agent to call.
+        fixed_params: Optional dict of fixed parameters to inject (e.g., fixed_task, fixed_prompt).
+    """
     def execute(image_list: List[Image.Image], image_index: int, **kwargs) -> str:
         from geo_edit.environment.tool_agents import call_agent
+
+        # Inject fixed parameters if specified
+        if fixed_params:
+            # Handle fixed_task for PaddleOCR
+            if "fixed_task" in fixed_params:
+                kwargs["task"] = fixed_params["fixed_task"]
+            # Handle fixed_prompt for Multimath/ChartMoE
+            if "fixed_prompt" in fixed_params:
+                kwargs["question"] = fixed_params["fixed_prompt"]
+            # Handle fixed_mode for SAM2
+            if "fixed_mode" in fixed_params:
+                if fixed_params["fixed_mode"] == "auto":
+                    kwargs.pop("bounding_box", None)  # Remove bbox for auto mode
+
         return call_agent(agent_name, image_list, image_index, **kwargs)
     return execute
 
 
 def _build_tool_registry() -> Dict[str, tuple]:
-    """Build the complete tool registry from functions and agents."""
+    """Build the complete tool registry from functions, agents, and multi-tools."""
     registry = dict(FUNCTION_TOOLS)
 
-    # Add agent tools with dynamically created execute functions
+    # Add legacy agent tools with dynamically created execute functions
     for name, declaration in AGENT_DECLARATIONS.items():
         registry[name] = (
             declaration,
             _make_agent_execute(name),
             "agent",
             AGENT_RETURN_TYPES[name],
+        )
+
+    # Add multi-tool declarations (fine-grained tools)
+    for tool_name, tool_info in MULTI_TOOL_DECLARATIONS.items():
+        decl = tool_info["declaration"]
+        base_agent = tool_info["base_agent"]
+
+        # Extract fixed parameters from declaration
+        fixed_params = {}
+        if "fixed_task" in decl:
+            fixed_params["fixed_task"] = decl["fixed_task"]
+        if "fixed_prompt" in decl:
+            fixed_params["fixed_prompt"] = decl["fixed_prompt"]
+        if "fixed_mode" in decl:
+            fixed_params["fixed_mode"] = decl["fixed_mode"]
+
+        # Create clean declaration without internal fields
+        clean_decl = {k: v for k, v in decl.items() if k not in ("fixed_task", "fixed_prompt", "fixed_mode", "return_type")}
+
+        registry[tool_name] = (
+            clean_decl,
+            _make_agent_execute(base_agent, fixed_params if fixed_params else None),
+            "agent",
+            decl.get("return_type", "text"),
         )
 
     return registry

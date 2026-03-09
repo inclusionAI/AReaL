@@ -228,6 +228,7 @@ class SAM2Actor(BaseToolModelActor):
 
 ACTOR_CLASS = SAM2Actor
 
+# Legacy single declaration (kept for backward compatibility)
 DECLARATION = {
     "name": "sam2",
     "description": """SAM2 (Segment Anything Model 2) automatic segmentation tool.
@@ -254,3 +255,43 @@ Returns JSON with mask proposals including scores, bounding boxes, areas, and ce
 }
 
 RETURN_TYPE = "text"
+
+# Multi-tool declarations - split by segmentation mode
+DECLARATIONS = {
+    "auto_segment": {
+        "name": "auto_segment",
+        "description": "Automatic image segmentation tool. Detects and segments ALL objects in an image without any prior knowledge. Returns JSON with mask proposals including bounding boxes, confidence scores, areas, and centroids. Best for: discovering unknown objects, general scene understanding, counting objects.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to segment (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_mode": "auto",
+        "return_type": "text"
+    },
+    "bbox_segment": {
+        "name": "bbox_segment",
+        "description": "Region-constrained segmentation tool. Performs precise segmentation within a specified bounding box region. Returns refined mask proposals for objects in the target area. Best for: segmenting specific objects, refining detection results, focused analysis.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to segment (e.g., 0 for Observation 0)."
+                },
+                "bounding_box": {
+                    "type": "string",
+                    "description": "Bounding box coordinates in format '\\boxed{x1,y1,x2,y2}' where values are 0-1000 normalized coordinates."
+                }
+            },
+            "required": ["image_index", "bounding_box"]
+        },
+        "fixed_mode": "bbox",
+        "return_type": "text"
+    }
+}

@@ -200,6 +200,7 @@ class PaddleOCRActor(BaseToolModelActor):
 
 ACTOR_CLASS = PaddleOCRActor
 
+# Legacy single declaration (kept for backward compatibility)
 DECLARATION = {
     "name": "paddleocr",
     "description": """PaddleOCR-VL text recognition tool. Advanced vision-language model for OCR with multiple task modes:
@@ -229,3 +230,103 @@ Supports multilingual text recognition with high accuracy.""",
 }
 
 RETURN_TYPE = "text"
+
+# Multi-tool declarations - each tool has a fixed task mode
+DECLARATIONS = {
+    "text_ocr": {
+        "name": "text_ocr",
+        "description": "General text recognition tool. Extracts all visible text from images with support for 111 languages. Best for: documents, labels, signs, natural scene text.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_task": "ocr",
+        "return_type": "text"
+    },
+    "table_ocr": {
+        "name": "table_ocr",
+        "description": "Table structure recognition tool. Extracts tabular data including rows, columns, and cell contents. Best for: spreadsheet images, data tables, structured documents.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_task": "table",
+        "return_type": "text"
+    },
+    "formula_ocr": {
+        "name": "formula_ocr",
+        "description": "Mathematical formula recognition tool. Converts mathematical expressions and equations to LaTeX format. Best for: math formulas, equations, scientific notation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_task": "formula",
+        "return_type": "text"
+    },
+    "chart_text_ocr": {
+        "name": "chart_text_ocr",
+        "description": "Chart text extraction tool. Recognizes and extracts text elements from charts and diagrams including labels, values, legends, and axis titles. Best for: bar charts, line graphs, pie charts.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_task": "chart",
+        "return_type": "text"
+    },
+    "text_spotting": {
+        "name": "text_spotting",
+        "description": "Text spotting tool with precise localization. Returns both text content AND bounding box coordinates for each detected text region. Best for: maps, annotated images, scene text with location needs.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_task": "spotting",
+        "return_type": "text"
+    },
+    "seal_ocr": {
+        "name": "seal_ocr",
+        "description": "Seal and stamp recognition tool. Specialized for recognizing text from official seals, stamps, and signatures. Best for: official documents, certificates, contracts with seals.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_task": "seal",
+        "return_type": "text"
+    }
+}

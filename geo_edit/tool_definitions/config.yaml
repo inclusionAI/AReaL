@@ -5,7 +5,10 @@ image_label: false
 draw_line: false
 bounding_box: false
 image_highlight: false
-# VLM analysis tools (agents/)
+
+# =============================================================================
+# Legacy VLM analysis tools (agents/) - kept for backward compatibility
+# =============================================================================
 multimath: false
 gllava: false
 chartmoe: false
@@ -14,4 +17,28 @@ sam2: false
 grounding_dino: false
 paddleocr: false
 
- 
+# =============================================================================
+# Fine-grained multi-tools (new)
+# These provide specialized functionality from base agents
+# =============================================================================
+
+# PaddleOCR multi-tools (6 tools from paddleocr base agent)
+text_ocr: false          # General text recognition
+table_ocr: false         # Table structure recognition
+formula_ocr: false       # Math formula to LaTeX
+chart_text_ocr: false    # Chart text extraction
+text_spotting: false     # Text localization (recommended for maps)
+seal_ocr: false          # Seal/stamp recognition
+
+# SAM2 multi-tools (2 tools from sam2 base agent)
+auto_segment: false      # Automatic full-image segmentation
+bbox_segment: false      # Region-constrained segmentation
+
+# Multimath multi-tools (2 tools from multimath base agent)
+math_latex_ocr: false    # Math expression to LaTeX
+math_image_describe: false  # Math image detailed description
+
+# ChartMoE multi-tools (2 tools from chartmoe base agent)
+chart_data_extract: false    # Extract chart data to structured format
+chart_trend_analysis: false  # Analyze chart trends and insights
+

@@ -122,6 +122,7 @@ class ChartMoEActor(BaseToolModelActor):
 
 ACTOR_CLASS = ChartMoEActor
 
+# Legacy single declaration (kept for backward compatibility)
 DECLARATION = {
     "name": "chartmoe",
     "description": "Use a chart-analysis VLM tool to read charts from images and return structured outputs (e.g., table/JSON) plus chart-grounded analysis. It can extract chart elements, visible values/relationships, trends, and key observations for downstream reasoning. You should input the index of the image to analyze and a question about it, the question should contain clear instructions and necessary information for the analysis.",
@@ -142,3 +143,44 @@ DECLARATION = {
 }
 
 RETURN_TYPE = "text"
+
+# Fixed prompts for different chart analysis modes
+DATA_EXTRACT_PROMPT = "Extract all data from this chart. Output the data in a structured format (table or JSON). Include all visible values, labels, categories, and data points."
+
+TREND_ANALYSIS_PROMPT = "Analyze this chart and describe the key trends, patterns, and observations. Focus on: overall direction, notable peaks/valleys, comparisons between categories, and any significant insights."
+
+# Multi-tool declarations - split by analysis mode
+DECLARATIONS = {
+    "chart_data_extract": {
+        "name": "chart_data_extract",
+        "description": "Chart data extraction tool. Extracts all numerical data and labels from charts into structured format (table/JSON). Captures data points, axis values, legend items, and category labels. Best for: getting exact values from bar charts, line graphs, pie charts, reading specific data points.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_prompt": DATA_EXTRACT_PROMPT,
+        "return_type": "text"
+    },
+    "chart_trend_analysis": {
+        "name": "chart_trend_analysis",
+        "description": "Chart trend analysis tool. Analyzes charts to identify trends, patterns, comparisons, and key insights. Describes overall direction, notable changes, category comparisons, and significant observations. Best for: understanding chart meaning, identifying trends, comparing values, summarizing chart insights.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_prompt": TREND_ANALYSIS_PROMPT,
+        "return_type": "text"
+    }
+}

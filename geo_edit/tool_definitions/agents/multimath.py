@@ -158,6 +158,7 @@ class MultiMathActor(BaseToolModelActor):
 
 ACTOR_CLASS = MultiMathActor
 
+# Legacy single declaration (kept for backward compatibility)
 DECLARATION = {
     "name": "multimath",
     "description": "Use a multimodal math-vision parsing tool to process math-problem images, returning either LaTeX OCR (for expression-only images) or a detailed English description of diagrams/plots/charts with all visible text, symbols, labels, and markers for downstream reasoning.  You should input the index of the image to analyze and a question about it, the question should contain clear instructions and necessary information for the analysis.",
@@ -178,3 +179,44 @@ DECLARATION = {
 }
 
 RETURN_TYPE = "text"
+
+# System prompts for different modes
+LATEX_OCR_PROMPT = '''You are a math expert. The image contains mathematical expressions. Please only output its LaTeX. Your response should only contain its OCR result without other content. For example: $$ x^2 + y^2 = z^2 $$.'''
+
+IMAGE_DESCRIBE_PROMPT = '''You are a math expert. Please describe the image in detail in English so that the graphic can be accurately drawn and used to solve a math problem based on your text description. Ensure that your description includes all necessary details, such as text, symbols, geometric markers, etc., if any.'''
+
+# Multi-tool declarations - split by output mode
+DECLARATIONS = {
+    "math_latex_ocr": {
+        "name": "math_latex_ocr",
+        "description": "Mathematical expression to LaTeX converter. Converts mathematical expressions, equations, and formulas from images directly to LaTeX format. Best for: standalone equations, formulas, mathematical notation that needs to be converted to LaTeX.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_prompt": LATEX_OCR_PROMPT,
+        "return_type": "text"
+    },
+    "math_image_describe": {
+        "name": "math_image_describe",
+        "description": "Mathematical image description tool. Provides detailed English descriptions of math-related images including geometry diagrams, function graphs, coordinate systems, and charts. Captures all visible text, symbols, labels, geometric markers, and spatial relationships. Best for: geometry problems, function plots, coordinate systems, complex diagrams.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_prompt": IMAGE_DESCRIBE_PROMPT,
+        "return_type": "text"
+    }
+}
