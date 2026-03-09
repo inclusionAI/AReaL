@@ -26,6 +26,22 @@ from tqdm import tqdm
 
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.models.thinkmorph_vllm import ThinkMorphDP
+from geo_edit.models.thinkmorph_vllm.configs import (
+    DEFAULT_CONFIG,
+    FAST_CONFIG,
+    HIGH_QUALITY_CONFIG,
+    REASONING_CONFIG,
+    EDITING_CONFIG,
+)
+
+# Available config presets
+CONFIG_PRESETS = {
+    "default": DEFAULT_CONFIG,
+    "fast": FAST_CONFIG,
+    "high_quality": HIGH_QUALITY_CONFIG,
+    "reasoning": REASONING_CONFIG,
+    "editing": EDITING_CONFIG,
+}
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,6 +60,7 @@ def run_inference(
     understanding_output: bool = False,
     max_mem_per_gpu: str = "140GiB",
     use_tools: bool = False,
+    config_preset: str = "default",
 ):
     """
     Run ThinkMorph inference on a registered task.
@@ -62,8 +79,20 @@ def run_inference(
         understanding_output: Text-only output (disable visual thinking)
         max_mem_per_gpu: Maximum GPU memory per device
         use_tools: Use tool-enabled prompt template
+        config_preset: Inference config preset (default, fast, high_quality, reasoning, editing)
     """
     os.makedirs(output_dir, exist_ok=True)
+
+    # Get inference config
+    if config_preset not in CONFIG_PRESETS:
+        logger.error(f"Unknown config preset: {config_preset}")
+        logger.info(f"Available presets: {list(CONFIG_PRESETS.keys())}")
+        return None
+    inference_config = CONFIG_PRESETS[config_preset]
+    logger.info(f"Using config preset: {config_preset}")
+    logger.info(f"  num_timesteps: {inference_config.get('num_timesteps')}")
+    logger.info(f"  cfg_text_scale: {inference_config.get('cfg_text_scale')}")
+    logger.info(f"  cfg_img_scale: {inference_config.get('cfg_img_scale')}")
 
     # Get dataset spec from registry
     try:
@@ -130,21 +159,14 @@ def run_inference(
         num_gpus=num_gpus,
         max_mem_per_gpu=max_mem_per_gpu,
         models_per_gpu=models_per_gpu,
+        inference_config=inference_config,
     )
 
-    # Run inference
-    logger.info(f"Running inference (think={think}, understanding_output={understanding_output})...")
-    dp_results = dp.infer_samples(
-        samples,
-        think=think,
-        understanding_output=understanding_output,
-    )
-
-    # Process results and save in openai_as_judge compatible format
-    # Format: output_dir/<sample_id>/meta_info.jsonl
+    # Results container
     results = []
 
-    for dp_result in tqdm(dp_results, desc="Saving results"):
+    # Callback to save each result immediately when received
+    def on_result(dp_result: Dict[str, Any]):
         idx = dp_result['original_idx']
         sample = samples[idx]
         outputs = dp_result.get('output', [])
@@ -157,9 +179,9 @@ def run_inference(
         # Create result in openai_as_judge compatible format
         result = {
             "id": sample_id,
-            "question": sample.get('text'),  # Required by openai_as_judge
-            "answer": str(gt_answer),  # Required by openai_as_judge (ground truth)
-            "output_text": text_outputs,  # Required by openai_as_judge (model output)
+            "question": sample.get('text'),
+            "answer": str(gt_answer),
+            "output_text": text_outputs,
         }
 
         # Add task-specific metadata
@@ -167,13 +189,11 @@ def run_inference(
         if task_kwargs:
             result["metadata"] = task_kwargs
 
-        results.append(result)
-
-        # Save to subdirectory format for openai_as_judge
+        # Save to subdirectory format for openai_as_judge (immediately!)
         sample_dir = os.path.join(output_dir, sample_id)
         os.makedirs(sample_dir, exist_ok=True)
 
-        # Save generated images
+        # Save generated images immediately
         img_outputs = [o for o in outputs if isinstance(o, Image.Image)]
         img_paths = []
         for i, img in enumerate(img_outputs):
@@ -184,9 +204,21 @@ def run_inference(
         if img_paths:
             result["generated_images"] = img_paths
 
+        # Save meta_info.jsonl immediately
         meta_info_path = os.path.join(sample_dir, "meta_info.jsonl")
         with open(meta_info_path, "w", encoding="utf-8") as f:
             f.write(json.dumps(result, ensure_ascii=False) + "\n")
+
+        results.append(result)
+
+    # Run inference with on_result callback for immediate saving
+    logger.info(f"Running inference (think={think}, understanding_output={understanding_output})...")
+    dp.infer_samples(
+        samples,
+        think=think,
+        understanding_output=understanding_output,
+        on_result=on_result,  # Save immediately when each result is ready
+    )
 
     # Save summary
     results_path = os.path.join(output_dir, "results.json")
@@ -199,11 +231,14 @@ def run_inference(
             "total_parallelism": total_parallelism,
             "think": think,
             "understanding_output": understanding_output,
+            "config_preset": config_preset,
+            "inference_config": inference_config,
         }, f, ensure_ascii=False, indent=2)
 
     # Print summary
     print(f"\n{'='*60}")
     print(f"Task: {task}")
+    print(f"Config: {config_preset}")
     print(f"Samples: {len(results)}")
     print(f"GPUs: {num_gpus}, Models/GPU: {models_per_gpu}, Total parallelism: {total_parallelism}")
     print(f"Visual thinking: {not understanding_output}")
@@ -278,6 +313,11 @@ def main():
         '--use_tools', action='store_true',
         help='Use tool-enabled prompt template'
     )
+    parser.add_argument(
+        '--config', type=str, default='default',
+        choices=list(CONFIG_PRESETS.keys()),
+        help=f'Inference config preset: {list(CONFIG_PRESETS.keys())} (default: default)'
+    )
 
     args = parser.parse_args()
 
@@ -294,6 +334,7 @@ def main():
         understanding_output=args.understanding_output,
         max_mem_per_gpu=args.max_mem_per_gpu,
         use_tools=args.use_tools,
+        config_preset=args.config,
     )
 
 

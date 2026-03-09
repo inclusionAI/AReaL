@@ -5,7 +5,7 @@
 
 import os
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import torch
@@ -30,6 +30,10 @@ class ThinkMorphDP:
         max_mem_per_gpu: Maximum memory per GPU
         models_per_gpu: Number of model instances per GPU (default 1)
             With 140GB GPU and ~30GB per model, can fit up to 4 models
+        inference_config: Optional dict of inference parameters to override defaults
+            Keys: max_think_tokens, text_temperature, cfg_text_scale, cfg_img_scale,
+                  cfg_interval, timestep_shift, num_timesteps, cfg_renorm_min,
+                  cfg_renorm_type, image_shapes, max_rounds
     """
 
     def __init__(
@@ -38,11 +42,13 @@ class ThinkMorphDP:
         num_gpus: int = 8,
         max_mem_per_gpu: str = "140GiB",
         models_per_gpu: int = 1,
+        inference_config: Optional[Dict[str, Any]] = None,
     ):
         self.model_path = model_path
         self.num_gpus = min(num_gpus, torch.cuda.device_count())
         self.max_mem_per_gpu = max_mem_per_gpu
         self.models_per_gpu = models_per_gpu
+        self.inference_config = inference_config or {}
 
         total_parallelism = self.num_gpus * self.models_per_gpu
         logger.info(f"ThinkMorphDP initialized:")
@@ -50,6 +56,8 @@ class ThinkMorphDP:
         logger.info(f"  GPUs: {self.num_gpus}")
         logger.info(f"  Models per GPU: {self.models_per_gpu}")
         logger.info(f"  Total parallelism: {total_parallelism} samples concurrently")
+        if self.inference_config:
+            logger.info(f"  Config overrides: {list(self.inference_config.keys())}")
 
     def infer_dataset(
         self,
@@ -89,6 +97,7 @@ class ThinkMorphDP:
         think: bool = True,
         understanding_output: bool = True,
         show_progress: bool = True,
+        on_result: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Run inference on a list of samples.
@@ -98,6 +107,9 @@ class ThinkMorphDP:
             think: Enable thinking mode
             understanding_output: Text-only output
             show_progress: Show progress bar
+            on_result: Callback function called immediately when each result is ready.
+                       Signature: on_result(result_dict) -> None
+                       Use this to save results incrementally (e.g., save images immediately).
 
         Returns:
             List of result dicts sorted by original index
@@ -118,6 +130,7 @@ class ThinkMorphDP:
             'understanding_output': understanding_output,
             'show_progress': show_progress and True,  # Only rank 0 shows progress
             'models_per_gpu': self.models_per_gpu,
+            'inference_config': self.inference_config,
         }
 
         # Start multiprocessing
@@ -163,7 +176,9 @@ class ThinkMorphDP:
                 # Worker finished
                 workers_done += 1
             else:
-                # Got a single sample result
+                # Got a single sample result - call callback immediately if provided
+                if on_result is not None:
+                    on_result(result)
                 all_results.append(result)
                 pbar.update(1)
         pbar.close()
@@ -219,6 +234,7 @@ def _worker_fn(
         return
 
     # Load multiple model instances
+    inference_config = kwargs.get('inference_config', {})
     logger.info(f"[GPU {rank}] Loading {models_per_gpu} model instance(s)...")
     inferencers = []
     for i in range(models_per_gpu):
@@ -227,6 +243,7 @@ def _worker_fn(
             model_path=model_path,
             max_mem_per_gpu=max_mem_per_gpu,
             device=rank,  # Load model only on this GPU
+            **inference_config,  # Pass inference config overrides
         )
         inferencers.append(inf)
 
