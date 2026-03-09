@@ -66,6 +66,7 @@ def _init_worker(
     output_path: str,
     max_tool_calls: int,
     enabled_agent_names: list,
+    enable_tools: list,
 ):
     """Initialize worker for Gemini/GPT models (Google API or matrixllm).
 
@@ -79,7 +80,8 @@ def _init_worker(
     global _WORKER_FINAL_ANSWER_CONFIG
 
     # Create ToolRouter WITHOUT initializing Ray actors
-    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force", skip_agent_init=True)
+    # Pass enable_tools to override config.yaml (same as main process)
+    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force", enable_tools=enable_tools, skip_agent_init=True)
 
     # Connect to existing Ray actors created in main process
     if enabled_agent_names:
@@ -394,6 +396,7 @@ def main():
             output_path,
             MAX_TOOL_CALLS,
             enabled_agent_names,
+            args.enable_tools,  # Pass enable_tools to workers
         ),
     )
 
