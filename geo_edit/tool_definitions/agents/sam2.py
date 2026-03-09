@@ -108,13 +108,12 @@ class SAM2Actor(BaseToolModelActor):
         # Load model immediately (no lazy loading)
         logger.info("Loading SAM2 model: %s", self.model_name)
 
-        # Determine device
-        device = f"cuda:{self.gpu_ids[0]}" if self.gpu_ids else "cpu"
-
+        # Use self.device set by setup_gpu() - after CUDA_VISIBLE_DEVICES is set,
+        # the visible GPU is always cuda:0 regardless of original GPU ID
         self.pipe = pipeline(
             "mask-generation",
             model=self.model_name,
-            device=device,
+            device=self.device,
         )
         self._initialized = True
 
