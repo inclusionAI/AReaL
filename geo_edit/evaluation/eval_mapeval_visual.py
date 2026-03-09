@@ -52,14 +52,18 @@ def main() -> None:
             record_id = os.path.basename(os.path.dirname(meta_path))
 
             for record in load_records(meta_path):
-                classification = record.get("meta_info_extra", {}).get("classification", "unknown")
+                # classification may be in meta_info_extra or directly in record
+                classification = record.get("classification") or record.get("meta_info_extra", {}).get("classification", "unknown")
                 ground_truth = int(record.get("answer", -1))
 
                 # Extract predicted answer
                 output_text = record.get("output_text", "")
                 if isinstance(output_text, list):
                     output_text = output_text[-1] if output_text else ""
-                predicted = parse_integer_answer(extract_answer(str(output_text)))
+                output_str = str(output_text)
+                # Try to extract from <answer> tags first, fallback to raw text
+                extracted = extract_answer(output_str)
+                predicted = parse_integer_answer(extracted if extracted else output_str)
 
                 is_correct = predicted == ground_truth
                 results_by_classification[classification]["total"] += 1
