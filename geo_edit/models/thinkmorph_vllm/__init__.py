@@ -9,12 +9,10 @@ Provides interleaved image-text generation capabilities without vLLM dependency.
 
 Supports:
 - Single sample inference: ThinkMorphInference
-- Batch inference: ThinkMorphBatchInference
-- Multi-GPU Data Parallel: ThinkMorphDP
+- Multi-GPU Data Parallel: ThinkMorphDP (supports multiple models per GPU)
 """
 
 from .inference import ThinkMorphInference, VLLMInterleavedInference
-from .inference_batch import ThinkMorphBatchInference, BatchInferenceConfig, run_batch_evaluation
 from .inference_dp import ThinkMorphDP
 from .configs import (
     DEFAULT_CONFIG,
@@ -29,10 +27,6 @@ __all__ = [
     # Single inference
     "ThinkMorphInference",
     "VLLMInterleavedInference",
-    # Batch inference
-    "ThinkMorphBatchInference",
-    "BatchInferenceConfig",
-    "run_batch_evaluation",
     # Multi-GPU DP inference
     "ThinkMorphDP",
     # Configs

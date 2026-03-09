@@ -6,6 +6,7 @@
 import os
 import logging
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import torch
 import torch.multiprocessing as mp
@@ -20,13 +21,15 @@ class ThinkMorphDP:
     Multi-process Data Parallel inference for ThinkMorph.
 
     Distributes samples across multiple GPUs, with each GPU running
-    an independent model instance. Each GPU processes samples sequentially
+    multiple model instances. Each model processes samples sequentially
     to support full interleaved text-image generation (visual thinking).
 
     Args:
         model_path: Path to ThinkMorph model
         num_gpus: Number of GPUs to use
         max_mem_per_gpu: Maximum memory per GPU
+        models_per_gpu: Number of model instances per GPU (default 1)
+            With 140GB GPU and ~30GB per model, can fit up to 4 models
     """
 
     def __init__(
@@ -34,15 +37,19 @@ class ThinkMorphDP:
         model_path: str,
         num_gpus: int = 8,
         max_mem_per_gpu: str = "140GiB",
+        models_per_gpu: int = 1,
     ):
         self.model_path = model_path
         self.num_gpus = min(num_gpus, torch.cuda.device_count())
         self.max_mem_per_gpu = max_mem_per_gpu
+        self.models_per_gpu = models_per_gpu
 
+        total_parallelism = self.num_gpus * self.models_per_gpu
         logger.info(f"ThinkMorphDP initialized:")
         logger.info(f"  Model: {model_path}")
         logger.info(f"  GPUs: {self.num_gpus}")
-        logger.info(f"  Parallelism: {self.num_gpus} samples concurrently")
+        logger.info(f"  Models per GPU: {self.models_per_gpu}")
+        logger.info(f"  Total parallelism: {total_parallelism} samples concurrently")
 
     def infer_dataset(
         self,
@@ -110,6 +117,7 @@ class ThinkMorphDP:
             'think': think,
             'understanding_output': understanding_output,
             'show_progress': show_progress and True,  # Only rank 0 shows progress
+            'models_per_gpu': self.models_per_gpu,
         }
 
         # Start multiprocessing
@@ -182,8 +190,9 @@ def _worker_fn(
     """
     Worker function for each GPU process.
 
-    Each worker processes samples sequentially using ThinkMorphInference,
-    which supports full interleaved text-image generation (visual thinking).
+    Each worker loads multiple model instances and uses threading to process
+    samples concurrently. Each model supports full interleaved text-image
+    generation (visual thinking).
 
     Args:
         rank: GPU rank (0 to num_gpus-1)
@@ -191,10 +200,11 @@ def _worker_fn(
         max_mem_per_gpu: Memory limit per GPU
         indexed_samples: List of (original_idx, sample) tuples
         output_queue: Queue to send results back
-        kwargs: Inference parameters
+        kwargs: Inference parameters (including 'models_per_gpu')
     """
     import torch
-    from tqdm import tqdm
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Set device for this process
     torch.cuda.set_device(rank)
@@ -202,42 +212,74 @@ def _worker_fn(
     # Import ThinkMorphInference for full interleaved generation support
     from .inference import ThinkMorphInference
 
-    logger.info(f"[GPU {rank}] Loading model...")
+    models_per_gpu = kwargs.get('models_per_gpu', 1)
 
-    # Initialize inferencer with specific device
-    inferencer = ThinkMorphInference(
-        model_path=model_path,
-        max_mem_per_gpu=max_mem_per_gpu,
-        device=rank,  # Load model only on this GPU
-    )
+    if not indexed_samples:
+        output_queue.put(None)
+        return
 
-    logger.info(f"[GPU {rank}] Processing {len(indexed_samples)} samples...")
+    # Load multiple model instances
+    logger.info(f"[GPU {rank}] Loading {models_per_gpu} model instance(s)...")
+    inferencers = []
+    for i in range(models_per_gpu):
+        logger.info(f"[GPU {rank}] Loading model instance {i+1}/{models_per_gpu}...")
+        inf = ThinkMorphInference(
+            model_path=model_path,
+            max_mem_per_gpu=max_mem_per_gpu,
+            device=rank,  # Load model only on this GPU
+        )
+        inferencers.append(inf)
 
-    # Process samples sequentially, send each result immediately for real-time progress
-    for original_idx, sample in indexed_samples:
-        try:
-            # Run single-sample inference with full interleaved generation
-            output = inferencer.infer_single(
-                image=sample.get('image'),
-                text=sample.get('text'),
-                think=kwargs.get('think', True),
-                understanding_output=kwargs.get('understanding_output', False),
-            )
+    logger.info(f"[GPU {rank}] Processing {len(indexed_samples)} samples with {models_per_gpu} model(s)...")
 
-            # Send result immediately (for real-time progress bar)
-            output_queue.put({
-                'original_idx': original_idx,
-                'id': sample.get('id', original_idx),
-                'output': output,
-            })
+    # Create a lock for each inferencer to ensure thread-safe access
+    inferencer_locks = [threading.Lock() for _ in range(models_per_gpu)]
 
-        except Exception as e:
-            logger.error(f"[GPU {rank}] Error processing sample {original_idx}: {e}")
-            output_queue.put({
-                'original_idx': original_idx,
-                'id': sample.get('id', original_idx),
-                'output': [f"Error: {str(e)}"],
-            })
+    def process_sample(inferencer_idx: int, original_idx: int, sample: dict):
+        """Process a single sample with a specific inferencer."""
+        inferencer = inferencers[inferencer_idx]
+        lock = inferencer_locks[inferencer_idx]
+
+        with lock:
+            try:
+                output = inferencer.infer_single(
+                    image=sample.get('image'),
+                    text=sample.get('text'),
+                    think=kwargs.get('think', True),
+                    understanding_output=kwargs.get('understanding_output', False),
+                )
+                return {
+                    'original_idx': original_idx,
+                    'id': sample.get('id', original_idx),
+                    'output': output,
+                }
+            except Exception as e:
+                logger.error(f"[GPU {rank}] Error processing sample {original_idx}: {e}")
+                return {
+                    'original_idx': original_idx,
+                    'id': sample.get('id', original_idx),
+                    'output': [f"Error: {str(e)}"],
+                }
+
+    if models_per_gpu == 1:
+        # Single model: process sequentially (no threading overhead)
+        for original_idx, sample in indexed_samples:
+            result = process_sample(0, original_idx, sample)
+            output_queue.put(result)
+    else:
+        # Multiple models: use ThreadPoolExecutor for concurrent inference
+        # Distribute samples to inferencers in round-robin fashion
+        with ThreadPoolExecutor(max_workers=models_per_gpu) as executor:
+            futures = []
+            for i, (original_idx, sample) in enumerate(indexed_samples):
+                inferencer_idx = i % models_per_gpu
+                future = executor.submit(process_sample, inferencer_idx, original_idx, sample)
+                futures.append(future)
+
+            # Send results as they complete
+            for future in as_completed(futures):
+                result = future.result()
+                output_queue.put(result)
 
     # Signal that this worker is done
     output_queue.put(None)
