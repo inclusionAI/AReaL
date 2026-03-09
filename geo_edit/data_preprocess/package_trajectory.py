@@ -242,28 +242,37 @@ def _extract_final_answer_from_trajectory(
 
 
 def _extract_thinking_text(trajectory: List[Dict[str, Any]]) -> str:
-    """Extract all assistant content except the final answer turn.
+    """Extract assistant content from Phase 1 & 2, excluding the final answer (Phase 3).
 
-    This represents the model's thinking/reasoning process.
+    Only extracts from role=assistant messages. User messages are ignored since
+    they may contain instructions with <answer> tags.
+
+    This represents the model's thinking/reasoning process (Phase 1 & 2 only).
     """
     texts = []
-    # Process all turns except potentially the last one with the answer
+
+    # Find the index of the last assistant turn with <answer> (Phase 3)
+    last_answer_idx = -1
+    for i in range(len(trajectory) - 1, -1, -1):
+        turn = trajectory[i]
+        if turn.get("role") == "assistant":
+            content = _get_text_from_content(turn.get("content", ""))
+            if "<answer>" in content.lower():
+                last_answer_idx = i
+                break
+
+    # Process all assistant turns except the final answer turn (Phase 3)
     for i, turn in enumerate(trajectory):
+        # Only check assistant messages
         if turn.get("role") != "assistant":
             continue
 
-        content = _get_text_from_content(turn.get("content", ""))
+        # Completely skip the final answer turn (Phase 3)
+        if i == last_answer_idx:
+            continue
 
-        # Skip if this is the last assistant turn with final answer
-        is_last_assistant = all(
-            t.get("role") != "assistant" for t in trajectory[i + 1 :]
-        )
-        if is_last_assistant and "<answer>" in content:
-            # Extract text before the answer tag
-            answer_idx = content.find("<answer>")
-            if answer_idx > 0:
-                texts.append(content[:answer_idx].strip())
-        else:
+        content = _get_text_from_content(turn.get("content", ""))
+        if content.strip():
             texts.append(content)
 
     return "\n\n".join(texts)
@@ -352,11 +361,20 @@ def _process_subfolder(
                     if config.leakage_check_mode == "quick":
                         has_leakage, reason = quick_leakage_check(thinking_text)
                         if has_leakage:
-                            logger.info(
-                                "Filtered %s: %s",
-                                subfolder.name,
-                                reason,
-                            )
+                            # Find the problematic part
+                            answer_idx = thinking_text.lower().find("<answer>")
+                            if answer_idx >= 0:
+                                start = max(0, answer_idx - 50)
+                                end = min(len(thinking_text), answer_idx + 100)
+                                problematic_snippet = thinking_text[start:end]
+                                logger.warning(
+                                    "Filtered %s: %s\n  Problematic content: ...%s...",
+                                    subfolder.name,
+                                    reason,
+                                    problematic_snippet,
+                                )
+                            else:
+                                logger.info("Filtered %s: %s", subfolder.name, reason)
                             if stats:
                                 stats.filtered_leakage += 1
                             return None
@@ -367,10 +385,17 @@ def _process_subfolder(
                                 question, str(ground_truth), thinking_text, use_ai=True
                             )
                             if has_leakage:
-                                logger.info(
-                                    "Filtered %s: answer leakage detected - %s",
+                                # Show snippet of thinking text for debugging
+                                snippet = thinking_text[:200] + "..." if len(thinking_text) > 200 else thinking_text
+                                logger.warning(
+                                    "Filtered %s: answer leakage detected\n"
+                                    "  AI reason: %s\n"
+                                    "  Ground truth: %s\n"
+                                    "  Thinking snippet: %s",
                                     subfolder.name,
-                                    reason[:100] if len(reason) > 100 else reason,
+                                    reason[:200] if len(reason) > 200 else reason,
+                                    str(ground_truth)[:100],
+                                    snippet,
                                 )
                                 if stats:
                                     stats.filtered_leakage += 1
