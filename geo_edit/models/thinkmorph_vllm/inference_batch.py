@@ -383,6 +383,44 @@ class ThinkMorphBatchInference:
         return gen_context
 
     @torch.no_grad()
+    def _update_batch_context_images(self, images: List, gen_context, vae: bool = True, vit: bool = True):
+        """
+        Update context with batch of images.
+
+        All images are processed together in a single batch call.
+        Images can have different sizes - they will be packed together.
+        """
+        past_key_values = gen_context['past_key_values']
+        kv_lens = gen_context['kv_lens']
+        ropes = gen_context['ropes']
+
+        if vae:
+            generation_input, kv_lens, ropes = self.model.prepare_vae_images(
+                curr_kvlens=kv_lens,
+                curr_rope=ropes,
+                images=images,
+                transforms=self.vae_transform,
+                new_token_ids=self.new_token_ids,
+            )
+            past_key_values = self.model.forward_cache_update_vae(self.vae_model, past_key_values, **generation_input)
+
+        if vit:
+            generation_input, kv_lens, ropes = self.model.prepare_vit_images(
+                curr_kvlens=kv_lens,
+                curr_rope=ropes,
+                images=images,
+                transforms=self.vit_transform,
+                new_token_ids=self.new_token_ids,
+            )
+            past_key_values = self.model.forward_cache_update_vit(past_key_values, **generation_input)
+
+        gen_context['kv_lens'] = kv_lens
+        gen_context['ropes'] = ropes
+        gen_context['past_key_values'] = past_key_values
+
+        return gen_context
+
+    @torch.no_grad()
     def _gen_batch_text(self, gen_context, max_length: int = 500, do_sample: bool = True, temperature: float = 1.0):
         """Generate text for batch."""
         gen_context = deepcopy(gen_context)
@@ -428,6 +466,9 @@ class ThinkMorphBatchInference:
         This method processes multiple samples in a single forward pass,
         providing better GPU utilization than sequential processing.
 
+        Note: For batches with images, ALL samples must have images.
+        Mixed batches (some with images, some without) fall back to sequential.
+
         Args:
             samples: List of dicts with 'image' and/or 'text' keys
             think: Enable thinking mode
@@ -441,6 +482,22 @@ class ThinkMorphBatchInference:
             return []
 
         batch_size = len(samples)
+
+        # Check image configuration
+        has_images = [sample.get('image') is not None for sample in samples]
+        all_have_images = all(has_images)
+        none_have_images = not any(has_images)
+
+        # Mixed batch (some with images, some without) - fall back to sequential
+        if not all_have_images and not none_have_images:
+            logger.info("Mixed batch (some with images, some without), using sequential processing")
+            return self.infer_batch(
+                samples,
+                think=think,
+                understanding_output=understanding_output,
+                show_progress=show_progress,
+            )
+
         results = [[] for _ in range(batch_size)]
 
         with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
@@ -452,24 +509,17 @@ class ThinkMorphBatchInference:
                 system_prompts = [VLM_THINK_SYSTEM_PROMPT] * batch_size
                 gen_context = self._update_batch_context_text(system_prompts, gen_context)
 
-            # Process images individually (images have different sizes)
-            for i, sample in enumerate(samples):
-                image = sample.get('image')
-                if image is not None:
-                    # For batch processing with images, we need to handle them one at a time
-                    # because image sizes may differ
+            # Batch process images if ALL samples have images
+            if all_have_images:
+                images = []
+                for sample in samples:
+                    image = sample.get('image')
                     image_input = self.vae_transform.resize_transform(pil_img2rgb(image))
-                    # Create single-sample context for image
-                    single_ctx = {
-                        'kv_lens': [gen_context['kv_lens'][i]],
-                        'ropes': [gen_context['ropes'][i]],
-                        'past_key_values': gen_context['past_key_values'],  # Shared
-                    }
-                    single_ctx = self._update_context_image(
-                        image_input, single_ctx, vae=not understanding_output
-                    )
-                    gen_context['kv_lens'][i] = single_ctx['kv_lens'][0]
-                    gen_context['ropes'][i] = single_ctx['ropes'][0]
+                    images.append(image_input)
+
+                gen_context = self._update_batch_context_images(
+                    images, gen_context, vae=not understanding_output
+                )
 
             # Batch process text prompts
             texts = [sample.get('text', '') for sample in samples]
