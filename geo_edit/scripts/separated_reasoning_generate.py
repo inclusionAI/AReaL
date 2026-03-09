@@ -30,7 +30,7 @@ from geo_edit.config import (
 from geo_edit.constants import MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
 from geo_edit.prompts.system_prompts import (
-    SEPARATED_REASONING_ONLY_PROMPT,
+    SIMPLIFIED_TOOL_SELECTION_PROMPT,
     SEPARATED_TOOL_CALL_ONLY_PROMPT,
     SEPARATED_FINAL_ANSWER_PROMPT,
     SEPARATED_USER_PROMPT,
@@ -110,7 +110,7 @@ def _init_worker(
         _WORKER_TASK_CLASS = GoogleVisionQATask
         base = agent_configs.generate_config
         _WORKER_REASONING_ONLY_CONFIG = derive_google_config(
-            base, system_prompt=SEPARATED_REASONING_ONLY_PROMPT, tool_mode="NONE"
+            base, system_prompt=SIMPLIFIED_TOOL_SELECTION_PROMPT, tool_mode="NONE"
         )
         _WORKER_TOOL_CALL_ONLY_CONFIG = derive_google_config(
             base, system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
@@ -131,7 +131,7 @@ def _init_worker(
         _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
         base = agent_configs.generate_config
         _WORKER_REASONING_ONLY_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=SEPARATED_REASONING_ONLY_PROMPT, tool_choice="none"
+            base, api_mode="chat_completions", system_prompt=SIMPLIFIED_TOOL_SELECTION_PROMPT, tool_choice="none"
         )
         _WORKER_TOOL_CALL_ONLY_CONFIG = derive_api_config(
             base, api_mode="chat_completions", system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT

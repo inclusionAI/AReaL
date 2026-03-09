@@ -124,15 +124,17 @@ You are an AI agent that selects tools for visual analysis tasks.
 
 Based on the question and observations, select ONE tool and explain why.
 
-Output format:
+STRICT OUTPUT FORMAT (you MUST follow this exactly):
 <think>
 Tool: [tool_name]
 Reason: [1-2 sentences explaining why this tool is appropriate]
 </think>
 
 Rules:
-1. Only output the tool NAME - do NOT include parameters
-2. Select only ONE tool per turn
+1. You MUST select a tool - NEVER answer the question directly
+2. Only output the tool NAME - do NOT include parameters
+3. Select only ONE tool per turn
+4. Do NOT output anything outside the <think></think> tags
 """
 
 SEPARATED_USER_PROMPT="""

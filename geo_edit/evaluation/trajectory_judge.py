@@ -30,6 +30,29 @@ from geo_edit.utils.text_utils import parse_leakage_score, parse_score
 # Pattern to detect <answer> tags (case insensitive)
 ANSWER_TAG_PATTERN = re.compile(r"<answer>", re.IGNORECASE)
 
+# Known tool names for tool plan extraction
+KNOWN_TOOL_NAMES = [
+    # General tools
+    "image_crop", "image_label", "draw_line", "bounding_box", "image_highlight",
+    "text_ocr", "auto_segment", "bbox_segment", "grounding_dino",
+    # Math tools
+    "math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath", "ovr",
+    # Table tools
+    "table_ocr",
+    # Chart tools
+    "chart_data_extract", "chart_trend_analysis", "chart_text_ocr", "chartmoe",
+    # Map tools
+    "text_spotting",
+    # Document tools
+    "seal_ocr",
+]
+
+# Build regex pattern for tool name extraction (case insensitive)
+TOOL_NAME_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(name) for name in KNOWN_TOOL_NAMES) + r")\b",
+    re.IGNORECASE
+)
+
 
 @dataclass
 class TrajectoryFilterConfig:
@@ -40,6 +63,7 @@ class TrajectoryFilterConfig:
     api_base: Optional[str] = None
     filter_wrong_answers: bool = True
     filter_answer_leakage: bool = True
+    filter_tool_mismatch: bool = False  # Filter if Phase 1 plan doesn't match Phase 2 tool calls
     leakage_check_mode: str = "quick"  # "quick" (regex only) or "full" (AI-based)
     max_workers: int = 16
 
@@ -52,6 +76,7 @@ class FilterStats:
     passed: int = 0
     filtered_wrong_answer: int = 0
     filtered_leakage: int = 0
+    filtered_tool_mismatch: int = 0
     failed: int = 0
     api_errors: int = 0
 
@@ -63,6 +88,7 @@ class FilterStats:
             f"Passed: {self.passed}",
             f"Filtered (wrong answer): {self.filtered_wrong_answer}",
             f"Filtered (answer leakage): {self.filtered_leakage}",
+            f"Filtered (tool mismatch): {self.filtered_tool_mismatch}",
             f"Failed to process: {self.failed}",
             f"API errors: {self.api_errors}",
         ]
