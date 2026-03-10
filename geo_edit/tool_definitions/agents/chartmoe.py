@@ -98,6 +98,9 @@ class ChartMoEActor(BaseToolModelActor):
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
+        # Convert PIL Image to tensor using model's vis_processor
+        image_tensor = self.model.vis_processor(image).unsqueeze(0).to(self.model.device)
+
         # Build query with image placeholder
         if self.system_prompt:
             query = f"<ImageHere>{self.system_prompt}\n{question}"
@@ -105,11 +108,10 @@ class ChartMoEActor(BaseToolModelActor):
             query = f"<ImageHere>{question}"
 
         with torch.amp.autocast('cuda'):
-            # Try passing PIL Image directly to chat()
             response, _ = self.model.chat(
                 self.tokenizer,
                 query=query,
-                image=image,  # Pass PIL Image directly
+                image=image_tensor,  # Pass tensor
                 max_new_tokens=max_tokens,
                 do_sample=temperature > 0,
                 temperature=temperature if temperature > 0 else None,
