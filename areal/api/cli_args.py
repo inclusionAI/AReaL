@@ -1663,6 +1663,13 @@ class InferenceEngineConfig:
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
+    worker_routing_strategy: str = field(
+        default="round-robin",
+        metadata={
+            "help": "Worker routing strategy for rollout controller",
+            "choices": ["round-robin", "random"],
+        },
+    )
     tokenizer_path: str = field(
         default="",
         metadata={"help": "Path to tokenizer for trajectory text decoding."},
