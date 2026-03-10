@@ -192,8 +192,6 @@ class ProxyRouter:
         rank = self.selector.select(self.workers)
         worker = self.workers[rank]
 
-        print(f"@@@{self.workers}")
-
         # Get proxy address if available
         proxy_addr = (
             self.proxy_addrs[rank]
