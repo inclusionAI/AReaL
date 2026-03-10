@@ -37,29 +37,6 @@ from geo_edit.prompts.system_prompts import (
     MULTI_ROUND_TOOL_SELECTION_PROMPT,
 )
 
-# JSON Schema for multi-round tool selection (enforces structured output)
-TOOL_SELECTION_JSON_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "tool_selection",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "tool": {
-                    "type": "string",
-                    "description": "The name of the tool to call from the available tools list"
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "1 paragraph explaining what NEW information this tool will provide"
-                }
-            },
-            "required": ["tool", "reason"],
-            "additionalProperties": False
-        }
-    }
-}
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
@@ -165,7 +142,6 @@ def _init_worker(
         _WORKER_MULTI_ROUND_REASONING_CONFIG = derive_api_config(
             base, api_mode="chat_completions", system_prompt=MULTI_ROUND_TOOL_SELECTION_PROMPT, tool_choice="none"
         )
-        _WORKER_MULTI_ROUND_REASONING_CONFIG["response_format"] = TOOL_SELECTION_JSON_SCHEMA
         _WORKER_TOOL_CALL_ONLY_CONFIG = derive_api_config(
             base, api_mode="chat_completions", system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
         )
@@ -274,32 +250,38 @@ def _run_one_task(task_payload: dict):
 
             logger.info(f"[{task_id}] Step {step} Phase 1: Reasoning generated ({len(reasoning_text)} chars)")
 
-            # Check for <answer> - error if found (only for non-JSON format)
-            if answer_pattern.search(reasoning_text):
-                logger.warning(reasoning_text)
-                raise ValueError("Reasoning phase should not generate <answer>. Model violated the protocol.")
+            # For step > 1: check if model wants to provide final answer (contains <answer>)
+            if step > 1 and answer_pattern.search(reasoning_text):
+                logger.info(f"[{task_id}] Step {step} Phase 1: Model chose to provide final answer directly")
+                # Parse answer from reasoning_text
+                answer_match = re.search(r"<answer>(.*?)</answer>", reasoning_text, re.DOTALL | re.IGNORECASE)
+                output_text = answer_match.group(1).strip() if answer_match else reasoning_text
+                think_match = re.search(r"<think>(.*?)</think>", reasoning_text, re.DOTALL | re.IGNORECASE)
+                thinking = think_match.group(1).strip() if think_match else ""
+                # Record final step
+                task._record_conversation_history(
+                    step=step,
+                    contents_for_save=[],
+                    action_record={"text": output_text, "tool_calls": []},
+                    thinking_process=thinking,
+                    output_text=output_text,
+                    tool_calls=[],
+                    extra_info=reasoning_extra,
+                )
+                meta_info = task.save_trajectory()
+                logger.info(f"[{task_id}] Task completed (early answer) - Total steps: {meta_info.get('total_steps', 'N/A')}")
+                return True, meta_info
 
-            # For step > 1 with chat_completions: parse JSON and convert to <think> format
-            if step > 1 and _WORKER_API_MODE == "chat_completions":
-                try:
-                    parsed = json.loads(reasoning_text)
-                    tool_name = parsed.get("tool", "")
-                    reason = parsed.get("reason", "")
-                    if not tool_name:
-                        raise ValueError(f"JSON output missing 'tool' field: {reasoning_text}")
-                    # Convert to <think> format for consistency
-                    reasoning_text = f"<think>\nTool: {tool_name}\nReason: {reason}\n</think>"
-                    logger.info(f"[{task_id}] Step {step} Phase 1: Parsed JSON -> tool={tool_name}")
-                except json.JSONDecodeError as e:
-                    logger.warning(f"[{task_id}] Step {step} Phase 1: Failed to parse JSON: {e}")
-                    logger.warning(f"Raw output: {reasoning_text}")
-                    raise ValueError(f"Multi-round reasoning must output valid JSON. Got: {reasoning_text[:200]}")
-            else:
-                # Validate format: must contain <think>Tool: [name]</think>
-                if not think_pattern.search(reasoning_text):
-                    logger.warning(f"[{task_id}] Step {step} Phase 1: Invalid format - missing <think>Tool: ...</think>")
-                    logger.warning(f"Raw output: {reasoning_text}")
-                    raise ValueError(f"Reasoning phase must output <think>Tool: [name]\\nReason: ...</think> format. Got: {reasoning_text[:200]}")
+            # Check for <answer> in step 1 - error if found
+            if step == 1 and answer_pattern.search(reasoning_text):
+                logger.warning(reasoning_text)
+                raise ValueError("First round reasoning phase should not generate <answer>. Model violated the protocol.")
+
+            # Validate format: must contain <think>Tool: [name]</think>
+            if not think_pattern.search(reasoning_text):
+                logger.warning(f"[{task_id}] Step {step} Phase 1: Invalid format - missing <think>Tool: ...</think>")
+                logger.warning(f"Raw output: {reasoning_text}")
+                raise ValueError(f"Reasoning phase must output <think>Tool: [name]\\nReason: ...</think> format. Got: {reasoning_text[:200]}")
 
             # ===== Phase 2: Generate tool call =====
             logger.info(f"[{task_id}] Step {step} Phase 2: Generating tool call...")
