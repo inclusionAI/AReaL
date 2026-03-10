@@ -167,17 +167,34 @@ class APIBasedAgent(BaseAgent):
 
             # Handle reasoning based on model type
             if reasoning_level is not None:
-                if "gemini" in self.model.lower():
-                    # For Gemini models: use extra_body with thinking_config
-                    gen_kwargs["extra_body"] = {
-                        "google": {
-                            "thinking_config": {
-                                "include_thoughts": True,
-                                "thinking_level": reasoning_level,
-                            },
-                            "thought_tag_marker": "think",
+                model_lower = self.model.lower()
+                if "gemini" in model_lower:
+                    # Gemini 2.5 uses thinking_budget, Gemini 3 uses thinking_level
+                    if "gemini-2.5" in model_lower or "gemini-2" in model_lower:
+                        # Gemini 2.5: use thinking_budget (0=off, -1=auto, positive=tokens)
+                        # Map reasoning_level to budget: low->4096, medium->8192, high->16384
+                        budget_map = {"low": 4096, "medium": 8192, "high": 16384}
+                        thinking_budget = budget_map.get(reasoning_level, -1)  # -1 = auto
+                        gen_kwargs["extra_body"] = {
+                            "google": {
+                                "thinking_config": {
+                                    "include_thoughts": True,
+                                    "thinking_budget": thinking_budget,
+                                },
+                                "thought_tag_marker": "think",
+                            }
                         }
-                    }
+                    else:
+                        # Gemini 3: use thinking_level
+                        gen_kwargs["extra_body"] = {
+                            "google": {
+                                "thinking_config": {
+                                    "include_thoughts": True,
+                                    "thinking_level": reasoning_level,
+                                },
+                                "thought_tag_marker": "think",
+                            }
+                        }
                 else:
                     # For GPT models: use reasoning_effort
                     gen_kwargs["reasoning_effort"] = reasoning_level
