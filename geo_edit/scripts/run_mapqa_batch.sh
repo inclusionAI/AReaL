@@ -9,15 +9,15 @@ if [ -z "${OPENAI_API_KEY:-}" ]; then
     exit 1
 fi
 
-DATASET_PATH="${1:?Usage: $0 <dataset_path> [dataset_name] [output_dir]}"
-DATASET_NAME="${2:-cartomapqa_stmf_counting}"
-OUTPUT_DIR="${3:-outputs/mapqa_batch}"
+DATASET_PATH="/storage/openpsi/data/lcy_image_edit/mapeval_visual.parquet"
+DATASET_NAME="mapeval_visual"
+OUTPUT_DIR="/storage/openpsi/data/lcy_image_edit/mapeval_0309/mapqa_batch"
 
 # Experiment definitions: "tools|rounds"
 EXPERIMENTS=(
     # Phase A: Single tools (1 round baseline)
-    "text_ocr|1"
-    "text_spotting|1"
+    # "text_ocr|1"
+    # "text_spotting|1"
     "grounding_dino|1"
     "auto_segment|1"
     "bbox_segment|1"
@@ -41,6 +41,7 @@ for exp in "${EXPERIMENTS[@]}"; do
     echo "=== Running: $tools ($rounds rounds) ==="
 
     python -m geo_edit.scripts.separated_reasoning_generate \
+        --api_base "https://matrixllm.alipay.com/v1" \
         --api_key "$OPENAI_API_KEY" \
         --dataset_path "$DATASET_PATH" \
         --dataset_name "$DATASET_NAME" \
