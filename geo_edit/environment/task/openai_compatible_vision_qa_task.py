@@ -31,6 +31,11 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         r"<answer>\s*(?:<\|begin_of_box\|>)?\s*(.*?)\s*(?:<\|end_of_box\|>)?\s*(?:</answer>|$)",
         re.DOTALL | re.IGNORECASE
     )
+    # Fallback pattern for models that output <|begin_of_box|>...<|end_of_box|> without <answer> tags at all
+    _BOX_ONLY_PATTERN = re.compile(
+        r"<\|begin_of_box\|>\s*(.*?)\s*<\|end_of_box\|>",
+        re.DOTALL | re.IGNORECASE
+    )
 
     def __init__(
         self,
@@ -242,6 +247,12 @@ class OpenAICompatibleVisionQATask(VisionQATask):
             if not output_text:
                 answer_parts = [m.group(1).strip() for m in self._ANSWER_FALLBACK_PATTERN.finditer(raw_text)]
                 output_text = "\n".join(part for part in answer_parts if part)
+            # Fallback: try matching <|begin_of_box|>...<|end_of_box|> without <answer> tags
+            if not output_text:
+                box_matches = list(self._BOX_ONLY_PATTERN.finditer(raw_text))
+                if box_matches:
+                    # Take the last match (most likely the final answer)
+                    output_text = box_matches[-1].group(1).strip()
 
         # Fallback to output_text if no message content found
         if not output_text and raw_text and not tool_calls:
@@ -295,6 +306,12 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         if not output_text:
             answer_parts = [m.group(1).strip() for m in self._ANSWER_FALLBACK_PATTERN.finditer(content)]
             output_text = "\n".join(part for part in answer_parts if part)
+        # Fallback: try matching <|begin_of_box|>...<|end_of_box|> without <answer> tags
+        if not output_text:
+            box_matches = list(self._BOX_ONLY_PATTERN.finditer(content))
+            if box_matches:
+                # Take the last match (most likely the final answer)
+                output_text = box_matches[-1].group(1).strip()
 
         tool_calls: List[ToolCall] = []
         tool_call_records: List[Dict[str, Any]] = []
