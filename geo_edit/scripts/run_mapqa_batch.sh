@@ -15,16 +15,16 @@ OUTPUT_DIR="/storage/openpsi/data/lcy_image_edit/mapeval_0309/mapqa_batch"
 
 # Experiment definitions: "tools|rounds"
 EXPERIMENTS=(
-    "image_crop text_ocr|2"
     # Phase A: Single tools (1 round baseline)
-    # "text_ocr|1"  # done
-    # "text_spotting|1"  # done
-    # "grounding_dino|1"
-    # "auto_segment|1" 
-    # "bbox_segment|1"
+    "image_crop|1"
+    "text_ocr|1"  # done
+    "text_spotting|1"  # done
+    "grounding_dino|1"
+    "auto_segment|1" 
+    "bbox_segment|1"
     "map_text_ocr|1"  # new: filtered OCR for maps
     # Phase B: Crop + multi-round (2 rounds)
-    # "image_crop text_ocr|2"
+    "image_crop text_ocr|2"
     "image_crop text_spotting|2"
     "image_crop grounding_dino|2"
     "image_crop auto_segment|2"
