@@ -88,34 +88,40 @@ class ChartMoEActor(BaseToolModelActor):
         **kwargs,
     ) -> str:
         """Analyze an image and answer the question."""
+        import os
+        import tempfile
         import torch
         from PIL import Image
 
         # Extract question from kwargs
         question = kwargs.get("question", "")
 
-        # Decode base64 image
+        # Decode base64 image and save to temp file
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        # Convert PIL Image to tensor using model's vis_processor
-        image_tensor = self.model.vis_processor(image).unsqueeze(0).to(self.model.device)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            image.save(tmp, format="PNG")
+            tmp_path = tmp.name
 
-        # Build query with image placeholder
-        if self.system_prompt:
-            query = f"<ImageHere>{self.system_prompt}\n{question}"
-        else:
-            query = f"<ImageHere>{question}"
+        try:
+            # Build query with image placeholder
+            if self.system_prompt:
+                query = f"<ImageHere>{self.system_prompt}\n{question}"
+            else:
+                query = f"<ImageHere>{question}"
 
-        with torch.amp.autocast('cuda'):
-            response, _ = self.model.chat(
-                self.tokenizer,
-                query=query,
-                image=image_tensor,  # Pass tensor
-                max_new_tokens=max_tokens,
-                do_sample=temperature > 0,
-                temperature=temperature if temperature > 0 else None,
-            )
+            with torch.amp.autocast('cuda'):
+                response, _ = self.model.chat(
+                    self.tokenizer,
+                    query=query,
+                    image=tmp_path,  # Pass file path
+                    max_new_tokens=max_tokens,
+                    do_sample=temperature > 0,
+                    temperature=temperature if temperature > 0 else None,
+                )
+        finally:
+            os.unlink(tmp_path)
 
         return self._parse_output(response)
 
