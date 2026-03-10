@@ -37,15 +37,7 @@ class GSM8KScaffoldingWorkflow(ScaffoldingWorkflow):
     """
 
     def build_scaffolding_llm(self, engine: InferenceEngine) -> ScaffoldingLlm:
-        self.gen_controller = NativeGenerationController()
-        self.reward_controller = RLVRRewardController(self.reward_fn)
-        self.trajectory_maker = PipelineTrajectoryMaker(
-            self.gen_controller, self.reward_controller
-        )
-        return ScaffoldingLlm(
-            self.trajectory_maker,
-            {NativeGenerationController.WorkerTag.GENERATION: self.worker},
-        )
+        return super().build_scaffolding_llm(engine)
 
 
 def main(args):
