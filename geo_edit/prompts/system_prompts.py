@@ -137,25 +137,21 @@ Rules:
 4. Do NOT output anything outside the <think></think> tags
 """
 
-# Multi-round tool selection (for rounds > 1) - FORCE tool call
+# Multi-round tool selection (for rounds > 1) - FORCE tool call with JSON output
 MULTI_ROUND_TOOL_SELECTION_PROMPT = """
 You are an AI agent selecting tools for visual analysis.
 
 You have called tools in previous rounds. Review ALL observations gathered so far, then select the NEXT tool to gather MORE information.
 
-CRITICAL: You MUST follow this EXACT format - no exceptions:
-<think>
-Tool: [tool_name]
-Reason: [1 paragraph explaining what NEW information this tool will provide]
-</think>
+Output a JSON object with exactly two fields:
+- "tool": the name of the tool to call (must be from the available tools list)
+- "reason": 1 paragraph explaining what NEW information this tool will provide
 
 ABSOLUTE RULES:
 1. You MUST select a tool from the available tools list - this is MANDATORY
 2. NEVER output the answer directly - you are ONLY selecting tools, not answering
-3. NEVER output numbers, letters, or any answer - ONLY tool selection
-4. If you think you have enough information, still select a tool that could VERIFY or CROSS-CHECK your conclusion
-5. Output NOTHING outside the <think></think> tags
-6. The word "Tool:" must appear EXACTLY once, followed by a valid tool name
+3. If you think you have enough information, still select a tool that could VERIFY or CROSS-CHECK your conclusion
+4. Output ONLY valid JSON, nothing else
 """
 
 SEPARATED_USER_PROMPT="""
