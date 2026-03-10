@@ -322,7 +322,6 @@ class PPOActor:
             _n_mbs = len(mb_inputs.mbs)
 
             for _mb_idx, mb in enumerate(mb_inputs.mbs):
-                import sys; print(f"[DEBUG ppo_update] minibatch {_mb_idx}/{_n_mbs}", flush=True, file=sys.stderr)
                 train_stat = self.engine.train_batch(
                     mb,
                     loss_fn=functools.partial(

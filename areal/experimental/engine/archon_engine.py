@@ -438,11 +438,6 @@ class ArchonEngine(TrainEngine):
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
 
-        import time as _t
-        import sys
-        _rank = dist.get_rank()
-        print(f"[DEBUG opt] rank={_rank} clip_grad_norm start t={_t.time():.1f}", flush=True, file=sys.stderr)
-
         grad_norm = fsdp2_clip_grad_norm(
             self._get_all_parameters(),
             max_norm=self.optimizer_config.gradient_clipping,
@@ -453,15 +448,12 @@ class ArchonEngine(TrainEngine):
             else None,
             offload_params=self.config.archon.offload_params,
         )
-        print(f"[DEBUG opt] rank={_rank} clip_grad_norm done norm={grad_norm:.4f} t={_t.time():.1f}", flush=True, file=sys.stderr)
 
         if not math.isfinite(grad_norm):
             self.optimizer_zero_grad()
             update_successful = False
         else:
-            print(f"[DEBUG opt] rank={_rank} optimizer.step start t={_t.time():.1f}", flush=True, file=sys.stderr)
             self.optimizer.step()
-            print(f"[DEBUG opt] rank={_rank} optimizer.step done t={_t.time():.1f}", flush=True, file=sys.stderr)
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
@@ -496,14 +488,11 @@ class ArchonEngine(TrainEngine):
         assert self._initialized
         self.optimizer_zero_grad()
 
-        import sys; print(f"[DEBUG train_batch rank={dist.get_rank()}] preparing microbatches...", flush=True, file=sys.stderr)
         mb_list = self._prepare_mb_list(input_).to(self.device)
-        print(f"[DEBUG train_batch rank={dist.get_rank()}] {len(mb_list)} microbatches ready", flush=True, file=sys.stderr)
 
         total_loss_weight = compute_total_loss_weight(
             mb_list, loss_weight_fn, self.data_parallel_group
         )
-        print(f"[DEBUG train_batch rank={dist.get_rank()}] total_loss_weight computed, starting fwd/bwd", flush=True, file=sys.stderr)
 
         def process_output(
             logits: torch.Tensor, ctx_dict: dict[str, Any]
@@ -520,9 +509,6 @@ class ArchonEngine(TrainEngine):
 
         self.forward_backward_batch(mb_list, process_output, forward_only=False)
 
-        import time as _time
-        print(f"[DEBUG train_batch rank={dist.get_rank()}] fwd/bwd done t={_time.time():.1f}", flush=True, file=sys.stderr)
-
         if self.lora_config is not None:
             from areal.experimental.models.archon.lora.lora_linear import (
                 sync_lora_grads,
@@ -532,9 +518,7 @@ class ArchonEngine(TrainEngine):
                 tp_group=self._tp_group,
                 dp_group=self.data_parallel_group,
             )
-            print(f"[DEBUG train_batch rank={dist.get_rank()}] sync_lora_grads done t={_time.time():.1f}", flush=True, file=sys.stderr)
 
-        print(f"[DEBUG train_batch rank={dist.get_rank()}] optimizer_step... t={_time.time():.1f}", flush=True, file=sys.stderr)
         return self.optimizer_step()
 
     @torch.no_grad()

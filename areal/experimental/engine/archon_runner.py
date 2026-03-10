@@ -95,13 +95,6 @@ class SequentialRunner(ForwardBackwardRunner):
                 cu_seqlens = inputs["cu_seqlens"]
                 max_seqlen = int(inputs["max_seqlen"])
 
-            if not forward_only:
-                import sys, time as _time
-                print(
-                    f"[DEBUG runner] rank={torch.distributed.get_rank()} "
-                    f"mb {mb_idx}/{total_mbs} forward t={_time.time():.1f}",
-                    flush=True, file=sys.stderr,
-                )
             logits = self.model(
                 inputs["input_ids"],
                 inputs["position_ids"],
@@ -121,10 +114,7 @@ class SequentialRunner(ForwardBackwardRunner):
                     else:
                         results.append(result.detach())
                 else:
-                    import sys, time as _time
-                    print(f"[DEBUG runner] rank={torch.distributed.get_rank()} mb {mb_idx}/{total_mbs} backward t={_time.time():.1f}", flush=True, file=sys.stderr)
                     result.backward()
-                    print(f"[DEBUG runner] rank={torch.distributed.get_rank()} mb {mb_idx}/{total_mbs} backward done t={_time.time():.1f}", flush=True, file=sys.stderr)
 
         return results
 

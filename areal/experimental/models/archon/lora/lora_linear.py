@@ -86,18 +86,7 @@ class LoRALinear(nn.Module):
             if result.requires_grad and hasattr(self, "_debug_name"):
                 _name = self._debug_name
 
-                def _bwd_hook(grad, _n=_name):
-                    import sys
-                    import time as _t
-
-                    print(
-                        f"[DEBUG bwd-hook] rank={torch.distributed.get_rank()} "
-                        f"layer={_n} t={_t.time():.1f}",
-                        flush=True,
-                        file=sys.stderr,
-                    )
-
-                result.register_hook(_bwd_hook)
+                result.register_hook(lambda grad: grad)
             return result
 
         h = F.dropout(x, p=self._dropout_p, training=self.training)
@@ -319,46 +308,20 @@ def sync_lora_grads(
         dp_group: Process group for data parallelism (optional but
             recommended; without it gradients are only TP-synced).
     """
-    import sys
-    import time as _t
-
     import torch.distributed as dist
 
     if tp_group is None and dp_group is None:
         return
 
-    rank = dist.get_rank()
-    count = 0
     for module in model.modules():
         if isinstance(module, LoRALinear) and module._tp_enabled:
-            name = getattr(module, "_debug_name", f"lora_{count}")
-            for pname, tensor in [
+            for _pname, tensor in [
                 ("a", module._lora_a_weight),
                 ("b", module._lora_b_weight),
             ]:
                 if tensor.grad is not None:
                     grad = tensor.grad
                     if tp_group is not None:
-                        if count < 2:
-                            print(
-                                f"[DEBUG sync] rank={rank} {name}.lora_{pname} "
-                                f"tp_reduce start t={_t.time():.1f}",
-                                flush=True,
-                                file=sys.stderr,
-                            )
                         dist.all_reduce(grad, group=tp_group)
-                        if count < 2:
-                            print(
-                                f"[DEBUG sync] rank={rank} {name}.lora_{pname} "
-                                f"tp_reduce done t={_t.time():.1f}",
-                                flush=True,
-                                file=sys.stderr,
-                            )
                     if dp_group is not None:
                         dist.all_reduce(grad, group=dp_group)
-            count += 1
-    print(
-        f"[DEBUG sync] rank={rank} total {count} modules synced t={_t.time():.1f}",
-        flush=True,
-        file=sys.stderr,
-    )
