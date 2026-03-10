@@ -258,10 +258,12 @@ def _run_one_task(task_payload: dict):
                 output_text = answer_match.group(1).strip() if answer_match else reasoning_text
                 think_match = re.search(r"<think>(.*?)</think>", reasoning_text, re.DOTALL | re.IGNORECASE)
                 thinking = think_match.group(1).strip() if think_match else ""
+                # Stringify contents for saving
+                contents_for_save = [task._stringify_observation_item(item) for item in (task.contents if isinstance(task.contents, list) else task.contents.get("input", []))]
                 # Record final step
                 task._record_conversation_history(
                     step=step,
-                    contents_for_save=[],
+                    contents_for_save=contents_for_save,
                     action_record={"text": output_text, "tool_calls": []},
                     thinking_process=thinking,
                     output_text=output_text,

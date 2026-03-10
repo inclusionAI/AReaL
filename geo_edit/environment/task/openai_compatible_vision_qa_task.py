@@ -356,10 +356,10 @@ class OpenAICompatibleVisionQATask(VisionQATask):
     def _append_tool_result(self, call_id: str, payload: Dict[str, str | Dict[str, str]] | List[Dict[str, str]]) -> None:
         """Append tool result to contents."""
         if self._use_responses_format:
-            output = payload if isinstance(payload, list) else json.dumps(payload, ensure_ascii=True)
+            output = payload if isinstance(payload, list) else json.dumps(payload, ensure_ascii=False)
             self.contents["input"].append({"type": "function_call_output", "call_id": call_id, "output": output})
         else:
-            text = json.dumps(payload, ensure_ascii=True) if isinstance(payload, dict) else json.dumps(payload)
+            text = json.dumps(payload, ensure_ascii=False) if isinstance(payload, dict) else json.dumps(payload, ensure_ascii=False)
             self.contents.append({"role": "tool", "tool_call_id": call_id, "content": text})
 
     def _append_tool_error(self, tool_call: ToolCall, error_msg: str) -> None:

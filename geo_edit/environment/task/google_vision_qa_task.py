@@ -251,7 +251,7 @@ class GoogleVisionQATask(VisionQATask):
                     "type": "function",
                     "function": {
                         "name": part.function_call.name,
-                        "arguments": json.dumps(dict(part.function_call.args)) if part.function_call.args else "{}"
+                        "arguments": json.dumps(dict(part.function_call.args), ensure_ascii=False) if part.function_call.args else "{}"
                     }
                 })
 
@@ -260,7 +260,7 @@ class GoogleVisionQATask(VisionQATask):
                 return {
                     "role": "tool",
                     "tool_call_id": f"call_{part.function_response.name}",
-                    "content": json.dumps(dict(part.function_response.response)) if part.function_response.response else "{}"
+                    "content": json.dumps(dict(part.function_response.response), ensure_ascii=False) if part.function_response.response else "{}"
                 }
 
         # Add tool_calls if present
@@ -311,7 +311,7 @@ class GoogleVisionQATask(VisionQATask):
                     "type": "function",
                     "function": {
                         "name": function_call["name"],
-                        "arguments": json.dumps(function_call["args"]) if isinstance(function_call["args"], dict) else str(function_call["args"])
+                        "arguments": json.dumps(function_call["args"], ensure_ascii=False) if isinstance(function_call["args"], dict) else str(function_call["args"])
                     }
                 })
 
@@ -321,7 +321,7 @@ class GoogleVisionQATask(VisionQATask):
                 return {
                     "role": "tool",
                     "tool_call_id": f"call_{function_response['name']}",
-                    "content": json.dumps(function_response["response"])
+                    "content": json.dumps(function_response["response"], ensure_ascii=False)
                 }
 
         # Add tool_calls if present

@@ -155,4 +155,4 @@ def save_global_meta_info(output_path: str, meta_info_list: List[Dict[str, Any]]
     global_meta_info = aggregate_meta_info(meta_info_list)
     global_meta_info_jsonl_path = os.path.join(output_path, "global_meta_info.jsonl")
     with open(global_meta_info_jsonl_path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(global_meta_info) + "\n")
+        f.write(json.dumps(global_meta_info, ensure_ascii=False) + "\n")

@@ -436,14 +436,14 @@ class VisionQATask(AbstractVLMTask):
 
         with open(self.extra_info_jsonl_path, "w", encoding="utf-8") as f:
             for record in extra_info_list:
-                f.write(json.dumps(record) + "\n")
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
         with open(self.output_jsonl_path, "w", encoding="utf-8") as f:
             for record in self.conversation_history:
-                f.write(json.dumps(record) + "\n")
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
         with open(self.meta_info_jsonl_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(meta_info) + "\n")
+            f.write(json.dumps(meta_info, ensure_ascii=False) + "\n")
 
         # Generate trajectory.json for SFT training (formatted JSON, not JSONL)
         try:
