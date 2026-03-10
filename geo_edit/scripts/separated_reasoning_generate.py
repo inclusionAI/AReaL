@@ -34,6 +34,7 @@ from geo_edit.prompts.system_prompts import (
     SEPARATED_TOOL_CALL_ONLY_PROMPT,
     SEPARATED_FINAL_ANSWER_PROMPT,
     SEPARATED_USER_PROMPT,
+    MULTI_ROUND_TOOL_SELECTION_PROMPT,
 )
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter
@@ -53,6 +54,7 @@ _WORKER_TASK_CLASS = None
 _WORKER_API_MODE: "str | None" = None
 _WORKER_TOOL_ROUTER: "ToolRouter | None" = None
 _WORKER_REASONING_ONLY_CONFIG = None
+_WORKER_MULTI_ROUND_REASONING_CONFIG = None
 _WORKER_TOOL_CALL_ONLY_CONFIG = None
 _WORKER_FINAL_ANSWER_CONFIG = None
 
@@ -76,8 +78,8 @@ def _init_worker(
     """
     global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS
     global _WORKER_TASK_CLASS, _WORKER_API_MODE
-    global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_TOOL_CALL_ONLY_CONFIG
-    global _WORKER_FINAL_ANSWER_CONFIG
+    global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_MULTI_ROUND_REASONING_CONFIG
+    global _WORKER_TOOL_CALL_ONLY_CONFIG, _WORKER_FINAL_ANSWER_CONFIG
 
     # Create ToolRouter WITHOUT initializing Ray actors
     # Pass enable_tools to override config.yaml (same as main process)
@@ -112,6 +114,9 @@ def _init_worker(
         _WORKER_REASONING_ONLY_CONFIG = derive_google_config(
             base, system_prompt=SIMPLIFIED_TOOL_SELECTION_PROMPT, tool_mode="NONE"
         )
+        _WORKER_MULTI_ROUND_REASONING_CONFIG = derive_google_config(
+            base, system_prompt=MULTI_ROUND_TOOL_SELECTION_PROMPT, tool_mode="NONE"
+        )
         _WORKER_TOOL_CALL_ONLY_CONFIG = derive_google_config(
             base, system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
         )
@@ -132,6 +137,9 @@ def _init_worker(
         base = agent_configs.generate_config
         _WORKER_REASONING_ONLY_CONFIG = derive_api_config(
             base, api_mode="chat_completions", system_prompt=SIMPLIFIED_TOOL_SELECTION_PROMPT, tool_choice="none"
+        )
+        _WORKER_MULTI_ROUND_REASONING_CONFIG = derive_api_config(
+            base, api_mode="chat_completions", system_prompt=MULTI_ROUND_TOOL_SELECTION_PROMPT, tool_choice="none"
         )
         _WORKER_TOOL_CALL_ONLY_CONFIG = derive_api_config(
             base, api_mode="chat_completions", system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
@@ -224,7 +232,11 @@ def _run_one_task(task_payload: dict):
 
             # ===== Phase 1: Generate reasoning (no tool call, no answer) =====
             logger.info(f"[{task_id}] Step {step} Phase 1: Generating reasoning...")
-            _WORKER_AGENT.config.generate_config = _WORKER_REASONING_ONLY_CONFIG
+            # Use multi-round prompt after first round
+            if step > 1:
+                _WORKER_AGENT.config.generate_config = _WORKER_MULTI_ROUND_REASONING_CONFIG
+            else:
+                _WORKER_AGENT.config.generate_config = _WORKER_REASONING_ONLY_CONFIG
             reasoning_action, reasoning_extra = _WORKER_AGENT.act(task.contents)
             logger.warning(reasoning_action)
             # Extract reasoning text from action
@@ -320,6 +332,8 @@ def main():
                         help="Tool names or categories to enable (overrides config.yaml). "
                              "Categories: general, math, table, chart, map, document, ocr, segment. "
                              "Examples: --enable_tools math chart, --enable_tools text_ocr formula_ocr")
+    parser.add_argument("--max_tool_calls", type=int, default=None,
+                        help="Max tool calls per task (default: constants.MAX_TOOL_CALLS)")
     args = parser.parse_args()
 
     if args.model_type == "Google" and not args.api_key:
@@ -398,7 +412,7 @@ def main():
             args.api_base,
             args.port,
             output_path,
-            MAX_TOOL_CALLS,
+            args.max_tool_calls if args.max_tool_calls is not None else MAX_TOOL_CALLS,
             enabled_agent_names,
             args.enable_tools,  # Pass enable_tools to workers
         ),

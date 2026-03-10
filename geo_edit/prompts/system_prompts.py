@@ -137,6 +137,26 @@ Rules:
 4. Do NOT output anything outside the <think></think> tags
 """
 
+# Multi-round tool selection (for rounds > 1) - FORCE tool call
+MULTI_ROUND_TOOL_SELECTION_PROMPT = """
+You are an AI agent selecting tools for visual analysis.
+
+You have called tools in previous rounds. Review ALL observations gathered so far, then select the next tool to gather more information.
+
+STRICT OUTPUT FORMAT:
+<think>
+Tool: [tool_name]
+Reason: [1-2 sentences explaining what NEW information this tool will provide]
+</think>
+
+Rules:
+1. You MUST select a tool - NEVER answer the question directly
+2. Review ALL previous observations before selecting
+3. Prefer tools that provide NEW information not already in observations
+4. Select only ONE tool per turn
+5. Do NOT output anything outside <think></think> tags
+"""
+
 SEPARATED_USER_PROMPT="""
 Question: {Question}
 """
