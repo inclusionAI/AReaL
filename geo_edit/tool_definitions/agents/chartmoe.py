@@ -53,8 +53,32 @@ class ChartMoEActor(BaseToolModelActor):
             device_map=self.device_map,
             trust_remote_code=True,
         ).eval()
+
+        # Monkey-patch vision_tower to add interpolate_pos_encoding=True
+        # Fix for transformers >= 4.x compatibility with ChartMoE
+        self._patch_vision_tower()
+
         self._initialized = True
         logger.info("ChartMoEActor initialized on GPU %s: %s", self.gpu_ids, model_name)
+
+    def _patch_vision_tower(self):
+        """Patch vision_tower.forward to add interpolate_pos_encoding=True."""
+        if hasattr(self.model, 'vit') and hasattr(self.model.vit, 'vision_tower'):
+            vision_tower = self.model.vit.vision_tower
+            original_forward = vision_tower.forward
+
+            def patched_forward(pixel_values, output_hidden_states=False, return_dict=True, **kwargs):
+                # Always enable interpolate_pos_encoding for variable-size images
+                return original_forward(
+                    pixel_values,
+                    output_hidden_states=output_hidden_states,
+                    return_dict=return_dict,
+                    interpolate_pos_encoding=True,
+                    **kwargs
+                )
+
+            vision_tower.forward = patched_forward
+            logger.info("Patched vision_tower.forward with interpolate_pos_encoding=True")
 
     def analyze(
         self,
@@ -64,45 +88,32 @@ class ChartMoEActor(BaseToolModelActor):
         **kwargs,
     ) -> str:
         """Analyze an image and answer the question."""
-        import os
-        import tempfile
         import torch
         from PIL import Image
 
         # Extract question from kwargs
         question = kwargs.get("question", "")
 
-        # Decode base64 image and save to temp file (model.chat expects file path)
+        # Decode base64 image
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        # Resize to exactly 336x336 (InternLM-XComposer2 CLIP ViT requirement)
-        image = image.resize((336, 336), Image.Resampling.LANCZOS)
+        # Build query with image placeholder
+        if self.system_prompt:
+            query = f"<ImageHere>{self.system_prompt}\n{question}"
+        else:
+            query = f"<ImageHere>{question}"
 
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            image.save(tmp, format="PNG")
-            tmp_path = tmp.name
-
-        try:
-            # Build query with image placeholder
-            if self.system_prompt:
-                query = f"<ImageHere>{self.system_prompt}\n{question}"
-            else:
-                query = f"<ImageHere>{question}"
-
-            # Use model.chat() API (InternLM-XComposer2 style)
-            with torch.cuda.amp.autocast():
-                response, _ = self.model.chat(
-                    self.tokenizer,
-                    query=query,
-                    image=tmp_path,
-                    max_new_tokens=max_tokens,
-                    do_sample=temperature > 0,
-                    temperature=temperature if temperature > 0 else None,
-                )
-        finally:
-            # Clean up temp file
-            os.unlink(tmp_path)
+        with torch.amp.autocast('cuda'):
+            # Try passing PIL Image directly to chat()
+            response, _ = self.model.chat(
+                self.tokenizer,
+                query=query,
+                image=image,  # Pass PIL Image directly
+                max_new_tokens=max_tokens,
+                do_sample=temperature > 0,
+                temperature=temperature if temperature > 0 else None,
+            )
 
         return self._parse_output(response)
 
