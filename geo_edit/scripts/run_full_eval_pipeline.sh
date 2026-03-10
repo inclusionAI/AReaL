@@ -18,6 +18,7 @@ NUM_WORKERS=32
 LEAKAGE_CHECK_MODE="full"
 FORCE=false
 COMPARE_WITH=""
+EVAL_MODE="mapqa"  # mapqa or judge
 
 # Filter flags
 FILTER_WRONG_ANSWERS=false
@@ -41,6 +42,7 @@ Optional:
   --judge_api_base URL  Judge API URL (default: $JUDGE_API_BASE)
   --num_workers N       Parallel workers (default: $NUM_WORKERS)
   --compare_with PATH   Baseline eval path for comparison
+  --eval_mode MODE      Evaluation mode: mapqa|judge (default: $EVAL_MODE)
   --force               Force re-run all steps
 
 Filters (Step 1):
@@ -78,6 +80,7 @@ while [[ $# -gt 0 ]]; do
         --judge_api_base) JUDGE_API_BASE="$2"; shift 2 ;;
         --num_workers) NUM_WORKERS="$2"; shift 2 ;;
         --compare_with) COMPARE_WITH="$2"; shift 2 ;;
+        --eval_mode) EVAL_MODE="$2"; shift 2 ;;
         --force) FORCE=true; shift ;;
         --filter_wrong_answers) FILTER_WRONG_ANSWERS=true; shift ;;
         --filter_answer_leakage) FILTER_ANSWER_LEAKAGE=true; shift ;;
@@ -179,8 +182,8 @@ run_single_pipeline() {
     fi
     echo ""
 
-    # Step 3: Evaluate with OpenAI as judge
-    echo "=== Step 3: OpenAI as Judge Evaluation ==="
+    # Step 3: Evaluation
+    echo "=== Step 3: Evaluation (mode: $EVAL_MODE) ==="
     if [[ -d "$EVAL_DIR" && "$FORCE" == false ]]; then
         echo "SKIP: Eval directory already exists at $EVAL_DIR"
     else
@@ -189,12 +192,19 @@ run_single_pipeline() {
             COMPARE_ARGS="--compare_with $COMPARE_WITH"
         fi
 
-        python -m geo_edit.evaluation.openai_as_judge \
-            --api_key "$OPENAI_API_KEY" \
-            --api_base "$JUDGE_API_BASE" \
-            --result_path "$RESULT_DIR" \
-            --output_path "$EVAL_DIR" \
-            $COMPARE_ARGS
+        if [[ "$EVAL_MODE" == "mapqa" ]]; then
+            python -m geo_edit.evaluation.eval_mapeval_visual \
+                --result_path "$RESULT_DIR" \
+                --output_path "$EVAL_DIR" \
+                $COMPARE_ARGS
+        else
+            python -m geo_edit.evaluation.openai_as_judge \
+                --api_key "$OPENAI_API_KEY" \
+                --api_base "$JUDGE_API_BASE" \
+                --result_path "$RESULT_DIR" \
+                --output_path "$EVAL_DIR" \
+                $COMPARE_ARGS
+        fi
 
         echo "Step 3 completed: $EVAL_DIR"
     fi
