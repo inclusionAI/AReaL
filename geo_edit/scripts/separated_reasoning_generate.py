@@ -13,6 +13,8 @@ import multiprocessing as mp
 import os
 import re
 import shutil
+import signal
+import sys
 import time
 from io import BytesIO
 
@@ -60,6 +62,11 @@ _WORKER_TOOL_CALL_ONLY_CONFIG = None
 _WORKER_FINAL_ANSWER_CONFIG = None
 
 
+def _worker_init_signal_handler():
+    """Ignore SIGINT in worker processes - let main process handle it."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
 def _init_worker(
     api_key: str,
     model_name_or_path: str,
@@ -77,6 +84,8 @@ def _init_worker(
     Ray tool agents are shared across all workers (initialized in main process).
     Workers connect to existing Ray actors by name.
     """
+    # Ignore SIGINT in workers - main process handles interrupts
+    _worker_init_signal_handler()
     global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS
     global _WORKER_TASK_CLASS, _WORKER_API_MODE
     global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_MULTI_ROUND_REASONING_CONFIG
@@ -451,6 +460,7 @@ def main():
         ),
     )
 
+    interrupted = False
     try:
         inflight = []
         submit_idx = 0
@@ -526,15 +536,29 @@ def main():
                 time.sleep(0.05)
 
         pbar.close()
-    finally:
-        # Close pool cleanly BEFORE shutting down Ray - even if errors occurred
-        logger.info("Closing worker pool...")
-        pool.close()
+    except KeyboardInterrupt:
+        interrupted = True
+        pbar.close()
+        logger.info("\nInterrupted by user. Terminating workers...")
+        # Terminate immediately instead of waiting for tasks to complete
+        pool.terminate()
         pool.join()
-        logger.info("Worker pool closed successfully")
+        logger.info("Workers terminated.")
+    finally:
+        if not interrupted:
+            # Close pool cleanly BEFORE shutting down Ray - even if errors occurred
+            logger.info("Closing worker pool...")
+            pool.close()
+            pool.join()
+            logger.info("Worker pool closed successfully")
 
-    save_global_meta_info(output_path, meta_info_list)
-    logger.info(f"All tasks completed. Total successful: {len(meta_info_list)}")
+    if meta_info_list:
+        save_global_meta_info(output_path, meta_info_list)
+
+    if interrupted:
+        logger.info(f"Script interrupted. Saved {len(meta_info_list)} completed tasks.")
+    else:
+        logger.info(f"All tasks completed. Total successful: {len(meta_info_list)}")
 
     # Shutdown Ray tool agents AFTER pool is closed to avoid SIGTERM conflicts
     # Note: We only shutdown tool agents, NOT Ray itself (Ray cluster remains running)
@@ -543,7 +567,11 @@ def main():
         tool_router.shutdown_agents()
         logger.info("Ray tool agents shutdown complete")
 
-    logger.info("Script completed. Ray cluster remains running.")
+    if interrupted:
+        logger.info("Script interrupted and cleaned up. Ray cluster remains running.")
+        sys.exit(1)
+    else:
+        logger.info("Script completed. Ray cluster remains running.")
 
 
 if __name__ == "__main__":
