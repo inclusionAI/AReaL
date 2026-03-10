@@ -34,7 +34,7 @@ from areal.utils.data import (
     tensor_container_to,
 )
 from areal.utils.dynamic_import import import_from_string
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_addr, gethostip
 
 logger = logging.getLogger("SyncRPCServer")
 
@@ -182,7 +182,7 @@ def _wait_for_worker_ready(host: str, port: int, timeout: float = 60) -> bool:
     Returns:
         True if the worker is ready, False if timeout is reached.
     """
-    url = f"http://{host}:{port}/health"
+    url = f"http://{format_addr(host, port)}/health"
     deadline = time.time() + timeout
 
     while time.time() < deadline:

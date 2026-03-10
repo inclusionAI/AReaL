@@ -24,7 +24,7 @@ from areal.infra.utils.launcher import (
 )
 from areal.infra.utils.proc import kill_process_tree
 from areal.utils import logging, name_resolve, names
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_addr, gethostip
 
 logger = logging.getLogger("SGLangWrapper")
 
@@ -185,7 +185,7 @@ class SGLangServerWrapper:
                 node_rank=node_rank,
             )
             launch_server_args.append((cmd, host_ip, server_port, node_rank))
-            server_addresses.append(f"http://{host_ip}:{server_port}")
+            server_addresses.append(f"http://{format_addr(host_ip, server_port)}")
 
         with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
             server_iterator = executor.map(
@@ -199,10 +199,10 @@ class SGLangServerWrapper:
 
     def launch_one_server(self, cmd, host_ip, server_port, node_rank):
         server_process = launch_server_cmd(cmd)
-        wait_for_server(f"http://{host_ip}:{server_port}")
+        wait_for_server(f"http://{format_addr(host_ip, server_port)}")
         if node_rank == 0:
             name = names.gen_servers(self.experiment_name, self.trial_name)
-            name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
+            name_resolve.add_subentry(name, format_addr(host_ip, server_port))
         logger.info(f"SGLang server launched at: http://{host_ip}:{server_port}")
         return server_process
 

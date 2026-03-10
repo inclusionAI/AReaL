@@ -34,7 +34,7 @@ from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_addr, gethostip
 from areal.utils.perf_tracer import trace_perf
 
 from ..staleness_manager import StalenessManager
@@ -236,7 +236,7 @@ class RolloutController:
                     engine_name=self._engine_name(rank),
                     # args in `engine_api`
                     engine_id=str(rank),
-                    addr=f"{info.host}:{info.port}",
+                    addr=format_addr(info.host, info.port),
                     *args,
                     **kwargs,
                 )
@@ -246,9 +246,26 @@ class RolloutController:
             ]
             await asyncio.gather(*tasks)
         else:
-            self.server_infos = await self._collective_rpc_async(
-                "launch_server", server_args=server_args
-            )
+            # Assign each worker a unique port range to avoid concurrent port conflicts.
+            # Workers on the same node calling find_free_ports simultaneously can pick
+            # the same port (TOCTOU race). Partitioning by global rank prevents this.
+            n_workers = len(self.workers)
+            ports_per_worker = 40000 // max(n_workers, 1)
+            server_info_tasks = []
+            for rank, worker in enumerate(self.workers):
+                worker_server_args = dict(server_args or {})
+                port_range_start = 10000 + rank * ports_per_worker
+                port_range_end = port_range_start + ports_per_worker - 1
+                worker_server_args["port_range"] = (port_range_start, port_range_end)
+                server_info_tasks.append(
+                    self.scheduler.async_call_engine(
+                        worker_id=worker.id,
+                        method="launch_server",
+                        engine_name=self._engine_name(rank),
+                        server_args=worker_server_args,
+                    )
+                )
+            self.server_infos = list(await asyncio.gather(*server_info_tasks))
             tasks = [
                 self.scheduler.async_call_engine(
                     worker_id=worker.id,
@@ -352,10 +369,10 @@ class RolloutController:
                     worker_id=worker.id,
                     method="initialize",
                     engine_name=f"proxy/{rank}",
-                    addr=f"{server_info.host}:{server_info.port}",
+                    addr=format_addr(server_info.host, server_info.port),
                 )
             )
-            self.proxy_addrs.append(f"http://{worker.ip}:{worker.worker_ports[0]}")
+            self.proxy_addrs.append(f"http://{format_addr(worker.ip, worker.worker_ports[0])}")
         await asyncio.gather(*init_tasks)
 
         logger.info(f"Proxy servers initialized. Addresses: {self.proxy_addrs}")
@@ -492,7 +509,7 @@ class RolloutController:
         """Return callback server address as 'host:port'."""
         if self._callback_host is None or self._callback_port is None:
             raise RuntimeError("Callback server not started")
-        return f"{self._callback_host}:{self._callback_port}"
+        return format_addr(self._callback_host, self._callback_port)
 
     def _resolve_task_future(self, task_id: int):
         """Resolve a pending future with the task result."""
