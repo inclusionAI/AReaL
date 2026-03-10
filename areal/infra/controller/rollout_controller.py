@@ -395,6 +395,27 @@ class RolloutController:
             self.proxy_addrs.append(f"http://{worker.ip}:{worker.worker_ports[0]}")
         await asyncio.gather(*init_tasks)
 
+        # For RayScheduler, explicitly start HTTP server inside the Ray Actor.
+        # fork_workers() creates RayRPCServer actors that don't run a custom
+        # command, so we need to call start_proxy_server on each actor.
+        from areal.infra.scheduler.ray import RayScheduler
+
+        if isinstance(self.scheduler, RayScheduler):
+            import ray
+
+            logger.info("Starting proxy HTTP servers on Ray workers...")
+            refs = []
+            for rank, worker in enumerate(self.proxy_workers):
+                port = int(worker.worker_ports[0])
+                wi = self.scheduler._get_worker_info_by_id(worker.id)
+                refs.append(
+                    wi.actor.start_proxy_server.remote(
+                        port, self._proxy_engine_name(rank)
+                    )
+                )
+            ray.get(refs)
+            logger.info("Proxy HTTP servers started on Ray workers")
+
         logger.info(f"Proxy servers initialized. Addresses: {self.proxy_addrs}")
 
     def get_proxy_addr(self, rank: int) -> str:

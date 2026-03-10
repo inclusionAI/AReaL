@@ -177,6 +177,58 @@ class RayRPCServer:
             )
             raise
 
+    def start_proxy_server(self, port: int, engine_name: str | None = None) -> None:
+        """Start a proxy HTTP server inside this Ray Actor (background thread).
+
+        RayScheduler's fork_workers() creates RayRPCServer actors, not standalone
+        proxy_rollout_server processes. This method starts the FastAPI app via
+        uvicorn so that AgentWorkflow can reach the proxy over HTTP.
+
+        Parameters
+        ----------
+        port : int
+            Port to listen on.
+        engine_name : str, optional
+            Name of the engine to serve. Falls back to the default engine.
+        """
+        import threading
+
+        import uvicorn
+
+        from areal.experimental.openai.proxy import proxy_rollout_server
+
+        # Resolve engine
+        if engine_name is None:
+            engine_name = self._default_engine_name
+        if engine_name is None or engine_name not in self._engines:
+            raise RuntimeError(
+                f"Cannot start proxy server: engine '{engine_name}' not found. "
+                f"Available: {list(self._engines.keys())}"
+            )
+        engine = self._engines[engine_name]
+
+        # Inject module-level globals used by the FastAPI app
+        proxy_rollout_server._engine = engine
+        proxy_rollout_server._server_host = "0.0.0.0"
+        proxy_rollout_server._server_port = port
+        proxy_rollout_server._setup_openai_client()
+
+        self.logger.info(
+            f"Starting proxy HTTP server on port {port} for engine '{engine_name}'"
+        )
+
+        def _run_uvicorn():
+            uvicorn.run(
+                proxy_rollout_server.app,
+                host="0.0.0.0",
+                port=port,
+                log_level="warning",
+            )
+
+        thread = threading.Thread(target=_run_uvicorn, daemon=True)
+        thread.start()
+        self._proxy_server_thread = thread
+
     def destroy(self) -> None:
         # Destroy all engines
         for engine_name, engine in list(self._engines.items()):
