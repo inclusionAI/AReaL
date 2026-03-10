@@ -141,9 +141,6 @@ class TestGatewayInfEngine:
         fn = lambda x: True  # noqa: E731
         assert GatewayInfEngine._resolve_should_accept_fn(fn) is fn
 
-    @pytest.mark.skip(
-        reason="OpenAIProxyWorkflow requires Python 3.12 (PEP 695 syntax in areal.experimental.openai)"
-    )
     def test_resolve_workflow_with_agent_class(self):
         """Test _resolve_workflow wraps agent-like classes in OpenAIProxyWorkflow."""
         cfg = GatewayControllerConfig()

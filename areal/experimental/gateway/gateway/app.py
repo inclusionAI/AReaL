@@ -383,4 +383,21 @@ def create_app(config: GatewayConfig) -> FastAPI:
         )
         return {"results": results}
 
+    @app.post("/grant_capacity")
+    async def grant_capacity(request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addrs = await get_all_worker_addrs(
+                config.router_addr, config.admin_api_key, config.router_timeout
+            )
+        except RouterUnreachableError as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        results = await broadcast_to_workers(
+            worker_addrs, "/grant_capacity", body, headers
+        )
+        return {"results": results}
+
     return app

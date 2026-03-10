@@ -419,10 +419,11 @@ class TestControllerRolloutBatch:
             workflow="tests.experimental.openai.utils.SimpleAgent",
         )
 
-        # Result is a dict with interaction tensor data
         assert result is not None
-        assert isinstance(result, dict)
+        assert isinstance(result, list)
         assert len(result) > 0
+        assert isinstance(result[0], dict)
+        assert len(result[0]) > 0
 
 
 # =============================================================================

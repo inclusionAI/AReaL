@@ -490,4 +490,14 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     app.post("/init_weights_update_group")(init_weights_update_group)
     app.post("/set_version")(set_version)
 
+    # =========================================================================
+    # Capacity management (mirrors proxy_rollout_server.grant_capacity)
+    # =========================================================================
+
+    @app.post("/grant_capacity")
+    async def grant_capacity(request: Request):
+        store: SessionStore = app.state.session_store
+        _require_admin_key(request, store)
+        return {"status": "ok"}
+
     return app

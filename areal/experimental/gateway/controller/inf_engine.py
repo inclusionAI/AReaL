@@ -73,6 +73,10 @@ class _GatewayInfEngineConfig:
     def pause_grace_period(self) -> float:
         return self._cfg.pause_grace_period
 
+    @property
+    def dump_to_file(self) -> bool:
+        return False
+
 
 class GatewayInfEngine:
     """Inference engine that routes all calls through the gateway HTTP stack.
@@ -248,11 +252,8 @@ class GatewayInfEngine:
         from areal.experimental.openai import OpenAIProxyWorkflow
 
         openai_cfg = self.config.openai
-        # Use config attributes if provided, otherwise fall back to
-        # OpenAIProxyConfig defaults (avoids importing areal.api.cli_args
-        # which triggers PEP 695 syntax errors on Python < 3.12).
         mode = getattr(openai_cfg, "mode", "inline")
-        admin_api_key = getattr(openai_cfg, "admin_api_key", "areal-admin-key")
+        admin_api_key = getattr(openai_cfg, "admin_api_key", self.config.admin_api_key)
         turn_discount = getattr(openai_cfg, "turn_discount", 1.0)
         export_style = getattr(openai_cfg, "export_style", "individual")
         subproc_max_workers = getattr(openai_cfg, "subproc_max_workers", 4)
@@ -318,7 +319,9 @@ class GatewayInfEngine:
             imported = import_from_string(workflow)
             if isinstance(imported, type) and issubclass(imported, RolloutWorkflow):
                 if workflow_kwargs is None:
-                    raise ValueError("workflow_kwargs required when workflow is a class")
+                    raise ValueError(
+                        "workflow_kwargs required when workflow is a class"
+                    )
                 resolved = imported(**workflow_kwargs)
             elif isinstance(imported, RolloutWorkflow):
                 resolved = imported
@@ -397,8 +400,11 @@ class GatewayInfEngine:
         if proxy_addr is None:
             proxy_addr = self.gateway_addr
         resolved_workflow = self._resolve_workflow(
-            workflow, workflow_kwargs, group_size,
-            proxy_addr=proxy_addr, engine=self,
+            workflow,
+            workflow_kwargs,
+            group_size,
+            proxy_addr=proxy_addr,
+            engine=self,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         return self.workflow_executor.submit(
@@ -438,8 +444,11 @@ class GatewayInfEngine:
         if proxy_addr is None:
             proxy_addr = self.gateway_addr
         resolved_workflow = self._resolve_workflow(
-            workflow, workflow_kwargs, group_size,
-            proxy_addr=proxy_addr, engine=self,
+            workflow,
+            workflow_kwargs,
+            group_size,
+            proxy_addr=proxy_addr,
+            engine=self,
         )
         return self.workflow_executor.rollout_batch(
             data=data, workflow=resolved_workflow
@@ -458,8 +467,11 @@ class GatewayInfEngine:
         if proxy_addr is None:
             proxy_addr = self.gateway_addr
         resolved_workflow = self._resolve_workflow(
-            workflow, workflow_kwargs, group_size,
-            proxy_addr=proxy_addr, engine=self,
+            workflow,
+            workflow_kwargs,
+            group_size,
+            proxy_addr=proxy_addr,
+            engine=self,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         return self.workflow_executor.prepare_batch(

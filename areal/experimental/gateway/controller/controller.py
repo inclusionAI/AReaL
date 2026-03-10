@@ -151,7 +151,7 @@ class GatewayRolloutController:
         """Create workers and launch SGLang servers via scheduler."""
         from dataclasses import asdict
 
-        from areal.api.cli_args import SchedulingSpec
+        from areal.api.cli_args import SchedulingStrategy, SchedulingSpec
         from areal.api.scheduler_api import Job
 
         # Build scheduling spec
@@ -164,21 +164,30 @@ class GatewayRolloutController:
 
         dp_size = alloc_mode.gen.dp_size if alloc_mode is not None else 1
 
+        scheduling_strategy = self.config.scheduling_strategy
+        if scheduling_strategy is None:
+            scheduling_strategy = SchedulingStrategy()
+
         job = Job(
             replicas=dp_size,
             tasks=[sch_spec for _ in range(dp_size)],
-            scheduling_strategy=self.config.scheduling_strategy,
+            scheduling_strategy=scheduling_strategy,
             role=self._worker_role,
         )
 
-        logger.info("Creating workers via scheduler...")
-        self.scheduler.create_workers(job=job)
-        self.workers = self.scheduler.get_workers(role=job.role)
-        logger.info("Workers ready: %s", [w.id for w in self.workers])
-
         if server_infos is not None:
+            # Pre-existing servers — skip worker creation / server launch
             self.server_infos = server_infos
+            logger.info(
+                "Using %d pre-existing server_infos, skipping worker creation",
+                len(server_infos),
+            )
         else:
+            logger.info("Creating workers via scheduler...")
+            self.scheduler.create_workers(job=job)
+            self.workers = self.scheduler.get_workers(role=job.role)
+            logger.info("Workers ready: %s", [w.id for w in self.workers])
+
             # Launch SGLang servers on workers
             tasks = []
             for rank, worker in enumerate(self.workers):
