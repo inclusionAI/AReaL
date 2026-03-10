@@ -5,13 +5,16 @@ set -euo pipefail
 # Require OPENAI_API_KEY environment variable
 if [ -z "${OPENAI_API_KEY:-}" ]; then
     echo "Error: OPENAI_API_KEY environment variable is required"
-    echo "Usage: OPENAI_API_KEY=your_key $0 <dataset_path> [dataset_name] [output_dir]"
+    echo "Usage: OPENAI_API_KEY=your_key MODEL_NAME=gemini-2.5-pro $0"
     exit 1
 fi
 
+# Model configuration (can be overridden via environment variable)
+MODEL_NAME="${MODEL_NAME:-gpt-5-2025-08-07}"
+
 DATASET_PATH="/storage/openpsi/data/lcy_image_edit/mapeval_visual.parquet"
 DATASET_NAME="mapeval_visual"
-OUTPUT_DIR="/storage/openpsi/data/lcy_image_edit/mapeval_0309/mapqa_batch"
+OUTPUT_DIR="/storage/openpsi/data/lcy_image_edit/mapeval_0309/mapqa_batch_${MODEL_NAME}"
 
 # Experiment definitions: "tools|rounds"
 EXPERIMENTS=(
@@ -49,7 +52,7 @@ for exp in "${EXPERIMENTS[@]}"; do
         --dataset_path "$DATASET_PATH" \
         --dataset_name "$DATASET_NAME" \
         --output_dir "$exp_dir" \
-        --model_name_or_path "gpt-5-2025-08-07" \
+        --model_name_or_path "$MODEL_NAME" \
         --model_type "OpenAI" \
         --max_tool_calls "$rounds" \
         --enable_tools $tools \
