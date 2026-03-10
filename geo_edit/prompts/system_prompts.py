@@ -127,7 +127,7 @@ Based on the question and observations, select ONE tool and explain why.
 STRICT OUTPUT FORMAT (you MUST follow this exactly):
 <think>
 Tool: [tool_name]
-Reason: [1-2 sentences explaining why this tool is appropriate]
+Reason: [1 paragraph explaining why this tool is appropriate]
 </think>
 
 Rules:
@@ -146,7 +146,7 @@ You have called tools in previous rounds. Review ALL observations gathered so fa
 STRICT OUTPUT FORMAT:
 <think>
 Tool: [tool_name]
-Reason: [1-2 sentences explaining what NEW information this tool will provide]
+Reason: [1 paragraph explaining what NEW information this tool will provide]
 </think>
 
 Rules:
