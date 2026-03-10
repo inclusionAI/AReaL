@@ -188,14 +188,15 @@ class ScaffoldingWorkflow(RolloutWorkflow):
         )
         prompt_str = self.tokenizer.decode(input_ids)
 
-        # Configure per-episode data on trajectory maker
-        # (clone() in scaffolding_llm will deep-copy these)
-        self.trajectory_maker.task_data = data
-        self.trajectory_maker.prompt_str = prompt_str
-        self.trajectory_maker.input_tokens = input_ids
-
-        # Run full pipeline via scaffolding_llm
-        result = self.scaffolding_llm.generate_async(prompt_str)
+        # Pass per-episode data as kwargs so generate_async captures them
+        # in the synchronous clone, avoiding race conditions when multiple
+        # arun_episode coroutines run concurrently.
+        result = self.scaffolding_llm.generate_async(
+            prompt_str,
+            task_data=data,
+            prompt_str=prompt_str,
+            input_tokens=input_ids,
+        )
         await result
 
         # Extract interaction and convert to tensor dict

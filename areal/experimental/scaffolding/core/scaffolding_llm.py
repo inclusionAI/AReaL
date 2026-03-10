@@ -167,16 +167,20 @@ class ScaffoldingLlm:
         self.main_loop_thread = threading.Thread(target=main_loop_thread, daemon=True)
         self.main_loop_thread.start()
 
-    def generate_async(self, prompt: str) -> ScaffoldingResult:
+    def generate_async(self, prompt: str, **kwargs) -> ScaffoldingResult:
         result = ScaffoldingResult()
+        # Clone synchronously here (before any async handoff) to avoid race
+        # conditions where concurrent callers mutate prototype_controller state
+        # between this call and when put_request actually runs on self.loop.
+        cloned_controller = self.prototype_controller.clone()
 
         async def put_request():
             try:
                 request = ScaffoldingRequest(
                     prompt=prompt,
-                    kwargs={},
+                    kwargs=kwargs,
                     result=result,
-                    controller=self.prototype_controller.clone(),
+                    controller=cloned_controller,
                 )
             except Exception as e:
                 await self.task_queue.put(None)

@@ -501,18 +501,28 @@ class PipelineTrajectoryMaker(Controller):
         reward_tasks = []
         interactions = {}
 
+        # Per-episode data may be passed via kwargs (from generate_async) to
+        # avoid race conditions when multiple episodes run concurrently.
+        effective_task_data = kwargs.pop("task_data", self.task_data)
+        effective_prompt_str = kwargs.pop("prompt_str", self.prompt_str)
+        effective_input_tokens = kwargs.pop("input_tokens", self.input_tokens)
+
         for i, task in enumerate(tasks):
             if isinstance(task, GenerationTask):
+                # Update task input_tokens from per-episode data if not already set
+                if not task.input_tokens and effective_input_tokens:
+                    task.input_tokens = effective_input_tokens
+
                 # Create interaction object
                 interaction = self._create_interaction_from_task(task)
                 task_id = f"task_{i}"
                 interactions[task_id] = interaction
 
-                # Create reward task using constructor-provided task_data and prompt_str
+                # Create reward task using per-episode task_data and prompt_str
                 reward_task = RLVRRewardTask.create_from_generation_task(
                     gen_task=task,
-                    prompt_str=self.prompt_str or task.input_str or "",
-                    task_data=self.task_data,
+                    prompt_str=effective_prompt_str or task.input_str or "",
+                    task_data=effective_task_data,
                     interaction=interaction,
                 )
                 reward_tasks.append(reward_task)
