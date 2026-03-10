@@ -211,14 +211,24 @@ class ToolAgentManager:
         cfg = self._configs[tool_name]
 
         try:
-            result = ray.get(
-                actor.analyze.remote(
-                    image_b64,
-                    cfg["temperature"],
-                    cfg["max_tokens"],
-                    **kwargs,
+            # Only pass temperature/max_tokens if they exist in config
+            # (some tools like grounding_dino and sam2 don't use them)
+            if "temperature" in cfg and "max_tokens" in cfg:
+                result = ray.get(
+                    actor.analyze.remote(
+                        image_b64,
+                        cfg["temperature"],
+                        cfg["max_tokens"],
+                        **kwargs,
+                    )
                 )
-            )
+            else:
+                result = ray.get(
+                    actor.analyze.remote(
+                        image_b64,
+                        **kwargs,
+                    )
+                )
             return result
         except Exception as e:
             logger.error("Tool agent %s call failed: %s", tool_name, e)
