@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import sys
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
@@ -806,7 +807,7 @@ class TrainEngineConfig:
         default="flash_attention_2",
         metadata={
             "help": "Attention implementation for huggingface transformers model.",
-            "choices": ["flash_attention_2"],
+            "choices": ["flash_attention_2", "sdpa", "eager"],
         },
     )
     init_from_scratch: bool = field(
@@ -1092,7 +1093,7 @@ class PPOCriticConfig(TrainEngineConfig):
 
 def get_py_cmd(module: str, args: dict[str, Any]):
     # convert to flags
-    cmd = ["python3", "-m", module]
+    cmd = [sys.executable, "-m", module]
     for k, v in args.items():
         if v is None or v is False or v == "" or (isinstance(v, list) and not v):
             continue
@@ -1493,7 +1494,7 @@ class InferenceEngineConfig:
         metadata={"help": "Whether to dump the trajectories to files under fileroot."},
     )
     setup_timeout: float = field(
-        default=300.0,
+        default=1200.0,
         metadata={
             "help": "Timeout in seconds of connecting to remote servers or launching local servers."
         },

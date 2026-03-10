@@ -1,8 +1,8 @@
-# Multi-turn Chat Scaffolding Example Configuration for GSM8K
-# Uses ChatScaffoldingWorkflow with TraceTrajectoryMaker + MultiTurnChatController
-# Compatible with GRPOConfig, for 8-GPU setup (4 inference + 4 training)
+# RLVR Scaffolding Example Configuration for GSM8K
+# Multi-node setup: 2 nodes x 8 A100-80GB GPUs (Ray scheduler)
+# allocation: 8 GPUs for SGLang inference, 8 GPUs for actor+ref training
 
-experiment_name: gsm8k-chat-scaffolding
+experiment_name: gsm8k-rlvr-scaffolding
 trial_name: trial0
 
 seed: 1
@@ -11,19 +11,22 @@ total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
 cluster:
-  n_nodes: 1
+  n_nodes: 2
   n_gpus_per_node: 8
   fileroot: /tmp/areal/experiments
   name_resolve:
-    type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
+    type: ray
+    ray_actor_name: ray_kv_store
 
-allocation_mode: sglang:d4p1t1+d4p1t1
+allocation_mode: sglang:d8+d8
+
+scheduler:
+  type: ray
 
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 256
+  max_concurrent_rollouts: 64
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
@@ -31,7 +34,7 @@ rollout:
   scheduling_spec: ${actor.scheduling_spec}
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
-  dump_to_file: true
+  dump_to_file: false
 
 gconfig:
   n_samples: 8
@@ -45,6 +48,7 @@ actor:
   trial_name: ${trial_name}
   path: Qwen/Qwen2.5-3B-Instruct
   init_from_scratch: false
+  attn_impl: sdpa
   disable_dropout: true
   gradient_checkpointing: true
   dtype: bfloat16
@@ -84,7 +88,11 @@ actor:
       gpu: 1
       mem: 32
       cmd: python3 -m areal.infra.rpc.rpc_server
-      env_vars: {}
+      env_vars:
+        NCCL_SOCKET_FAMILY: AF_INET6
+        NCCL_SOCKET_IFNAME: eth0
+        TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC: "3600"
+        NCCL_IB_DISABLE: "1"
 
 ref:
   experiment_name: ${experiment_name}
@@ -124,8 +132,8 @@ vllm:
 train_dataset:
   batch_size: 256
   shuffle: true
-  pin_memory: true
-  num_workers: 4
+  pin_memory: false
+  num_workers: 0
   path: openai/gsm8k
   type: rl
   max_length: 2048

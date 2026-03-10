@@ -39,7 +39,7 @@ def get_gsm8k_rl_dataset(
             {
                 "role": "user",
                 "content": sample["question"]
-                + "\nPlease put your final answer within \\boxed{}.",
+                + "\nPlease reason step by step and provide your final numeric answer.",
             }
         ]
         return {"messages": messages}

@@ -63,7 +63,7 @@ class RayWorkerInfo:
 class RayScheduler(Scheduler):
     def __init__(
         self,
-        startup_timeout: float = 30.0,
+        startup_timeout: float = 600.0,
         *,
         exp_config: BaseExperimentConfig | None = None,
     ):
