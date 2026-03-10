@@ -76,6 +76,9 @@ class ChartMoEActor(BaseToolModelActor):
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
+        # Resize to exactly 336x336 (InternLM-XComposer2 CLIP ViT requirement)
+        image = image.resize((336, 336), Image.Resampling.LANCZOS)
+
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             image.save(tmp, format="PNG")
             tmp_path = tmp.name
