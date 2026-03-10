@@ -44,6 +44,7 @@ chartmoe: false            # [Legacy] General chart analysis
 # MAP TOOLS - Map and location-based tools
 # =============================================================================
 text_spotting: false       # Text localization with coordinates (recommended for maps)
+map_text_ocr: false        # Map-optimized OCR: filters numbers, merges adjacent text
 
 # =============================================================================
 # DOCUMENT TOOLS - Specialized document processing

@@ -43,9 +43,9 @@ TOOL_CATEGORIES = {
     "math": ["math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath", "ovr"],
     "table": ["table_ocr"],
     "chart": ["chart_data_extract", "chart_trend_analysis", "chart_text_ocr", "chartmoe"],
-    "map": ["text_spotting"],
+    "map": ["text_spotting", "map_text_ocr"],
     "document": ["seal_ocr"],
-    "ocr": ["text_ocr", "table_ocr", "formula_ocr", "chart_text_ocr", "text_spotting", "seal_ocr"],
+    "ocr": ["text_ocr", "table_ocr", "formula_ocr", "chart_text_ocr", "text_spotting", "seal_ocr", "map_text_ocr"],
     "segment": ["auto_segment", "bbox_segment"],
 }
 
@@ -79,8 +79,10 @@ def _make_agent_execute(agent_name: str, fixed_params: Optional[Dict[str, Any]] 
 
     Args:
         agent_name: Name of the base agent to call.
-        fixed_params: Optional dict of fixed parameters to inject (e.g., fixed_task, fixed_prompt).
+        fixed_params: Optional dict of fixed parameters to inject (e.g., fixed_task, fixed_prompt, filter_map).
     """
+    import json
+
     def execute(image_list: List[Image.Image], image_index: int, **kwargs) -> str:
         from geo_edit.environment.tool_agents import call_agent
 
@@ -97,7 +99,20 @@ def _make_agent_execute(agent_name: str, fixed_params: Optional[Dict[str, Any]] 
                 if fixed_params["fixed_mode"] == "auto":
                     kwargs.pop("bounding_box", None)  # Remove bbox for auto mode
 
-        return call_agent(agent_name, image_list, image_index, **kwargs)
+        result = call_agent(agent_name, image_list, image_index, **kwargs)
+
+        # Post-process for map_text_ocr: filter and merge text results
+        if fixed_params and fixed_params.get("filter_map"):
+            try:
+                from geo_edit.tool_definitions.agents.paddleocr_tool import process_map_ocr_result
+                result_json = json.loads(result)
+                if "text" in result_json and isinstance(result_json["text"], list):
+                    result_json["text"] = process_map_ocr_result(result_json["text"])
+                    result = json.dumps(result_json)
+            except (json.JSONDecodeError, ImportError) as e:
+                logger.warning(f"Failed to post-process map OCR result: {e}")
+
+        return result
     return execute
 
 
@@ -127,9 +142,11 @@ def _build_tool_registry() -> Dict[str, tuple]:
             fixed_params["fixed_prompt"] = decl["fixed_prompt"]
         if "fixed_mode" in decl:
             fixed_params["fixed_mode"] = decl["fixed_mode"]
+        if "filter_map" in decl:
+            fixed_params["filter_map"] = decl["filter_map"]
 
         # Create clean declaration without internal fields
-        clean_decl = {k: v for k, v in decl.items() if k not in ("fixed_task", "fixed_prompt", "fixed_mode", "return_type")}
+        clean_decl = {k: v for k, v in decl.items() if k not in ("fixed_task", "fixed_prompt", "fixed_mode", "filter_map", "return_type")}
 
         registry[tool_name] = (
             clean_decl,

@@ -201,6 +201,87 @@ class PaddleOCRActor(BaseToolModelActor):
 ACTOR_CLASS = PaddleOCRActor
 RETURN_TYPE = "text"
 
+
+# ============ Map OCR Post-processing Functions ============
+
+def filter_map_text(text_results: list) -> list:
+    """Filter map OCR results to keep meaningful text only.
+
+    Filters out:
+    - Pure numbers (e.g., "123", "45.6")
+    - Single characters (usually noise)
+    - Pure symbols
+
+    Keeps:
+    - Mixed text like "A1出口", "3号线", "北京路123号"
+    """
+    filtered = []
+    for item in text_results:
+        text = item["text"].strip()
+        # 1. Filter pure numbers (including decimals)
+        if re.match(r'^[\d.,\s]+$', text):
+            continue
+        # 2. Filter single characters (usually noise)
+        if len(text) <= 1:
+            continue
+        # 3. Filter pure symbols
+        if re.match(r'^[^\w\u4e00-\u9fff]+$', text):
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def merge_nearby_text(text_results: list, distance_threshold: int = 50) -> list:
+    """Merge spatially adjacent text blocks.
+
+    Args:
+        text_results: List of {"text": str, "bbox": [x1,y1,x2,y2]}
+        distance_threshold: Max pixel distance to consider as "nearby"
+
+    Returns:
+        Merged text results
+    """
+    if not text_results:
+        return []
+
+    # Sort by y-coordinate, then by x-coordinate
+    sorted_results = sorted(text_results, key=lambda x: (x["bbox"][1], x["bbox"][0]))
+
+    merged = []
+    current = sorted_results[0].copy()
+
+    for item in sorted_results[1:]:
+        curr_bbox = current["bbox"]
+        next_bbox = item["bbox"]
+
+        # Check if on same line (y-coords close) and horizontally adjacent
+        same_line = abs(curr_bbox[1] - next_bbox[1]) < distance_threshold
+        horizontal_near = next_bbox[0] - curr_bbox[2] < distance_threshold
+
+        if same_line and horizontal_near:
+            # Merge text and bbox
+            current["text"] = current["text"] + " " + item["text"]
+            current["bbox"] = [
+                min(curr_bbox[0], next_bbox[0]),
+                min(curr_bbox[1], next_bbox[1]),
+                max(curr_bbox[2], next_bbox[2]),
+                max(curr_bbox[3], next_bbox[3])
+            ]
+        else:
+            merged.append(current)
+            current = item.copy()
+
+    merged.append(current)
+    return merged
+
+
+def process_map_ocr_result(text_results: list) -> list:
+    """Full processing pipeline for map OCR: filter -> merge."""
+    filtered = filter_map_text(text_results)
+    merged = merge_nearby_text(filtered)
+    return merged
+
+
 # Multi-tool declarations - each tool has a fixed task mode
 DECLARATIONS = {
     "text_ocr": {
@@ -297,6 +378,23 @@ DECLARATIONS = {
             "required": ["image_index"]
         },
         "fixed_task": "seal",
+        "return_type": "text"
+    },
+    "map_text_ocr": {
+        "name": "map_text_ocr",
+        "description": "Text recognition optimized for maps. Extracts place names, road names, and landmarks while filtering out noise like pure numbers, distances, and scale markers. Adjacent text blocks are merged for cleaner results.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_index": {
+                    "type": "integer",
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                }
+            },
+            "required": ["image_index"]
+        },
+        "fixed_task": "spotting",
+        "filter_map": True,
         "return_type": "text"
     }
 }
