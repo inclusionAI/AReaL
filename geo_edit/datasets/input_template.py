@@ -153,3 +153,12 @@ Question: {question}
 
 Please analyze the chart and provide your final answer in <answer></answer> tags.
 """
+
+# Separated version: question only, no role/answer format (for separated reasoning mode)
+CHARTQA_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+Provide a precise and concise answer based on the chart.
+"""
+
+CHARTQA_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."

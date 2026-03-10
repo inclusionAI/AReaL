@@ -25,7 +25,7 @@ agent_config = {
 
 
 class ChartMoEActor(BaseToolModelActor):
-    """ChartMoE VLM Actor using transformers inference."""
+    """ChartMoE VLM Actor using model.chat() API."""
 
     def __init__(
         self,
@@ -39,20 +39,20 @@ class ChartMoEActor(BaseToolModelActor):
             system_prompt: Optional system prompt for the model.
         """
         import torch
-        from transformers import AutoModelForCausalLM, AutoProcessor
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
         self.model_name = model_name
         self.system_prompt = system_prompt or ""
 
-        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.float16,
             device_map=self.device_map,
             trust_remote_code=True,
-        )
+        ).eval()
         self._initialized = True
         logger.info("ChartMoEActor initialized on GPU %s: %s", self.gpu_ids, model_name)
 
@@ -64,43 +64,44 @@ class ChartMoEActor(BaseToolModelActor):
         **kwargs,
     ) -> str:
         """Analyze an image and answer the question."""
+        import os
+        import tempfile
         import torch
         from PIL import Image
 
         # Extract question from kwargs
         question = kwargs.get("question", "")
 
-        # Decode base64 image
+        # Decode base64 image and save to temp file (model.chat expects file path)
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        # Build prompt - ChartMoE uses a specific format
-        if self.system_prompt:
-            prompt = f"<image>\n{self.system_prompt}\n{question}"
-        else:
-            prompt = f"<image>\n{question}"
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            image.save(tmp, format="PNG")
+            tmp_path = tmp.name
 
-        # Process inputs
-        inputs = self.processor(text=prompt, images=image, return_tensors="pt")
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+        try:
+            # Build query with image placeholder
+            if self.system_prompt:
+                query = f"<ImageHere>{self.system_prompt}\n{question}"
+            else:
+                query = f"<ImageHere>{question}"
 
-        # Generate
-        with torch.no_grad():
-            generate_kwargs = {
-                "max_new_tokens": max_tokens,
-                "do_sample": temperature > 0,
-            }
-            if temperature > 0:
-                generate_kwargs["temperature"] = temperature
-            output_ids = self.model.generate(**inputs, **generate_kwargs)
+            # Use model.chat() API (InternLM-XComposer2 style)
+            with torch.cuda.amp.autocast():
+                response, _ = self.model.chat(
+                    self.tokenizer,
+                    query=query,
+                    image=tmp_path,
+                    max_new_tokens=max_tokens,
+                    do_sample=temperature > 0,
+                    temperature=temperature if temperature > 0 else None,
+                )
+        finally:
+            # Clean up temp file
+            os.unlink(tmp_path)
 
-        # Decode output (skip input tokens)
-        input_len = inputs["input_ids"].shape[1]
-        generated_text = self.processor.decode(
-            output_ids[0][input_len:], skip_special_tokens=True
-        )
-
-        return self._parse_output(generated_text)
+        return self._parse_output(response)
 
     def _parse_output(self, text: str) -> str:
         """Parse output (following ToolAgent._parse_response logic)."""

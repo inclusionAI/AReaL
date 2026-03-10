@@ -11,8 +11,10 @@ from geo_edit.datasets.input_template import (
     CARTOMAPQA_STMF_COUNTING_TEMPLATE,
     CARTOMAPQA_STMF_NAME_LISTING_TEMPLATE,
     CARTOMAPQA_STMF_PRESENCE_TEMPLATE,
+    CHARTQA_ANSWER_FORMAT,
     CHARTQA_INPUT_TEMPLATE,
     CHARTQA_NOTOOL_INPUT_TEMPLATE,
+    CHARTQA_SEPARATED_TEMPLATE,
     MAPEVAL_VISUAL_ANSWER_FORMAT,
     MAPEVAL_VISUAL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE,
@@ -270,6 +272,8 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
                 "type": item.get("type", ""),
             },
         },
+        separated_prompt_template=CHARTQA_SEPARATED_TEMPLATE,
+        answer_format=CHARTQA_ANSWER_FORMAT,
     ),
 }
 
