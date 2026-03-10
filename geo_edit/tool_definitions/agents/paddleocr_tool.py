@@ -130,10 +130,11 @@ class PaddleOCRActor(BaseToolModelActor):
                 }
             ]
 
-            # Create sampling parameters
+            # Create sampling parameters with repetition penalty to prevent loops
             sampling_params = SamplingParams(
                 temperature=temperature,
                 max_tokens=self.max_new_tokens,
+                repetition_penalty=1.2,  # Penalize repeated tokens
             )
 
             # Run inference with vLLM
