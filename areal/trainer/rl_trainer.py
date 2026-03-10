@@ -413,8 +413,9 @@ class PPOTrainer:
                 adv_batch = self.actor.compute_advantages(rollout_batch)
                 self.actor.get_device_stats().log("compute advantages")
 
-            # Wait for async checkpoint staging to complete before modifying parameters
+            import sys; print("[DEBUG rl_trainer] compute_advantages done, waiting for staging...", flush=True, file=sys.stderr)
             self.saver.maybe_wait_for_staging()
+            print("[DEBUG rl_trainer] staging done, calling ppo_update...", flush=True, file=sys.stderr)
 
             with (
                 stats_tracker.record_timing("train_step"),

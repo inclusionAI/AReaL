@@ -6,6 +6,7 @@ Provides utilities for extracting, filtering, and managing adapter parameters.
 
 from typing import Protocol, runtime_checkable
 
+import torch
 import torch.nn as nn
 
 
@@ -27,36 +28,40 @@ class AdapterModule(Protocol):
         ...
 
 
-def get_adapter_params(model: nn.Module) -> dict[str, nn.Parameter]:
+def get_adapter_params(model: nn.Module) -> dict[str, torch.Tensor]:
     """Extract all adapter parameters from model using AdapterModule protocol.
 
-    Walks through all modules in the model and collects parameters from modules
-    that implement the AdapterModule protocol.
+    Walks through all modules in the model and collects adapter tensors.
+    Supports both ``nn.Parameter`` attributes (found via ``named_parameters``)
+    and plain tensor attributes stored via ``object.__setattr__`` (which are
+    invisible to ``nn.Module`` tracking and therefore to FSDP2).
 
     Args:
         model: Model to extract adapter parameters from
 
     Returns:
-        Dictionary mapping fully-qualified parameter names to Parameter objects
+        Dictionary mapping fully-qualified names to tensors
     """
-    adapter_params = {}
+    adapter_params: dict[str, torch.Tensor] = {}
 
     for module_name, module in model.named_modules():
         if isinstance(module, AdapterModule):
-            current_adapter_params = module.adapter_params()
-
-            for param_name, param in module.named_parameters(recurse=True):
-                if param_name in current_adapter_params:
+            for attr_name in module.adapter_params():
+                tensor = getattr(module, attr_name, None)
+                if tensor is not None and isinstance(tensor, torch.Tensor):
                     full_key = (
-                        f"{module_name}.{param_name}" if module_name else param_name
+                        f"{module_name}.{attr_name}" if module_name else attr_name
                     )
-                    adapter_params[full_key] = param
+                    adapter_params[full_key] = tensor
 
     return adapter_params
 
 
 def set_trainable_params(model: nn.Module, adapter_param_names: set[str]) -> None:
-    """Freeze all parameters except those in adapter_param_names.
+    """Freeze all nn.Parameters except those in *adapter_param_names*.
+
+    Plain-tensor LoRA weights (stored via ``object.__setattr__``) are not
+    affected by this function – they always keep ``requires_grad=True``.
 
     Args:
         model: Model to configure

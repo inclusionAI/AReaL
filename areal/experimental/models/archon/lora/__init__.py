@@ -13,7 +13,7 @@ from areal.experimental.models.archon.lora.adapter import (
     get_adapter_state_dict,
     set_trainable_params,
 )
-from areal.experimental.models.archon.lora.lora_linear import LoRALinear
+from areal.experimental.models.archon.lora.lora_linear import LoRALinear, sync_lora_grads
 
 __all__ = [
     "LoRALinear",
@@ -23,4 +23,5 @@ __all__ = [
     "set_trainable_params",
     "disable_adapter",
     "enable_adapter",
+    "sync_lora_grads",
 ]

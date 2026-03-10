@@ -70,8 +70,20 @@ def save_lora_adapter(
         if rank == 0:
             logger.warning("Creating empty adapter checkpoint")
 
-    # Convert to HF format using state dict adapter
-    archon_state = {k: v.cpu().detach().clone() for k, v in adapter_params.items()}
+    # After FSDP2, adapter params are DTensors (sharded).  Gather them
+    # into plain CPU tensors so safetensors can serialise them.
+    from torch.distributed.tensor import DTensor
+
+    archon_state = {}
+    for k, v in adapter_params.items():
+        if isinstance(v, DTensor):
+            v = v.full_tensor()
+        # AC and torch.compile insert wrapper prefixes into the FQN
+        # (e.g. "._checkpoint_wrapped_module", "._orig_mod").
+        # Strip them so the key converter can recognise the names.
+        k = k.replace("._checkpoint_wrapped_module", "")
+        k = k.replace("._orig_mod", "")
+        archon_state[k] = v.detach().cpu().clone()
     hf_state = engine.state_dict_adapter.to_hf(archon_state)
 
     # Add PEFT prefix: base_model.model.{key}
@@ -88,7 +100,8 @@ def save_lora_adapter(
         for key in adapter_params:
             parts = key.split(".")
             for i, part in enumerate(parts):
-                if part in ("lora_a", "lora_b") and i > 0:
+                is_lora = part in ("lora_a", "lora_b") or part.startswith("_lora_")
+                if is_lora and i > 0:
                     module_name = parts[i - 1]
                     target_modules.add(module_name)
                     break
@@ -111,9 +124,10 @@ def save_lora_adapter(
             json.dump(adapter_config, f, indent=2)
         logger.info(f"Saved adapter config to {config_path}")
 
-    # Synchronize all ranks
+    # Synchronize all ranks (use gloo-based cpu_group, matching save_model_to_hf
+    # and update_weights_from_disk; avoids potential NCCL barrier issues)
     if dist.is_initialized():
-        dist.barrier()
+        dist.barrier(group=engine.cpu_group)
 
 
 def load_lora_adapter(
@@ -215,7 +229,9 @@ def load_lora_adapter(
     if rank == 0:
         logger.info(f"Loaded {loaded_count} adapter parameters into model")
 
-    if dist.is_initialized():
+    if dist.is_initialized() and hasattr(engine, "cpu_group"):
+        dist.barrier(group=engine.cpu_group)
+    elif dist.is_initialized():
         dist.barrier()
 
 

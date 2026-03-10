@@ -72,8 +72,9 @@ class SequentialRunner(ForwardBackwardRunner):
         forward_only: bool,
     ) -> list[torch.Tensor | dict[int, torch.Tensor]]:
         results: list[torch.Tensor | dict[int, torch.Tensor]] = []
+        total_mbs = len(mb_list)
 
-        for mb_item in mb_list:
+        for mb_idx, mb_item in enumerate(mb_list):
             inputs, ctx = self.prepare_inputs_fn(mb_item)
 
             tree_attn_meta = None
@@ -94,6 +95,13 @@ class SequentialRunner(ForwardBackwardRunner):
                 cu_seqlens = inputs["cu_seqlens"]
                 max_seqlen = int(inputs["max_seqlen"])
 
+            if not forward_only:
+                import sys, time as _time
+                print(
+                    f"[DEBUG runner] rank={torch.distributed.get_rank()} "
+                    f"mb {mb_idx}/{total_mbs} forward t={_time.time():.1f}",
+                    flush=True, file=sys.stderr,
+                )
             logits = self.model(
                 inputs["input_ids"],
                 inputs["position_ids"],
@@ -108,13 +116,15 @@ class SequentialRunner(ForwardBackwardRunner):
 
             if result is not None:
                 if forward_only:
-                    # Result can be a tensor or dict (for tree training)
                     if isinstance(result, dict):
                         results.append({k: v.detach() for k, v in result.items()})
                     else:
                         results.append(result.detach())
                 else:
+                    import sys, time as _time
+                    print(f"[DEBUG runner] rank={torch.distributed.get_rank()} mb {mb_idx}/{total_mbs} backward t={_time.time():.1f}", flush=True, file=sys.stderr)
                     result.backward()
+                    print(f"[DEBUG runner] rank={torch.distributed.get_rank()} mb {mb_idx}/{total_mbs} backward done t={_time.time():.1f}", flush=True, file=sys.stderr)
 
         return results
 

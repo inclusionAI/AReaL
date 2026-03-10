@@ -340,6 +340,8 @@ class ArchonEngine(TrainEngine):
         )
 
         self._materialize_and_load_weights()
+        if self.lora_config is not None:
+            self._freeze_non_lora_params()
         self._create_optimizer(ft_spec)
 
         self.runner = create_runner(
@@ -436,6 +438,11 @@ class ArchonEngine(TrainEngine):
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
 
+        import time as _t
+        import sys
+        _rank = dist.get_rank()
+        print(f"[DEBUG opt] rank={_rank} clip_grad_norm start t={_t.time():.1f}", flush=True, file=sys.stderr)
+
         grad_norm = fsdp2_clip_grad_norm(
             self._get_all_parameters(),
             max_norm=self.optimizer_config.gradient_clipping,
@@ -446,12 +453,15 @@ class ArchonEngine(TrainEngine):
             else None,
             offload_params=self.config.archon.offload_params,
         )
+        print(f"[DEBUG opt] rank={_rank} clip_grad_norm done norm={grad_norm:.4f} t={_t.time():.1f}", flush=True, file=sys.stderr)
 
         if not math.isfinite(grad_norm):
             self.optimizer_zero_grad()
             update_successful = False
         else:
+            print(f"[DEBUG opt] rank={_rank} optimizer.step start t={_t.time():.1f}", flush=True, file=sys.stderr)
             self.optimizer.step()
+            print(f"[DEBUG opt] rank={_rank} optimizer.step done t={_t.time():.1f}", flush=True, file=sys.stderr)
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
@@ -486,11 +496,14 @@ class ArchonEngine(TrainEngine):
         assert self._initialized
         self.optimizer_zero_grad()
 
+        import sys; print(f"[DEBUG train_batch rank={dist.get_rank()}] preparing microbatches...", flush=True, file=sys.stderr)
         mb_list = self._prepare_mb_list(input_).to(self.device)
+        print(f"[DEBUG train_batch rank={dist.get_rank()}] {len(mb_list)} microbatches ready", flush=True, file=sys.stderr)
 
         total_loss_weight = compute_total_loss_weight(
             mb_list, loss_weight_fn, self.data_parallel_group
         )
+        print(f"[DEBUG train_batch rank={dist.get_rank()}] total_loss_weight computed, starting fwd/bwd", flush=True, file=sys.stderr)
 
         def process_output(
             logits: torch.Tensor, ctx_dict: dict[str, Any]
@@ -507,6 +520,21 @@ class ArchonEngine(TrainEngine):
 
         self.forward_backward_batch(mb_list, process_output, forward_only=False)
 
+        import time as _time
+        print(f"[DEBUG train_batch rank={dist.get_rank()}] fwd/bwd done t={_time.time():.1f}", flush=True, file=sys.stderr)
+
+        if self.lora_config is not None:
+            from areal.experimental.models.archon.lora.lora_linear import (
+                sync_lora_grads,
+            )
+            sync_lora_grads(
+                self.model,
+                tp_group=self._tp_group,
+                dp_group=self.data_parallel_group,
+            )
+            print(f"[DEBUG train_batch rank={dist.get_rank()}] sync_lora_grads done t={_time.time():.1f}", flush=True, file=sys.stderr)
+
+        print(f"[DEBUG train_batch rank={dist.get_rank()}] optimizer_step... t={_time.time():.1f}", flush=True, file=sys.stderr)
         return self.optimizer_step()
 
     @torch.no_grad()
@@ -836,6 +864,7 @@ class ArchonEngine(TrainEngine):
             reshard_after_forward_policy=self.config.archon.reshard_after_forward_policy,
             ac_config=ac_config,
             enable_compile=enable_compile,
+            apply_lora_fn=self._apply_lora if self.lora_config is not None else None,
         )
 
         # Delete original model to free memory
@@ -874,6 +903,7 @@ class ArchonEngine(TrainEngine):
             reshard_after_forward_policy=self.config.archon.reshard_after_forward_policy,
             ac_config=ac_config,
             enable_compile=enable_compile,
+            apply_lora_fn=self._apply_lora if self.lora_config is not None else None,
         )
         self.model_parts = [self.model]
 
@@ -975,8 +1005,109 @@ class ArchonEngine(TrainEngine):
             self.model_config, hf_assets_path=self.config.path
         )
 
+    def _apply_lora(self, module: nn.Module | None = None) -> None:
+        from areal.experimental.models.archon.lora import (
+            LoRALinear,
+            get_adapter_params,
+        )
+
+        assert self.lora_config is not None
+        module = self.model if module is None else module
+
+        target_modules = set(self.lora_config.target_modules)
+        apply_to_all_linears = "all-linear" in target_modules
+        peft_name_map = (
+            self.state_dict_adapter.to_peft_module_map
+            if self.state_dict_adapter is not None
+            else {}
+        )
+        replaced_modules: list[str] = []
+
+        def replace_linear_modules(parent_module: nn.Module, prefix: str = "") -> None:
+            for child_name, child in list(parent_module.named_children()):
+                child_prefix = f"{prefix}.{child_name}" if prefix else child_name
+                if isinstance(child, nn.Linear):
+                    peft_name = peft_name_map.get(child_name)
+                    if (
+                        not apply_to_all_linears
+                        and child_name not in target_modules
+                        and peft_name not in target_modules
+                    ):
+                        continue
+
+                    lora_mod = LoRALinear.from_linear(
+                        child,
+                        rank=self.lora_config.rank,
+                        alpha=self.lora_config.alpha,
+                    )
+                    lora_mod._debug_name = child_prefix
+                    setattr(parent_module, child_name, lora_mod)
+                    replaced_modules.append(child_prefix)
+                    continue
+
+                replace_linear_modules(child, child_prefix)
+
+        replace_linear_modules(module)
+
+        adapter_params = get_adapter_params(module)
+
+        if replaced_modules:
+            self.logger.info(
+                f"Applied LoRA to {len(replaced_modules)} linear modules and created "
+                f"{len(adapter_params)} adapter parameters"
+            )
+
+    def _freeze_non_lora_params(self) -> None:
+        from areal.experimental.models.archon.lora import (
+            LoRALinear,
+            get_adapter_params,
+            set_trainable_params,
+        )
+
+        adapter_param_count = 0
+        for model in self.model_parts:
+            # LoRA weights are plain tensors created on meta device during
+            # model structure creation.  FSDP2 only materialises
+            # nn.Parameters, so we must move LoRA tensors ourselves.
+            for module in model.modules():
+                if isinstance(module, LoRALinear):
+                    module.materialize_lora(self.device)
+
+            adapter_params = get_adapter_params(model)
+            if not adapter_params:
+                continue
+
+            # Re-initialize lora_a (kaiming) and lora_b (zeros) so the
+            # initial LoRA contribution is exactly zero.
+            with torch.no_grad():
+                for name, tensor in adapter_params.items():
+                    if "lora_b" in name:
+                        nn.init.zeros_(tensor)
+                    elif "lora_a" in name:
+                        nn.init.kaiming_uniform_(tensor, a=math.sqrt(5))
+
+            adapter_param_count += len(adapter_params)
+            set_trainable_params(model, set(adapter_params.keys()))
+
+        if adapter_param_count == 0:
+            raise RuntimeError(
+                "LoRA is enabled but no adapter parameters were found after weight loading."
+            )
+
+        self.logger.info(
+            f"Froze base weights and kept {adapter_param_count} adapter parameters trainable"
+        )
+
     def _get_all_parameters(self) -> list[nn.Parameter]:
-        return [p for m in self.model_parts for p in m.parameters()]
+        params = [p for m in self.model_parts for p in m.parameters()]
+        if self.lora_config is not None:
+            from areal.experimental.models.archon.lora import LoRALinear
+
+            for m in self.model_parts:
+                for module in m.modules():
+                    if isinstance(module, LoRALinear):
+                        params.extend(module.lora_parameters())
+        return params
 
     def _get_model_name_parameters(self) -> Iterator[tuple[str, nn.Parameter]]:
         for m in self.model_parts:
