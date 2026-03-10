@@ -117,7 +117,7 @@ from areal.utils.data import (
 )
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_addr, gethostip, is_ipv6_address
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
@@ -1048,7 +1048,10 @@ class FSDPEngine(TrainEngine):
         assert meta.type == "xccl"
 
         # Reset weight weight meta with local info
-        meta.nccl_master_address = self.weight_update_master_addr = gethostip()
+        raw_addr = gethostip()
+        self.weight_update_master_addr = raw_addr
+        # Pre-bracket IPv6 so SGLang's f"tcp://{master_address}:{port}" constructs a valid URL
+        meta.nccl_master_address = f"[{raw_addr}]" if is_ipv6_address(raw_addr) else raw_addr
         meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
         meta.nccl_group_name = self.weight_update_group_name
 
@@ -1060,15 +1063,16 @@ class FSDPEngine(TrainEngine):
 
             fut = self.rollout_engine.init_weights_update_group(meta)
 
+            tcp_addr = format_addr(meta.nccl_master_address, meta.nccl_master_port)
             self.logger.info(
                 f"Initializing weight update group: type={meta.type} "
-                f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port} "
+                f"init_method=tcp://{tcp_addr} "
                 f"group={meta.nccl_group_name}"
             )
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
                 world_size=meta.alloc_mode.gen.world_size + 1,
-                init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
+                init_method=f"tcp://{tcp_addr}",
                 rank=0,
                 group_name=meta.nccl_group_name,
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,
@@ -1081,7 +1085,9 @@ class FSDPEngine(TrainEngine):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
 
         # Reset weight weight meta with local info
-        meta.nccl_master_address = self.weight_update_master_addr
+        # Pre-bracket IPv6 so SGLang's f"tcp://{master_address}:{port}" constructs a valid URL
+        raw_addr = self.weight_update_master_addr
+        meta.nccl_master_address = f"[{raw_addr}]" if is_ipv6_address(raw_addr) else raw_addr
         meta.nccl_master_port = self.weight_update_master_port
         meta.nccl_group_name = self.weight_update_group_name
 
@@ -1301,7 +1307,9 @@ class FSDPEngine(TrainEngine):
         else:
             input_ = amend_position_ids(input_)
 
-        mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
+        mb_list = split_padded_tensor_dict_into_mb_list(
+            input_, self.config.mb_spec, group=self.cpu_group
+        )
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
         mb_list = pad_mb_list(
             mb_list,
