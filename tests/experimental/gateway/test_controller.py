@@ -171,6 +171,7 @@ class TestGatewayInfEngine:
         with pytest.raises(ValueError, match="proxy_addr and engine are required"):
             GatewayInfEngine._resolve_workflow(MockAgent, workflow_kwargs={})
 
+
 # =============================================================================
 # GatewayRolloutController — API surface
 # =============================================================================
@@ -315,7 +316,8 @@ class TestGatewayRolloutControllerConstruction:
         with pytest.raises(RuntimeError, match="initialize"):
             _ = controller._engine
 
-    def test_callback_addr_raises_before_server(self):
+    def test_callback_addr_returns_gateway_address(self):
+        """callback_addr should return gateway host:port without requiring a callback server."""
         from areal.experimental.gateway.controller.controller import (
             GatewayRolloutController,
         )
@@ -323,8 +325,11 @@ class TestGatewayRolloutControllerConstruction:
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
-        with pytest.raises(RuntimeError, match="Callback server not started"):
-            _ = controller.callback_addr
+        addr = controller.callback_addr
+        assert ":" in addr
+        host, port = addr.rsplit(":", 1)
+        assert int(port) == cfg.gateway_port
+        assert host != "0.0.0.0"
 
     def test_config_perf_tracer_is_noop(self):
         from areal.experimental.gateway.controller.controller import (
