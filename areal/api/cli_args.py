@@ -2162,6 +2162,13 @@ class PPOConfig(BaseExperimentConfig):
             "This results in variable-sized batches of valid data."
         },
     )
+    post_exit_hook: str = field(
+        default="",
+        metadata={
+            "help": "Shell command executed after trainer shutdown to clean up resources "
+            "(e.g., releasing sandbox environments). Runs in PPOTrainer.close()."
+        },
+    )
 
     def __post_init__(self):
         """Validate the eval generation config."""

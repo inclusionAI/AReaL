@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import os
+import subprocess
 from collections.abc import Callable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
@@ -498,6 +499,9 @@ class PPOTrainer:
             self._save_perf_tracer(step=global_step)
 
     def close(self):
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
         self.saver.finalize()
         self.stats_logger.close()
         if self.eval_rollout is not None:
@@ -509,6 +513,37 @@ class PPOTrainer:
             self.critic.destroy()
         self.actor.destroy()
         perf_tracer.save(force=True)
+        self._run_post_exit_hook()
+
+    def _run_post_exit_hook(self, timeout: int = 600):
+        """Execute post_exit_hook shell command if configured."""
+        hook_cmd = getattr(self.config, "post_exit_hook", "")
+        if not hook_cmd or not hook_cmd.strip():
+            return
+        hook_cmd = hook_cmd.strip()
+        logger.info(f"Executing post_exit_hook: {hook_cmd}")
+        try:
+            result = subprocess.run(
+                hook_cmd,
+                shell=True,
+                timeout=timeout,
+                capture_output=True,
+                text=True,
+            )
+            if result.stdout:
+                logger.info(f"post_exit_hook stdout: {result.stdout.strip()}")
+            if result.stderr:
+                logger.warning(f"post_exit_hook stderr: {result.stderr.strip()}")
+            if result.returncode != 0:
+                logger.error(
+                    f"post_exit_hook exited with non-zero code: {result.returncode}"
+                )
+            else:
+                logger.info("post_exit_hook completed successfully")
+        except subprocess.TimeoutExpired:
+            logger.error(f"post_exit_hook timed out after {timeout}s, skipping")
+        except Exception as e:
+            logger.error(f"Error executing post_exit_hook: {e}")
 
     def _config_perf_tracer(self):
         rank = int(os.getenv("RANK", "0"))
@@ -941,11 +976,43 @@ class PPOTrainer:
         self._proxy_started = True
 
     def __enter__(self):
+        self._install_signal_handlers()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         if exc_type is not None:
             logger.error(f"Training failed with exception: {exc_value}", exc_info=True)
         self.close()
+        self._restore_signal_handlers()
         if exc_type is not None:
             raise exc_value
+
+    def _install_signal_handlers(self):
+        """Register signal handlers so close() runs on SIGTERM/SIGINT."""
+        import signal
+
+        self._original_sigterm = signal.getsignal(signal.SIGTERM)
+        self._original_sigint = signal.getsignal(signal.SIGINT)
+
+        def _handle_signal(signum, frame):
+            sig_name = signal.Signals(signum).name
+            logger.info(f"Received {sig_name}, shutting down trainer...")
+            try:
+                self.close()
+            finally:
+                # Restore default handler and re-raise so the process exits
+                # with the correct signal status code.
+                signal.signal(signum, signal.SIG_DFL)
+                os.kill(os.getpid(), signum)
+
+        signal.signal(signal.SIGTERM, _handle_signal)
+        signal.signal(signal.SIGINT, _handle_signal)
+
+    def _restore_signal_handlers(self):
+        """Restore original signal handlers after context manager exit."""
+        import signal
+
+        if hasattr(self, "_original_sigterm"):
+            signal.signal(signal.SIGTERM, self._original_sigterm)
+        if hasattr(self, "_original_sigint"):
+            signal.signal(signal.SIGINT, self._original_sigint)

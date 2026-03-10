@@ -7,6 +7,12 @@ total_train_epochs: 200
 total_train_steps: 12
 tokenizer_path: ${actor.path}
 
+# Post-exit cleanup command (e.g., release SWE sandbox instances)
+# TODO: Update to your cleanup script path
+post_exit_hook: ""
+# Example:
+# post_exit_hook: "cd /path/to/SWEAgent && PYTHONPATH=$PWD:$PYTHONPATH AENV_SYSTEM_URL=http://your-aenv:8080 python src/swe/clean_instances.py"
+
 cluster:
   n_nodes: 4
   n_gpus_per_node: 8
