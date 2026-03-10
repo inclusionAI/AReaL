@@ -99,7 +99,7 @@ class PaddleOCRActor(BaseToolModelActor):
             return json.dumps({
                 "error": f"Invalid task: {task}. Must be one of: {list(TASK_PROMPTS.keys())}",
                 "task": task
-            })
+            }, ensure_ascii=False)
 
         # Decode image
         image_bytes = base64.b64decode(image_b64)
@@ -175,13 +175,13 @@ class PaddleOCRActor(BaseToolModelActor):
                 return json.dumps({
                     "task": task,
                     "text": lines,
-                })
+                }, ensure_ascii=False)
 
             # Return formatted result
             return json.dumps({
                 "task": task,
                 "text": result.strip(),
-            })
+            }, ensure_ascii=False)
 
         except Exception as e:
             logger.error("PaddleOCR-VL failed: %s", e)
@@ -189,7 +189,7 @@ class PaddleOCRActor(BaseToolModelActor):
                 "error": str(e),
                 "task": task,
                 "text": "",
-            })
+            }, ensure_ascii=False)
 
     def health_check(self) -> dict:
         """Return health status of the actor."""
@@ -281,6 +281,38 @@ def process_map_ocr_result(text_results: list) -> list:
     filtered = filter_map_text(text_results)
     merged = merge_nearby_text(filtered)
     return merged
+
+
+def filter_map_text_string(text: str) -> str:
+    """Filter map OCR plain text results to keep meaningful text only.
+
+    Filters out lines/tokens that are:
+    - Pure numbers (e.g., "123", "45.6")
+    - Single characters (usually noise)
+    - Pure symbols
+
+    Args:
+        text: Plain text string from OCR result.
+
+    Returns:
+        Filtered text with each valid item on a new line.
+    """
+    filtered_lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # 1. Filter pure numbers (including decimals)
+        if re.match(r'^[\d.,\s]+$', line):
+            continue
+        # 2. Filter single characters (usually noise)
+        if len(line) <= 1:
+            continue
+        # 3. Filter pure symbols
+        if re.match(r'^[^\w\u4e00-\u9fff]+$', line):
+            continue
+        filtered_lines.append(line)
+    return "\n".join(filtered_lines)
 
 
 # Multi-tool declarations - each tool has a fixed task mode
@@ -383,7 +415,7 @@ DECLARATIONS = {
     },
     "map_text_ocr": {
         "name": "map_text_ocr",
-        "description": "Text recognition optimized for maps. Extracts place names, road names, and landmarks while filtering out noise like pure numbers, distances, and scale markers. Adjacent text blocks are merged for cleaner results.",
+        "description": "Text recognition optimized for maps. Extracts place names, road names, and landmarks while filtering out noise like pure numbers, distances, and scale markers.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -394,7 +426,7 @@ DECLARATIONS = {
             },
             "required": ["image_index"]
         },
-        "fixed_task": "spotting",
+        "fixed_task": "ocr",
         "filter_map": True,
         "return_type": "text"
     }

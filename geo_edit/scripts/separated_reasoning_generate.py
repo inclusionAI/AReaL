@@ -225,6 +225,7 @@ def _run_one_task(task_payload: dict):
     _WORKER_AGENT.reset()
     original_generate_config = _WORKER_AGENT.config.generate_config
     answer_pattern = re.compile(r"<answer>", re.IGNORECASE)
+    think_pattern = re.compile(r"<think>.*?Tool:\s*(\w+).*?</think>", re.DOTALL | re.IGNORECASE)
 
     try:
         for i in range(_WORKER_MAX_TOOL_CALLS):
@@ -248,11 +249,16 @@ def _run_one_task(task_payload: dict):
 
             logger.info(f"[{task_id}] Step {step} Phase 1: Reasoning generated ({len(reasoning_text)} chars)")
 
-
             # Check for <answer> - error if found
             if answer_pattern.search(reasoning_text):
                 logger.warning(reasoning_text)
                 raise ValueError("Reasoning phase should not generate <answer>. Model violated the protocol.")
+
+            # Validate format: must contain <think>Tool: [name]</think>
+            if not think_pattern.search(reasoning_text):
+                logger.warning(f"[{task_id}] Step {step} Phase 1: Invalid format - missing <think>Tool: ...</think>")
+                logger.warning(f"Raw output: {reasoning_text}")
+                raise ValueError(f"Reasoning phase must output <think>Tool: [name]\\nReason: ...</think> format. Got: {reasoning_text[:200]}")
 
             # ===== Phase 2: Generate tool call =====
             logger.info(f"[{task_id}] Step {step} Phase 2: Generating tool call...")

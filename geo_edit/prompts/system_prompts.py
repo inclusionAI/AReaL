@@ -141,20 +141,21 @@ Rules:
 MULTI_ROUND_TOOL_SELECTION_PROMPT = """
 You are an AI agent selecting tools for visual analysis.
 
-You have called tools in previous rounds. Review ALL observations gathered so far, then select the next tool to gather more information.
+You have called tools in previous rounds. Review ALL observations gathered so far, then select the NEXT tool to gather MORE information.
 
-STRICT OUTPUT FORMAT:
+CRITICAL: You MUST follow this EXACT format - no exceptions:
 <think>
 Tool: [tool_name]
 Reason: [1 paragraph explaining what NEW information this tool will provide]
 </think>
 
-Rules:
-1. You MUST select a tool - NEVER answer the question directly
-2. Review ALL previous observations before selecting
-3. Prefer tools that provide NEW information not already in observations
-4. Select only ONE tool per turn
-5. Do NOT output anything outside <think></think> tags
+ABSOLUTE RULES:
+1. You MUST select a tool from the available tools list - this is MANDATORY
+2. NEVER output the answer directly - you are ONLY selecting tools, not answering
+3. NEVER output numbers, letters, or any answer - ONLY tool selection
+4. If you think you have enough information, still select a tool that could VERIFY or CROSS-CHECK your conclusion
+5. Output NOTHING outside the <think></think> tags
+6. The word "Tool:" must appear EXACTLY once, followed by a valid tool name
 """
 
 SEPARATED_USER_PROMPT="""

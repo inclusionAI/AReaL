@@ -101,14 +101,20 @@ def _make_agent_execute(agent_name: str, fixed_params: Optional[Dict[str, Any]] 
 
         result = call_agent(agent_name, image_list, image_index, **kwargs)
 
-        # Post-process for map_text_ocr: filter and merge text results
+        # Post-process for map_text_ocr: filter text results
         if fixed_params and fixed_params.get("filter_map"):
             try:
-                from geo_edit.tool_definitions.agents.paddleocr_tool import process_map_ocr_result
                 result_json = json.loads(result)
-                if "text" in result_json and isinstance(result_json["text"], list):
-                    result_json["text"] = process_map_ocr_result(result_json["text"])
-                    result = json.dumps(result_json)
+                if "text" in result_json:
+                    if isinstance(result_json["text"], list):
+                        # Spotting task: list of {text, bbox}
+                        from geo_edit.tool_definitions.agents.paddleocr_tool import process_map_ocr_result
+                        result_json["text"] = process_map_ocr_result(result_json["text"])
+                    elif isinstance(result_json["text"], str):
+                        # OCR task: plain text string
+                        from geo_edit.tool_definitions.agents.paddleocr_tool import filter_map_text_string
+                        result_json["text"] = filter_map_text_string(result_json["text"])
+                    result = json.dumps(result_json, ensure_ascii=False)
             except (json.JSONDecodeError, ImportError) as e:
                 logger.warning(f"Failed to post-process map OCR result: {e}")
 
