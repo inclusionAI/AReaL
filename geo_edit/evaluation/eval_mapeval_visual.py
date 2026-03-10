@@ -32,10 +32,69 @@ def parse_integer_answer(answer_text: str) -> int:
     return -1
 
 
+def load_baseline_results(path: str) -> dict:
+    """Load eval_result.jsonl from path or directory."""
+    if os.path.isdir(path):
+        path = os.path.join(path, "eval_result.jsonl")
+    results = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                record = json.loads(line)
+                results[str(record["id"])] = record
+    return results
+
+
+def compare_with_baseline(eval_results: list, baseline_path: str) -> None:
+    """Compare current results with baseline (current as primary)."""
+    baseline = load_baseline_results(baseline_path)
+    current_by_id = {str(r["id"]): r for r in eval_results}
+
+    both_correct = both_wrong = current_only = baseline_only = 0
+    current_correct = baseline_correct = 0
+
+    for sid, cur in current_by_id.items():
+        if sid not in baseline:
+            continue
+        cur_ok = cur.get("result") == 1.0
+        base_ok = baseline[sid].get("result") == 1.0
+        current_correct += cur_ok
+        baseline_correct += base_ok
+        if cur_ok and base_ok:
+            both_correct += 1
+        elif not cur_ok and not base_ok:
+            both_wrong += 1
+        elif cur_ok:
+            current_only += 1
+        else:
+            baseline_only += 1
+
+    total = both_correct + both_wrong + current_only + baseline_only
+    if total == 0:
+        print("\nNo common samples for comparison!")
+        return
+
+    cur_acc = current_correct / total
+    base_acc = baseline_correct / total
+
+    print("\n" + "=" * 50)
+    print("COMPARISON (current as primary)")
+    print("=" * 50)
+    print(f"Common samples: {total}")
+    print(f"Current:  {current_correct}/{total} ({cur_acc:.4f})")
+    print(f"Baseline: {baseline_correct}/{total} ({base_acc:.4f})")
+    print("-" * 50)
+    print(f"Diff: {cur_acc - base_acc:+.4f}")
+    print(f"Both correct: {both_correct}, Both wrong: {both_wrong}")
+    print(f"Current only: {current_only}, Baseline only: {baseline_only}")
+    print("=" * 50)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate MapEval-Visual predictions.")
     parser.add_argument("--result_path", type=str, required=True, help="Directory containing inference results.")
     parser.add_argument("--output_path", type=str, required=True, help="Directory to save evaluation results.")
+    parser.add_argument("--compare_with", type=str, default=None, help="Path to baseline eval results for comparison.")
     args = parser.parse_args()
 
     os.makedirs(args.output_path, exist_ok=True)
@@ -132,6 +191,10 @@ def main() -> None:
     print("-" * 50)
     print(f"{'Overall':20s}: {overall_correct:4d}/{overall_total:4d} ({overall_accuracy * 100:5.1f}%)")
     print(f"\nResults saved to: {args.output_path}")
+
+    # Compare with baseline if provided
+    if args.compare_with:
+        compare_with_baseline(eval_results, args.compare_with)
 
 
 if __name__ == "__main__":

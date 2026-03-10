@@ -82,6 +82,67 @@ def evaluate_final_answer(
     return 1.0 if score_str == "1" else 0.0
 
 
+def load_baseline_results(path: str) -> dict:
+    """Load eval_result.jsonl from path or directory."""
+    if os.path.isdir(path):
+        path = os.path.join(path, "eval_result.jsonl")
+    results = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                record = json.loads(line)
+                results[str(record["id"])] = record
+    return results
+
+
+def compare_with_baseline(eval_results: list, baseline_path: str) -> None:
+    """Compare current results with baseline (current as primary)."""
+    baseline = load_baseline_results(baseline_path)
+    current_by_id = {str(r["id"]): r for r in eval_results}
+
+    both_correct = both_wrong = current_only = baseline_only = 0
+    current_correct = baseline_correct = 0
+
+    for sid, cur in current_by_id.items():
+        if sid not in baseline:
+            continue
+        cur_result = cur.get("result")
+        base_result = baseline[sid].get("result")
+        # Handle filtered results (dict means filtered)
+        cur_ok = cur_result == 1.0
+        base_ok = base_result == 1.0
+        current_correct += cur_ok
+        baseline_correct += base_ok
+        if cur_ok and base_ok:
+            both_correct += 1
+        elif not cur_ok and not base_ok:
+            both_wrong += 1
+        elif cur_ok:
+            current_only += 1
+        else:
+            baseline_only += 1
+
+    total = both_correct + both_wrong + current_only + baseline_only
+    if total == 0:
+        print("\nNo common samples for comparison!")
+        return
+
+    cur_acc = current_correct / total
+    base_acc = baseline_correct / total
+
+    print("\n" + "=" * 50)
+    print("COMPARISON (current as primary)")
+    print("=" * 50)
+    print(f"Common samples: {total}")
+    print(f"Current:  {current_correct}/{total} ({cur_acc:.4f})")
+    print(f"Baseline: {baseline_correct}/{total} ({base_acc:.4f})")
+    print("-" * 50)
+    print(f"Diff: {cur_acc - base_acc:+.4f}")
+    print(f"Both correct: {both_correct}, Both wrong: {both_wrong}")
+    print(f"Current only: {current_only}, Baseline only: {baseline_only}")
+    print("=" * 50)
+
+
 def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
     question = record["question"]
     ground_truth = record["answer"]
@@ -147,6 +208,12 @@ def main(
         type=str,
         default="",
         help="Additional prompt to append to the evaluation prompt.",
+    )
+    parser.add_argument(
+        "--compare_with",
+        type=str,
+        default=None,
+        help="Path to baseline eval results for comparison.",
     )
     args = parser.parse_args()
 
@@ -230,6 +297,10 @@ def main(
         f.write(f"avg_input_tokens={avg_input:.2f}\n")
         f.write(f"avg_total_tokens={avg_total:.2f}\n")
         f.write(tool_stats_text)
+
+    # Compare with baseline if provided
+    if args.compare_with:
+        compare_with_baseline(eval_results, args.compare_with)
 
 
 if __name__ == "__main__":
