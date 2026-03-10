@@ -8,6 +8,8 @@ from collections.abc import Callable
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
+from openai.types.chat import ChatCompletion
+
 if TYPE_CHECKING:
     from areal.api.io_struct import ModelRequest, ModelResponse
     from areal.experimental.gateway.controller.config import GatewayControllerConfig
@@ -119,6 +121,61 @@ class GatewayInfEngine:
             return self._version
 
     # -- Core generation ---------------------------------------------------
+
+    async def chat_completion(
+        self,
+        messages: list[dict],
+        session_api_key: str | None = None,
+        **kwargs,
+    ) -> ChatCompletion:
+        """Send a chat completion request through the gateway HTTP stack.
+
+        Parameters
+        ----------
+        messages : list[dict]
+            OpenAI-style chat messages.
+        session_api_key : str | None
+            If provided, authenticate as this session; otherwise use the
+            admin API key from the controller config.
+        **kwargs
+            Optional overrides: ``temperature``, ``top_p``,
+            ``max_completion_tokens``.
+
+        Returns
+        -------
+        ChatCompletion
+            Parsed OpenAI ChatCompletion object.
+        """
+        import aiohttp
+
+        body = {
+            "messages": messages,
+            "temperature": kwargs.get("temperature", 1.0),
+            "top_p": kwargs.get("top_p", 1.0),
+            "max_completion_tokens": kwargs.get("max_completion_tokens", 512),
+            "stream": False,
+        }
+
+        api_key = (
+            session_api_key if session_api_key is not None else self.config.admin_api_key
+        )
+        url = f"{self.gateway_addr}/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+
+        timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=body, headers=headers) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(
+                        f"Gateway /chat/completions returned {resp.status}: {text}"
+                    )
+                resp_json = await resp.json()
+
+        return ChatCompletion.model_validate(resp_json)
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Send a generation request through the gateway HTTP stack.

@@ -400,4 +400,48 @@ def create_app(config: GatewayConfig) -> FastAPI:
         )
         return {"results": results}
 
+
+    # =========================================================================
+    # Compatibility aliases for RolloutCallback — map /callback/* to broadcast endpoints
+    # =========================================================================
+    # RolloutCallback (shared infrastructure in areal/infra/controller/rollout_callback.py)
+    # uses /callback/* prefixed paths for weight updates and generation control.
+    # Gateway implements the actual handlers at unprefixed paths. These aliases
+    # register the SAME handler functions on both routes to bridge the gap without
+    # modifying the shared RolloutCallback class.
+
+    # POST /callback/init_weights_group → init_weights_update_group
+    app.add_api_route(
+        "/callback/init_weights_group",
+        init_weights_update_group,
+        methods=["POST"],
+    )
+
+    # POST /callback/update_weights_xccl → update_weights_from_distributed
+    app.add_api_route(
+        "/callback/update_weights_xccl",
+        update_weights_from_distributed,
+        methods=["POST"],
+    )
+
+    # POST /callback/update_weights_disk → update_weights_from_disk
+    app.add_api_route(
+        "/callback/update_weights_disk",
+        update_weights_from_disk,
+        methods=["POST"],
+    )
+
+    # POST /callback/pause_generation → pause_generation
+    app.add_api_route(
+        "/callback/pause_generation",
+        pause_generation,
+        methods=["POST"],
+    )
+
+    # POST /callback/continue_generation → continue_generation
+    app.add_api_route(
+        "/callback/continue_generation",
+        continue_generation,
+        methods=["POST"],
+    )
     return app

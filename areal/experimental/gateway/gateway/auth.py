@@ -38,16 +38,6 @@ def extract_bearer_token(request: Request) -> str:
     )
 
 
-def authenticate(api_key: str, admin_api_key: str) -> str:
-    """Returns 'admin' if key matches admin key, 'unknown' otherwise.
-
-    Session key validation happens at the Router — gateway does not
-    store session keys locally.
-    """
-    if hmac.compare_digest(api_key, admin_api_key):
-        return "admin"
-    return "unknown"
-
 
 def require_admin_key(request: Request, admin_api_key: str) -> str:
     """Validate that the request carries the admin API key.

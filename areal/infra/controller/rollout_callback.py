@@ -28,7 +28,7 @@ class RolloutCallback:
 
     controller_addr: str
     request_timeout: float = 600.0
-
+    admin_api_key: str | None = None
     def _post(self, endpoint: str, payload: dict[str, Any] | None = None) -> dict:
         """Make synchronous HTTP POST to controller callback endpoint.
 
@@ -46,9 +46,13 @@ class RolloutCallback:
         """
         url = f"http://{self.controller_addr}{endpoint}"
         try:
+            headers = {}
+            if self.admin_api_key is not None:
+                headers["Authorization"] = f"Bearer {self.admin_api_key}"
             resp = requests.post(
                 url,
                 json=payload or {},
+                headers=headers,
                 timeout=self.request_timeout,
             )
             resp.raise_for_status()
