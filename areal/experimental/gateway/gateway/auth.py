@@ -38,7 +38,6 @@ def extract_bearer_token(request: Request) -> str:
     )
 
 
-
 def require_admin_key(request: Request, admin_api_key: str) -> str:
     """Validate that the request carries the admin API key.
 

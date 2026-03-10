@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Callable
 from threading import Lock
@@ -157,7 +156,9 @@ class GatewayInfEngine:
         }
 
         api_key = (
-            session_api_key if session_api_key is not None else self.config.admin_api_key
+            session_api_key
+            if session_api_key is not None
+            else self.config.admin_api_key
         )
         url = f"{self.gateway_addr}/chat/completions"
         headers = {
@@ -417,8 +418,9 @@ class GatewayInfEngine:
             resolved = engine._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
 
         if group_size > 1:
-            from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
             import logging as _logging
+
+            from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
 
             resolved = GroupedRolloutWorkflow(
                 resolved, group_size, _logging.getLogger("GatewayInfEngine")

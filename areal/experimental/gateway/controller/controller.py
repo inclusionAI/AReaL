@@ -8,12 +8,10 @@ Scheduler is used ONLY to launch SGLang servers and gateway micro-services.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import threading
 import time
 import traceback
-from collections import defaultdict
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
@@ -22,8 +20,6 @@ if TYPE_CHECKING:
         LocalInfServerInfo,
         ModelRequest,
         ModelResponse,
-        ParamSpec,
-        WeightUpdateMeta,
     )
     from areal.api.scheduler_api import Scheduler, Worker
 
@@ -140,7 +136,7 @@ class GatewayRolloutController:
         """Create workers and launch SGLang servers via scheduler."""
         from dataclasses import asdict
 
-        from areal.api.cli_args import SchedulingStrategy, SchedulingSpec
+        from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
         from areal.api.scheduler_api import Job
 
         # Build scheduling spec
@@ -196,7 +192,6 @@ class GatewayRolloutController:
 
     def _start_gateway_services(self) -> None:
         """Start Router, Data Proxies, and Gateway as background threads."""
-        import uvicorn
 
         from areal.experimental.gateway.data_proxy.app import (
             create_app as create_data_proxy_app,
@@ -493,7 +488,9 @@ class GatewayRolloutController:
         return await self._engine.agenerate(req)
 
     async def chat_completion(self, messages, session_api_key=None, **kwargs):
-        return await self._engine.chat_completion(messages, session_api_key=session_api_key, **kwargs)
+        return await self._engine.chat_completion(
+            messages, session_api_key=session_api_key, **kwargs
+        )
 
     # -- Pause / Resume ----------------------------------------------------
 

@@ -20,6 +20,7 @@ from areal.experimental.gateway.gateway.config import GatewayConfig
 from areal.experimental.gateway.gateway.streaming import (
     RouterKeyRejectedError,
     RouterUnreachableError,
+    _forwarding_headers,
     broadcast_to_workers,
     forward_request,
     forward_sse_stream,
@@ -27,7 +28,6 @@ from areal.experimental.gateway.gateway.streaming import (
     query_router,
     query_router_by_session_id,
     register_session_in_router,
-    _forwarding_headers,
 )
 
 logger = logging.getLogger("Gateway")
@@ -399,7 +399,6 @@ def create_app(config: GatewayConfig) -> FastAPI:
             worker_addrs, "/grant_capacity", body, headers
         )
         return {"results": results}
-
 
     # =========================================================================
     # Compatibility aliases for RolloutCallback — map /callback/* to broadcast endpoints
