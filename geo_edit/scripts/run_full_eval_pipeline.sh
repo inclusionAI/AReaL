@@ -123,8 +123,11 @@ run_single_pipeline() {
     local PARENT_NAME="$3"
     local OUTPUT_BASE="$4"
 
-    # Derive paths: {subdir}_{parent}_full
-    local NAME_PREFIX="${SUBDIR_NAME}_${PARENT_NAME}"
+    # Derive paths: insert suffix after "mapeval_visual_"
+    # Extract suffix from parent name (e.g., mapqa_batch_gpt -> gpt)
+    local SUFFIX="${PARENT_NAME##*_}"
+    # Insert suffix: mapeval_visual_auto_segment_1r -> mapeval_visual_gpt_auto_segment_1r
+    local NAME_PREFIX="${SUBDIR_NAME/mapeval_visual_/mapeval_visual_${SUFFIX}_}"
     local PARQUET_DIR="${OUTPUT_BASE}/packaged_trajectory"
     local PARQUET_PATH="${PARQUET_DIR}/${NAME_PREFIX}_full.parquet"
     local RESULT_DIR="${OUTPUT_BASE}/${MODEL_BASENAME}_${NAME_PREFIX}_full"
