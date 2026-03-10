@@ -72,9 +72,11 @@ def main() -> None:
 
                 eval_item = {
                     "id": record_id,
+                    "question": record.get("question", ""),
+                    "image_path": record.get("image_path"),
                     "classification": classification,
-                    "ground_truth": ground_truth,
-                    "prediction": predicted,
+                    "ground_truth": str(ground_truth),
+                    "prediction": str(predicted),
                     "result": 1.0 if is_correct else 0.0,
                     "output_text": output_text,
                 }
