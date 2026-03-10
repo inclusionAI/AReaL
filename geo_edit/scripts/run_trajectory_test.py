@@ -9,13 +9,7 @@ Usage:
     bash geo_edit/scripts/launch_vllm_generate.sh
 
     # 2. Run test
-    gpt-5_grounding_dino gpt-5_label gpt-5_only_crop gpt-5_only_highlight gpt-5_sam  gpt-5_testset
-    python -m geo_edit.scripts.run_trajectory_test \
-        --parquet_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/gpt-5_grounding_dino.parquet \
-        --output_path /storage/openpsi/data/lcy_image_edit/CartoMapQA_output_0303/InternVL3-8B/gpt-5_grounding_dino\
-        --model_name /storage/openpsi/models/InternVL3-8B \
-        --api_base http://127.0.0.1:8000 \
-        --num_workers 32
+        python -m geo_edit.scripts.run_trajectory_test         --parquet_path /storage/openpsi/data/lcy_image_edit/mapeval_0309/packaged_trajectory/gpt_crop_full.parquet      --output_path /storage/openpsi/data/lcy_image_edit/mapeval_0309/GLM-4.1V-9B-Thinking_gpt_crop_full       --model_name /storage/openpsi/models/GLM-4.1V-9B-Thinking       --api_base http://127.0.0.1:8000         --num_workers 32
 
     # 3. Evaluate with openai_as_judge
     gpt-5_grounding_dino gpt-5_label gpt-5_only_crop gpt-5_only_highlight gpt-5_sam  gpt-5_testset
