@@ -73,15 +73,6 @@ class GatewayRolloutController:
         # Staleness manager (created in initialize)
         self._staleness_manager = None
 
-        # Callback server (Flask, for training controller compatibility)
-        self._callback_app = None
-        self._callback_server = None
-        self._callback_server_thread: threading.Thread | None = None
-        self._callback_port: int | None = None
-        self._callback_host: str | None = None
-        self._callback_loop: asyncio.AbstractEventLoop | None = None
-        self._callback_loop_ready = threading.Event()
-
         # Proxy compatibility (no-ops — gateway IS the proxy)
         self._proxy_started = False
         self.proxy_workers: list = []
@@ -136,8 +127,6 @@ class GatewayRolloutController:
             max_staleness=self.config.max_head_offpolicyness,
         )
 
-        # Start callback server
-        self._start_callback_server()
         logger.info("GatewayRolloutController initialized (role=%s)", role)
 
     async def _async_initialize(
@@ -383,120 +372,15 @@ class GatewayRolloutController:
         self._router_thread = None
         self._gateway_services_started = False
 
-    # -- Callback server (training controller compatibility) ---------------
-
-    def _start_callback_server(self) -> None:
-        """Start Flask HTTP server for training controller callbacks.
-
-        The training controller's ``connect_engine()`` creates
-        ``RolloutCallback(controller_addr=rollout.callback_addr)`` which
-        sends HTTP POSTs to these routes.
-        """
-        from flask import Flask, jsonify, request as flask_request
-        from werkzeug.serving import make_server
-
-        from areal.utils.network import find_free_ports, gethostip
-
-        if self._callback_server is not None:
-            logger.warning("Callback server already running")
-            return
-
-        app = Flask(__name__)
-        app.logger.disabled = True
-
-        @app.route("/callback/init_weights_group", methods=["POST"])
-        def init_weights_group():
-            payload = flask_request.get_json() or {}
-            self._callback_loop.run_until_complete(
-                self.init_weights_update_group(payload.get("meta"))
-            )
-            return jsonify({"status": "ok"})
-
-        @app.route("/callback/update_weights_xccl", methods=["POST"])
-        def update_weights():
-            payload = flask_request.get_json() or {}
-            self._callback_loop.run_until_complete(
-                self.update_weights_from_distributed(
-                    payload.get("meta"), payload.get("param_specs")
-                )
-            )
-            return jsonify({"status": "ok"})
-
-        @app.route("/callback/update_weights_disk", methods=["POST"])
-        def update_weights_disk():
-            payload = flask_request.get_json() or {}
-            self._callback_loop.run_until_complete(
-                self.update_weights_from_disk(payload.get("meta"))
-            )
-            return jsonify({"status": "ok"})
-
-        @app.route("/callback/pause_generation", methods=["POST"])
-        def pause_generation_cb():
-            self._callback_loop.run_until_complete(self.pause_generation())
-            return jsonify({"status": "ok"})
-
-        @app.route("/callback/continue_generation", methods=["POST"])
-        def continue_generation_cb():
-            self._callback_loop.run_until_complete(self.continue_generation())
-            return jsonify({"status": "ok"})
-
-        @app.errorhandler(Exception)
-        def handle_error(e):
-            logger.error("Callback handler error: %s", e)
-            return jsonify({"error": str(e)}), 500
-
-        self._callback_port = find_free_ports(1)[0]
-        self._callback_host = gethostip()
-        self._callback_app = app
-        self._callback_server = make_server(
-            self._callback_host, self._callback_port, app, threaded=False
-        )
-
-        # Suppress access logs
-        self._callback_server.RequestHandlerClass.log_request = (
-            lambda self, *a, **kw: None
-        )
-        import logging as stdlib_logging
-
-        stdlib_logging.getLogger("werkzeug").setLevel(stdlib_logging.WARNING)
-
-        def serve_forever():
-            self._callback_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._callback_loop)
-            self._callback_loop_ready.set()
-            logger.info(
-                "Callback server started on %s:%s",
-                self._callback_host,
-                self._callback_port,
-            )
-            self._callback_server.serve_forever()
-
-        self._callback_server_thread = threading.Thread(
-            target=serve_forever, daemon=True
-        )
-        self._callback_server_thread.start()
-        self._callback_loop_ready.wait()
-
-    def _stop_callback_server(self) -> None:
-        if self._callback_server is not None:
-            logger.info("Stopping callback server...")
-            self._callback_server.shutdown()
-            if self._callback_loop is not None:
-                self._callback_loop.close()
-            self._callback_server = None
-            self._callback_app = None
-            self._callback_server_thread = None
-            self._callback_port = None
-            self._callback_host = None
-            self._callback_loop = None
-            self._callback_loop_ready.clear()
-
     @property
     def callback_addr(self) -> str:
-        """Return callback server address as 'host:port'."""
-        if self._callback_host is None or self._callback_port is None:
-            raise RuntimeError("Callback server not started")
-        return f"{self._callback_host}:{self._callback_port}"
+        """Return gateway address as 'host:port' for training controller callbacks."""
+        from areal.utils.network import gethostip
+
+        host = self.config.gateway_host
+        if host == "0.0.0.0":
+            host = gethostip()
+        return f"{host}:{self.config.gateway_port}"
 
     # -- Destroy -----------------------------------------------------------
 
@@ -505,9 +389,6 @@ class GatewayRolloutController:
         if self._gateway_inf_engine is not None:
             self._gateway_inf_engine.destroy()
             self._gateway_inf_engine = None
-
-        # Stop callback server
-        self._stop_callback_server()
 
         # Stop gateway services
         self._stop_gateway_services()
@@ -610,6 +491,9 @@ class GatewayRolloutController:
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         return await self._engine.agenerate(req)
+
+    async def chat_completion(self, messages, session_api_key=None, **kwargs):
+        return await self._engine.chat_completion(messages, session_api_key=session_api_key, **kwargs)
 
     # -- Pause / Resume ----------------------------------------------------
 
