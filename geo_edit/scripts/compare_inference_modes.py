@@ -316,6 +316,9 @@ def run_direct_inference(
                         elif isinstance(image, dict) and "bytes" in image:
                             image = Image.open(BytesIO(image["bytes"]))
                             image.save(image_path)
+                        elif isinstance(image, bytes):
+                            image = Image.open(BytesIO(image))
+                            image.save(image_path)
                         else:
                             logger.warning("Invalid image type for %s: %s", task_id, type(image))
                             text_only = True

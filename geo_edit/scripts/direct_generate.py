@@ -244,6 +244,9 @@ def main():
                         elif isinstance(image, dict) and "bytes" in image:
                             image = Image.open(BytesIO(image["bytes"]))
                             image.save(image_path)
+                        elif isinstance(image, bytes):
+                            image = Image.open(BytesIO(image))
+                            image.save(image_path)
                         else:
                             raise ValueError(f"Invalid image type: {type(image)}")
                 else:

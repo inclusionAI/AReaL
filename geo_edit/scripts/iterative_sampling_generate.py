@@ -670,6 +670,8 @@ def main():
                             image.save(image_path)
                         elif isinstance(image, dict) and "bytes" in image:
                             Image.open(BytesIO(image["bytes"])).save(image_path)
+                        elif isinstance(image, bytes):
+                            Image.open(BytesIO(image)).save(image_path)
 
                 payload = {
                     "id": task_id,
