@@ -68,8 +68,35 @@ class ChartMoEActor(BaseToolModelActor):
         # Set tokenizer on model (required by official implementation)
         self.model.tokenizer = self.tokenizer
 
+        # Patch vision_tower to fix image size mismatch (490x490 vs 336x336)
+        self._patch_vision_tower()
+
         self._initialized = True
         logger.info("ChartMoEActor initialized on GPU %s: %s", self.gpu_ids, model_name)
+
+    def _patch_vision_tower(self):
+        """Patch vision_tower.forward to add interpolate_pos_encoding=True.
+
+        Fixes: ValueError: Input image size (490*490) doesn't match model (336*336).
+        The patch enables position encoding interpolation for variable-size images.
+        """
+        # Navigate to vision_tower: model.vit.vision_tower
+        if hasattr(self.model, 'vit') and hasattr(self.model.vit, 'vision_tower'):
+            vision_tower = self.model.vit.vision_tower
+            original_forward = vision_tower.forward
+
+            def patched_forward(pixel_values, output_hidden_states=False, return_dict=True, **kwargs):
+                # Always enable interpolate_pos_encoding for variable-size images
+                return original_forward(
+                    pixel_values,
+                    output_hidden_states=output_hidden_states,
+                    return_dict=return_dict,
+                    interpolate_pos_encoding=True,
+                    **kwargs
+                )
+
+            vision_tower.forward = patched_forward
+            logger.info("Patched vision_tower.forward with interpolate_pos_encoding=True")
 
     def analyze(
         self,
