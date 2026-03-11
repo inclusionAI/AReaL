@@ -20,6 +20,7 @@ FORCE=false
 COMPARE_WITH=""
 EVAL_MODE="judge"  # mapqa, judge, or custom
 EVAL_SCRIPT=""     # custom evaluation script module
+OUTPUT_DIR=""      # output directory (default: parent of data_dir)
 
 # Filter flags
 FILTER_WRONG_ANSWERS=false
@@ -46,6 +47,7 @@ Optional:
   --eval_mode MODE      Evaluation mode: mapqa|judge|custom (default: $EVAL_MODE)
   --eval_script MODULE  Custom eval script module (required if eval_mode=custom)
                         Example: geo_edit.evaluation.eval_chartqa
+  --output_dir DIR      Output directory (default: parent of data_dir)
   --force               Force re-run all steps
 
 Filters (Step 1):
@@ -85,6 +87,7 @@ while [[ $# -gt 0 ]]; do
         --compare_with) COMPARE_WITH="$2"; shift 2 ;;
         --eval_mode) EVAL_MODE="$2"; shift 2 ;;
         --eval_script) EVAL_SCRIPT="$2"; shift 2 ;;
+        --output_dir) OUTPUT_DIR="$2"; shift 2 ;;
         --force) FORCE=true; shift ;;
         --filter_wrong_answers) FILTER_WRONG_ANSWERS=true; shift ;;
         --filter_answer_leakage) FILTER_ANSWER_LEAKAGE=true; shift ;;
@@ -233,9 +236,17 @@ run_single_pipeline() {
 DATA_DIR_NAME=$(basename "$DATA_DIR")
 PARENT_DIR=$(dirname "$DATA_DIR")
 
+# Use OUTPUT_DIR if specified, otherwise default to PARENT_DIR
+if [[ -n "$OUTPUT_DIR" ]]; then
+    OUTPUT_BASE="$OUTPUT_DIR"
+else
+    OUTPUT_BASE="$PARENT_DIR"
+fi
+
 echo "=== Full Evaluation Pipeline (Batch Mode) ==="
 echo "Model: $MODEL_NAME"
 echo "Data dir: $DATA_DIR"
+echo "Output dir: $OUTPUT_BASE"
 echo ""
 
 # Collect subdirectories
@@ -256,7 +267,7 @@ echo ""
 
 for subdir in "${SUBDIRS[@]}"; do
     subdir_name=$(basename "$subdir")
-    run_single_pipeline "$subdir" "$subdir_name" "$DATA_DIR_NAME" "$PARENT_DIR"
+    run_single_pipeline "$subdir" "$subdir_name" "$DATA_DIR_NAME" "$OUTPUT_BASE"
 done
 
 echo ""
