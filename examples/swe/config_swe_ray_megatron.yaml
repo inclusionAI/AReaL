@@ -1,17 +1,13 @@
-experiment_name: swe-rl
-trial_name: 32b-sft-ray
+experiment_name: swe-grpo-30b
+trial_name: trial0-ray
 
 seed: 1
 enable_offload: false
-total_train_epochs: 200
-total_train_steps: 12
+total_train_epochs: 10
+total_train_steps: 1024
 tokenizer_path: ${actor.path}
 
-# Post-exit cleanup command (e.g., release SWE sandbox instances)
-# TODO: Update to your cleanup script path
-post_exit_hook: ""
-# Example:
-# post_exit_hook: "cd /path/to/SWEAgent && PYTHONPATH=$PWD:$PYTHONPATH AENV_SYSTEM_URL=http://your-aenv:8080 python src/swe/clean_instances.py"
+post_exit_hook: "cd /storage/openpsi/zhengyu.hzy/code/swe/SWEAgent_train && PYTHONPATH=$PWD:$PYTHONPATH pip install -q -r requirements.txt && AENV_SYSTEM_URL=http://33.182.43.81:8080 python src/swe/clean_instances.py"
 
 cluster:
   n_nodes: 4
@@ -21,10 +17,7 @@ cluster:
     type: ray
     ray_actor_name: ray_kv_store
 
-# Parallel strategy (32 GPUs total):
-#   SGLang inference: 16 GPUs = 4 instances x TP4
-#   FSDP training:    16 GPUs = dp2 x cp8
-allocation_mode: sglang:d4t4+fsdp:d2c8
+allocation_mode: sglang:d4t4+megatron:(attn:d2p4t2|ffn:d1p4e4)
 
 scheduler:
   type: ray
@@ -32,42 +25,53 @@ scheduler:
 gconfig:
   n_samples: 8
   min_new_tokens: 0
-  max_new_tokens: 8192
+  max_new_tokens: 32768 # TODO
   max_tokens: 131071
   greedy: false
   temperature: 1.0
+  top_p: 1.0
+  top_k: 100000000
 
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 32
+  max_concurrent_rollouts: 128
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
-  enable_rollout_tracing: false
+  enable_rollout_tracing: true
   scheduling_spec: ${actor.scheduling_spec}
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
   dump_to_file: true
+  setup_timeout: 300.0
+  request_timeout: 3600.0
+  request_retries: 3
   openai:
     mode: inline
     tool_call_parser: qwen25
     reasoning_parser: qwen3
+    chat_template_type: hf
     engine_max_tokens: ${gconfig.max_tokens}
     export_style: individual
     turn_discount: 1.0
+    session_timeout_seconds: 3600
 
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   # TODO: Update to your model path
-  path: /path/to/your/model
+  path: Qwen/Qwen3-30B-A3B
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
   dtype: bfloat16
+  grad_reduce_dtype: float32
   mb_spec:
-    max_tokens_per_mb: 131072
+    n_mbs: 1
+    granularity: 1
+    max_tokens_per_mb: 32768 # per-mb forward token limit, avoid OOM for 30B MoE
+    n_mbs_divisor: 1
   optimizer:
     type: adam
     lr: 5.0e-6
@@ -78,28 +82,44 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  eps_clip: 0.2
+  megatron:
+    wrap_with_ddp: true
+    ddp:
+      grad_reduce_in_fp32: true
+      overlap_grad_reduce: false
+      overlap_param_gather: false
+      use_distributed_optimizer: true
+    use_deterministic_algorithms: true
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    moe_router_dtype: fp32
+    moe_token_dispatcher_type: alltoall
+  eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
+  reward_clip: 20.0
   kl_ctl: 0.0
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  reward_norm: null
+  discount: 1.0
+  gae_lambda: 1.0
   adv_norm:
     mean_level: batch
     std_level: batch
+    std_unbiased: true
+    eps: 1.0e-05
   max_new_tokens: ${gconfig.max_new_tokens}
-  pad_to_maximum: true
   enable_tree_training: false
   scheduling_spec:
     - task_type: worker
       port_count: 2
       gpu: 1
       cpu: 4
-      mem: 16
+      mem: 32
       cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars:
         NCCL_DEBUG: "WARN"
@@ -108,6 +128,8 @@ actor:
         AENV_SYSTEM_URL: "http://your-aenv-service:8080"
         # TODO: Update to your SWEAgent root path
         SWE_AGENT_ROOT: /path/to/SWEAgent
+        WANDB_BASE_URL: your-wandb-url  # Optional: for W&B logging
+        WANDB_API_KEY: your-wandb-api-key  # Optional: for W&B logging
 
 ref:
   experiment_name: ${experiment_name}
@@ -117,8 +139,12 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 131072
+    n_mbs: 1
+    granularity: 1
+    max_tokens_per_mb: 32768 # match actor, avoid OOM for 30B MoE
+    n_mbs_divisor: 1
   optimizer: null
+  enable_tree_training: false
 
 # SWE environment
 econfig:
@@ -137,7 +163,11 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 131072
-  mem_fraction_static: 0.70
+  max_prefill_tokens: 32768 # limit per-batch prefill to avoid OOM spikes
+  mem_fraction_static: 0.8
+  schedule_policy: lpm
+  attention_backend: fa3
+  log_level: warning
 
 vllm:
   model: ${actor.path}
@@ -157,15 +187,15 @@ train_dataset:
   path: /path/to/swe_bench_verified.jsonl
   type: rl
   max_length: 32768
+  drop_last: true
 
 valid_dataset:
-  batch_size: 8
-  shuffle: false
+  batch_size: 16
+  shuffle: true
   pin_memory: true
   num_workers: 4
   path: /path/to/swe_bench_verified.jsonl
   type: rl
-  drop_last: false
 
 # Utilities
 saver:
@@ -207,5 +237,5 @@ perf_tracer:
   fileroot: ${cluster.fileroot}
   save_interval: 1
   session_tracer:
-    enabled: false
+    enabled: true
     flush_threshold: 100
