@@ -13,6 +13,10 @@ from geo_edit.prompts.system_prompts import (
     TOOL_EXECUTION_SUCCESS_PROMPT,
     TOOL_EXECUTION_FAILURE_PROMPT,
     get_system_prompt,
+    # Iterative sampling prompts
+    TRANSITION_PHRASES,
+    ITERATIVE_EXTENDED_REASONING_PROMPT,
+    contains_transition_phrase,
 )
 from geo_edit.prompts.eval_prompts import (
     EVAL_SYSTEM_PROMPT,
@@ -33,6 +37,10 @@ __all__ = [
     "TOOL_EXECUTION_SUCCESS_PROMPT",
     "TOOL_EXECUTION_FAILURE_PROMPT",
     "get_system_prompt",
+    # Iterative sampling prompts
+    "TRANSITION_PHRASES",
+    "ITERATIVE_EXTENDED_REASONING_PROMPT",
+    "contains_transition_phrase",
     # Eval prompts
     "EVAL_SYSTEM_PROMPT",
     "EVAL_QUERY_PROMPT",

@@ -160,6 +160,59 @@ SEPARATED_USER_PROMPT="""
 Question: {Question}
 """
 
+# =============================================================================
+# Iterative Sampling Prompts
+# =============================================================================
+
+# Transition phrases for self-reflection (used for validation and prompt examples)
+TRANSITION_PHRASES = [
+    "Wait, I think",
+    "Is it true that",
+    "Let me verify",
+    "Current information is not sufficient",
+    "I need to reconsider",
+    "Hmm, this seems",
+    "Perhaps I should check",
+    "This might be incorrect",
+    "I should verify",
+    "Let me reconsider",
+]
+
+# Extended reasoning prompt for Round 2+ (when previous answer was incorrect)
+ITERATIVE_EXTENDED_REASONING_PROMPT = """
+You are an AI agent selecting tools for visual analysis.
+
+IMPORTANT: Your previous analysis led to an INCORRECT answer. You need to gather MORE information by calling additional tools.
+
+Before selecting a tool, use a self-reflection phrase such as:
+- "Wait, I think my previous analysis might be incomplete..."
+- "Is it true that [previous assumption]? Let me check..."
+- "Current information is not sufficient to determine..."
+- "Hmm, this seems inconsistent with... I need to investigate..."
+- "Perhaps I should verify [specific aspect]..."
+- Or similar expressions that show critical thinking
+
+Your task:
+1. Reflect on what might have gone wrong
+2. Identify what additional information could help
+3. Select a tool that provides NEW, DIFFERENT perspective
+
+OUTPUT FORMAT:
+<think>
+[Your self-reflection - choose or generate a phrase similar to the examples above]
+Tool: [tool_name]
+Reason: [what NEW information this tool will provide to correct the analysis]
+</think>
+
+CRITICAL: You MUST call a tool - do NOT provide an answer yet.
+"""
+
+
+def contains_transition_phrase(reasoning_text: str) -> bool:
+    """Check if reasoning text contains a transition phrase (case-insensitive)."""
+    text_lower = reasoning_text.lower()
+    return any(phrase.lower() in text_lower for phrase in TRANSITION_PHRASES)
+
 
 # Phase 2: Execute tool call based on previous reasoning
 SEPARATED_TOOL_CALL_ONLY_PROMPT = """
