@@ -1,4 +1,7 @@
-"""ChartMoE VLM Agent Tool."""
+"""ChartMoE VLM Agent Tool.
+
+Based on official implementation: https://github.com/DataArcTech/ChartMoE
+"""
 
 import base64
 import json
@@ -23,9 +26,15 @@ agent_config = {
     "num_gpus": 1,
 }
 
+# ChartMoE prompt template (from official implementation)
+CHARTMOE_PROMPT_TEMPLATE = "[UNUSED_TOKEN_146]user\n{}[UNUSED_TOKEN_145]\n[UNUSED_TOKEN_146]assistant\n"
+
 
 class ChartMoEActor(BaseToolModelActor):
-    """ChartMoE VLM Actor using AutoProcessor API."""
+    """ChartMoE VLM Actor following official implementation.
+
+    Based on: https://github.com/DataArcTech/ChartMoE/blob/master/chartmoe/generation_utils.py
+    """
 
     def __init__(
         self,
@@ -39,24 +48,25 @@ class ChartMoEActor(BaseToolModelActor):
             system_prompt: Optional system prompt for the model.
         """
         import torch
-        from transformers import AutoModel, AutoProcessor
+        from transformers import AutoModel, AutoTokenizer
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
         self.model_name = model_name
         self.system_prompt = system_prompt or ""
 
-        # Load model and processor
-        self.processor = AutoProcessor.from_pretrained(
+        # Load tokenizer and model (following official implementation)
+        self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             trust_remote_code=True,
         )
         self.model = AutoModel.from_pretrained(
             model_name,
-            torch_dtype=torch.float16,
-            device_map=self.device_map,
             trust_remote_code=True,
-        ).eval()
+        ).half().cuda().eval()
+
+        # Set tokenizer on model (required by official implementation)
+        self.model.tokenizer = self.tokenizer
 
         self._initialized = True
         logger.info("ChartMoEActor initialized on GPU %s: %s", self.gpu_ids, model_name)
@@ -68,7 +78,10 @@ class ChartMoEActor(BaseToolModelActor):
         max_tokens: int = 1024,
         **kwargs,
     ) -> str:
-        """Analyze an image and answer the question."""
+        """Analyze an image and answer the question.
+
+        Follows official ChartMoE_Robot.chat() implementation.
+        """
         import torch
         from PIL import Image
 
@@ -79,44 +92,66 @@ class ChartMoEActor(BaseToolModelActor):
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        # Build prompt
+        # Build prompt with system prompt if provided
         if self.system_prompt:
-            prompt = f"{self.system_prompt}\n{question}"
+            full_question = f"{self.system_prompt}\n{question}"
         else:
-            prompt = question
+            full_question = question
 
-        # Use processor to prepare inputs
-        inputs = self.processor(
-            text=prompt,
-            images=image,
-            return_tensors="pt",
-        )
+        # Format with ChartMoE template
+        formatted_prompt = CHARTMOE_PROMPT_TEMPLATE.format(full_question)
 
-        # Move inputs to model device
-        inputs = {k: v.to(self.model.device) if hasattr(v, 'to') else v
-                  for k, v in inputs.items()}
+        # Build embeddings following official implementation
+        # Order: [BOS] -> [IMAGE] -> [TEXT]
+        embeds = []
+        im_mask = []
 
-        # Generate response
-        with torch.no_grad():
+        # 1. Encode empty text with BOS token (before image at position 0)
+        text_embeds = self.model.encode_text("", add_special_tokens=True)
+        embeds.append(text_embeds)
+        im_mask.append(torch.zeros(text_embeds.shape[:2]).cuda())
+
+        # 2. Encode image
+        image_tensor = self.model.vis_processor(image).unsqueeze(0).cuda()
+        image_embeds = self.model.encode_img(image_tensor)
+        embeds.append(image_embeds)
+        im_mask.append(torch.ones(image_embeds.shape[:2]).cuda())
+
+        # 3. Encode prompt text (after image)
+        text_embeds = self.model.encode_text(formatted_prompt, add_special_tokens=False)
+        embeds.append(text_embeds)
+        im_mask.append(torch.zeros(text_embeds.shape[:2]).cuda())
+
+        # 3. Concatenate embeddings
+        embeds = torch.cat(embeds, dim=1)
+        im_mask = torch.cat(im_mask, dim=1).bool()
+
+        # 4. Generate with EOS tokens
+        eos_token_id = [
+            self.tokenizer.convert_tokens_to_ids(["[UNUSED_TOKEN_145]"])[0],
+            self.tokenizer.eos_token_id,
+        ]
+
+        with torch.cuda.amp.autocast():
             outputs = self.model.generate(
-                **inputs,
+                inputs_embeds=embeds,
+                im_mask=im_mask,
+                temperature=temperature if temperature > 0 else 1.0,
                 max_new_tokens=max_tokens,
-                do_sample=temperature > 0,
-                temperature=temperature if temperature > 0 else None,
                 num_beams=1,
+                do_sample=temperature > 0,
+                repetition_penalty=1.0,
+                eos_token_id=eos_token_id,
             )
 
-        # Decode output
-        generated_text = self.processor.decode(
-            outputs[0],
-            skip_special_tokens=True,
-        )
+        # 5. Decode output
+        output_token = outputs[0]
+        if output_token[0] == 0 or output_token[0] == 1:
+            output_token = output_token[1:]
+        output_text = self.tokenizer.decode(output_token, add_special_tokens=False)
+        output_text = output_text.split("[UNUSED_TOKEN_145]")[0].strip()
 
-        # Remove input prompt if included in output
-        if generated_text.startswith(prompt):
-            generated_text = generated_text[len(prompt):].strip()
-
-        return self._parse_output(generated_text)
+        return self._parse_output(output_text)
 
     def _parse_output(self, text: str) -> str:
         """Parse output (following ToolAgent._parse_response logic)."""
