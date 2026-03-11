@@ -5,6 +5,7 @@ import re
 from typing import List, Optional
 
 ANSWER_TEMPLATE = "<answer>{}</answer>"
+BOX_TEMPLATE = "<|begin_of_box|>{}<|end_of_box|>"
 
 
 def parse_score(text: str) -> str:
@@ -24,8 +25,9 @@ def parse_leakage_score(text: str) -> str:
     return match.group(1) if match else ""
 
 
-def extract_answer(text: str, mode: str) -> Optional[str]:
-    parts = ANSWER_TEMPLATE.split("{}")
+def _extract_with_template(text: str, template: str, mode: str) -> Optional[str]:
+    """Extract answer using a specific template."""
+    parts = template.split("{}")
     if mode == "split":
         if parts[0] not in text or parts[1] not in text:
             return None
@@ -41,7 +43,51 @@ def extract_answer(text: str, mode: str) -> Optional[str]:
                 return None
             return text[start:end].strip()
         return text[start:].strip()
-    raise ValueError(f"Unknown extract mode: {mode}")
+    return None
+
+
+def _extract_partial(text: str, start_tag: str) -> Optional[str]:
+    """Extract answer from partial tag (without closing tag)."""
+    start = text.find(start_tag)
+    if start == -1:
+        return None
+    content = text[start + len(start_tag) :].strip()
+    return content if content else None
+
+
+def extract_answer(text: str, mode: str) -> Optional[str]:
+    """Extract answer from text using various formats.
+
+    Supported formats (in order of priority):
+    1. <answer>...</answer>
+    2. <|begin_of_box|>...<|end_of_box|>
+    3. <answer>... (partial, without closing tag)
+    4. <|begin_of_box|>... (partial, without closing tag)
+    """
+    if mode not in ("split", "strict"):
+        raise ValueError(f"Unknown extract mode: {mode}")
+
+    # Try <answer>...</answer>
+    result = _extract_with_template(text, ANSWER_TEMPLATE, mode)
+    if result is not None:
+        return result
+
+    # Try <|begin_of_box|>...<|end_of_box|>
+    result = _extract_with_template(text, BOX_TEMPLATE, mode)
+    if result is not None:
+        return result
+
+    # Try partial <answer>...
+    result = _extract_partial(text, "<answer>")
+    if result is not None:
+        return result
+
+    # Try partial <|begin_of_box|>...
+    result = _extract_partial(text, "<|begin_of_box|>")
+    if result is not None:
+        return result
+
+    return None
 
 
 def get_final_prediction(predict_str_list: List[str], extract_mode: Optional[str]) -> str:
