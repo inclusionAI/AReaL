@@ -6,11 +6,8 @@ import torch
 from transformers import PreTrainedTokenizerFast
 
 from areal import workflow_context
+from areal.api import AsyncRewardWrapper, InferenceEngine, ModelRequest, RolloutWorkflow
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import ModelRequest
-from areal.api.reward_api import AsyncRewardWrapper
-from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, stats_tracker
 
 logger = logging.getLogger("MultiTurnWorkflow")

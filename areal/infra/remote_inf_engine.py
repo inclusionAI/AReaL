@@ -22,19 +22,22 @@ import torch.distributed as dist
 import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import InferenceEngineConfig, OpenAIProxyConfig
-from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import (
-    HttpGenerationResult,
-    HttpRequest,
+from areal.api import (
+    InferenceEngine,
     LocalInfServerInfo,
     ModelRequest,
     ModelResponse,
     ParamSpec,
+    RolloutWorkflow,
     WeightUpdateMeta,
+    WorkflowLike,
+)
+from areal.api.cli_args import InferenceEngineConfig, OpenAIProxyConfig
+from areal.api.io_struct import (
+    HttpGenerationResult,
+    HttpRequest,
     WeightUpdateRequests,
 )
-from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
 from areal.infra import workflow_context
 from areal.infra.platforms import current_platform
 from areal.infra.utils.concurrent import get_executor

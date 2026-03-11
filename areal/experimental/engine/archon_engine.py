@@ -24,15 +24,15 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
-from areal.api.alloc_mode import ParallelStrategy
-from areal.api.cli_args import MicroBatchSpec
-from areal.api.engine_api import TrainEngine
-from areal.api.io_struct import (
-    DeviceRuntimeInfo,
+from areal.api import (
     FinetuneSpec,
+    ParallelStrategy,
     SaveLoadMeta,
+    TrainEngine,
     WeightUpdateMeta,
 )
+from areal.api.cli_args import MicroBatchSpec
+from areal.api.io_struct import DeviceRuntimeInfo
 from areal.engine.core.distributed import patch_dist_group_timeout
 from areal.engine.core.train_engine import (
     aggregate_eval_losses,
@@ -108,10 +108,8 @@ if TYPE_CHECKING:
     from torch.distributed.pipelining import PipelineStage
     from torchdata.stateful_dataloader import StatefulDataLoader
 
+    from areal.api import InferenceEngine, Scheduler, WorkflowLike
     from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
-    from areal.api.engine_api import InferenceEngine
-    from areal.api.scheduler_api import Scheduler
-    from areal.api.workflow_api import WorkflowLike
     from areal.experimental.engine.archon_runner import ForwardBackwardRunner
 
 
@@ -1099,7 +1097,10 @@ class ArchonEngine(TrainEngine):
 
     def _create_device_model(self):
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.device(int(os.environ["LOCAL_RANK"]))
+        if current_platform.device_type == "cpu":
+            self.device = torch.device("cpu")
+        else:
+            self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
@@ -1134,10 +1135,15 @@ class ArchonEngine(TrainEngine):
             )
             attn_type = "varlen"
 
+        # Map moe_router_dtype string config to torch.dtype; None means no override
+        router_dtype = (
+            torch.float32 if self.config.archon.moe_router_dtype == "fp32" else None
+        )
         model_args = self.spec.model_args_class.from_hf_config(
             self.model_config,
             is_critic=self.config.is_critic,
             attn_type=attn_type,
+            router_dtype=router_dtype,
         )
         return self.spec.model_class(model_args)
 

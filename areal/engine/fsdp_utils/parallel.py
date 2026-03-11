@@ -16,7 +16,7 @@ from torch.distributed.tensor.parallel import (
 )
 from transformers import PretrainedConfig
 
-from areal.api.alloc_mode import FSDPParallelStrategy
+from areal.api import FSDPParallelStrategy
 from areal.api.cli_args import FSDPWrapPolicy, TrainEngineConfig
 from areal.engine.core.model import (
     is_gemma3_model,

@@ -6,7 +6,7 @@ import pathlib
 import sys
 import time
 
-from areal.api.alloc_mode import AllocationMode, AllocationType
+from areal.api import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names
 from areal.utils.fs import validate_shared_path
 

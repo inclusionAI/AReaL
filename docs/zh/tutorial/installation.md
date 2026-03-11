@@ -82,8 +82,14 @@ uv sync --extra cuda
 # uv sync --group dev
 ```
 
-这将安装所有 CUDA 依赖的包，包括 SGLang、vLLM、Megatron、Flash Attention 等。这些包需要 Linux x86_64 和 CUDA
-12.x 及兼容的 NVIDIA 驱动。
+这将安装 CUDA 依赖的训练包（Megatron、Flash Attention、Torch Memory Saver）以及 **SGLang**
+作为默认推理后端。这些包需要 Linux x86_64 和 CUDA 12.x 及兼容的 NVIDIA 驱动。
+
+如果您希望使用 **vLLM** 作为推理后端而非 SGLang：
+
+```bash
+uv sync --extra cuda-train --extra vllm
+```
 
 同样的命令也适用于 macOS 和不带 CUDA 支持的 Linux。CUDA 包会通过平台标记自动跳过。但是，需要 CUDA
 的训练和推理功能将不可用。此配置仅适用于开发、测试和非 GPU 工作流。
@@ -95,15 +101,16 @@ uv sync --extra cuda
 - `megatron`：Megatron 训练后端
 - `tms`：Torch Memory Saver
 - `flash-attn`：Flash Attention v2
-- `cuda`：上述所有（便捷 extra）
+- `cuda-train`：仅训练包（megatron + tms + flash-attn，不含推理后端）
+- `cuda`：cuda-train + sglang（默认，向后兼容）
 
-**注意**：您可以单独安装这些 extra：
+**注意**：您可以混合搭配各个 extra：
 
 ```bash
-# 如果不需要 SGLang 和 Megatron
+# vLLM 仅带 flash-attn（不含 megatron 和 tms）
 uv sync --extra vllm --extra flash-attn
-# 如果安装 flash-attn 时遇到连接问题
-uv sync --extra vllm --extra sglang --extra megatron --extra tms
+# vLLM 加所有训练包
+uv sync --extra cuda-train --extra vllm
 ```
 
 ### 额外的 CUDA 包（可选，手动安装）

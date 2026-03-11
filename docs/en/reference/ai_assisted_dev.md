@@ -99,10 +99,11 @@ automatically routes to the appropriate expert.
 
 Commands are automated workflows invoked with the `/` prefix:
 
-| Command      | Purpose                                    |
-| ------------ | ------------------------------------------ |
-| `/create-pr` | Rebase, squash commits, and create PR      |
-| `/review-pr` | Intelligent code review with risk analysis |
+| Command             | Purpose                                    |
+| ------------------- | ------------------------------------------ |
+| `/create-pr`        | Rebase, squash commits, and create PR      |
+| `/review-pr`        | Intelligent code review with risk analysis |
+| `/translate-doc-zh` | Translate English documentation to Chinese |
 
 **`/review-pr`** is particularly powerful -- it uses dynamic templates to analyze PR
 changes, detect risk levels (CRITICAL/HIGH/MEDIUM/LOW), and spawn minimal targeted

@@ -7,16 +7,19 @@ import torch
 
 from tests.utils import get_model_path
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import (
+    AllocationMode,
+    ModelRequest,
+    ParamSpec,
+    WeightUpdateMeta,
+    Worker,
+)
 from areal.api.cli_args import (
     GenerationHyperparameters,
     InferenceEngineConfig,
     SchedulingSpec,
     SGLangConfig,
 )
-from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
-from areal.api.scheduler_api import Worker
-from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.infra import RolloutController
 from areal.infra.scheduler.local import LocalScheduler
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -1000,10 +1003,13 @@ QWEN3_PATH = get_model_path(
 )
 
 
+@pytest.mark.sglang
 @pytest.mark.parametrize("model_path", [QWEN3_PATH])
 @pytest.mark.slow
 @pytest.mark.ci
 def test_rollout_controller_integration(tmp_path, model_path):
+    from areal.engine.sglang_remote import RemoteSGLangEngine
+
     tokenizer = load_hf_tokenizer(model_path)
     fileroot = tmp_path / "fileroot"
     fileroot.mkdir()

@@ -1,16 +1,33 @@
 from __future__ import annotations  # noqa
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 import torch
 from openai.types.chat import ChatCompletion
 from openai.types.responses.response import Response
 from openai.types.responses.response_input_param import ResponseInputParam
 
-from areal.api.io_struct import ModelResponse
+from areal.api import ModelResponse
 from areal.utils import logging
 
 logger = logging.getLogger("TokenLogpReward")
+
+
+class ApiType(str, Enum):
+    """API type for interaction."""
+
+    COMPLETION = "completion"
+    RESPONSE = "response"
+    NONE = "none"
+
+
+class InputName(str, Enum):
+    """Input name used for logging."""
+
+    MESSAGES = "messages"
+    INPUT_DATA = "input_data"
+    NONE = "none"
 
 
 @dataclass
@@ -44,25 +61,24 @@ class InteractionWithTokenLogpReward:
         return self.response is not None
 
     @property
-    def api_type(self) -> str:
-        # TODO: replace api_type value with enum
+    def api_type(self) -> ApiType:
         """API type (completion/response)."""
         if self.is_completion:
-            return "completion"
+            return ApiType.COMPLETION
         elif self.is_response:
-            return "response"
+            return ApiType.RESPONSE
         else:
-            return "none"
+            return ApiType.NONE
 
     @property
-    def input_name_for_logging(self) -> str:
-        # TODO: replace input_name value with enum
+    def input_name_for_logging(self) -> InputName:
+        """Input name used for logging."""
         if self.is_completion:
-            return "messages"
+            return InputName.MESSAGES
         elif self.is_response:
-            return "input_data"
+            return InputName.INPUT_DATA
         else:
-            return "none"
+            return InputName.NONE
 
     @property
     def current_data(self) -> list[dict] | str | ResponseInputParam | None:
@@ -143,7 +159,7 @@ class InteractionWithTokenLogpReward:
                 logger.warning(
                     f"The input length of the child {api_type} ({resp.input_len}) is less than or "
                     f"equal to the length of the parent {api_type} {parent_len}. "
-                    f"This should not happen if the {input_name}s are constructed properly."
+                    f"This should not happen if the {input_name}s are constructed properly. "
                     f"Ignoring the parent {api_type} by masking them out. \n"
                     f"Parent input token ids: {self.parent.model_response.input_tokens}\n"
                     f"Parent output token ids: {self.parent.model_response.output_tokens}\n"

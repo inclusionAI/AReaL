@@ -40,14 +40,13 @@ from tests.experimental.archon.torchrun.dist_utils import (
     write_result,
 )
 
-from areal.api.alloc_mode import ParallelStrategy
+from areal.api import FinetuneSpec, ParallelStrategy, SaveLoadMeta
 from areal.api.cli_args import (
     ArchonEngineConfig,
     MicroBatchSpec,
     OptimizerConfig,
     TrainEngineConfig,
 )
-from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.experimental.engine.archon_checkpoint import DCPState
 from areal.experimental.engine.archon_engine import ArchonLMEngine
 from areal.experimental.models.archon import ArchonParallelDims

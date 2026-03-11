@@ -12,8 +12,7 @@ import torch
 from huggingface_hub import snapshot_download
 from transformers import AutoConfig
 
-from areal.api.engine_api import InferenceEngine
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api import InferenceEngine, RolloutWorkflow
 from areal.experimental.models.archon import get_model_spec, is_supported_model
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging

@@ -19,7 +19,7 @@ import aiofiles.os
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api import RolloutWorkflow
 from .async_task_runner import (
     AsyncTaskRunner,
     TaskQueueFullError,

@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from areal.api import Job
 from areal.api.cli_args import (
     BaseExperimentConfig,
     SchedulingSpec,
     SchedulingStrategy,
     SchedulingStrategyType,
 )
-from areal.api.scheduler_api import Job
 from areal.infra.scheduler.exceptions import (
     EngineCreationError,
     WorkerCreationError,

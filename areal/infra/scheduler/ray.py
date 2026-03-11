@@ -13,12 +13,12 @@ from ray.util.placement_group import (
 )
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
+from areal.api import Job, Scheduler, Worker
 from areal.api.cli_args import (
     BaseExperimentConfig,
     SchedulingSpec,
     SchedulingStrategyType,
 )
-from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.infra.rpc.ray_rpc_server import RayRPCServer
 from areal.infra.scheduler.exceptions import (
     EngineCallError,

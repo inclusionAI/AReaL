@@ -41,17 +41,19 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
-from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
-from areal.api.engine_api import InferenceEngine, TrainEngine
-from areal.api.io_struct import (
-    DeviceRuntimeInfo,
+from areal.api import (
     FinetuneSpec,
+    FSDPParallelStrategy,
+    InferenceEngine,
+    ParallelStrategy,
     ParamSpec,
     SaveLoadMeta,
+    TrainEngine,
     WeightUpdateMeta,
+    WorkflowLike,
 )
-from areal.api.workflow_api import WorkflowLike
+from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
+from areal.api.io_struct import DeviceRuntimeInfo
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_total_loss_weight,
@@ -123,8 +125,8 @@ from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
 if TYPE_CHECKING:
+    from areal.api import Scheduler
     from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
-    from areal.api.scheduler_api import Scheduler
 
 
 @dataclasses.dataclass
@@ -775,7 +777,10 @@ class FSDPEngine(TrainEngine):
 
     def _create_device_model(self):
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.device(int(os.environ["LOCAL_RANK"]))
+        if current_platform.device_type == "cpu":
+            self.device = torch.device("cpu")
+        else:
+            self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         dtype = getattr(torch, self.config.dtype)
 

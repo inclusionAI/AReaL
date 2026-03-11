@@ -13,7 +13,7 @@ from math_verify import parse, verify
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
-from areal.api.reward_api import AsyncRewardWrapper
+from areal.api import AsyncRewardWrapper
 
 
 def math_reward_fn(completions: str, answer: str) -> float:

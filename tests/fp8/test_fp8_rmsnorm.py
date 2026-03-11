@@ -22,7 +22,7 @@ from tests.fp8.engine_utils import create_engine
 from tests.fp8.model_hooks import get_model_from_engine
 from tests.utils import get_model_path
 
-from areal.engine.megatron_engine import MegatronEngine
+from areal.engine import MegatronEngine
 from areal.utils import logging
 
 logger = logging.getLogger("FP8 BF16 RMSNorm Test")

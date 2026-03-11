@@ -11,19 +11,19 @@ import torch
 
 from tests.utils import get_model_path
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, LocalInfServerInfo
 from areal.api.cli_args import (
     InferenceEngineConfig,
     SGLangConfig,
 )
-from areal.api.io_struct import LocalInfServerInfo
-from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine import RemoteSGLangEngine
 from areal.infra import RolloutController
 from areal.infra.rpc.rtensor import RTensor
 from areal.infra.scheduler.local import LocalScheduler
 from areal.infra.utils.proc import kill_process_tree
 from areal.utils import network, seeding
 
+pytestmark = pytest.mark.sglang
 # =============================================================================
 # Test Configuration
 # =============================================================================

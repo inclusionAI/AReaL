@@ -99,7 +99,7 @@ First, install the package:
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
 pip install uv
-uv sync --extra cuda
+uv sync --extra cuda  # installs training packages + SGLang (default inference backend)
 ```
 
 Our training scripts automatically download the required dataset (openai/gsm8k) and
@@ -166,15 +166,15 @@ All RL algorithms support both asynchronous and synchronous versions by setting
 
 | Algorithm                | Documentation                                 | Paper                                          | Configuration                                                     |
 | ------------------------ | --------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
-| **GRPO**                 | [📖 Docs](docs/algorithms/grpo_series.md)     | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)                 |
-| **GSPO**                 | [📖 Docs](docs/algorithms/grpo_series.md)     | [📄 Paper](https://arxiv.org/abs/2507.18071)   | [🔗 GSM8K Example](examples/math/gsm8k_gspo.yaml)                 |
-| **PPO**                  | [📖 Docs](docs/algorithms/grpo_series.md)     | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)                  |
-| **DAPO**                 | [📖 Docs](docs/algorithms/grpo_series.md)     | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/math/gsm8k_dapo_dynamic_bs.yaml)      |
-| **LitePPO**              | [📖 Docs](docs/algorithms/grpo_series.md)     | [📄 Paper](https://arxiv.org/abs/2508.08221)   | [🔗 GSM8K Example](examples/math/gsm8k_liteppo.yaml)              |
-| **Dr.GRPO**              | [📖 Docs](docs/algorithms/grpo_series.md)     | [📄 Paper](https://arxiv.org/abs/2503.20783)   | [🔗 GSM8K Example](examples/math/gsm8k_drgrpo.yaml)               |
+| **GRPO**                 | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)                 |
+| **GSPO**                 | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/abs/2507.18071)   | [🔗 GSM8K Example](examples/math/gsm8k_gspo.yaml)                 |
+| **PPO**                  | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)                  |
+| **DAPO**                 | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/math/gsm8k_dapo_dynamic_bs.yaml)      |
+| **LitePPO**              | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/abs/2508.08221)   | [🔗 GSM8K Example](examples/math/gsm8k_liteppo.yaml)              |
+| **Dr.GRPO**              | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/abs/2503.20783)   | [🔗 GSM8K Example](examples/math/gsm8k_drgrpo.yaml)               |
 | **REINFORCE++**          | -                                             | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)            |
-| **RLOO**                 | [📖 Docs](docs/algorithms/grpo_series.md)     | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)                 |
-| **SAPO**                 | [📖 Docs](docs/algorithms/grpo_series.md)     | [📄 Paper](https://arxiv.org/abs/2511.20347)   | [🔗 GSM8K Example](examples/math/gsm8k_sapo.yaml)                 |
+| **RLOO**                 | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)                 |
+| **SAPO**                 | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/abs/2511.20347)   | [🔗 GSM8K Example](examples/math/gsm8k_sapo.yaml)                 |
 | **M2PO**                 | [📖 Docs](docs/algorithms/m2po.md)            | [📄 Paper](https://arxiv.org/abs/2510.01161)   | [🔗 GSM8K Example](examples/math/gsm8k_m2po.yaml)                 |
 | **RLHF Reward Modeling** | -                                             | -                                              | [🔗 RLHF Example](examples/alignment/)                            |
 | **SFT**                  | -                                             | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)                    |
@@ -266,8 +266,9 @@ cd AReaL
 
 # Install uv and sync dependencies
 pip install uv
-# Use `--extra cuda` on Linux with CUDA for full functionality
+# Use `--extra cuda` on Linux with CUDA (installs training packages + SGLang)
 uv sync --extra cuda --group dev
+# For vLLM instead: uv sync --extra cuda-train --extra vllm --group dev
 # Or without CUDA support
 # uv sync --group dev
 

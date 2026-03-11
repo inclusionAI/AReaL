@@ -1,7 +1,7 @@
 from collections.abc import Callable
 
+from areal.api import FinetuneSpec
 from areal.api.cli_args import EvaluatorConfig
-from areal.api.io_struct import FinetuneSpec
 from areal.utils import timeutil
 
 

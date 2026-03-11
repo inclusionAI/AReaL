@@ -16,6 +16,7 @@ from areal.infra.utils.proc import kill_process_tree
 from areal.utils import network, seeding
 from areal.utils.hf_utils import load_hf_tokenizer
 
+pytestmark = pytest.mark.sglang
 EXPR_NAME = "test_openai"
 TRIAL_NAME = "trial_0"
 MODEL_PATH = get_model_path(
@@ -76,7 +77,7 @@ def tokenizer():
 @pytest.fixture
 def openai_client(sglang_server, tokenizer):
     from areal.api.cli_args import InferenceEngineConfig
-    from areal.engine.sglang_remote import RemoteSGLangEngine
+    from areal.engine import RemoteSGLangEngine
 
     config = InferenceEngineConfig(
         experiment_name=EXPR_NAME,

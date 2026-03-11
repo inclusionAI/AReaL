@@ -11,7 +11,7 @@ from ray.util.placement_group import (
 )
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-from areal.api.scheduler_api import SchedulingSpec
+from areal.api.cli_args import SchedulingSpec
 from areal.infra.utils.ray import create_resource_spec
 from areal.utils import logging
 

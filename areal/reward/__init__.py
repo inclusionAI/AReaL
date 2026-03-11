@@ -75,3 +75,36 @@ def get_math_verify_worker() -> MathVerifyWorker:
     if _MATH_VERIFY_WORKER is None:
         _MATH_VERIFY_WORKER = MathVerifyWorker()
     return _MATH_VERIFY_WORKER
+
+
+__all__ = [
+    "VALID_REWARD_FN",
+    "get_custom_reward_fn",
+    "MathVerifyWorker",
+    "get_math_verify_worker",
+    "gsm8k_reward_fn",
+    "geometry3k_reward_fn",
+    "clevr_count_70k_reward_fn",
+]
+
+
+_LAZY_IMPORTS = {
+    "gsm8k_reward_fn": "areal.reward.gsm8k",
+    "geometry3k_reward_fn": "areal.reward.geometry3k",
+    "clevr_count_70k_reward_fn": "areal.reward.clevr_count_70k",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_IMPORTS:
+        import importlib
+
+        module = importlib.import_module(_LAZY_IMPORTS[name])
+        val = getattr(module, name)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return list(__all__)

@@ -14,8 +14,8 @@ from tests.fp8.engine_utils import (
     print_gemm_profile,
 )
 
+from areal.engine import MegatronEngine
 from areal.engine.core.train_engine import compute_total_loss_weight
-from areal.engine.megatron_engine import MegatronEngine
 from areal.engine.megatron_utils.megatron import get_named_parameters
 from areal.utils import logging
 
