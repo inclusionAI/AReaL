@@ -18,7 +18,8 @@ NUM_WORKERS=32
 LEAKAGE_CHECK_MODE="full"
 FORCE=false
 COMPARE_WITH=""
-EVAL_MODE="mapqa"  # mapqa or judge
+EVAL_MODE="judge"  # mapqa, judge, or custom
+EVAL_SCRIPT=""     # custom evaluation script module
 
 # Filter flags
 FILTER_WRONG_ANSWERS=false
@@ -42,7 +43,9 @@ Optional:
   --judge_api_base URL  Judge API URL (default: $JUDGE_API_BASE)
   --num_workers N       Parallel workers (default: $NUM_WORKERS)
   --compare_with PATH   Baseline eval path for comparison
-  --eval_mode MODE      Evaluation mode: mapqa|judge (default: $EVAL_MODE)
+  --eval_mode MODE      Evaluation mode: mapqa|judge|custom (default: $EVAL_MODE)
+  --eval_script MODULE  Custom eval script module (required if eval_mode=custom)
+                        Example: geo_edit.evaluation.eval_chartqa
   --force               Force re-run all steps
 
 Filters (Step 1):
@@ -58,15 +61,15 @@ Batch Mode:
   If data_dir contains subdirectories (each with trajectory data), the script
   will automatically process each subdirectory.
 
-  Example structure:
-    mapqa_batch/
-      gpt_crop/
-      gpt_zoom/
+  Example structure (works with any dataset):
+    chartqa_exp_gpt/          # or mapqa_batch/, etc.
+      exp_1/
+      exp_2/
 
-  Output paths:
-    parquet: packaged_trajectory/{subdir}_{parent}_full.parquet
-    result:  {model}_{subdir}_{parent}_full/
-    eval:    {model}_{subdir}_{parent}_full_eval/
+  Output paths (generic naming):
+    parquet: packaged_trajectory/{parent}_{subdir}_full.parquet
+    result:  {model}_{parent}_{subdir}_full/
+    eval:    {model}_{parent}_{subdir}_full_eval/
 EOF
     exit 1
 }
@@ -81,6 +84,7 @@ while [[ $# -gt 0 ]]; do
         --num_workers) NUM_WORKERS="$2"; shift 2 ;;
         --compare_with) COMPARE_WITH="$2"; shift 2 ;;
         --eval_mode) EVAL_MODE="$2"; shift 2 ;;
+        --eval_script) EVAL_SCRIPT="$2"; shift 2 ;;
         --force) FORCE=true; shift ;;
         --filter_wrong_answers) FILTER_WRONG_ANSWERS=true; shift ;;
         --filter_answer_leakage) FILTER_ANSWER_LEAKAGE=true; shift ;;
@@ -102,6 +106,10 @@ if [[ -z "$MODEL_NAME" ]]; then
 fi
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then
     echo "Error: OPENAI_API_KEY environment variable is required"
+    exit 1
+fi
+if [[ "$EVAL_MODE" == "custom" && -z "$EVAL_SCRIPT" ]]; then
+    echo "Error: --eval_script is required when eval_mode=custom"
     exit 1
 fi
 
@@ -126,11 +134,9 @@ run_single_pipeline() {
     local PARENT_NAME="$3"
     local OUTPUT_BASE="$4"
 
-    # Derive paths: insert suffix after "mapeval_visual_"
-    # Extract suffix from parent name (e.g., mapqa_batch_gpt -> gpt)
-    local SUFFIX="${PARENT_NAME##*_}"
-    # Insert suffix: mapeval_visual_auto_segment_1r -> mapeval_visual_gpt_auto_segment_1r
-    local NAME_PREFIX="${SUBDIR_NAME/mapeval_visual_/mapeval_visual_${SUFFIX}_}"
+    # Generic naming: use parent_subdir as the experiment identifier
+    # This works for any dataset structure (chartqa, mapqa, etc.)
+    local NAME_PREFIX="${PARENT_NAME}_${SUBDIR_NAME}"
     local PARQUET_DIR="${OUTPUT_BASE}/packaged_trajectory"
     local PARQUET_PATH="${PARQUET_DIR}/${NAME_PREFIX}_full.parquet"
     local RESULT_DIR="${OUTPUT_BASE}/${MODEL_BASENAME}_${NAME_PREFIX}_full"
@@ -197,7 +203,13 @@ run_single_pipeline() {
                 --result_path "$RESULT_DIR" \
                 --output_path "$EVAL_DIR" \
                 $COMPARE_ARGS
+        elif [[ "$EVAL_MODE" == "custom" ]]; then
+            python -m "$EVAL_SCRIPT" \
+                --result_path "$RESULT_DIR" \
+                --output_path "$EVAL_DIR" \
+                $COMPARE_ARGS
         else
+            # judge mode (default)
             python -m geo_edit.evaluation.openai_as_judge \
                 --api_key "$OPENAI_API_KEY" \
                 --api_base "$JUDGE_API_BASE" \
