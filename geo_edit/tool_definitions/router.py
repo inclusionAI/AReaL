@@ -42,7 +42,7 @@ TOOL_CATEGORIES = {
                 "text_ocr", "auto_segment", "bbox_segment", "grounding_dino"],
     "math": ["math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath", "ovr"],
     "table": ["table_ocr"],
-    "chart": ["chart_data_extract", "chart_trend_analysis", "chart_text_ocr", "chartmoe"],
+    "chart": ["chart_reasoning", "chart_data_extract", "chart_trend_analysis", "chart_text_ocr", "chartr1"],
     "map": ["text_spotting", "map_text_ocr"],
     "document": ["seal_ocr"],
     "ocr": ["text_ocr", "table_ocr", "formula_ocr", "chart_text_ocr", "text_spotting", "seal_ocr", "map_text_ocr"],

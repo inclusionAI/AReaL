@@ -33,12 +33,14 @@ ovr: false                 # RL-enhanced visual reasoning
 table_ocr: false           # Table structure and data extraction
 
 # =============================================================================
-# CHART TOOLS - Chart and diagram analysis
+# CHART TOOLS - Chart and diagram analysis (Chart-R1)
 # =============================================================================
-chart_data_extract: false  # Extract chart data to structured format
-chart_trend_analysis: false # Analyze chart trends and insights
-chart_text_ocr: false      # Extract text from charts (PaddleOCR)
-chartmoe: false            # [Legacy] General chart analysis
+chart_reasoning: false      # [Chart-R1] Chart analysis with custom question
+chart_data_extract: false   # [Chart-R1] Extract chart data to structured format
+chart_trend_analysis: false # [Chart-R1] Analyze chart trends and patterns
+chart_text_ocr: false       # [PaddleOCR] Extract text from charts
+chartr1: false              # [Chart-R1] Legacy single-tool entry
+# chartmoe: false           # [Deprecated] Replaced by Chart-R1
 
 # =============================================================================
 # MAP TOOLS - Map and location-based tools

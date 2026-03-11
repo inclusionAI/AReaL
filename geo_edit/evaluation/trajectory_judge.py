@@ -39,8 +39,8 @@ KNOWN_TOOL_NAMES = [
     "math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath", "ovr",
     # Table tools
     "table_ocr",
-    # Chart tools
-    "chart_data_extract", "chart_trend_analysis", "chart_text_ocr", "chartmoe",
+    # Chart tools (Chart-R1)
+    "chart_reasoning", "chart_data_extract", "chart_trend_analysis", "chart_text_ocr",
     # Map tools
     "text_spotting",
     # Document tools

@@ -17,8 +17,13 @@ from geo_edit.utils.stats import get_output_tokens_total, get_input_tokens_total
 
 
 def extract_answer(text: str) -> str:
-    """Extract answer from <answer> tags."""
+    """Extract answer from <answer> tags or <|begin_of_box|>...<|end_of_box|> format."""
+    # Try <answer> tags first
     match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # Try <|begin_of_box|>...<|end_of_box|> format
+    match = re.search(r"<\|begin_of_box\|>(.*?)<\|end_of_box\|>", text, re.DOTALL)
     if match:
         return match.group(1).strip()
     return ""

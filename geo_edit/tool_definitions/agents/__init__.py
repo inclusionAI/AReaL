@@ -8,14 +8,15 @@ Supports both legacy single-tool declarations and new multi-tool declarations (D
 
 from typing import Dict, Type, Any
 
-from geo_edit.tool_definitions.agents import multimath, gllava, chartmoe, ovr, sam2, grounding_dino, paddleocr_tool
+from geo_edit.tool_definitions.agents import multimath, gllava, chartr1, ovr, sam2, grounding_dino, paddleocr_tool
 
 # Agent declarations for API tool definitions
 # Note: paddleocr and sam2 legacy tools removed - use fine-grained multi-tools instead
+# Note: chartmoe deprecated - use chartr1 (Chart-R1) instead
 AGENT_DECLARATIONS: Dict[str, dict] = {
     "multimath": multimath.DECLARATION,
     "gllava": gllava.DECLARATION,
-    "chartmoe": chartmoe.DECLARATION,
+    "chartr1": chartr1.DECLARATION,
     "ovr": ovr.DECLARATION,
     "grounding_dino": grounding_dino.DECLARATION,
 }
@@ -24,7 +25,7 @@ AGENT_DECLARATIONS: Dict[str, dict] = {
 AGENT_RETURN_TYPES: Dict[str, str] = {
     "multimath": multimath.RETURN_TYPE,
     "gllava": gllava.RETURN_TYPE,
-    "chartmoe": chartmoe.RETURN_TYPE,
+    "chartr1": chartr1.RETURN_TYPE,
     "ovr": ovr.RETURN_TYPE,
     "grounding_dino": grounding_dino.RETURN_TYPE,
 }
@@ -33,7 +34,7 @@ AGENT_RETURN_TYPES: Dict[str, str] = {
 AGENT_CONFIGS: Dict[str, dict] = {
     "multimath": multimath.agent_config,
     "gllava": gllava.agent_config,
-    "chartmoe": chartmoe.agent_config,
+    "chartr1": chartr1.agent_config,
     "ovr": ovr.agent_config,
     "sam2": sam2.agent_config,
     "grounding_dino": grounding_dino.agent_config,
@@ -44,7 +45,7 @@ AGENT_CONFIGS: Dict[str, dict] = {
 AGENT_SYSTEM_PROMPTS: Dict[str, str] = {
     "multimath": multimath.SYSTEM_PROMPT,
     "gllava": gllava.SYSTEM_PROMPT,
-    "chartmoe": chartmoe.SYSTEM_PROMPT,
+    "chartr1": chartr1.SYSTEM_PROMPT,
     "ovr": ovr.SYSTEM_PROMPT,
     "sam2": sam2.SYSTEM_PROMPT,
     "grounding_dino": grounding_dino.SYSTEM_PROMPT,
@@ -55,7 +56,7 @@ AGENT_SYSTEM_PROMPTS: Dict[str, str] = {
 AGENT_ACTOR_CLASSES: Dict[str, Type] = {
     "multimath": multimath.ACTOR_CLASS,
     "gllava": gllava.ACTOR_CLASS,
-    "chartmoe": chartmoe.ACTOR_CLASS,
+    "chartr1": chartr1.ACTOR_CLASS,
     "ovr": ovr.ACTOR_CLASS,
     "sam2": sam2.ACTOR_CLASS,
     "grounding_dino": grounding_dino.ACTOR_CLASS,
@@ -104,15 +105,15 @@ if hasattr(multimath, 'DECLARATIONS'):
             "system_prompt": decl.get("fixed_prompt", multimath.SYSTEM_PROMPT),
         }
 
-# Register ChartMoE multi-tools
-if hasattr(chartmoe, 'DECLARATIONS'):
-    for tool_name, decl in chartmoe.DECLARATIONS.items():
+# Register Chart-R1 multi-tools (replaces ChartMoE)
+if hasattr(chartr1, 'DECLARATIONS'):
+    for tool_name, decl in chartr1.DECLARATIONS.items():
         MULTI_TOOL_DECLARATIONS[tool_name] = {
             "declaration": decl,
-            "base_agent": "chartmoe",
-            "actor_class": chartmoe.ACTOR_CLASS,
-            "agent_config": chartmoe.agent_config,
-            "system_prompt": chartmoe.SYSTEM_PROMPT,
+            "base_agent": "chartr1",
+            "actor_class": chartr1.ACTOR_CLASS,
+            "agent_config": chartr1.agent_config,
+            "system_prompt": chartr1.SYSTEM_PROMPT,
         }
 
 

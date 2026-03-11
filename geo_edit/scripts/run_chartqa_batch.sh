@@ -21,15 +21,17 @@ EXPERIMENTS=(
     # Phase A: Single tools (1 round baseline)
     "chart_data_extract|1"
     "chart_trend_analysis|1"
+    "chart_reasoning|1"
     "chart_text_ocr|1"
-    "chartmoe|1"
     "text_ocr|1"
     # Phase B: Crop + multi-round (2 rounds)
     "image_crop chart_data_extract|2"
     "image_crop chart_trend_analysis|2"
+    "image_crop chart_reasoning|2"
     "image_crop chart_text_ocr|2"
     # Phase C: Multi-round (3 rounds)
     "image_crop chart_data_extract chart_trend_analysis|3"
+    "image_crop chart_reasoning chart_data_extract|3"
     "image_crop chart_text_ocr chart_data_extract|3"
 )
 
