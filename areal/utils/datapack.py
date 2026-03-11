@@ -1,9 +1,12 @@
 import bisect
+import copy
+import dataclasses
 import itertools
 from typing import Any
 
 import numba
 import numpy as np
+import torch
 
 
 def flat2d(arr: list[list[Any]]) -> list[Any]:
@@ -255,6 +258,310 @@ def balanced_greedy_partition(nums: list[int], K: int) -> list[list[int]]:
         counts[chosen_group] += 1
 
     return groups
+
+
+def _pad_cat_dim0(tensors: list[torch.Tensor]) -> torch.Tensor:
+    """Pad tensors to same non-batch dims and concatenate along dim 0."""
+    # Get the maximum shape for dims 1 to N-1
+    shape = [0 for _ in range(tensors[0].ndim - 1)]
+    for t in tensors:
+        if t.ndim != len(shape) + 1:
+            raise ValueError(
+                f"Shard dimension mismatch: expected {len(shape) + 1}, got {t.ndim}"
+            )
+        for i in range(1, t.ndim):
+            shape[i - 1] = max(shape[i - 1], t.shape[i])
+
+    # Pad tensors
+    padded_tensors = []
+    for t in tensors:
+        pad_sizes = []
+        for i in range(1, t.ndim):
+            pad_size = shape[i - 1] - t.shape[i]
+            pad_sizes.append(pad_size)
+        if any(pad_sizes):
+            pad = []
+            for pad_size in reversed(pad_sizes):
+                pad.extend([0, pad_size])
+            pt = torch.nn.functional.pad(t, tuple(pad), "constant", 0)
+            padded_tensors.append(pt)
+            continue
+        padded_tensors.append(t)
+
+    return torch.cat(padded_tensors, dim=0)
+
+
+def pad_and_concat_tensors(dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Concat a list of trajectory dicts (with plain tensors) into a single batch dict."""
+    if not dicts:
+        return {}
+    if len(dicts) == 1:
+        return dicts[0]
+    # Validate key consistency
+    first_keys = set(dicts[0].keys())
+    for i, d in enumerate(dicts[1:], 1):
+        if set(d.keys()) != first_keys:
+            raise ValueError(
+                f"pad_and_concat_tensors: dict[{i}] has different keys than dict[0]. "
+                f"Expected {sorted(first_keys)}, got {sorted(d.keys())}"
+            )
+    result: dict[str, Any] = {}
+    for key in dicts[0]:
+        values = [d[key] for d in dicts]
+        if isinstance(values[0], torch.Tensor):
+            result[key] = _pad_cat_dim0(values)
+        elif isinstance(values[0], list):
+            result[key] = [item for v in values for item in v]
+        else:
+            result[key] = values[0]
+    return result
+
+
+def _unpad_splits(
+    splits: list[torch.Tensor], traj_seqlens: list[int] | None
+) -> list[torch.Tensor]:
+    """Trim each split tensor's last dim to its original sequence length."""
+    if traj_seqlens is None:
+        return splits
+    for i, s in enumerate(splits):
+        if s.ndim >= 2 and s.shape[-1] > traj_seqlens[i]:
+            splits[i] = s[..., : traj_seqlens[i]]
+    return splits
+
+
+def split_and_unpad_tensor(
+    result: Any,
+    n_trajs: int,
+    traj_group_sizes: list[int] | int = 1,
+    traj_seqlens: list[int] | None = None,
+) -> Any:
+    """Split a batched result back into per-trajectory list, optionally unpadding.
+
+    Inverse of pad_and_concat_tensors for engine outputs. Handles:
+    - torch.Tensor → list[torch.Tensor] (split along dim 0)
+    - dict[str, Tensor] → list[dict[str, Tensor]]
+    - None → None
+
+    When traj_seqlens is provided, each split tensor is trimmed along the last
+    dimension to its original sequence length (undoing the padding from
+    pad_and_concat_tensors).
+
+    Parameters
+    ----------
+    result : Any
+        Batched result from engine computation.
+    n_trajs : int
+        Number of trajectories to split into.
+    traj_group_sizes : list[int] | int
+        Per-trajectory batch sizes (dim 0) for splitting. Accepts a single int
+        for uniform sizes (backward compatibility). Default 1.
+    traj_seqlens : list[int] | None
+        Per-trajectory sequence lengths for unpadding. Default None (no unpadding).
+
+    Returns
+    -------
+    Any
+        Per-trajectory results as a list, or None.
+    """
+    if result is None:
+        return None
+    # Normalize to list for uniform handling
+    if isinstance(traj_group_sizes, int):
+        traj_group_sizes = [traj_group_sizes] * n_trajs
+    total = sum(traj_group_sizes)
+    if isinstance(result, torch.Tensor):
+        splits = list(result.split(traj_group_sizes, dim=0))
+        return _unpad_splits(splits, traj_seqlens)
+    if isinstance(result, dict):
+        split_result = [{} for _ in range(n_trajs)]
+        for key, value in result.items():
+            if isinstance(value, torch.Tensor) and value.shape[0] == total:
+                splits = _unpad_splits(
+                    list(value.split(traj_group_sizes, dim=0)), traj_seqlens
+                )
+                for i, s in enumerate(splits):
+                    split_result[i][key] = s
+            else:
+                for i in range(n_trajs):
+                    split_result[i][key] = copy.copy(value)
+        return split_result
+    return result
+
+
+@dataclasses.dataclass
+class TrajBatchMeta:
+    """Metadata captured by pack_batch for unpack_batch to reverse the transformation.
+
+    Carries context needed to symmetrically undo the concat+pad done by
+    pack_batch, including per-trajectory batch sizes and sequence lengths
+    for unpadding engine outputs that may have been padded to a different max.
+    """
+
+    n_trajs: int
+    traj_group_sizes: list[int]
+    traj_seqlens: list[int]
+
+
+def pack_batch(
+    data: list[dict[str, Any]],
+) -> tuple[dict[str, Any], TrajBatchMeta]:
+    """Concat list[dict] trajectories into a single batched dict.
+
+    Parameters
+    ----------
+    data : list[dict[str, Any]]
+        List of trajectory dicts to concatenate.
+
+    Returns
+    -------
+    tuple[dict[str, Any], TrajBatchMeta]
+        (batched_dict, meta) where meta carries n_trajs, per-traj batch sizes,
+        and per-traj sequence lengths for later unpadding.
+    """
+    assert isinstance(data, list) and all(isinstance(d, dict) for d in data), (
+        f"Expected list[dict], got {type(data)}"
+    )
+    traj_group_sizes = []
+    for d in data:
+        first_tensor = next(
+            (v for v in d.values() if isinstance(v, torch.Tensor)), None
+        )
+        traj_group_sizes.append(
+            first_tensor.shape[0] if first_tensor is not None else 1
+        )
+    traj_seqlens = [d["attention_mask"].shape[-1] for d in data]
+    meta = TrajBatchMeta(
+        n_trajs=len(data),
+        traj_group_sizes=traj_group_sizes,
+        traj_seqlens=traj_seqlens,
+    )
+    return pad_and_concat_tensors(data), meta
+
+
+def unpack_batch(
+    result: Any,
+    meta: TrajBatchMeta,
+) -> list[Any] | None:
+    """Split batched result back into per-trajectory list and unpad.
+
+    Parameters
+    ----------
+    result : Any
+        Batched result from engine computation.
+    meta : TrajBatchMeta
+        Metadata from pack_batch containing per-traj sequence lengths.
+
+    Returns
+    -------
+    list[Any] | None
+        Per-trajectory results as a list, or None.
+    """
+    return split_and_unpad_tensor(
+        result, meta.n_trajs, meta.traj_group_sizes, meta.traj_seqlens
+    )
+
+
+def find_in_structure(obj: Any, type_: type) -> Any | None:
+    """Find first instance of type_ in a nested structure."""
+    if isinstance(obj, type_):
+        return obj
+    if isinstance(obj, dict):
+        for v in obj.values():
+            result = find_in_structure(v, type_)
+            if result is not None:
+                return result
+    if isinstance(obj, (tuple, list)):
+        for item in obj:
+            result = find_in_structure(item, type_)
+            if result is not None:
+                return result
+    return None
+
+
+def dispatch_traj_list(
+    traj_list: list[dict[str, Any]],
+    dp_size: int,
+) -> tuple[list[list[dict[str, Any]]], list[list[int]]]:
+    """Partition a trajectory list across DP groups by balanced token count.
+
+    Parameters
+    ----------
+    traj_list : list[dict[str, Any]]
+        List of trajectory dicts. Dicts may contain RTensor values whose
+        shard seqlens are used as partition weights.
+    dp_size : int
+        Number of data parallel groups.
+
+    Returns
+    -------
+    tuple[list[list[dict[str, Any]]], list[list[int]]]
+        (splits, group_indices) where splits[i] is the traj subset for DP group i.
+    """
+    from areal.infra.rpc.rtensor import RTensor
+
+    seqlens = []
+    for d in traj_list:
+        for v in d.values():
+            if isinstance(v, RTensor):
+                seqlens.append(sum(v.shard.seqlens))
+                break
+        else:
+            seqlens.append(1)
+
+    group_indices = balanced_greedy_partition(seqlens, K=dp_size)
+    splits = [[traj_list[i] for i in idxs] for idxs in group_indices]
+    return splits, group_indices
+
+
+def data_parallel_merge(results: list[Any]) -> Any:
+    """Merge results from data parallel processing. Standalone version.
+
+    Parameters
+    ----------
+    results : list[Any]
+        Results from each DP group.
+
+    Returns
+    -------
+    Any
+        Merged result with original ordering restored.
+    """
+    from areal.infra.rpc.rtensor import RTensor  # Lazy import to avoid circular dep
+
+    if not results:
+        return None
+
+    first = results[0]
+
+    # Raw tensors and RTensors should never reach this merge path.
+    # RTensors flow through _reorder_traj_results in the controller instead.
+    if isinstance(first, torch.Tensor):
+        raise TypeError(
+            "Regular tensors not allowed in merge - only RTensors. "
+            "Engine outputs should be automatically converted to RTensors."
+        )
+
+    if isinstance(first, RTensor):
+        raise TypeError(
+            "RTensors should not be merged via data_parallel_merge. "
+            "Per-trajectory RTensors flow through _reorder_traj_results instead."
+        )
+
+    if isinstance(first, dict):
+        merged = {}
+        for key in first.keys():
+            values = [r[key] for r in results]
+            merged[key] = data_parallel_merge(values)
+        return merged
+
+    if isinstance(first, (list, tuple)):
+        merged = [
+            data_parallel_merge([r[i] for r in results]) for i in range(len(first))
+        ]
+        return type(first)(merged)
+
+    # Scalars: return first (assume synchronized)
+    return first
 
 
 if __name__ == "__main__":

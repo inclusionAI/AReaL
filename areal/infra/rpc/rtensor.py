@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
@@ -8,28 +7,27 @@ from threading import Lock
 from typing import Any, Protocol
 
 import aiohttp
-import numpy as np
 import orjson
 import ray
 import torch
 
 from areal.infra.utils.concurrent import run_async_task
-from areal.utils.datapack import balanced_greedy_partition, flat2d
+from areal.utils.datapack import find_in_structure
 
 
 class TensorBackend(Protocol):
-    def fetch(self, shards: list[TensorShardInfo]) -> list[torch.Tensor]:
-        """Fetch tensors for the given shards.
+    def fetch(self, shard: TensorShardInfo) -> torch.Tensor:
+        """Fetch tensor for the given shard.
 
         Parameters
         ----------
-        shards : list[TensorShardInfo]
-            List of shard metadata to fetch
+        shard : TensorShardInfo
+            Shard metadata to fetch
 
         Returns
         -------
-        list[torch.Tensor]
-            List of tensors corresponding to each shard
+        torch.Tensor
+            Tensor corresponding to the shard
         """
         ...
 
@@ -73,7 +71,9 @@ class TensorShardInfo:
     size : int
         Batch size (shape[0]) of this shard
     seqlens : list[int]
-        Sequence lengths of this shard (from attention_mask)
+        Actual token counts per sequence in this shard, derived from attention_mask.
+        The stored tensor data may include padding tokens beyond these lengths
+
     shard_id : Any
         Unique identifier for the shard (str for HTTP, ray.ObjectRef for Ray)
     node_addr : str
@@ -87,19 +87,16 @@ class TensorShardInfo:
 
 
 class HttpTensorBackend:
-    def fetch(self, shards: list[TensorShardInfo]) -> list[torch.Tensor]:
-        """Fetch all shards via HTTP."""
+    def fetch(self, shard: TensorShardInfo) -> torch.Tensor:
+        """Fetch shard via HTTP."""
 
-        async def _fetch_all():
+        async def _fetch():
             async with aiohttp.ClientSession() as session:
-                return await asyncio.gather(
-                    *[
-                        self._fetch_tensor(session, s.shard_id, s.node_addr)
-                        for s in shards
-                    ]
+                return await self._fetch_tensor(
+                    session, shard.shard_id, shard.node_addr
                 )
 
-        return run_async_task(_fetch_all)
+        return run_async_task(_fetch)
 
     async def _fetch_tensor(
         self, session: aiohttp.ClientSession, shard_id: str, node_addr: str
@@ -132,9 +129,9 @@ class HttpTensorBackend:
 
 
 class RayTensorBackend:
-    def fetch(self, shards: list[TensorShardInfo]) -> list[torch.Tensor]:
-        """Fetch all shards from Ray object store."""
-        return ray.get([s.shard_id for s in shards])
+    def fetch(self, shard: TensorShardInfo) -> torch.Tensor:
+        """Fetch shard from Ray object store."""
+        return ray.get(shard.shard_id)
 
     def store(self, tensor: torch.Tensor) -> ray.ObjectRef:
         """Store tensor in Ray object store, return ObjectRef."""
@@ -165,145 +162,76 @@ def set_backend(backend: TensorBackend | None) -> None:
 
 @dataclass
 class RTensor:
-    shards: list[TensorShardInfo]
+    shard: TensorShardInfo
     data: torch.Tensor
 
     def to_local(self) -> torch.Tensor:
         if not self.data.is_meta:
             return self.data
-        # Fetch all shards first
-        tensors = self._fetch()
-        self.data = _pad_cat_dim0(tensors)
+        self.data = get_backend().fetch(self.shard)
         return self.data
 
-    def _fetch(self) -> list[torch.Tensor]:
-        return get_backend().fetch(self.shards)
-
     @staticmethod
-    def split_tensor(batch_tensor: torch.Tensor, layout: RTensor) -> list[torch.Tensor]:
-        offsets = np.cumsum([0] + [shard.size for shard in layout.shards])
-        if offsets[-1] != batch_tensor.shape[0]:
-            raise ValueError(
-                f"Batched tensor size {batch_tensor.shape[0]} does not match "
-                f"layout total size {offsets[-1]}"
-            )
-        # no clone here because they are read-only slices
-        return [batch_tensor[a:b] for a, b in zip(offsets[:-1], offsets[1:])]
+    def extract_layout(
+        obj: Any, node_addr: str | None, layouts: Any = None
+    ) -> RTensor | None:
+        """Extract layout RTensor from object or create from attention_mask or standalone tensor.
 
-    def split(self) -> list[RTensor]:
-        tensors = RTensor.split_tensor(self.data, self)
-        return [RTensor(shards=[s], data=t) for s, t in zip(self.shards, tensors)]
-
-    @classmethod
-    def from_batched(
-        cls, batch_tensor: torch.Tensor, layout: RTensor, node_addr: str
-    ) -> RTensor:
-        if not batch_tensor.is_cpu and not batch_tensor.is_meta:
-            raise ValueError("RTensor shards must be on CPU or meta device")
-
-        tensors = cls.split_tensor(batch_tensor, layout)
-        backend = get_backend()
-
-        shards = []
-        for tensor, shard_info in zip(tensors, layout.shards):
-            # Truncate at the maximum sequence length to prevent over-padding
-            if tensor.ndim > 1:
-                tensor = tensor[:, : max(shard_info.seqlens)]
-            # Store locally
-            shard_id = backend.store(tensor)
-            info = TensorShardInfo(
-                size=shard_info.size,
-                seqlens=shard_info.seqlens.copy(),
-                shard_id=shard_id,
-                node_addr=node_addr,
-            )
-            shards.append(info)
-
-        return cls(shards=shards, data=batch_tensor.to("meta"))
-
-    @staticmethod
-    def cat(rtensors: list[RTensor | torch.Tensor], dim: int = 0) -> RTensor:
-        n_tensors = len(rtensors)
-        if n_tensors == 0:
-            return RTensor(shards=[], data=torch.tensor([]).to("meta"))
-        n_rtensors = len([x for x in rtensors if isinstance(x, RTensor)])
-
-        # All RTensors
-        if n_tensors == n_rtensors:
-            if dim != 0:
-                raise ValueError(
-                    "RTensor.cat for multiple RTensors only supports dim=0"
-                )
-            if any(t.data is None for t in rtensors):
-                raise RuntimeError("Cannot concat rtensors with None data")
-            shards = []
-            for r in rtensors:
-                assert isinstance(r, RTensor)
-                shards.extend(r.shards)
-            return RTensor(
-                shards=shards,
-                data=_pad_cat_dim0([r.data for r in rtensors]),
-            )
-
-        # hybrid RTensor and normal tensors
-        if n_rtensors != 1:
-            raise ValueError(
-                "RTensor.cat only support concatenating a single RTensor "
-                "with other torch.Tensor"
-            )
-        rt = [x for x in rtensors if isinstance(x, RTensor)][0]
-        return RTensor(
-            shards=rt.shards,
-            data=torch.cat(
-                [r.data if isinstance(r, RTensor) else r for r in rtensors], dim=dim
-            ),
-        )
-
-    @staticmethod
-    def extract_layout(obj: Any, layouts: Any, node_addr: str | None) -> RTensor | None:
-        """Extract layout RTensor from object or create from attention_mask.
+        Handles three cases in priority order:
+        1. If layouts is provided, find and return existing RTensor in layouts
+        2. If obj is a dict with attention_mask, create layout from attention_mask
+        3. If obj is a standalone Tensor, create layout from tensor shape
 
         Parameters
         ----------
         obj : Any
             Object potentially containing tensors
-        layouts : Any
-            Layouts potentially containing RTensor
         node_addr : str | None
             Node address for creating new shard info
+        layouts : Any, optional
+            Layouts potentially containing RTensor (default: None)
 
         Returns
         -------
         RTensor | None
-            Layout RTensor or None if not found
+            Layout RTensor or None if not found or created
         """
-        # Determine if batched from input layouts
-        layout_rtensor = _find_in_structure(layouts, RTensor)
-        result_tensor = _find_in_structure(obj, torch.Tensor)
-        if layout_rtensor is None and result_tensor is not None:
-            if not isinstance(obj, dict):
-                raise RuntimeError(
-                    "When input does not contain RTensor, "
-                    "we expect to extract layouts from a dict batch "
-                    f"returned by InferenceEngine. Get obj: {obj}, "
-                    f"input layouts: {layouts}."
-                )
-            attn_mask = obj.get("attention_mask", None)
-            if attn_mask is None:
-                raise RuntimeError("`attention_mask` is not found")
-            assert node_addr is not None
-            shard = TensorShardInfo(
-                size=attn_mask.shape[0],
-                seqlens=[int(am.sum()) for am in attn_mask],
-                shard_id="",
-                node_addr=node_addr,
-            )
+        # Fallback: existing RTensor in layouts
+        if layouts is not None:
+            existing = find_in_structure(layouts, RTensor)
+            if existing is not None:
+                return existing
 
-            layout_rtensor = RTensor(
-                shards=[shard],
-                data=torch.empty_like(attn_mask, device="meta"),
+        # Dict with attention_mask
+        if isinstance(obj, dict):
+            attn_mask = obj.get("attention_mask")
+            if isinstance(attn_mask, torch.Tensor):
+                shard = TensorShardInfo(
+                    size=attn_mask.shape[0],
+                    seqlens=[int(am.sum()) for am in attn_mask],
+                    shard_id="",
+                    node_addr=node_addr or "",
+                )
+                return RTensor(
+                    shard=shard,
+                    data=torch.empty_like(attn_mask, device="meta"),
+                )
+            return None  # dict without attention_mask (e.g., dict[str, float])
+
+        # Standalone Tensor
+        if isinstance(obj, torch.Tensor):
+            shard = TensorShardInfo(
+                size=obj.shape[0],
+                seqlens=[int(obj.shape[1])] * obj.shape[0]
+                if obj.ndim > 1
+                else [1] * obj.shape[0],
+                shard_id="",
+                node_addr=node_addr or "",
             )
-        return layout_rtensor
+            return RTensor(shard=shard, data=torch.empty(0, device="meta"))
+
+        # Everything else
+        return None
 
     @staticmethod
     def remotize(obj: Any, layout: RTensor, node_addr: str) -> Any:
@@ -324,9 +252,15 @@ class RTensor:
             Object with tensors converted to RTensors
         """
         if isinstance(obj, torch.Tensor):
-            return RTensor.from_batched(
-                obj.detach().cpu(), layout=layout, node_addr=node_addr
+            tensor = obj.detach().cpu()
+            shard_id = get_backend().store(tensor)
+            shard = TensorShardInfo(
+                size=tensor.shape[0],
+                seqlens=layout.shard.seqlens,
+                shard_id=shard_id,
+                node_addr=node_addr,
             )
+            return RTensor(shard=shard, data=tensor.to("meta"))
 
         if isinstance(obj, dict):
             return {
@@ -345,6 +279,54 @@ class RTensor:
                 RTensor.remotize(obj=item, layout=layout, node_addr=node_addr)
                 for item in obj
             )
+
+        return obj
+
+    @staticmethod
+    def auto_remotize(obj: Any, node_addr: str, layouts: Any = None) -> Any:
+        """Recursively discover layouts and remotize tensors in nested structures.
+
+        Parameters
+        ----------
+        obj : Any
+            Object potentially containing tensors (dict, list, tuple, Tensor, None, etc.)
+        node_addr : str
+            Node address for shard storage (e.g., "host:port" or "" for Ray backend)
+        layouts : Any, optional
+            Trajectory layouts to pair with list/tuple items by position (default: None)
+
+        Returns
+        -------
+        Any
+            Object with tensors converted to RTensors
+        """
+
+        if obj is None:
+            return None
+
+        # When layouts is a same-length list/tuple, it is a per-element list of layouts,
+        # not a single layout for the whole container. Always do position-pairing here
+        # so extract_layout is never called on the container itself with a list of layouts.
+        if isinstance(obj, list):
+            if isinstance(layouts, (list, tuple)) and len(layouts) == len(obj):
+                return [
+                    RTensor.auto_remotize(item, node_addr, layouts=layout_item)
+                    for item, layout_item in zip(obj, layouts)
+                ]
+            return [RTensor.auto_remotize(item, node_addr) for item in obj]
+
+        if isinstance(obj, tuple):
+            if isinstance(layouts, (list, tuple)) and len(layouts) == len(obj):
+                return tuple(
+                    RTensor.auto_remotize(item, node_addr, layouts=layout_item)
+                    for item, layout_item in zip(obj, layouts)
+                )
+            return tuple(RTensor.auto_remotize(item, node_addr) for item in obj)
+
+        # For individual items (Tensor, dict, scalar): use extract_layout.
+        layout = RTensor.extract_layout(obj, node_addr=node_addr, layouts=layouts)
+        if layout is not None:
+            return RTensor.remotize(obj, layout, node_addr)
 
         return obj
 
@@ -379,149 +361,6 @@ class RTensor:
         return obj
 
     @staticmethod
-    def data_parallel_dispatch(
-        obj: Any, dp_size: int, group_indices: list[list[int]] | None = None
-    ) -> tuple[list[Any], list[list[int]] | None]:
-        """Split data for data parallel processing.
-
-        Parameters
-        ----------
-        obj : Any
-            Object to split
-        dp_size : int
-            Number of data parallel groups
-        group_indices : list[list[int]] | None
-            Pre-computed group assignments (computed if None)
-
-        Returns
-        -------
-        tuple[list[Any], list[list[int]] | None]
-            Split objects and group indices
-        """
-        if group_indices is None:
-            layout_rtensor = _find_in_structure(obj, RTensor)
-            if layout_rtensor is not None:
-                seqlens = [sum(s.seqlens) for s in layout_rtensor.shards]
-                # Use balanced greedy partition to allocate shards to DP groups
-                group_indices = balanced_greedy_partition(seqlens, K=dp_size)
-            # else: no RTensors found, will replicate scalars without group_indices
-
-        if isinstance(obj, RTensor):
-            tensors = RTensor.split_tensor(obj.data, obj)
-            assert group_indices is not None
-            # Split shards according to group assignments
-            split_rtensors = []
-            for group_idxs in group_indices:
-                # Collect shards for this group
-                group_shards = [obj.shards[i] for i in group_idxs]
-                group_data = _pad_cat_dim0([tensors[i] for i in group_idxs])
-                split_rtensors.append(RTensor(shards=group_shards, data=group_data))
-            return split_rtensors, group_indices
-
-        if isinstance(obj, dict):
-            # Split each value, return list of dicts
-            split_values = {
-                k: RTensor.data_parallel_dispatch(v, dp_size, group_indices)[0]
-                for k, v in obj.items()
-            }
-            return [
-                {k: split_values[k][i] for k in obj.keys()} for i in range(dp_size)
-            ], group_indices
-
-        if isinstance(obj, list):
-            # Split each element
-            split_elements = [
-                RTensor.data_parallel_dispatch(elem, dp_size, group_indices)[0]
-                for elem in obj
-            ]
-            return [
-                [split_elements[j][i] for j in range(len(obj))] for i in range(dp_size)
-            ], group_indices
-
-        if isinstance(obj, tuple):
-            # Split each element
-            split_elements = [
-                RTensor.data_parallel_dispatch(elem, dp_size, group_indices)[0]
-                for elem in obj
-            ]
-            return [
-                tuple(split_elements[j][i] for j in range(len(obj)))
-                for i in range(dp_size)
-            ], group_indices
-
-        # Non-RTensor objects: replicate to all groups
-        return [obj] * dp_size, group_indices
-
-    @staticmethod
-    def data_parallel_merge(
-        results: list[Any], group_indices: list[list[int]] | None
-    ) -> Any:
-        """Merge results from data parallel processing.
-
-        Parameters
-        ----------
-        results : list[Any]
-            Results from each DP group
-        group_indices : list[list[int]] | None
-            Group assignments used during dispatch
-
-        Returns
-        -------
-        Any
-            Merged result with original ordering restored
-        """
-        if not results:
-            return None
-
-        first = results[0]
-
-        # Check for raw tensors - not allowed
-        if isinstance(first, torch.Tensor):
-            raise TypeError(
-                "Regular tensors not allowed in merge - only RTensors. "
-                "Engine outputs should be automatically converted to RTensors."
-            )
-
-        if isinstance(first, RTensor):
-            assert group_indices is not None
-            rtensors = flat2d([r.split() for r in results])
-            indices = flat2d(group_indices)
-            assert len(rtensors) == len(indices), (len(rtensors), len(indices))
-            inv_indices = np.zeros(len(indices), dtype=np.int64)
-            inv_indices[indices] = np.arange(len(indices))
-            return RTensor.cat([rtensors[i] for i in inv_indices])
-
-        if isinstance(first, dict):
-            merged = {}
-            for key in first.keys():
-                values = [r[key] for r in results]
-                merged[key] = RTensor.data_parallel_merge(
-                    values, group_indices=group_indices
-                )
-            return merged
-
-        if isinstance(first, list):
-            merged = []
-            for i in range(len(first)):
-                elements = [r[i] for r in results]
-                merged.append(
-                    RTensor.data_parallel_merge(elements, group_indices=group_indices)
-                )
-            return merged
-
-        if isinstance(first, tuple):
-            merged = []
-            for i in range(len(first)):
-                elements = [r[i] for r in results]
-                merged.append(
-                    RTensor.data_parallel_merge(elements, group_indices=group_indices)
-                )
-            return tuple(merged)
-
-        # Scalars: return first (assume synchronized)
-        return first
-
-    @staticmethod
     def collect_shards(obj: Any) -> dict[str, list[Any]]:
         """Collect shard IDs grouped by node address from nested structure.
 
@@ -539,10 +378,9 @@ class RTensor:
 
         def _collect(o: Any) -> None:
             if isinstance(o, RTensor):
-                for shard in o.shards:
-                    if shard.node_addr not in shards_by_node:
-                        shards_by_node[shard.node_addr] = []
-                    shards_by_node[shard.node_addr].append(shard.shard_id)
+                if o.shard.node_addr not in shards_by_node:
+                    shards_by_node[o.shard.node_addr] = []
+                shards_by_node[o.shard.node_addr].append(o.shard.shard_id)
             elif isinstance(o, dict):
                 for v in o.values():
                     _collect(v)
@@ -586,67 +424,37 @@ class RTensor:
         """Number of dimensions."""
         return self.data.ndim
 
-    @classmethod
-    def __torch_function__(
-        cls,
-        func: Any,
-        _types: tuple[type, ...],
-        args: tuple[Any, ...] = (),
-        kwargs: dict[str, Any] | None = None,
-    ) -> RTensor:
-        if kwargs is None:
-            kwargs = {}
 
-        if func is torch.cat:
-            return RTensor.cat(*args, **kwargs)
+def extract_layouts_from_container(container: Any) -> list[RTensor] | None:
+    """Extract per-element RTensor layouts from a container of dicts.
 
-        raise NotImplementedError(f"RTensor does not implement torch function {func}")
+    For each dict in the container, finds one RTensor via DFS.
+    Returns a list with one RTensor per element, or None if the container
+    doesn't match the expected pattern (list/tuple of dicts with RTensors).
 
+    Parameters
+    ----------
+    container : Any
+        A list or tuple of dicts potentially containing RTensors.
 
-def _pad_cat_dim0(tensors: list[torch.Tensor]) -> torch.Tensor:
-    # Get the maximum shape for dims 1 to N-1
-    shape = [0 for _ in range(tensors[0].ndim - 1)]
-    for t in tensors:
-        if t.ndim != len(shape) + 1:
-            raise ValueError(
-                f"Shard dimension mismatch: expected {len(shape) + 1}, got {t.ndim}"
-            )
-        for i in range(1, t.ndim):
-            shape[i - 1] = max(shape[i - 1], t.shape[i])
-
-    # Pad tensors
-    padded_tensors = []
-    for t in tensors:
-        pad_sizes = []
-        for i in range(1, t.ndim):
-            pad_size = shape[i - 1] - t.shape[i]
-            pad_sizes.append(pad_size)
-        if any(pad_sizes):
-            pad = []
-            for pad_size in reversed(pad_sizes):
-                pad.extend([0, pad_size])
-            pt = torch.nn.functional.pad(t, tuple(pad), "constant", 0)
-            padded_tensors.append(pt)
-            continue
-        padded_tensors.append(t)
-
-    return torch.cat(padded_tensors, dim=0)
-
-
-def _find_in_structure(obj: Any, type_: type) -> Any | None:
-    if isinstance(obj, type_):
-        return obj
-    if isinstance(obj, dict):
-        for v in obj.values():
-            result = _find_in_structure(v, type_)
-            if result is not None:
-                return result
-    if isinstance(obj, (tuple, list)):
-        for item in obj:
-            result = _find_in_structure(item, type_)
-            if result is not None:
-                return result
-    return None
+    Returns
+    -------
+    list[RTensor] | None
+        One RTensor per dict element, or None if pattern doesn't match.
+    """
+    if not isinstance(container, (list, tuple)) or not container:
+        return None
+    if not isinstance(container[0], dict):
+        return None
+    rtensors: list[RTensor] = []
+    for d in container:
+        if not isinstance(d, dict):
+            return None
+        rt = find_in_structure(d, RTensor)
+        if rt is None:
+            return None
+        rtensors.append(rt)
+    return rtensors
 
 
 # =============================================================================

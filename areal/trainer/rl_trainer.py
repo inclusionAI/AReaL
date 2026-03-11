@@ -366,7 +366,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["values"] = self.critic.compute_values(rollout_batch)
+                    values = self.critic.compute_values(rollout_batch)
+                    for traj, v in zip(rollout_batch, values):
+                        traj["values"] = v
                     self.critic.get_device_stats().log("critic values")
 
             if config.actor.should_compute_prox_logp():
@@ -378,7 +380,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["prox_logp"] = self.actor.compute_logp(rollout_batch)
+                    prox_logps = self.actor.compute_logp(rollout_batch)
+                    for traj, logp in zip(rollout_batch, prox_logps):
+                        traj["prox_logp"] = logp
                     self.actor.get_device_stats().log("recompute logp")
 
             if self.ref is not None:
@@ -390,7 +394,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
+                    ref_logps = self.ref.compute_logp(rollout_batch)
+                    for traj, logp in zip(rollout_batch, ref_logps):
+                        traj["ref_logp"] = logp
                     self.ref.get_device_stats().log("ref logp")
 
             if self.teacher is not None:

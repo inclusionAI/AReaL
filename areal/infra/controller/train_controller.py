@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any
 
+import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -20,6 +21,7 @@ from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
 from areal.infra.rpc.rtensor import RTensor
 from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, stats_tracker
+from areal.utils.datapack import data_parallel_merge, dispatch_traj_list
 from areal.utils.network import find_free_ports
 
 from .rollout_callback import RolloutCallback
@@ -301,6 +303,11 @@ class TrainController:
 
     def _custom_function_call(self, method: str, *args, **kwargs):
         """Dispatch method call to workers: split batches, replicate args, merge results."""
+        # Check if any input is a traj list (determines return format)
+        has_traj_list = any(self._is_traj_list(a) for a in args) or any(
+            self._is_traj_list(v) for v in kwargs.values()
+        )
+
         dp_split_args, dp_split_kwargs, group_indices = self._dispatch_inputs(
             *args, **kwargs
         )
@@ -309,11 +316,21 @@ class TrainController:
         )
         # Filter to only keep results from DP head workers
         results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
-        merged = self._merge_results(results, group_indices)
-        return merged
+
+        # If input was traj list, each DP head returns list[dict] per-traj results
+        # (or None for void methods).
+        # Flatten and reorder to restore original trajectory order.
+        if has_traj_list and group_indices is not None:
+            return self._reorder_traj_results(results, group_indices)
+        # Non-traj-list calls (scalar methods)
+        return self._merge_results(results, group_indices)
 
     async def _async_custom_function_call(self, method: str, *args, **kwargs):
         """Async version of _custom_function_call."""
+        has_traj_list = any(self._is_traj_list(a) for a in args) or any(
+            self._is_traj_list(v) for v in kwargs.values()
+        )
+
         dp_split_args, dp_split_kwargs, group_indices = self._dispatch_inputs(
             *args, **kwargs
         )
@@ -322,34 +339,81 @@ class TrainController:
         )
         # Filter to only keep results from DP head workers
         results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
+
+        if has_traj_list and group_indices is not None:
+            return self._reorder_traj_results(results, group_indices)
         return self._merge_results(results, group_indices)
 
-    def _dispatch_inputs(self, *args, **kwargs):
-        """Split RTensors across DP groups, replicate other args."""
-        results, group_indices = RTensor.data_parallel_dispatch(
-            (args, kwargs), dp_size=self.parallel_strategy.dp_size
+    @staticmethod
+    def _reorder_traj_results(
+        results: list[Any], group_indices: list[list[int]]
+    ) -> list[Any] | None:
+        """Flatten per-DP-group list results and reorder to original trajectory order.
+
+        Parameters
+        ----------
+        results : list[Any]
+            Per-DP-group results. Each result is a list (or non-list for single traj).
+            If all results are None (e.g., from ppo_update), returns None.
+        group_indices : list[list[int]]
+            group_indices[i] contains the original trajectory indices assigned to DP group i.
+        """
+        # If all DP groups returned None (e.g., ppo_update), propagate None
+        if all(r is None for r in results):
+            return None
+
+        n_total = sum(len(g) for g in group_indices)
+        reordered: list[Any] = [None] * n_total
+        for group_result, indices in zip(results, group_indices):
+            # Handle case where result is a single item (not list) for single-traj groups
+            if not isinstance(group_result, list):
+                group_result = [group_result] * len(indices)
+            assert len(group_result) == len(indices), (
+                f"DP group returned {len(group_result)} results but expected {len(indices)}"
+            )
+            for result_item, orig_idx in zip(group_result, indices):
+                reordered[orig_idx] = result_item
+        return reordered
+
+    @staticmethod
+    def _is_traj_list(obj: Any) -> bool:
+        """Check if obj is a list of trajectory dicts (from rollout)."""
+        return (
+            isinstance(obj, list)
+            and bool(obj)
+            and isinstance(obj[0], dict)
+            and any(isinstance(v, (torch.Tensor, RTensor)) for v in obj[0].values())
         )
-        # results is list of (args_tuple, kwargs_dict) pairs, one per DP group
-        # Transpose to match _call_with_dispatched_inputs expectations:
-        # dp_split_args[arg_idx][dp_idx] = value for arg_idx-th arg on dp_idx-th group
-        # dp_worker_kwargs[key][dp_idx] = value for key kwarg on dp_idx-th group
 
-        dp_size = len(results)
-        num_args = len(args)
+    def _dispatch_inputs(self, *args, **kwargs):
+        """Partition trajectory lists across DP groups, replicate other args.
 
-        # Transpose args: from list of tuples to list of lists
-        dp_split_args = [
-            [results[dp_idx][0][arg_idx] for dp_idx in range(dp_size)]
-            for arg_idx in range(num_args)
-        ]
+        Each DP group receives a list[dict[str, RTensor]] subset.
+        """
+        dp_size = self.parallel_strategy.dp_size
 
-        # Transpose kwargs: from list of dicts to dict of lists
-        dp_worker_kwargs = {}
-        if kwargs:
-            for key in kwargs.keys():
-                dp_worker_kwargs[key] = [
-                    results[dp_idx][1][key] for dp_idx in range(dp_size)
-                ]
+        group_indices = None
+        dp_split_args = []
+        for a in args:
+            if self._is_traj_list(a):
+                if group_indices is None:
+                    splits, group_indices = dispatch_traj_list(a, dp_size)
+                else:
+                    splits = [[a[i] for i in idxs] for idxs in group_indices]
+                dp_split_args.append(splits)
+            else:
+                dp_split_args.append([a] * dp_size)
+
+        dp_worker_kwargs: dict[str, list[Any]] = {}
+        for k, v in kwargs.items():
+            if self._is_traj_list(v):
+                if group_indices is None:
+                    splits, group_indices = dispatch_traj_list(v, dp_size)
+                else:
+                    splits = [[v[i] for i in idxs] for idxs in group_indices]
+                dp_worker_kwargs[k] = splits
+            else:
+                dp_worker_kwargs[k] = [v] * dp_size
 
         return dp_split_args, dp_worker_kwargs, group_indices
 
@@ -388,8 +452,8 @@ class TrainController:
         return await asyncio.gather(*tasks)
 
     def _merge_results(self, results, group_indices):
-        """Merge RTensor results from DP heads using RTensor.merge()."""
-        return RTensor.data_parallel_merge(results, group_indices)
+        """Merge RTensor results from DP heads."""
+        return data_parallel_merge(results)
 
     def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
         if self.rollout is not None and self.rollout != rollout:
