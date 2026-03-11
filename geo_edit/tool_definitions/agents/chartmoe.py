@@ -25,7 +25,7 @@ agent_config = {
 
 
 class ChartMoEActor(BaseToolModelActor):
-    """ChartMoE VLM Actor using model.chat() API."""
+    """ChartMoE VLM Actor using AutoProcessor API."""
 
     def __init__(
         self,
@@ -39,46 +39,27 @@ class ChartMoEActor(BaseToolModelActor):
             system_prompt: Optional system prompt for the model.
         """
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoModel, AutoProcessor
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
         self.model_name = model_name
         self.system_prompt = system_prompt or ""
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(
+        # Load model and processor
+        self.processor = AutoProcessor.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+        )
+        self.model = AutoModel.from_pretrained(
             model_name,
             torch_dtype=torch.float16,
             device_map=self.device_map,
             trust_remote_code=True,
         ).eval()
 
-        # Monkey-patch vision_tower to add interpolate_pos_encoding=True
-        # Fix for transformers >= 4.x compatibility with ChartMoE
-        self._patch_vision_tower()
-
         self._initialized = True
         logger.info("ChartMoEActor initialized on GPU %s: %s", self.gpu_ids, model_name)
-
-    def _patch_vision_tower(self):
-        """Patch vision_tower.forward to add interpolate_pos_encoding=True."""
-        if hasattr(self.model, 'vit') and hasattr(self.model.vit, 'vision_tower'):
-            vision_tower = self.model.vit.vision_tower
-            original_forward = vision_tower.forward
-
-            def patched_forward(pixel_values, output_hidden_states=False, return_dict=True, **kwargs):
-                # Always enable interpolate_pos_encoding for variable-size images
-                return original_forward(
-                    pixel_values,
-                    output_hidden_states=output_hidden_states,
-                    return_dict=return_dict,
-                    interpolate_pos_encoding=True,
-                    **kwargs
-                )
-
-            vision_tower.forward = patched_forward
-            logger.info("Patched vision_tower.forward with interpolate_pos_encoding=True")
 
     def analyze(
         self,
@@ -88,42 +69,54 @@ class ChartMoEActor(BaseToolModelActor):
         **kwargs,
     ) -> str:
         """Analyze an image and answer the question."""
-        import os
-        import tempfile
         import torch
         from PIL import Image
 
         # Extract question from kwargs
         question = kwargs.get("question", "")
 
-        # Decode base64 image and save to temp file
+        # Decode base64 image to PIL Image
         image_bytes = base64.b64decode(image_b64)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            image.save(tmp, format="PNG")
-            tmp_path = tmp.name
+        # Build prompt
+        if self.system_prompt:
+            prompt = f"{self.system_prompt}\n{question}"
+        else:
+            prompt = question
 
-        try:
-            # Build query with image placeholder
-            if self.system_prompt:
-                query = f"<ImageHere>{self.system_prompt}\n{question}"
-            else:
-                query = f"<ImageHere>{question}"
+        # Use processor to prepare inputs
+        inputs = self.processor(
+            text=prompt,
+            images=image,
+            return_tensors="pt",
+        )
 
-            with torch.amp.autocast('cuda'):
-                response, _ = self.model.chat(
-                    self.tokenizer,
-                    query=query,
-                    image=tmp_path,  # Pass file path
-                    max_new_tokens=max_tokens,
-                    do_sample=temperature > 0,
-                    temperature=temperature if temperature > 0 else None,
-                )
-        finally:
-            os.unlink(tmp_path)
+        # Move inputs to model device
+        inputs = {k: v.to(self.model.device) if hasattr(v, 'to') else v
+                  for k, v in inputs.items()}
 
-        return self._parse_output(response)
+        # Generate response
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                do_sample=temperature > 0,
+                temperature=temperature if temperature > 0 else None,
+                num_beams=1,
+            )
+
+        # Decode output
+        generated_text = self.processor.decode(
+            outputs[0],
+            skip_special_tokens=True,
+        )
+
+        # Remove input prompt if included in output
+        if generated_text.startswith(prompt):
+            generated_text = generated_text[len(prompt):].strip()
+
+        return self._parse_output(generated_text)
 
     def _parse_output(self, text: str) -> str:
         """Parse output (following ToolAgent._parse_response logic)."""
