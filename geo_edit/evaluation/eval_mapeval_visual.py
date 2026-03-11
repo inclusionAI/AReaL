@@ -26,6 +26,14 @@ def extract_answer(text: str) -> str:
     match = re.search(r"<\|begin_of_box\|>(.*?)<\|end_of_box\|>", text, re.DOTALL)
     if match:
         return match.group(1).strip()
+    # Try partial <answer>... (without closing tag)
+    match = re.search(r"<answer>(.+)", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # Try partial <|begin_of_box|>... (without closing tag)
+    match = re.search(r"<\|begin_of_box\|>(.+)", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
     return ""
 
 
