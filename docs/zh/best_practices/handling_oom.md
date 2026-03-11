@@ -130,7 +130,26 @@ allocation_mode: sglang:d4+archon:d2p2e2
 
 我们推荐使用流水线和专家并行而不是张量/上下文并行。查看[分配模式参考文档](../reference/alloc_mode.md)了解更多详情。
 
-### 4. 切换到轻量级优化器
+### 4. 启用逐层优化器步进
+
+当使用 FSDP CPU 卸载（`offload_params: true`）时，默认的 CPU Adam 步进可能非常慢。
+启用逐层优化器步进，将优化器状态逐层流式传输到设备以获得显著加速：
+
+```yaml
+actor:
+  fsdp:
+    per_layer_optim_step: true
+    optim_step_prefetch_layers: 1  # 预取层数（默认：1）
+```
+
+这将逐层流式传输状态到设备执行 Adam 更新，而非在 CPU 上运行， 保持设备内存占用低的同时实现更快的优化器更新。
+
+**前置条件：**
+
+- 同时兼容 `offload_params: true` 和 `false`（优化器状态由逐层包装器自动管理在 CPU 上； 当 `offload_params`
+  也启用时，参数/梯度也会逐层流式传输到设备）
+
+### 5. 切换到轻量级优化器
 
 AReaL 根据训练引擎支持不同的优化器。
 
@@ -143,7 +162,7 @@ AReaL 根据训练引擎支持不同的优化器。
 `SGD` 和 `AdamW_bf16` 比默认的 `AdamW` 使用更少的内存。通过在 YAML 配置文件中设置
 `actor.optimizer.type: <name>` 来切换（例如 `actor.optimizer.type: sgd`）。
 
-### 5. 使用内存高效模型加载
+### 6. 使用内存高效模型加载
 
 如果在模型初始化期间（训练开始前）发生 OOM，请启用内存高效加载：
 

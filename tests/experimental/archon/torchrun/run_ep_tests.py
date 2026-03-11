@@ -667,12 +667,12 @@ def test_dtensor_checkpoint_roundtrip(
             reconstructed = reconstructed_state[name]
 
             if isinstance(original, DTensor):
-                original_local = original._local_tensor
+                original_local = original.to_local()
             else:
                 original_local = original
 
             if isinstance(reconstructed, DTensor):
-                reconstructed_local = reconstructed._local_tensor
+                reconstructed_local = reconstructed.to_local()
             else:
                 reconstructed_local = reconstructed
 
