@@ -1062,7 +1062,7 @@ def test_rollout_controller_integration(tmp_path, model_path):
             ),
         )
         assert isinstance(result, dict)
-        assert len(result["attention_mask"].shards) == bs
+        assert result["attention_mask"].shard.size == bs
     finally:
         rollout.destroy()
 
