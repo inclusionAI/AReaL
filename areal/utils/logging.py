@@ -47,7 +47,7 @@ LOGGER_COLORS_EXACT = {
     "VisionRLVRWorkflow": "light_purple",
     "MultiTurnWorkflow": "light_purple",
     "MultiTurnV2Workflow": "light_purple",
-    # Controllers - white
+    "AenvWorkflow": "light_purple",
     "TrainController": "white",
     "RolloutController": "white",
     "WorkflowExecutor": "white",
@@ -64,6 +64,8 @@ LOGGER_COLORS_EXACT = {
     "VLLMWrapper": "white",
     "RemoteInfEngine": "white",
     "vLLMEngine": "white",
+    # adapter - blue
+    "AenvAdapter": "blue",
     # Dataset - green
     "Dataset": "light_green",
     "CLEVR70KDataset": "light_green",
