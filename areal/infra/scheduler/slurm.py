@@ -309,10 +309,10 @@ class SlurmScheduler(Scheduler):
                 logger.info(f"Configuration successful on worker '{worker_id}'")
                 return
             elif response.status_code == 400:
-                error_detail = response.json().get("detail", "Unknown error")
+                error_detail = response.json().get("error", "Unknown error")
                 raise WorkerConfigurationError(worker_id, error_detail, str(400))
             elif response.status_code == 500:
-                error_detail = response.json().get("detail", "Unknown error")
+                error_detail = response.json().get("error", "Unknown error")
                 raise WorkerConfigurationError(worker_id, error_detail, str(500))
             else:
                 raise WorkerConfigurationError(
@@ -1329,7 +1329,7 @@ class SlurmScheduler(Scheduler):
                         return result.get("result")
                     elif response.status == 400:
                         error_detail = (await response.json()).get(
-                            "detail", "Unknown error"
+                            "error", "Unknown error"
                         )
                         if "Failed to import" in error_detail:
                             raise EngineImportError(engine, error_detail)
@@ -1337,7 +1337,7 @@ class SlurmScheduler(Scheduler):
                             raise EngineCreationError(worker_id, error_detail, 400)
                     elif response.status == 500:
                         error_detail = (await response.json()).get(
-                            "detail", "Unknown error"
+                            "error", "Unknown error"
                         )
                         raise EngineCreationError(worker_id, error_detail, 500)
                     else:
@@ -1439,7 +1439,7 @@ class SlurmScheduler(Scheduler):
                     result = response.json()
                     return deserialize_value(result.get("result"))
                 elif response.status_code == 500:
-                    error_detail = response.json().get("detail", "Unknown error")
+                    error_detail = response.json().get("error", "Unknown error")
                     # Check if retryable
                     if attempt < max_retries and "timeout" in error_detail.lower():
                         last_error = f"Engine method timeout: {error_detail}"
@@ -1457,7 +1457,7 @@ class SlurmScheduler(Scheduler):
                         f"Worker temporarily unavailable, retry {attempt}/{max_retries}"
                     )
                 else:
-                    error_detail = response.json().get("detail", "Unknown error")
+                    error_detail = response.json().get("error", "Unknown error")
                     raise EngineCallError(
                         worker_id,
                         method,
@@ -1580,7 +1580,7 @@ class SlurmScheduler(Scheduler):
                             return deserialize_value(result.get("result"))
                         elif response.status == 500:
                             error_detail = (await response.json()).get(
-                                "detail", "Unknown error"
+                                "error", "Unknown error"
                             )
                             if (
                                 attempt < max_retries
@@ -1601,7 +1601,7 @@ class SlurmScheduler(Scheduler):
                             )
                         else:
                             error_detail = (await response.json()).get(
-                                "detail", "Unknown error"
+                                "error", "Unknown error"
                             )
                             raise EngineCallError(
                                 worker_id,
