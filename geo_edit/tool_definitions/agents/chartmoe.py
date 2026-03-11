@@ -139,7 +139,7 @@ class ChartMoEActor(BaseToolModelActor):
         im_mask.append(torch.zeros(text_embeds.shape[:2]).cuda())
 
         # 2. Encode image
-        image_tensor = self.model.vis_processor(image).unsqueeze(0).cuda()
+        image_tensor = self.model.vis_processor(image).unsqueeze(0).half().cuda()
         image_embeds = self.model.encode_img(image_tensor)
         embeds.append(image_embeds)
         im_mask.append(torch.ones(image_embeds.shape[:2]).cuda())
