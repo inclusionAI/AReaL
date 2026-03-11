@@ -162,3 +162,34 @@ Provide a precise and concise answer based on the chart.
 """
 
 CHARTQA_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."
+
+CHARTQAPRO_INPUT_TEMPLATE = """\
+You are a chart understanding assistant specialized in analyzing charts and graphs.
+
+Look at the chart image and answer the following question. The question may be factoid, hypothetical, fact-checking, conversational, or multiple choice.
+
+Question: {question}
+
+If you need to analyze the chart in detail, you can use the available tools.
+
+Please provide your final answer in <answer></answer> tags. For multiple choice questions, provide only the letter (e.g., A, B, C, D).
+"""
+
+CHARTQAPRO_NOTOOL_INPUT_TEMPLATE = """\
+You are a chart understanding assistant specialized in analyzing charts and graphs.
+
+Look at the chart image carefully and answer the following question. The question may be factoid, hypothetical, fact-checking, conversational, or multiple choice.
+
+Question: {question}
+
+Please analyze the chart and provide your final answer in <answer></answer> tags. For multiple choice questions, provide only the letter (e.g., A, B, C, D).
+"""
+
+# Separated version: question only, no role/answer format (for separated reasoning mode)
+CHARTQAPRO_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+Provide a precise and concise answer based on the chart. For multiple choice questions, provide only the letter.
+"""
+
+CHARTQAPRO_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."

@@ -15,6 +15,10 @@ from geo_edit.datasets.input_template import (
     CHARTQA_INPUT_TEMPLATE,
     CHARTQA_NOTOOL_INPUT_TEMPLATE,
     CHARTQA_SEPARATED_TEMPLATE,
+    CHARTQAPRO_ANSWER_FORMAT,
+    CHARTQAPRO_INPUT_TEMPLATE,
+    CHARTQAPRO_NOTOOL_INPUT_TEMPLATE,
+    CHARTQAPRO_SEPARATED_TEMPLATE,
     MAPEVAL_VISUAL_ANSWER_FORMAT,
     MAPEVAL_VISUAL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE,
@@ -274,6 +278,27 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
         separated_prompt_template=CHARTQA_SEPARATED_TEMPLATE,
         answer_format=CHARTQA_ANSWER_FORMAT,
+    ),
+    "chartqapro": DatasetSpec(
+        name="chartqapro",
+        id_key="id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=CHARTQAPRO_INPUT_TEMPLATE,
+        notool_prompt_template=CHARTQAPRO_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "question_type": item.get("question_type", ""),
+                "chart_id": item.get("chart_id", -1),
+                "question_idx": item.get("question_idx", 0),
+                "year": item.get("year", ""),
+            },
+        },
+        separated_prompt_template=CHARTQAPRO_SEPARATED_TEMPLATE,
+        answer_format=CHARTQAPRO_ANSWER_FORMAT,
     ),
 }
 
