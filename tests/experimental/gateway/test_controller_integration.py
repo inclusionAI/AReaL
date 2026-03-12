@@ -471,6 +471,110 @@ class TestControllerRolloutBatch:
         assert len(result) > 0
         assert isinstance(result[0], dict)
 
+
+# =============================================================================
+# TestControllerPrepareBatch
+# =============================================================================
+
+
+class _FakeDataLoader:
+    """Minimal dataloader stub for prepare_batch tests.
+
+    Yields one batch of dicts per iteration with a `.batch_size` attribute,
+    which is all that `workflow_executor.prepare_batch` requires.
+    """
+
+    def __init__(self, items: list[dict], batch_size: int = 1) -> None:
+        self._items = items
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        # Yield items one at a time (each 'batch' is a single dict)
+        yield from self._items
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not has_gpu(), reason="GPU required")
+class TestControllerPrepareBatch:
+    """Test prepare_batch through the controller with SimpleAgent workflow."""
+
+    def test_prepare_batch_returns_results(self, gateway_controller):
+        """prepare_batch should return a non-empty list of trajectory dicts."""
+        items = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            },
+            {
+                "messages": [{"role": "user", "content": "What is 3+3?"}],
+                "answer": "6",
+            },
+        ]
+        dataloader = _FakeDataLoader(items, batch_size=len(items))
+
+        result = gateway_controller.prepare_batch(
+            dataloader=dataloader,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+        )
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert isinstance(result[0], dict)
+
+    def test_prepare_batch_with_should_accept_fn_rejects(self, gateway_controller):
+        """prepare_batch with a rejecting should_accept_fn returns empty list."""
+
+        def reject_all(trajectory: dict) -> bool:
+            return False
+
+        items = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            },
+        ]
+        dataloader = _FakeDataLoader(items, batch_size=len(items))
+
+        result = gateway_controller.prepare_batch(
+            dataloader=dataloader,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+            should_accept_fn=reject_all,
+            dynamic_bs=True,
+        )
+
+        # All trajectories should be rejected, so the list is empty
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_prepare_batch_with_should_accept_fn_accepts(self, gateway_controller):
+        """prepare_batch with an accepting should_accept_fn returns results."""
+
+        def accept_all(trajectory: dict) -> bool:
+            return True
+
+        items = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            },
+            {
+                "messages": [{"role": "user", "content": "What is 3+3?"}],
+                "answer": "6",
+            },
+        ]
+        dataloader = _FakeDataLoader(items, batch_size=len(items))
+
+        result = gateway_controller.prepare_batch(
+            dataloader=dataloader,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+            should_accept_fn=accept_all,
+        )
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert isinstance(result[0], dict)
+
+
 # =============================================================================
 # TestControllerSubmitWait
 # =============================================================================
