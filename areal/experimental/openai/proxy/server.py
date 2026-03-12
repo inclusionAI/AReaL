@@ -170,6 +170,7 @@ ANTHROPIC_MESSAGES_PATHNAME = "v1/messages"
 GRANT_CAPACITY_PATHNAME = "grant_capacity"
 EXPORT_TRAJECTORIES_PATHNAME = "export_trajectories"
 INTERNAL_WAIT_FOR_SESSION_PATHNAME = "internal/wait_for_session"
+INTERNAL_GET_SELF_DISTILL_COMPLETION_PATHNAME = "internal/get_self_distill_completion"
 
 # Shared default for admin API key — used by cli_args.py and workflow.py
 # to avoid independent duplication.

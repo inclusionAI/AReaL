@@ -28,6 +28,7 @@ from openai.types.responses import Response
 from openai.types.responses.response_create_params import ResponseCreateParams
 
 from areal.api.cli_args import NameResolveConfig, OpenAIProxyConfig
+from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.client import ArealOpenAI
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import name_resolve, names, seeding
@@ -42,6 +43,7 @@ from .server import (
     DEFAULT_ADMIN_API_KEY,
     EXPORT_TRAJECTORIES_PATHNAME,
     GRANT_CAPACITY_PATHNAME,
+    INTERNAL_GET_SELF_DISTILL_COMPLETION_PATHNAME,
     RESPONSES_PATHNAME,
     RL_END_SESSION_PATHNAME,
     RL_SET_REWARD_PATHNAME,
@@ -107,6 +109,9 @@ _session_timeout_seconds: int = 3600  # Default timeout (overridden by config)
 _admin_api_key: str = secrets.token_urlsafe(32)
 _api_key_to_session: dict[str, str] = {}
 _session_to_api_key: dict[str, str] = {}  # Reverse mapping for O(1) cleanup
+
+# Self-distill completion buffer (populated by admin-key chat completions)
+_self_distill_buffer: asyncio.Queue = asyncio.Queue()
 
 # Server address (set at startup)
 _server_host: str = "0.0.0.0"
@@ -186,6 +191,17 @@ def _require_admin_key(request: Request) -> str:
 def _require_session_key(request: Request) -> str:
     """Resolve session_id from the session API key in the Authorization header."""
     token = _extract_bearer_token(request)
+    with _lock:
+        session_id = _api_key_to_session.get(token)
+    if session_id is None:
+        raise HTTPException(
+            status_code=401, detail="Invalid or expired session API key."
+        )
+    return session_id
+
+
+def _require_session_key_from_token(token: str) -> str:
+    """Resolve session_id from a pre-extracted bearer token."""
     with _lock:
         session_id = _api_key_to_session.get(token)
     if session_id is None:
@@ -599,19 +615,111 @@ async def _call_client_create(
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
+async def _call_client_create_with_cache(
+    create_fn,
+    request: dict[str, Any] | BaseModel,
+    cache: InteractionCache,
+    extra_ignored_args: list[str] | None = None,
+) -> ChatCompletion:
+    """Like _call_client_create but takes an InteractionCache directly.
+
+    Used for admin-key self-distill completions that bypass session lifecycle.
+    """
+    if _openai_client is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Proxy server not initialized.",
+        )
+
+    sig = inspect.signature(create_fn)
+    areal_client_ignored_args = ["model"] + (extra_ignored_args or [])
+    areal_client_disallowed_args = ["areal_cache"]
+    areal_client_allowed_args = list(
+        k
+        for k in sig.parameters.keys()
+        if k not in areal_client_ignored_args and k not in areal_client_disallowed_args
+    )
+
+    kwargs = request.model_dump() if isinstance(request, BaseModel) else dict(request)
+    dropped_args = []
+    for k, v in kwargs.items():
+        if k not in areal_client_allowed_args:
+            dropped_args.append((k, v))
+
+    for k, _ in dropped_args:
+        del kwargs[k]
+
+    def _is_default_value(k: str, v: Any) -> bool:
+        if isinstance(request, BaseModel):
+            return v == type(request).model_fields[k].default
+        return False
+
+    dropped_non_default_args = [
+        (k, v)
+        for k, v in dropped_args
+        if k not in areal_client_ignored_args and not _is_default_value(k, v)
+    ]
+    if len(dropped_non_default_args):
+        dropped_args_str = "\n".join(
+            [f"  {k}: {v}" for k, v in dropped_non_default_args]
+        )
+        _warn_once(
+            f"dropped unsupported non-default arguments for areal client:\n"
+            f"{dropped_args_str}"
+        )
+
+    if "temperature" not in kwargs:
+        kwargs["temperature"] = 1.0
+        _warn_once("temperature not set in request, defaulting to 1.0")
+    if "top_p" not in kwargs:
+        kwargs["top_p"] = 1.0
+        _warn_once("top_p not set in request, defaulting to 1.0")
+
+    try:
+        return await create_fn(areal_cache=cache, **kwargs)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
 @app.post(
     f"/{CHAT_COMPLETIONS_PATHNAME}",
     dependencies=[Depends(validate_json_request)],
 )
 async def chat_completions(
-    request: CompletionCreateParams, session_id: str = Depends(_require_session_key)
+    request: CompletionCreateParams, raw_request: Request
 ) -> ChatCompletion:
-    """OpenAI-compatible chat completions endpoint."""
+    """OpenAI-compatible chat completions endpoint.
+
+    Supports both session-key and admin-key authentication.
+    Admin-key completions bypass session lifecycle and buffer results
+    for self-distillation.
+    """
     if _openai_client is None:
         raise HTTPException(
             status_code=500,
             detail='Proxy server not initialized. Send requests to /create_engine then /call "initialize" first.',
         )
+
+    # Try admin key first
+    token = _extract_bearer_token(raw_request)
+    if hmac.compare_digest(token, _admin_api_key):
+        # Admin key: self-distill mode — use temp cache, buffer result
+
+        temp_cache = InteractionCache()
+        result = await _call_client_create_with_cache(
+            create_fn=_openai_client.chat.completions.create,
+            request=request,
+            cache=temp_cache,
+        )
+        # Buffer all interactions for self-distill agent pickup
+        for interaction in temp_cache.values():
+            await _self_distill_buffer.put(interaction)
+        return result
+
+    # Session key: normal flow
+    session_id = _require_session_key_from_token(token)
     return await _call_client_create(
         create_fn=_openai_client.chat.completions.create,
         request=request,
@@ -856,6 +964,33 @@ async def export_trajectories(
     # Serialize for HTTP transport
     serialized = serialize_interactions(interactions)
     return ExportTrajectoriesResponse(interactions=serialized)
+
+
+# =============================================================================
+# Self-Distill Buffer Endpoint
+# =============================================================================
+
+
+@app.post(
+    f"/{INTERNAL_GET_SELF_DISTILL_COMPLETION_PATHNAME}",
+    dependencies=[Depends(_require_admin_key)],
+)
+async def get_self_distill_completion(raw_request: Request):
+    """Internal endpoint: self-distill agent pulls buffered completions."""
+    data = await raw_request.json()
+    timeout = data.get("timeout", 300.0)
+    try:
+        interaction = await asyncio.wait_for(
+            _self_distill_buffer.get(), timeout=timeout
+        )
+        tensor_dict = interaction.to_tensor_dict()
+        return {
+            "status": "success",
+            "tensor_dict": {k: v.tolist() for k, v in tensor_dict.items()},
+            "interaction_id": interaction.interaction_id,
+        }
+    except TimeoutError:
+        return {"status": "timeout"}
 
 
 # =============================================================================

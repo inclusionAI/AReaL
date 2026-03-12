@@ -2213,6 +2213,118 @@ class GRPOConfig(PPOConfig):
     pass
 
 
+@dataclass
+class SelfDistillationConfig:
+    """Configuration for self-distillation loss computation.
+
+    Controls the KL divergence, top-k distillation, IS clipping,
+    and feedback template for the self-distillation pipeline.
+    """
+
+    full_logit_distillation: bool = field(
+        default=True,
+        metadata={"help": "Whether to use full-logit KL distillation."},
+    )
+    teacher_update_rate: float = field(
+        default=0.05,
+        metadata={"help": "EMA update rate for teacher weights."},
+    )
+    distillation_topk: int | None = field(
+        default=None,
+        metadata={
+            "help": "If set, use top-k logits for distillation instead of full distribution."
+        },
+    )
+    distillation_add_tail: bool = field(
+        default=True,
+        metadata={"help": "Whether to add a tail bucket for top-k distillation."},
+    )
+    is_clip: float | None = field(
+        default=None,
+        metadata={
+            "help": "Clip value for importance sampling ratio. None disables IS weighting."
+        },
+    )
+    feedback_template: str = field(
+        default=(
+            "Given the above context, evaluate whether the last response "
+            "is appropriate. Explain the reason."
+        ),
+        metadata={"help": "Template for generating feedback. Configurable by user."},
+    )
+
+    def __post_init__(self):
+        if not 0.0 <= self.teacher_update_rate <= 1.0:
+            raise ValueError(
+                f"SelfDistillationConfig.teacher_update_rate must be in [0, 1], "
+                f"got {self.teacher_update_rate}"
+            )
+        if self.distillation_topk is not None and self.distillation_topk <= 0:
+            raise ValueError(
+                f"SelfDistillationConfig.distillation_topk must be positive, "
+                f"got {self.distillation_topk}"
+            )
+        if self.is_clip is not None and self.is_clip <= 0:
+            raise ValueError(
+                f"SelfDistillationConfig.is_clip must be positive, got {self.is_clip}"
+            )
+
+
+@dataclass
+class SelfDistillActorConfig(TrainEngineConfig):
+    """Configuration for the self-distillation actor model.
+
+    Unlike PPOActorConfig, this actor does NOT use mini-batching.
+    It performs a single global-batch update per step.
+    """
+
+    self_distillation: SelfDistillationConfig = field(
+        default_factory=SelfDistillationConfig
+    )
+
+
+@dataclass
+class SelfDistillConfig(BaseExperimentConfig):
+    """Configuration for Self-Distillation (SDPO) experiments.
+
+    This is the top-level experiment config, analogous to PPOConfig.
+    """
+
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+    eval_gconfig: GenerationHyperparameters | None = field(
+        default=None,
+        metadata={
+            "help": "Generation hyperparameters for evaluation. If None, use gconfig."
+        },
+    )
+    rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
+    actor: SelfDistillActorConfig = field(default_factory=SelfDistillActorConfig)
+    batch_size: int = field(
+        default=64,
+        metadata={"help": "Number of extended trajectories per training batch."},
+    )
+    max_prompt_len: int = field(
+        default=4096,
+        metadata={"help": "Maximum prompt length in tokens."},
+    )
+    max_response_len: int = field(
+        default=4096,
+        metadata={"help": "Maximum response length in tokens."},
+    )
+    max_feedback_len: int = field(
+        default=2048,
+        metadata={"help": "Maximum feedback length in tokens."},
+    )
+
+    def __post_init__(self):
+        """Validate the eval generation config."""
+        if self.eval_gconfig is None:
+            self.eval_gconfig = self.gconfig.new()
+        super().__post_init__()
+
+
 def parse_cli_args(argv: list[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument(

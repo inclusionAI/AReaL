@@ -105,7 +105,11 @@ from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
 
 if TYPE_CHECKING:
-    from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
+    from areal.api.cli_args import (
+        PPOActorConfig,
+        PPOCriticConfig,
+        SelfDistillActorConfig,
+    )
     from areal.api.scheduler_api import Scheduler
 
 
@@ -1604,6 +1608,35 @@ class MegatronPPOActor(MegatronEngine):
         from areal.trainer.ppo.actor import PPOActorController
 
         return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class MegatronDistillActor(MegatronEngine):
+    """Self-distillation actor implementation using Megatron backend."""
+
+    def __init__(self, config: SelfDistillActorConfig):
+        from areal.trainer.self_distill.actor import SelfDistillActor
+
+        super().__init__(config)
+        self.actor = SelfDistillActor(config, self)
+
+    @torch.no_grad()
+    def reorg_batch(self, *args, **kwargs) -> dict[str, Any]:
+        return self.actor.reorg_batch(*args, **kwargs)
+
+    @torch.no_grad()
+    def compute_teacher_logp(self, *args, **kwargs) -> torch.Tensor:
+        return self.actor.compute_teacher_logp(*args, **kwargs)
+
+    def self_distill_update(self, *args, **kwargs) -> None:
+        self.actor.self_distill_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(cls, config: SelfDistillActorConfig, scheduler: Scheduler):
+        from areal.trainer.self_distill.actor import DistillActorController
+
+        return DistillActorController(
+            train_engine=cls, config=config, scheduler=scheduler
+        )
 
 
 class MegatronPPOCritic(MegatronEngine):

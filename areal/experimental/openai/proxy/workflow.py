@@ -79,9 +79,9 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         subproc_max_workers: int = 4,
         proxy_gateway_addr: str | None = None,
     ):
-        if mode not in ("inline", "subproc", "online"):
+        if mode not in ("inline", "subproc", "online", "self_distill"):
             raise ValueError(
-                f"Invalid mode: {mode}. Must be 'inline', 'subproc', or 'online'"
+                f"Invalid mode: {mode}. Must be 'inline', 'subproc', 'online', or 'self_distill'"
             )
 
         if mode == "online":
@@ -91,6 +91,13 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
 
             agent = _OnlineAgent(
                 proxy_gateway_addr=proxy_gateway_addr,
+                admin_api_key=admin_api_key,
+            )
+        elif mode == "self_distill":
+            from .self_distill_agent import _SelfDistillAgent
+
+            agent = _SelfDistillAgent(
+                proxy_gateway_addr=proxy_gateway_addr or "",
                 admin_api_key=admin_api_key,
             )
         else:
@@ -141,7 +148,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 data,
                 extra_envs,
             )
-        if self.mode == "online":
+        if self.mode in ("online", "self_distill"):
             http_client = await workflow_context.get_httpx_client()
             extra_kwargs = {
                 "base_url": self.proxy_addr,
@@ -196,7 +203,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 style=self.export_style,
             )
 
-            # Return None if no interactions (empty session — user never sent chat/completions)
+            # Return None if no interactions
             if not interactions:
                 logger.warning(
                     f"Session {session_info.session_id} has no interactions, "
@@ -209,6 +216,28 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             last_reward = interactions[last_id].reward
             stats_tracker.get(workflow_context.stat_scope()).scalar(reward=last_reward)
             return interactions
+
+        if self.mode == "self_distill":
+            # Self-distill mode: _SelfDistillAgent pulls buffered completions
+            # from the worker's distillation queue.  Data comes as tensor_dict directly.
+            result = await self._run_agent(self._admin_api_key, data)
+
+            if result.get("status") == "timeout":
+                logger.warning("Self-distill: no completion available within timeout")
+                return None
+
+            # Convert the raw tensor dict into an interaction-like structure
+            # The tensor_dict already has input_ids, loss_mask, logprobs, etc.
+            import torch
+
+            from ..types import InteractionWithTokenLogpReward
+
+            tensor_dict = {k: torch.tensor(v) for k, v in result["tensor_dict"].items()}
+            interaction = InteractionWithTokenLogpReward()
+            interaction._cache = tensor_dict
+            interaction_id = result.get("interaction_id", "sd-0")
+
+            return {interaction_id: interaction}
 
         # ---- Normal mode (inline / subproc) ----
 

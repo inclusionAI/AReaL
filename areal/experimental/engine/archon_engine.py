@@ -1270,6 +1270,35 @@ class ArchonPPOActor(ArchonEngine):
         return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
 
 
+class ArchonDistillActor(ArchonEngine):
+    """Self-distillation actor implementation using Archon backend."""
+
+    def __init__(self, config):
+        from areal.trainer.self_distill.actor import SelfDistillActor
+
+        super().__init__(config)
+        self.actor = SelfDistillActor(config, self)
+
+    @torch.no_grad()
+    def reorg_batch(self, *args, **kwargs) -> dict[str, Any]:
+        return self.actor.reorg_batch(*args, **kwargs)
+
+    @torch.no_grad()
+    def compute_teacher_logp(self, *args, **kwargs) -> torch.Tensor:
+        return self.actor.compute_teacher_logp(*args, **kwargs)
+
+    def self_distill_update(self, *args, **kwargs) -> None:
+        self.actor.self_distill_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(cls, config, scheduler: Scheduler):
+        from areal.trainer.self_distill.actor import DistillActorController
+
+        return DistillActorController(
+            train_engine=cls, config=config, scheduler=scheduler
+        )
+
+
 class ArchonPPOCritic(ArchonEngine):
     """PPO Critic implementation using Archon backend."""
 

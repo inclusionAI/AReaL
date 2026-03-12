@@ -10,12 +10,13 @@ from .infra import (
     current_platform,
     workflow_context,
 )
-from .trainer import PPOTrainer, SFTTrainer
+from .trainer import PPOTrainer, SFTTrainer, SelfDistillationTrainer
 
 __all__ = [
     "PPOTrainer",
     "RolloutController",
     "SFTTrainer",
+    "SelfDistillationTrainer",
     "StalenessManager",
     "TrainController",
     "WorkflowExecutor",

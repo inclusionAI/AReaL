@@ -584,6 +584,26 @@ def create_proxy_gateway_app(
     @app.post(f"/{CHAT_COMPLETIONS_PATHNAME}")
     async def chat_completions(request: Request):
         token = _extract_bearer_token(request)
+
+        # Admin key: round-robin to workers (self-distill mode)
+        if token and hmac.compare_digest(token, admin_api_key):
+            idx = rr_index[0] % len(proxy_addrs)
+            rr_index[0] += 1
+            worker_addr = proxy_addrs[idx]
+            body = await request.body()
+            headers = dict(request.headers)
+            logger.info(
+                "[chat/completions] Admin-key request → worker %s (round-robin)",
+                worker_addr,
+            )
+            return await _forward(
+                worker_addr,
+                CHAT_COMPLETIONS_PATHNAME,
+                body,
+                headers,
+            )
+
+        # Session key: normal session-routed forwarding
         route = routes.get(token) if token else None
         if route:
             logger.info(
