@@ -20,11 +20,11 @@
 | --------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
 | 操作系统        |                                                                Ubuntu、EulerOS 或满足以下要求的任何系统                                                                |
 | 昇腾 HDK        |                                                                                 25.2.1                                                                                 |
-| CANN            |                                                                                8.3.RC2                                                                                 |
+| CANN            |                                                                                 8.5.0                                                                                  |
 | Git LFS         | 下载模型、数据集和 AReaL 代码所需。请参阅[安装指南](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
 | Docker          |                                                                                 27.2.0                                                                                 |
-| AReaL 镜像 (A2) |                                                `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a2`（详见下文）                                                |
-| AReaL 镜像 (A3) |                                                `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a3`（详见下文）                                                |
+| AReaL 镜像 (A2) |                                                `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v1.0.1-a2`（详见下文）                                                |
+| AReaL 镜像 (A3) |                                                `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v1.0.1-a3`（详见下文）                                                |
 
 **注意**：本教程不涵盖 CANN 的安装或共享存储挂载，因为这些取决于您特定的节点配置和系统版本。请独立完成这些安装。您可以从 vLLM-Ascend
 社区查看更多详情[此页面](https://docs.vllm.ai/projects/ascend/en/latest/installation.html)。
@@ -40,8 +40,8 @@ WORK_DIR=<your_workspace>
 CONTAINER_WORK_DIR=<your_container_workspace>
 
 # 根据您的硬件类型使用 A2/A3 镜像
-# IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a2
-IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a3
+# IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v1.0.1-a2
+IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v1.0.1-a3
 CONTAINER_NAME=areal_npu
 
 cd ${WORK_DIR}
@@ -86,15 +86,19 @@ ${IMAGE}  \
 
 ### 自定义环境安装
 
+该镜像在 `/AReaL` 目录下包含一份内置的 AReaL 源代码副本，但该副本可能已过时。建议删除该目录，并从源码重新安装 AReaL。
+
 ```bash
+rm -rf /AReaL
+
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
 
 # 切换到 ascend 分支
-git checkout ascend
+git checkout ascend-v1.0.1
 
-# 使用 NPU 额外依赖安装 AReaL
-uv pip install -r pyproject.toml --extra all_npu
+# 安装 AReaL
+pip install -e . --no-deps
 ```
 
 ## （可选）启动 Ray 集群用于分布式训练
@@ -126,4 +130,5 @@ ray start --address $RAY_HEAD_IP
 
 按照那里的说明进行操作。如果要使用 Ray 运行多节点训练，请在启动任务之前确保您的 Ray 集群已按上述说明启动。
 
-**注意**：目前，昇腾 NPU 上仅支持 `fsdp` 训练引擎和 `vllm` 推理引擎（通过 vLLM-Ascend 插件）。
+**注意**：目前，昇腾 NPU 上仅支持 `fsdp` 训练引擎和 `vllm` 推理引擎（通过 vLLM-Ascend 插件）。`megatron` 引擎（通过
+[MindSpeed](https://gitcode.com/Ascend/MindSpeed)）目前仍处于实验阶段。
