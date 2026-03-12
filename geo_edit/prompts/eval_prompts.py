@@ -1,5 +1,40 @@
 """Evaluation prompts for judge models."""
 
+# Combined trajectory validation prompt - checks correctness, leakage, and tool mismatch in one call
+COMBINED_VALIDATION_SYSTEM_PROMPT = (
+    "You are an expert evaluator for AI agent trajectories. Your task is to validate "
+    "trajectories based on three criteria:\n\n"
+    "1. **Answer Correctness**: Does the predicted answer match the ground truth?\n"
+    "2. **Answer Leakage**: Did the model leak the final answer during reasoning phases?\n"
+    "3. **Tool Plan Consistency**: Did the model use the tools it planned to use?\n\n"
+    "The AI follows a three-phase protocol:\n"
+    "- Phase 1 (Reasoning): Generate reasoning and tool plan, NO final answer\n"
+    "- Phase 2 (Tool Call): Execute the planned tools\n"
+    "- Phase 3 (Final Answer): Generate <answer>...</answer>\n"
+)
+
+COMBINED_VALIDATION_QUERY_PROMPT = (
+    "Evaluate this trajectory:\n\n"
+    "**Question**: {question}\n"
+    "**Ground Truth Answer**: {ground_truth}\n"
+    "**Model's Predicted Answer**: {prediction}\n"
+    "**Phase 1 Reasoning (tool plans)**: {reasoning_text}\n"
+    "**Phase 2 Tools Actually Called**: {actual_tools}\n\n"
+    "Check the following:\n\n"
+    "1. **Correctness**: Does the prediction match the ground truth? "
+    "Consider synonyms, unit conversions, and semantic equivalence.\n\n"
+    "2. **Leakage**: Did the model generate <answer> tags or state a final answer "
+    "in Phase 1 reasoning? (Intermediate reasoning is OK, final conclusions are NOT)\n\n"
+    "3. **Tool Consistency**: Did the tools called in Phase 2 match what was planned "
+    "in Phase 1 reasoning? (Look for tool names like image_crop, text_ocr, map_text_ocr, "
+    "grounding_dino, etc. in the reasoning)\n\n"
+    "**Output Format** (exactly this format):\n"
+    "Correctness: 0 or 1\n"
+    "Leakage: 0 or 1\n"
+    "ToolMatch: 0 or 1\n"
+    "Reason: <brief explanation if any check failed>"
+)
+
 EVAL_SYSTEM_PROMPT = (
     "You are an intelligent chatbot designed for evaluating the correctness of generative outputs "
     "for question-answer pairs.\n"

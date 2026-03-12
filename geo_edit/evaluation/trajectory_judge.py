@@ -24,6 +24,8 @@ from geo_edit.prompts import (
     EVAL_SYSTEM_PROMPT,
     LEAKAGE_DETECTION_QUERY_PROMPT,
     LEAKAGE_DETECTION_SYSTEM_PROMPT,
+    COMBINED_VALIDATION_SYSTEM_PROMPT,
+    COMBINED_VALIDATION_QUERY_PROMPT,
 )
 from geo_edit.utils.text_utils import extract_response_text, parse_leakage_score, parse_score
 
@@ -42,7 +44,7 @@ KNOWN_TOOL_NAMES = [
     # Chart tools (Chart-R1)
     "chart_reasoning", "chart_data_extract", "chart_trend_analysis", "chart_text_ocr",
     # Map tools
-    "text_spotting",
+    "text_spotting", "map_text_ocr",
     # Document tools
     "seal_ocr",
 ]
@@ -220,6 +222,63 @@ class TrajectoryJudge:
         score = parse_leakage_score(response)
         has_leakage = score == "1"
         return has_leakage, response
+
+    def validate_trajectory(
+        self,
+        question: str,
+        ground_truth: str,
+        prediction: str,
+        reasoning_text: str,
+        actual_tools: set,
+    ) -> Tuple[bool, str]:
+        """Combined validation: correctness, leakage, and tool match in one API call.
+
+        Args:
+            question: The question being answered.
+            ground_truth: The ground truth answer.
+            prediction: The model's predicted answer.
+            reasoning_text: The model's Phase 1 reasoning text.
+            actual_tools: Set of tool names actually called in Phase 2.
+
+        Returns:
+            Tuple of (is_valid, reason).
+            is_valid is True if all checks pass.
+        """
+        prompt = COMBINED_VALIDATION_QUERY_PROMPT.format(
+            question=question,
+            ground_truth=ground_truth,
+            prediction=prediction,
+            reasoning_text=reasoning_text,
+            actual_tools=", ".join(actual_tools) if actual_tools else "none",
+        )
+        response = self._call_api(COMBINED_VALIDATION_SYSTEM_PROMPT, prompt)
+
+        # Parse response
+        correctness = "0"
+        leakage = "0"
+        tool_match = "0"
+        reason = ""
+
+        for line in response.split("\n"):
+            line = line.strip()
+            if line.lower().startswith("correctness:"):
+                correctness = "1" if "1" in line else "0"
+            elif line.lower().startswith("leakage:"):
+                leakage = "1" if "1" in line else "0"
+            elif line.lower().startswith("toolmatch:"):
+                tool_match = "1" if "1" in line else "0"
+            elif line.lower().startswith("reason:"):
+                reason = line.split(":", 1)[1].strip() if ":" in line else ""
+
+        # Check all conditions
+        if correctness != "1":
+            return False, f"wrong_answer (gt={ground_truth}, pred={prediction}) reason={reason}"
+        if leakage == "1":
+            return False, f"answer_leakage (reason={reason})"
+        if tool_match != "1":
+            return False, f"tool_mismatch (reason={reason})"
+
+        return True, "valid"
 
 
 def quick_leakage_check(thinking_text: str) -> Tuple[bool, str]:

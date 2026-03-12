@@ -23,6 +23,8 @@ from geo_edit.prompts.eval_prompts import (
     EVAL_QUERY_PROMPT,
     LEAKAGE_DETECTION_SYSTEM_PROMPT,
     LEAKAGE_DETECTION_QUERY_PROMPT,
+    COMBINED_VALIDATION_SYSTEM_PROMPT,
+    COMBINED_VALIDATION_QUERY_PROMPT,
 )
 from geo_edit.prompts.tool_agent_prompts import (
     get_tool_agent_prompt,
@@ -46,6 +48,8 @@ __all__ = [
     "EVAL_QUERY_PROMPT",
     "LEAKAGE_DETECTION_SYSTEM_PROMPT",
     "LEAKAGE_DETECTION_QUERY_PROMPT",
+    "COMBINED_VALIDATION_SYSTEM_PROMPT",
+    "COMBINED_VALIDATION_QUERY_PROMPT",
     # Tool agent prompts
     "get_tool_agent_prompt",
     "list_tool_agents",

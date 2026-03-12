@@ -35,7 +35,7 @@ from geo_edit.prompts.system_prompts import (
 )
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter
-from geo_edit.evaluation.trajectory_judge import TrajectoryJudge, check_tool_plan_mismatch
+from geo_edit.evaluation.trajectory_judge import TrajectoryJudge
 from geo_edit.utils.logger import setup_logger
 from geo_edit.utils.stats import save_global_meta_info
 from geo_edit.utils.text_utils import extract_response_text
@@ -111,34 +111,22 @@ def _validate_trajectory(
     question: str,
     ground_truth: str,
     prediction: str,
-    thinking_text: str,
-    trajectory: list,
+    reasoning_text: str,
+    actual_tools: set,
 ) -> Tuple[bool, str]:
-    """Validate if the trajectory is valid."""
+    """Validate trajectory using combined LLM check (single API call).
+
+    Checks correctness, leakage, and tool match in one call.
+    """
     assert _WORKER_JUDGE is not None, "Judge not initialized"
 
-    # 1. Check answer correctness
-    is_correct, _ = _WORKER_JUDGE.judge_correctness(question, ground_truth, prediction)
-    if not is_correct:
-        return False, f"wrong_answer (gt={ground_truth}, pred={prediction})"
-
-    # 2. Check answer leakage with AI detection (optional)
-    if not _WORKER_SKIP_LEAKAGE_CHECK:
-        has_leakage, reason = _WORKER_JUDGE.detect_leakage(
-            question=question,
-            ground_truth=ground_truth,
-            thinking_text=thinking_text,
-            use_ai=True,
-        )
-        if has_leakage:
-            return False, f"answer_leakage: {reason}"
-
-    # 3. Check tool plan mismatch (Phase 1 plan vs Phase 2 actual calls)
-    has_mismatch, reason = check_tool_plan_mismatch(trajectory)
-    if has_mismatch:
-        return False, f"tool_mismatch: {reason}"
-
-    return True, "valid"
+    return _WORKER_JUDGE.validate_trajectory(
+        question=question,
+        ground_truth=ground_truth,
+        prediction=prediction,
+        reasoning_text=reasoning_text,
+        actual_tools=actual_tools,
+    )
 
 
 # =============================================================================
@@ -205,6 +193,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     think_pattern = re.compile(r"<think>.*?Tool:\s*(\w+).*?</think>", re.DOTALL | re.IGNORECASE)
 
     all_thinking_text = []
+    all_actual_tools = set()
     total_attempts = 0
 
     # Iterate through rounds (each round adds one more tool call)
@@ -253,6 +242,10 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 logger.warning(f"[{task_id}] Round {current_round}: No tool calls generated")
                 break
 
+            # Collect actual tool names for validation
+            for tool_call in function_call_part_list:
+                all_actual_tools.add(tool_call.name.lower())
+
             task.update_observation_from_action(function_call_part_list)
 
         except Exception as e:
@@ -288,26 +281,19 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 meta_info = task.save_trajectory()
                 final_answer = meta_info.get("output_text", "")
 
-                # Load trajectory for validation
-                trajectory_path = os.path.join(task_save_dir, "trajectory.json")
-                trajectory = []
-                if os.path.exists(trajectory_path):
-                    with open(trajectory_path, "r", encoding="utf-8") as f:
-                        trajectory = json.load(f)
-
                 is_valid, reason = _validate_trajectory(
                     question=question,
                     ground_truth=ground_truth,
                     prediction=final_answer,
-                    thinking_text="\n".join(all_thinking_text),
-                    trajectory=trajectory,
+                    reasoning_text="\n".join(all_thinking_text),
+                    actual_tools=all_actual_tools,
                 )
 
                 if is_valid:
                     logger.info(f"[{task_id}] Valid trajectory found after {total_attempts} attempts")
                     return True, meta_info
 
-                logger.info(f"[{task_id}] Round {current_round} Attempt {attempt + 1} invalid: {reason}")
+                logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} invalid: {reason}")
 
                 # Restore state for retry (remove Phase 3 from contents)
                 task.contents = contents_before_phase3
