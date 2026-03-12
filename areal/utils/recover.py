@@ -295,7 +295,9 @@ class RecoverHandler:
             weight_format=weight_format,
             with_optim=with_optim,
             tokenizer=tokenizer,
-            processor=processor,
+            # DCP format only saves weights/optimizer, processor is not needed
+            # and skipping it avoids serializing a large object over RPC
+            processor=None if weight_format == "dcp" else processor,
             base_model_path=base_model_path,
         )
         engine.save(meta)

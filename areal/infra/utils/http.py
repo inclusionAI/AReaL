@@ -66,7 +66,17 @@ async def arequest_with_retry(
             async with ctx as response:
                 if verbose:
                     logger.info("http requests return")
-                response.raise_for_status()
+                if response.status >= 400:
+                    # Read response body before raising so error details aren't lost
+                    error_body = await response.text()
+                    logger.warning(
+                        "HTTP %d from %s%s: %s",
+                        response.status,
+                        addr,
+                        endpoint,
+                        error_body[:500],
+                    )
+                    response.raise_for_status()
                 ctype = response.content_type or ""
                 if ctype == "application/json":
                     res = await response.json()

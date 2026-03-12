@@ -985,13 +985,14 @@ class FSDPEngine(TrainEngine):
         name_params_iterator = self.model.named_parameters()
         if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
             for name, value in name_params_iterator:
-                new_name = name.replace("model.", "", 1)
-                if new_name.startswith("language_model."):
-                    new_name = new_name.replace(
-                        "language_model.", "language_model.model.", 1
-                    )
-                elif new_name.startswith("lm_head."):
-                    new_name = f"language_model.{new_name}"
+                # HF names: model.visual.*, model.language_model.*, lm_head.*
+                # Checkpoint/SGLang names: visual.*, model.*, lm_head.*
+                if name.startswith("model.language_model."):
+                    new_name = name.replace("model.language_model.", "model.", 1)
+                elif name.startswith("model."):
+                    new_name = name[len("model.") :]
+                else:
+                    new_name = name
                 yield new_name, value
         elif self.is_vision_model and is_gemma3_model(self.model_config.model_type):
             for name, value in name_params_iterator:
@@ -1307,10 +1308,29 @@ class FSDPEngine(TrainEngine):
         if is_qwen_vl_model(self.model_config.model_type):
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
+            batch_size = input_ids.shape[0]
             image_grid_thw = None
             video_grid_thw = None
             if "multi_modal_input" in input_:
                 multi_modal_input = input_["multi_modal_input"]
+
+                # Fix: multi_modal_input may have fewer entries than batch_size
+                # when n_samples > 1 (GRPO generates multiple responses per prompt).
+                # Each group of n_samples sequences shares the same image, so we
+                # repeat each entry to match batch_size.
+                mm_len = len(multi_modal_input)
+                if mm_len > 0 and mm_len < batch_size and batch_size % mm_len == 0:
+                    n_repeats = batch_size // mm_len
+                    self.logger.info(
+                        f"[VLM] Expanding multi_modal_input from {mm_len} to "
+                        f"{batch_size} entries (n_repeats={n_repeats})"
+                    )
+                    expanded = []
+                    for entry in multi_modal_input:
+                        expanded.extend([entry] * n_repeats)
+                    multi_modal_input = expanded
+                    input_["multi_modal_input"] = multi_modal_input
+
                 image_grid_thw_list = [
                     m["image_grid_thw"]
                     for m in multi_modal_input

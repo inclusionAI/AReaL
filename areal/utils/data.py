@@ -566,6 +566,18 @@ def split_padded_tensor_dict_into_mb_list(
     for key in multimodal_keys:
         multi_modal_input = data[key]
 
+        # Fix: expand multi_modal_input when it has fewer entries than batch_size.
+        # This happens when n_samples > 1 (GRPO) and multi_modal_input entries
+        # are deduplicated during RPC transport. Each group of n_samples sequences
+        # shares the same image, so repeating entries is safe.
+        mm_len = len(multi_modal_input)
+        if mm_len > 0 and mm_len < bs and bs % mm_len == 0:
+            n_repeats = bs // mm_len
+            expanded = []
+            for entry in multi_modal_input:
+                expanded.extend([entry] * n_repeats)
+            multi_modal_input = expanded
+
         # Prepare the pixel_values and image_grid_thw for each group
         multi_modal_input_split = []
 

@@ -968,7 +968,8 @@ class RolloutController:
 
         # Extract trajectories and concatenate
         trajectories = [r.trajectory if r is not None else None for r in results]
-        return concat_padded_tensors([t for t in trajectories if t is not None])
+        valid_trajs = [t for t in trajectories if t is not None]
+        return concat_padded_tensors(valid_trajs)
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.

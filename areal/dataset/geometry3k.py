@@ -1,4 +1,3 @@
-from io import BytesIO
 from typing import Any
 
 from datasets import load_dataset
@@ -34,9 +33,7 @@ def convert_image(
         image = preprocess(image)
     if image.mode != "RGB":
         image = image.convert("RGB")
-    with BytesIO() as output:
-        image.save(output, format="JPEG")
-        return output.getvalue()
+    return image
 
 
 def get_geometry3k_sft_dataset(

@@ -14,6 +14,7 @@ parts:
     - file: tutorial/eval
     - file: tutorial/megatron
     - file: tutorial/archon
+    - file: tutorial/vlm
     - file: cli_reference
   - caption: Code Walkthrough
     chapters:

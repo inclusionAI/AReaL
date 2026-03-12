@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 import numpy as np
 import torch
+from PIL.Image import Image as PILImage
 from pydantic import BaseModel, Field
 
 from areal.utils import logging
@@ -380,6 +381,59 @@ class SerializedTokenizer(BaseModel):
         raise ValueError(msg)
 
 
+class SerializedProcessor(BaseModel):
+    """Pydantic model for serialized Hugging Face processors (e.g., VLM processors).
+
+    Uses the same archive approach as SerializedTokenizer: save_pretrained to
+    a temp dir, zip it, base64-encode, and reconstruct via AutoProcessor.
+    """
+
+    type: Literal["processor"] = Field(default="processor")
+    name_or_path: str
+    data: str
+    compression: TokenizerCompression = Field(default="zip")
+
+    @classmethod
+    def from_processor(cls, processor: Any) -> "SerializedProcessor":
+        """Create a serialized representation from a Hugging Face processor."""
+        name_or_path = getattr(
+            processor, "name_or_path", processor.__class__.__name__
+        )
+        # Reuse the same archiving logic as tokenizers
+        blob = SerializedTokenizer._archive_tokenizer(processor)
+        blob, compression = SerializedTokenizer._maybe_compress(blob)
+        data_b64 = base64.b64encode(blob).decode("utf-8")
+        return cls(name_or_path=name_or_path, data=data_b64, compression=compression)
+
+    def to_processor(self) -> Any:
+        """Reconstruct a Hugging Face processor from serialized data."""
+        blob = base64.b64decode(self.data.encode("utf-8"))
+        if self.compression == "zstd":
+            import zstandard as zstd
+
+            blob = zstd.ZstdDecompressor().decompress(blob)
+
+        from transformers import AutoProcessor
+
+        zip_buffer = io.BytesIO(blob)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with zipfile.ZipFile(zip_buffer) as zf:
+                zf.extractall(tmpdir)
+            processor = AutoProcessor.from_pretrained(tmpdir)
+
+        if hasattr(processor, "name_or_path"):
+            processor.name_or_path = self.name_or_path
+        return processor
+
+    @staticmethod
+    def _is_processor(obj: Any) -> bool:
+        try:
+            from transformers import ProcessorMixin
+        except ImportError:
+            return False
+        return isinstance(obj, ProcessorMixin)
+
+
 def serialize_value(value: Any) -> Any:
     """Recursively serialize a value, converting tensors and dataclasses to serialized dicts.
 
@@ -432,6 +486,11 @@ def serialize_value(value: Any) -> Any:
         tokenizer_payload = SerializedTokenizer.from_tokenizer(value)
         return tokenizer_payload.model_dump()
 
+    # Handle HuggingFace processors (e.g., Qwen2_5_VLProcessor)
+    if SerializedProcessor._is_processor(value):
+        processor_payload = SerializedProcessor.from_processor(value)
+        return processor_payload.model_dump()
+
     # Handle dict - recursively serialize values
     if isinstance(value, dict):
         return {key: serialize_value(val) for key, val in value.items()}
@@ -443,6 +502,13 @@ def serialize_value(value: Any) -> Any:
     # Handle tuple - convert to list and recursively serialize
     if isinstance(value, tuple):
         return [serialize_value(item) for item in value]
+
+    # Handle PIL Image objects (used in VLM workflows)
+    if isinstance(value, PILImage):
+        buf = io.BytesIO()
+        value.save(buf, format="PNG")
+        data_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        return {"type": "pil_image", "data": data_b64}
 
     # `launch_server` returns a subprocess.Popen, skip it
     if isinstance(value, subprocess.Popen):
@@ -506,6 +572,24 @@ def deserialize_value(value: Any) -> Any:
                 logger.warning(
                     f"Failed to deserialize tokenizer, treating as regular dict: {e}"
                 )
+
+        # Check for SerializedProcessor marker
+        if value.get("type") == "processor":
+            try:
+                serialized_processor = SerializedProcessor.model_validate(value)
+                return serialized_processor.to_processor()
+            except Exception as e:
+                logger.warning(
+                    f"Failed to deserialize processor, treating as regular dict: {e}"
+                )
+
+        # Check for PIL Image marker
+        if value.get("type") == "pil_image":
+            from PIL import Image
+
+            data_b64 = value["data"]
+            buf = io.BytesIO(base64.b64decode(data_b64.encode("utf-8")))
+            return Image.open(buf).copy()
 
         # Check for SerializedNDArray marker
         if value.get("type") == "ndarray":
