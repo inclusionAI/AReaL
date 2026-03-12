@@ -21,6 +21,11 @@ from vllm.entrypoints.openai.protocol import (
     OpenAIBaseModel,
 )
 from vllm.entrypoints.utils import cli_env_setup, load_aware_call, with_cancellation
+
+from areal.engine.vllm_ext.lora_registry import (
+    apply_pending_lora_registry_update,
+    cache_pending_lora_registry_update,
+)
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 from vllm.v1.engine import EngineCoreOutput, EngineCoreOutputs, FinishReason
@@ -158,6 +163,11 @@ async def update_weight_lora_xccl(raw_request: Request):
     ret_list = await llm.engine_core.call_utility_async(
         "areal_injected_update_weight_lora_xccl",
     )
+    if all(success for success, _ in ret_list):
+        if apply_pending_lora_registry_update(raw_request.app.state):
+            logger.info(
+                "Updated OpenAIServingModels LoRA registry after XCCL LoRA refresh"
+            )
     return build_response(ret_list)
 
 
@@ -221,6 +231,13 @@ async def set_weight_meta_xccl_lora(
             request.base_model_name,
         ),
     )
+    if all(success for success, _ in ret_list):
+        cache_pending_lora_registry_update(
+            raw_request.app.state,
+            lora_name=request.lora_name,
+            lora_int_id=request.lora_int_id,
+            base_model_name=request.base_model_name,
+        )
     return build_response(ret_list)
 
 
