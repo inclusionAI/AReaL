@@ -34,7 +34,7 @@ from geo_edit.prompts.system_prompts import (
 )
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter
-from geo_edit.evaluation.trajectory_judge import TrajectoryJudge, quick_leakage_check
+from geo_edit.evaluation.trajectory_judge import TrajectoryJudge, check_tool_plan_mismatch
 from geo_edit.utils.logger import setup_logger
 from geo_edit.utils.stats import save_global_meta_info
 from geo_edit.utils.text_utils import extract_response_text
@@ -219,45 +219,23 @@ def _execute_single_attempt(
             step = i + 1
 
             # ===== Phase 1: Generate reasoning =====
-            # Use extended config for extra rounds (step > 1 when tool_rounds > 1)
-            if extended_reasoning_config is not None and step > 1:
+            # Step 1: normal reasoning; Step > 1 (Round 2+): extended reasoning with self-reflection
+            if step > 1:
                 agent.config.generate_config = extended_reasoning_config
-            elif step > 1:
-                agent.config.generate_config = phase_configs.multi_round_reasoning
             else:
                 agent.config.generate_config = phase_configs.reasoning_only
 
             reasoning_action, reasoning_extra = agent.act(task.contents)
+            logger.warning(reasoning_action)  # Display model's tool call plan
 
             # Extract reasoning text
             reasoning_text = extract_response_text(reasoning_action, api_mode)
 
             all_thinking_text.append(reasoning_text)
 
-            # Check for early answer in multi-round
-            if step > 1 and answer_pattern.search(reasoning_text):
-                answer_match = re.search(r"<answer>(.*?)</answer>", reasoning_text, re.DOTALL | re.IGNORECASE)
-                output_text = answer_match.group(1).strip() if answer_match else reasoning_text
-                think_match = re.search(r"<think>(.*?)</think>", reasoning_text, re.DOTALL | re.IGNORECASE)
-                thinking = think_match.group(1).strip() if think_match else ""
-
-                task.append_assistant_message(reasoning_text)
-                contents_for_save = [task._stringify_observation_item(item) for item in (task.contents if isinstance(task.contents, list) else task.contents.get("input", []))]
-                task._record_conversation_history(
-                    step=step,
-                    contents_for_save=contents_for_save,
-                    action_record={"text": output_text, "tool_calls": []},
-                    thinking_process=thinking,
-                    output_text=output_text,
-                    tool_calls=[],
-                    extra_info=reasoning_extra,
-                )
-                meta_info = task.save_trajectory()
-                return True, meta_info, output_text, "\n".join(all_thinking_text), None
-
-            # Validate format for step 1
-            if step == 1 and answer_pattern.search(reasoning_text):
-                raise ValueError("First round should not generate <answer>")
+            # Validate format (both reasoning_only and extended_reasoning forbid <answer>)
+            if answer_pattern.search(reasoning_text):
+                raise ValueError("Reasoning phase should not generate <answer>")
 
             if not think_pattern.search(reasoning_text):
                 raise ValueError(f"Invalid format - missing <think>Tool: ...</think>")
@@ -320,6 +298,7 @@ def _validate_trajectory(
     ground_truth: str,
     prediction: str,
     thinking_text: str,
+    trajectory: list,
 ) -> Tuple[bool, str]:
     """Validate if the trajectory is valid.
 
@@ -328,20 +307,33 @@ def _validate_trajectory(
         ground_truth: Ground truth answer.
         prediction: Model's prediction.
         thinking_text: Combined thinking text from Phase 1&2.
+        trajectory: Conversation history for tool plan mismatch check.
 
     Returns:
         (is_valid, reason)
     """
+    assert _WORKER_JUDGE is not None, "Judge not initialized"
+
     # 1. Check answer correctness
     is_correct, _ = _WORKER_JUDGE.judge_correctness(question, ground_truth, prediction)
     if not is_correct:
         return False, "wrong_answer"
 
-    # 2. Check answer leakage (optional)
+    # 2. Check answer leakage with AI detection (optional)
     if not _WORKER_SKIP_LEAKAGE_CHECK:
-        has_leakage, _ = quick_leakage_check(thinking_text)
+        has_leakage, reason = _WORKER_JUDGE.detect_leakage(
+            question=question,
+            ground_truth=ground_truth,
+            thinking_text=thinking_text,
+            use_ai=True,  # Use AI for subtle leakage detection
+        )
         if has_leakage:
-            return False, "answer_leakage"
+            return False, f"answer_leakage: {reason}"
+
+    # 3. Check tool plan mismatch (Phase 1 plan vs Phase 2 actual calls)
+    has_mismatch, reason = check_tool_plan_mismatch(trajectory)
+    if has_mismatch:
+        return False, f"tool_mismatch: {reason}"
 
     return True, "valid"
 
@@ -385,9 +377,17 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             previous_round_state is not None
         )
 
-        # Clean up previous attempt's files
+        # Clean up previous attempt's files (preserve input_image.png)
         if state.total_attempts > 0 and os.path.exists(task_save_dir):
-            shutil.rmtree(task_save_dir, ignore_errors=True)
+            for item in os.listdir(task_save_dir):
+                item_path = os.path.join(task_save_dir, item)
+                # Preserve input_image.png
+                if item == "input_image.png":
+                    continue
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path, ignore_errors=True)
+                else:
+                    os.remove(item_path)
         os.makedirs(task_save_dir, exist_ok=True)
 
         # Select reasoning config
@@ -426,12 +426,20 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     break
             continue
 
+        # Load trajectory for validation
+        trajectory_path = os.path.join(task_save_dir, "trajectory.json")
+        trajectory = []
+        if os.path.exists(trajectory_path):
+            with open(trajectory_path, "r", encoding="utf-8") as f:
+                trajectory = json.load(f)
+
         # Validate trajectory
         is_valid, reason = _validate_trajectory(
             question=question,
             ground_truth=ground_truth,
             prediction=final_answer,
             thinking_text=thinking_text,
+            trajectory=trajectory,
         )
 
         if is_valid:
@@ -458,7 +466,16 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 break
 
     logger.warning(f"[{task_id}] Max attempts reached without valid trajectory")
-    shutil.rmtree(task_save_dir, ignore_errors=True)
+    # Clean up task_save_dir contents but preserve input_image.png
+    if os.path.exists(task_save_dir):
+        for item in os.listdir(task_save_dir):
+            item_path = os.path.join(task_save_dir, item)
+            if item == "input_image.png":
+                continue
+            if os.path.isdir(item_path):
+                shutil.rmtree(item_path, ignore_errors=True)
+            else:
+                os.remove(item_path)
     return False, None
 
 
@@ -623,6 +640,7 @@ def main():
                 payload = {
                     "id": task_id,
                     "traj_id": traj_id,
+                    "task_base_dir": task_base_dir,
                     "task_save_dir": traj_save_dir,
                     "prompt": dataset_spec.build_prompt(item, True, separated=True),
                     "answer": dataset_spec.get_answer(item),
