@@ -558,9 +558,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        # Check batch size (first dimension of input_ids tensor)
-        assert len(batch) > 0
-        assert batch[0]["input_ids"].shape[0] == 4
+        # Check that all trajectories are returned (each as a separate dict)
+        assert len(batch) == 4
 
         controller.destroy()
 
@@ -583,9 +582,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        # Check batch size (first dimension of input_ids tensor)
-        assert len(batch) > 0
-        assert batch[0]["input_ids"].shape[0] == 10
+        # Check that all trajectories are returned (each as a separate dict)
+        assert len(batch) == 10
 
         controller.destroy()
 
