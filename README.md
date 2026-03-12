@@ -142,6 +142,7 @@ For comprehensive setup instructions, see
 | **[Tool-Integrated Reasoning](examples/tir/)**           | Multi-turn tool calling during reasoning (Python executor, calculator) | [Training Curve](examples/tir/figures/task_reward.png)                       |
 | **[OpenAI Agents Integration](examples/openai_agents/)** | Integration with OpenAI Agents SDK for agentic workflows               | -                                                                            |
 | **[CAMEL-AI Integration](examples/camel/)**              | Integration with CAMEL-AI framework for agentic RL                     | -                                                                            |
+| **[MiniMax Integration](examples/agent_workflow/)**      | Integration with MiniMax via OpenAI-compatible API                     | -                                                                            |
 
 ### Vision-Language Models
 

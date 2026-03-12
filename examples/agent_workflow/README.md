@@ -59,3 +59,23 @@ See `areal/workflow/openai/` for concrete examples.
    (i.e., setting `rollout.openai.mode=subproc`) to run the agent. While this provides
    more flexibility for writing the agent, using a subprocess will introduce even larger
    overhead.
+
+## Using MiniMax
+
+To use [MiniMax](https://www.minimax.io/) models (MiniMax-M2.5, MiniMax-M2.5-highspeed)
+with the agent workflow:
+
+```bash
+export MINIMAX_API_KEY="your-minimax-api-key"
+
+python3 examples/agent_workflow/train.py \
+    --config examples/agent_workflow/config_minimax.yaml \
+    scheduler.type=local
+```
+
+MiniMax provides an OpenAI-compatible API, so no additional dependencies are required.
+The workflow uses `AsyncOpenAI` with MiniMax's base URL (`https://api.minimax.io/v1`).
+For China mainland users, set `MINIMAX_BASE_URL=https://api.minimaxi.com/v1`.
+
+See [`areal/workflow/minimax/math_agent.py`](../../areal/workflow/minimax/math_agent.py)
+for the implementation.
