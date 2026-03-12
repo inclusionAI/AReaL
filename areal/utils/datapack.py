@@ -383,7 +383,7 @@ def split_and_unpad_tensor(
                     split_result[i][key] = s
             else:
                 for i in range(n_trajs):
-                    split_result[i][key] = copy.copy(value)
+                    split_result[i][key] = copy.deepcopy(value)
         return split_result
     return result
 
