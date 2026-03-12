@@ -150,8 +150,11 @@ async def update_weight_xccl(raw_request: Request):
     )
     return build_response(ret_list)
 
+
 @router.post("/areal_update_weights_lora_xccl")
-async def update_weight_lora_xccl(request: UpdateWeightsFromXcclRequest, raw_request: Request):
+async def update_weight_lora_xccl(
+    request: UpdateWeightsFromXcclRequest, raw_request: Request
+):
     logger.info("API server starts update_weight_lora via XCCL")
     models_obj = raw_request.app.state.openai_serving_models
     new_name = request.lora_name
