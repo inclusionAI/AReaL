@@ -463,6 +463,7 @@ class GatewayRolloutController:
             data=data,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
             group_size=group_size,
         )
 

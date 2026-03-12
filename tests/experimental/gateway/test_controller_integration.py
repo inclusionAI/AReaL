@@ -425,6 +425,51 @@ class TestControllerRolloutBatch:
         assert isinstance(result[0], dict)
         assert len(result[0]) > 0
 
+    def test_rollout_batch_with_should_accept_fn_rejects(self, gateway_controller):
+        """rollout_batch with a rejecting should_accept_fn returns empty list."""
+
+        def reject_all(trajectory: dict) -> bool:
+            return False
+
+        data = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            }
+        ]
+
+        result = gateway_controller.rollout_batch(
+            data=data,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+            should_accept_fn=reject_all,
+        )
+
+        # All trajectories should be rejected, so the list is empty
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_rollout_batch_with_should_accept_fn_accepts(self, gateway_controller):
+        """rollout_batch with an accepting should_accept_fn returns results."""
+
+        def accept_all(trajectory: dict) -> bool:
+            return True
+
+        data = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            }
+        ]
+
+        result = gateway_controller.rollout_batch(
+            data=data,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+            should_accept_fn=accept_all,
+        )
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert isinstance(result[0], dict)
 
 # =============================================================================
 # TestControllerSubmitWait

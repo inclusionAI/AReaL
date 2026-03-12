@@ -497,6 +497,7 @@ class GatewayInfEngine:
         data: list[dict[str, Any]],
         workflow,
         workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         proxy_addr: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -509,9 +510,15 @@ class GatewayInfEngine:
             proxy_addr=proxy_addr,
             engine=self,
         )
-        return self.workflow_executor.rollout_batch(
-            data=data, workflow=resolved_workflow
-        )
+        resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
+        for item in data:
+            self.workflow_executor.submit(
+                data=item,
+                workflow=resolved_workflow,
+                should_accept_fn=resolved_accept_fn,
+            )
+        results = self.workflow_executor.wait(count=len(data))
+        return [r for r in results if r is not None]
 
     def prepare_batch(
         self,
