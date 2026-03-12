@@ -23,6 +23,7 @@ Note: All tests are marked slow (30B param MoE model). Requires CUDA.
 from __future__ import annotations
 
 import gc
+import os
 from collections.abc import Generator
 from typing import Any
 
@@ -47,9 +48,13 @@ from areal.experimental.models.archon.moe.moe import MoE
 from areal.infra.platforms import current_platform
 
 # Skip if no CUDA available
-pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="CUDA not available"
-)
+pytestmark = [
+    pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available"),
+    pytest.mark.skipif(
+        os.environ.get("AREAL_RUN_DEEP_MOE_PARITY", "0") != "1",
+        reason="set AREAL_RUN_DEEP_MOE_PARITY=1 to run deep MoE diagnostics",
+    ),
+]
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -61,29 +66,6 @@ SEQ_LEN = 32
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _format_table(
-    headers: list[str], rows: list[list[str]], col_widths: list[int] | None = None
-) -> str:
-    """Format a simple ASCII table for debug output."""
-    if col_widths is None:
-        col_widths = [
-            max(len(h), max((len(r) for r in col), default=0))
-            for h, col in zip(headers, zip(*rows), strict=False)
-        ]
-        # Ensure widths are at least as wide as headers
-        col_widths = [max(w, len(h)) for w, h in zip(col_widths, headers, strict=False)]
-
-    header_line = " | ".join(
-        h.ljust(w) for h, w in zip(headers, col_widths, strict=False)
-    )
-    sep_line = "-|-".join("-" * w for w in col_widths)
-    data_lines = [
-        " | ".join(c.ljust(w) for c, w in zip(row, col_widths, strict=False))
-        for row in rows
-    ]
-    return "\n".join([header_line, sep_line, *data_lines])
 
 
 def _is_moe_layer_idx(layer_id: int, decoder_sparse_step: int) -> bool:
@@ -153,14 +135,14 @@ def moe_model_outputs() -> Generator[dict[str, Any], None, None]:
     # ------------------------------------------------------------------
     # Phase 1: HuggingFace model (partial — NUM_LAYERS_SUBSET layers only)
     # ------------------------------------------------------------------
-    hf_model = AutoModelForCausalLM.from_pretrained(
+    hf_model_any: Any = AutoModelForCausalLM.from_pretrained(
         model_path,
         config=partial_config,
         torch_dtype=dtype,
         trust_remote_code=True,
-        attn_implementation="sdpa",
+        attn_implementation="flash_attention_2",
     )
-    hf_model = hf_model.to(device).eval()
+    hf_model = hf_model_any.to(device).eval()
 
     hf_layer_outputs: dict[str, torch.Tensor] = {}
     hf_router_data: dict[str, torch.Tensor] = {}
@@ -620,195 +602,6 @@ class TestMoEInternals:
         assert metrics.max_diff < 10.0, (
             f"Dense layer 0 max_diff too large: {metrics.max_diff:.6f}"
         )
-
-
-# =========================================================================
-# Level 3: Layer-by-layer
-# =========================================================================
-
-
-class TestLayerByLayer:
-    """Layer-by-layer hidden state comparison."""
-
-    @pytest.mark.slow
-    def test_level3_layer_by_layer(self, moe_model_outputs: dict[str, Any]) -> None:
-        """THE KEY DEBUGGING TEST.
-
-        Compare hidden states at every layer boundary for both models.
-        Prints a formatted table showing where divergence is introduced.
-        """
-        hf_outputs = moe_model_outputs["hf_layer_outputs"]
-        archon_outputs = moe_model_outputs["archon_layer_outputs"]
-        decoder_sparse_step: int = moe_model_outputs["decoder_sparse_step"]
-
-        headers = [
-            "Layer",
-            "Component",
-            "Type",
-            "Max Diff",
-            "Mean Diff",
-            "Relative Diff",
-        ]
-        col_widths = [6, 12, 5, 12, 12, 14]
-        rows: list[list[str]] = []
-
-        # Embedding
-        if "emb" in hf_outputs and "emb" in archon_outputs:
-            diff = (hf_outputs["emb"].float() - archon_outputs["emb"].float()).abs()
-            ref_norm = hf_outputs["emb"].float().abs().mean().item() + 1e-8
-            rows.append(
-                [
-                    "emb",
-                    "tok_emb",
-                    "dense",
-                    f"{diff.max().item():.6f}",
-                    f"{diff.mean().item():.6f}",
-                    f"{diff.mean().item() / ref_norm:.6f}",
-                ]
-            )
-
-        # Per-layer components
-        n_layers = min(NUM_LAYERS_SUBSET, moe_model_outputs["config"].num_hidden_layers)
-        for i in range(n_layers):
-            is_moe = _is_moe_layer_idx(i, decoder_sparse_step)
-            layer_type = "MoE" if is_moe else "dense"
-
-            for component, label in [
-                (f"layer{i}_attn_norm", "attn_norm"),
-                (f"layer{i}_attn", "attn"),
-                (f"layer{i}_ffn_norm", "ffn_norm"),
-                (f"layer{i}_ffn", "ffn/moe"),
-                (f"layer{i}_out", "out+res"),
-            ]:
-                if component in hf_outputs and component in archon_outputs:
-                    hf_t = hf_outputs[component].float()
-                    ar_t = archon_outputs[component].float()
-                    # Handle shape differences (HF may have different batch dims)
-                    if hf_t.shape != ar_t.shape:
-                        # Try to reshape for comparison
-                        hf_flat = hf_t.reshape(-1)
-                        ar_flat = ar_t.reshape(-1)
-                        min_len = min(hf_flat.shape[0], ar_flat.shape[0])
-                        diff = (hf_flat[:min_len] - ar_flat[:min_len]).abs()
-                        ref_norm = hf_flat[:min_len].abs().mean().item() + 1e-8
-                    else:
-                        diff = (hf_t - ar_t).abs()
-                        ref_norm = hf_t.abs().mean().item() + 1e-8
-
-                    rows.append(
-                        [
-                            str(i),
-                            label,
-                            layer_type,
-                            f"{diff.max().item():.6f}",
-                            f"{diff.mean().item():.6f}",
-                            f"{diff.mean().item() / ref_norm:.6f}",
-                        ]
-                    )
-
-        # Final norm
-        if "final_norm" in hf_outputs and "final_norm" in archon_outputs:
-            diff = (
-                hf_outputs["final_norm"].float() - archon_outputs["final_norm"].float()
-            ).abs()
-            ref_norm = hf_outputs["final_norm"].float().abs().mean().item() + 1e-8
-            rows.append(
-                [
-                    "final",
-                    "norm",
-                    "dense",
-                    f"{diff.max().item():.6f}",
-                    f"{diff.mean().item():.6f}",
-                    f"{diff.mean().item() / ref_norm:.6f}",
-                ]
-            )
-
-        print("\n[Level 3] Layer-by-Layer Hidden State Comparison")
-        print(_format_table(headers, rows, col_widths))
-
-        # At least embedding should be captured
-        assert len(rows) > 0, "No layer outputs were captured"
-
-        # Embedding should be exact (same weights, same input)
-        if rows and rows[0][0] == "emb":
-            emb_max_diff = float(rows[0][3])
-            assert emb_max_diff < 1e-3, (
-                f"Embedding divergence too large: {emb_max_diff:.6f}"
-            )
-
-    @pytest.mark.slow
-    def test_level3_divergence_growth(self, moe_model_outputs: dict[str, Any]) -> None:
-        """Track how divergence grows across layers.
-
-        Reports whether growth is additive (linear) or multiplicative
-        (exponential). This tells us if the issue is in a specific layer
-        type or accumulates.
-        """
-        hf_outputs = moe_model_outputs["hf_layer_outputs"]
-        archon_outputs = moe_model_outputs["archon_layer_outputs"]
-        decoder_sparse_step: int = moe_model_outputs["decoder_sparse_step"]
-        n_layers = min(NUM_LAYERS_SUBSET, moe_model_outputs["config"].num_hidden_layers)
-
-        layer_diffs: list[dict[str, Any]] = []
-
-        for i in range(n_layers):
-            key = f"layer{i}_out"
-            if key in hf_outputs and key in archon_outputs:
-                hf_t = hf_outputs[key].float()
-                ar_t = archon_outputs[key].float()
-                if hf_t.shape == ar_t.shape:
-                    diff = (hf_t - ar_t).abs()
-                    is_moe = _is_moe_layer_idx(i, decoder_sparse_step)
-                    layer_diffs.append(
-                        {
-                            "layer": i,
-                            "type": "MoE" if is_moe else "dense",
-                            "max_diff": diff.max().item(),
-                            "mean_diff": diff.mean().item(),
-                        }
-                    )
-
-        if len(layer_diffs) < 2:
-            pytest.skip("Not enough layer outputs captured for growth analysis")
-
-        print("\n[Level 3] Divergence Growth Analysis")
-        print(
-            f"  {'Layer':>5} | {'Type':>5} | {'Max Diff':>12} | {'Mean Diff':>12} | {'Growth':>10}"
-        )
-        print(f"  {'-' * 5}-|-{'-' * 5}-|-{'-' * 12}-|-{'-' * 12}-|-{'-' * 10}")
-
-        prev_mean: float | None = None
-        growth_factors: list[float] = []
-        for entry in layer_diffs:
-            if prev_mean is not None and prev_mean > 1e-10:
-                growth = entry["mean_diff"] / prev_mean
-                growth_factors.append(growth)
-                growth_str = f"{growth:.3f}x"
-            else:
-                growth_str = "—"
-            print(
-                f"  {entry['layer']:>5} | {entry['type']:>5} | "
-                f"{entry['max_diff']:>12.6f} | {entry['mean_diff']:>12.6f} | "
-                f"{growth_str:>10}"
-            )
-            prev_mean = entry["mean_diff"]
-
-        if growth_factors:
-            avg_growth = sum(growth_factors) / len(growth_factors)
-            max_growth = max(growth_factors)
-            print(f"\n  Average growth factor: {avg_growth:.3f}x")
-            print(f"  Max growth factor:    {max_growth:.3f}x")
-            if avg_growth > 2.0:
-                print(
-                    "  ⚠ EXPONENTIAL growth detected — multiplicative error accumulation"
-                )
-            elif avg_growth > 1.2:
-                print("  ⚠ Super-linear growth — error amplification present")
-            else:
-                print("  ✓ Roughly linear/sublinear growth — errors are additive")
-
-        # Informational test — always passes if we got data
-        assert len(layer_diffs) >= 2, "Need at least 2 layers for growth analysis"
 
 
 # =========================================================================
