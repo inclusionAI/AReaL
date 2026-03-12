@@ -1751,6 +1751,14 @@ class InferenceEngineConfig:
             "help": "Return routed expert indices for MoE models. Effective only when using SGLang engine with MoE models."
         },
     )
+    use_gateway: bool = field(
+        default=False,
+        metadata={
+            "help": "Use GatewayRolloutController instead of the default RolloutController. "
+            "Routes all rollout traffic through the gateway HTTP stack "
+            "(Gateway → Router → Data Proxy → SGLang)."
+        },
+    )
 
     def __post_init__(self):
         """Validate scheduling_spec length."""
