@@ -489,8 +489,9 @@ class _FakeDataLoader:
         self.batch_size = batch_size
 
     def __iter__(self):
-        # Yield items one at a time (each 'batch' is a single dict)
-        yield from self._items
+        # Yield a single batch containing all items, matching StatefulDataLoader
+        # semantics where each iteration yields a batch (list of dicts).
+        yield self._items
 
 
 @pytest.mark.slow
