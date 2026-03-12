@@ -406,6 +406,13 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         else:
             self.contents.append({"role": "user", "content": [{"type": "text", "text": prompt}]})
 
+    def append_system_prompt(self, prompt: str) -> None:
+        """Append a system message to contents."""
+        if self.api_mode == "responses":
+            self.contents["input"].append({"role": "system", "content": [{"type": "input_text", "text": prompt}]})
+        else:
+            self.contents.append({"role": "system", "content": prompt})
+
     def append_assistant_message(self, text: str) -> None:
         """Append an assistant message to contents."""
         if self.api_mode == "responses":

@@ -161,6 +161,14 @@ class GoogleVisionQATask(VisionQATask):
     def append_prompt(self, prompt: str) -> None:
         self.contents.append(prompt)
 
+    def append_system_prompt(self, prompt: str) -> None:
+        """Append a system instruction to contents."""
+        from google.genai import types
+        # For Google API, system instructions are typically in config, but we can add as user message with special formatting
+        self.contents.append(
+            types.Content(role="user", parts=[types.Part.from_text(text=f"[SYSTEM INSTRUCTION]\n{prompt}")])
+        )
+
     def append_assistant_message(self, text: str) -> None:
         """Append an assistant message to contents."""
         from google.genai import types
