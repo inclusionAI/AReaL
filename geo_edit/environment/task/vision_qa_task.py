@@ -356,7 +356,7 @@ class VisionQATask(AbstractVLMTask):
                 function_call_per_step.append(function_names)
             else:
                 function_call_per_step.append(None)
-            extra_info = record["extra_info"]
+            extra_info = record.get("extra_info", {})
             tokens_used = extra_info.get("tokens_used")
             tokens_input = extra_info.get("tokens_input")
             tokens_output = extra_info.get("tokens_output")
@@ -422,17 +422,14 @@ class VisionQATask(AbstractVLMTask):
 
         last_step_index = len(self.conversation_history) - 1
         for idx, record in enumerate(self.conversation_history):
-            observation = record["observation"]
+            observation = record.get("observation")
             extra_info_list.append(
                 {
                     "step": record["step"],
-                    "extra_info": record.pop("extra_info"),
+                    "extra_info": record.get("extra_info", {}),
                     "observation": observation,
                 }
             )
-            if idx != last_step_index:
-                if "observation" in record:
-                    record.pop("observation")
 
         with open(self.extra_info_jsonl_path, "w", encoding="utf-8") as f:
             for record in extra_info_list:
