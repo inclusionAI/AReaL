@@ -50,6 +50,10 @@ class MoEArgs:
     num_shared_experts: int = 0
     top_k: int = 1
 
+    # Shared expert configuration
+    shared_expert_intermediate_size: int = 0
+    use_shared_expert_gate: bool = False
+
     # Router configuration
     score_func: Literal["softmax", "sigmoid"] = "sigmoid"
     route_norm: bool = False
