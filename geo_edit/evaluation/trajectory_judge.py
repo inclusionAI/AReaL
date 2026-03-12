@@ -25,7 +25,7 @@ from geo_edit.prompts import (
     LEAKAGE_DETECTION_QUERY_PROMPT,
     LEAKAGE_DETECTION_SYSTEM_PROMPT,
 )
-from geo_edit.utils.text_utils import parse_leakage_score, parse_score
+from geo_edit.utils.text_utils import extract_response_text, parse_leakage_score, parse_score
 
 # Pattern to detect <answer> tags (case insensitive)
 ANSWER_TAG_PATTERN = re.compile(r"<answer>", re.IGNORECASE)
@@ -143,7 +143,7 @@ class TrajectoryJudge:
                     {"role": "user", "content": user_prompt},
                 ],
             )
-            return resp.choices[0].message.content if resp.choices else ""
+            return extract_response_text(resp, "chat_completions")
         else:
             resp = self.client.responses.create(
                 model=self.model,

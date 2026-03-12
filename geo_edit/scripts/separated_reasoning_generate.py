@@ -13,7 +13,6 @@ import multiprocessing as mp
 import os
 import re
 import shutil
-import signal
 import sys
 import time
 from io import BytesIO
@@ -22,49 +21,20 @@ from datasets import load_dataset
 from PIL import Image
 from tqdm import tqdm
 
-from geo_edit.agents.api_agent import AgentConfig, APIBasedAgent
-from geo_edit.config import (
-    build_google_agent_configs,
-    build_api_agent_configs,
-    derive_google_config,
-    derive_api_config,
-)
 from geo_edit.constants import MAX_TOOL_CALLS
-from geo_edit.prompts import get_system_prompt
-from geo_edit.prompts.system_prompts import (
-    SIMPLIFIED_TOOL_SELECTION_PROMPT,
-    SEPARATED_TOOL_CALL_ONLY_PROMPT,
-    SEPARATED_FINAL_ANSWER_PROMPT,
-    SEPARATED_USER_PROMPT,
-    MULTI_ROUND_TOOL_SELECTION_PROMPT,
-)
-
+from geo_edit.prompts.system_prompts import SEPARATED_USER_PROMPT
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter
-from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
-from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.utils.logger import setup_logger
 from geo_edit.utils.stats import save_global_meta_info
+from geo_edit.utils.text_utils import extract_response_text
+from geo_edit.utils.worker_utils import init_worker_base, WorkerContext
 
 logger = setup_logger(__name__)
 
 # Worker globals (one per process)
-_WORKER_AGENT: "APIBasedAgent | None" = None
-_WORKER_AGENT_CONFIGS = None
-_WORKER_OUTPUT_PATH: "str | None" = None
+_WORKER_CTX: "WorkerContext | None" = None
 _WORKER_MAX_TOOL_CALLS: "int | None" = None
-_WORKER_TASK_CLASS = None
-_WORKER_API_MODE: "str | None" = None
-_WORKER_TOOL_ROUTER: "ToolRouter | None" = None
-_WORKER_REASONING_ONLY_CONFIG = None
-_WORKER_MULTI_ROUND_REASONING_CONFIG = None
-_WORKER_TOOL_CALL_ONLY_CONFIG = None
-_WORKER_FINAL_ANSWER_CONFIG = None
-
-
-def _worker_init_signal_handler():
-    """Ignore SIGINT in worker processes - let main process handle it."""
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
 def _init_worker(
@@ -84,96 +54,19 @@ def _init_worker(
     Ray tool agents are shared across all workers (initialized in main process).
     Workers connect to existing Ray actors by name.
     """
-    # Ignore SIGINT in workers - main process handles interrupts
-    _worker_init_signal_handler()
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS
-    global _WORKER_TASK_CLASS, _WORKER_API_MODE
-    global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_MULTI_ROUND_REASONING_CONFIG
-    global _WORKER_TOOL_CALL_ONLY_CONFIG, _WORKER_FINAL_ANSWER_CONFIG
+    global _WORKER_CTX, _WORKER_MAX_TOOL_CALLS
 
-    # Create ToolRouter WITHOUT initializing Ray actors
-    # Pass enable_tools to override config.yaml (same as main process)
-    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force", enable_tools=enable_tools, skip_agent_init=True)
-
-    # Connect to existing Ray actors created in main process
-    if enabled_agent_names:
-        from geo_edit.environment.tool_agents import get_manager
-        manager = get_manager()
-        # Get agent configs to pass to connect_to_existing_agents
-        agent_configs = _WORKER_TOOL_ROUTER.get_enabled_agent_configs()
-        manager.connect_to_existing_agents(enabled_agent_names, configs=agent_configs)
-        logger.info(f"Worker (PID: {os.getpid()}) connected to {len(enabled_agent_names)} Ray actors: {enabled_agent_names}")
-
-    if model_type == "Google" and not api_key:
-        raise ValueError("API key must be provided for Google models.")
-
-    system_prompt = get_system_prompt(model_type, "force")
-
-    # Determine api_mode: Google API or matrixllm (chat_completions)
-    if model_type == "Google":
-        _WORKER_API_MODE = "google"
-        agent_configs = build_google_agent_configs(
-            _WORKER_TOOL_ROUTER,
-            thinking_level="low",
-            include_thoughts=True,
-            temperature=1.0,
-            system_prompt=system_prompt,
-        )
-        _WORKER_TASK_CLASS = GoogleVisionQATask
-        base = agent_configs.generate_config
-        _WORKER_REASONING_ONLY_CONFIG = derive_google_config(
-            base, system_prompt=SIMPLIFIED_TOOL_SELECTION_PROMPT, tool_mode="NONE"
-        )
-        _WORKER_MULTI_ROUND_REASONING_CONFIG = derive_google_config(
-            base, system_prompt=MULTI_ROUND_TOOL_SELECTION_PROMPT, tool_mode="NONE"
-        )
-        _WORKER_TOOL_CALL_ONLY_CONFIG = derive_google_config(
-            base, system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
-        )
-        _WORKER_FINAL_ANSWER_CONFIG = derive_google_config(
-            base, system_prompt=SEPARATED_FINAL_ANSWER_PROMPT, tool_mode="NONE"
-        )
-    else:
-        # SGLang/OpenAI via matrixllm uses chat_completions
-        _WORKER_API_MODE = "chat_completions"
-        agent_configs = build_api_agent_configs(
-            _WORKER_TOOL_ROUTER,
-            api_mode="chat_completions",
-            temperature=1.0,
-            reasoning_level="low",
-            system_prompt=system_prompt,
-        )
-        _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
-        base = agent_configs.generate_config
-        _WORKER_REASONING_ONLY_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=SIMPLIFIED_TOOL_SELECTION_PROMPT, tool_choice="none"
-        )
-        _WORKER_MULTI_ROUND_REASONING_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=MULTI_ROUND_TOOL_SELECTION_PROMPT, tool_choice="none"
-        )
-        _WORKER_TOOL_CALL_ONLY_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
-        )
-        _WORKER_FINAL_ANSWER_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=SEPARATED_FINAL_ANSWER_PROMPT, tool_choice="none"
-        )
-
-    config = AgentConfig(
-        model_type=model_type,
-        model_name=model_name_or_path,
+    _WORKER_CTX = init_worker_base(
         api_key=api_key,
+        model_name_or_path=model_name_or_path,
+        model_type=model_type,
         api_base=api_base,
         port=port,
-        generate_config=agent_configs.generate_config,
-        n_retry=3,
-        api_mode=_WORKER_API_MODE,
+        output_path=output_path,
+        enabled_agent_names=enabled_agent_names,
+        enable_tools=enable_tools,
     )
-    _WORKER_AGENT_CONFIGS = agent_configs
-    _WORKER_AGENT = APIBasedAgent(config)
-    _WORKER_OUTPUT_PATH = output_path
     _WORKER_MAX_TOOL_CALLS = max_tool_calls
-
-    logger.info(f"Worker initialized with {model_type} agent (PID: {os.getpid()})")
 
 
 def _run_one_task(task_payload: dict):
@@ -183,13 +76,13 @@ def _run_one_task(task_payload: dict):
     Phase 2: Generate tool call (no additional reasoning)
     Phase 3: Generate final answer (no tool execution)
     """
-    assert _WORKER_AGENT is not None
-    assert _WORKER_AGENT_CONFIGS is not None
+    assert _WORKER_CTX is not None, "Worker not initialized"
     assert _WORKER_MAX_TOOL_CALLS is not None
-    assert _WORKER_TOOL_ROUTER is not None
-    assert _WORKER_REASONING_ONLY_CONFIG is not None
-    assert _WORKER_TOOL_CALL_ONLY_CONFIG is not None
-    assert _WORKER_FINAL_ANSWER_CONFIG is not None
+
+    ctx = _WORKER_CTX
+    agent = ctx.agent
+    api_mode = ctx.api_mode
+    phase_configs = ctx.phase_configs
 
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
@@ -207,9 +100,9 @@ def _run_one_task(task_payload: dict):
             meta_info = json.loads(f.readline().strip())
         return True, meta_info
 
-    task_kwargs = {"model_type": "google" if _WORKER_API_MODE == "google" else "sglang"}
-    if _WORKER_API_MODE != "google":
-        task_kwargs["api_mode"] = _WORKER_API_MODE
+    task_kwargs = {"model_type": "google" if api_mode == "google" else "sglang"}
+    if api_mode != "google":
+        task_kwargs["api_mode"] = api_mode
     extra_kwargs = task_payload.get("task_kwargs")
     if isinstance(extra_kwargs, dict):
         task_kwargs.update(extra_kwargs)
@@ -217,10 +110,10 @@ def _run_one_task(task_payload: dict):
         logger.info(f"[{task_id}] running text-only task.")
         task_kwargs["text_only"] = True
 
-    tool_functions = _WORKER_TOOL_ROUTER.get_available_tools()
-    tool_return_types = _WORKER_TOOL_ROUTER.get_tool_return_types()
+    tool_functions = ctx.tool_router.get_available_tools()
+    tool_return_types = ctx.tool_router.get_tool_return_types()
 
-    task = _WORKER_TASK_CLASS(
+    task = ctx.task_class(
         task_id=task_id,
         task_prompt=formatted_text_prompt,
         task_answer=answer,
@@ -232,8 +125,8 @@ def _run_one_task(task_payload: dict):
     )
 
     # Reset agent state for new task (reuses same agent instance)
-    _WORKER_AGENT.reset()
-    original_generate_config = _WORKER_AGENT.config.generate_config
+    agent.reset()
+    original_generate_config = agent.config.generate_config
     answer_pattern = re.compile(r"<answer>", re.IGNORECASE)
     think_pattern = re.compile(r"<think>.*?Tool:\s*(\w+).*?</think>", re.DOTALL | re.IGNORECASE)
 
@@ -245,17 +138,13 @@ def _run_one_task(task_payload: dict):
             logger.info(f"[{task_id}] Step {step} Phase 1: Generating reasoning...")
             # Use multi-round prompt after first round
             if step > 1:
-                _WORKER_AGENT.config.generate_config = _WORKER_MULTI_ROUND_REASONING_CONFIG
+                agent.config.generate_config = phase_configs.multi_round_reasoning
             else:
-                _WORKER_AGENT.config.generate_config = _WORKER_REASONING_ONLY_CONFIG
-            reasoning_action, reasoning_extra = _WORKER_AGENT.act(task.contents)
+                agent.config.generate_config = phase_configs.reasoning_only
+            reasoning_action, reasoning_extra = agent.act(task.contents)
             logger.warning(reasoning_action)
             # Extract reasoning text from action
-            if _WORKER_API_MODE == "google":
-                text_parts = [p.text for p in reasoning_action.parts if p.text and not p.thought]
-                reasoning_text = "\n".join(text_parts)
-            else:
-                reasoning_text = reasoning_action.choices[0].message.content or ""
+            reasoning_text = extract_response_text(reasoning_action, api_mode)
 
             logger.info(f"[{task_id}] Step {step} Phase 1: Reasoning generated ({len(reasoning_text)} chars)")
 
@@ -300,10 +189,10 @@ def _run_one_task(task_payload: dict):
             logger.info(f"[{task_id}] Step {step} Phase 2: Generating tool call...")
             task.append_assistant_message(reasoning_text)
 
-            _WORKER_AGENT.config.generate_config = _WORKER_TOOL_CALL_ONLY_CONFIG
-            tool_action, tool_extra = _WORKER_AGENT.act(task.contents)
+            agent.config.generate_config = phase_configs.tool_call_only
+            tool_action, tool_extra = agent.act(task.contents)
 
-            _WORKER_AGENT.config.generate_config = original_generate_config
+            agent.config.generate_config = original_generate_config
 
             # Merge reasoning_extra into tool_extra for recording
             merged_extra = {
@@ -334,9 +223,9 @@ def _run_one_task(task_payload: dict):
             # Inject answer format instruction before generating final answer
             if answer_format:
                 task.append_prompt(answer_format)
-            _WORKER_AGENT.config.generate_config = _WORKER_FINAL_ANSWER_CONFIG
-            action, extra_info = _WORKER_AGENT.act(task.contents)
-            _WORKER_AGENT.config.generate_config = original_generate_config
+            agent.config.generate_config = phase_configs.final_answer
+            action, extra_info = agent.act(task.contents)
+            agent.config.generate_config = original_generate_config
             task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
 
         if task.state:

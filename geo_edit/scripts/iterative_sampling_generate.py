@@ -18,7 +18,6 @@ import multiprocessing as mp
 import os
 import re
 import shutil
-import signal
 import sys
 import time
 from dataclasses import dataclass
@@ -29,50 +28,25 @@ from datasets import load_dataset
 from PIL import Image
 from tqdm import tqdm
 
-from geo_edit.agents.api_agent import AgentConfig, APIBasedAgent
-from geo_edit.config import (
-    build_google_agent_configs,
-    build_api_agent_configs,
-    derive_google_config,
-    derive_api_config,
-)
-from geo_edit.constants import MAX_TOOL_CALLS
-from geo_edit.prompts import get_system_prompt
 from geo_edit.prompts.system_prompts import (
-    SIMPLIFIED_TOOL_SELECTION_PROMPT,
-    SEPARATED_TOOL_CALL_ONLY_PROMPT,
-    SEPARATED_FINAL_ANSWER_PROMPT,
     SEPARATED_USER_PROMPT,
-    MULTI_ROUND_TOOL_SELECTION_PROMPT,
     ITERATIVE_EXTENDED_REASONING_PROMPT,
 )
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter
-from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
-from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.evaluation.trajectory_judge import TrajectoryJudge, quick_leakage_check
 from geo_edit.utils.logger import setup_logger
 from geo_edit.utils.stats import save_global_meta_info
+from geo_edit.utils.text_utils import extract_response_text
+from geo_edit.utils.worker_utils import init_worker_base, WorkerContext
 
 logger = setup_logger(__name__)
 
 # =============================================================================
 # Worker globals (one per process)
 # =============================================================================
-_WORKER_AGENT: "APIBasedAgent | None" = None
-_WORKER_AGENT_CONFIGS = None
-_WORKER_OUTPUT_PATH: "str | None" = None
-_WORKER_TASK_CLASS = None
-_WORKER_API_MODE: "str | None" = None
-_WORKER_TOOL_ROUTER: "ToolRouter | None" = None
-_WORKER_REASONING_ONLY_CONFIG = None
-_WORKER_MULTI_ROUND_REASONING_CONFIG = None
-_WORKER_TOOL_CALL_ONLY_CONFIG = None
-_WORKER_FINAL_ANSWER_CONFIG = None
-
-# New globals for iterative sampling
+_WORKER_CTX: "WorkerContext | None" = None
 _WORKER_JUDGE: "TrajectoryJudge | None" = None
-_WORKER_EXTENDED_REASONING_CONFIG = None
 _WORKER_MAX_ITERATIVE_ROUNDS: int = 5
 _WORKER_ATTEMPTS_PER_ROUND: int = 2
 _WORKER_SKIP_LEAKAGE_CHECK: bool = False
@@ -109,11 +83,6 @@ class IterativeSamplingState:
         self.attempt_count = 0
 
 
-def _worker_init_signal_handler():
-    """Ignore SIGINT in worker processes - let main process handle it."""
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-
 # =============================================================================
 # Worker initialization
 # =============================================================================
@@ -126,7 +95,7 @@ def _init_worker(
     output_path: str,
     enabled_agent_names: list,
     enable_tools: list,
-    # New params for iterative sampling
+    # Params for iterative sampling
     judge_api_key: str,
     judge_model: str,
     judge_api_base: Optional[str],
@@ -135,105 +104,26 @@ def _init_worker(
     skip_leakage_check: bool,
 ):
     """Initialize worker for iterative sampling."""
-    _worker_init_signal_handler()
-
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH
-    global _WORKER_TASK_CLASS, _WORKER_API_MODE
-    global _WORKER_TOOL_ROUTER, _WORKER_REASONING_ONLY_CONFIG, _WORKER_MULTI_ROUND_REASONING_CONFIG
-    global _WORKER_TOOL_CALL_ONLY_CONFIG, _WORKER_FINAL_ANSWER_CONFIG
-    global _WORKER_JUDGE, _WORKER_EXTENDED_REASONING_CONFIG
+    global _WORKER_CTX, _WORKER_JUDGE
     global _WORKER_MAX_ITERATIVE_ROUNDS, _WORKER_ATTEMPTS_PER_ROUND, _WORKER_SKIP_LEAKAGE_CHECK
 
     # Set iterative sampling params
     _WORKER_MAX_ITERATIVE_ROUNDS = max_iterative_rounds
     _WORKER_ATTEMPTS_PER_ROUND = attempts_per_round
     _WORKER_SKIP_LEAKAGE_CHECK = skip_leakage_check
-    _WORKER_OUTPUT_PATH = output_path
 
-    # Create ToolRouter WITHOUT initializing Ray actors
-    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode="force", enable_tools=enable_tools, skip_agent_init=True)
-
-    # Connect to existing Ray actors created in main process
-    if enabled_agent_names:
-        from geo_edit.environment.tool_agents import get_manager
-        manager = get_manager()
-        agent_configs = _WORKER_TOOL_ROUTER.get_enabled_agent_configs()
-        manager.connect_to_existing_agents(enabled_agent_names, configs=agent_configs)
-        logger.info(f"Worker (PID: {os.getpid()}) connected to {len(enabled_agent_names)} Ray actors")
-
-    if model_type == "Google" and not api_key:
-        raise ValueError("API key must be provided for Google models.")
-
-    system_prompt = get_system_prompt(model_type, "force")
-
-    # Build configs based on model type
-    if model_type == "Google":
-        _WORKER_API_MODE = "google"
-        agent_configs = build_google_agent_configs(
-            _WORKER_TOOL_ROUTER,
-            thinking_level="low",
-            include_thoughts=True,
-            temperature=1.0,
-            system_prompt=system_prompt,
-        )
-        _WORKER_TASK_CLASS = GoogleVisionQATask
-        base = agent_configs.generate_config
-        _WORKER_REASONING_ONLY_CONFIG = derive_google_config(
-            base, system_prompt=SIMPLIFIED_TOOL_SELECTION_PROMPT, tool_mode="NONE"
-        )
-        _WORKER_MULTI_ROUND_REASONING_CONFIG = derive_google_config(
-            base, system_prompt=MULTI_ROUND_TOOL_SELECTION_PROMPT, tool_mode="NONE"
-        )
-        _WORKER_TOOL_CALL_ONLY_CONFIG = derive_google_config(
-            base, system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
-        )
-        _WORKER_FINAL_ANSWER_CONFIG = derive_google_config(
-            base, system_prompt=SEPARATED_FINAL_ANSWER_PROMPT, tool_mode="NONE"
-        )
-        # Extended reasoning config for iterative sampling
-        _WORKER_EXTENDED_REASONING_CONFIG = derive_google_config(
-            base, system_prompt=ITERATIVE_EXTENDED_REASONING_PROMPT, tool_mode="NONE"
-        )
-    else:
-        _WORKER_API_MODE = "chat_completions"
-        agent_configs = build_api_agent_configs(
-            _WORKER_TOOL_ROUTER,
-            api_mode="chat_completions",
-            temperature=1.0,
-            reasoning_level="low",
-            system_prompt=system_prompt,
-        )
-        _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
-        base = agent_configs.generate_config
-        _WORKER_REASONING_ONLY_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=SIMPLIFIED_TOOL_SELECTION_PROMPT, tool_choice="none"
-        )
-        _WORKER_MULTI_ROUND_REASONING_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=MULTI_ROUND_TOOL_SELECTION_PROMPT, tool_choice="none"
-        )
-        _WORKER_TOOL_CALL_ONLY_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
-        )
-        _WORKER_FINAL_ANSWER_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=SEPARATED_FINAL_ANSWER_PROMPT, tool_choice="none"
-        )
-        # Extended reasoning config for iterative sampling
-        _WORKER_EXTENDED_REASONING_CONFIG = derive_api_config(
-            base, api_mode="chat_completions", system_prompt=ITERATIVE_EXTENDED_REASONING_PROMPT, tool_choice="none"
-        )
-
-    config = AgentConfig(
-        model_type=model_type,
-        model_name=model_name_or_path,
+    # Use shared worker initialization
+    _WORKER_CTX = init_worker_base(
         api_key=api_key,
+        model_name_or_path=model_name_or_path,
+        model_type=model_type,
         api_base=api_base,
         port=port,
-        generate_config=agent_configs.generate_config,
-        n_retry=3,
-        api_mode=_WORKER_API_MODE,
+        output_path=output_path,
+        enabled_agent_names=enabled_agent_names,
+        enable_tools=enable_tools,
+        extra_prompts={"extended_reasoning": ITERATIVE_EXTENDED_REASONING_PROMPT},
     )
-    _WORKER_AGENT_CONFIGS = agent_configs
-    _WORKER_AGENT = APIBasedAgent(config)
 
     # Initialize TrajectoryJudge for validation
     _WORKER_JUDGE = TrajectoryJudge(
@@ -242,7 +132,7 @@ def _init_worker(
         api_base=judge_api_base,
     )
 
-    logger.info(f"Worker initialized with {model_type} agent and TrajectoryJudge (PID: {os.getpid()})")
+    logger.info(f"Worker initialized with TrajectoryJudge (PID: {os.getpid()})")
 
 
 # =============================================================================
@@ -252,17 +142,25 @@ def _execute_single_attempt(
     task_payload: dict,
     tool_rounds: int,
     extended_reasoning_config: Any = None,
-) -> Tuple[bool, Optional[dict], Optional[str], str]:
+    previous_task_state: Optional[dict] = None,
+) -> Tuple[bool, Optional[dict], Optional[str], str, Optional[dict]]:
     """Execute a single attempt of three-phase reasoning.
 
     Args:
         task_payload: Task data including prompt, answer, image_path, etc.
         tool_rounds: Maximum number of tool call rounds.
         extended_reasoning_config: Config for extended rounds (Round 2+).
+        previous_task_state: State from previous attempt to continue from (for Round 2+).
 
     Returns:
-        (success, meta_info, final_answer, thinking_text)
+        (success, meta_info, final_answer, thinking_text, task_state_for_next)
     """
+    assert _WORKER_CTX is not None, "Worker not initialized"
+    ctx = _WORKER_CTX
+    agent = ctx.agent
+    api_mode = ctx.api_mode
+    phase_configs = ctx.phase_configs
+
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
     answer = task_payload["answer"]
@@ -273,19 +171,19 @@ def _execute_single_attempt(
 
     formatted_text_prompt = SEPARATED_USER_PROMPT.format(Question=text_prompt)
 
-    task_kwargs = {"model_type": "google" if _WORKER_API_MODE == "google" else "sglang"}
-    if _WORKER_API_MODE != "google":
-        task_kwargs["api_mode"] = _WORKER_API_MODE
+    task_kwargs = {"model_type": "google" if api_mode == "google" else "sglang"}
+    if api_mode != "google":
+        task_kwargs["api_mode"] = api_mode
     extra_kwargs = task_payload.get("task_kwargs")
     if isinstance(extra_kwargs, dict):
         task_kwargs.update(extra_kwargs)
     if text_only:
         task_kwargs["text_only"] = True
 
-    tool_functions = _WORKER_TOOL_ROUTER.get_available_tools()
-    tool_return_types = _WORKER_TOOL_ROUTER.get_tool_return_types()
+    tool_functions = ctx.tool_router.get_available_tools()
+    tool_return_types = ctx.tool_router.get_tool_return_types()
 
-    task = _WORKER_TASK_CLASS(
+    task = ctx.task_class(
         task_id=task_id,
         task_prompt=formatted_text_prompt,
         task_answer=answer,
@@ -296,34 +194,43 @@ def _execute_single_attempt(
         **task_kwargs,
     )
 
-    _WORKER_AGENT.reset()
-    original_generate_config = _WORKER_AGENT.config.generate_config
+    agent.reset()
+    original_generate_config = agent.config.generate_config
     answer_pattern = re.compile(r"<answer>", re.IGNORECASE)
     think_pattern = re.compile(r"<think>.*?Tool:\s*(\w+).*?</think>", re.DOTALL | re.IGNORECASE)
 
     all_thinking_text = []  # Collect all thinking for leakage check
+    start_step = 1  # Default start from step 1
+
+    # Restore previous state if provided (for Round 2+)
+    if previous_task_state is not None:
+        task.contents = previous_task_state["contents"]
+        task.conversation_history = previous_task_state["conversation_history"]
+        task.image_list = previous_task_state["image_list"]
+        task.image_path_map = previous_task_state["image_path_map"]
+        if hasattr(task, "image_url_map"):
+            task.image_url_map = previous_task_state.get("image_url_map", {})
+        all_thinking_text = previous_task_state.get("thinking_text", [])
+        start_step = previous_task_state.get("completed_steps", 0) + 1
+        logger.info(f"[{task_id}] Restored state from previous attempt, continuing from step {start_step}")
 
     try:
-        for i in range(tool_rounds):
+        for i in range(start_step - 1, tool_rounds):
             step = i + 1
 
             # ===== Phase 1: Generate reasoning =====
             # Use extended config for extra rounds (step > 1 when tool_rounds > 1)
             if extended_reasoning_config is not None and step > 1:
-                _WORKER_AGENT.config.generate_config = extended_reasoning_config
+                agent.config.generate_config = extended_reasoning_config
             elif step > 1:
-                _WORKER_AGENT.config.generate_config = _WORKER_MULTI_ROUND_REASONING_CONFIG
+                agent.config.generate_config = phase_configs.multi_round_reasoning
             else:
-                _WORKER_AGENT.config.generate_config = _WORKER_REASONING_ONLY_CONFIG
+                agent.config.generate_config = phase_configs.reasoning_only
 
-            reasoning_action, reasoning_extra = _WORKER_AGENT.act(task.contents)
+            reasoning_action, reasoning_extra = agent.act(task.contents)
 
             # Extract reasoning text
-            if _WORKER_API_MODE == "google":
-                text_parts = [p.text for p in reasoning_action.parts if p.text and not p.thought]
-                reasoning_text = "\n".join(text_parts)
-            else:
-                reasoning_text = reasoning_action.choices[0].message.content or ""
+            reasoning_text = extract_response_text(reasoning_action, api_mode)
 
             all_thinking_text.append(reasoning_text)
 
@@ -346,7 +253,7 @@ def _execute_single_attempt(
                     extra_info=reasoning_extra,
                 )
                 meta_info = task.save_trajectory()
-                return True, meta_info, output_text, "\n".join(all_thinking_text)
+                return True, meta_info, output_text, "\n".join(all_thinking_text), None
 
             # Validate format for step 1
             if step == 1 and answer_pattern.search(reasoning_text):
@@ -357,9 +264,9 @@ def _execute_single_attempt(
 
             # ===== Phase 2: Generate tool call =====
             task.append_assistant_message(reasoning_text)
-            _WORKER_AGENT.config.generate_config = _WORKER_TOOL_CALL_ONLY_CONFIG
-            tool_action, tool_extra = _WORKER_AGENT.act(task.contents)
-            _WORKER_AGENT.config.generate_config = original_generate_config
+            agent.config.generate_config = phase_configs.tool_call_only
+            tool_action, tool_extra = agent.act(task.contents)
+            agent.config.generate_config = original_generate_config
 
             merged_extra = {"reasoning_" + k: v for k, v in reasoning_extra.items()}
             merged_extra.update(tool_extra)
@@ -373,25 +280,36 @@ def _execute_single_attempt(
 
             task.update_observation_from_action(function_call_part_list)
 
+        # Build task state for potential continuation (before Phase 3)
+        task_state_for_next = {
+            "contents": task.contents,
+            "conversation_history": task.conversation_history,
+            "image_list": task.image_list,
+            "image_path_map": task.image_path_map,
+            "image_url_map": getattr(task, "image_url_map", {}),
+            "thinking_text": all_thinking_text,
+            "completed_steps": tool_rounds,
+        }
+
         # ===== Phase 3: Generate final answer =====
         if task.state:
             if answer_format:
                 task.append_prompt(answer_format)
-            _WORKER_AGENT.config.generate_config = _WORKER_FINAL_ANSWER_CONFIG
-            action, extra_info = _WORKER_AGENT.act(task.contents)
-            _WORKER_AGENT.config.generate_config = original_generate_config
+            agent.config.generate_config = phase_configs.final_answer
+            action, extra_info = agent.act(task.contents)
+            agent.config.generate_config = original_generate_config
             task.parse_action(step=tool_rounds + 1, action=action, extra_info=extra_info)
 
         if task.state:
             meta_info = task.save_trajectory()
             final_answer = meta_info.get("output_text", "")
-            return True, meta_info, final_answer, "\n".join(all_thinking_text)
+            return True, meta_info, final_answer, "\n".join(all_thinking_text), task_state_for_next
 
-        return False, None, None, "\n".join(all_thinking_text)
+        return False, None, None, "\n".join(all_thinking_text), task_state_for_next
 
     except Exception as e:
         logger.warning(f"[{task_id}] Attempt failed: {e}")
-        return False, None, None, "\n".join(all_thinking_text)
+        return False, None, None, "\n".join(all_thinking_text), None
 
 
 # =============================================================================
@@ -439,6 +357,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     - If failed, extend to Round 2 (tool_rounds=2) and retry
     - Continue until max_iterative_rounds or success
     """
+    assert _WORKER_CTX is not None, "Worker not initialized"
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
     question = task_payload["prompt"]
@@ -452,8 +371,20 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
         return True, meta_info
 
     state = IterativeSamplingState(task_id=task_id)
+    # State from the last attempt of previous round (Round N-1's last attempt)
+    # All attempts in Round N should start from this state
+    previous_round_state = None
+    # State from current round's last attempt (for passing to next round)
+    current_round_last_state = None
 
     while state.current_tool_rounds <= _WORKER_MAX_ITERATIVE_ROUNDS:
+        # Determine if we should continue from previous round's state
+        # Round 2+ should always start from previous round's last state
+        should_continue_from_previous = (
+            state.current_tool_rounds > 1 and
+            previous_round_state is not None
+        )
+
         # Clean up previous attempt's files
         if state.total_attempts > 0 and os.path.exists(task_save_dir):
             shutil.rmtree(task_save_dir, ignore_errors=True)
@@ -461,19 +392,24 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
 
         # Select reasoning config
         if state.current_tool_rounds > 1:
-            extended_config = _WORKER_EXTENDED_REASONING_CONFIG
+            extended_config = _WORKER_CTX.phase_configs.extended_reasoning
         else:
             extended_config = None
 
+        # Pass previous round's state for Round 2+ (all attempts in the same round use the same base state)
+        previous_state = previous_round_state if should_continue_from_previous else None
+
         logger.info(f"[{task_id}] Attempt {state.total_attempts + 1}: "
                    f"tool_rounds={state.current_tool_rounds}, "
-                   f"attempt={state.attempt_count + 1}/{_WORKER_ATTEMPTS_PER_ROUND}")
+                   f"attempt={state.attempt_count + 1}/{_WORKER_ATTEMPTS_PER_ROUND}, "
+                   f"continue_from_previous={should_continue_from_previous}")
 
         # Execute single attempt
-        success, meta_info, final_answer, thinking_text = _execute_single_attempt(
+        success, meta_info, final_answer, thinking_text, task_state = _execute_single_attempt(
             task_payload,
             tool_rounds=state.current_tool_rounds,
             extended_reasoning_config=extended_config,
+            previous_task_state=previous_state,
         )
 
         if not success or final_answer is None:
@@ -481,6 +417,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             state.increment_attempt()
             if not state.should_retry():
                 if state.should_extend():
+                    # Moving to next round: use current round's last successful state (if any)
+                    previous_round_state = current_round_last_state
+                    current_round_last_state = None
                     state.extend_rounds()
                     logger.info(f"[{task_id}] Extending to {state.current_tool_rounds} tool rounds")
                 else:
@@ -503,8 +442,16 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
         state.previous_answer = final_answer
         state.increment_attempt()
 
+        # Save task state from current attempt (for potential use by next round)
+        if task_state is not None:
+            current_round_last_state = task_state
+
         if not state.should_retry():
             if state.should_extend():
+                # Moving to next round: save current round's last state as previous_round_state
+                # This will be the base state for ALL attempts in the next round
+                previous_round_state = current_round_last_state
+                current_round_last_state = None
                 state.extend_rounds()
                 logger.info(f"[{task_id}] Extending to {state.current_tool_rounds} tool rounds")
             else:
@@ -526,8 +473,8 @@ def main():
     parser.add_argument("--dataset_split", type=str, default=None, help="Dataset split name.")
     parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()))
     parser.add_argument("--output_dir", type=str, required=True, help="Output directory.")
-    parser.add_argument("--model_name_or_path", type=str, default="gemini-2.5-pro-preview-05-06")
-    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "SGLang", "OpenAI"])
+    parser.add_argument("--model_name_or_path", type=str, default="gpt-5-2025-08-07")
+    parser.add_argument("--model_type", type=str, default="OpenAI", choices=["Google", "SGLang", "OpenAI"])
     parser.add_argument("--api_base", type=str, default=None, help="Base URL for API.")
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--max_concurrent_requests", type=int, default=16)

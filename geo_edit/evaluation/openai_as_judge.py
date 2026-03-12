@@ -7,7 +7,7 @@ from typing import List, Optional, Union
 from geo_edit.prompts import EVAL_QUERY_PROMPT, EVAL_SYSTEM_PROMPT
 from geo_edit.utils.io_utils import iter_meta_info_files, load_records
 from geo_edit.utils.stats import compute_tool_combination_statistics, get_input_tokens_total, get_output_tokens_total, get_total_tokens
-from geo_edit.utils.text_utils import get_final_prediction, parse_score
+from geo_edit.utils.text_utils import extract_response_text, get_final_prediction, parse_score
 from openai import OpenAI
 
 
@@ -50,8 +50,8 @@ class OpenAIJudge:
                     {"role": "user", "content": prompt},
                 ],
             )
-            output_text = resp.choices[0].message.content if resp.choices else ""
-            return parse_score(output_text or "")
+            output_text = extract_response_text(resp, "chat_completions")
+            return parse_score(output_text)
         resp = self.client.responses.create(
             model=self.model,
             instructions=EVAL_SYSTEM_PROMPT,

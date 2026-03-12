@@ -189,3 +189,24 @@ def calculate_confidence_score(logprobs: List[float]) -> float:
     avg_logprob = sum(logprobs) / len(logprobs)
     confidence = 1 / (1 + math.exp(-(avg_logprob + 2.5)))
     return max(0.0, min(1.0, confidence))
+
+
+def extract_response_text(action, api_mode: str) -> str:
+    """Extract text content from API response based on API mode.
+
+    Args:
+        action: Response from API (Google GenerateContentResponse or OpenAI ChatCompletion).
+        api_mode: Either "google" or "chat_completions"/"responses".
+
+    Returns:
+        Extracted text content.
+    """
+    if api_mode == "google":
+        # Google Gemini response: extract non-thought text parts
+        text_parts = [p.text for p in action.parts if p.text and not p.thought]
+        return "\n".join(text_parts)
+    else:
+        # OpenAI-compatible response
+        if hasattr(action, "choices") and action.choices:
+            return action.choices[0].message.content or ""
+        return ""

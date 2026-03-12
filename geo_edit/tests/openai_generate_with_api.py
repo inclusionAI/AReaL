@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from openai import OpenAI
 
+from geo_edit.utils.text_utils import extract_response_text
+
 DEFAULT_API_BASE = "https://matrixllm.alipay.com/v1"
 DEFAULT_MODEL = "gpt-5-2025-08-07"
 DEFAULT_PROMPT = "Please describe this image briefly."
@@ -59,10 +61,8 @@ def test_describe_single_image_via_chat_completions() -> None:
         reasoning_effort="low"
     )
 
-    content = ""
     print(response)
-    if response.choices and response.choices[0].message:
-        content = response.choices[0].message.content or ""
+    content = extract_response_text(response, "chat_completions")
 
     assert content.strip(), "Model returned empty content."
     print("\nModel output:\n", content.strip())
