@@ -19,6 +19,7 @@ import time
 
 import httpx
 import pytest
+import torch
 
 from tests.experimental.gateway.integration_utils import (
     EXPR_NAME,
@@ -424,6 +425,9 @@ class TestControllerRolloutBatch:
         assert len(result) > 0
         assert isinstance(result[0], dict)
         assert len(result[0]) > 0
+        assert "input_ids" in result[0]
+        assert isinstance(result[0]["input_ids"], torch.Tensor)
+        assert result[0]["input_ids"].ndim == 2
 
     def test_rollout_batch_with_should_accept_fn_rejects(self, gateway_controller):
         """rollout_batch with a rejecting should_accept_fn returns empty list."""
@@ -470,6 +474,9 @@ class TestControllerRolloutBatch:
         assert isinstance(result, list)
         assert len(result) > 0
         assert isinstance(result[0], dict)
+        assert "input_ids" in result[0]
+        assert isinstance(result[0]["input_ids"], torch.Tensor)
+        assert result[0]["input_ids"].ndim == 2
 
 
 # =============================================================================
@@ -521,6 +528,9 @@ class TestControllerPrepareBatch:
         assert isinstance(result, list)
         assert len(result) > 0
         assert isinstance(result[0], dict)
+        assert "input_ids" in result[0]
+        assert isinstance(result[0]["input_ids"], torch.Tensor)
+        assert result[0]["input_ids"].ndim == 2
 
     def test_prepare_batch_with_should_accept_fn_rejects(self, gateway_controller):
         """prepare_batch with a rejecting should_accept_fn returns empty list."""
@@ -574,6 +584,9 @@ class TestControllerPrepareBatch:
         assert isinstance(result, list)
         assert len(result) > 0
         assert isinstance(result[0], dict)
+        assert "input_ids" in result[0]
+        assert isinstance(result[0]["input_ids"], torch.Tensor)
+        assert result[0]["input_ids"].ndim == 2
 
 
 # =============================================================================
