@@ -323,7 +323,7 @@ class TrainController:
         if has_traj_list and group_indices is not None:
             return self._reorder_traj_results(results, group_indices)
         # Non-traj-list calls (scalar methods)
-        return self._merge_results(results, group_indices)
+        return self._merge_results(results)
 
     async def _async_custom_function_call(self, method: str, *args, **kwargs):
         """Async version of _custom_function_call."""
@@ -342,7 +342,7 @@ class TrainController:
 
         if has_traj_list and group_indices is not None:
             return self._reorder_traj_results(results, group_indices)
-        return self._merge_results(results, group_indices)
+        return self._merge_results(results)
 
     @staticmethod
     def _reorder_traj_results(
@@ -391,29 +391,19 @@ class TrainController:
         Each DP group receives a list[dict[str, RTensor]] subset.
         """
         dp_size = self.parallel_strategy.dp_size
-
         group_indices = None
-        dp_split_args = []
-        for a in args:
-            if self._is_traj_list(a):
-                if group_indices is None:
-                    splits, group_indices = dispatch_traj_list(a, dp_size)
-                else:
-                    splits = [[a[i] for i in idxs] for idxs in group_indices]
-                dp_split_args.append(splits)
-            else:
-                dp_split_args.append([a] * dp_size)
 
-        dp_worker_kwargs: dict[str, list[Any]] = {}
-        for k, v in kwargs.items():
-            if self._is_traj_list(v):
+        def _get_splits(item):
+            nonlocal group_indices
+            if self._is_traj_list(item):
                 if group_indices is None:
-                    splits, group_indices = dispatch_traj_list(v, dp_size)
-                else:
-                    splits = [[v[i] for i in idxs] for idxs in group_indices]
-                dp_worker_kwargs[k] = splits
-            else:
-                dp_worker_kwargs[k] = [v] * dp_size
+                    splits, group_indices = dispatch_traj_list(item, dp_size)
+                    return splits
+                return [[item[i] for i in idxs] for idxs in group_indices]
+            return [item] * dp_size
+
+        dp_split_args = [_get_splits(a) for a in args]
+        dp_worker_kwargs = {k: _get_splits(v) for k, v in kwargs.items()}
 
         return dp_split_args, dp_worker_kwargs, group_indices
 
@@ -451,7 +441,7 @@ class TrainController:
             )
         return await asyncio.gather(*tasks)
 
-    def _merge_results(self, results, group_indices):
+    def _merge_results(self, results):
         """Merge RTensor results from DP heads."""
         return data_parallel_merge(results)
 
