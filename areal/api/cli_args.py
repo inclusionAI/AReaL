@@ -354,9 +354,6 @@ class OptimizerConfig:
             "help": "Proportion of training steps for warmup",
         },
     )
-    offload: bool = field(
-        default=False, metadata={"help": "Enable optimizer state offloading"}
-    )
     initial_loss_scale: float = field(
         default=2**32, metadata={"help": "Initial loss scaling factor"}
     )
@@ -406,6 +403,25 @@ class FSDPEngineConfig:
             "not used; each rank loads weights independently on CPU."
         },
     )
+    per_layer_optim_step: bool = field(
+        default=False,
+        metadata={
+            "help": "Run Adam step on GPU by streaming optimizer states layer-by-layer "
+            "with async prefetching, instead of running on CPU. Optimizer states are "
+            "automatically managed on CPU by the per-layer wrapper regardless of "
+            "offload_params setting. Requires optimizer type 'adam' (AdamW)."
+        },
+    )
+    optim_step_prefetch_layers: int = field(
+        default=1,
+        metadata={"help": "Number of layers to prefetch during per-layer optim step."},
+    )
+
+    def __post_init__(self):
+        if self.optim_step_prefetch_layers < 0:
+            raise ValueError(
+                f"optim_step_prefetch_layers must be >= 0, got {self.optim_step_prefetch_layers}"
+            )
 
     shard_vision_across_sp: bool = field(
         default=False,
