@@ -253,20 +253,29 @@ class TrajectoryJudge:
         )
         response = self._call_api(COMBINED_VALIDATION_SYSTEM_PROMPT, prompt)
 
-        # Parse response
+        # Parse response - extract value immediately after colon
         correctness = "0"
         leakage = "0"
         tool_match = "0"
         reason = ""
 
+        def extract_score(line: str) -> str:
+            """Extract 0 or 1 from 'Key: 0' or 'Key: 1' format."""
+            if ":" not in line:
+                return "0"
+            value_part = line.split(":", 1)[1].strip()
+            # Get first character/word which should be 0 or 1
+            first_token = value_part.split()[0] if value_part.split() else "0"
+            return "1" if first_token.startswith("1") else "0"
+
         for line in response.split("\n"):
             line = line.strip()
             if line.lower().startswith("correctness:"):
-                correctness = "1" if "1" in line else "0"
+                correctness = extract_score(line)
             elif line.lower().startswith("leakage:"):
-                leakage = "1" if "1" in line else "0"
+                leakage = extract_score(line)
             elif line.lower().startswith("toolmatch:"):
-                tool_match = "1" if "1" in line else "0"
+                tool_match = extract_score(line)
             elif line.lower().startswith("reason:"):
                 reason = line.split(":", 1)[1].strip() if ":" in line else ""
 
