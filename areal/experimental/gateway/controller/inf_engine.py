@@ -500,7 +500,7 @@ class GatewayInfEngine:
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         proxy_addr: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         if proxy_addr is None:
             proxy_addr = self.gateway_addr
         resolved_workflow = self._resolve_workflow(
@@ -518,7 +518,10 @@ class GatewayInfEngine:
                 should_accept_fn=resolved_accept_fn,
             )
         results = self.workflow_executor.wait(count=len(data))
-        return [r for r in results if r is not None]
+        # Concatenate into batch tensor format (matching RolloutController API)
+        from areal.utils.data import concat_padded_tensors
+
+        return concat_padded_tensors([r for r in results if r is not None])
 
     def prepare_batch(
         self,
@@ -529,7 +532,7 @@ class GatewayInfEngine:
         group_size: int = 1,
         dynamic_bs: bool = False,
         proxy_addr: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         if proxy_addr is None:
             proxy_addr = self.gateway_addr
         resolved_workflow = self._resolve_workflow(
@@ -540,12 +543,16 @@ class GatewayInfEngine:
             engine=self,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
-        return self.workflow_executor.prepare_batch(
+        results = self.workflow_executor.prepare_batch(
             dataloader=dataloader,
             workflow=resolved_workflow,
             should_accept_fn=resolved_accept_fn,
             dynamic_bs=dynamic_bs,
         )
+        # Concatenate into batch tensor format (matching RolloutController API)
+        from areal.utils.data import concat_padded_tensors
+
+        return concat_padded_tensors([r for r in results if r is not None])
 
     def pause(self) -> None:
         """Pause the workflow executor (prevents new task dispatching)."""

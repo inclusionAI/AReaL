@@ -407,7 +407,7 @@ class TestControllerRolloutBatch:
     """Test rollout_batch through the controller with SimpleAgent workflow."""
 
     def test_rollout_batch_with_simple_agent(self, gateway_controller):
-        """rollout_batch with SimpleAgent should return interaction data."""
+        """rollout_batch with SimpleAgent should return concatenated batch dict."""
         data = [
             {
                 "messages": [{"role": "user", "content": "What is 2+2?"}],
@@ -421,16 +421,19 @@ class TestControllerRolloutBatch:
         )
 
         assert result is not None
-        assert isinstance(result, list)
+        assert isinstance(result, dict)
         assert len(result) > 0
-        assert isinstance(result[0], dict)
-        assert len(result[0]) > 0
-        assert "input_ids" in result[0]
-        assert isinstance(result[0]["input_ids"], torch.Tensor)
-        assert result[0]["input_ids"].ndim == 2
+        assert "input_ids" in result
+        # Values should be RTensor (matching RolloutController API)
+        from areal.infra.rpc.rtensor import RTensor
+
+        assert isinstance(result["input_ids"], RTensor)
+        assert result["input_ids"].ndim == 2
+        assert hasattr(result["input_ids"], "shards")
+        assert len(result["input_ids"].shards) > 0
 
     def test_rollout_batch_with_should_accept_fn_rejects(self, gateway_controller):
-        """rollout_batch with a rejecting should_accept_fn returns empty list."""
+        """rollout_batch with a rejecting should_accept_fn returns empty dict."""
 
         def reject_all(trajectory: dict) -> bool:
             return False
@@ -448,12 +451,12 @@ class TestControllerRolloutBatch:
             should_accept_fn=reject_all,
         )
 
-        # All trajectories should be rejected, so the list is empty
-        assert isinstance(result, list)
+        # All trajectories should be rejected, so the result is an empty dict
+        assert isinstance(result, dict)
         assert len(result) == 0
 
     def test_rollout_batch_with_should_accept_fn_accepts(self, gateway_controller):
-        """rollout_batch with an accepting should_accept_fn returns results."""
+        """rollout_batch with an accepting should_accept_fn returns concatenated batch dict."""
 
         def accept_all(trajectory: dict) -> bool:
             return True
@@ -471,12 +474,16 @@ class TestControllerRolloutBatch:
             should_accept_fn=accept_all,
         )
 
-        assert isinstance(result, list)
+        assert isinstance(result, dict)
         assert len(result) > 0
-        assert isinstance(result[0], dict)
-        assert "input_ids" in result[0]
-        assert isinstance(result[0]["input_ids"], torch.Tensor)
-        assert result[0]["input_ids"].ndim == 2
+        assert "input_ids" in result
+        # Values should be RTensor (matching RolloutController API)
+        from areal.infra.rpc.rtensor import RTensor
+
+        assert isinstance(result["input_ids"], RTensor)
+        assert result["input_ids"].ndim == 2
+        assert hasattr(result["input_ids"], "shards")
+        assert len(result["input_ids"].shards) > 0
 
 
 # =============================================================================
@@ -507,7 +514,7 @@ class TestControllerPrepareBatch:
     """Test prepare_batch through the controller with SimpleAgent workflow."""
 
     def test_prepare_batch_returns_results(self, gateway_controller):
-        """prepare_batch should return a non-empty list of trajectory dicts."""
+        """prepare_batch should return a concatenated batch dict."""
         items = [
             {
                 "messages": [{"role": "user", "content": "What is 2+2?"}],
@@ -525,15 +532,19 @@ class TestControllerPrepareBatch:
             workflow="tests.experimental.openai.utils.SimpleAgent",
         )
 
-        assert isinstance(result, list)
+        assert isinstance(result, dict)
         assert len(result) > 0
-        assert isinstance(result[0], dict)
-        assert "input_ids" in result[0]
-        assert isinstance(result[0]["input_ids"], torch.Tensor)
-        assert result[0]["input_ids"].ndim == 2
+        assert "input_ids" in result
+        # Values should be RTensor (matching RolloutController API)
+        from areal.infra.rpc.rtensor import RTensor
+
+        assert isinstance(result["input_ids"], RTensor)
+        assert result["input_ids"].ndim == 2
+        assert hasattr(result["input_ids"], "shards")
+        assert len(result["input_ids"].shards) > 0
 
     def test_prepare_batch_with_should_accept_fn_rejects(self, gateway_controller):
-        """prepare_batch with a rejecting should_accept_fn returns empty list."""
+        """prepare_batch with a rejecting should_accept_fn returns empty dict."""
 
         def reject_all(trajectory: dict) -> bool:
             return False
@@ -553,12 +564,12 @@ class TestControllerPrepareBatch:
             dynamic_bs=True,
         )
 
-        # All trajectories should be rejected, so the list is empty
-        assert isinstance(result, list)
+        # All trajectories should be rejected, so the result is an empty dict
+        assert isinstance(result, dict)
         assert len(result) == 0
 
     def test_prepare_batch_with_should_accept_fn_accepts(self, gateway_controller):
-        """prepare_batch with an accepting should_accept_fn returns results."""
+        """prepare_batch with an accepting should_accept_fn returns concatenated batch dict."""
 
         def accept_all(trajectory: dict) -> bool:
             return True
@@ -581,12 +592,16 @@ class TestControllerPrepareBatch:
             should_accept_fn=accept_all,
         )
 
-        assert isinstance(result, list)
+        assert isinstance(result, dict)
         assert len(result) > 0
-        assert isinstance(result[0], dict)
-        assert "input_ids" in result[0]
-        assert isinstance(result[0]["input_ids"], torch.Tensor)
-        assert result[0]["input_ids"].ndim == 2
+        assert "input_ids" in result
+        # Values should be RTensor (matching RolloutController API)
+        from areal.infra.rpc.rtensor import RTensor
+
+        assert isinstance(result["input_ids"], RTensor)
+        assert result["input_ids"].ndim == 2
+        assert hasattr(result["input_ids"], "shards")
+        assert len(result["input_ids"].shards) > 0
 
 
 # =============================================================================
