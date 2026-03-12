@@ -153,28 +153,32 @@ async def update_weight_xccl(raw_request: Request):
 
 @router.post("/areal_update_weights_lora_xccl")
 async def update_weight_lora_xccl(
-    request: UpdateWeightsFromXcclRequest, raw_request: Request
+    request: UpdateWeightsFromXcclRequestLora, raw_request: Request
 ):
     logger.info("API server starts update_weight_lora via XCCL")
+    llm = raw_request.app.state.engine_client
+    ret_list = await llm.engine_core.call_utility_async(
+        "areal_injected_update_weight_lora_xccl",
+    )
+    # Only touch the registry after weights are actually updated
     models_obj = raw_request.app.state.openai_serving_models
     new_name = request.lora_name
     lora_id = request.lora_int_id
-
     for old_name, req in list(models_obj.lora_requests.items()):
         if req.lora_int_id == lora_id:
             del models_obj.lora_requests[old_name]
             req.lora_name = new_name
             models_obj.lora_requests[new_name] = req
             logger.info(
-                f"Updated LoRA name of openai_serving_models"
+                f"Updated LoRA name of openai_serving_models "
                 f"from {old_name} -> {new_name}"
             )
             break
-
-    llm = raw_request.app.state.engine_client
-    ret_list = await llm.engine_core.call_utility_async(
-        "areal_injected_update_weight_lora_xccl",
-    )
+    else:
+        logger.warning(
+            f"LoRA adapter with int_id={lora_id} not found in "
+            f"openai_serving_models.lora_requests"
+        )
     return build_response(ret_list)
 
 
