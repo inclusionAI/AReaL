@@ -14,6 +14,7 @@ Sampling strategy:
 - Maximum rounds: 5
 """
 import argparse
+import copy
 import json
 import multiprocessing as mp
 import os
@@ -216,7 +217,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
 
             # For Round 2+, temporarily add extended reasoning prompt (not saved to trajectory)
             if current_round > 1:
-                contents_before_prompt = task.contents.copy() if isinstance(task.contents, list) else dict(task.contents)
+                contents_before_prompt = copy.deepcopy(task.contents)
                 task.append_system_prompt(ITERATIVE_EXTENDED_REASONING_PROMPT)
 
             reasoning_action, reasoning_extra = agent.act(task.contents)
@@ -264,8 +265,8 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             logger.info(f"[{task_id}] Round {current_round} Attempt {attempt + 1}: Generating final answer")
 
             try:
-                # Save contents state before Phase 3 (for retry)
-                contents_before_phase3 = task.contents.copy() if isinstance(task.contents, list) else dict(task.contents)
+                # Save contents state before Phase 3 (for retry) - deep copy needed
+                contents_before_phase3 = copy.deepcopy(task.contents)
                 conv_history_len = len(task.conversation_history)
 
                 if answer_format:
