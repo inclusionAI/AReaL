@@ -295,9 +295,17 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
 
                 logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} invalid: {reason}")
 
-                # Restore state for retry (remove Phase 3 from contents)
-                task.contents = contents_before_phase3
+                # Always restore conversation_history (don't save failed attempts to trajectory)
                 task.conversation_history = task.conversation_history[:conv_history_len]
+
+                # Check if this is the last attempt and we're going to next round
+                is_last_attempt = (attempt == _WORKER_ATTEMPTS_PER_ROUND - 1)
+                is_going_to_next_round = (current_round < _WORKER_MAX_ITERATIVE_ROUNDS)
+
+                # Only restore contents if NOT last attempt going to next round
+                # (Keep Phase 3 in contents so model sees wrong answer in Round 2+)
+                if not (is_last_attempt and is_going_to_next_round):
+                    task.contents = contents_before_phase3
 
                 # Clean up saved files for retry
                 for item in os.listdir(task_save_dir):
@@ -311,9 +319,10 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
 
             except Exception as e:
                 logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} failed: {e}")
-                # Restore state
-                task.contents = contents_before_phase3
+                # Always restore conversation_history
                 task.conversation_history = task.conversation_history[:conv_history_len]
+                # Restore contents for retry within same round
+                task.contents = contents_before_phase3
                 continue
 
         # All Phase 3 attempts failed for this round, extend to next round
