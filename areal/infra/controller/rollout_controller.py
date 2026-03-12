@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import shutil
 import threading
 import traceback
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from enum import Enum
 from threading import Lock
 from typing import Any
 
@@ -67,6 +70,153 @@ class _RemoteRolloutResult:
     trajectory: dict[str, Any]
 
 
+class RoutingStrategy(str, Enum):
+    """Enumeration of available worker routing strategies."""
+
+    ROUND_ROBIN = "round-robin"
+    RANDOM = "random"
+
+
+class WorkerSelector(ABC):
+    """Abstract base class for worker selection strategies.
+
+    This class defines the interface that all worker selection strategies
+    must implement, following the Strategy design pattern.
+    """
+
+    @abstractmethod
+    def select(self, workers: list[Worker]) -> int:
+        """Select a worker and return its rank."""
+        pass
+
+    @abstractmethod
+    def reset(self) -> None:
+        """Reset the selector's internal state."""
+        pass
+
+
+class RoundRobinSelector(WorkerSelector):
+    """Round-robin worker selection strategy.
+
+    Cycles through workers sequentially, ensuring even distribution of requests.
+    This strategy maintains internal state (current index) and is deterministic.
+    """
+
+    def __init__(self):
+        self._current_idx = 0
+
+    def select(self, workers: list[Worker]) -> int:
+        """Select the next worker in round-robin order."""
+        if not workers:
+            raise RuntimeError("No workers available to choose from.")
+
+        rank = self._current_idx
+        self._current_idx = (self._current_idx + 1) % len(workers)
+        return rank
+
+    def reset(self) -> None:
+        """Reset the round-robin index to 0."""
+        self._current_idx = 0
+
+
+class RandomSelector(WorkerSelector):
+    """Random worker selection strategy.
+
+    Randomly selects a worker on each request. This strategy is stateless
+    and non-deterministic, which helps avoid synchronization issues in
+    distributed systems.
+    """
+
+    def select(self, workers: list[Worker]) -> int:
+        """Randomly select a worker."""
+        if not workers:
+            raise RuntimeError("No workers available to choose from.")
+        return random.randint(0, len(workers) - 1)
+
+    def reset(self) -> None:
+        """No-op for stateless random strategy."""
+        pass
+
+
+class ProxyRouter:
+    """Router for choosing workers and managing proxy addresses.
+
+    This class uses the Strategy pattern to support multiple worker selection
+    strategies (round-robin, random, etc.) and manages proxy server addresses.
+    """
+
+    # Strategy factory: maps RoutingStrategy enum to WorkerSelector classes
+    _SELECTOR_FACTORY: dict[RoutingStrategy, type[WorkerSelector]] = {
+        RoutingStrategy.ROUND_ROBIN: RoundRobinSelector,
+        RoutingStrategy.RANDOM: RandomSelector,
+    }
+
+    def __init__(
+        self,
+        workers: list[Worker],
+        proxy_addrs: list[str] | None = None,
+        routing_strategy: RoutingStrategy | str = RoutingStrategy.ROUND_ROBIN,
+    ):
+        """Initialize the ProxyRouter."""
+        self.workers = workers
+        self.proxy_addrs = proxy_addrs or []
+        self._proxy_enabled = bool(proxy_addrs)
+
+        # Convert string to enum if necessary
+        if isinstance(routing_strategy, str):
+            try:
+                self.strategy = RoutingStrategy(routing_strategy)
+            except ValueError:
+                valid_strategies = ", ".join([s.value for s in RoutingStrategy])
+                raise ValueError(
+                    f"Invalid routing_strategy: {routing_strategy}. "
+                    f"Must be one of: {valid_strategies}"
+                )
+        else:
+            self.strategy = routing_strategy
+
+        # Create the appropriate selector using the factory
+        selector_class = self._SELECTOR_FACTORY.get(self.strategy)
+        if selector_class is None:
+            raise ValueError(
+                f"No selector implementation found for strategy: {self.strategy}"
+            )
+        self.selector = selector_class()
+
+    def route(self) -> tuple[Worker, int, str | None]:
+        """Choose a worker and get its proxy address.
+
+        Delegates worker selection to the configured strategy implementation.
+        """
+        # Delegate selection to the strategy
+        rank = self.selector.select(self.workers)
+        worker = self.workers[rank]
+
+        # Get proxy address if available
+        proxy_addr = (
+            self.proxy_addrs[rank]
+            if self._proxy_enabled and rank < len(self.proxy_addrs)
+            else None
+        )
+
+        return worker, rank, proxy_addr
+
+    def get_proxy_addr(self, rank: int) -> str | None:
+        """Get the proxy server address for a specific worker rank."""
+        if not self._proxy_enabled or rank >= len(self.proxy_addrs):
+            return None
+        return self.proxy_addrs[rank]
+
+    def update_proxy_addrs(self, proxy_addrs: list[str]) -> None:
+        """Update the proxy addresses."""
+        self.proxy_addrs = proxy_addrs
+        self._proxy_enabled = bool(proxy_addrs)
+
+    def reset(self) -> None:
+        """Reset the routing strategy's internal state."""
+        self.selector.reset()
+
+
 class RolloutController:
     def __init__(
         self,
@@ -83,8 +233,8 @@ class RolloutController:
         self.server_infos: list[LocalInfServerInfo] = []
         self._worker_role: str
 
-        # Round-robin scheduling
-        self._current_worker_idx = 0
+        # Proxy router for worker selection and proxy address management
+        self._proxy_router: ProxyRouter | None = None
 
         # State
         self._version_lock = Lock()
@@ -239,6 +389,17 @@ class RolloutController:
         logger.info("Waiting for workers to be ready...")
         self.workers = self.scheduler.get_workers(role=job.role)
         logger.info(f"Workers ready: {[w.id for w in self.workers]}")
+
+        routing_strategy = (
+            self.config.worker_routing_strategy or RoutingStrategy.ROUND_ROBIN
+        )
+        self._proxy_router = ProxyRouter(
+            workers=self.workers,
+            routing_strategy=routing_strategy,
+        )
+        logger.info(
+            f"ProxyRouter initialized with {routing_strategy} routing strategy."
+        )
 
         # Get engine class path for dynamic import on workers
         engine_class = self.inf_engine
@@ -400,6 +561,11 @@ class RolloutController:
 
         logger.info(f"Proxy servers initialized. Addresses: {self.proxy_addrs}")
 
+        # Update proxy router with proxy addresses
+        if self._proxy_router is not None:
+            self._proxy_router.update_proxy_addrs(self.proxy_addrs)
+            logger.info("ProxyRouter updated with proxy addresses.")
+
     def get_proxy_addr(self, rank: int) -> str:
         """Get the proxy server address for a given rollout worker rank.
 
@@ -412,7 +578,18 @@ class RolloutController:
         -------
         str
             The HTTP address of the corresponding proxy server
+
+        Note
+        ----
+        This method is now a wrapper around ProxyRouter.get_proxy_addr() for backward compatibility.
+        Consider using ProxyRouter.get_proxy_addr() or ProxyRouter.route() directly for new code.
         """
+        if self._proxy_router is not None:
+            proxy_addr = self._proxy_router.get_proxy_addr(rank)
+            if proxy_addr is not None:
+                return proxy_addr
+
+        # Fallback to legacy implementation
         if not self._proxy_started:
             raise RuntimeError(
                 "Proxy workers not initialized. Call start_proxy() first."
@@ -422,6 +599,17 @@ class RolloutController:
                 f"Invalid rank {rank}, only {len(self.proxy_addrs)} proxy workers"
             )
         return self.proxy_addrs[rank]
+
+    def route_worker_with_proxy(self) -> tuple[Worker, int, str | None]:
+        """Choose a worker and get its proxy address using the ProxyRouter.
+
+        This is a convenience method that demonstrates the simplified proxy server usage
+        using the ProxyRouter. It combines worker selection and proxy address resolution
+        in a single call.
+        """
+        if self._proxy_router is None:
+            raise RuntimeError("ProxyRouter not initialized. Call initialize() first.")
+        return self._proxy_router.route()
 
     def start_proxy_gateway(self) -> None:
         """Start the proxy gateway for external access.
@@ -699,13 +887,20 @@ class RolloutController:
         -------
         tuple[Worker, int]
             The chosen worker object and its rank
+
+        Note
+        ----
+        This method is now a wrapper around ProxyRouter.route() for backward compatibility.
+        Consider using ProxyRouter.route() directly for new code.
         """
-        if not self.workers:
-            raise RuntimeError("No workers available to choose from.")
-        worker = self.workers[self._current_worker_idx]
-        rank = self._current_worker_idx
-        self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
-        return worker, rank
+        if self._proxy_router is not None:
+            worker, rank, _ = self._proxy_router.route()
+            return worker, rank
+
+        # Fallback to legacy round-robin if router not initialized
+        fallback_selector = RoundRobinSelector()
+        rank = fallback_selector.select(self.workers)
+        return self.workers[rank], rank
 
     def _resolve_workflow_str(self, workflow: WorkflowLike | None) -> str | None:
         """Resolve workflow to a string import path.
