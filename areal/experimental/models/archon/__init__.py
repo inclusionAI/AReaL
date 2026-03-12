@@ -27,6 +27,7 @@ from areal.experimental.models.archon.pipeline_parallel import (
 )
 from areal.experimental.models.archon.qwen2 import spec as qwen2_spec  # noqa: F401
 from areal.experimental.models.archon.qwen3 import spec as qwen3_spec  # noqa: F401
+from areal.experimental.models.archon.qwen3_5 import spec as qwen3_5_spec  # noqa: F401
 
 __all__ = [
     "ArchonParallelDims",
