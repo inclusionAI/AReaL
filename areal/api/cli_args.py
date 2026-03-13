@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
@@ -29,6 +30,15 @@ uvloop.install()
 logger = logging.getLogger("CLIArgs")
 
 ConfigT = TypeVar("ConfigT")
+
+BUILTIN_ATTN_IMPLS = (
+    "eager",
+    "sdpa",
+    "flash_attention_2",
+    "flash_attention_3",
+    "flex_attention",
+)
+HF_KERNEL_REPO_PATTERN = re.compile(r"^[^/:]+/[^/:@]+(?:@[^/:]+)?(?::[^/:]+)?$")
 
 
 @dataclass
@@ -928,8 +938,16 @@ class TrainEngineConfig:
     attn_impl: str = field(
         default="flash_attention_2",
         metadata={
-            "help": "Attention implementation for huggingface transformers model.",
-            "choices": ["flash_attention_2"],
+            "help": "Attention implementation for huggingface transformers model. "
+            "Accepts builtin transformers backends or a Hugging Face kernels repo ID "
+            "formatted as org/repo[@revision][:entrypoint].",
+            "choices": list(BUILTIN_ATTN_IMPLS),
+        },
+    )
+    use_kernels: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable Hugging Face kernels model kernelization after model creation."
         },
     )
     init_from_scratch: bool = field(
@@ -1028,6 +1046,16 @@ class TrainEngineConfig:
             raise ValueError(
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
+            )
+        if not (
+            self.attn_impl in BUILTIN_ATTN_IMPLS
+            or HF_KERNEL_REPO_PATTERN.match(self.attn_impl)
+        ):
+            raise ValueError(
+                "attn_impl must be one of "
+                f"{BUILTIN_ATTN_IMPLS} or a Hugging Face kernels repo ID "
+                "formatted as org/repo[@revision][:entrypoint], "
+                f"got '{self.attn_impl}'."
             )
         if self.fsdp.memory_efficient_load and self.init_from_scratch:
             raise ValueError(

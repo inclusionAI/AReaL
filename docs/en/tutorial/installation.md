@@ -97,9 +97,9 @@ Activation is required before running `pre-commit` or `git commit`. If you use
 `uv run <command>` instead, activation is not needed as `uv run` automatically uses the
 virtual environment.
 
-This installs CUDA-dependent training packages (Megatron, Flash Attention, Torch Memory
-Saver) plus **SGLang** as the default inference backend. These packages require Linux
-x86_64 with CUDA 12.x and compatible NVIDIA drivers.
+This installs CUDA-dependent training packages (Megatron, Flash Attention, Hugging Face
+Kernels, Torch Memory Saver) plus **SGLang** as the default inference backend. These
+packages require Linux x86_64 with CUDA 12.x and compatible NVIDIA drivers.
 
 If you prefer **vLLM** as the inference backend instead of SGLang:
 
@@ -119,15 +119,16 @@ You can also install individual extras instead of the full `cuda` bundle:
 - `megatron`: Megatron training backend
 - `tms`: Torch Memory Saver
 - `flash-attn`: Flash Attention v2
-- `cuda-train`: Training packages only (megatron + tms + flash-attn, no inference
-  backend)
+- `kernels`: Hugging Face Kernels runtime
+- `cuda-train`: Training packages only (megatron + tms + flash-attn + kernels, no
+  inference backend)
 - `cuda`: cuda-train + sglang (default, backward-compatible)
 
 **Note**: You can mix and match individual extras:
 
 ```bash
-# vLLM with just flash-attn (no megatron, no tms)
-uv sync --extra vllm --extra flash-attn
+# vLLM with HF Kernels and flash-attn (no megatron, no tms)
+uv sync --extra vllm --extra flash-attn --extra kernels
 # vLLM with all training packages
 uv sync --extra cuda-train --extra vllm
 ```

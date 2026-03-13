@@ -41,6 +41,14 @@ from transformers import AutoConfig, AutoModelForCausalLM
 
 from areal.infra import current_platform
 
+VALID_ATTN_IMPLS = {
+    "eager",
+    "sdpa",
+    "flash_attention_2",
+    "flash_attention_3",
+    "flex_attention",
+}
+
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command line arguments."""
@@ -127,11 +135,16 @@ Examples:
     parser.add_argument(
         "--attn-impl",
         type=str,
-        choices=["sdpa", "flash_attention_2", "eager"],
         default="sdpa",
         help="Attention implementation (default: sdpa)",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if "/" not in args.attn_impl and args.attn_impl not in VALID_ATTN_IMPLS:
+        parser.error(
+            "--attn-impl must be a builtin transformers backend or a Hugging Face "
+            "kernels repo ID like org/repo[@revision][:entrypoint]."
+        )
+    return args
 
 
 def get_dtype(dtype_str: str) -> torch.dtype:

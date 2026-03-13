@@ -44,6 +44,8 @@ actor:
   trial_name: ${trial_name}
   path: Qwen/Qwen2.5-1.5B-Instruct
   init_from_scratch: false
+  attn_impl: kernels-community/flash-attn
+  use_kernels: true
   disable_dropout: true
   gradient_checkpointing: true
   dtype: bfloat16
@@ -90,6 +92,8 @@ ref:
   trial_name: ${trial_name}
   path: ${actor.path}
   init_from_scratch: false
+  attn_impl: ${actor.attn_impl}
+  use_kernels: ${actor.use_kernels}
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:

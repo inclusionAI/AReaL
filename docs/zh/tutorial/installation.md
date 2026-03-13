@@ -82,8 +82,8 @@ uv sync --extra cuda
 # uv sync --group dev
 ```
 
-这将安装 CUDA 依赖的训练包（Megatron、Flash Attention、Torch Memory Saver）以及 **SGLang**
-作为默认推理后端。这些包需要 Linux x86_64 和 CUDA 12.x 及兼容的 NVIDIA 驱动。
+这将安装 CUDA 依赖的训练包（Megatron、Flash Attention、Hugging Face Kernels、Torch Memory Saver）以及
+**SGLang** 作为默认推理后端。这些包需要 Linux x86_64 和 CUDA 12.x 及兼容的 NVIDIA 驱动。
 
 如果您希望使用 **vLLM** 作为推理后端而非 SGLang：
 
@@ -101,14 +101,15 @@ uv sync --extra cuda-train --extra vllm
 - `megatron`：Megatron 训练后端
 - `tms`：Torch Memory Saver
 - `flash-attn`：Flash Attention v2
-- `cuda-train`：仅训练包（megatron + tms + flash-attn，不含推理后端）
+- `kernels`：Hugging Face Kernels 运行时
+- `cuda-train`：仅训练包（megatron + tms + flash-attn + kernels，不含推理后端）
 - `cuda`：cuda-train + sglang（默认，向后兼容）
 
 **注意**：您可以混合搭配各个 extra：
 
 ```bash
-# vLLM 仅带 flash-attn（不含 megatron 和 tms）
-uv sync --extra vllm --extra flash-attn
+# vLLM 带 HF Kernels 和 flash-attn（不含 megatron 和 tms）
+uv sync --extra vllm --extra flash-attn --extra kernels
 # vLLM 加所有训练包
 uv sync --extra cuda-train --extra vllm
 ```
