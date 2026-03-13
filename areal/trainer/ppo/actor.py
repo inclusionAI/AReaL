@@ -23,6 +23,7 @@ from areal.utils.data import (
     Normalization,
     split_padded_tensor_dict_into_mb_list,
 )
+from areal.utils.datapack import pack_batch, unpack_batch
 from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
@@ -116,9 +117,37 @@ class PPOActor:
         logger.info(f"  eps_clip: {config.eps_clip}")
         logger.info("=" * 70)
 
+    def _packed_call(
+        self,
+        fn,
+        data: list[dict[str, Any]],
+        *,
+        unpack: bool = True,
+    ):
+        """Pack trajectories into a batch, call *fn*, optionally unpack.
+
+        Parameters
+        ----------
+        fn : Callable[[dict[str, Any]], Any]
+            Implementation function that receives the batched dict.
+        data : list[dict[str, Any]]
+            Per-trajectory dicts to be concatenated.
+        unpack : bool
+            If True (default), split the result back into per-trajectory list
+            via ``unpack_batch``.
+        """
+        batched, meta = pack_batch(data)
+        result = fn(batched)
+        if unpack:
+            return unpack_batch(result, meta)
+        return result
+
     @trace_perf("ppo_actor.compute_logp", category="compute")
     @torch.no_grad()
-    def compute_logp(self, data: dict[str, Any]) -> torch.Tensor:
+    def compute_logp(self, data: list[dict[str, Any]]) -> list[torch.Tensor] | None:
+        return self._packed_call(self._compute_logp, data)
+
+    def _compute_logp(self, data: dict[str, Any]) -> torch.Tensor | None:
         self.engine.eval()
         return self.engine.forward(
             input_=data,
@@ -126,7 +155,10 @@ class PPOActor:
         )
 
     @trace_perf("ppo_actor.compute_advantages", category="compute")
-    def compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
+    def compute_advantages(self, data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return self._packed_call(self._compute_advantages, data)
+
+    def _compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
@@ -234,7 +266,10 @@ class PPOActor:
 
     @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
-    def ppo_update(self, data: dict[str, Any]) -> None:
+    def ppo_update(self, data: list[dict[str, Any]]) -> None:
+        self._packed_call(self._ppo_update, data, unpack=False)
+
+    def _ppo_update(self, data: dict[str, Any]) -> None:
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
