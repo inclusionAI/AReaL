@@ -149,6 +149,28 @@ class VLLMWorkerExtension:
             logger.error(error_msg)
             return False, error_msg
 
+    def update_weight_tensor(self, names, weights):
+        """Update weights from direct tensor data (colocation mode).
+
+        Parameters
+        ----------
+        names : list[str]
+            Parameter names to update.
+        weights : dict[str, torch.Tensor]
+            Mapping of parameter name to tensor data.
+        """
+        logger.info("start update weights from tensor (colocation)", flush=True)
+        try:
+            for name in names:
+                tensor = weights[name].to(self.model_runner.device)
+                self.model_runner.model.load_weights(weights=[(name, tensor)])
+            self.sync()
+            return True, "Success"
+        except Exception as e:
+            error_msg = f"Failed to update parameter from tensor! {e}."
+            logger.error(error_msg)
+            return False, error_msg
+
     def update_weight_lora_xccl(self):
         # NOTE: This code relies on vLLM private APIs: _adapter_manager, _registered_adapters,
         # and _add_adapter/activate_adapter, which may change/ breakdown due to newer vllm versions.

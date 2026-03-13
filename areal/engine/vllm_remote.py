@@ -6,6 +6,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
+import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
@@ -190,6 +191,33 @@ class VLLMBackend:
             ]
         )
 
+    def build_tensor_weight_update_requests(
+        self,
+        named_tensors: list[tuple[str, torch.Tensor]],
+    ) -> WeightUpdateRequests:
+        """Build vLLM tensor-based weight update requests (colocation mode).
+
+        Serializes tensor data for direct weight loading into vLLM model.
+        """
+        from areal.infra.rpc.serialization import serialize_value
+
+        names = [name for name, _ in named_tensors]
+        weights = {
+            name: serialize_value(tensor.detach().cpu())
+            for name, tensor in named_tensors
+        }
+        return WeightUpdateRequests(
+            requests=[
+                HttpRequest(
+                    endpoint="/areal_update_weights_tensor",
+                    payload={
+                        "names": names,
+                        "weights": weights,
+                    },
+                )
+            ]
+        )
+
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
@@ -341,6 +369,13 @@ class RemotevLLMEngine(InferenceEngine):
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""
         return self._engine.update_weights_from_disk(meta)
+
+    def update_weights_from_tensor(
+        self,
+        named_tensors: list[tuple[str, torch.Tensor]],
+    ) -> Future[None]:
+        """Update weights by direct tensor passing (colocation mode)."""
+        return self._engine.update_weights_from_tensor(named_tensors)
 
     def submit(
         self,

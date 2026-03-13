@@ -563,6 +563,15 @@ class RolloutController:
             self._callback_loop.run_until_complete(self.update_weights_from_disk(meta))
             return jsonify({"status": "ok"})
 
+        @app.route("/callback/update_weights_tensor", methods=["POST"])
+        def update_weights_tensor():
+            payload = request.get_json() or {}
+            named_tensors = deserialize_value(payload.get("named_tensors"))
+            self._callback_loop.run_until_complete(
+                self.update_weights_from_tensor(named_tensors)
+            )
+            return jsonify({"status": "ok"})
+
         @app.route("/callback/pause_generation", methods=["POST"])
         def pause_generation():
             self._callback_loop.run_until_complete(self.pause_generation())
@@ -1015,6 +1024,20 @@ class RolloutController:
     ):
         await self._collective_rpc_async(
             "update_weights_from_distributed", meta=meta, param_specs=param_specs
+        )
+
+    async def update_weights_from_tensor(
+        self,
+        named_tensors: list[tuple[str, "torch.Tensor"]],
+    ):
+        """Update weights by direct tensor passing (colocation mode).
+
+        Tensors are passed directly to the inference workers. In colocation
+        mode, the workers share the same GPU, so tensors can be loaded
+        without NCCL communication.
+        """
+        await self._collective_rpc_async(
+            "update_weights_from_tensor", named_tensors=named_tensors
         )
 
     async def update_weights_from_disk(self, meta: WeightUpdateMeta):

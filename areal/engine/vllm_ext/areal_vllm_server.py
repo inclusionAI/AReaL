@@ -182,6 +182,26 @@ async def update_weight_lora_xccl(
     return build_response(ret_list)
 
 
+@router.post("/areal_update_weights_tensor")
+async def update_weight_tensor(raw_request: Request):
+    """Update weights via direct tensor data (colocation mode)."""
+    from areal.infra.rpc.serialization import deserialize_value
+
+    logger.info("API server starts update_weight_tensor (colocation)")
+    payload = await raw_request.json()
+    names = payload["names"]
+    weights = {
+        name: deserialize_value(payload["weights"][name]) for name in names
+    }
+    llm = raw_request.app.state.engine_client
+    ret_list = await llm.engine_core.call_utility_async(
+        "areal_injected_update_weight_tensor",
+        names,
+        weights,
+    )
+    return build_response(ret_list)
+
+
 @router.post("/areal_init_weights_update_group")
 async def init_weights_update_group(request: UpdateGroupRequest, raw_request: Request):
     logger.info("API server starts init_weights_update_group")
@@ -364,6 +384,12 @@ def areal_injected_update_weight_lora_xccl(self):
     return self.collective_rpc("update_weight_lora_xccl")
 
 
+def areal_injected_update_weight_tensor(self, names, weights):
+    """Update weights from direct tensor data (colocation mode)."""
+    self.abort_all_reqs()
+    return self.collective_rpc("update_weight_tensor", args=(names, weights))
+
+
 def finish_request(self, req_state: "RequestState"):
     if req_state.lora_name is None:
         return
@@ -390,6 +416,11 @@ def hook():
         EngineCore,
         "areal_injected_update_weight_lora_xccl",
         areal_injected_update_weight_lora_xccl,
+    )
+    setattr(
+        EngineCore,
+        "areal_injected_update_weight_tensor",
+        areal_injected_update_weight_tensor,
     )
 
     # Patch for LoRARequestStates management in vllm < v0.11.0

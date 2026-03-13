@@ -652,11 +652,35 @@ class ArchonEngine(TrainEngine):
                     meta=meta,
                     engine=self,
                 )
+        elif meta.type == "tensor":
+            # Colocation mode: direct tensor passing (no NCCL)
+            tms_context = (
+                torch_memory_saver.disable()
+                if self.is_offload and not torch.version.hip
+                else nullcontext()
+            )
+            with tms_context:
+                self._update_weights_from_tensor(meta)
         elif meta.type == "disk":
             update_weights_from_disk(
                 meta=meta,
                 engine=self,
             )
+
+    def _update_weights_from_tensor(self, meta: WeightUpdateMeta):
+        """Update weights via direct tensor passing (colocation mode)."""
+        from areal.engine.core.colocation_sync import (
+            update_weights_from_tensor as _coloc_update,
+        )
+
+        _coloc_update(
+            model=self.model,
+            meta=meta,
+            rollout_engine=self.rollout_engine,
+            cpu_group=self.cpu_group,
+            use_lora=False,
+            get_model_name_parameters=self._get_model_name_parameters,
+        )
 
     def save(self, meta: SaveLoadMeta):
         """Save model in HuggingFace or DCP format."""
