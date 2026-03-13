@@ -125,14 +125,8 @@ def gateway_controller(sglang_server, local_scheduler, model_path, tmp_path):
     from areal.experimental.gateway.controller.controller import (
         GatewayRolloutController,
     )
-    from areal.utils.network import find_free_ports
-
-    gateway_port, router_port, data_proxy_base_port = find_free_ports(3)
 
     config = GatewayControllerConfig(
-        gateway_port=gateway_port,
-        router_port=router_port,
-        data_proxy_base_port=data_proxy_base_port,
         tokenizer_path=model_path,
         model_path=model_path,
         scheduling_spec=(SchedulingSpec(),),
@@ -172,20 +166,22 @@ class TestControllerLifecycle:
     """Verify controller lifecycle: init starts services, properties set, destroy cleans up."""
 
     def test_gateway_services_started(self, gateway_controller):
-        """After initialization, gateway services flag should be True."""
-        assert gateway_controller._gateway_services_started is True
+        """After initialization, gateway services should be running."""
+        # Verify addresses were resolved by the scheduler
+        assert gateway_controller._gateway_addr != ""
+        assert gateway_controller._router_addr != ""
+        assert len(gateway_controller._data_proxy_addrs) > 0
 
     def test_gateway_health(self, gateway_controller):
         """The gateway HTTP service should respond healthy."""
-        addr = gateway_controller.proxy_gateway_addr
+        addr = gateway_controller._gateway_addr
         resp = httpx.get(f"{addr}/health", timeout=10.0)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
     def test_router_health(self, gateway_controller):
         """The router HTTP service should respond healthy with 1 worker."""
-        port = gateway_controller.config.router_port
-        resp = httpx.get(f"http://127.0.0.1:{port}/health", timeout=10.0)
+        resp = httpx.get(f"{gateway_controller._router_addr}/health", timeout=10.0)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
@@ -193,8 +189,8 @@ class TestControllerLifecycle:
 
     def test_data_proxy_health(self, gateway_controller):
         """The data proxy HTTP service should respond healthy."""
-        port = gateway_controller.config.data_proxy_base_port
-        resp = httpx.get(f"http://127.0.0.1:{port}/health", timeout=10.0)
+        dp_addr = gateway_controller._data_proxy_addrs[0]
+        resp = httpx.get(f"{dp_addr}/health", timeout=10.0)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
@@ -209,8 +205,9 @@ class TestControllerLifecycle:
     def test_proxy_gateway_addr_set(self, gateway_controller):
         """proxy_gateway_addr should point to the gateway port."""
         addr = gateway_controller.proxy_gateway_addr
-        port = gateway_controller.config.gateway_port
-        assert addr == f"http://127.0.0.1:{port}"
+        # proxy_gateway_addr should be a valid http URL
+        assert addr.startswith("http://")
+        assert addr == gateway_controller._gateway_addr
 
 
 # =============================================================================
@@ -262,8 +259,8 @@ class TestControllerPauseResume:
         """pause() should broadcast pause to all data proxy workers."""
         gateway_controller.pause()
         # Verify data proxy reports paused
-        dp_port = gateway_controller.config.data_proxy_base_port
-        resp = httpx.get(f"http://127.0.0.1:{dp_port}/health", timeout=10.0)
+        dp_addr = gateway_controller._data_proxy_addrs[0]
+        resp = httpx.get(f"{dp_addr}/health", timeout=10.0)
         assert resp.status_code == 200
         assert resp.json().get("paused") is True
         # Clean up: resume
@@ -274,8 +271,8 @@ class TestControllerPauseResume:
         gateway_controller.pause()
         gateway_controller.resume()
         # Verify data proxy is no longer paused
-        dp_port = gateway_controller.config.data_proxy_base_port
-        resp = httpx.get(f"http://127.0.0.1:{dp_port}/health", timeout=10.0)
+        dp_addr = gateway_controller._data_proxy_addrs[0]
+        resp = httpx.get(f"{dp_addr}/health", timeout=10.0)
         assert resp.status_code == 200
         assert resp.json().get("paused") is False
 
@@ -292,8 +289,7 @@ class TestControllerPauseResume:
         assert resp.status_code == 200
 
         # Router still healthy
-        router_port = gateway_controller.config.router_port
-        resp = httpx.get(f"http://127.0.0.1:{router_port}/health", timeout=10.0)
+        resp = httpx.get(f"{gateway_controller._router_addr}/health", timeout=10.0)
         assert resp.status_code == 200
 
 

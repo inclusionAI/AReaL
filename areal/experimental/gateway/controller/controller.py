@@ -2,14 +2,13 @@
 
 Routes ALL traffic (inference, weight updates, pause/continue) through the
 gateway HTTP stack (Gateway → Router → Data Proxy → SGLang).
-Scheduler is used ONLY to launch SGLang servers and gateway micro-services.
+All servers are launched as worker processes via the scheduler.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 import time
 import traceback
 from threading import Lock
@@ -35,7 +34,17 @@ class GatewayRolloutController:
     This is a **parallel** implementation to ``RolloutController`` (NOT a
     subclass).  It is duck-type compatible: the trainer can use either one
     without code changes.
+
+    All servers (SGLang, Router, Data Proxy, Gateway) are launched as
+    worker sub-processes via the scheduler.  The controller talks to them
+    directly over HTTP — no engine creation or RPC calls on workers.
     """
+
+    # Worker role suffixes for each service type
+    _SGLANG_SUFFIX = "-sglang"
+    _ROUTER_SUFFIX = "-router"
+    _DATA_PROXY_SUFFIX = "-data-proxy"
+    _GATEWAY_SUFFIX = "-gateway"
 
     def __init__(
         self,
@@ -50,24 +59,24 @@ class GatewayRolloutController:
         self.server_infos: list[LocalInfServerInfo] = []
         self._worker_role: str = ""
 
+        # Addresses resolved after initialization
+        self._sglang_addrs: list[str] = []
+        self._router_addr: str = ""
+        self._data_proxy_addrs: list[str] = []
+        self._gateway_addr: str = ""
+
         # Version management
         self._version_lock = Lock()
         self._version = 0
-
-        # Gateway micro-services (background threads)
-        self._router_server = None
-        self._router_thread: threading.Thread | None = None
-        self._data_proxy_servers: list = []
-        self._data_proxy_threads: list[threading.Thread] = []
-        self._gateway_server = None
-        self._gateway_thread: threading.Thread | None = None
-        self._gateway_services_started = False
 
         # Inference engine (routes through gateway HTTP)
         self._gateway_inf_engine: GatewayInfEngine | None = None
 
         # Staleness manager (created in initialize)
         self._staleness_manager = None
+
+        # Track which service roles were created for cleanup
+        self._service_roles: list[str] = []
 
         # Proxy compatibility (no-ops — gateway IS the proxy)
         self._proxy_started = False
@@ -102,12 +111,11 @@ class GatewayRolloutController:
             **kwargs,
         )
 
-        # Start gateway micro-services
-        self._start_gateway_services()
+        # Register data proxies in the router
+        self._register_data_proxies_in_router()
 
         # Create inference engine pointed at the gateway
-        gateway_addr = f"http://127.0.0.1:{self.config.gateway_port}"
-        self._gateway_inf_engine = GatewayInfEngine(gateway_addr, self.config)
+        self._gateway_inf_engine = GatewayInfEngine(self._gateway_addr, self.config)
         self._gateway_inf_engine.initialize()
 
         # Create staleness manager
@@ -133,184 +141,173 @@ class GatewayRolloutController:
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """Create workers and launch SGLang servers via scheduler."""
+        """Launch all servers as worker processes via the scheduler.
+
+        Creates four groups of workers:
+        1. SGLang inference servers (dp_size replicas, GPU)
+        2. Router (1 replica, CPU)
+        3. Data Proxies (dp_size replicas, CPU)
+        4. Gateway (1 replica, CPU)
+        """
         from dataclasses import asdict
 
-        from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
+        from areal.api.cli_args import SchedulingSpec, SchedulingStrategy, SGLangConfig
         from areal.api.scheduler_api import Job
 
-        # Build scheduling spec
-        sch_spec = SchedulingSpec(**asdict(self.config.scheduling_spec[0]))
-        if alloc_mode is not None:
-            sch_spec.cpu *= alloc_mode.gen_instance_size
-            sch_spec.mem *= alloc_mode.gen_instance_size
-            if sch_spec.gpu > 0:
-                sch_spec.gpu = alloc_mode.gen_instance_size
-
         dp_size = alloc_mode.gen.dp_size if alloc_mode is not None else 1
+        cfg = self.config
 
-        scheduling_strategy = self.config.scheduling_strategy
-        if scheduling_strategy is None:
-            scheduling_strategy = SchedulingStrategy()
-
-        job = Job(
-            replicas=dp_size,
-            tasks=[sch_spec for _ in range(dp_size)],
-            scheduling_strategy=scheduling_strategy,
-            role=self._worker_role,
-        )
-
+        # -- 1. Launch SGLang servers ----------------------------------------
         if server_infos is not None:
-            # Pre-existing servers — skip worker creation / server launch
+            # Pre-existing servers — skip SGLang worker creation
             self.server_infos = server_infos
+            self._sglang_addrs = [
+                f"http://{info.host}:{info.port}" for info in server_infos
+            ]
             logger.info(
-                "Using %d pre-existing server_infos, skipping worker creation",
+                "Using %d pre-existing server_infos, skipping SGLang worker creation",
                 len(server_infos),
             )
         else:
-            logger.info("Creating workers via scheduler...")
-            self.scheduler.create_workers(job=job)
-            self.workers = self.scheduler.get_workers(role=job.role)
-            logger.info("Workers ready: %s", [w.id for w in self.workers])
+            sglang_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
+            if alloc_mode is not None:
+                sglang_spec.cpu *= alloc_mode.gen_instance_size
+                sglang_spec.mem *= alloc_mode.gen_instance_size
+                if sglang_spec.gpu > 0:
+                    sglang_spec.gpu = alloc_mode.gen_instance_size
 
-            # Launch SGLang servers on workers
-            tasks = []
-            for rank, worker in enumerate(self.workers):
-                tasks.append(
-                    self.scheduler.async_call_engine(
-                        worker_id=worker.id,
-                        method="launch_server",
-                        engine_name=self._engine_name(rank),
-                        server_args=server_args or {},
-                    )
+            # Build SGLang launch command from server_args
+            sglang_cmd = " ".join(SGLangConfig.build_cmd_from_args(server_args or {}))
+            sglang_spec.cmd = sglang_cmd
+
+            sglang_role = f"{self._worker_role}{self._SGLANG_SUFFIX}"
+            sglang_job = Job(
+                replicas=dp_size,
+                tasks=[sglang_spec for _ in range(dp_size)],
+                scheduling_strategy=SchedulingStrategy(),
+                role=sglang_role,
+            )
+            self.scheduler.create_workers(job=sglang_job)
+            self._service_roles.append(sglang_role)
+
+            sglang_workers = self.scheduler.get_workers(role=sglang_role)
+            self.workers = sglang_workers
+            self._sglang_addrs = [
+                f"http://{w.ip}:{w.worker_ports[0]}" for w in sglang_workers
+            ]
+
+            # Wait for SGLang servers to be healthy
+            for i, addr in enumerate(self._sglang_addrs):
+                self._wait_for_service(
+                    f"{addr}/health", f"SGLang-{i}", timeout=cfg.setup_timeout
                 )
-            self.server_infos = await asyncio.gather(*tasks)
 
-        logger.info("SGLang servers: %s", self.server_infos)
+            # Build server_infos from worker addresses
+            from areal.api.io_struct import LocalInfServerInfo
 
-    # -- Gateway services lifecycle ----------------------------------------
+            self.server_infos = [
+                LocalInfServerInfo(
+                    host=w.ip,
+                    port=int(w.worker_ports[0]),
+                    process=None,  # type: ignore[arg-type]  # managed by scheduler
+                )
+                for w in sglang_workers
+            ]
 
-    def _start_gateway_services(self) -> None:
-        """Start Router, Data Proxies, and Gateway as background threads."""
+        logger.info("SGLang servers: %s", self._sglang_addrs)
 
-        from areal.experimental.gateway.data_proxy.app import (
-            create_app as create_data_proxy_app,
+        # -- 2. Launch Router -----------------------------------------------
+        router_spec = SchedulingSpec(
+            gpu=0,
+            cpu=1,
+            mem=4,
+            cmd=(
+                f"python -m areal.experimental.gateway.router"
+                f" --admin-api-key {cfg.admin_api_key}"
+                f" --routing-strategy {cfg.routing_strategy}"
+                f" --poll-interval {cfg.poll_interval}"
+                f" --log-level {cfg.log_level}"
+            ),
         )
-        from areal.experimental.gateway.data_proxy.config import DataProxyConfig
-        from areal.experimental.gateway.gateway.app import (
-            create_app as create_gateway_app,
+        router_role = f"{self._worker_role}{self._ROUTER_SUFFIX}"
+        router_job = Job(
+            replicas=1,
+            tasks=[router_spec],
+            scheduling_strategy=SchedulingStrategy(),
+            role=router_role,
         )
-        from areal.experimental.gateway.gateway.config import GatewayConfig
-        from areal.experimental.gateway.router.app import (
-            create_app as create_router_app,
+        self.scheduler.create_workers(job=router_job)
+        self._service_roles.append(router_role)
+
+        router_workers = self.scheduler.get_workers(role=router_role)
+        self._router_addr = (
+            f"http://{router_workers[0].ip}:{router_workers[0].worker_ports[0]}"
         )
-        from areal.experimental.gateway.router.config import RouterConfig
+        self._wait_for_service(f"{self._router_addr}/health", "Router")
+        logger.info("Router: %s", self._router_addr)
 
-        cfg = self.config
-
-        # 1. Start Router
-        router_cfg = RouterConfig(
-            host=cfg.router_host,
-            port=cfg.router_port,
-            admin_api_key=cfg.admin_api_key,
-            poll_interval=cfg.poll_interval,
-            routing_strategy=cfg.routing_strategy,
-            log_level=cfg.log_level,
-        )
-        router_app = create_router_app(router_cfg)
-        self._router_thread = self._start_uvicorn_thread(
-            router_app, cfg.router_host, cfg.router_port, "Router"
-        )
-
-        # Wait for router to be ready
-        self._wait_for_service(f"http://127.0.0.1:{cfg.router_port}/health", "Router")
-
-        # 2. Start one Data Proxy per worker
-        for i, info in enumerate(self.server_infos):
-            dp_port = cfg.data_proxy_base_port + i
-            backend_addr = f"http://{info.host}:{info.port}"
-            dp_cfg = DataProxyConfig(
-                host=cfg.data_proxy_host,
-                port=dp_port,
-                backend_addr=backend_addr,
-                tokenizer_path=cfg.tokenizer_path,
-                log_level=cfg.log_level,
-                request_timeout=cfg.request_timeout,
-                max_resubmit_retries=cfg.max_resubmit_retries,
-                resubmit_wait=cfg.resubmit_wait,
-                admin_api_key=cfg.admin_api_key,
+        # -- 3. Launch Data Proxies -----------------------------------------
+        for i, sglang_addr in enumerate(self._sglang_addrs):
+            dp_spec = SchedulingSpec(
+                gpu=0,
+                cpu=1,
+                mem=4,
+                cmd=(
+                    f"python -m areal.experimental.gateway.data_proxy"
+                    f" --backend-addr {sglang_addr}"
+                    f" --tokenizer-path {cfg.tokenizer_path}"
+                    f" --log-level {cfg.log_level}"
+                    f" --request-timeout {cfg.request_timeout}"
+                ),
             )
-            dp_app = create_data_proxy_app(dp_cfg)
-            thread = self._start_uvicorn_thread(
-                dp_app, cfg.data_proxy_host, dp_port, f"DataProxy-{i}"
+            dp_role = f"{self._worker_role}{self._DATA_PROXY_SUFFIX}-{i}"
+            dp_job = Job(
+                replicas=1,
+                tasks=[dp_spec],
+                scheduling_strategy=SchedulingStrategy(),
+                role=dp_role,
             )
-            self._data_proxy_threads.append(thread)
+            self.scheduler.create_workers(job=dp_job)
+            self._service_roles.append(dp_role)
 
-            # Wait for data proxy to be ready
-            self._wait_for_service(
-                f"http://127.0.0.1:{dp_port}/health", f"DataProxy-{i}"
-            )
+            dp_workers = self.scheduler.get_workers(role=dp_role)
+            dp_addr = f"http://{dp_workers[0].ip}:{dp_workers[0].worker_ports[0]}"
+            self._data_proxy_addrs.append(dp_addr)
+            self._wait_for_service(f"{dp_addr}/health", f"DataProxy-{i}")
 
-            # Register data proxy in router
-            self._register_worker_in_router(f"http://127.0.0.1:{dp_port}")
+        logger.info("Data Proxies: %s", self._data_proxy_addrs)
 
-        # 3. Start Gateway
-        gw_cfg = GatewayConfig(
-            host=cfg.gateway_host,
-            port=cfg.gateway_port,
-            admin_api_key=cfg.admin_api_key,
-            router_addr=f"http://127.0.0.1:{cfg.router_port}",
-            forward_timeout=cfg.request_timeout,
-            log_level=cfg.log_level,
+        # -- 4. Launch Gateway ----------------------------------------------
+        gw_spec = SchedulingSpec(
+            gpu=0,
+            cpu=1,
+            mem=4,
+            cmd=(
+                f"python -m areal.experimental.gateway.gateway"
+                f" --admin-api-key {cfg.admin_api_key}"
+                f" --router-addr {self._router_addr}"
+                f" --forward-timeout {cfg.request_timeout}"
+                f" --log-level {cfg.log_level}"
+            ),
         )
-        gw_app = create_gateway_app(gw_cfg)
-        self._gateway_thread = self._start_uvicorn_thread(
-            gw_app, cfg.gateway_host, cfg.gateway_port, "Gateway"
+        gw_role = f"{self._worker_role}{self._GATEWAY_SUFFIX}"
+        gw_job = Job(
+            replicas=1,
+            tasks=[gw_spec],
+            scheduling_strategy=SchedulingStrategy(),
+            role=gw_role,
         )
+        self.scheduler.create_workers(job=gw_job)
+        self._service_roles.append(gw_role)
 
-        # Wait for gateway to be ready
-        self._wait_for_service(f"http://127.0.0.1:{cfg.gateway_port}/health", "Gateway")
+        gw_workers = self.scheduler.get_workers(role=gw_role)
+        self._gateway_addr = (
+            f"http://{gw_workers[0].ip}:{gw_workers[0].worker_ports[0]}"
+        )
+        self._wait_for_service(f"{self._gateway_addr}/health", "Gateway")
+        logger.info("Gateway: %s", self._gateway_addr)
 
-        self._gateway_services_started = True
-        logger.info("All gateway services started")
-
-    def _start_uvicorn_thread(
-        self, app: Any, host: str, port: int, name: str
-    ) -> threading.Thread:
-        """Start a uvicorn server in a daemon thread."""
-        import uvicorn
-
-        server_holder: list = []
-
-        def serve():
-            config = uvicorn.Config(app, host=host, port=port, log_level="warning")
-            server = uvicorn.Server(config)
-            server_holder.append(server)
-            server.run()
-
-        thread = threading.Thread(target=serve, name=name, daemon=True)
-        thread.start()
-
-        # Wait for server to start
-        deadline = time.monotonic() + self.config.setup_timeout
-        while time.monotonic() < deadline:
-            if (
-                server_holder
-                and hasattr(server_holder[0], "started")
-                and server_holder[0].started
-            ):
-                break
-            time.sleep(0.05)
-
-        if name == "Router":
-            self._router_server = server_holder[0] if server_holder else None
-        elif name == "Gateway":
-            self._gateway_server = server_holder[0] if server_holder else None
-        elif name.startswith("DataProxy"):
-            if server_holder:
-                self._data_proxy_servers.append(server_holder[0])
-
-        return thread
+    # -- Service health checks & registration ------------------------------
 
     def _wait_for_service(
         self, url: str, name: str, timeout: float | None = None
@@ -331,51 +328,28 @@ class GatewayRolloutController:
             time.sleep(0.1)
         raise TimeoutError(f"{name} did not become healthy at {url} within {timeout}s")
 
-    def _register_worker_in_router(self, worker_addr: str) -> None:
-        """Register a data proxy worker in the router."""
+    def _register_data_proxies_in_router(self) -> None:
+        """Register all data proxy workers in the router."""
         import requests
 
-        router_url = f"http://127.0.0.1:{self.config.router_port}/register_worker"
-        resp = requests.post(
-            router_url,
-            json={"worker_addr": worker_addr},
-            headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
-            timeout=5,
-        )
-        resp.raise_for_status()
-        logger.info("Registered worker %s in router", worker_addr)
-
-    def _stop_gateway_services(self) -> None:
-        """Stop all gateway micro-services."""
-        for server in (
-            [self._gateway_server] + self._data_proxy_servers + [self._router_server]
-        ):
-            if server is not None:
-                server.should_exit = True
-
-        for thread in (
-            [self._gateway_thread] + self._data_proxy_threads + [self._router_thread]
-        ):
-            if thread is not None:
-                thread.join(timeout=5.0)
-
-        self._gateway_server = None
-        self._gateway_thread = None
-        self._data_proxy_servers.clear()
-        self._data_proxy_threads.clear()
-        self._router_server = None
-        self._router_thread = None
-        self._gateway_services_started = False
+        for dp_addr in self._data_proxy_addrs:
+            resp = requests.post(
+                f"{self._router_addr}/register_worker",
+                json={"worker_addr": dp_addr},
+                headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            logger.info("Registered data proxy %s in router", dp_addr)
 
     @property
     def callback_addr(self) -> str:
         """Return gateway address as 'host:port' for training controller callbacks."""
-        from areal.utils.network import gethostip
-
-        host = self.config.gateway_host
-        if host == "0.0.0.0":
-            host = gethostip()
-        return f"{host}:{self.config.gateway_port}"
+        # Strip the http:// prefix to match the host:port format
+        addr = self._gateway_addr
+        if addr.startswith("http://"):
+            addr = addr[len("http://") :]
+        return addr
 
     # -- Destroy -----------------------------------------------------------
 
@@ -385,19 +359,25 @@ class GatewayRolloutController:
             self._gateway_inf_engine.destroy()
             self._gateway_inf_engine = None
 
-        # Stop gateway services
-        self._stop_gateway_services()
-
-        # Delete workers via scheduler
-        if self._worker_role:
+        # Delete all service workers via scheduler
+        for role in reversed(self._service_roles):
             try:
-                self.scheduler.delete_workers(role=self._worker_role)
-                self.workers.clear()
-                self.server_infos.clear()
-                logger.info("Workers deleted")
+                self.scheduler.delete_workers(role=role)
+                logger.info("Workers deleted for role: %s", role)
             except Exception:
-                logger.error("Error deleting workers: %s", traceback.format_exc())
+                logger.error(
+                    "Error deleting workers for role %s: %s",
+                    role,
+                    traceback.format_exc(),
+                )
 
+        self._service_roles.clear()
+        self.workers.clear()
+        self.server_infos.clear()
+        self._sglang_addrs.clear()
+        self._data_proxy_addrs.clear()
+        self._router_addr = ""
+        self._gateway_addr = ""
         self._staleness_manager = None
 
     # -- Version management ------------------------------------------------
@@ -408,7 +388,7 @@ class GatewayRolloutController:
             if self._gateway_inf_engine is not None:
                 self._gateway_inf_engine.set_version(version)
         # Broadcast to all workers via gateway
-        if self._gateway_services_started:
+        if self._gateway_addr:
             self._gateway_http_post("/set_version", {"version": version})
 
     def get_version(self) -> int:
@@ -499,22 +479,22 @@ class GatewayRolloutController:
         """Pause dispatcher + broadcast pause to all workers."""
         if self._gateway_inf_engine is not None:
             self._gateway_inf_engine.pause()
-        if self._gateway_services_started:
+        if self._gateway_addr:
             self._gateway_http_post("/pause_generation", {})
 
     def resume(self) -> None:
         """Broadcast resume to all workers + resume dispatcher."""
-        if self._gateway_services_started:
+        if self._gateway_addr:
             self._gateway_http_post("/continue_generation", {})
         if self._gateway_inf_engine is not None:
             self._gateway_inf_engine.resume()
 
     async def pause_generation(self) -> None:
-        if self._gateway_services_started:
+        if self._gateway_addr:
             self._gateway_http_post("/pause_generation", {})
 
     async def continue_generation(self) -> None:
-        if self._gateway_services_started:
+        if self._gateway_addr:
             self._gateway_http_post("/continue_generation", {})
 
     # -- Weight updates (route through gateway HTTP) -----------------------
@@ -564,7 +544,7 @@ class GatewayRolloutController:
 
     @property
     def proxy_gateway_addr(self) -> str:
-        return f"http://127.0.0.1:{self.config.gateway_port}"
+        return self._gateway_addr
 
     # -- Properties --------------------------------------------------------
 
@@ -594,7 +574,7 @@ class GatewayRolloutController:
         """Make an HTTP POST to the gateway with admin auth."""
         import requests
 
-        url = f"http://127.0.0.1:{self.config.gateway_port}{endpoint}"
+        url = f"{self._gateway_addr}{endpoint}"
         try:
             resp = requests.post(
                 url,

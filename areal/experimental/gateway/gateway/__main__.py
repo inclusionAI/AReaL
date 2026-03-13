@@ -38,7 +38,7 @@ def main():
         choices=["debug", "info", "warning", "error"],
         help="Log level",
     )
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),

@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--tokenizer-path", required=True)
     parser.add_argument("--log-level", default="info")
     parser.add_argument("--request-timeout", type=float, default=120.0)
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     config = DataProxyConfig(
         host=args.host,

@@ -127,7 +127,7 @@ def main(args):
         server_args=server_args,
     )
 
-    gateway_url = f"http://127.0.0.1:{gw_cfg.gateway_port}"
+    gateway_url = controller._gateway_addr
     admin_api_key = gw_cfg.admin_api_key
     print(f"[chatbot] Gateway ready at {gateway_url}")
 

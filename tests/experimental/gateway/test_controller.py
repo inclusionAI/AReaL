@@ -303,7 +303,8 @@ class TestGatewayRolloutControllerConstruction:
         cfg = GatewayControllerConfig(gateway_port=9999)
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
-        assert controller.proxy_gateway_addr == "http://127.0.0.1:9999"
+        # Before initialize, proxy_gateway_addr returns the empty _gateway_addr
+        assert controller.proxy_gateway_addr == ""
 
     def test_engine_raises_before_init(self):
         from areal.experimental.gateway.controller.controller import (
@@ -355,11 +356,12 @@ class TestGatewayRolloutControllerHTTP:
             GatewayRolloutController,
         )
 
-        cfg = GatewayControllerConfig(gateway_port=19999)
+        cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
-
+        # _gateway_addr is empty before init, so the URL is just the endpoint
         # Should not raise — just logs the error
+        controller._gateway_addr = "http://127.0.0.1:19999"
         controller._gateway_http_post("/test", {"key": "value"})
 
     @patch("requests.post")
@@ -372,9 +374,10 @@ class TestGatewayRolloutControllerHTTP:
         mock_resp.status_code = 200
         mock_post.return_value = mock_resp
 
-        cfg = GatewayControllerConfig(gateway_port=8080, admin_api_key="my-secret-key")
+        cfg = GatewayControllerConfig(admin_api_key="my-secret-key")
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
+        controller._gateway_addr = "http://127.0.0.1:8080"
 
         controller._gateway_http_post("/test_endpoint", {"data": 1})
 
