@@ -220,6 +220,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             actual_tools_before_round = set(all_actual_tools)
 
             should_retry_round = False
+            current_round_tools = set()  # Track tools for current round only
 
             try:
                 # ===== Phase 1: Generate reasoning =====
@@ -267,7 +268,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
 
                 # Collect actual tool names for validation
                 for tool_call in function_call_part_list:
-                    all_actual_tools.add(tool_call.name.lower())
+                    tool_name = tool_call.name.lower()
+                    all_actual_tools.add(tool_name)
+                    current_round_tools.add(tool_name)
 
                 task.update_observation_from_action(function_call_part_list)
 
@@ -332,8 +335,8 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                         question=question,
                         ground_truth=ground_truth,
                         prediction=final_answer,
-                        reasoning_text="\n".join(all_thinking_text),
-                        actual_tools=all_actual_tools,
+                        reasoning_text=reasoning_text,  # Only current round's reasoning
+                        actual_tools=current_round_tools,  # Only current round's tools
                     )
 
                     if is_valid:
@@ -347,7 +350,10 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     # Check if this is a non-answer-error issue (leakage or tool mismatch)
                     is_answer_error = reason.startswith("wrong_answer")
 
-                    if not is_answer_error:
+                    if is_answer_error:
+                        logger.info(f"[{task_id}] Round {current_round} Attempt {attempt + 1}: wrong answer, "
+                                    f"will try next attempt or extend round")
+                    else:
                         # For leakage/tool_mismatch, retry the entire round (Phase 1 + Phase 2)
                         logger.info(f"[{task_id}] Round {current_round} has non-answer issue ({reason}), "
                                     f"will retry round ({round_retry_count + 1}/{max_round_retries})")
