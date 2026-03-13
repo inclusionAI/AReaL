@@ -299,9 +299,8 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     task.conversation_history = task.conversation_history[:conv_history_len]
                     continue
 
-                # Save and validate
-                meta_info = task.save_trajectory()
-                final_answer = meta_info.get("output_text", "")
+                # Validate first (don't save yet)
+                final_answer = task.conversation_history[-1].get("output_text", "")
 
                 is_valid, reason = _validate_trajectory(
                     question=question,
@@ -312,6 +311,8 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 )
 
                 if is_valid:
+                    # Only save trajectory when valid
+                    meta_info = task.save_trajectory()
                     logger.info(f"[{task_id}] Valid trajectory found after {total_attempts} attempts")
                     return True, meta_info
 
@@ -320,14 +321,23 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 # Track this round's last wrong answer (will be added to list after all attempts)
                 round_last_wrong_answer = final_answer
 
-                # Always restore state for retry (model won't see previous Phase 3)
-                task.conversation_history = task.conversation_history[:conv_history_len]
+                # Check if this is the final attempt of the final round
+                is_final_attempt = (current_round == _WORKER_MAX_ITERATIVE_ROUNDS and
+                                    attempt == _WORKER_ATTEMPTS_PER_ROUND - 1)
+
+                # Restore state for retry (model won't see previous Phase 3)
+                # For final attempt: keep conversation_history (for trajectory), only restore contents
+                if not is_final_attempt:
+                    task.conversation_history = task.conversation_history[:conv_history_len]
                 task.contents = contents_before_phase3
 
             except Exception as e:
                 logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} failed: {e}")
-                # Always restore state on exception
-                task.conversation_history = task.conversation_history[:conv_history_len]
+                # Restore state on exception
+                is_final_attempt = (current_round == _WORKER_MAX_ITERATIVE_ROUNDS and
+                                    attempt == _WORKER_ATTEMPTS_PER_ROUND - 1)
+                if not is_final_attempt:
+                    task.conversation_history = task.conversation_history[:conv_history_len]
                 task.contents = contents_before_phase3
                 continue
 
@@ -338,7 +348,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             logger.info(f"[{task_id}] Extending to Round {current_round + 1}")
 
     logger.warning(f"[{task_id}] Max attempts reached without valid trajectory")
-    return False, None
+    # Save final trajectory with last Phase 3 attempt
+    meta_info = task.save_trajectory()
+    return False, meta_info
 
 
 # =============================================================================
