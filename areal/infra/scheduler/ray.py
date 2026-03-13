@@ -56,7 +56,7 @@ class RayWorkerInfo:
 class RayScheduler(Scheduler):
     def __init__(
         self,
-        startup_timeout: float = 30.0,
+        startup_timeout: float = 300.0,
         *,
         exp_config: BaseExperimentConfig | None = None,
     ):
@@ -168,19 +168,18 @@ class RayScheduler(Scheduler):
         worker_ids: list[str] = []
 
         placement_strategy = self._get_placement_strategy(schedulings)
-        placement_groups = placement_strategy.create_placement_group(
+        placement_strategy.create_placement_group(
             role,
             schedulings,
             self.exp_config.cluster.n_gpus_per_node,
             timeout=self.startup_timeout,
         )
 
-        master_ip, master_port = get_placement_group_master_ip_and_port(
-            placement_groups[0], placement_group_bundle_index=0
-        )
-
         for idx, spec in enumerate(schedulings):
             options, pg_scheduling_strategy = placement_strategy.actor_resources(spec)
+            master_ip, master_port = get_placement_group_master_ip_and_port(
+                pg_scheduling_strategy.placement_group, placement_group_bundle_index=0
+            )
             worker_id = f"{role}/{idx}"
             env = self._build_env_vars(spec)
             actor = RayRPCServer.options(
