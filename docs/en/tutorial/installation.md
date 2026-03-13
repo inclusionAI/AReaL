@@ -127,16 +127,17 @@ You can also install individual extras instead of the full `cuda` bundle:
 **Note**: You can mix and match individual extras:
 
 ```bash
-# vLLM with HF Kernels and flash-attn (no megatron, no tms)
+# vLLM with Hugging Face Kernels and flash-attn (no megatron, no tms)
 uv sync --extra vllm --extra flash-attn --extra kernels
 # vLLM with all training packages
 uv sync --extra cuda-train --extra vllm
 ```
 
-### Using HF Kernels in Training
+### Using Hugging Face Kernels in Training
 
-Installing the `kernels` extra only makes the runtime available. Training keeps the
-existing defaults unless you opt in through configuration.
+Installing the `kernels` extra only makes the
+[Hugging Face Kernels](https://github.com/huggingface/kernels) runtime available.
+Training keeps the existing defaults unless you opt in through configuration.
 
 Use the following fields on your train engine config (for example `actor`, `critic`, or
 `teacher`):

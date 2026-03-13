@@ -48,7 +48,7 @@ python3 examples/math/gsm8k_rl.py \
     +sglang.attention_backend=triton
 ```
 
-如果您想在训练中启用 Hugging Face kernels，请显式添加训练引擎覆盖项：
+如果您想在训练中启用 [Hugging Face Kernels](https://github.com/huggingface/kernels)，请显式添加训练引擎覆盖项：
 
 ```bash
 python3 examples/math/gsm8k_rl.py \

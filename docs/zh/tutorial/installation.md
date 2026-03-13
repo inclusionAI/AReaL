@@ -108,15 +108,16 @@ uv sync --extra cuda-train --extra vllm
 **注意**：您可以混合搭配各个 extra：
 
 ```bash
-# vLLM 带 HF Kernels 和 flash-attn（不含 megatron 和 tms）
+# vLLM 带 Hugging Face Kernels 和 flash-attn（不含 megatron 和 tms）
 uv sync --extra vllm --extra flash-attn --extra kernels
 # vLLM 加所有训练包
 uv sync --extra cuda-train --extra vllm
 ```
 
-### 在训练中使用 HF Kernels
+### 在训练中使用 Hugging Face Kernels
 
-安装 `kernels` extra 只会让运行时可用；训练仍然保持现有默认值，除非您在配置中显式启用。
+安装 `kernels` extra 只会让 [Hugging Face Kernels](https://github.com/huggingface/kernels)
+运行时可用；训练仍然保持现有默认值，除非您在配置中显式启用。
 
 对训练引擎配置（例如 `actor`、`critic` 或 `teacher`）使用以下字段：
 

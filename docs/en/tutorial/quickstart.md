@@ -56,7 +56,8 @@ python3 examples/math/gsm8k_rl.py \
     +sglang.attention_backend=triton
 ```
 
-To enable Hugging Face kernels in training, add the train engine overrides explicitly:
+To enable [Hugging Face Kernels](https://github.com/huggingface/kernels) in training,
+add the train engine overrides explicitly:
 
 ```bash
 python3 examples/math/gsm8k_rl.py \

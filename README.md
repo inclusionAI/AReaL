@@ -99,7 +99,7 @@ First, install the package:
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
 pip install uv
-uv sync --extra cuda  # installs training packages + HF Kernels + SGLang
+uv sync --extra cuda  # installs training packages + Hugging Face Kernels + SGLang
 ```
 
 Our training scripts automatically download the required dataset (openai/gsm8k) and
