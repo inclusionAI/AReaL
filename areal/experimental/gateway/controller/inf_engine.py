@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-from openai.types.chat import ChatCompletion
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 if TYPE_CHECKING:
     from areal.api.io_struct import ModelRequest, ModelResponse
@@ -126,7 +126,7 @@ class GatewayInfEngine:
         messages: list[dict],
         session_api_key: str | None = None,
         **kwargs,
-    ) -> ChatCompletion:
+    ) -> ChatCompletion | AsyncGenerator[ChatCompletionChunk, None]:
         """Send a chat completion request through the gateway HTTP stack.
 
         Parameters
@@ -138,22 +138,28 @@ class GatewayInfEngine:
             admin API key from the controller config.
         **kwargs
             Optional overrides: ``temperature``, ``top_p``,
-            ``max_completion_tokens``.
+            ``max_completion_tokens``, ``stream``.
 
         Returns
         -------
-        ChatCompletion
-            Parsed OpenAI ChatCompletion object.
+        ChatCompletion | AsyncGenerator[ChatCompletionChunk, None]
+            When ``stream=False`` (default): parsed OpenAI ChatCompletion object.
+            When ``stream=True``: async generator yielding ChatCompletionChunk.
         """
         import aiohttp
 
-        body = {
+        stream = kwargs.get("stream", False)
+        body: dict[str, Any] = {
             "messages": messages,
             "temperature": kwargs.get("temperature", 1.0),
             "top_p": kwargs.get("top_p", 1.0),
             "max_completion_tokens": kwargs.get("max_completion_tokens", 512),
-            "stream": False,
+            "stream": stream,
         }
+        # Forward extra body params (e.g. chat_template_kwargs)
+        extra_body = kwargs.get("extra_body")
+        if extra_body and isinstance(extra_body, dict):
+            body.update(extra_body)
 
         api_key = (
             session_api_key
@@ -166,6 +172,10 @@ class GatewayInfEngine:
             "Authorization": f"Bearer {api_key}",
         }
 
+        if stream:
+            return self._stream_chat_completion(url, body, headers)
+
+        # Non-streaming path
         timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, json=body, headers=headers) as resp:
@@ -177,6 +187,43 @@ class GatewayInfEngine:
                 resp_json = await resp.json()
 
         return ChatCompletion.model_validate(resp_json)
+
+    async def _stream_chat_completion(
+        self,
+        url: str,
+        body: dict[str, Any],
+        headers: dict[str, str],
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
+        """Parse SSE stream from the gateway into ChatCompletionChunk objects."""
+        import aiohttp
+
+        timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
+        session = aiohttp.ClientSession(timeout=timeout)
+        try:
+            resp = await session.post(url, json=body, headers=headers)
+            if resp.status != 200:
+                text = await resp.text()
+                await resp.release()
+                await session.close()
+                raise RuntimeError(
+                    f"Gateway /chat/completions returned {resp.status}: {text}"
+                )
+
+            async for line in resp.content:
+                decoded = line.decode("utf-8").strip()
+                if not decoded or not decoded.startswith("data: "):
+                    continue
+                payload = decoded[len("data: "):]
+                if payload == "[DONE]":
+                    break
+                import json as _json
+
+                chunk_data = _json.loads(payload)
+                yield ChatCompletionChunk.model_validate(chunk_data)
+
+            await resp.release()
+        finally:
+            await session.close()
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Send a generation request through the gateway HTTP stack.

@@ -584,9 +584,10 @@ class GatewayRolloutController:
         return await self._engine.agenerate(req)
 
     async def chat_completion(self, messages, session_api_key=None, **kwargs):
-        return await self._engine.chat_completion(
+        result = await self._engine.chat_completion(
             messages, session_api_key=session_api_key, **kwargs
         )
+        return result
 
     # -- Pause / Resume ----------------------------------------------------
 

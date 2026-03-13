@@ -2,8 +2,8 @@
 
 Launches a full gateway stack (SGLang + Router + Data Proxy + Gateway)
 via ``GatewayRolloutController`` and runs an interactive REPL that
-streams chat completions token-by-token through the OpenAI-compatible
-``/chat/completions`` endpoint.
+streams chat completions token-by-token through the controller's
+``chat_completion`` API.
 
 No training is involved — the example demonstrates the gateway inference
 path in isolation.
@@ -18,8 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-
-from openai import AsyncOpenAI
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
@@ -39,14 +37,8 @@ from areal.infra import LocalScheduler
 # ---------------------------------------------------------------------------
 
 
-async def chat_loop(gateway_url: str, admin_api_key: str) -> None:
+async def chat_loop(controller: GatewayRolloutController) -> None:
     """Run an interactive chat loop using streaming completions."""
-    client = AsyncOpenAI(
-        base_url=f"{gateway_url}/",
-        api_key=admin_api_key,
-        max_retries=0,
-    )
-
     messages: list[dict] = []
     print("\n=== Qwen3 Chatbot (streaming via GatewayRolloutController) ===")
     print("Type your message and press Enter.  Ctrl-C or 'quit' to exit.\n")
@@ -65,16 +57,17 @@ async def chat_loop(gateway_url: str, admin_api_key: str) -> None:
 
         print("Assistant: ", end="", flush=True)
         assistant_text = ""
+        chunk_count = 0
         try:
-            stream = await client.chat.completions.create(
-                model="sglang",
-                messages=messages,  # type: ignore[arg-type]
+            stream = await controller.chat_completion(
+                messages,
                 stream=True,
                 temperature=0.7,
-                max_completion_tokens=2048,
+                max_completion_tokens=16384,
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
-            async for chunk in stream:
+            async for chunk in stream:  # type: ignore[union-attr]
+                chunk_count += 1
                 delta = chunk.choices[0].delta
                 if delta.content:
                     print(delta.content, end="", flush=True)
@@ -85,6 +78,7 @@ async def chat_loop(gateway_url: str, admin_api_key: str) -> None:
             continue
 
         print()  # newline after streamed response
+        print(f"  [{chunk_count} chunks streamed]")
         messages.append({"role": "assistant", "content": assistant_text})
 
 
@@ -113,26 +107,26 @@ def main(args):
         tokenizer_path=config.tokenizer_path,
         model_path=config.tokenizer_path,  # same as tokenizer for chatbot
         consumer_batch_size=1,
-        scheduling_spec=(SchedulingSpec(gpu=1, cmd="python3 -m areal.infra.rpc.rpc_server"),),
+        scheduling_spec=(
+            SchedulingSpec(gpu=1, cmd="python3 -m areal.infra.rpc.rpc_server"),
+        ),
     )
 
     # Create scheduler and controller
     scheduler = LocalScheduler(exp_config=config)
     controller = GatewayRolloutController(gw_cfg, scheduler)
 
-    # Initialize — this launches SGLang servers and starts gateway services
+    # Initialize — launches RPC workers, SGLang engines, gateway services
     controller.initialize(
         role="rollout",
         alloc_mode=alloc_mode,
         server_args=server_args,
     )
 
-    gateway_url = controller._gateway_addr
-    admin_api_key = gw_cfg.admin_api_key
-    print(f"[chatbot] Gateway ready at {gateway_url}")
+    print(f"[chatbot] Gateway ready at {controller._gateway_addr}")
 
     try:
-        asyncio.run(chat_loop(gateway_url, admin_api_key))
+        asyncio.run(chat_loop(controller))
     finally:
         print("[chatbot] Shutting down...")
         controller.destroy()
