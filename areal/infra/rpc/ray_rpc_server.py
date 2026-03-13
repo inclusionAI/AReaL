@@ -35,6 +35,9 @@ class RayServer(abc.ABC):
         self._default_engine_name: str | None = None  # For backward compatibility
         self._allocated_port = set()
         self.config: BaseExperimentConfig = config
+        ctx = ray.get_runtime_context()
+        self.actor_name = ctx.get_actor_name()
+        self.logger = logging.getLogger(self.__class__.__name__)
 
     def _get_device(self):
         # lazy resolve the device inside worker process
@@ -108,6 +111,9 @@ class RayServer(abc.ABC):
     def __ray_shutdown__(self):
         self.destroy()
 
+    def __repr__(self):
+        return f"{self.__class__.__name__} [{self.actor_name}]"
+
 
 @ray.remote
 class RayRPCServer(RayServer):
@@ -125,7 +131,6 @@ class RayRPCServer(RayServer):
 
     def __init__(self, config: BaseExperimentConfig, **kwargs):
         super().__init__(config, **kwargs)
-        self.logger = logging.getLogger("RayRPCServer")
 
     def create_engine(
         self,
@@ -269,7 +274,6 @@ class RayHTTPLauncher(RayServer):
 
     def __init__(self, config: BaseExperimentConfig, **kwargs):
         super().__init__(config, **kwargs)
-        self.logger = logging.getLogger("RayHTTPLauncher")
 
         missing = [k for k in self.REQUIRED_ARGS if k not in kwargs]
         if missing:
