@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import re
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
@@ -16,6 +15,11 @@ from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.utils import logging, name_resolve, pkg_version
+from areal.utils.attn_impl import (
+    BUILTIN_ATTN_IMPLS,
+    get_attn_impl_validation_error,
+    is_valid_attn_impl,
+)
 from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
     PROX_LOGP_METHODS_ALL,
@@ -30,15 +34,6 @@ uvloop.install()
 logger = logging.getLogger("CLIArgs")
 
 ConfigT = TypeVar("ConfigT")
-
-BUILTIN_ATTN_IMPLS = (
-    "eager",
-    "sdpa",
-    "flash_attention_2",
-    "flash_attention_3",
-    "flex_attention",
-)
-HF_KERNEL_REPO_PATTERN = re.compile(r"^[^/:]+/[^/:@]+(?:@[^/:]+)?(?::[^/:]+)?$")
 
 
 @dataclass
@@ -1047,16 +1042,8 @@ class TrainEngineConfig:
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
             )
-        if not (
-            self.attn_impl in BUILTIN_ATTN_IMPLS
-            or HF_KERNEL_REPO_PATTERN.match(self.attn_impl)
-        ):
-            raise ValueError(
-                "attn_impl must be one of "
-                f"{BUILTIN_ATTN_IMPLS} or a Hugging Face kernels repo ID "
-                "formatted as org/repo[@revision][:entrypoint], "
-                f"got '{self.attn_impl}'."
-            )
+        if not is_valid_attn_impl(self.attn_impl):
+            raise ValueError(get_attn_impl_validation_error(self.attn_impl))
         if self.fsdp.memory_efficient_load and self.init_from_scratch:
             raise ValueError(
                 "memory_efficient_load cannot be used with init_from_scratch=True. "

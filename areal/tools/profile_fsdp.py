@@ -40,14 +40,7 @@ from torch.profiler import ProfilerActivity
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from areal.infra import current_platform
-
-VALID_ATTN_IMPLS = {
-    "eager",
-    "sdpa",
-    "flash_attention_2",
-    "flash_attention_3",
-    "flex_attention",
-}
+from areal.utils.attn_impl import get_attn_impl_validation_error, is_valid_attn_impl
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -139,11 +132,8 @@ Examples:
         help="Attention implementation (default: sdpa)",
     )
     args = parser.parse_args(argv)
-    if "/" not in args.attn_impl and args.attn_impl not in VALID_ATTN_IMPLS:
-        parser.error(
-            "--attn-impl must be a builtin transformers backend or a Hugging Face "
-            "kernels repo ID like org/repo[@revision][:entrypoint]."
-        )
+    if not is_valid_attn_impl(args.attn_impl):
+        parser.error(get_attn_impl_validation_error(args.attn_impl))
     return args
 
 
