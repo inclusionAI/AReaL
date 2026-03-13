@@ -202,6 +202,10 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     for current_round in range(1, _WORKER_MAX_ITERATIVE_ROUNDS + 1):
         logger.info(f"[{task_id}] Starting Round {current_round}")
 
+        # Reset agent client at start of each new round (fresh perspective, keep stats)
+        if current_round > 1:
+            agent._model_loaded = False
+
         try:
             # ===== Phase 1: Generate reasoning =====
             agent.config.generate_config = phase_configs.reasoning_only
