@@ -20,11 +20,11 @@ The following hardware configuration has been extensively tested:
 | ---------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
 | Operating System |                                                                      Ubuntu, EulerOS or any system meeting the requirements below                                                                      |
 | Ascend HDK       |                                                                                                 25.2.1                                                                                                 |
-| CANN             |                                                                                                8.3.RC2                                                                                                 |
+| CANN             |                                                                                                 8.5.0                                                                                                  |
 | Git LFS          | Required for downloading models, datasets, and AReaL code. See [installation guide](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
 | Docker           |                                                                                                 27.2.0                                                                                                 |
-| AReaL Image (A2) |                                                            `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a2` (see details below)                                                            |
-| AReaL Image (A3) |                                                            `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a3` (see details below)                                                            |
+| AReaL Image (A2) |                                                            `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v1.0.1-a2` (see details below)                                                            |
+| AReaL Image (A3) |                                                            `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v1.0.1-a3` (see details below)                                                            |
 
 **Note**: This tutorial does not cover the installation of CANN, or shared storage
 mounting, as these depend on your specific node configuration and system version. Please
@@ -44,8 +44,8 @@ WORK_DIR=<your_workspace>
 CONTAINER_WORK_DIR=<your_container_workspace>
 
 # Use A2/A3 image depending on your hardware type
-# IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a2
-IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a3
+# IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v1.0.1-a2
+IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v1.0.1-a3
 CONTAINER_NAME=areal_npu
 
 cd ${WORK_DIR}
@@ -92,15 +92,20 @@ checkpoints and logs.
 
 ### Custom Environment Installation
 
+The image includes a built-in copy of the AReaL source code under `/AReaL`, but it may
+be out of date. We recommend removing it and installing AReaL from source.
+
 ```bash
+rm -rf /AReaL
+
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
 
 # Checkout to ascend branch
-git checkout ascend
+git checkout ascend-v1.0.1
 
-# Install AReaL with NPU extras
-uv pip install -r pyproject.toml --extra all_npu
+# Install AReaL
+pip install -e . --no-deps
 ```
 
 ## (Optional) Launch Ray Cluster for Distributed Training
@@ -137,4 +142,5 @@ Follow the instructions there. If you want to run multi-node training with Ray, 
 sure your Ray cluster is started as described above before launching the job.
 
 **Note**: Currently, only the `fsdp` training engine and the `vllm` rollout engine
-(through the vLLM-Ascend plugin) are supported on Ascend NPU.
+(through the vLLM-Ascend plugin) are supported on Ascend NPU. The `megatron` engine
+(through [MindSpeed](https://gitcode.com/Ascend/MindSpeed)) is currently experimental.

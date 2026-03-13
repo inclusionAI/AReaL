@@ -77,7 +77,7 @@ from areal.engine.fsdp_utils import (
 )
 from areal.engine.fsdp_utils.checkpoint import DCPState
 from areal.engine.fsdp_utils.grad import fsdp2_clip_grad_norm
-from areal.engine.fsdp_utils.optimizer import AnyPrecisionAdamW
+from areal.engine.fsdp_utils.optimizer import AnyPrecisionAdamW, PerLayerOptimWrapper
 from areal.engine.fsdp_utils.parallel import ParallelHelper, parallelize_model
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
@@ -205,6 +205,7 @@ class FSDPEngine(TrainEngine):
         self.dp_rank: int
 
         self.is_offload: bool = False
+        self._per_layer_optim_wrapper: PerLayerOptimWrapper | None = None
         self.enable_tree_training: bool = self.config.enable_tree_training
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
@@ -350,6 +351,19 @@ class FSDPEngine(TrainEngine):
         )
 
         self._create_optimizer(ft_spec)
+
+        if self.config.fsdp.per_layer_optim_step:
+            if self.optimizer_config.type != "adam":
+                raise ValueError(
+                    f"per_layer_optim_step only supports 'adam' optimizer, got '{self.optimizer_config.type}'."
+                )
+            self._per_layer_optim_wrapper = PerLayerOptimWrapper(
+                model=self.model,
+                optimizer=self.optimizer,
+                device_id=self.device,
+                prefetch_layers=self.config.fsdp.optim_step_prefetch_layers,
+            )
+
         self._initialized = True
 
     @property
@@ -379,6 +393,9 @@ class FSDPEngine(TrainEngine):
             del self.optimizer
         if hasattr(self, "model"):
             del self.model
+        if self._per_layer_optim_wrapper is not None:
+            del self._per_layer_optim_wrapper
+            self._per_layer_optim_wrapper = None
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
@@ -501,6 +518,11 @@ class FSDPEngine(TrainEngine):
         if meta.with_optim and meta.weight_format == "hf":
             self._load_optimizer_state(meta.path)
 
+        # Checkpoint load replaces optimizer state tensor objects, losing
+        # pinning and normalization established by PerLayerOptimWrapper.__init__.
+        if meta.with_optim and self._per_layer_optim_wrapper is not None:
+            self._per_layer_optim_wrapper.refresh_states()
+
     def optimizer_zero_grad(self):
         assert self.optimizer is not None
         self.optimizer.zero_grad()
@@ -521,6 +543,11 @@ class FSDPEngine(TrainEngine):
         if not math.isfinite(grad_norm):
             self.optimizer_zero_grad()
             update_successful = False
+        elif self.config.fsdp.per_layer_optim_step:
+            assert self._per_layer_optim_wrapper is not None
+            with trace_scope("fsdp_engine.step"):
+                self._per_layer_optim_wrapper.step()
+            update_successful = True
         else:
             with trace_scope("fsdp_engine.step"):
                 self.optimizer.step()
