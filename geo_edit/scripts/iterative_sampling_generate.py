@@ -195,6 +195,8 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     all_thinking_text = []
     all_actual_tools = set()
     total_attempts = 0
+    last_wrong_answer = ""  # Track last wrong answer for Round 2+ prompt
+    last_wrong_thinking = ""  # Track last thinking for Round 2+ prompt
 
     # Iterate through rounds (each round adds one more tool call)
     for current_round in range(1, _WORKER_MAX_ITERATIVE_ROUNDS + 1):
@@ -204,10 +206,14 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             # ===== Phase 1: Generate reasoning =====
             agent.config.generate_config = phase_configs.reasoning_only
 
-            # For Round 2+, temporarily add extended reasoning prompt (not saved to trajectory)
+            # For Round 2+, temporarily add extended reasoning prompt with previous wrong answer
             if current_round > 1:
                 contents_before_prompt = copy.deepcopy(task.contents)
-                task.append_system_prompt(ITERATIVE_EXTENDED_REASONING_PROMPT)
+                formatted_prompt = ITERATIVE_EXTENDED_REASONING_PROMPT.format(
+                    think=last_wrong_thinking or "(no thinking recorded)",
+                    answer=last_wrong_answer or "(no answer recorded)",
+                )
+                task.append_system_prompt(formatted_prompt)
 
             reasoning_action, reasoning_extra = agent.act(task.contents)
             logger.warning(reasoning_action)  # Display model's tool call plan
@@ -295,17 +301,13 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
 
                 logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} invalid: {reason}")
 
-                # Always restore conversation_history (don't save failed attempts to trajectory)
+                # Save wrong answer info for Round 2+ prompt
+                last_wrong_answer = final_answer
+                last_wrong_thinking = "\n".join(all_thinking_text)
+
+                # Restore state for retry
                 task.conversation_history = task.conversation_history[:conv_history_len]
-
-                # Check if this is the last attempt and we're going to next round
-                is_last_attempt = (attempt == _WORKER_ATTEMPTS_PER_ROUND - 1)
-                is_going_to_next_round = (current_round < _WORKER_MAX_ITERATIVE_ROUNDS)
-
-                # Only restore contents if NOT last attempt going to next round
-                # (Keep Phase 3 in contents so model sees wrong answer in Round 2+)
-                if not (is_last_attempt and is_going_to_next_round):
-                    task.contents = contents_before_phase3
+                task.contents = contents_before_phase3
 
                 # Clean up saved files for retry
                 for item in os.listdir(task_save_dir):
