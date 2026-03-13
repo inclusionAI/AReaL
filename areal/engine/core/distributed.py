@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-import torch
+import torch  # noqa: F401 (used by callers)
 
 
 def patch_dist_group_timeout(timeout: timedelta):
@@ -8,7 +8,7 @@ def patch_dist_group_timeout(timeout: timedelta):
     Patch the default timeout for process groups in torch.distributed.
 
     Args:
-        timeout (float): Timeout in seconds.
+        timeout (timedelta): Default timeout to set for all process group backends.
     """
     from torch.distributed import distributed_c10d
 
@@ -20,6 +20,11 @@ def patch_dist_group_timeout(timeout: timedelta):
 
 
 # Copy from pytorch and OpenRLHF to allow creating multiple main groups.
+# This is needed because torch.distributed.init_process_group() only creates
+# the default global group, and torch.distributed.new_group() only creates
+# subgroups of the default group. AReaL needs independent process groups
+# for weight synchronization between training and inference engines that
+# run in separate launcher contexts (separate init_process_group calls).
 # https://github.com/pytorch/pytorch/blob/main/torch/distributed/distributed_c10d.py
 # https://github.com/OpenRLHF/OpenRLHF/blob/main/openrlhf/utils/distributed_util.py
 def init_custom_process_group(
@@ -30,7 +35,7 @@ def init_custom_process_group(
     rank=-1,
     store=None,
     group_name=None,
-    pg_options=None,
+    backend_options=None,
 ):
     from torch.distributed.distributed_c10d import (
         Backend,
@@ -68,12 +73,6 @@ def init_custom_process_group(
         # different systems (e.g. RPC) in case the store is multi-tenant.
         store = PrefixStore(group_name, store)
 
-    # NOTE: The pg_options parameter was renamed into backend_options in PyTorch 2.6.0
-    # https://github.com/pytorch/pytorch/commit/a0c7029a75628cd5fa8df83c0de0ea98ee7fd844
-    # We need to determine the appropriate parameter name based on PyTorch version
-    pg_options_param_name = (
-        "backend_options" if str(torch.__version__) >= "2.6" else "pg_options"
-    )
     pg, _ = _new_process_group_helper(
         world_size,
         rank,
@@ -81,8 +80,9 @@ def init_custom_process_group(
         backend,
         store,
         group_name=group_name,
-        **{pg_options_param_name: pg_options},
+        backend_options=backend_options,
         timeout=timeout,
+        group_desc=group_name,
     )
 
     _world.pg_group_ranks[pg] = {i: i for i in range(world_size)}

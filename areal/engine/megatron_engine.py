@@ -977,15 +977,7 @@ class MegatronEngine(TrainEngine):
             torch, self.mcore_config.exp_avg_sq_dtype
         )
 
-        self.optimizer = get_megatron_optimizer(
-            mcore_opt_config,
-            self.model,
-            no_weight_decay_cond=lambda n, p: any(
-                k in n for k in ["bias", "ln.weight", "ln_f.weight"]
-            ),
-            scale_lr_cond=None,
-            lr_mult=1.0,
-        )
+        self.optimizer = get_megatron_optimizer(mcore_opt_config, self.model)
 
         warmup_steps_proportion = self.optimizer_config.warmup_steps_proportion
         warmup_steps = int(warmup_steps_proportion * ft_spec.total_train_steps)

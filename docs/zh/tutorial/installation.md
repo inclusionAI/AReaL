@@ -82,17 +82,47 @@ uv sync --extra cuda
 # uv sync --group dev
 ```
 
-这将安装 CUDA 依赖的训练包（Megatron、Flash Attention、Hugging Face Kernels、Torch Memory Saver）以及
-**SGLang** 作为默认推理后端。这些包需要 Linux x86_64 和 CUDA 12.x 及兼容的 NVIDIA 驱动。
+这将安装 CUDA 依赖的训练包（Megatron、Torch Memory Saver）以及 **SGLang**
+作为默认推理后端。这些包需要 Linux x86_64 和 CUDA 12.x 及兼容的 NVIDIA 驱动。
 
-如果您希望使用 **vLLM** 作为推理后端而非 SGLang：
+#### Flash Attention 预编译 Wheel
+
+Flash Attention v2 包含在 `--extra cuda` 和 `--extra cuda-vllm` 中，但 PyPI
+仅提供源码分发包，从源码编译耗时约 30 分钟。为跳过编译，请在运行 `uv sync`
+**之前**安装**预编译 wheel**。
+
+Flash Attention wheel 在编译时与特定 PyTorch 版本绑定。SGLang 使用 **torch 2.9**，
+vLLM 使用 **torch 2.10**，请选择对应的 wheel。将 `cpXYZ` 替换为您的 Python 版本
+（3.11 对应 `cp311`，3.12 对应 `cp312`）。
+
+**SGLang**（默认，torch 2.9）：
 
 ```bash
-uv sync --extra cuda-train --extra vllm
+# Python 3.12
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
+# Python 3.11
+# uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp311-cp311-linux_x86_64.whl"
+
+uv sync --extra cuda
 ```
 
-同样的命令也适用于 macOS 和不带 CUDA 支持的 Linux。CUDA 包会通过平台标记自动跳过。但是，需要 CUDA
-的训练和推理功能将不可用。此配置仅适用于开发、测试和非 GPU 工作流。
+**vLLM**（torch 2.10）：
+
+```bash
+# Python 3.12
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp312-cp312-linux_x86_64.whl"
+# Python 3.11
+# uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp311-cp311-linux_x86_64.whl"
+
+uv sync --extra cuda-vllm
+```
+
+浏览所有可用 wheel：
+<https://github.com/mjun0812/flash-attention-prebuild-wheels/releases>。
+
+同样的 `uv sync` 命令也适用于 macOS 和不带 CUDA 支持的 Linux。CUDA 包（包括 flash-attn）
+会通过平台标记自动跳过。但是，需要 CUDA 的训练和推理功能将不可用。此配置仅适用于开发、测试和非
+GPU 工作流。
 
 您也可以单独安装各个 extra，而不是完整的 `cuda` 捆绑包：
 
@@ -102,8 +132,10 @@ uv sync --extra cuda-train --extra vllm
 - `tms`：Torch Memory Saver
 - `flash-attn`：Flash Attention v2
 - `kernels`：Hugging Face Kernels 运行时
-- `cuda-train`：仅训练包（megatron + tms + flash-attn + kernels，不含推理后端）
-- `cuda`：cuda-train + sglang（默认，向后兼容）
+- `cuda-train`：仅训练包（megatron + tms，不含推理后端）
+- `cuda-sglang`：cuda-train + sglang + flash-attn
+- `cuda-vllm`：cuda-train + vllm + flash-attn
+- `cuda`：cuda-sglang 的别名（默认，向后兼容）
 
 **注意**：您可以混合搭配各个 extra：
 
