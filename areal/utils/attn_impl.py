@@ -1,4 +1,4 @@
-import re
+from transformers.integrations.hub_kernels import is_kernel
 
 BUILTIN_ATTN_IMPLS = (
     "eager",
@@ -7,14 +7,11 @@ BUILTIN_ATTN_IMPLS = (
     "flash_attention_3",
     "flex_attention",
 )
-HF_KERNEL_REPO_PATTERN = re.compile(r"^[^/:]+/[^/:@]+(?:@[^/:]+)?(?::[^/:]+)?$")
 
 
 def is_valid_attn_impl(attn_impl: str) -> bool:
-    """Return whether ``attn_impl`` is a builtin backend or valid kernels repo ID."""
-    return attn_impl in BUILTIN_ATTN_IMPLS or bool(
-        HF_KERNEL_REPO_PATTERN.match(attn_impl)
-    )
+    """Return whether ``attn_impl`` is a builtin backend or valid HF kernels syntax."""
+    return attn_impl in BUILTIN_ATTN_IMPLS or is_kernel(attn_impl)
 
 
 def get_attn_impl_validation_error(attn_impl: str) -> str:
@@ -22,6 +19,7 @@ def get_attn_impl_validation_error(attn_impl: str) -> str:
     return (
         "attn_impl must be one of "
         f"{BUILTIN_ATTN_IMPLS} or a Hugging Face kernels repo ID "
-        "formatted as org/repo[@revision][:entrypoint], "
+        "formatted as org/repo[@revision][:entrypoint] "
+        "(optionally prefixed with wrapper|), "
         f"got '{attn_impl}'."
     )

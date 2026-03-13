@@ -225,6 +225,7 @@ def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
         "flash_attention_2",
         "kernels-community/flash-attn",
         "kernels-community/flash-attn@main:flash_attn_varlen_func",
+        "flash_attention_2|kernels-community/flash-attn@main:flash_attn_varlen_func",
     ],
 )
 def test_train_engine_config_accepts_builtin_and_kernel_attn_impls(attn_impl):
