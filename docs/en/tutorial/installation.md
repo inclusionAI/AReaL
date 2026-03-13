@@ -133,6 +133,31 @@ uv sync --extra vllm --extra flash-attn --extra kernels
 uv sync --extra cuda-train --extra vllm
 ```
 
+### Using HF Kernels in Training
+
+Installing the `kernels` extra only makes the runtime available. Training keeps the
+existing defaults unless you opt in through configuration.
+
+Use the following fields on your train engine config (for example `actor`, `critic`, or
+`teacher`):
+
+- `attn_impl`: Select the attention backend. In addition to built-in backends such as
+  `sdpa` and `flash_attention_2`, this can point to a Hugging Face kernels repo ID such
+  as `kernels-community/flash-attn` or
+  `kernels-community/flash-attn@main:flash_attn_varlen_func`.
+- `use_kernels`: Set to `true` to kernelize the model after creation.
+
+Example:
+
+```yaml
+actor:
+  attn_impl: kernels-community/flash-attn
+  use_kernels: true
+```
+
+For predictable behavior, prefer an explicit kernels repo ID instead of relying on
+automatic fallback from `flash_attention_*`.
+
 ### Additional CUDA Packages (Optional, Manual Installation)
 
 The Docker image includes additional compiled packages that are NOT in `pyproject.toml`.

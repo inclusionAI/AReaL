@@ -114,6 +114,27 @@ uv sync --extra vllm --extra flash-attn --extra kernels
 uv sync --extra cuda-train --extra vllm
 ```
 
+### 在训练中使用 HF Kernels
+
+安装 `kernels` extra 只会让运行时可用；训练仍然保持现有默认值，除非您在配置中显式启用。
+
+对训练引擎配置（例如 `actor`、`critic` 或 `teacher`）使用以下字段：
+
+- `attn_impl`：选择注意力后端。除了 `sdpa`、`flash_attention_2` 等内置后端外，还可以填写 Hugging Face kernels 仓库
+  ID，例如 `kernels-community/flash-attn` 或
+  `kernels-community/flash-attn@main:flash_attn_varlen_func`。
+- `use_kernels`：设为 `true` 后，会在模型创建完成后对模型执行 kernelize。
+
+示例：
+
+```yaml
+actor:
+  attn_impl: kernels-community/flash-attn
+  use_kernels: true
+```
+
+为了获得可预测的行为，建议显式指定 kernels 仓库 ID，而不是依赖 `flash_attention_*` 的自动回退。
+
 ### 额外的 CUDA 包（可选，手动安装）
 
 Docker 镜像包含 `pyproject.toml` 中没有的额外编译包。这些包需要 CUDA，必须从源码编译。如果使用自定义环境（非
