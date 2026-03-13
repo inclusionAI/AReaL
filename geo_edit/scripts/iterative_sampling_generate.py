@@ -196,156 +196,211 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     all_actual_tools = set()
     total_attempts = 0
     all_wrong_answers = []  # Track all wrong answers from previous rounds for Phase 3 prompt
+    max_round_retries = 3  # Max retries for non-answer-error issues within a round
 
     # Iterate through rounds (each round adds one more tool call)
-    for current_round in range(1, _WORKER_MAX_ITERATIVE_ROUNDS + 1):
-        logger.info(f"[{task_id}] Starting Round {current_round}")
+    current_round = 1
+    while current_round <= _WORKER_MAX_ITERATIVE_ROUNDS:
+        round_retry_count = 0
 
-        # Reset agent client at start of each new round (fresh perspective, keep stats)
-        if current_round > 1:
-            agent._model_loaded = False
+        while round_retry_count < max_round_retries:
+            logger.info(f"[{task_id}] Starting Round {current_round}" +
+                        (f" (retry {round_retry_count})" if round_retry_count > 0 else ""))
 
-        try:
-            # ===== Phase 1: Generate reasoning =====
-            agent.config.generate_config = phase_configs.reasoning_only
+            # Save state at the beginning of this round for potential retry
+            contents_before_round = copy.deepcopy(task.contents)
+            conv_history_before_round = len(task.conversation_history)
+            agent_state_before_round = {
+                "conversation_history": list(agent.conversation_history),
+                "step_count": agent.step_count,
+                "total_tokens_used": agent.total_tokens_used,
+                "cost": list(agent.cost),
+            }
+            thinking_text_before_round = list(all_thinking_text)
+            actual_tools_before_round = set(all_actual_tools)
 
-            # For Round 2+, temporarily add extended reasoning prompt with previous wrong answer
-            if current_round > 1:
-                contents_before_prompt = copy.deepcopy(task.contents)
-                task.append_system_prompt(ITERATIVE_EXTENDED_REASONING_PROMPT.format(
-                    used_tools=", ".join(all_actual_tools) if all_actual_tools else "None"
-                ))
-
-            reasoning_action, reasoning_extra = agent.act(task.contents)
-            logger.warning(reasoning_action)  # Display model's tool call plan
-
-            # Restore contents (remove the temporary prompt) before adding reasoning
-            if current_round > 1:
-                task.contents = contents_before_prompt
-
-            reasoning_text = extract_response_text(reasoning_action, api_mode)
-            all_thinking_text.append(reasoning_text)
-
-            # Validate format
-            if answer_pattern.search(reasoning_text):
-                raise ValueError("Reasoning phase should not generate <answer>")
-            if not think_pattern.search(reasoning_text):
-                raise ValueError("Invalid format - missing <think>Tool: ...</think>")
-
-            # ===== Phase 2: Generate tool call =====
-            task.append_assistant_message(reasoning_text)
-            agent.config.generate_config = phase_configs.tool_call_only
-            tool_action, tool_extra = agent.act(task.contents)
-            agent.config.generate_config = original_generate_config
-
-            merged_extra = {"reasoning_" + k: v for k, v in reasoning_extra.items()}
-            merged_extra.update(tool_extra)
-
-            function_call_part_list = task.parse_action(
-                step=current_round, action=tool_action, extra_info=merged_extra
-            )
-
-            if not function_call_part_list:
-                logger.warning(f"[{task_id}] Round {current_round}: No tool calls generated")
-                break
-
-            # Collect actual tool names for validation
-            for tool_call in function_call_part_list:
-                all_actual_tools.add(tool_call.name.lower())
-
-            task.update_observation_from_action(function_call_part_list)
-
-        except Exception as e:
-            logger.warning(f"[{task_id}] Round {current_round} Phase 1/2 failed: {e}")
-            continue
-
-        # ===== Phase 3: Try final answer multiple times =====
-        round_last_wrong_answer = ""  # Track this round's last wrong answer
-        for attempt in range(_WORKER_ATTEMPTS_PER_ROUND):
-            total_attempts += 1
-            logger.info(f"[{task_id}] Round {current_round} Attempt {attempt + 1}: Generating final answer")
+            should_retry_round = False
 
             try:
-                # Save contents state before Phase 3 (for retry) - deep copy needed
-                contents_before_phase3 = copy.deepcopy(task.contents)
-                conv_history_len = len(task.conversation_history)
+                # ===== Phase 1: Generate reasoning =====
+                agent.config.generate_config = phase_configs.reasoning_only
 
-                if answer_format:
-                    task.append_prompt(answer_format)
+                # For Round 2+, temporarily add extended reasoning prompt with previous wrong answer
+                if current_round > 1:
+                    contents_before_prompt = copy.deepcopy(task.contents)
+                    task.append_system_prompt(ITERATIVE_EXTENDED_REASONING_PROMPT.format(
+                        used_tools=", ".join(all_actual_tools) if all_actual_tools else "None"
+                    ))
 
-                # For Round 2+, add prompt to avoid repeating previous wrong answers (temporary, not saved)
-                if current_round > 1 and all_wrong_answers:
-                    wrong_answers_str = "\n".join(f"- Round {i+1}: {ans}" for i, ans in enumerate(all_wrong_answers))
-                    formatted_prompt = ITERATIVE_FINAL_ANSWER_PROMPT.format(
-                        wrong_answers=wrong_answers_str,
-                    )
-                    task.append_system_prompt(formatted_prompt)
+                reasoning_action, reasoning_extra = agent.act(task.contents)
+                logger.warning(reasoning_action)  # Display model's tool call plan
 
-                agent.config.generate_config = phase_configs.final_answer
-                action, extra_info = agent.act(task.contents)
+                # Restore contents (remove the temporary prompt) before adding reasoning
+                if current_round > 1:
+                    task.contents = contents_before_prompt
+
+                reasoning_text = extract_response_text(reasoning_action, api_mode)
+                all_thinking_text.append(reasoning_text)
+
+                # Validate format
+                if answer_pattern.search(reasoning_text):
+                    raise ValueError("Reasoning phase should not generate <answer>")
+                if not think_pattern.search(reasoning_text):
+                    raise ValueError("Invalid format - missing <think>Tool: ...</think>")
+
+                # ===== Phase 2: Generate tool call =====
+                task.append_assistant_message(reasoning_text)
+                agent.config.generate_config = phase_configs.tool_call_only
+                tool_action, tool_extra = agent.act(task.contents)
                 agent.config.generate_config = original_generate_config
 
-                # Restore contents (remove the temporary prompt) before parsing action
-                task.contents = contents_before_phase3
-                if answer_format:
-                    task.append_prompt(answer_format)
+                merged_extra = {"reasoning_" + k: v for k, v in reasoning_extra.items()}
+                merged_extra.update(tool_extra)
 
-                task.parse_action(step=current_round + 1, action=action, extra_info=extra_info)
-
-                if not task.state:
-                    logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1}: task.state is False")
-                    # Restore state for retry
-                    task.contents = contents_before_phase3
-                    task.conversation_history = task.conversation_history[:conv_history_len]
-                    continue
-
-                # Validate first (don't save yet)
-                final_answer = task.conversation_history[-1].get("output_text", "")
-
-                is_valid, reason = _validate_trajectory(
-                    question=question,
-                    ground_truth=ground_truth,
-                    prediction=final_answer,
-                    reasoning_text="\n".join(all_thinking_text),
-                    actual_tools=all_actual_tools,
+                function_call_part_list = task.parse_action(
+                    step=current_round, action=tool_action, extra_info=merged_extra
                 )
 
-                if is_valid:
-                    # Only save trajectory when valid
-                    meta_info = task.save_trajectory()
-                    logger.info(f"[{task_id}] Valid trajectory found after {total_attempts} attempts")
-                    return True, meta_info
+                if not function_call_part_list:
+                    logger.warning(f"[{task_id}] Round {current_round}: No tool calls generated")
+                    break
 
-                logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} invalid: {reason}")
+                # Collect actual tool names for validation
+                for tool_call in function_call_part_list:
+                    all_actual_tools.add(tool_call.name.lower())
 
-                # Track this round's last wrong answer (will be added to list after all attempts)
-                round_last_wrong_answer = final_answer
-
-                # Check if this is the final attempt of the final round
-                is_final_attempt = (current_round == _WORKER_MAX_ITERATIVE_ROUNDS and
-                                    attempt == _WORKER_ATTEMPTS_PER_ROUND - 1)
-
-                # Restore state for retry (model won't see previous Phase 3)
-                # For final attempt: keep conversation_history (for trajectory), only restore contents
-                if not is_final_attempt:
-                    task.conversation_history = task.conversation_history[:conv_history_len]
-                task.contents = contents_before_phase3
+                task.update_observation_from_action(function_call_part_list)
 
             except Exception as e:
-                logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} failed: {e}")
-                # Restore state on exception
-                is_final_attempt = (current_round == _WORKER_MAX_ITERATIVE_ROUNDS and
-                                    attempt == _WORKER_ATTEMPTS_PER_ROUND - 1)
-                if not is_final_attempt:
-                    task.conversation_history = task.conversation_history[:conv_history_len]
-                task.contents = contents_before_phase3
+                logger.warning(f"[{task_id}] Round {current_round} Phase 1/2 failed: {e}")
+                # Restore state and retry round
+                task.contents = contents_before_round
+                task.conversation_history = task.conversation_history[:conv_history_before_round]
+                agent.conversation_history = agent_state_before_round["conversation_history"]
+                agent.step_count = agent_state_before_round["step_count"]
+                agent.total_tokens_used = agent_state_before_round["total_tokens_used"]
+                agent.cost = agent_state_before_round["cost"]
+                all_thinking_text = thinking_text_before_round
+                all_actual_tools = actual_tools_before_round
+                round_retry_count += 1
                 continue
+
+            # ===== Phase 3: Try final answer multiple times =====
+            round_last_wrong_answer = ""  # Track this round's last wrong answer
+            for attempt in range(_WORKER_ATTEMPTS_PER_ROUND):
+                total_attempts += 1
+                logger.info(f"[{task_id}] Round {current_round} Attempt {attempt + 1}: Generating final answer")
+
+                try:
+                    # Save contents state before Phase 3 (for retry) - deep copy needed
+                    contents_before_phase3 = copy.deepcopy(task.contents)
+                    conv_history_len = len(task.conversation_history)
+
+                    if answer_format:
+                        task.append_prompt(answer_format)
+
+                    # For Round 2+, add prompt to avoid repeating previous wrong answers (temporary, not saved)
+                    if current_round > 1 and all_wrong_answers:
+                        wrong_answers_str = "\n".join(f"- Round {i+1}: {ans}" for i, ans in enumerate(all_wrong_answers))
+                        formatted_prompt = ITERATIVE_FINAL_ANSWER_PROMPT.format(
+                            wrong_answers=wrong_answers_str,
+                        )
+                        task.append_system_prompt(formatted_prompt)
+
+                    agent.config.generate_config = phase_configs.final_answer
+                    action, extra_info = agent.act(task.contents)
+                    agent.config.generate_config = original_generate_config
+
+                    # Restore contents (remove the temporary prompt) before parsing action
+                    task.contents = contents_before_phase3
+                    if answer_format:
+                        task.append_prompt(answer_format)
+
+                    task.parse_action(step=current_round + 1, action=action, extra_info=extra_info)
+
+                    if not task.state:
+                        logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1}: task.state is False")
+                        # Restore state for retry
+                        task.contents = contents_before_phase3
+                        task.conversation_history = task.conversation_history[:conv_history_len]
+                        continue
+
+                    # Validate first (don't save yet)
+                    final_answer = task.conversation_history[-1].get("output_text", "")
+
+                    is_valid, reason = _validate_trajectory(
+                        question=question,
+                        ground_truth=ground_truth,
+                        prediction=final_answer,
+                        reasoning_text="\n".join(all_thinking_text),
+                        actual_tools=all_actual_tools,
+                    )
+
+                    if is_valid:
+                        # Only save trajectory when valid
+                        meta_info = task.save_trajectory()
+                        logger.info(f"[{task_id}] Valid trajectory found after {total_attempts} attempts")
+                        return True, meta_info
+
+                    logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} invalid: {reason}")
+
+                    # Check if this is a non-answer-error issue (leakage or tool mismatch)
+                    is_answer_error = reason.startswith("wrong_answer")
+
+                    if not is_answer_error:
+                        # For leakage/tool_mismatch, retry the entire round (Phase 1 + Phase 2)
+                        logger.info(f"[{task_id}] Round {current_round} has non-answer issue ({reason}), "
+                                    f"will retry round ({round_retry_count + 1}/{max_round_retries})")
+                        should_retry_round = True
+                        # Restore state to before this round
+                        task.contents = contents_before_round
+                        task.conversation_history = task.conversation_history[:conv_history_before_round]
+                        agent.conversation_history = agent_state_before_round["conversation_history"]
+                        agent.step_count = agent_state_before_round["step_count"]
+                        agent.total_tokens_used = agent_state_before_round["total_tokens_used"]
+                        agent.cost = agent_state_before_round["cost"]
+                        all_thinking_text = thinking_text_before_round
+                        all_actual_tools = actual_tools_before_round
+                        break  # Break from Phase 3 attempts loop to retry round
+
+                    # Track this round's last wrong answer (will be added to list after all attempts)
+                    round_last_wrong_answer = final_answer
+
+                    # Check if this is the final attempt of the final round
+                    is_final_attempt = (current_round == _WORKER_MAX_ITERATIVE_ROUNDS and
+                                        attempt == _WORKER_ATTEMPTS_PER_ROUND - 1)
+
+                    # Restore state for retry (model won't see previous Phase 3)
+                    # For final attempt: keep conversation_history (for trajectory), only restore contents
+                    if not is_final_attempt:
+                        task.conversation_history = task.conversation_history[:conv_history_len]
+                    task.contents = contents_before_phase3
+
+                except Exception as e:
+                    logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} failed: {e}")
+                    # Restore state on exception
+                    is_final_attempt = (current_round == _WORKER_MAX_ITERATIVE_ROUNDS and
+                                        attempt == _WORKER_ATTEMPTS_PER_ROUND - 1)
+                    if not is_final_attempt:
+                        task.conversation_history = task.conversation_history[:conv_history_len]
+                    task.contents = contents_before_phase3
+                    continue
+
+            # Check if we need to retry the round due to non-answer-error
+            if should_retry_round:
+                round_retry_count += 1
+                continue  # Continue the while round_retry_count loop
+
+            # All Phase 3 attempts completed (either success returned above, or all failed with wrong_answer)
+            break  # Exit the round retry loop
 
         # All Phase 3 attempts failed for this round, record wrong answer and extend
         if round_last_wrong_answer:
             all_wrong_answers.append(round_last_wrong_answer)
         if current_round < _WORKER_MAX_ITERATIVE_ROUNDS:
             logger.info(f"[{task_id}] Extending to Round {current_round + 1}")
+
+        current_round += 1
 
     logger.warning(f"[{task_id}] Max attempts reached without valid trajectory")
     # Save final trajectory with last Phase 3 attempt
