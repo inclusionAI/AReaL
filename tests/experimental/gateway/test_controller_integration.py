@@ -649,3 +649,132 @@ class TestControllerSubmitWait:
         # Each result should be a dict (interaction data) or None
         result = results[0]
         assert result is None or isinstance(result, dict)
+
+
+# =============================================================================
+# TestControllerFullInitialization (no pre-existing server_infos)
+# =============================================================================
+
+
+@pytest.fixture
+def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
+    """Create a GatewayRolloutController that launches SGLang via the full init path.
+
+    Unlike ``gateway_controller`` which passes pre-existing ``server_infos``,
+    this fixture lets the controller create RPC workers, create
+    GatewaySGLangEngine on them, and call ``launch_server`` internally.
+    """
+    if not has_gpu():
+        pytest.skip("GPU required")
+
+    from areal.api.alloc_mode import AllocationMode
+    from areal.api.cli_args import SGLangConfig, SchedulingSpec
+    from areal.experimental.gateway.controller.config import GatewayControllerConfig
+    from areal.experimental.gateway.controller.controller import (
+        GatewayRolloutController,
+    )
+
+    config = GatewayControllerConfig(
+        tokenizer_path=model_path,
+        model_path=model_path,
+        scheduling_spec=(SchedulingSpec(gpu=1, cmd="python -m areal.infra.rpc.rpc_server"),),
+        admin_api_key="test-admin",
+        consumer_batch_size=2,
+        setup_timeout=300.0,
+    )
+
+    alloc_mode = AllocationMode.from_str("sglang:d1")
+    server_args = SGLangConfig.build_args(
+        sglang_config=SGLangConfig(
+            model_path=model_path,
+            skip_tokenizer_init=True,
+            mem_fraction_static=0.3,
+        ),
+        tp_size=alloc_mode.gen.tp_size,
+        base_gpu_id=0,
+    )
+
+    ctrl = GatewayRolloutController(config=config, scheduler=local_scheduler)
+    ctrl.initialize(
+        role="rollout-full",
+        alloc_mode=alloc_mode,
+        server_args=server_args,
+    )
+
+    try:
+        yield ctrl
+    finally:
+        ctrl.destroy()
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not has_gpu(), reason="GPU required")
+class TestControllerFullInitialization:
+    """Test the full initialization path where the controller launches SGLang itself.
+
+    This covers the code path where ``server_infos`` is **not** provided, so the
+    controller creates RPC workers, creates GatewaySGLangEngine on each, calls
+    ``launch_server``, then forks data proxies from the workers.
+    """
+
+    def test_server_infos_populated(self, gateway_controller_full_init):
+        """server_infos should be populated after full init."""
+        ctrl = gateway_controller_full_init
+        assert len(ctrl.server_infos) > 0
+        info = ctrl.server_infos[0]
+        assert info.host
+        assert info.port > 0
+
+    def test_sglang_health(self, gateway_controller_full_init):
+        """The SGLang server launched by the controller should be healthy."""
+        ctrl = gateway_controller_full_init
+        for addr in ctrl._sglang_addrs:
+            resp = httpx.get(f"{addr}/health", timeout=30.0)
+            assert resp.status_code == 200
+
+    def test_gateway_health(self, gateway_controller_full_init):
+        """Gateway should be healthy after full init."""
+        ctrl = gateway_controller_full_init
+        resp = httpx.get(f"{ctrl._gateway_addr}/health", timeout=10.0)
+        assert resp.status_code == 200
+
+    def test_data_proxy_health(self, gateway_controller_full_init):
+        """Data proxies should be healthy after full init."""
+        ctrl = gateway_controller_full_init
+        for dp_addr in ctrl._data_proxy_addrs:
+            resp = httpx.get(f"{dp_addr}/health", timeout=10.0)
+            assert resp.status_code == 200
+
+    def test_data_proxy_forked_from_sglang(self, gateway_controller_full_init):
+        """Data proxies should have been forked (not standalone) in full init path."""
+        ctrl = gateway_controller_full_init
+        sglang_role = f"rollout-full{ctrl._SGLANG_SUFFIX}"
+        dp_role = f"rollout-full{ctrl._DATA_PROXY_SUFFIX}"
+        # Both roles should be in service_roles
+        assert sglang_role in ctrl._service_roles
+        assert dp_role in ctrl._service_roles
+
+    @pytest.mark.asyncio
+    async def test_agenerate_works(self, gateway_controller_full_init, model_path):
+        """agenerate should work through the full init path."""
+        from areal.api.cli_args import GenerationHyperparameters
+        from areal.api.io_struct import ModelRequest, ModelResponse
+        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
+            TokenizerProxy,
+        )
+
+        ctrl = gateway_controller_full_init
+        tok = TokenizerProxy(model_path)
+        input_ids = await tok.tokenize("What is 2+2?")
+
+        req = ModelRequest(
+            input_ids=input_ids,
+            gconfig=GenerationHyperparameters(
+                max_new_tokens=16,
+                temperature=0.0,
+            ),
+        )
+
+        resp = await ctrl.agenerate(req)
+        assert isinstance(resp, ModelResponse)
+        assert len(resp.output_tokens) > 0

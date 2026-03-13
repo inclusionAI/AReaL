@@ -152,7 +152,7 @@ class GatewayRolloutController:
         """
         from dataclasses import asdict
 
-        from areal.api.cli_args import SchedulingSpec, SchedulingStrategy, SGLangConfig
+        from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
         from areal.api.scheduler_api import Job
 
         dp_size = alloc_mode.gen.dp_size if alloc_mode is not None else 1
@@ -170,6 +170,11 @@ class GatewayRolloutController:
                 len(server_infos),
             )
         else:
+            # -- RPC server workers + GatewaySGLangEngine (like RolloutController) --
+            # Workers run areal.infra.rpc.rpc_server (the standard cmd from
+            # scheduling_spec). We then create a GatewaySGLangEngine on each
+            # worker and call launch_server to start SGLang as a subprocess.
+            # This keeps the /fork endpoint available for data-proxy colocation.
             sglang_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
             if alloc_mode is not None:
                 sglang_spec.cpu *= alloc_mode.gen_instance_size
@@ -177,11 +182,7 @@ class GatewayRolloutController:
                 if sglang_spec.gpu > 0:
                     sglang_spec.gpu = alloc_mode.gen_instance_size
 
-            # Build SGLang launch command from server_args
-            sglang_cmd = " ".join(SGLangConfig.build_cmd_from_args(server_args or {}))
-            sglang_spec.cmd = sglang_cmd
-
-            # Set env vars for data proxy discovery (inherited by forked processes)
+            # Env vars inherited by forked data-proxy children
             sglang_spec.env_vars["AREAL_DP_TOKENIZER_PATH"] = cfg.tokenizer_path
             sglang_spec.env_vars["AREAL_DP_ADMIN_API_KEY"] = cfg.admin_api_key
             sglang_spec.env_vars["AREAL_DP_LOG_LEVEL"] = cfg.log_level
@@ -194,13 +195,43 @@ class GatewayRolloutController:
                 scheduling_strategy=SchedulingStrategy(),
                 role=sglang_role,
             )
+
+            # 1a. Create RPC server workers
             self.scheduler.create_workers(job=sglang_job)
             self._service_roles.append(sglang_role)
-
             sglang_workers = self.scheduler.get_workers(role=sglang_role)
             self.workers = sglang_workers
+            logger.info("SGLang RPC workers ready: %s", [w.id for w in sglang_workers])
+
+            # 1b. Create GatewaySGLangEngine on each worker
+            engine_class = (
+                "areal.experimental.gateway.data_proxy.sglang_engine.GatewaySGLangEngine"
+            )
+            create_tasks = [
+                self.scheduler.create_engine(
+                    worker_id=worker.id,
+                    engine=engine_class,
+                    engine_name=self._engine_name(rank),
+                    config=cfg,
+                )
+                for rank, worker in enumerate(sglang_workers)
+            ]
+            await asyncio.gather(*create_tasks)
+            logger.info("GatewaySGLangEngine created on all workers")
+
+            # 1c. Call launch_server on each engine to start SGLang subprocess
+            launch_tasks = [
+                self.scheduler.async_call_engine(
+                    worker_id=worker.id,
+                    method="launch_server",
+                    engine_name=self._engine_name(rank),
+                    server_args=server_args or {},
+                )
+                for rank, worker in enumerate(sglang_workers)
+            ]
+            self.server_infos = await asyncio.gather(*launch_tasks)
             self._sglang_addrs = [
-                f"http://{w.ip}:{w.worker_ports[0]}" for w in sglang_workers
+                f"http://{info.host}:{info.port}" for info in self.server_infos
             ]
 
             # Wait for SGLang servers to be healthy
@@ -208,18 +239,6 @@ class GatewayRolloutController:
                 self._wait_for_service(
                     f"{addr}/health", f"SGLang-{i}", timeout=cfg.setup_timeout
                 )
-
-            # Build server_infos from worker addresses
-            from areal.api.io_struct import LocalInfServerInfo
-
-            self.server_infos = [
-                LocalInfServerInfo(
-                    host=w.ip,
-                    port=int(w.worker_ports[0]),
-                    process=None,  # type: ignore[arg-type]  # managed by scheduler
-                )
-                for w in sglang_workers
-            ]
         logger.info("SGLang servers: %s", self._sglang_addrs)
 
         # -- 2. Launch Router -----------------------------------------------
@@ -427,11 +446,33 @@ class GatewayRolloutController:
 
     # -- Destroy -----------------------------------------------------------
 
-    def destroy(self) -> None:
-        # Destroy inference engine
+        # Destroy gateway inference engine
         if self._gateway_inf_engine is not None:
             self._gateway_inf_engine.destroy()
             self._gateway_inf_engine = None
+
+        # Teardown SGLang servers on RPC workers before deleting workers
+        sglang_role = f"{self._worker_role}{self._SGLANG_SUFFIX}"
+        if sglang_role in self._service_roles:
+            try:
+                from areal.infra.utils.concurrent import run_async_task
+
+                async def _teardown():
+                    tasks = [
+                        self.scheduler.async_call_engine(
+                            worker_id=worker.id,
+                            method="teardown_server",
+                            engine_name=self._engine_name(rank),
+                        )
+                        for rank, worker in enumerate(self.workers)
+                    ]
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+                run_async_task(_teardown)
+            except Exception:
+                logger.error(
+                    "Error tearing down SGLang servers: %s", traceback.format_exc()
+                )
 
         # Delete all service workers via scheduler
         for role in reversed(self._service_roles):
