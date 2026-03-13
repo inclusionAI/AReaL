@@ -42,7 +42,7 @@ classifiers = [
 
 dependencies = [
     # Core ML/AI libraries
-    "torch>=2.9.1,<2.10",
+    "torch>=2.9.1,<2.11",
     "torchaudio",
     "torchvision",
     "torchdata",
@@ -82,7 +82,7 @@ dependencies = [
     "pybase64",
     "msgspec",
     "math-verify==0.8.0",
-    "dotenv",
+    "python-dotenv",
     "json5",
     "psutil",
     "nvidia-ml-py; sys_platform == 'linux'",
@@ -92,7 +92,7 @@ dependencies = [
     "pybind11>=2.10.0",
     "networkx==3.3",
     "aiofiles",
-    "aiohttp>=3.11.10",
+    "aiohttp>=3.13.3,<4",
     "httpx>=0.28.1",
     "pyzmq",
     "regex",
@@ -135,33 +135,61 @@ dependencies = [
 # CUDA-dependent extras - these packages only have Linux x86_64 wheels
 # Platform markers ensure they're skipped on unsupported platforms
 sglang = [
-    "sglang[tracing]==0.5.7; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sglang[tracing]==0.5.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 vllm = [
-    "vllm==0.14.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "vllm==0.17.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torch==2.10.0+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 tms = [
     "torch_memory_saver==0.0.9; sys_platform == 'linux'",
 ]
-flash-attn = [
-    "flash-attn==2.8.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+flash-attn-sglang = [
+    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp311-cp311-linux_x86_64.whl; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.11'",
+    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.12'",
+]
+flash-attn-vllm = [
+    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp311-cp311-linux_x86_64.whl; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.11'",
+    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp312-cp312-linux_x86_64.whl; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.12'",
 ]
 megatron = [
-    "megatron-core==0.13.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "mbridge==0.13.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "megatron-core==0.16.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "mbridge==0.15.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 # Convenience extra for CUDA training packages (no inference backend)
 # Install with --extra sglang or --extra vllm for a complete setup
 cuda-train = [
     "areal[tms]",
     "areal[megatron]",
-    "areal[flash-attn]",
 ]
 # Backward-compatible: `uv sync --extra cuda` installs training packages + sglang.
-# For vllm instead, use: uv sync --extra cuda-train --extra vllm
-cuda = [
+# For vllm instead, use: `uv sync --extra cuda-vllm`
+cuda-sglang = [
     "areal[cuda-train]",
     "areal[sglang]",
+    "areal[flash-attn-sglang]",
+    "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+cuda-vllm = [
+    "areal[cuda-train]",
+    "areal[vllm]",
+    "areal[flash-attn-vllm]",
+    "torch==2.10.0+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+cuda = [
+    "areal[cuda-sglang]",
+    "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [project.urls]
@@ -213,8 +241,44 @@ conflicts = [
     ],
     # cuda includes sglang, so it also conflicts with vllm
     [
+        { extra = "cuda-sglang" },
+        { extra = "vllm" },
+    ],
+    [
         { extra = "cuda" },
         { extra = "vllm" },
+    ],
+    # cuda-vllm includes vllm, so it conflicts with sglang and cuda
+    [
+        { extra = "cuda-vllm" },
+        { extra = "sglang" },
+    ],
+    [
+        { extra = "cuda-vllm" },
+        { extra = "cuda" },
+    ],
+    [
+        { extra = "cuda-vllm" },
+        { extra = "cuda-sglang" },
+    ],
+    # flash-attn-sglang and flash-attn-vllm ship different flash-attn URLs
+    [
+        { extra = "flash-attn-sglang" },
+        { extra = "flash-attn-vllm" },
+    ],
+    # cuda includes flash-attn-sglang, so it also conflicts with flash-attn-vllm
+    [
+        { extra = "cuda" },
+        { extra = "flash-attn-vllm" },
+    ],
+    [
+        { extra = "cuda-sglang" },
+        { extra = "flash-attn-vllm" },
+    ],
+    # cuda-vllm includes flash-attn-vllm, so it also conflicts with flash-attn-sglang
+    [
+        { extra = "cuda-vllm" },
+        { extra = "flash-attn-sglang" },
     ],
 ]
 override-dependencies = [
@@ -225,8 +289,33 @@ override-dependencies = [
     "soundfile>=0.12.1,<0.13.0",
 ]
 
-[tool.uv.extra-build-dependencies]
-flash-attn = ["torch>=2.9.1,<2.10"]
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu129", extra = "sglang" },
+    { index = "pytorch-cu129", extra = "vllm" },
+    { index = "pytorch-cu129", extra = "cuda" },
+    { index = "pytorch-cu129", extra = "cuda-sglang" },
+    { index = "pytorch-cu129", extra = "cuda-vllm" },
+]
+torchaudio = [
+    { index = "pytorch-cu129", extra = "sglang" },
+    { index = "pytorch-cu129", extra = "vllm" },
+    { index = "pytorch-cu129", extra = "cuda" },
+    { index = "pytorch-cu129", extra = "cuda-sglang" },
+    { index = "pytorch-cu129", extra = "cuda-vllm" },
+]
+torchvision = [
+    { index = "pytorch-cu129", extra = "sglang" },
+    { index = "pytorch-cu129", extra = "vllm" },
+    { index = "pytorch-cu129", extra = "cuda" },
+    { index = "pytorch-cu129", extra = "cuda-sglang" },
+    { index = "pytorch-cu129", extra = "cuda-vllm" },
+]
 
 # =============================================================================
 # Tool configurations: pytest
