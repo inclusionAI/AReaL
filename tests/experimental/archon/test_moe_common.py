@@ -15,6 +15,7 @@ Note: Router tests require triton (skipped automatically if not installed).
 
 import pytest
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from areal.api.cli_args import ArchonEngineConfig
@@ -24,6 +25,7 @@ try:
     import triton  # noqa: F401
 
     from areal.experimental.models.archon.moe.router import (
+        RouterGateLinear,
         RouterGatingLinearFunction,
         TokenChoiceTopKRouter,
         router_gating_linear,
@@ -269,6 +271,49 @@ class TestRouterGatingLinearFunction:
         assert len(BackwardSavedInspector.saved_during_backward) == 2
         assert BackwardSavedInspector.saved_during_backward[0].dtype == torch.bfloat16
         assert BackwardSavedInspector.saved_during_backward[1].dtype == torch.bfloat16
+
+
+@requires_triton
+class TestRouterGateLinear:
+    """Tests for RouterGateLinear nn.Module wrapper."""
+
+    def test_state_dict_matches_nn_linear(self):
+        """State dict keys must match nn.Linear(bias=False) for checkpoint compat."""
+        gate = RouterGateLinear(16, 8)
+        linear = nn.Linear(16, 8, bias=False)
+        assert set(gate.state_dict().keys()) == set(linear.state_dict().keys())
+
+    def test_forward_fp32_output_dtype(self):
+        """With router_dtype=fp32, output must be fp32."""
+        gate = RouterGateLinear(16, 8, router_dtype=torch.float32)
+        x = torch.randn(4, 16, dtype=torch.bfloat16)
+        out = gate(x)
+        assert out.dtype == torch.float32
+        assert out.shape == (4, 8)
+
+    def test_forward_none_preserves_input_dtype(self):
+        """With router_dtype=None, output dtype matches input dtype."""
+        gate = RouterGateLinear(16, 8, router_dtype=None).to(torch.bfloat16)
+        x = torch.randn(4, 16, dtype=torch.bfloat16)
+        out = gate(x)
+        assert out.dtype == torch.bfloat16
+
+    def test_backward_saves_original_dtype(self):
+        """RouterGatingLinearFunction saves tensors in original dtype, not router_dtype.
+
+        This verifies the memory optimization: even though the GEMM runs in fp32,
+        the gradients are returned in bf16 (the weight's/input's original dtype).
+        """
+        gate = RouterGateLinear(16, 8, router_dtype=torch.float32).to(torch.bfloat16)
+        x = torch.randn(4, 16, dtype=torch.bfloat16, requires_grad=True)
+        out = gate(x)
+        out.sum().backward()
+        # Weight grad should exist and be in bf16 (weight's original dtype)
+        assert gate.weight.grad is not None
+        assert gate.weight.grad.dtype == torch.bfloat16
+        # Input grad should be in bf16 (input's original dtype)
+        assert x.grad is not None
+        assert x.grad.dtype == torch.bfloat16
 
 
 @requires_triton
