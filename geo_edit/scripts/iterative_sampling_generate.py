@@ -317,10 +317,10 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 task.conversation_history = task.conversation_history[:conv_history_len]
                 task.contents = contents_before_phase3
 
-                # Clean up saved files for retry
+                # Clean up saved files for retry (keep input_image.png and images/ directory)
                 for item in os.listdir(task_save_dir):
                     item_path = os.path.join(task_save_dir, item)
-                    if item == "input_image.png":
+                    if item in ("input_image.png", "images"):
                         continue
                     if os.path.isdir(item_path):
                         shutil.rmtree(item_path, ignore_errors=True)
