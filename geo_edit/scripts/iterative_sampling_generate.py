@@ -283,6 +283,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     task.conversation_history = task.conversation_history[:conv_history_len]
                     continue
 
+                # Extract Phase 3 response content for error feedback
+                phase3_response = extract_response_text(action, api_mode)
+
                 # Save and validate
                 meta_info = task.save_trajectory()
                 final_answer = meta_info.get("output_text", "")
@@ -302,8 +305,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} invalid: {reason}")
 
                 # Save wrong answer info for Round 2+ prompt
+                # Use Phase 3 response (the actual reasoning that led to wrong answer)
                 last_wrong_answer = final_answer
-                last_wrong_thinking = "\n".join(all_thinking_text)
+                last_wrong_thinking = phase3_response
 
                 # Restore state for retry
                 task.conversation_history = task.conversation_history[:conv_history_len]

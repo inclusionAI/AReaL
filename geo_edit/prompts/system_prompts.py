@@ -182,7 +182,7 @@ TRANSITION_PHRASES = [
 ITERATIVE_EXTENDED_REASONING_PROMPT = """
 You are an AI agent selecting tools for visual analysis.
 
-IMPORTANT: Your previous analysis {think} led to an INCORRECT answer. {answer} You need to gather MORE information by calling additional tools.
+IMPORTANT: Your previous analysis {think} led to an INCORRECT answer {answer}.  You need to gather MORE information by calling additional tools.
 
 Before selecting a tool, use a self-reflection phrase such as:
 - "Wait, I think my previous analysis might be incomplete..."
