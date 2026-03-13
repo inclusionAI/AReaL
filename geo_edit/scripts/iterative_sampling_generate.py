@@ -212,7 +212,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             # For Round 2+, temporarily add extended reasoning prompt with previous wrong answer
             if current_round > 1:
                 contents_before_prompt = copy.deepcopy(task.contents)
-                task.append_system_prompt(ITERATIVE_EXTENDED_REASONING_PROMPT)
+                task.append_system_prompt(ITERATIVE_EXTENDED_REASONING_PROMPT.format(
+                    used_tools=", ".join(all_actual_tools) if all_actual_tools else "None"
+                ))
 
             reasoning_action, reasoning_extra = agent.act(task.contents)
             logger.warning(reasoning_action)  # Display model's tool call plan

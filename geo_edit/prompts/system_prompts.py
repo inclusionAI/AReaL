@@ -195,7 +195,7 @@ Before selecting a tool, use a self-reflection phrase such as:
 Your task:
 1. Reflect on what might have gone wrong
 2. Identify what additional information could help
-3. Select a tool that provides NEW, DIFFERENT perspective
+3. You have used: {used_tools}. Explore new tools for a DIFFERENT perspective
 
 OUTPUT FORMAT:
 <think>
