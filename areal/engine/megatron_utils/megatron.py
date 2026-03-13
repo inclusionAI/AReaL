@@ -22,17 +22,29 @@ def _all_gather_and_concat(
     tp_size: int,
     tp_group,
     partition_dim: int,
+    partition_stride: int,
     name: str,
 ) -> torch.Tensor:
-    """All-gather tensor partitions and concatenate along partition dimension."""
+    """All-gather tensor partitions and concatenate along partition dimension.
+
+    When partition_stride > 1 (e.g., GLU/SwiGLU layers where gate and up projections
+    are interleaved), each TP rank stores interleaved sub-blocks. After all-gather,
+    these must be de-interleaved before concatenation to reconstruct the correct
+    full tensor.
+    """
     partitions = [torch.empty_like(tensor) for _ in range(tp_size)]
     dist.all_gather(partitions, tensor, group=tp_group)
 
-    # TODO: here we did an extra copy during concat, maybe merge this with convert_to_hf is better?
-    # TODO: check only GLU is used.
-    if "linear_fc1.weight" in name:
-        partitions = [p.chunk(2, dim=0) for p in partitions]
-        partitions = [p[0] for p in partitions] + [p[1] for p in partitions]
+    # De-interleave strided partitions. With stride S, each rank stores S interleaved
+    # sub-blocks. We split each partition into S chunks and regroup by stride index
+    # so that all sub-blocks for stride 0 come first, then stride 1, etc.
+    # Example (stride=2, tp=2): rank0=[gate_0|up_0], rank1=[gate_1|up_1]
+    #   → [gate_0, gate_1, up_0, up_1] → cat → [gate_full | up_full]
+    if partition_stride > 1:
+        chunks = [p.chunk(partition_stride, dim=partition_dim) for p in partitions]
+        partitions = [
+            chunks[rank][s] for s in range(partition_stride) for rank in range(tp_size)
+        ]
 
     # this is bug in megatron's grouped moe.
     partition_dim = (
@@ -47,6 +59,7 @@ def _all_gather_fp8_tensor_and_concat(
     tp_size: int,
     tp_group,
     partition_dim: int,
+    partition_stride: int,
     name: str,
     block_size: int = 128,
 ) -> FP8BlockwiseTensorHelper:
@@ -56,10 +69,15 @@ def _all_gather_fp8_tensor_and_concat(
     This allows conversion functions to work with FP8 tensors as regular tensors.
     """
     gathered_rowwise_data = _all_gather_and_concat(
-        tensor._rowwise_data, tp_size, tp_group, partition_dim, name
+        tensor._rowwise_data, tp_size, tp_group, partition_dim, partition_stride, name
     )
     gathered_rowwise_scale_inv = _all_gather_and_concat(
-        tensor._rowwise_scale_inv, tp_size, tp_group, partition_dim, name
+        tensor._rowwise_scale_inv,
+        tp_size,
+        tp_group,
+        partition_dim,
+        partition_stride,
+        name,
     )
 
     return FP8BlockwiseTensorHelper(
@@ -103,17 +121,19 @@ def all_gather_param(
         tp_group = mpu.get_tensor_model_parallel_group()
 
     partition_dim = param.partition_dim
-    assert param.partition_stride == 1, "partition_stride != 1 is not supported"
+    partition_stride = param.partition_stride
 
     # Handle FP8 tensors specially
     if param_is_fp8 and fp8_direct_convert:
         block_size = get_block_size_from_config(quantization_config)
         return _all_gather_fp8_tensor_and_concat(
-            param, tp_size, tp_group, partition_dim, name, block_size
+            param, tp_size, tp_group, partition_dim, partition_stride, name, block_size
         )
 
     # bf16/fp32
-    param = _all_gather_and_concat(param.data, tp_size, tp_group, partition_dim, name)
+    param = _all_gather_and_concat(
+        param.data, tp_size, tp_group, partition_dim, partition_stride, name
+    )
     return param
 
 

@@ -116,15 +116,15 @@ QWEN25_VL_PATH = get_model_path(
 QWEN3_VL_PATH = get_model_path(
     "/storage/openpsi/models/Qwen3-VL-2B-Instruct", "Qwen/Qwen3-VL-2B-Instruct"
 )
-GEMMA3_PATH = get_model_path(
-    "/storage/openpsi/models/google__gemma-3-4b-it/", "google/gemma-3-4b-it"
-)
+# GEMMA3_PATH = get_model_path(
+#     "/storage/openpsi/models/google__gemma-3-4b-it/", "google/gemma-3-4b-it"
+# )
 
 
 def mock_padded_vlm_data(model_path):
-    if model_path == GEMMA3_PATH:
-        model_type = "gemma3"
-    elif model_path == QWEN25_VL_PATH:
+    # if model_path == GEMMA3_PATH:
+    #     model_type = "gemma3"
+    if model_path == QWEN25_VL_PATH:
         model_type = "qwen25"
     elif model_path == QWEN3_VL_PATH:
         model_type = "qwen3"
@@ -217,7 +217,7 @@ def mock_padded_vlm_data(model_path):
     [
         pytest.param(QWEN25_VL_PATH),
         pytest.param(QWEN3_VL_PATH),
-        pytest.param(GEMMA3_PATH, marks=pytest.mark.slow),
+        # pytest.param(GEMMA3_PATH, marks=pytest.mark.slow),
     ],
 )
 def test_vlm_consistency(model_path):

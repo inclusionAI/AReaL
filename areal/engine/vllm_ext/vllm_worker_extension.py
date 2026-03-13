@@ -24,7 +24,7 @@ class VLLMWorkerExtension:
         current_platform.synchronize()
         torch.distributed.barrier()
 
-    def update_weights(self, model_path):
+    def areal_update_weights(self, model_path):
         logger.info(f"start update weights, {model_path}", flush=True)
         try:
             # load weight
@@ -42,7 +42,7 @@ class VLLMWorkerExtension:
             logger.error(error_msg)
             return False, error_msg
 
-    def update_weights_lora(
+    def areal_update_weights_lora(
         self,
         lora_model_path: str,
         lora_name: str,
@@ -72,7 +72,7 @@ class VLLMWorkerExtension:
             logger.error(error_msg)
             return False, error_msg
 
-    def set_weight_meta(
+    def areal_set_weight_meta(
         self,
         names: list[str],
         dtypes: list[str],
@@ -86,7 +86,7 @@ class VLLMWorkerExtension:
         self.areal_weight_meta_group_name = group_name
         return True, "Success"
 
-    def set_weight_meta_lora(
+    def areal_set_weight_meta_lora(
         self,
         names: list[str],
         dtypes: list[str],
@@ -116,7 +116,7 @@ class VLLMWorkerExtension:
         self.areal_lora_base_model_name = base_model_name
         return True, "Success"
 
-    def update_weight_xccl(self):
+    def areal_update_weight_xccl(self):
         logger.info("start update weights by nccl or hccl", flush=True)
         names = self.areal_weight_meta_names
         dtypes = self.areal_weight_meta_dtypes
@@ -149,7 +149,7 @@ class VLLMWorkerExtension:
             logger.error(error_msg)
             return False, error_msg
 
-    def update_weight_lora_xccl(self):
+    def areal_update_weight_lora_xccl(self):
         # NOTE: This code relies on vLLM private APIs: _adapter_manager, _registered_adapters,
         # and _add_adapter/activate_adapter, which may change/ breakdown due to newer vllm versions.
 
@@ -260,7 +260,7 @@ class VLLMWorkerExtension:
             logger.error(error_msg)
             return False, error_msg
 
-    def init_update_weight_group(
+    def areal_init_update_weight_group(
         self,
         master_address: str,
         master_port: str,

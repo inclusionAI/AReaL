@@ -39,6 +39,11 @@ The `latest` tag always points to the sglang variant.
    - For vllm, check
      `https://github.com/vllm-project/vllm/blob/v${version}/pyproject.toml`
 
+   Focus on the verions of following packages in particular:
+
+   - torch
+   - transformers
+
 1. **Resolve dependency conflicts** and report to user.
 
    If there's no inconsistency between the above packages, and it only conflicts with

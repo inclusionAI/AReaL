@@ -211,6 +211,7 @@ jobs:
               --zone "$zone" \
               --machine-type "a2-highgpu-2g" \
               --image "$GCP_OS_IMAGE" \
+              --boot-disk-size 2000GB \
               --maintenance-policy TERMINATE \
               --restart-on-failure \
               --max-run-duration "2h" \
