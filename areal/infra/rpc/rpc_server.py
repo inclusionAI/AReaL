@@ -431,15 +431,15 @@ def configure():
     try:
         data = request.get_json()
         if data is None:
-            return jsonify({"detail": "Invalid JSON in request body"}), 400
+            return jsonify({"error": "Invalid JSON in request body"}), 400
 
         config = data.get("config")
         if config is None:
-            return jsonify({"detail": "Missing 'config' field in request"}), 400
+            return jsonify({"error": "Missing 'config' field in request"}), 400
 
         rank = data.get("rank")
         if rank is None:
-            return jsonify({"detail": "Missing 'rank' field in request"}), 400
+            return jsonify({"error": "Missing 'rank' field in request"}), 400
 
         config = deserialize_value(config)
         config: BaseExperimentConfig
