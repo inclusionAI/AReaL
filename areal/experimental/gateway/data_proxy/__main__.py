@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--tokenizer-path", required=True)
     parser.add_argument("--log-level", default="info")
     parser.add_argument("--request-timeout", type=float, default=120.0)
+    parser.add_argument("--admin-api-key", default="areal-admin-key")
     args, _ = parser.parse_known_args()
 
     config = DataProxyConfig(
@@ -27,6 +28,7 @@ def main():
         tokenizer_path=args.tokenizer_path,
         log_level=args.log_level,
         request_timeout=args.request_timeout,
+        admin_api_key=args.admin_api_key,
     )
     app = create_app(config)
     uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)

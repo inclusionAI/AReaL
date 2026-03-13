@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import time
 import traceback
 from threading import Lock
@@ -256,6 +257,7 @@ class GatewayRolloutController:
                     f"python -m areal.experimental.gateway.data_proxy"
                     f" --backend-addr {sglang_addr}"
                     f" --tokenizer-path {cfg.tokenizer_path}"
+                    f" --admin-api-key {cfg.admin_api_key}"
                     f" --log-level {cfg.log_level}"
                     f" --request-timeout {cfg.request_timeout}"
                 ),
@@ -345,11 +347,17 @@ class GatewayRolloutController:
     @property
     def callback_addr(self) -> str:
         """Return gateway address as 'host:port' for training controller callbacks."""
-        # Strip the http:// prefix to match the host:port format
-        addr = self._gateway_addr
-        if addr.startswith("http://"):
-            addr = addr[len("http://") :]
-        return addr
+        if self._gateway_addr:
+            # Strip the http:// prefix to match the host:port format
+            addr = self._gateway_addr
+            if addr.startswith("http://"):
+                addr = addr[len("http://") :]
+            return addr
+        # Fallback: construct from config (before deployment)
+        host = self.config.gateway_host
+        if host == "0.0.0.0":
+            host = socket.gethostname()
+        return f"{host}:{self.config.gateway_port}"
 
     # -- Destroy -----------------------------------------------------------
 
