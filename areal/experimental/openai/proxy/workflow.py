@@ -132,6 +132,8 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 "OPENAI_API_KEY": session_api_key,
                 "ANTHROPIC_BASE_URL": self.proxy_addr,
                 "ANTHROPIC_API_KEY": session_api_key,
+                "MINIMAX_BASE_URL": self.proxy_addr,
+                "MINIMAX_API_KEY": session_api_key,
             }
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
