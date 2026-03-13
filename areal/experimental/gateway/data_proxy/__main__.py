@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 import uvicorn
 
@@ -14,8 +15,11 @@ def main():
     parser = argparse.ArgumentParser(description="AReaL Data Proxy")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8082)
-    parser.add_argument("--backend-addr", default="http://localhost:30000")
-    parser.add_argument("--tokenizer-path", required=True)
+    parser.add_argument("--backend-addr",
+                        default=os.environ.get("AREAL_DP_BACKEND_ADDR", "http://localhost:30000"))
+    parser.add_argument("--tokenizer-path",
+                        default=os.environ.get("AREAL_DP_TOKENIZER_PATH"),
+                        required="AREAL_DP_TOKENIZER_PATH" not in os.environ)
     parser.add_argument("--log-level", default="info")
     parser.add_argument("--request-timeout", type=float, default=120.0)
     parser.add_argument("--admin-api-key", default="areal-admin-key")

@@ -181,6 +181,12 @@ class GatewayRolloutController:
             sglang_cmd = " ".join(SGLangConfig.build_cmd_from_args(server_args or {}))
             sglang_spec.cmd = sglang_cmd
 
+            # Set env vars for data proxy discovery (inherited by forked processes)
+            sglang_spec.env_vars["AREAL_DP_TOKENIZER_PATH"] = cfg.tokenizer_path
+            sglang_spec.env_vars["AREAL_DP_ADMIN_API_KEY"] = cfg.admin_api_key
+            sglang_spec.env_vars["AREAL_DP_LOG_LEVEL"] = cfg.log_level
+            sglang_spec.env_vars["AREAL_DP_REQUEST_TIMEOUT"] = str(cfg.request_timeout)
+
             sglang_role = f"{self._worker_role}{self._SGLANG_SUFFIX}"
             sglang_job = Job(
                 replicas=dp_size,
@@ -214,7 +220,6 @@ class GatewayRolloutController:
                 )
                 for w in sglang_workers
             ]
-
         logger.info("SGLang servers: %s", self._sglang_addrs)
 
         # -- 2. Launch Router -----------------------------------------------
@@ -248,36 +253,74 @@ class GatewayRolloutController:
         logger.info("Router: %s", self._router_addr)
 
         # -- 3. Launch Data Proxies -----------------------------------------
-        for i, sglang_addr in enumerate(self._sglang_addrs):
-            dp_spec = SchedulingSpec(
-                gpu=0,
-                cpu=1,
-                mem=4,
-                cmd=(
-                    f"python -m areal.experimental.gateway.data_proxy"
-                    f" --backend-addr {sglang_addr}"
-                    f" --tokenizer-path {cfg.tokenizer_path}"
-                    f" --admin-api-key {cfg.admin_api_key}"
-                    f" --log-level {cfg.log_level}"
-                    f" --request-timeout {cfg.request_timeout}"
-                ),
-            )
-            dp_role = f"{self._worker_role}{self._DATA_PROXY_SUFFIX}-{i}"
-            dp_job = Job(
-                replicas=1,
-                tasks=[dp_spec],
-                scheduling_strategy=SchedulingStrategy(),
+        #   When SGLang workers were created by the controller, data proxies
+        #   are **forked** from them (similar to RolloutController.start_proxy),
+        #   ensuring colocation on the same node/GPUs.
+        #   When pre-existing server_infos were provided (e.g. tests), data
+        #   proxies are created as standalone workers instead.
+        dp_role = f"{self._worker_role}{self._DATA_PROXY_SUFFIX}"
+
+        sglang_role = f"{self._worker_role}{self._SGLANG_SUFFIX}"
+        has_sglang_workers = sglang_role in [
+            r for r in self._service_roles
+        ]
+
+        if has_sglang_workers:
+            # Fork data proxies from SGLang workers (colocated deployment)
+            dp_command = "areal.experimental.gateway.data_proxy"
+            worker_ids = self.scheduler.fork_workers(
                 role=dp_role,
+                target_role=sglang_role,
+                command=dp_command,
             )
-            self.scheduler.create_workers(job=dp_job)
             self._service_roles.append(dp_role)
+            logger.info("Data proxy workers forked: %s", worker_ids)
 
             dp_workers = self.scheduler.get_workers(role=dp_role)
-            dp_addr = f"http://{dp_workers[0].ip}:{dp_workers[0].worker_ports[0]}"
-            self._data_proxy_addrs.append(dp_addr)
-            self._wait_for_service(f"{dp_addr}/health", f"DataProxy-{i}")
+            sglang_workers = self.scheduler.get_workers(role=sglang_role)
+            self._data_proxy_addrs = [
+                f"http://{w.ip}:{w.worker_ports[0]}" for w in dp_workers
+            ]
 
-        logger.info("Data Proxies: %s", self._data_proxy_addrs)
+            # Configure each data proxy with its corresponding SGLang backend.
+            for dp_addr, sg_w in zip(self._data_proxy_addrs, sglang_workers):
+                backend_addr = f"http://{sg_w.ip}:{sg_w.worker_ports[0]}"
+                self._configure_data_proxy_backend(dp_addr, backend_addr)
+        else:
+            # Standalone data proxies (pre-existing server_infos)
+            for i, sglang_addr in enumerate(self._sglang_addrs):
+                dp_spec = SchedulingSpec(
+                    gpu=0,
+                    cpu=1,
+                    mem=4,
+                    cmd=(
+                        f"python -m areal.experimental.gateway.data_proxy"
+                        f" --backend-addr {sglang_addr}"
+                        f" --tokenizer-path {cfg.tokenizer_path}"
+                        f" --admin-api-key {cfg.admin_api_key}"
+                        f" --log-level {cfg.log_level}"
+                        f" --request-timeout {cfg.request_timeout}"
+                    ),
+                )
+                dp_i_role = f"{dp_role}-{i}"
+                dp_job = Job(
+                    replicas=1,
+                    tasks=[dp_spec],
+                    scheduling_strategy=SchedulingStrategy(),
+                    role=dp_i_role,
+                )
+                self.scheduler.create_workers(job=dp_job)
+                self._service_roles.append(dp_i_role)
+
+                dp_workers = self.scheduler.get_workers(role=dp_i_role)
+                dp_addr = (
+                    f"http://{dp_workers[0].ip}:{dp_workers[0].worker_ports[0]}"
+                )
+                self._data_proxy_addrs.append(dp_addr)
+
+        # Wait for all data proxies to be healthy
+        for i, dp_addr in enumerate(self._data_proxy_addrs):
+            self._wait_for_service(f"{dp_addr}/health", f"DataProxy-{i}")
 
         # -- 4. Launch Gateway ----------------------------------------------
         gw_spec = SchedulingSpec(
@@ -329,6 +372,29 @@ class GatewayRolloutController:
                 pass
             time.sleep(0.1)
         raise TimeoutError(f"{name} did not become healthy at {url} within {timeout}s")
+
+    def _configure_data_proxy_backend(
+        self, dp_addr: str, backend_addr: str
+    ) -> None:
+        """Configure a data proxy's SGLang backend address after fork.
+
+        Called after ``fork_workers`` to tell each data proxy which SGLang
+        server to connect to.  The data proxy exposes a ``/configure_backend``
+        endpoint that re-initialises its ``SGLangBackend``.
+        """
+        import requests
+
+        resp = requests.post(
+            f"{dp_addr}/configure_backend",
+            json={"backend_addr": backend_addr},
+            headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        logger.info(
+            "Configured data proxy %s -> backend %s", dp_addr, backend_addr
+        )
+
 
     def _register_data_proxies_in_router(self) -> None:
         """Register all data proxy workers in the router."""

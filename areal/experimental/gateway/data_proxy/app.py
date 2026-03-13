@@ -500,4 +500,37 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         _require_admin_key(request, store)
         return {"status": "ok"}
 
+
+    # =========================================================================
+    # Runtime backend reconfiguration (for fork-based deployment)
+    # =========================================================================
+
+    @app.post("/configure_backend")
+    async def configure_backend(request: Request):
+        """Reconfigure the SGLang backend address after process start.
+
+        Called by the controller after ``fork_workers`` to tell this data
+        proxy which SGLang server to connect to.
+        """
+        store: SessionStore = app.state.session_store
+        _require_admin_key(request, store)
+        body = await request.json()
+        new_addr = body.get("backend_addr")
+        if not new_addr:
+            raise HTTPException(status_code=400, detail="backend_addr is required")
+        pause_state: PauseState = app.state.pause_state
+        new_backend = SGLangBackend(
+            backend_addr=new_addr,
+            pause_state=pause_state,
+            request_timeout=app.state.config.request_timeout,
+            max_resubmit_retries=app.state.config.max_resubmit_retries,
+            resubmit_wait=app.state.config.resubmit_wait,
+        )
+        app.state.backend = new_backend
+        app.state.config.backend_addr = new_addr
+        # Re-create chat handler with new backend
+        app.state.chat_handler = ChatCompletionHandler(new_backend, app.state.tokenizer)
+        logger.info("Backend reconfigured to %s", new_addr)
+        return {"status": "ok", "backend_addr": new_addr}
+
     return app
