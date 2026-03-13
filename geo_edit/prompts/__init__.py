@@ -16,6 +16,7 @@ from geo_edit.prompts.system_prompts import (
     # Iterative sampling prompts
     TRANSITION_PHRASES,
     ITERATIVE_EXTENDED_REASONING_PROMPT,
+    ITERATIVE_FINAL_ANSWER_PROMPT,
     contains_transition_phrase,
 )
 from geo_edit.prompts.eval_prompts import (
@@ -42,6 +43,7 @@ __all__ = [
     # Iterative sampling prompts
     "TRANSITION_PHRASES",
     "ITERATIVE_EXTENDED_REASONING_PROMPT",
+    "ITERATIVE_FINAL_ANSWER_PROMPT",
     "contains_transition_phrase",
     # Eval prompts
     "EVAL_SYSTEM_PROMPT",

@@ -19,7 +19,6 @@ import json
 import multiprocessing as mp
 import os
 import re
-import shutil
 import sys
 import time
 from io import BytesIO
@@ -32,6 +31,7 @@ from tqdm import tqdm
 from geo_edit.prompts.system_prompts import (
     SEPARATED_USER_PROMPT,
     ITERATIVE_EXTENDED_REASONING_PROMPT,
+    ITERATIVE_FINAL_ANSWER_PROMPT,
 )
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter
@@ -195,8 +195,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     all_thinking_text = []
     all_actual_tools = set()
     total_attempts = 0
-    last_wrong_answer = ""  # Track last wrong answer for Round 2+ prompt
-    last_wrong_thinking = ""  # Track last thinking for Round 2+ prompt
+    all_wrong_answers = []  # Track all wrong answers from previous rounds for Phase 3 prompt
 
     # Iterate through rounds (each round adds one more tool call)
     for current_round in range(1, _WORKER_MAX_ITERATIVE_ROUNDS + 1):
@@ -213,11 +212,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             # For Round 2+, temporarily add extended reasoning prompt with previous wrong answer
             if current_round > 1:
                 contents_before_prompt = copy.deepcopy(task.contents)
-                formatted_prompt = ITERATIVE_EXTENDED_REASONING_PROMPT.format(
-                    think=last_wrong_thinking or "(no thinking recorded)",
-                    answer=last_wrong_answer or "(no answer recorded)",
-                )
-                task.append_system_prompt(formatted_prompt)
+                task.append_system_prompt(ITERATIVE_EXTENDED_REASONING_PROMPT)
 
             reasoning_action, reasoning_extra = agent.act(task.contents)
             logger.warning(reasoning_action)  # Display model's tool call plan
@@ -263,6 +258,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             continue
 
         # ===== Phase 3: Try final answer multiple times =====
+        round_last_wrong_answer = ""  # Track this round's last wrong answer
         for attempt in range(_WORKER_ATTEMPTS_PER_ROUND):
             total_attempts += 1
             logger.info(f"[{task_id}] Round {current_round} Attempt {attempt + 1}: Generating final answer")
@@ -275,9 +271,23 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 if answer_format:
                     task.append_prompt(answer_format)
 
+                # For Round 2+, add prompt to avoid repeating previous wrong answers (temporary, not saved)
+                if current_round > 1 and all_wrong_answers:
+                    wrong_answers_str = "\n".join(f"- Round {i+1}: {ans}" for i, ans in enumerate(all_wrong_answers))
+                    formatted_prompt = ITERATIVE_FINAL_ANSWER_PROMPT.format(
+                        wrong_answers=wrong_answers_str,
+                    )
+                    task.append_system_prompt(formatted_prompt)
+
                 agent.config.generate_config = phase_configs.final_answer
                 action, extra_info = agent.act(task.contents)
                 agent.config.generate_config = original_generate_config
+
+                # Restore contents (remove the temporary prompt) before parsing action
+                task.contents = contents_before_phase3
+                if answer_format:
+                    task.append_prompt(answer_format)
+
                 task.parse_action(step=current_round + 1, action=action, extra_info=extra_info)
 
                 if not task.state:
@@ -286,9 +296,6 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     task.contents = contents_before_phase3
                     task.conversation_history = task.conversation_history[:conv_history_len]
                     continue
-
-                # Extract Phase 3 response content for error feedback
-                phase3_response = extract_response_text(action, api_mode)
 
                 # Save and validate
                 meta_info = task.save_trajectory()
@@ -308,48 +315,27 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
 
                 logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} invalid: {reason}")
 
-                # Save wrong answer info for Round 2+ prompt
-                # Use Phase 3 response (the actual reasoning that led to wrong answer)
-                last_wrong_answer = final_answer
-                last_wrong_thinking = phase3_response
+                # Track this round's last wrong answer (will be added to list after all attempts)
+                round_last_wrong_answer = final_answer
 
-                # Restore state for retry
+                # Always restore state for retry (model won't see previous Phase 3)
                 task.conversation_history = task.conversation_history[:conv_history_len]
                 task.contents = contents_before_phase3
-
-                # Clean up saved files for retry (keep input_image.png and images/ directory)
-                for item in os.listdir(task_save_dir):
-                    item_path = os.path.join(task_save_dir, item)
-                    if item in ("input_image.png", "images"):
-                        continue
-                    if os.path.isdir(item_path):
-                        shutil.rmtree(item_path, ignore_errors=True)
-                    else:
-                        os.remove(item_path)
 
             except Exception as e:
                 logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} failed: {e}")
-                # Always restore conversation_history
+                # Always restore state on exception
                 task.conversation_history = task.conversation_history[:conv_history_len]
-                # Restore contents for retry within same round
                 task.contents = contents_before_phase3
                 continue
 
-        # All Phase 3 attempts failed for this round, extend to next round
+        # All Phase 3 attempts failed for this round, record wrong answer and extend
+        if round_last_wrong_answer:
+            all_wrong_answers.append(round_last_wrong_answer)
         if current_round < _WORKER_MAX_ITERATIVE_ROUNDS:
             logger.info(f"[{task_id}] Extending to Round {current_round + 1}")
 
     logger.warning(f"[{task_id}] Max attempts reached without valid trajectory")
-    # Clean up
-    if os.path.exists(task_save_dir):
-        for item in os.listdir(task_save_dir):
-            item_path = os.path.join(task_save_dir, item)
-            if item == "input_image.png":
-                continue
-            if os.path.isdir(item_path):
-                shutil.rmtree(item_path, ignore_errors=True)
-            else:
-                os.remove(item_path)
     return False, None
 
 
