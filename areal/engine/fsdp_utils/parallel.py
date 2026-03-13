@@ -21,6 +21,7 @@ from areal.api.cli_args import FSDPWrapPolicy, TrainEngineConfig
 from areal.engine.core.model import (
     is_gemma3_model,
     is_moe_model,
+    is_omni_model,
     is_qwen3_vl_model,
     is_valid_vision_model,
 )
@@ -320,37 +321,50 @@ def apply_non_moe_tp(
         )
 
     if is_valid_vision_model(model_config.model_type):
-        if isinstance(model.model.language_model, nn.Module):
-            # For vision-language models, avoid sharding the embedding layer because
-            # the visual components access it without tensor parallelism support.
-            # Instead, configure the first transformer layer to handle input
-            # sharding properly.
-            model_tp_plan.pop("embed_tokens", None)
-            model_tp_plan["layers.0"] = PrepareModuleInput(
-                input_layouts=Replicate(),
-                desired_input_layouts=Shard(1),
-            )
+        # Resolve the language model submodule: Omni models nest it under
+        # model.thinker.language_model, while VL models use model.model.language_model.
+        if is_omni_model(model_config.model_type):
+            from areal.models.transformers.qwen_omni import get_thinker_language_model
 
-            # For Qwen3 VL, patch _deepstack_process for TP
-            if is_qwen3_vl_model(model_config.model_type):
-                # NOTE: Lazy import to avoid ImportError when qwen3_vl model is not used.
-                # transformers.models.qwen3_vl doesn't exist in all transformers versions,
-                # so we only import it when actually needed for Qwen3 VL models.
-                from areal.models.transformers.qwen3_vl import (
-                    patch_qwen3_vl_deepstack_process_for_tp,
-                )
-
-                patch_qwen3_vl_deepstack_process_for_tp(model.model.language_model)
-
-            parallelize_module(
-                model.model.language_model,
-                device_mesh=tp_device_mesh,
-                parallelize_plan=model_tp_plan,
-            )
+            language_model = get_thinker_language_model(model)
+        elif isinstance(
+            getattr(getattr(model, "model", None), "language_model", None), nn.Module
+        ):
+            language_model = model.model.language_model
         else:
             raise RuntimeError(
-                "Vision model does not have the required submodule 'model.language_model'"
+                "Vision/Omni model does not have the required language_model submodule"
             )
+
+        # For vision-language models, avoid sharding the embedding layer because
+        # the visual components access it without tensor parallelism support.
+        # Instead, configure the first transformer layer to handle input
+        # sharding properly.
+        model_tp_plan.pop("embed_tokens", None)
+        model_tp_plan["layers.0"] = PrepareModuleInput(
+            input_layouts=Replicate(),
+            desired_input_layouts=Shard(1),
+        )
+
+        if is_qwen3_vl_model(model_config.model_type):
+            from areal.models.transformers.qwen3_vl import (
+                patch_qwen3_vl_deepstack_process_for_tp,
+            )
+
+            patch_qwen3_vl_deepstack_process_for_tp(language_model)
+
+        if is_omni_model(model_config.model_type):
+            from areal.models.transformers.qwen_omni import (
+                patch_qwen_omni_deepstack_process_for_tp,
+            )
+
+            patch_qwen_omni_deepstack_process_for_tp(language_model)
+
+        parallelize_module(
+            language_model,
+            device_mesh=tp_device_mesh,
+            parallelize_plan=model_tp_plan,
+        )
     else:
         parallelize_module(
             model.model,

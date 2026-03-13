@@ -144,21 +144,40 @@ def patch_vlm_for_ulysses_input_slicing(model_class: type):
     logger.info(f"Patched {model_class.__name__}.forward")
 
 
+def _resolve_attention_head_counts(
+    model: PreTrainedModel,
+) -> tuple[int, int]:
+    """Extract num_attention_heads and num_key_value_heads from the model config.
+
+    Handles nested configs for VL models (``text_config``) and Omni models
+    where the Thinker's LLM config lives at ``thinker_config.text_config``.
+    """
+    candidates = [model.config]
+    for attr in ("text_config", "thinker_config"):
+        sub = getattr(model.config, attr, None)
+        if sub is not None:
+            candidates.append(sub)
+            # Omni: thinker_config.text_config holds the actual LLM config
+            inner = getattr(sub, "text_config", None)
+            if inner is not None:
+                candidates.append(inner)
+
+    for cfg in candidates:
+        heads = getattr(cfg, "num_attention_heads", None)
+        kv_heads = getattr(cfg, "num_key_value_heads", None)
+        if heads is not None and kv_heads is not None:
+            return int(heads), int(kv_heads)
+    raise AttributeError(
+        "Cannot resolve num_attention_heads / num_key_value_heads from model config."
+    )
+
+
 def apply_monkey_patch(
     model: PreTrainedModel,
     ulysses_sp_size: int = 1,
     shard_vision_across_sp: bool = False,
 ):
-    try:
-        num_attention_heads, num_key_value_heads = (
-            model.config.num_attention_heads,
-            model.config.num_key_value_heads,
-        )
-    except AttributeError:
-        num_attention_heads, num_key_value_heads = (
-            model.config.text_config.num_attention_heads,
-            model.config.text_config.num_key_value_heads,
-        )
+    num_attention_heads, num_key_value_heads = _resolve_attention_head_counts(model)
 
     if num_attention_heads % ulysses_sp_size != 0:
         raise ValueError(
@@ -196,6 +215,16 @@ def apply_monkey_patch(
             "patch_module": "areal.models.transformers.qwen3_vl",
             "patch_attn_func": "ulysses_flash_attn_forward",
         },
+        # Qwen2.5-Omni Thinker reuses Qwen2.5-VL's text model and attention.
+        "qwen2_5_omni": {
+            "module": "transformers.models.qwen2_5_vl.modeling_qwen2_5_vl",
+            "attn_class": "Qwen2_5_VLAttention",
+            "model_class": "Qwen2_5_VLTextModel",
+            "patch_module": "areal.models.transformers.qwen2_vl",
+            "patch_attn_func": "ulysses_flash_attn_forward",
+        },
+        # Qwen3-Omni (MoE) Thinker uses Qwen3Moe attention; falls through
+        # to the generic flash_attention patch below.
     }
 
     if ulysses_sp_size <= 1:

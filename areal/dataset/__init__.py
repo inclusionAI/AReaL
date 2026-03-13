@@ -15,6 +15,7 @@ VALID_DATASETS = [
     "virl39k",
     "hh-rlhf",
     "torl_data",
+    "omni_data",
 ]
 
 logger = logging.getLogger("Dataset")
@@ -116,6 +117,16 @@ def _get_custom_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
+            max_length=max_length,
+            **kwargs,
+        )
+    elif "omni_data" in path and type == "rl":
+        from .omni_data import get_omni_rl_dataset
+
+        return get_omni_rl_dataset(
+            path=path,
+            split=split,
+            processor=processor,
             max_length=max_length,
             **kwargs,
         )

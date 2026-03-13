@@ -20,6 +20,14 @@ def image2base64(images: list[ImageObject] | ImageObject) -> list[str]:
     return byte_images
 
 
+def base642image(b64_str: str) -> ImageObject:
+    """Decode a base64-encoded PNG string back to a PIL Image."""
+    buf = BytesIO(base64.b64decode(b64_str))
+    img = Image.open(buf)
+    img.load()
+    return img
+
+
 def pad_images_batch_to_max_size(images):
     max_width = max(image.size[0] for image in images)
     max_height = max(image.size[1] for image in images)
