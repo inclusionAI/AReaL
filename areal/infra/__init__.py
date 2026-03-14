@@ -15,6 +15,7 @@ from .remote_inf_engine import (
     RemoteInfEngine,
 )
 from .scheduler import LocalScheduler, RayScheduler, SlurmScheduler
+from .colocated import ColocatedConfig, ColocatedOrchestrator
 from .staleness_manager import StalenessManager
 from .workflow_executor import (
     WorkflowExecutor,
@@ -22,6 +23,8 @@ from .workflow_executor import (
 )
 
 __all__ = [
+    "ColocatedConfig",
+    "ColocatedOrchestrator",
     "RemoteInfBackendProtocol",
     "RemoteInfEngine",
     "StalenessManager",

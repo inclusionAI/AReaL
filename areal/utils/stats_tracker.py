@@ -198,7 +198,9 @@ class DistributedStatsTracker:
         elif reduce_type == ReduceType.MAX:
             result[key] = self._max_of(key, reduce_group)
         elif reduce_type == ReduceType.SCALAR:
-            if current_platform.is_initialized():
+            if reduce_group is None:
+                device = "cpu"
+            elif current_platform.is_initialized():
                 device = current_platform.device_type
             else:
                 device = "cpu"

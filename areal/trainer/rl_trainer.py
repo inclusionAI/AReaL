@@ -5,6 +5,7 @@ import os
 from collections.abc import Callable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
+from contextlib import nullcontext
 
 import torch.distributed as dist
 from datasets import Dataset
@@ -50,6 +51,7 @@ from areal.utils.perf_tracer import Category
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+from areal.utils.offload import torch_memory_saver
 
 if TYPE_CHECKING:
     from areal.engine import (
@@ -119,7 +121,7 @@ class PPOTrainer:
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
 
         # Validate config before proceeding with weight initialization
-        self._validate_cfg()
+        self._validate_cfg(train_dataset)
 
         self._amend_xccl_weight_update_envvar()
 
@@ -186,49 +188,91 @@ class PPOTrainer:
             "ft_spec": ft_spec,
             "alloc_mode": self.allocation_mode,
         }
-        self.actor.initialize(**engine_init_kwargs, role="actor")
-        if self.critic is not None:
-            self.critic.initialize(**engine_init_kwargs, role="critic")
-        if self.ref is not None:
-            self.ref.initialize(**engine_init_kwargs, role="ref")
 
-        self.teacher = None
-        if config.teacher is not None:
-            self.teacher = self._create_teacher(config.teacher)
-            teacher_allocation_mode = AllocationMode.from_str(
-                config.teacher.allocation_mode
+        self._colocated = getattr(config.actor, "colocated", False)
+
+        if self._colocated:
+            # SPMD: actor first, then connect to existing SGLang/vLLM server
+            self.actor.initialize(**engine_init_kwargs, role="actor")
+            self.rollout = self._init_rollout(
+                config.rollout, is_eval=False, lora_path=None
             )
-            teacher_init_kwargs = {
-                "addr": None,
-                "ft_spec": ft_spec,
-                "alloc_mode": teacher_allocation_mode,
-            }
-            self.teacher.initialize(**teacher_init_kwargs, role="teacher")
 
-        # Save initial LoRA weights if enabled (for inference server pre-loading)
-        initial_lora_path = self._save_initial_lora_weights()
+            # Save initial LoRA weights if needed.
+            # In colocated mode the rollout was started without LoRA, so the
+            # initial adapter must be synced to the inference engine later
+            # (after ColocatedOrchestrator is set up).
+            self._initial_lora_path = self._save_initial_lora_weights()
 
-        # Initialize inference with LoRA path
-        self.rollout = self._init_rollout(
-            config.rollout, is_eval=False, lora_path=initial_lora_path
-        )
-        # Online mode detection: skip eval rollout for efficiency.
-        openai_cfg = config.rollout.openai
-        self._online_mode = train_dataset is None or (
-            openai_cfg is not None and openai_cfg.mode == "online"
-        )
-
-        self.eval_rollout = None
-        if not self._online_mode:
+            # No critic / ref / teacher in colocated mode
+            self.teacher = None
             self.eval_rollout = self._init_rollout(
-                config.rollout, is_eval=True, lora_path=initial_lora_path
+                config.rollout,
+                is_eval=True,
+                lora_path=self._initial_lora_path,
             )
+
+        else:
+            # Standard mode: original initialization order preserved exactly
+            self.actor.initialize(**engine_init_kwargs, role="actor")
+            if self.critic is not None:
+                self.critic.initialize(**engine_init_kwargs, role="critic")
+            if self.ref is not None:
+                self.ref.initialize(**engine_init_kwargs, role="ref")
+
+            self.teacher = None
+            if config.teacher is not None:
+                self.teacher = self._create_teacher(config.teacher)
+                teacher_allocation_mode = AllocationMode.from_str(
+                    config.teacher.allocation_mode
+                )
+                teacher_init_kwargs = {
+                    "addr": None,
+                    "ft_spec": ft_spec,
+                    "alloc_mode": teacher_allocation_mode,
+                }
+                self.teacher.initialize(**teacher_init_kwargs, role="teacher")
+
+            # Save initial LoRA weights if enabled (for inference server pre-loading)
+            initial_lora_path = self._save_initial_lora_weights()
+
+            # Initialize inference with LoRA path
+            self.rollout = self._init_rollout(
+                rollout_config=config.rollout, is_eval=False, lora_path=initial_lora_path
+            )
+            # Online mode detection: skip eval rollout for efficiency.
+            openai_cfg = config.rollout.openai
+            self._online_mode = train_dataset is None or (
+                openai_cfg is not None and openai_cfg.mode == "online"
+            )
+
+            self.eval_rollout = None
+            if not self._online_mode:
+                self.eval_rollout = self._init_rollout(
+                    config.rollout, is_eval=True, lora_path=initial_lora_path
+                )
 
         # Proxy worker initialization (lazy, for AgentWorkflow support)
         self._proxy_started = False
 
         # Prepare weight update meta and connect to inference engine
-        if self.config.actor.weight_update_mode == "disk":
+        if self._colocated:
+            # Colocated mode: use local disk path for weight transfer
+            colocated_kwargs = {
+                "weight_path": config.actor.colocated_weight_path,
+            }
+            if config.actor.use_lora:
+                colocated_kwargs.update(
+                    {
+                        "use_lora": config.actor.use_lora,
+                        "lora_name": config.gconfig.lora_name,
+                        "base_model_name": config.actor.path,
+                    }
+                )
+            self.weight_update_meta = WeightUpdateMeta.from_colocated_disk(
+                **colocated_kwargs
+            )
+        elif self.config.actor.weight_update_mode == "disk":
             disk_kwargs = {
                 "experiment_name": config.experiment_name,
                 "trial_name": config.trial_name,
@@ -268,7 +312,48 @@ class PPOTrainer:
             )
         self.actor.connect_engine(self.rollout, self.weight_update_meta)
 
-        # Set up evaluation (skip in online mode)
+        # Initialize colocated orchestrator if enabled
+        self.colocated_orch = None
+        if self._colocated:
+            from areal.infra.colocated import ColocatedConfig, ColocatedOrchestrator
+
+            self.colocated_orch = ColocatedOrchestrator(
+                train_engine=self.actor,
+                inf_engine=self.rollout,
+                config=ColocatedConfig(
+                    weight_path=config.actor.colocated_weight_path,
+                ),
+            )
+
+            # If LoRA is enabled, save initial adapter to the colocated weight
+            # path BEFORE offloading (actor is still on GPU at this point).
+            _initial_lora_meta = None
+            if self._initial_lora_path is not None:
+                _initial_lora_meta = self.weight_update_meta.with_version(0)
+                self.actor.save(
+                    SaveLoadMeta(
+                        path=_initial_lora_meta.path,
+                        weight_format="hf",
+                        with_optim=False,
+                        tokenizer=self.tokenizer,
+                        processor=self.processor,
+                    )
+                )
+
+            # After initialization both engines sit on GPU.  Offload the
+            # training engine so inference has exclusive GPU access for the
+            # first rollout.
+            self.colocated_orch.initial_offload_training()
+
+            # Sync initial LoRA weights to inference engine (actor now offloaded).
+            if _initial_lora_meta is not None:
+                self.colocated_orch.direct_disk_weight_update(_initial_lora_meta)
+
+            logger.info(
+                f"Colocated mode enabled. Weight transfer path: {config.actor.colocated_weight_path}"
+            )
+
+        # Set up evaluation helpers.
         self.evaluator = Evaluator(config.evaluator, ft_spec)
 
         # Set up save as HF model
@@ -278,16 +363,62 @@ class PPOTrainer:
         # Set up statistics logging (wandb, tensoboard, etc.)
         self.stats_logger = StatsLogger(config, ft_spec)
 
+        # In colocated mode, train stats must be exported before switching GPU
+        # ownership to inference, but the final commit should still happen
+        # after evaluation so eval metrics can be logged together.
+        self._pending_train_stats_for_commit: dict[str, float] | None = None
+
         # Set up checkpointing for recover
-        self.recover_info = self.recover_handler.load(
-            self.actor,
-            self.saver,
-            self.evaluator,
-            self.stats_logger,
-            self.train_dataloader,
-            inference_engine=self.rollout,
-            weight_update_meta=self.weight_update_meta,
-        )
+        if self._colocated:
+            # In colocated mode, the actor is already offloaded. The standard
+            # recover flow (update_engine.update_weights) cannot work because
+            # _update_weights_from_disk needs GPU parameters.  Instead, skip
+            # inference_engine sync in recover_handler.load and handle it
+            # manually via the ColocatedOrchestrator.
+            self.recover_info = self.recover_handler.load(
+                self.actor,
+                self.saver,
+                self.evaluator,
+                self.stats_logger,
+                self.train_dataloader,
+                inference_engine=None,
+                weight_update_meta=None,
+            )
+            if self.recover_info is not None:
+                # Recovered from checkpoint — sync weights to inference engine.
+                # The actor is offloaded; sync_weights_to_inference will
+                # onload it, save weights, offload again, and update inference.
+                assert self.colocated_orch is not None
+                global_step = self.recover_info.last_step_info.global_step
+                recovery_version = global_step + 1
+                versioned_meta = self.weight_update_meta.with_version(
+                    recovery_version
+                )
+                # save() must be called while actor is on GPU; onload first.
+                self.colocated_orch.prepare_for_training()
+                self.actor.save(
+                    SaveLoadMeta(
+                        path=versioned_meta.path,
+                        weight_format="hf",
+                        with_optim=False,
+                        tokenizer=self.tokenizer,
+                        processor=self.processor,
+                    )
+                )
+                self.actor.set_version(recovery_version)
+                self.rollout.set_version(recovery_version)
+                # offload training, onload inference, and load new weights
+                self.colocated_orch.prepare_for_inference(versioned_meta)
+        else:
+            self.recover_info = self.recover_handler.load(
+                self.actor,
+                self.saver,
+                self.evaluator,
+                self.stats_logger,
+                self.train_dataloader,
+                inference_engine=self.rollout,
+                weight_update_meta=self.weight_update_meta,
+            )
 
         self._config_perf_tracer()
 
@@ -348,14 +479,34 @@ class PPOTrainer:
                     },
                 ),
             ):
-                rollout_batch = self.actor.prepare_batch(
-                    self.train_dataloader,
-                    workflow=workflow,
-                    workflow_kwargs=workflow_kwargs,
-                    should_accept_fn=dynamic_filter_fn,
-                    group_size=config.gconfig.n_samples,
-                    dynamic_bs=self.config.dynamic_bs,
+                tms_ctx: Any | nullcontext[None] = (
+                    torch_memory_saver.disable()
+                    if self._colocated
+                    else nullcontext()
                 )
+                with tms_ctx:
+                    rollout_batch = self.actor.prepare_batch(
+                        self.train_dataloader,
+                        workflow=workflow,
+                        workflow_kwargs=workflow_kwargs,
+                        should_accept_fn=dynamic_filter_fn,
+                        group_size=config.gconfig.n_samples,
+                        dynamic_bs=self.config.dynamic_bs,
+                    )
+                    if self._colocated:
+                        self.rollout.pause()
+
+            # === Colocated mode: switch from inference to training ===
+            if self._colocated:
+                with (
+                    stats_tracker.record_timing("colocated_switch_to_train"),
+                    perf_tracer.trace_scope(
+                        "train.colocated_switch_to_train",
+                        category=Category.COMM,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    self.colocated_orch.prepare_for_training()
 
             if self.critic is not None:
                 with (
@@ -457,7 +608,8 @@ class PPOTrainer:
                     self.critic.get_device_stats().log("ppo critic update")
 
             # pause inference for updating weights, save, and evaluation
-            self.rollout.pause()
+            if not self._colocated:
+                self.rollout.pause()
 
             with (
                 stats_tracker.record_timing("update_weights"),
@@ -467,18 +619,36 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                # Use versioned path for weight updates
                 new_version = global_step + 1
                 versioned_meta = self.weight_update_meta.with_version(new_version)
-                self.actor.update_weights(versioned_meta)
+
+                if self._colocated:
+                    # Colocated mode: save weights to the versioned disk path
+                    # while training engine is still on GPU
+                    self.actor.save(
+                        SaveLoadMeta(
+                            path=versioned_meta.path,
+                            weight_format="hf",
+                            with_optim=False,
+                            tokenizer=self.tokenizer,
+                            processor=self.processor,
+                        )
+                    )
+                else:
+                    # Standard mode: use FSDP's update_weights (xccl or disk)
+                    self.actor.update_weights(versioned_meta)
 
                 self.actor.set_version(new_version)
                 if self.critic is not None:
                     self.critic.set_version(new_version)
-                self.rollout.set_version(new_version)
-                if self.eval_rollout is not None:
-                    self.eval_rollout.set_version(new_version)
 
+                if not self._colocated:
+                    self.rollout.set_version(new_version)
+                    if self.eval_rollout is not None:
+                        self.eval_rollout.set_version(new_version)
+
+            # In colocated mode, save HF and recover checkpoint BEFORE switching
+            # to inference, since these operations need the train engine on GPU.
             with (
                 stats_tracker.record_timing("save"),
                 perf_tracer.trace_scope(
@@ -502,6 +672,37 @@ class PPOTrainer:
                 )
 
             with (
+                stats_tracker.record_timing("clear_batches"),
+                perf_tracer.trace_scope(
+                    "train.clear_batches",
+                    category=Category.INSTR,
+                    args={"global_step": global_step},
+                ),
+            ):
+                # Since all RTensor objects are affiliated IPs,
+                # calling `clear_batches` once should be sufficient.
+                self.actor.clear_batches(rollout_batch, adv_batch)
+
+            if self._colocated:
+                self._capture_train_stats_snapshot()
+
+            # === Colocated mode: switch from training to inference ===
+            if self._colocated:
+                with (
+                    stats_tracker.record_timing("colocated_switch_to_inference"),
+                    perf_tracer.trace_scope(
+                        "train.colocated_switch_to_inference",
+                        category=Category.COMM,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    self.colocated_orch.prepare_for_inference(versioned_meta)
+
+                self.rollout.set_version(new_version)
+                if self.eval_rollout is not None:
+                    self.eval_rollout.set_version(new_version)
+
+            with (
                 stats_tracker.record_timing("eval"),
                 perf_tracer.trace_scope(
                     "train.eval",
@@ -516,18 +717,6 @@ class PPOTrainer:
                     epoch_step=step,
                     global_step=global_step,
                 )
-
-            with (
-                stats_tracker.record_timing("clear_batches"),
-                perf_tracer.trace_scope(
-                    "train.clear_batches",
-                    category=Category.INSTR,
-                    args={"global_step": global_step},
-                ),
-            ):
-                # Since all RTensor objects are affiliated IPs,
-                # calling `clear_batches` once should be sufficient.
-                self.actor.clear_batches(rollout_batch, adv_batch)
 
             with perf_tracer.trace_scope(
                 "train.log_stats",
@@ -544,6 +733,8 @@ class PPOTrainer:
             self._save_perf_tracer(step=global_step)
 
     def close(self):
+        if self.colocated_orch is not None:
+            self.colocated_orch.cleanup()
         self.saver.finalize()
         self.stats_logger.close()
         if self.eval_rollout is not None:
@@ -553,6 +744,10 @@ class PPOTrainer:
             self.ref.destroy()
         if self.critic is not None:
             self.critic.destroy()
+
+        if self._colocated and getattr(self.actor, "is_offload", False):
+            self.actor.onload()
+
         self.actor.destroy()
         perf_tracer.save(force=True)
 
@@ -709,11 +904,12 @@ class PPOTrainer:
         is_eval: bool = False,
         lora_path: str | None = None,
     ) -> InferenceEngine | RolloutController:
-        if lora_path is not None and not is_single_controller():
+        if lora_path is not None and not is_single_controller() and not self._colocated:
             raise ValueError(
-                "LoRA is only supported in single-controller mode. "
+                "LoRA is only supported in single-controller mode or colocated mode. "
                 "Use `python3 train.py scheduler.type=local` instead of "
-                "`python3 -m areal.infra.launcher.local`."
+                "`python3 -m areal.infra.launcher.local`, or enable colocated mode "
+                "with `actor.colocated=true` and `actor.weight_update_mode=disk`."
             )
         # Create a working copy of config
         config = deepcopy(rollout_config)
@@ -914,19 +1110,41 @@ class PPOTrainer:
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
-    def _export_and_commit_stats(self, epoch: int, epoch_step: int, global_step: int):
-        # Upload statistics to the logger (e.g., wandb)
+    def _capture_train_stats_snapshot(self) -> None:
+        """Capture train-side stats before colocated eval takes over the GPU."""
+        if self._pending_train_stats_for_commit is not None:
+            logger.warning(
+                "Overwriting pending train stats snapshot before previous commit."
+            )
         stats = self.actor.export_stats()
         stats.update(self.rollout.export_stats())
+        self._pending_train_stats_for_commit = stats
+
+    def _export_eval_stats_snapshot(self) -> dict[str, float]:
+        stats: dict[str, float] = {}
         if self.eval_rollout is not None:
             stats.update(self.eval_rollout.export_stats())
+        return stats
+
+    def _export_and_commit_stats(self, epoch: int, epoch_step: int, global_step: int):
+        # Upload statistics to the logger (e.g., wandb)
+        pending_train_stats = self._pending_train_stats_for_commit
+        self._pending_train_stats_for_commit = None
+
+        if pending_train_stats is not None:
+            stats = dict(pending_train_stats)
+        else:
+            stats = self.actor.export_stats()
+            stats.update(self.rollout.export_stats())
+
+        stats.update(self._export_eval_stats_snapshot())
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
-    def _validate_cfg(self):
-        """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
+    def _validate_cfg(self, train_dataset: Dataset | None):
+        """Validate config before weight initialization to fail fast on unsupported setups."""
         if (
             self.allocation_mode.gen_backend == "vllm"
             and self.config.rollout.return_routed_experts
@@ -934,6 +1152,47 @@ class PPOTrainer:
             raise ValueError(
                 "return_routed_experts is only supported with SGLang backend. "
                 "Please disable return_routed_experts or switch to SGLang backend."
+            )
+
+        if not getattr(self.config.actor, "colocated", False):
+            return
+
+        if is_single_controller():
+            raise ValueError(
+                "Colocated mode only supports SPMD mode. "
+                "Launch with `python3 -m areal.infra.launcher.local` instead."
+            )
+
+        if self.config.cluster.n_nodes != 1:
+            raise ValueError(
+                "Colocated mode only supports single-node runs. "
+                f"Got cluster.n_nodes={self.config.cluster.n_nodes}."
+            )
+
+        if train_dataset is None:
+            raise ValueError(
+                "Colocated mode does not support online training and requires a train_dataset."
+            )
+
+        openai_cfg = self.config.rollout.openai
+        if openai_cfg is not None and openai_cfg.mode == "online":
+            raise ValueError(
+                "Colocated mode does not support rollout.openai.mode='online'."
+            )
+
+        if self.config.critic is not None:
+            raise ValueError(
+                "Colocated mode only supports actor-only training: critic is not supported."
+            )
+
+        if self.config.ref is not None or self.config.actor.kl_ctl > 0:
+            raise ValueError(
+                "Colocated mode only supports actor-only training: ref/kl_ctl is not supported."
+            )
+
+        if self.config.teacher is not None:
+            raise ValueError(
+                "Colocated mode only supports actor-only training: teacher is not supported."
             )
 
     def _requires_proxy_workflow(self, workflow: WorkflowLike | None) -> bool:
