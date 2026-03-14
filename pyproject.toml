@@ -146,6 +146,9 @@ tms = [
 flash-attn = [
     "flash-attn==2.8.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+kernels = [
+    "kernels==0.12.2",
+]
 megatron = [
     "megatron-core==0.13.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "mbridge==0.13.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -156,6 +159,7 @@ cuda-train = [
     "areal[tms]",
     "areal[megatron]",
     "areal[flash-attn]",
+    "areal[kernels]",
 ]
 # Backward-compatible: `uv sync --extra cuda` installs training packages + sglang.
 # For vllm instead, use: uv sync --extra cuda-train --extra vllm
