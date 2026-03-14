@@ -10,10 +10,52 @@ import pytest
 import requests
 import torch
 
-from areal.infra.rpc.rtensor import RTensor, TensorShardInfo
+from areal.infra.rpc.rtensor import NonBatchedTensor, RTensor, TensorShardInfo
 from areal.infra.rpc.serialization import serialize_value
 from areal.infra.utils.proc import kill_process_tree
 from areal.utils.network import find_free_ports
+
+
+def _make_non_batched_template(
+    rpc_server: str,
+    pixel_rows: int,
+    *,
+    pixel_width: int = 32,
+    image_grid_shape: tuple[int, int] = (1, 3),
+) -> dict[str, NonBatchedTensor]:
+    return {
+        "pixel_values": NonBatchedTensor(
+            RTensor(
+                shards=[
+                    TensorShardInfo(
+                        shard_id=str(uuid.uuid4()),
+                        node_addr=rpc_server,
+                        size=1,
+                        seqlens=[pixel_rows],
+                    )
+                ],
+                data=torch.empty(pixel_rows, pixel_width, device="meta"),
+            )
+        ),
+        "image_grid_thw": NonBatchedTensor(
+            RTensor(
+                shards=[
+                    TensorShardInfo(
+                        shard_id=str(uuid.uuid4()),
+                        node_addr=rpc_server,
+                        size=1,
+                        seqlens=[1],
+                    )
+                ],
+                data=torch.empty(*image_grid_shape, device="meta", dtype=torch.int64),
+            )
+        ),
+    }
+
+
+def _assert_multimodal_item_wrapped(mm_item):
+    assert isinstance(mm_item["pixel_values"], NonBatchedTensor)
+    assert isinstance(mm_item["image_grid_thw"], NonBatchedTensor)
 
 
 @pytest.fixture(scope="module")
@@ -269,6 +311,165 @@ class TestRTensorIntegration:
         assert isinstance(localized["logits"], torch.Tensor)
         assert torch.allclose(localized["logits"], output["logits"])
         assert localized["score"] == 0.95
+
+    def test_non_batched_tensor_roundtrip(self, rpc_server):
+        """NonBatchedTensor should bypass outer batch splitting and roundtrip unchanged."""
+        attention_mask = torch.tensor([[1, 1, 1], [1, 1, 0], [1, 0, 0]], dtype=torch.bool)
+        layout = RTensor.extract_layout(
+            {"attention_mask": attention_mask},
+            layouts={},
+            node_addr=rpc_server,
+        )
+        assert layout is not None
+
+        pixel_values = torch.randn(8160, 32).cpu()
+        image_grid_thw = torch.tensor([[2, 30, 136]], dtype=torch.int64)
+        output = {
+            "attention_mask": attention_mask.cpu(),
+            "multi_modal_input": [
+                {
+                    "pixel_values": NonBatchedTensor(pixel_values),
+                    "image_grid_thw": NonBatchedTensor(image_grid_thw),
+                }
+            ],
+        }
+
+        remotized = RTensor.remotize(output, layout=layout, node_addr=rpc_server)
+        mm_item = remotized["multi_modal_input"][0]
+        assert isinstance(mm_item["pixel_values"], NonBatchedTensor)
+        assert isinstance(mm_item["pixel_values"].tensor, RTensor)
+        assert mm_item["pixel_values"].tensor.shards[0].size == pixel_values.shape[0]
+
+        from areal.infra.rpc.rtensor import fetch
+
+        for key in ("pixel_values", "image_grid_thw"):
+            shard_id = mm_item[key].tensor.shards[0].shard_id
+            tensor = fetch(shard_id)
+            serialized = serialize_value(tensor)
+            resp = requests.put(
+                f"http://{rpc_server}/data/{shard_id}",
+                data=orjson.dumps(serialized),
+            )
+            assert resp.status_code == 200
+
+        localized = RTensor.localize(remotized)
+        localized_mm = localized["multi_modal_input"][0]
+        assert isinstance(localized_mm["pixel_values"], torch.Tensor)
+        assert torch.allclose(localized_mm["pixel_values"], pixel_values)
+        assert torch.equal(localized_mm["image_grid_thw"], image_grid_thw)
+
+    def test_extract_layout_ignores_non_batched_payload_rtensors(self, rpc_server):
+        """Layout inference must ignore RTensors wrapped by NonBatchedTensor."""
+        batch_layout = RTensor(
+            shards=[
+                TensorShardInfo(
+                    shard_id=str(uuid.uuid4()),
+                    node_addr=rpc_server,
+                    size=3,
+                    seqlens=[7, 8, 9],
+                )
+            ],
+            data=torch.empty(3, 9, device="meta"),
+        )
+        opaque_payload = NonBatchedTensor(
+            RTensor(
+                shards=[
+                    TensorShardInfo(
+                        shard_id=str(uuid.uuid4()),
+                        node_addr=rpc_server,
+                        size=1,
+                        seqlens=[8160],
+                    )
+                ],
+                data=torch.empty(8160, 32, device="meta"),
+            )
+        )
+
+        inferred = RTensor.extract_layout(
+            obj={"logits": torch.randn(3, 11).cpu()},
+            layouts={
+                "attention_mask": batch_layout,
+                "multi_modal_input": [{"pixel_values": opaque_payload}],
+            },
+            node_addr=rpc_server,
+        )
+
+        assert inferred is batch_layout
+        assert inferred.shards[0].size == 3
+
+    def test_rewrap_non_batched_preserves_marked_result_fields(self, rpc_server):
+        """Result tensors matching NonBatchedTensor-marked inputs should be rewrapped."""
+        result = {
+            "advantages": torch.randn(3, 7).cpu(),
+            "multi_modal_input": [
+                {
+                    "pixel_values": torch.randn(8160, 32).cpu(),
+                    "image_grid_thw": torch.tensor([[2, 30, 136]], dtype=torch.int64),
+                }
+            ],
+        }
+        template = {
+            "multi_modal_input": [_make_non_batched_template(rpc_server, 8160)]
+        }
+
+        wrapped = RTensor.rewrap_non_batched(result, [template], {})
+
+        assert isinstance(wrapped["advantages"], torch.Tensor)
+        mm_item = wrapped["multi_modal_input"][0]
+        _assert_multimodal_item_wrapped(mm_item)
+        assert torch.allclose(
+            mm_item["pixel_values"].tensor,
+            result["multi_modal_input"][0]["pixel_values"],
+        )
+        assert torch.equal(
+            mm_item["image_grid_thw"].tensor,
+            result["multi_modal_input"][0]["image_grid_thw"],
+        )
+
+    def test_rewrap_non_batched_matches_mutated_positional_batch_arg(self, rpc_server):
+        """Rewrap should match a result dict returned directly from args[0]."""
+        result = {
+            "advantages": torch.randn(3, 7).cpu(),
+            "multi_modal_input": [
+                {
+                    "pixel_values": torch.randn(8160, 32).cpu(),
+                    "image_grid_thw": torch.tensor([[2, 30, 136]], dtype=torch.int64),
+                },
+                {
+                    "pixel_values": torch.randn(5440, 32).cpu(),
+                    "image_grid_thw": torch.tensor([[1, 30, 136]], dtype=torch.int64),
+                },
+                {
+                    "pixel_values": torch.randn(2720, 32).cpu(),
+                    "image_grid_thw": torch.tensor([[1, 20, 136]], dtype=torch.int64),
+                },
+            ],
+        }
+        arg0_template = {
+            "attention_mask": RTensor(
+                shards=[
+                    TensorShardInfo(
+                        shard_id=str(uuid.uuid4()),
+                        node_addr=rpc_server,
+                        size=3,
+                        seqlens=[7, 8, 9],
+                    )
+                ],
+                data=torch.empty(3, 9, device="meta"),
+            ),
+            "multi_modal_input": [
+                _make_non_batched_template(rpc_server, 8160),
+                _make_non_batched_template(rpc_server, 5440),
+                _make_non_batched_template(rpc_server, 2720),
+            ],
+        }
+
+        wrapped = RTensor.rewrap_non_batched(result, [arg0_template], {})
+
+        assert isinstance(wrapped["advantages"], torch.Tensor)
+        for idx in range(3):
+            mm_item = wrapped["multi_modal_input"][idx]
+            _assert_multimodal_item_wrapped(mm_item)
 
     def test_clear_batch_data(self, rpc_server):
         """Test clearing stored tensor shards."""

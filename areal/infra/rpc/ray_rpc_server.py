@@ -165,6 +165,7 @@ class RayRPCServer:
                 result, layouts=dict(args=raw_args, kwargs=raw_kwargs), node_addr=""
             )
             if layout is not None:
+                result = RTensor.rewrap_non_batched(result, raw_args, raw_kwargs)
                 result = RTensor.remotize(result, layout, node_addr="")
             # put back to cpu to mimic RPCServer encode/decode
             result = tensor_container_to(result, "cpu")

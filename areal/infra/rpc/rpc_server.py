@@ -791,6 +791,7 @@ def call_engine_method():
             node_addr=f"{_server_host}:{_server_port}",
         )
         if layout is not None:
+            result = RTensor.rewrap_non_batched(result, raw_args, raw_kwargs)
             result = RTensor.remotize(
                 result,
                 layout,
