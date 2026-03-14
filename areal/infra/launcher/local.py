@@ -386,9 +386,7 @@ def local_main(config, run_id: int = 0):
         # device set instead of the next sequential slice.
         if is_colocated:
             gen_gpu_count = (
-                alloc_mode.gen.pp_size
-                * alloc_mode.gen.tp_size
-                * alloc_mode.gen.dp_size
+                alloc_mode.gen.pp_size * alloc_mode.gen.tp_size * alloc_mode.gen.dp_size
             )
             launcher._gpu_counter -= gen_gpu_count
             logger.info(

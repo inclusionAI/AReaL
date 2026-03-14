@@ -89,18 +89,14 @@ class TestColocatedOrchestrator:
         assert orchestrator._inf_on_gpu is True
         assert orchestrator._train_on_gpu is True
 
-    def test_initial_offload_training(
-        self, orchestrator, mock_train_engine
-    ):
+    def test_initial_offload_training(self, orchestrator, mock_train_engine):
         """Test that initial_offload_training offloads the training engine."""
         assert orchestrator._train_on_gpu is True
         orchestrator.initial_offload_training()
         mock_train_engine.offload.assert_called_once()
         assert orchestrator._train_on_gpu is False
 
-    def test_initial_offload_training_idempotent(
-        self, orchestrator, mock_train_engine
-    ):
+    def test_initial_offload_training_idempotent(self, orchestrator, mock_train_engine):
         """Test that calling initial_offload_training twice is safe."""
         orchestrator.initial_offload_training()
         orchestrator.initial_offload_training()  # Should skip
@@ -168,9 +164,7 @@ class TestColocatedOrchestrator:
         meta = MagicMock()
         meta.path = "/tmp/test_weights"
 
-        with patch.object(
-            orchestrator, "_direct_disk_weight_update"
-        ) as mock_update:
+        with patch.object(orchestrator, "_direct_disk_weight_update") as mock_update:
             orchestrator.prepare_for_inference(meta)
             mock_update.assert_called_once_with(meta)
 
@@ -240,9 +234,7 @@ class TestWeightUpdateMetaColocated:
     def test_from_colocated_disk_custom_path(self):
         from areal.api.io_struct import WeightUpdateMeta
 
-        meta = WeightUpdateMeta.from_colocated_disk(
-            weight_path="/tmp/custom_weights"
-        )
+        meta = WeightUpdateMeta.from_colocated_disk(weight_path="/tmp/custom_weights")
         assert meta.path == "/tmp/custom_weights/weight_update"
 
     def test_from_colocated_disk_with_lora(self):
@@ -260,9 +252,7 @@ class TestWeightUpdateMetaColocated:
     def test_from_colocated_disk_with_version(self):
         from areal.api.io_struct import WeightUpdateMeta
 
-        meta = WeightUpdateMeta.from_colocated_disk(
-            weight_path="/dev/shm/test_weights"
-        )
+        meta = WeightUpdateMeta.from_colocated_disk(weight_path="/dev/shm/test_weights")
         versioned = meta.with_version(5)
         assert versioned.path == "/dev/shm/test_weights/weight_update_v5"
         assert versioned.version == 5
@@ -286,35 +276,39 @@ class TestPPOTrainerColocatedValidation:
     def test_validate_cfg_rejects_single_controller(self):
         trainer = _make_validation_trainer()
 
-        with patch(
-            "areal.trainer.rl_trainer.is_single_controller", return_value=True
-        ), pytest.raises(ValueError, match="only supports SPMD mode"):
+        with (
+            patch("areal.trainer.rl_trainer.is_single_controller", return_value=True),
+            pytest.raises(ValueError, match="only supports SPMD mode"),
+        ):
             trainer._validate_cfg(train_dataset=object())
 
     def test_validate_cfg_rejects_multi_node(self):
         trainer = _make_validation_trainer()
         trainer.config.cluster.n_nodes = 2
 
-        with patch(
-            "areal.trainer.rl_trainer.is_single_controller", return_value=False
-        ), pytest.raises(ValueError, match="single-node runs"):
+        with (
+            patch("areal.trainer.rl_trainer.is_single_controller", return_value=False),
+            pytest.raises(ValueError, match="single-node runs"),
+        ):
             trainer._validate_cfg(train_dataset=object())
 
     def test_validate_cfg_rejects_missing_train_dataset(self):
         trainer = _make_validation_trainer()
 
-        with patch(
-            "areal.trainer.rl_trainer.is_single_controller", return_value=False
-        ), pytest.raises(ValueError, match="requires a train_dataset"):
+        with (
+            patch("areal.trainer.rl_trainer.is_single_controller", return_value=False),
+            pytest.raises(ValueError, match="requires a train_dataset"),
+        ):
             trainer._validate_cfg(train_dataset=None)
 
     def test_validate_cfg_rejects_online_mode(self):
         trainer = _make_validation_trainer()
         trainer.config.rollout.openai = SimpleNamespace(mode="online")
 
-        with patch(
-            "areal.trainer.rl_trainer.is_single_controller", return_value=False
-        ), pytest.raises(ValueError, match="rollout.openai.mode='online'"):
+        with (
+            patch("areal.trainer.rl_trainer.is_single_controller", return_value=False),
+            pytest.raises(ValueError, match="rollout.openai.mode='online'"),
+        ):
             trainer._validate_cfg(train_dataset=object())
 
     @pytest.mark.parametrize(
@@ -344,9 +338,10 @@ class TestPPOTrainerColocatedValidation:
         trainer = _make_validation_trainer()
         mutate(trainer)
 
-        with patch(
-            "areal.trainer.rl_trainer.is_single_controller", return_value=False
-        ), pytest.raises(ValueError, match=expected_error):
+        with (
+            patch("areal.trainer.rl_trainer.is_single_controller", return_value=False),
+            pytest.raises(ValueError, match=expected_error),
+        ):
             trainer._validate_cfg(train_dataset=object())
 
     def test_validate_cfg_does_not_apply_colocated_restrictions_to_standard_mode(self):
@@ -358,7 +353,5 @@ class TestPPOTrainerColocatedValidation:
         trainer.config.ref = object()
         trainer.config.teacher = object()
 
-        with patch(
-            "areal.trainer.rl_trainer.is_single_controller", return_value=True
-        ):
+        with patch("areal.trainer.rl_trainer.is_single_controller", return_value=True):
             trainer._validate_cfg(train_dataset=None)
