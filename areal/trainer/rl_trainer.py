@@ -770,11 +770,14 @@ class PPOTrainer:
             role="rollout",
             alloc_mode=self.allocation_mode,
             server_args=server_args,
+            gen_backend=self.allocation_mode.gen_backend,
+            n_samples=self.config.gconfig.n_samples,
         )
         if is_eval:
             assert len(self.rollout.server_infos) > 0
             init_kwargs["server_infos"] = self.rollout.server_infos
             init_kwargs["role"] = "eval-rollout"
+            init_kwargs["n_samples"] = self.config.eval_gconfig.n_samples
         controller.initialize(**init_kwargs)
         return controller
 
