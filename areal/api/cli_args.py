@@ -1277,7 +1277,7 @@ class PPOActorConfig(TrainEngineConfig):
                     "SAPO is not compatible with `use_decoupled_loss=True`. "
                     "Please set `actor.use_decoupled_loss=false` in your configuration."
                 )
-        # Validate colocated mode configuration        
+        # Validate colocated mode configuration
         if self.colocated:
             if self.weight_update_mode != "disk":
                 raise ValueError(

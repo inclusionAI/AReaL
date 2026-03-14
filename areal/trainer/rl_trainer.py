@@ -3,9 +3,9 @@ from __future__ import annotations
 import functools
 import os
 from collections.abc import Callable
+from contextlib import nullcontext
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
-from contextlib import nullcontext
 
 import torch.distributed as dist
 from datasets import Dataset
@@ -47,11 +47,11 @@ from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
+from areal.utils.offload import torch_memory_saver
 from areal.utils.perf_tracer import Category
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from areal.utils.offload import torch_memory_saver
 
 if TYPE_CHECKING:
     from areal.engine import (
@@ -238,7 +238,9 @@ class PPOTrainer:
 
             # Initialize inference with LoRA path
             self.rollout = self._init_rollout(
-                rollout_config=config.rollout, is_eval=False, lora_path=initial_lora_path
+                rollout_config=config.rollout,
+                is_eval=False,
+                lora_path=initial_lora_path,
             )
             # Online mode detection: skip eval rollout for efficiency.
             openai_cfg = config.rollout.openai
@@ -386,14 +388,12 @@ class PPOTrainer:
             )
             if self.recover_info is not None:
                 # Recovered from checkpoint — sync weights to inference engine.
-                # The actor is offloaded; sync_weights_to_inference will
-                # onload it, save weights, offload again, and update inference.
+                # The actor is offloaded; onload it, save weights, offload
+                # again, and update inference.
                 assert self.colocated_orch is not None
                 global_step = self.recover_info.last_step_info.global_step
                 recovery_version = global_step + 1
-                versioned_meta = self.weight_update_meta.with_version(
-                    recovery_version
-                )
+                versioned_meta = self.weight_update_meta.with_version(recovery_version)
                 # save() must be called while actor is on GPU; onload first.
                 self.colocated_orch.prepare_for_training()
                 self.actor.save(
@@ -480,9 +480,7 @@ class PPOTrainer:
                 ),
             ):
                 tms_ctx: Any | nullcontext[None] = (
-                    torch_memory_saver.disable()
-                    if self._colocated
-                    else nullcontext()
+                    torch_memory_saver.disable() if self._colocated else nullcontext()
                 )
                 with tms_ctx:
                     rollout_batch = self.actor.prepare_batch(

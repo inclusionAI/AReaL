@@ -23,9 +23,8 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import torch.distributed as dist
-
 import aiohttp
+import torch.distributed as dist
 import uvloop
 
 from areal.api.io_struct import WeightUpdateMeta, WeightUpdateRequests
@@ -186,33 +185,6 @@ class ColocatedOrchestrator:
         # Step 3: load new weights from disk into the inference engine
         self._direct_disk_weight_update(meta)
 
-    def sync_weights_to_inference(self, meta: WeightUpdateMeta) -> None:
-        """Temporarily onload training, save weights, offload, and sync to inference.
-
-        This method handles the full cycle needed when the training engine's
-        weights have been modified while offloaded (e.g. during checkpoint
-        recovery) and the inference engine must be brought up-to-date.
-
-        After this call, the training engine is offloaded and the inference
-        engine holds the updated weights on GPU.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Versioned weight update metadata.  ``meta.path`` is where the
-            HF-format weights will be (temporarily) saved.
-        """
-        # 1) Onload training engine so we can save weights
-        if not self._train_on_gpu:
-            self._train_engine.onload()
-            self._train_on_gpu = True
-
-        # 2) Caller must save weights to meta.path before calling
-        #    prepare_for_inference (which will read from meta.path).
-        #    Here we directly switch to inference mode which offloads
-        #    training and loads new weights into inference.
-        self.prepare_for_inference(meta)
-
     def direct_disk_weight_update(self, meta: WeightUpdateMeta) -> None:
         """Public wrapper for sending disk weight updates to inference servers.
 
@@ -252,8 +224,8 @@ class ColocatedOrchestrator:
         request_retries: int = inner_engine.config.request_retries
 
         # Build weight update requests using the backend protocol
-        weight_reqs: WeightUpdateRequests = (
-            backend.build_disk_weight_update_requests(meta)
+        weight_reqs: WeightUpdateRequests = backend.build_disk_weight_update_requests(
+            meta
         )
 
         logger.info(
@@ -291,7 +263,7 @@ class ColocatedOrchestrator:
         if self.config.cleanup_weights_after_load and meta.path is not None:
             shutil.rmtree(meta.path, ignore_errors=True)
             logger.debug("Cleaned up weight directory: %s", meta.path)
-        
+
         dist.barrier(self._train_engine.cpu_group)
 
     def cleanup(self) -> None:
