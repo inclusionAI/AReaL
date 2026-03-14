@@ -1197,6 +1197,24 @@ class PPOActorConfig(TrainEngineConfig):
         default_factory=lambda: [],
         metadata={"help": "Keys for logging agent trajectory statistics"},
     )
+    # Colocated (GPU time-sharing) mode
+    colocated: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable colocated mode where training and inference share the same GPUs. "
+            "When enabled, training and inference alternate via offload/onload with "
+            "weights transferred through a local disk path (e.g. /dev/shm)."
+        },
+    )
+    colocated_weight_path: str = field(
+        default="/dev/shm/areal_colocated_weights",
+        metadata={
+            "help": "Base path for temporary weight storage in colocated mode. "
+            "Defaults to /dev/shm for fast in-memory transfer. "
+            "Only effective when colocated=True."
+        },
+    )
+
     # Others
     max_new_tokens: int = field(
         default=1024,
@@ -1258,6 +1276,14 @@ class PPOActorConfig(TrainEngineConfig):
                 raise ValueError(
                     "SAPO is not compatible with `use_decoupled_loss=True`. "
                     "Please set `actor.use_decoupled_loss=false` in your configuration."
+                )
+        # Validate colocated mode configuration        
+        if self.colocated:
+            if self.weight_update_mode != "disk":
+                raise ValueError(
+                    "Colocated mode requires weight_update_mode='disk', "
+                    f"got '{self.weight_update_mode}'. "
+                    "Set actor.weight_update_mode=disk in your configuration."
                 )
 
         super().__post_init__()
