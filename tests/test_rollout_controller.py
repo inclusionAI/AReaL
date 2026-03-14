@@ -77,6 +77,9 @@ class MockScheduler:
         self.engine_calls.append((worker_id, method, args, kwargs))
         self.call_count += 1
         if method == "agenerate":
+            # 构造rollout 拖尾
+            if worker_id == "rollout/0":
+                await asyncio.sleep(3)
             return Mock()
         # Handle submit method - return a task_id and store the result
         elif method == "submit":
@@ -191,7 +194,6 @@ class TestRolloutControllerInitialization:
         assert controller.config == config
         assert controller.scheduler == scheduler
         assert controller.workers == []
-        assert controller._current_worker_idx == 0
         assert controller._version == 0
         assert controller.staleness_manager is None
 
@@ -374,34 +376,6 @@ class TestRolloutControllerCapacity:
         capacity_v5 = controller.get_capacity()
 
         assert capacity_v5 > capacity_v0
-
-        controller.destroy()
-
-
-class TestRolloutControllerWorkerSelection:
-    def test_choose_worker_round_robin(self):
-        config = create_test_config(consumer_batch_size=16)
-        scheduler = MockScheduler()
-        controller = RolloutController(
-            inf_engine=MockInferenceEngine,
-            config=config,
-            scheduler=scheduler,
-        )
-
-        alloc_mode = AllocationMode.from_str("sglang:d3")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
-
-        worker_ids = []
-        for _ in range(6):
-            worker, _ = controller._choose_worker()
-            worker_ids.append(worker.id)
-
-        assert worker_ids[0] == "rollout/0"
-        assert worker_ids[1] == "rollout/1"
-        assert worker_ids[2] == "rollout/2"
-        assert worker_ids[3] == "rollout/0"
-        assert worker_ids[4] == "rollout/1"
-        assert worker_ids[5] == "rollout/2"
 
         controller.destroy()
 
@@ -859,6 +833,40 @@ class TestRolloutControllerAgenerate:
         assert worker_ids[1] == "rollout/1"
         assert worker_ids[2] == "rollout/2"
         assert worker_ids[3] == "rollout/0"
+
+        controller.destroy()
+
+    @pytest.mark.asyncio
+    async def test_agenerate_least_request(self):
+        config = create_test_config(consumer_batch_size=16)
+        config.schedule_policy = "least_request"
+        config.max_concurrent_rollouts = 1
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d3")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        async def test_agenerate():
+            req = ModelRequest(input_ids=[1, 2, 3])
+            await controller.agenerate(req)
+
+        tasks = [asyncio.create_task(test_agenerate()) for _ in range(6)]
+        await asyncio.gather(*tasks)
+
+        agenerate_calls = [
+            call for call in scheduler.engine_calls if call[1] == "agenerate"
+        ]
+        worker_ids = [call[0] for call in agenerate_calls]
+
+        assert worker_ids[0] == "rollout/0"
+        assert worker_ids[1] == "rollout/1"
+        assert worker_ids[2] in ["rollout/1", "rollout/2"]
+        assert worker_ids[3] in ["rollout/1", "rollout/2"]
 
         controller.destroy()
 
