@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from threading import Lock
 from typing import Any, Protocol
 
@@ -221,6 +221,23 @@ class RTensor:
 
         return cls(shards=shards, data=batch_tensor.to("meta"))
 
+    @classmethod
+    def from_unbatched(cls, tensor: torch.Tensor, node_addr: str) -> RTensor:
+        """Store a tensor as a single opaque shard without applying batch splitting."""
+        if not tensor.is_cpu and not tensor.is_meta:
+            raise ValueError("RTensor shards must be on CPU or meta device")
+
+        backend = get_backend()
+        shard_id = backend.store(tensor)
+        leading_size = int(tensor.shape[0]) if tensor.ndim > 0 else 1
+        shard = TensorShardInfo(
+            size=leading_size,
+            seqlens=[leading_size],
+            shard_id=shard_id,
+            node_addr=node_addr,
+        )
+        return cls(shards=[shard], data=tensor.to("meta"))
+
     @staticmethod
     def cat(rtensors: list[RTensor | torch.Tensor], dim: int = 0) -> RTensor:
         n_tensors = len(rtensors)
@@ -278,7 +295,7 @@ class RTensor:
             Layout RTensor or None if not found
         """
         # Determine if batched from input layouts
-        layout_rtensor = _find_in_structure(layouts, RTensor)
+        layout_rtensor = _find_batch_layout_rtensor(layouts)
         result_tensor = _find_in_structure(obj, torch.Tensor)
         if layout_rtensor is None and result_tensor is not None:
             if not isinstance(obj, dict):
@@ -323,10 +340,39 @@ class RTensor:
         Any
             Object with tensors converted to RTensors
         """
+        if isinstance(obj, RTensor):
+            return obj
+
+        if isinstance(obj, NonBatchedTensor):
+            tensor = obj.tensor
+            if isinstance(tensor, RTensor):
+                remotized_tensor = tensor
+            elif isinstance(tensor, torch.Tensor):
+                remotized_tensor = RTensor.from_unbatched(
+                    tensor.detach().cpu(), node_addr=node_addr
+                )
+            else:
+                raise TypeError(
+                    "NonBatchedTensor expects torch.Tensor or RTensor, "
+                    f"got {type(tensor).__name__}"
+                )
+            return NonBatchedTensor(tensor=remotized_tensor)
+
         if isinstance(obj, torch.Tensor):
             return RTensor.from_batched(
                 obj.detach().cpu(), layout=layout, node_addr=node_addr
             )
+
+        if is_dataclass(obj) and not isinstance(obj, type):
+            values = {
+                field.name: RTensor.remotize(
+                    obj=getattr(obj, field.name),
+                    layout=layout,
+                    node_addr=node_addr,
+                )
+                for field in fields(obj)
+            }
+            return obj.__class__(**values)
 
         if isinstance(obj, dict):
             return {
@@ -367,6 +413,16 @@ class RTensor:
         if isinstance(obj, RTensor):
             return obj.to_local()
 
+        if isinstance(obj, NonBatchedTensor):
+            return obj.tensor.to_local() if isinstance(obj.tensor, RTensor) else obj.tensor
+
+        if is_dataclass(obj) and not isinstance(obj, type):
+            values = {
+                field.name: RTensor.localize(getattr(obj, field.name))
+                for field in fields(obj)
+            }
+            return obj.__class__(**values)
+
         if isinstance(obj, dict):
             return {k: RTensor.localize(v) for k, v in obj.items()}
 
@@ -377,6 +433,20 @@ class RTensor:
             return tuple(RTensor.localize(item) for item in obj)
 
         return obj
+
+    @staticmethod
+    def rewrap_non_batched(obj: Any, *templates: Any) -> Any:
+        """Reapply NonBatchedTensor markers from input templates onto a result structure.
+
+        Engine methods often localize `NonBatchedTensor` payloads to plain tensors before
+        execution. If the method returns a structure that still carries those payloads
+        (for example, `compute_advantages` returning the updated batch dict), the RPC
+        layer needs to restore the non-batched transport semantics before calling
+        `remotize()`. This helper preserves existing behavior for regular tensors while
+        re-wrapping only the fields explicitly marked by input templates.
+        """
+        expanded_templates = _expand_non_batched_templates(templates)
+        return _rewrap_non_batched_from_templates(obj, expanded_templates)
 
     @staticmethod
     def data_parallel_dispatch(
@@ -399,7 +469,7 @@ class RTensor:
             Split objects and group indices
         """
         if group_indices is None:
-            layout_rtensor = _find_in_structure(obj, RTensor)
+            layout_rtensor = _find_batch_layout_rtensor(obj)
             if layout_rtensor is not None:
                 seqlens = [sum(s.seqlens) for s in layout_rtensor.shards]
                 # Use balanced greedy partition to allocate shards to DP groups
@@ -521,6 +591,7 @@ class RTensor:
         # Scalars: return first (assume synchronized)
         return first
 
+
     @staticmethod
     def collect_shards(obj: Any) -> dict[str, list[Any]]:
         """Collect shard IDs grouped by node address from nested structure.
@@ -543,6 +614,9 @@ class RTensor:
                     if shard.node_addr not in shards_by_node:
                         shards_by_node[shard.node_addr] = []
                     shards_by_node[shard.node_addr].append(shard.shard_id)
+            elif is_dataclass(o) and not isinstance(o, type):
+                for field in fields(o):
+                    _collect(getattr(o, field.name))
             elif isinstance(o, dict):
                 for v in o.values():
                     _collect(v)
@@ -603,6 +677,20 @@ class RTensor:
         raise NotImplementedError(f"RTensor does not implement torch function {func}")
 
 
+@dataclass
+class NonBatchedTensor:
+    """Explicit wrapper for per-sample tensors that should not be split by batch layout.
+
+    Use this wrapper for tensor payloads whose leading dimension does not correspond
+    to the outer batch dimension tracked by RTensor layouts, e.g. multimodal
+    `pixel_values` produced by VLM processors. The wrapped tensor will be stored and
+    fetched as a single opaque object while preserving the existing batch-first
+    semantics for regular tensors.
+    """
+
+    tensor: torch.Tensor | RTensor
+
+
 def _pad_cat_dim0(tensors: list[torch.Tensor]) -> torch.Tensor:
     # Get the maximum shape for dims 1 to N-1
     shape = [0 for _ in range(tensors[0].ndim - 1)]
@@ -636,6 +724,11 @@ def _pad_cat_dim0(tensors: list[torch.Tensor]) -> torch.Tensor:
 def _find_in_structure(obj: Any, type_: type) -> Any | None:
     if isinstance(obj, type_):
         return obj
+    if is_dataclass(obj) and not isinstance(obj, type):
+        for field in fields(obj):
+            result = _find_in_structure(getattr(obj, field.name), type_)
+            if result is not None:
+                return result
     if isinstance(obj, dict):
         for v in obj.values():
             result = _find_in_structure(v, type_)
@@ -647,6 +740,133 @@ def _find_in_structure(obj: Any, type_: type) -> Any | None:
             if result is not None:
                 return result
     return None
+
+
+def _find_batch_layout_rtensor(obj: Any) -> RTensor | None:
+    """Find the RTensor that represents the outer batch layout.
+
+    `NonBatchedTensor` wraps per-sample payloads whose inner RTensor shards should not
+    participate in batch-layout inference. This helper preserves the original recursive
+    layout detection behavior for regular structures while explicitly skipping the
+    transport-only wrapper.
+    """
+    if isinstance(obj, RTensor):
+        return obj
+    if isinstance(obj, NonBatchedTensor):
+        return None
+    if is_dataclass(obj) and not isinstance(obj, type):
+        for field in fields(obj):
+            result = _find_batch_layout_rtensor(getattr(obj, field.name))
+            if result is not None:
+                return result
+    if isinstance(obj, dict):
+        for value in obj.values():
+            result = _find_batch_layout_rtensor(value)
+            if result is not None:
+                return result
+    if isinstance(obj, (tuple, list)):
+        for item in obj:
+            result = _find_batch_layout_rtensor(item)
+            if result is not None:
+                return result
+    return None
+
+
+def _rewrap_non_batched_from_templates(obj: Any, templates: tuple[Any, ...]) -> Any:
+    matched_templates = tuple(t for t in templates if t is not None)
+    if not matched_templates:
+        return obj
+
+    if any(isinstance(template, NonBatchedTensor) for template in matched_templates):
+        if isinstance(obj, (torch.Tensor, RTensor, NonBatchedTensor)):
+            return obj if isinstance(obj, NonBatchedTensor) else NonBatchedTensor(obj)
+        return obj
+
+    if is_dataclass(obj) and not isinstance(obj, type):
+        values = {}
+        for field in fields(obj):
+            child_templates = tuple(
+                getattr(template, field.name)
+                for template in matched_templates
+                if is_dataclass(template)
+                and not isinstance(template, type)
+                and hasattr(template, field.name)
+            )
+            values[field.name] = _rewrap_non_batched_from_templates(
+                getattr(obj, field.name),
+                child_templates,
+            )
+        return obj.__class__(**values)
+
+    if isinstance(obj, dict):
+        return {
+            key: _rewrap_non_batched_from_templates(
+                value,
+                tuple(
+                    template[key]
+                    for template in matched_templates
+                    if isinstance(template, dict) and key in template
+                ),
+            )
+            for key, value in obj.items()
+        }
+
+    if isinstance(obj, list):
+        wrapped = []
+        for index, value in enumerate(obj):
+            child_templates = tuple(
+                template[index]
+                for template in matched_templates
+                if isinstance(template, list) and index < len(template)
+            )
+            wrapped.append(_rewrap_non_batched_from_templates(value, child_templates))
+        return wrapped
+
+    if isinstance(obj, tuple):
+        wrapped = []
+        for index, value in enumerate(obj):
+            child_templates = tuple(
+                template[index]
+                for template in matched_templates
+                if isinstance(template, tuple) and index < len(template)
+            )
+            wrapped.append(_rewrap_non_batched_from_templates(value, child_templates))
+        return tuple(wrapped)
+
+    return obj
+
+
+def _expand_non_batched_templates(templates: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Expand top-level RPC arg/kwarg containers into structural candidates.
+
+    Worker methods commonly return a mutated positional or keyword argument directly,
+    e.g. `compute_advantages(data)` returning the updated `data` dict. In that case,
+    the result structure aligns with `args[0]`, not with the outer `args` list itself.
+    Expanding one level keeps rewrap path matching strict while preserving the opt-in
+    behavior of `NonBatchedTensor`.
+    """
+    expanded: list[Any] = []
+    seen: set[int] = set()
+
+    def _append(value: Any) -> None:
+        marker = id(value)
+        if marker in seen:
+            return
+        seen.add(marker)
+        expanded.append(value)
+
+    for template in templates:
+        if template is None:
+            continue
+        _append(template)
+        if isinstance(template, dict):
+            for value in template.values():
+                _append(value)
+        elif isinstance(template, (list, tuple)):
+            for value in template:
+                _append(value)
+
+    return tuple(expanded)
 
 
 # =============================================================================
