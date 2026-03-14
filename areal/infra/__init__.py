@@ -1,6 +1,7 @@
 """Core components for AREAL."""
 
 from . import workflow_context
+from .colocated import ColocatedConfig, ColocatedOrchestrator
 from .controller import RolloutController, TrainController
 from .launcher import (
     LocalLauncher,
@@ -22,6 +23,8 @@ from .workflow_executor import (
 )
 
 __all__ = [
+    "ColocatedConfig",
+    "ColocatedOrchestrator",
     "RemoteInfBackendProtocol",
     "RemoteInfEngine",
     "StalenessManager",
