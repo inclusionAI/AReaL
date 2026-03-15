@@ -1,0 +1,214 @@
+"""Agent Gateway — independent HTTP/WebSocket server.
+
+The Gateway is the public-facing entry point for the Agent Service.
+It accepts client connections (WebSocket or HTTP via the OpenResponses
+bridge), resolves session routing through the Router, and forwards
+requests to the appropriate DataProxy.
+
+All inter-service communication is HTTP — Gateway holds no direct
+Python references to Router, DataProxy, or Worker.
+"""
+
+from __future__ import annotations
+
+import json
+import traceback
+
+import httpx
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
+from areal.utils import logging
+
+from .protocol import (
+    FrameType,
+    RequestFrame,
+    RequestMethod,
+    generate_run_id,
+    make_complete_response,
+    make_delta_event,
+    make_failed_response,
+    make_tool_call_event,
+    parse_frame,
+    serialize_frame,
+)
+
+logger = logging.getLogger("AgentGateway")
+
+
+def _make_accepted_json(request_id: str, run_id: str) -> str:
+    return json.dumps(
+        {
+            "type": FrameType.RES,
+            "id": request_id,
+            "ok": True,
+            "payload": {"runId": run_id, "status": "accepted"},
+        }
+    )
+
+
+def create_gateway_app(router_addr: str) -> FastAPI:
+    """Create the Agent Gateway ASGI application.
+
+    Parameters
+    ----------
+    router_addr : str
+        HTTP address of the Router service (e.g. ``http://localhost:8081``).
+    """
+    app = FastAPI(title="AReaL Agent Gateway")
+    http_client = httpx.AsyncClient(timeout=600.0)
+
+    async def _route(session_key: str) -> str:
+        resp = await http_client.post(
+            f"{router_addr}/route",
+            json={"session_key": session_key},
+        )
+        resp.raise_for_status()
+        return resp.json()["data_proxy_addr"]
+
+    async def _send_turn(
+        data_proxy_addr: str,
+        session_key: str,
+        message: str,
+        run_id: str,
+        queue_mode: str,
+        metadata: dict,
+    ) -> dict:
+        resp = await http_client.post(
+            f"{data_proxy_addr}/session/{session_key}/turn",
+            json={
+                "message": message,
+                "run_id": run_id,
+                "queue_mode": queue_mode,
+                "metadata": metadata,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        await websocket.accept()
+        logger.info("WebSocket connection accepted")
+
+        try:
+            while True:
+                raw = await websocket.receive_text()
+                frame = parse_frame(raw)
+
+                if not isinstance(frame, RequestFrame):
+                    await websocket.send_text(
+                        serialize_frame(
+                            make_failed_response("unknown", "", "Expected req frame")
+                        )
+                    )
+                    continue
+
+                if frame.method != RequestMethod.AGENT:
+                    await websocket.send_text(
+                        serialize_frame(
+                            make_failed_response(
+                                frame.id, "", f"Unsupported method: {frame.method}"
+                            )
+                        )
+                    )
+                    continue
+
+                session_key = frame.session_key
+                if not session_key:
+                    await websocket.send_text(
+                        serialize_frame(
+                            make_failed_response(
+                                frame.id, "", "Missing sessionKey in params"
+                            )
+                        )
+                    )
+                    continue
+
+                run_id = generate_run_id()
+                await websocket.send_text(_make_accepted_json(frame.id, run_id))
+
+                try:
+                    data_proxy_addr = await _route(session_key)
+                    result = await _send_turn(
+                        data_proxy_addr=data_proxy_addr,
+                        session_key=session_key,
+                        message=frame.message,
+                        run_id=run_id,
+                        queue_mode=frame.queue_mode.value,
+                        metadata=frame.params,
+                    )
+
+                    for evt in result.get("events", []):
+                        if evt.get("type") == "delta":
+                            await websocket.send_text(
+                                serialize_frame(
+                                    make_delta_event(run_id, evt.get("text", ""))
+                                )
+                            )
+                        elif evt.get("type") == "tool_call":
+                            await websocket.send_text(
+                                serialize_frame(
+                                    make_tool_call_event(
+                                        run_id,
+                                        evt.get("name", ""),
+                                        evt.get("args", ""),
+                                    )
+                                )
+                            )
+
+                    await websocket.send_text(
+                        serialize_frame(
+                            make_complete_response(
+                                frame.id, run_id, result.get("summary", "")
+                            )
+                        )
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Run %s failed: %s\n%s",
+                        run_id,
+                        exc,
+                        traceback.format_exc(),
+                    )
+                    await websocket.send_text(
+                        serialize_frame(
+                            make_failed_response(frame.id, run_id, str(exc))
+                        )
+                    )
+
+        except WebSocketDisconnect:
+            logger.info("WebSocket disconnected")
+        except Exception:
+            logger.exception("Unexpected error in WebSocket handler")
+
+    @app.on_event("shutdown")
+    async def shutdown():
+        await http_client.aclose()
+
+    return app
+
+
+def main() -> None:
+    import argparse
+
+    import uvicorn
+
+    from .agent_bridge import OpenResponsesBridge, mount_bridge
+
+    parser = argparse.ArgumentParser(description="Agent Gateway")
+    parser.add_argument("--router-addr", required=True, help="Router HTTP address")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8080)
+    args = parser.parse_args()
+
+    app = create_gateway_app(router_addr=args.router_addr)
+    mount_bridge(app, OpenResponsesBridge(router_addr=args.router_addr))
+    uvicorn.run(app, host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()
