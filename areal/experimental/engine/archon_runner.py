@@ -72,8 +72,9 @@ class SequentialRunner(ForwardBackwardRunner):
         forward_only: bool,
     ) -> list[torch.Tensor | dict[int, torch.Tensor]]:
         results: list[torch.Tensor | dict[int, torch.Tensor]] = []
+        total_mbs = len(mb_list)
 
-        for mb_item in mb_list:
+        for mb_idx, mb_item in enumerate(mb_list):
             inputs, ctx = self.prepare_inputs_fn(mb_item)
 
             tree_attn_meta = None
@@ -108,7 +109,6 @@ class SequentialRunner(ForwardBackwardRunner):
 
             if result is not None:
                 if forward_only:
-                    # Result can be a tensor or dict (for tree training)
                     if isinstance(result, dict):
                         results.append({k: v.detach() for k, v in result.items()})
                     else:
