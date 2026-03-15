@@ -185,7 +185,7 @@ class VLLMBackend:
                 ),
                 HttpRequest(
                     endpoint=update_endpoint,
-                    payload={},
+                    payload={} if not meta.use_lora else payload,
                 ),
             ]
         )

@@ -866,10 +866,10 @@ class LocalScheduler(Scheduler):
                 logger.info(f"Configuration successfully on worker '{worker_id}'")
                 return
             elif response.status_code == 400:
-                error_detail = response.json().get("detail", "Unknown error")
+                error_detail = response.json().get("error", "Unknown error")
                 raise WorkerConfigurationError(worker_id, error_detail, str(400))
             elif response.status_code == 500:
-                error_detail = response.json().get("detail", "Unknown error")
+                error_detail = response.json().get("error", "Unknown error")
                 raise WorkerConfigurationError(worker_id, error_detail, str(500))
             else:
                 raise WorkerConfigurationError(
@@ -1118,7 +1118,7 @@ class LocalScheduler(Scheduler):
                     elif response.status == 400:
                         # Import error or bad request
                         error_detail = (await response.json()).get(
-                            "detail", "Unknown error"
+                            "error", "Unknown error"
                         )
                         if "Failed to import" in error_detail:
                             raise EngineImportError(engine, error_detail)
@@ -1127,7 +1127,7 @@ class LocalScheduler(Scheduler):
                     elif response.status == 500:
                         # Engine initialization failed
                         error_detail = (await response.json()).get(
-                            "detail", "Unknown error"
+                            "error", "Unknown error"
                         )
                         raise EngineCreationError(worker_id, error_detail, 500)
                     else:
@@ -1399,7 +1399,7 @@ class LocalScheduler(Scheduler):
                         elif response.status == 400:
                             # Bad request (e.g., method doesn't exist) - don't retry
                             error_detail = (await response.json()).get(
-                                "detail", "Unknown error"
+                                "error", "Unknown error"
                             )
                             raise EngineCallError(
                                 worker_id, method, error_detail, attempt
@@ -1407,7 +1407,7 @@ class LocalScheduler(Scheduler):
                         elif response.status == 500:
                             # Engine method failed - don't retry
                             error_detail = (await response.json()).get(
-                                "detail", "Unknown error"
+                                "error", "Unknown error"
                             )
                             raise EngineCallError(
                                 worker_id, method, error_detail, attempt
@@ -1492,11 +1492,11 @@ class LocalScheduler(Scheduler):
             return deserialized_result, False, None
         elif response.status_code == 400:
             # Bad request (e.g., method doesn't exist) - don't retry
-            error_detail = response.json().get("detail", "Unknown error")
+            error_detail = response.json().get("error", "Unknown error")
             raise EngineCallError(worker_id, method, error_detail, attempt)
         elif response.status_code == 500:
             # Engine method failed - don't retry
-            error_detail = response.json().get("detail", "Unknown error")
+            error_detail = response.json().get("error", "Unknown error")
             raise EngineCallError(worker_id, method, error_detail, attempt)
         elif response.status_code == 503:
             # Service unavailable - retry

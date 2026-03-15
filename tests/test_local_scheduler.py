@@ -1315,7 +1315,7 @@ class TestEngineCreation:
         mock_response = AsyncMock()
         mock_response.status = 400
         mock_response.json = AsyncMock(
-            return_value={"detail": "Failed to import 'nonexistent.Engine'"}
+            return_value={"error": "Failed to import 'nonexistent.Engine'"}
         )
         mock_response.__aenter__.return_value = mock_response
         mock_response.__aexit__.return_value = None
@@ -1343,7 +1343,7 @@ class TestEngineCreation:
         mock_response = AsyncMock()
         mock_response.status = 500
         mock_response.json = AsyncMock(
-            return_value={"detail": "Engine initialization failed: out of memory"}
+            return_value={"error": "Engine initialization failed: out of memory"}
         )
         mock_response.__aenter__.return_value = mock_response
         mock_response.__aexit__.return_value = None
@@ -1486,7 +1486,7 @@ class TestEngineMethodCalls:
         scheduler._workers["test"] = [worker]
 
         mock_response = create_mock_http_response(
-            status_code=400, json_data={"detail": "Method 'nonexistent' not found"}
+            status_code=400, json_data={"error": "Method 'nonexistent' not found"}
         )
 
         with patch.object(requests, "post", return_value=mock_response):
