@@ -669,7 +669,7 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
         pytest.skip("GPU required")
 
     from areal.api.alloc_mode import AllocationMode
-    from areal.api.cli_args import SGLangConfig, SchedulingSpec
+    from areal.api.cli_args import SchedulingSpec
     from areal.experimental.gateway.controller.config import GatewayControllerConfig
     from areal.experimental.gateway.controller.controller import (
         GatewayRolloutController,
@@ -678,22 +678,17 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
     config = GatewayControllerConfig(
         tokenizer_path=model_path,
         model_path=model_path,
-        scheduling_spec=(SchedulingSpec(gpu=1, cmd="python -m areal.infra.rpc.rpc_server"),),
+        scheduling_spec=(SchedulingSpec(gpu=1, cmd="python -m areal.experimental.gateway.guard"),),
         admin_api_key="test-admin",
         consumer_batch_size=2,
         setup_timeout=300.0,
     )
 
     alloc_mode = AllocationMode.from_str("sglang:d1")
-    server_args = SGLangConfig.build_args(
-        sglang_config=SGLangConfig(
-            model_path=model_path,
-            skip_tokenizer_init=True,
-            mem_fraction_static=0.3,
-        ),
-        tp_size=alloc_mode.gen.tp_size,
-        base_gpu_id=0,
-    )
+    server_args = {
+        "skip_tokenizer_init": True,
+        "mem_fraction_static": 0.3,
+    }
 
     ctrl = GatewayRolloutController(config=config, scheduler=local_scheduler)
     ctrl.initialize(
