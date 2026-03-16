@@ -19,6 +19,7 @@ from areal.api.cli_args import (
     OptimizerConfig,
     TrainEngineConfig,
 )
+from areal.engine.fsdp_utils.attn_impl import BUILTIN_ATTN_IMPLS
 from areal.infra.platforms import current_platform
 
 VOCAB_SIZE = 100
@@ -221,8 +222,7 @@ def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
 @pytest.mark.parametrize(
     "attn_impl",
     [
-        "sdpa",
-        "flash_attention_2",
+        *BUILTIN_ATTN_IMPLS,
         "kernels-community/flash-attn",
         "kernels-community/flash-attn@main:flash_attn_varlen_func",
         "flash_attention_2|kernels-community/flash-attn@main:flash_attn_varlen_func",

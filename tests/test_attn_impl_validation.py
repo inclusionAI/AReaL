@@ -1,11 +1,11 @@
 import pytest
 
-from areal.tools.profile_fsdp import parse_args
-from areal.utils.attn_impl import (
+from areal.engine.fsdp_utils.attn_impl import (
     BUILTIN_ATTN_IMPLS,
     get_attn_impl_validation_error,
     is_valid_attn_impl,
 )
+from areal.tools.profile_fsdp import parse_args
 
 
 @pytest.mark.parametrize(

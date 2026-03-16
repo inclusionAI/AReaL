@@ -39,8 +39,11 @@ import torch
 from torch.profiler import ProfilerActivity
 from transformers import AutoConfig, AutoModelForCausalLM
 
+from areal.engine.fsdp_utils.attn_impl import (
+    get_attn_impl_validation_error,
+    is_valid_attn_impl,
+)
 from areal.infra import current_platform
-from areal.utils.attn_impl import get_attn_impl_validation_error, is_valid_attn_impl
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

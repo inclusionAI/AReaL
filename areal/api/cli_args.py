@@ -14,12 +14,12 @@ from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
-from areal.utils import logging, name_resolve, pkg_version
-from areal.utils.attn_impl import (
+from areal.engine.fsdp_utils.attn_impl import (
     BUILTIN_ATTN_IMPLS,
     get_attn_impl_validation_error,
     is_valid_attn_impl,
 )
+from areal.utils import logging, name_resolve, pkg_version
 from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
     PROX_LOGP_METHODS_ALL,
