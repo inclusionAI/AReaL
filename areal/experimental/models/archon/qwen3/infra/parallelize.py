@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -91,6 +92,7 @@ def parallelize_qwen3(
     reshard_after_forward_policy: str = "default",
     ac_config: ActivationCheckpointConfig | None = None,
     enable_compile: bool = True,
+    apply_lora_fn: Callable[[nn.Module], None] | None = None,
 ) -> nn.Module:
     """Apply parallelization to Qwen3 model.
 
@@ -151,6 +153,10 @@ def parallelize_qwen3(
     if parallel_dims.cp_enabled:
         cp_group = parallel_dims.get_group("cp")
         apply_cp(model, cp_group, tp_size=parallel_dims.tp)
+
+    # Inject LoRA after TP/EP/CP so TP planning still operates on nn.Linear.
+    if apply_lora_fn is not None:
+        apply_lora_fn(model)
 
     # AC must be after TP/CP
     if ac_config is not None and ac_config.mode != "none":
