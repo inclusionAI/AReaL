@@ -336,6 +336,17 @@ frameworks and SDKs:
   [LangChain example](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/langchain/math_agent.py)
   for details.
 
+## Online Mode
+
+For scenarios where the agent code runs _outside_ of AReaL (e.g., external agent
+runtimes, human evaluators, or third-party services), use **online proxy mode**. AReaL
+exposes an OpenAI-compatible HTTP API that any application can connect to, and all
+interactions are automatically collected as RL training data.
+
+See the [Online RL Training Guide](online_proxy.md) for a complete walkthrough, and the
+[OpenClaw example](https://github.com/inclusionAI/AReaL/tree/main/examples/openclaw) for
+a working end-to-end demo.
+
 ## Under the Hood
 
 For a detailed explanation of how AReaL's agentic training infrastructure works,
