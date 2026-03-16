@@ -8,7 +8,8 @@ import os
 from werkzeug.serving import make_server
 
 from areal.api.cli_args import NameResolveConfig
-from areal.experimental.gateway.guard import app
+from areal.experimental.gateway.guard import app as guard_app
+from areal.experimental.gateway.guard.app import app as flask_app
 from areal.utils import logging, name_resolve, names
 from areal.utils.network import gethostip
 
@@ -49,16 +50,13 @@ def main():
     args, _ = parser.parse_known_args()
 
     # Set global config in app module for fork endpoint to use
-    app._server_host = args.host
-    if app._server_host == "0.0.0.0":
-        app._server_host = gethostip()
+    guard_app._server_host = args.host
+    if guard_app._server_host == "0.0.0.0":
+        guard_app._server_host = gethostip()
 
-    app._experiment_name = args.experiment_name
-    app._trial_name = args.trial_name
-    app._name_resolve_type = args.name_resolve_type
-    app._nfs_record_root = args.nfs_record_root
-    app._etcd3_addr = args.etcd3_addr
-    app._fileroot = args.fileroot
+    guard_app._experiment_name = args.experiment_name
+    guard_app._trial_name = args.trial_name
+    guard_app._fileroot = args.fileroot
 
     # Get worker identity
     worker_role = args.role
@@ -71,8 +69,8 @@ def main():
     worker_id = f"{worker_role}/{worker_index}"
 
     # Make a flask server
-    server = make_server(args.host, args.port, app, threaded=True)
-    app._server_port = server.socket.getsockname()[1]
+    server = make_server(args.host, args.port, flask_app, threaded=True)
+    server_port = server.socket.getsockname()[1]
 
     # Configure name_resolve
     name_resolve.reconfigure(
@@ -85,10 +83,10 @@ def main():
     key = names.worker_discovery(
         args.experiment_name, args.trial_name, args.role, worker_index
     )
-    name_resolve.add(key, f"{app._server_host}:{app._server_port}", replace=True)
+    name_resolve.add(key, f"{guard_app._server_host}:{server_port}", replace=True)
 
     logger.info(
-        f"Starting RPCGuard on {app._server_host}:{app._server_port} for worker {worker_id}"
+        f"Starting RPCGuard on {guard_app._server_host}:{server_port} for worker {worker_id}"
     )
 
     try:
@@ -96,7 +94,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("Shutting down RPCGuard")
     finally:
-        app.cleanup_forked_children()
+        guard_app.cleanup_forked_children()
         server.shutdown()
 
 
