@@ -1,6 +1,7 @@
 import os
 import sys
 
+import torch
 import torch.distributed as dist
 
 from areal import current_platform
@@ -11,7 +12,6 @@ from areal.engine import FSDPRWEngine
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
-    pad_sequences_to_tensors,
     tensor_container_to,
 )
 from areal.utils.dataloader import create_dataloader
@@ -23,13 +23,25 @@ from areal.utils.stats_logger import StatsLogger
 
 
 def rw_modeling_colate_fn(items):
-    return pad_sequences_to_tensors(
-        [
-            {"input_ids": ids}
-            for item in items
-            for ids in (item["chosen_ids"], item["rejected_ids"])
-        ]
-    )
+    """Collate reward-model items into per-sequence tensor dicts.
+
+    Each dataset item has ``chosen_ids`` and ``rejected_ids``.  This produces
+    two dicts per item (chosen first, then rejected), each with ``[1, seqlen]``
+    tensors and ``attention_mask``.
+    """
+    result = []
+    for item in items:
+        for ids in (item["chosen_ids"], item["rejected_ids"]):
+            if not torch.is_tensor(ids):
+                ids = torch.tensor(ids)
+            seqlen = ids.shape[0]
+            result.append(
+                {
+                    "input_ids": ids.unsqueeze(0),
+                    "attention_mask": torch.ones(1, seqlen, dtype=torch.bool),
+                }
+            )
+    return result
 
 
 def main(args):
@@ -148,7 +160,9 @@ def main(args):
                 # via stats_tracker.export().
                 def evaluate_fn():
                     for data in valid_dataloader:
-                        data = data.to(current_platform.current_device())
+                        data = tensor_container_to(
+                            data, current_platform.current_device()
+                        )
                         data = broadcast_tensor_container(
                             data,
                             src_rank=engine.current_data_parallel_head(),

@@ -21,8 +21,7 @@ from areal.utils.constants import (
 from areal.utils.data import (
     KLEstimator,
     Normalization,
-    concat_batch,
-    split_batch,
+    batched_call,
     split_padded_tensor_dict_into_mb_list,
 )
 from areal.utils.functional import (
@@ -118,35 +117,10 @@ class PPOActor:
         logger.info(f"  eps_clip: {config.eps_clip}")
         logger.info("=" * 70)
 
-    def _packed_call(
-        self,
-        fn,
-        data: list[dict[str, Any]],
-        *,
-        unpack: bool = True,
-    ):
-        """Pack trajectories into a batch, call *fn*, optionally unpack.
-
-        Parameters
-        ----------
-        fn : Callable[[dict[str, Any]], Any]
-            Implementation function that receives the batched dict.
-        data : list[dict[str, Any]]
-            Per-trajectory dicts to be concatenated.
-        unpack : bool
-            If True (default), split the result back into per-trajectory list
-            via ``split_batch``.
-        """
-        batched, meta = concat_batch(data)
-        result = fn(batched)
-        if unpack:
-            return split_batch(result, meta)
-        return result
-
     @trace_perf("ppo_actor.compute_logp", category="compute")
     @torch.no_grad()
     def compute_logp(self, data: list[dict[str, Any]]) -> list[torch.Tensor] | None:
-        return self._packed_call(self._compute_logp, data)
+        return batched_call(self._compute_logp, data)
 
     def _compute_logp(self, data: dict[str, Any]) -> torch.Tensor | None:
         self.engine.eval()
@@ -157,7 +131,7 @@ class PPOActor:
 
     @trace_perf("ppo_actor.compute_advantages", category="compute")
     def compute_advantages(self, data: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return self._packed_call(self._compute_advantages, data)
+        return batched_call(self._compute_advantages, data)
 
     def _compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
         bs = data["input_ids"].shape[0]
@@ -268,7 +242,7 @@ class PPOActor:
     @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
     def ppo_update(self, data: list[dict[str, Any]]) -> None:
-        self._packed_call(self._ppo_update, data, unpack=False)
+        batched_call(self._ppo_update, data, unpack=False)
 
     def _ppo_update(self, data: dict[str, Any]) -> None:
         attn_mask = data["attention_mask"]

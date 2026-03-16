@@ -143,6 +143,41 @@ def pad_sequences_to_tensors(
     return result
 
 
+def collate_samples_to_list(
+    sequence_list: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert raw dataset samples into per-sample tensor dicts.
+
+    Each sample is converted to a dict of 2-D tensors ``[1, seqlen]``
+    with an ``attention_mask`` added.  Returns ``list[dict[str, Tensor]]``,
+    the canonical per-trajectory format expected by :func:`batched_call` /
+    :func:`concat_batch`.
+    """
+    result: list[dict[str, Any]] = []
+    for item in sequence_list:
+        sample: dict[str, Any] = {}
+        seqlen: int | None = None
+        for key, value in item.items():
+            if is_multi_modal_key(key):
+                if isinstance(value, list):
+                    for v in value:
+                        if isinstance(v, dict):
+                            for k, t in v.items():
+                                if not torch.is_tensor(t):
+                                    v[k] = torch.tensor(t)
+                sample[key] = value if isinstance(value, list) else [value]
+                continue
+            if not torch.is_tensor(value):
+                value = torch.tensor(value)
+            if seqlen is None:
+                seqlen = value.shape[0]
+            sample[key] = value.unsqueeze(0)  # [seqlen] -> [1, seqlen]
+        if "attention_mask" not in sample and seqlen is not None:
+            sample["attention_mask"] = torch.ones(1, seqlen, dtype=torch.bool)
+        result.append(sample)
+    return result
+
+
 def unpad_input(
     hidden_states, attention_mask
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
@@ -361,6 +396,35 @@ def split_batch(
     return split_and_unpad_tensor(
         result, meta.n_trajs, meta.traj_group_sizes, meta.traj_seqlens
     )
+
+
+def batched_call(
+    fn: Callable[[dict[str, Any]], Any],
+    data: list[dict[str, Any]],
+    *,
+    unpack: bool = True,
+) -> Any:
+    """Concatenate per-trajectory dicts into one batch, call *fn*, optionally unpack.
+
+    This is the canonical way to bridge the per-trajectory data representation
+    (``list[dict[str, Any]]``) used by trainers/workflows with the single-batch
+    representation (``dict[str, Any]``) expected by engine forward/backward methods.
+
+    Parameters
+    ----------
+    fn : Callable[[dict[str, Any]], Any]
+        Implementation function that receives the batched dict.
+    data : list[dict[str, Any]]
+        Per-trajectory dicts to be concatenated.
+    unpack : bool
+        If True (default), split the result back into a per-trajectory list
+        via :func:`split_batch`.
+    """
+    batched, meta = concat_batch(data)
+    result = fn(batched)
+    if unpack:
+        return split_batch(result, meta)
+    return result
 
 
 def unpack_sequence(
