@@ -8,24 +8,11 @@ import os
 from werkzeug.serving import make_server
 
 from areal.api.cli_args import NameResolveConfig
-from areal.experimental.gateway.guard.app import app, cleanup_forked_children
-from areal.infra.rpc.rpc_server import cleanup_forked_children
+from areal.experimental.gateway.guard import app
 from areal.utils import logging, name_resolve, names
 from areal.utils.network import gethostip
 
 logger = logging.getLogger("RPCGuard")
-
-# Global server address variables (set at startup)
-_server_host: str = "0.0.0.0"
-_server_port: int = 8000
-
-# Server config (needed for /fork endpoint to spawn children with same config)
-_experiment_name: str | None = None
-_trial_name: str | None = None
-_name_resolve_type: str = "nfs"
-_nfs_record_root: str = "/tmp/areal/name_resolve"
-_etcd3_addr: str = "localhost:2379"
-_fileroot: str | None = None  # Log file directory root
 
 
 def main():
@@ -61,19 +48,17 @@ def main():
 
     args, _ = parser.parse_known_args()
 
-    # Set global server address variables
-    global _server_host, _server_port, _experiment_name, _trial_name, _name_resolve_type, _nfs_record_root, _etcd3_addr, _fileroot
-    _server_host = args.host
-    if _server_host == "0.0.0.0":
-        _server_host = gethostip()
+    # Set global config in app module for fork endpoint to use
+    app._server_host = args.host
+    if app._server_host == "0.0.0.0":
+        app._server_host = gethostip()
 
-    # Set global config for fork endpoint
-    _experiment_name = args.experiment_name
-    _trial_name = args.trial_name
-    _name_resolve_type = args.name_resolve_type
-    _nfs_record_root = args.nfs_record_root
-    _etcd3_addr = args.etcd3_addr
-    _fileroot = args.fileroot
+    app._experiment_name = args.experiment_name
+    app._trial_name = args.trial_name
+    app._name_resolve_type = args.name_resolve_type
+    app._nfs_record_root = args.nfs_record_root
+    app._etcd3_addr = args.etcd3_addr
+    app._fileroot = args.fileroot
 
     # Get worker identity
     worker_role = args.role
@@ -87,7 +72,7 @@ def main():
 
     # Make a flask server
     server = make_server(args.host, args.port, app, threaded=True)
-    _server_port = server.socket.getsockname()[1]
+    app._server_port = server.socket.getsockname()[1]
 
     # Configure name_resolve
     name_resolve.reconfigure(
@@ -100,10 +85,10 @@ def main():
     key = names.worker_discovery(
         args.experiment_name, args.trial_name, args.role, worker_index
     )
-    name_resolve.add(key, f"{_server_host}:{_server_port}", replace=True)
+    name_resolve.add(key, f"{app._server_host}:{app._server_port}", replace=True)
 
     logger.info(
-        f"Starting RPCGuard on {_server_host}:{_server_port} for worker {worker_id}"
+        f"Starting RPCGuard on {app._server_host}:{app._server_port} for worker {worker_id}"
     )
 
     try:
@@ -111,7 +96,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("Shutting down RPCGuard")
     finally:
-        cleanup_forked_children()
+        app.cleanup_forked_children()
         server.shutdown()
 
 
