@@ -204,9 +204,7 @@ class GatewayRolloutController:
             logger.info("SGLang RPC workers ready: %s", [w.id for w in sglang_workers])
 
             # 1b. Create GatewaySGLangEngine on each worker
-            engine_class = (
-                "areal.experimental.gateway.data_proxy.sglang_engine.GatewaySGLangEngine"
-            )
+            engine_class = "areal.experimental.gateway.data_proxy.sglang_engine.GatewaySGLangEngine"
             create_tasks = [
                 self.scheduler.create_engine(
                     worker_id=worker.id,
@@ -280,9 +278,7 @@ class GatewayRolloutController:
         dp_role = f"{self._worker_role}{self._DATA_PROXY_SUFFIX}"
 
         sglang_role = f"{self._worker_role}{self._SGLANG_SUFFIX}"
-        has_sglang_workers = sglang_role in [
-            r for r in self._service_roles
-        ]
+        has_sglang_workers = sglang_role in [r for r in self._service_roles]
 
         if has_sglang_workers:
             # Fork data proxies from SGLang workers (colocated deployment)
@@ -296,15 +292,13 @@ class GatewayRolloutController:
             logger.info("Data proxy workers forked: %s", worker_ids)
 
             dp_workers = self.scheduler.get_workers(role=dp_role)
-            sglang_workers = self.scheduler.get_workers(role=sglang_role)
             self._data_proxy_addrs = [
                 f"http://{w.ip}:{w.worker_ports[0]}" for w in dp_workers
             ]
 
             # Configure each data proxy with its corresponding SGLang backend.
-            for dp_addr, sg_w in zip(self._data_proxy_addrs, sglang_workers):
-                backend_addr = f"http://{sg_w.ip}:{sg_w.worker_ports[0]}"
-                self._configure_data_proxy_backend(dp_addr, backend_addr)
+            for dp_addr, sglang_addr in zip(self._data_proxy_addrs, self._sglang_addrs):
+                self._configure_data_proxy_backend(dp_addr, sglang_addr)
         else:
             # Standalone data proxies (pre-existing server_infos)
             for i, sglang_addr in enumerate(self._sglang_addrs):
@@ -332,9 +326,7 @@ class GatewayRolloutController:
                 self._service_roles.append(dp_i_role)
 
                 dp_workers = self.scheduler.get_workers(role=dp_i_role)
-                dp_addr = (
-                    f"http://{dp_workers[0].ip}:{dp_workers[0].worker_ports[0]}"
-                )
+                dp_addr = f"http://{dp_workers[0].ip}:{dp_workers[0].worker_ports[0]}"
                 self._data_proxy_addrs.append(dp_addr)
 
         # Wait for all data proxies to be healthy
@@ -392,9 +384,7 @@ class GatewayRolloutController:
             time.sleep(0.1)
         raise TimeoutError(f"{name} did not become healthy at {url} within {timeout}s")
 
-    def _configure_data_proxy_backend(
-        self, dp_addr: str, backend_addr: str
-    ) -> None:
+    def _configure_data_proxy_backend(self, dp_addr: str, backend_addr: str) -> None:
         """Configure a data proxy's SGLang backend address after fork.
 
         Called after ``fork_workers`` to tell each data proxy which SGLang
@@ -410,10 +400,7 @@ class GatewayRolloutController:
             timeout=30,
         )
         resp.raise_for_status()
-        logger.info(
-            "Configured data proxy %s -> backend %s", dp_addr, backend_addr
-        )
-
+        logger.info("Configured data proxy %s -> backend %s", dp_addr, backend_addr)
 
     def _register_data_proxies_in_router(self) -> None:
         """Register all data proxy workers in the router."""
@@ -446,6 +433,8 @@ class GatewayRolloutController:
 
     # -- Destroy -----------------------------------------------------------
 
+    def destroy(self) -> None:
+        """Tear down all services and release resources."""
         # Destroy gateway inference engine
         if self._gateway_inf_engine is not None:
             self._gateway_inf_engine.destroy()

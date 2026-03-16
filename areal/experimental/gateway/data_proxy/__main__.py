@@ -15,14 +15,28 @@ def main():
     parser = argparse.ArgumentParser(description="AReaL Data Proxy")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8082)
-    parser.add_argument("--backend-addr",
-                        default=os.environ.get("AREAL_DP_BACKEND_ADDR", "http://localhost:30000"))
-    parser.add_argument("--tokenizer-path",
-                        default=os.environ.get("AREAL_DP_TOKENIZER_PATH"),
-                        required="AREAL_DP_TOKENIZER_PATH" not in os.environ)
-    parser.add_argument("--log-level", default="info")
-    parser.add_argument("--request-timeout", type=float, default=120.0)
-    parser.add_argument("--admin-api-key", default="areal-admin-key")
+    parser.add_argument(
+        "--backend-addr",
+        default=os.environ.get("AREAL_DP_BACKEND_ADDR", "http://localhost:30000"),
+    )
+    parser.add_argument(
+        "--tokenizer-path",
+        default=os.environ.get("AREAL_DP_TOKENIZER_PATH"),
+        required="AREAL_DP_TOKENIZER_PATH" not in os.environ,
+    )
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("AREAL_DP_LOG_LEVEL", "info"),
+    )
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=float(os.environ.get("AREAL_DP_REQUEST_TIMEOUT", "120.0")),
+    )
+    parser.add_argument(
+        "--admin-api-key",
+        default=os.environ.get("AREAL_DP_ADMIN_API_KEY", "areal-admin-key"),
+    )
     args, _ = parser.parse_known_args()
 
     config = DataProxyConfig(
