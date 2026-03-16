@@ -8,7 +8,7 @@ This engine is loaded onto RPC server workers by the
 2. Expose the ``/fork`` endpoint (inherited from the RPC server)
    so that data-proxy processes can be forked from the same node.
 
-All other inference/weight-update traffic is routed through the
+All other inference traffic is routed through the
 gateway HTTP stack and never touches this engine.
 """
 

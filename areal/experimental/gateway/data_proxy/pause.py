@@ -1,13 +1,12 @@
-"""Pause/resume state management for weight-update coordination.
+"""Pause/resume state management for generation coordination.
 
-When the training side triggers a weight update, the controller calls
-POST /pause on the data proxy, which:
-  1. Sets the PauseState flag to True
-  2. Calls SGLang POST /pause_generation (aborting in-flight requests)
+The controller calls POST /pause on the data proxy to:
+  1. Set the PauseState flag to True
+  2. Call SGLang POST /pause_generation (aborting in-flight requests)
 
-After the weight update, the controller calls POST /resume:
-  1. Calls SGLang POST /continue_generation
-  2. Sets the PauseState flag to False
+When ready to resume, the controller calls POST /resume:
+  1. Call SGLang POST /continue_generation
+  2. Set the PauseState flag to False
 
 SGLangBackend (backend.py) polls PauseState and transparently
 resubmits aborted requests once resumed.

@@ -311,77 +311,10 @@ def create_app(config: GatewayConfig) -> FastAPI:
             media_type=resp.headers.get("content-type"),
         )
 
-    # =========================================================================
-    # Weight update broadcasts — admin key ONLY
-    # =========================================================================
-
-    @app.post("/update_weights_from_disk")
-    async def update_weights_from_disk(request: Request):
-        require_admin_key(request, config.admin_api_key)
-        try:
-            worker_addrs = await get_all_worker_addrs(
-                config.router_addr, config.admin_api_key, config.router_timeout
-            )
-        except RouterUnreachableError as exc:
-            return _router_error_response(exc)
-
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
-        results = await broadcast_to_workers(
-            worker_addrs, "/update_weights_from_disk", body, headers
-        )
-        return {"results": results}
-
-    @app.post("/update_weights_from_distributed")
-    async def update_weights_from_distributed(request: Request):
-        require_admin_key(request, config.admin_api_key)
-        try:
-            worker_addrs = await get_all_worker_addrs(
-                config.router_addr, config.admin_api_key, config.router_timeout
-            )
-        except RouterUnreachableError as exc:
-            return _router_error_response(exc)
-
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
-        results = await broadcast_to_workers(
-            worker_addrs, "/update_weights_from_distributed", body, headers
-        )
-        return {"results": results}
-
-    @app.post("/init_weights_update_group")
-    async def init_weights_update_group(request: Request):
-        require_admin_key(request, config.admin_api_key)
-        try:
-            worker_addrs = await get_all_worker_addrs(
-                config.router_addr, config.admin_api_key, config.router_timeout
-            )
-        except RouterUnreachableError as exc:
-            return _router_error_response(exc)
-
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
-        results = await broadcast_to_workers(
-            worker_addrs, "/init_weights_update_group", body, headers
-        )
-        return {"results": results}
-
-    @app.post("/set_version")
-    async def set_version(request: Request):
-        require_admin_key(request, config.admin_api_key)
-        try:
-            worker_addrs = await get_all_worker_addrs(
-                config.router_addr, config.admin_api_key, config.router_timeout
-            )
-        except RouterUnreachableError as exc:
-            return _router_error_response(exc)
-
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
-        results = await broadcast_to_workers(
-            worker_addrs, "/set_version", body, headers
-        )
-        return {"results": results}
+    # NOTE: Weight-update broadcast endpoints (update_weights_from_disk,
+    # update_weights_from_distributed, init_weights_update_group, set_version)
+    # have been removed. Re-add when the gateway natively supports weight
+    # synchronisation.
 
     @app.post("/grant_capacity")
     async def grant_capacity(request: Request):
@@ -400,36 +333,13 @@ def create_app(config: GatewayConfig) -> FastAPI:
         )
         return {"results": results}
 
+
     # =========================================================================
     # Compatibility aliases for RolloutCallback — map /callback/* to broadcast endpoints
     # =========================================================================
-    # RolloutCallback (shared infrastructure in areal/infra/controller/rollout_callback.py)
-    # uses /callback/* prefixed paths for weight updates and generation control.
-    # Gateway implements the actual handlers at unprefixed paths. These aliases
-    # register the SAME handler functions on both routes to bridge the gap without
-    # modifying the shared RolloutCallback class.
-
-    # POST /callback/init_weights_group → init_weights_update_group
-    app.add_api_route(
-        "/callback/init_weights_group",
-        init_weights_update_group,
-        methods=["POST"],
-    )
-
-    # POST /callback/update_weights_xccl → update_weights_from_distributed
-    app.add_api_route(
-        "/callback/update_weights_xccl",
-        update_weights_from_distributed,
-        methods=["POST"],
-    )
-
-    # POST /callback/update_weights_disk → update_weights_from_disk
-    app.add_api_route(
-        "/callback/update_weights_disk",
-        update_weights_from_disk,
-        methods=["POST"],
-    )
-
+    # RolloutCallback uses /callback/* prefixed paths for generation control.
+    # Gateway implements the actual handlers at unprefixed paths.  These aliases
+    # register the SAME handler functions on both routes.
     # POST /callback/pause_generation → pause_generation
     app.add_api_route(
         "/callback/pause_generation",

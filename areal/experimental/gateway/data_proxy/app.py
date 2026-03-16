@@ -34,12 +34,6 @@ from areal.experimental.gateway.data_proxy.session import (
     serialize_interactions,
 )
 from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
-from areal.experimental.gateway.data_proxy.weight_update import (
-    init_weights_update_group,
-    set_version,
-    update_weights_from_disk,
-    update_weights_from_distributed,
-)
 
 logger = logging.getLogger("DataProxy")
 
@@ -481,14 +475,9 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         serialized = serialize_interactions(interactions)
         return ExportTrajectoriesResponse(interactions=serialized)
 
-    # =========================================================================
-    # Weight update forwarding (data proxy → co-located SGLang server)
-    # =========================================================================
-
-    app.post("/update_weights_from_disk")(update_weights_from_disk)
-    app.post("/update_weights_from_distributed")(update_weights_from_distributed)
-    app.post("/init_weights_update_group")(init_weights_update_group)
-    app.post("/set_version")(set_version)
+    # NOTE: Weight-update forwarding endpoints (update_weights_from_disk,
+    # update_weights_from_distributed, init_weights_update_group, set_version)
+    # have been removed. Re-add when the gateway natively supports weight sync.
 
     # =========================================================================
     # Capacity management (mirrors proxy_rollout_server.grant_capacity)

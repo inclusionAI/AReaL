@@ -1,7 +1,7 @@
 """GatewayRolloutController — parallel implementation to RolloutController.
 
-Routes ALL traffic (inference, weight updates, pause/continue) through the
-gateway HTTP stack (Gateway → Router → Data Proxy → SGLang).
+Routes inference and pause/continue traffic through the gateway HTTP stack
+(Gateway → Router → Data Proxy → SGLang).
 All servers are launched as worker processes via the scheduler.
 """
 
@@ -491,9 +491,9 @@ class GatewayRolloutController:
             self._version = version
             if self._gateway_inf_engine is not None:
                 self._gateway_inf_engine.set_version(version)
-        # Broadcast to all workers via gateway
-        if self._gateway_addr:
-            self._gateway_http_post("/set_version", {"version": version})
+        # TODO: Weight-update forwarding (set_version broadcast to workers via
+        # gateway HTTP) has been removed. Re-implement when the gateway
+        # natively supports weight synchronisation.
 
     def get_version(self) -> int:
         with self._version_lock:
@@ -602,29 +602,38 @@ class GatewayRolloutController:
         if self._gateway_addr:
             self._gateway_http_post("/continue_generation", {})
 
-    # -- Weight updates (route through gateway HTTP) -----------------------
+    # -- Weight updates (not yet implemented in gateway) --------------------
 
     async def init_weights_update_group(self, meta: Any) -> None:
-        self._gateway_http_post(
-            "/init_weights_update_group",
-            {"meta": meta} if not isinstance(meta, dict) else meta,
+        """Initialize NCCL weight-update group on all workers.
+
+        Not yet implemented — the gateway HTTP stack does not support
+        weight synchronisation yet.
+        """
+        raise NotImplementedError(
+            "init_weights_update_group is not yet supported by the gateway rollout controller"
         )
 
     async def update_weights_from_distributed(
         self, meta: Any, param_specs: Any
     ) -> None:
-        payload = {
-            "meta": meta if isinstance(meta, dict) else str(meta),
-            "param_specs": param_specs
-            if isinstance(param_specs, list)
-            else str(param_specs),
-        }
-        self._gateway_http_post("/update_weights_from_distributed", payload)
+        """Trigger a distributed (NCCL/XCCL) weight update on all workers.
+
+        Not yet implemented — the gateway HTTP stack does not support
+        weight synchronisation yet.
+        """
+        raise NotImplementedError(
+            "update_weights_from_distributed is not yet supported by the gateway rollout controller"
+        )
 
     async def update_weights_from_disk(self, meta: Any) -> None:
-        self._gateway_http_post(
-            "/update_weights_from_disk",
-            {"meta": meta} if not isinstance(meta, dict) else meta,
+        """Trigger a disk-based weight update on all workers.
+
+        Not yet implemented — the gateway HTTP stack does not support
+        weight synchronisation yet.
+        """
+        raise NotImplementedError(
+            "update_weights_from_disk is not yet supported by the gateway rollout controller"
         )
 
     # -- Stats -------------------------------------------------------------

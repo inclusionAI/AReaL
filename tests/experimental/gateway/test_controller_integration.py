@@ -231,13 +231,14 @@ class TestControllerVersioning:
         # Reset for other tests
         gateway_controller.set_version(0)
 
-    def test_set_version_broadcasts_to_gateway(self, gateway_controller):
-        """set_version should broadcast to the gateway (verify via health or no error)."""
-        # The main check is that this doesn't raise — the gateway HTTP POST
-        # is sent to /set_version on the gateway, which forwards to workers.
+    def test_set_version_does_not_raise_without_broadcast(self, gateway_controller):
+        """set_version updates local state without broadcasting (broadcast removed)."""
+        # Weight-update forwarding (including /set_version broadcast) has been
+        # removed from the gateway HTTP stack.  This test verifies that
+        # set_version still works for local version tracking.
         gateway_controller.set_version(10)
         assert gateway_controller.get_version() == 10
-        # Verify gateway is still healthy after broadcast
+        # Verify gateway is still healthy (no stale broadcast attempted)
         addr = gateway_controller.proxy_gateway_addr
         resp = httpx.get(f"{addr}/health", timeout=10.0)
         assert resp.status_code == 200
