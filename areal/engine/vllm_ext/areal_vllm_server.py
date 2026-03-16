@@ -160,7 +160,7 @@ def _register_runtime_lora_name(
         lora_int_id=lora_int_id,
         lora_path=runtime_lora_path,
     )
-    if base_model_name:
+    if base_model_name is not None:
         lora_request.base_model_name = base_model_name
     requests[lora_name] = lora_request
     logger.info(
