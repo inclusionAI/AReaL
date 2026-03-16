@@ -198,7 +198,7 @@ class RTensor:
             # split_and_unpad_tensor auto-derives trim lengths from attention_mask.
             attn_mask = obj.get("attention_mask")
             if isinstance(attn_mask, torch.Tensor) and attn_mask.ndim >= 2:
-                from areal.utils.datapack import split_and_unpad_tensor
+                from areal.utils.data import split_and_unpad_tensor
 
                 compacted = split_and_unpad_tensor(
                     obj,

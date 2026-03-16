@@ -21,9 +21,10 @@ from areal.utils.constants import (
 from areal.utils.data import (
     KLEstimator,
     Normalization,
+    concat_batch,
+    split_batch,
     split_padded_tensor_dict_into_mb_list,
 )
-from areal.utils.datapack import pack_batch, unpack_batch
 from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
@@ -134,12 +135,12 @@ class PPOActor:
             Per-trajectory dicts to be concatenated.
         unpack : bool
             If True (default), split the result back into per-trajectory list
-            via ``unpack_batch``.
+            via ``split_batch``.
         """
-        batched, meta = pack_batch(data)
+        batched, meta = concat_batch(data)
         result = fn(batched)
         if unpack:
-            return unpack_batch(result, meta)
+            return split_batch(result, meta)
         return result
 
     @trace_perf("ppo_actor.compute_logp", category="compute")

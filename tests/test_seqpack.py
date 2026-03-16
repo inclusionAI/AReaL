@@ -1,4 +1,4 @@
-"""Tests for datapack allocation functions."""
+"""Tests for seqpack allocation functions."""
 
 from unittest.mock import AsyncMock, Mock
 
@@ -14,11 +14,13 @@ from areal.infra.controller.train_controller import (
     _is_tensor_like,
 )
 from areal.infra.rpc.rtensor import RTensor, TensorShardInfo
-from areal.utils.datapack import (
+from areal.utils.data import (
+    concat_padded_tensors,
+    split_and_unpad_tensor,
+)
+from areal.utils.seqpack import (
     balanced_greedy_partition,
     ffd_allocate,
-    pad_and_concat_tensors,
-    split_and_unpad_tensor,
 )
 
 # =============================================================================
@@ -913,29 +915,29 @@ class TestTrainControllerDispatchIntegration:
 
 
 class TestPadAndConcatTensors:
-    """Test pad_and_concat_tensors utility."""
+    """Test concat_padded_tensors utility."""
 
     def test_concat_single_dict_returns_same(self):
         d = {"x": torch.randn(2, 3)}
-        result = pad_and_concat_tensors([d])
+        result = concat_padded_tensors([d])
         assert result is d
 
     def test_concat_two_dicts_pads_and_cats(self):
         d1 = {"x": torch.ones(2, 3), "y": torch.ones(2, 5)}
         d2 = {"x": torch.zeros(1, 4), "y": torch.zeros(1, 5)}
-        result = pad_and_concat_tensors([d1, d2])
+        result = concat_padded_tensors([d1, d2])
         assert result["x"].shape == (3, 4)  # padded to max dim-1
         assert result["y"].shape == (3, 5)
         assert torch.allclose(result["x"][:2, :3], torch.ones(2, 3))
         assert torch.allclose(result["x"][2:, :4], torch.zeros(1, 4))
 
     def test_concat_empty_returns_empty(self):
-        assert pad_and_concat_tensors([]) == {}
+        assert concat_padded_tensors([]) == {}
 
     def test_concat_list_values(self):
         d1 = {"ids": [1, 2]}
         d2 = {"ids": [3, 4, 5]}
-        result = pad_and_concat_tensors([d1, d2])
+        result = concat_padded_tensors([d1, d2])
         assert result["ids"] == [1, 2, 3, 4, 5]
 
 
@@ -980,37 +982,37 @@ class TestSplitAndUnpadTensor:
 
 
 class TestPadAndConcatTensorsKeyValidation:
-    """Tests for M4: pad_and_concat_tensors key validation."""
+    """Tests for M4: concat_padded_tensors key validation."""
 
     def test_consistent_keys_succeeds(self):
-        """pad_and_concat_tensors works when all dicts have same keys."""
+        """concat_padded_tensors works when all dicts have same keys."""
         dicts = [{"a": torch.tensor([1, 2])}, {"a": torch.tensor([3, 4])}]
-        result = pad_and_concat_tensors(dicts)
+        result = concat_padded_tensors(dicts)
         assert "a" in result
 
     def test_inconsistent_keys_raises(self):
-        """pad_and_concat_tensors raises ValueError on mismatched keys."""
+        """concat_padded_tensors raises ValueError on mismatched keys."""
         dicts = [{"a": torch.tensor([1])}, {"b": torch.tensor([2])}]
         with pytest.raises(ValueError):
-            pad_and_concat_tensors(dicts)
+            concat_padded_tensors(dicts)
 
     def test_extra_key_in_later_dict_raises(self):
-        """pad_and_concat_tensors raises ValueError when later dict has extra key."""
+        """concat_padded_tensors raises ValueError when later dict has extra key."""
         dicts = [
             {"a": torch.tensor([1])},
             {"a": torch.tensor([2]), "b": torch.tensor([3])},
         ]
         with pytest.raises(ValueError):
-            pad_and_concat_tensors(dicts)
+            concat_padded_tensors(dicts)
 
     def test_missing_key_in_later_dict_raises(self):
-        """pad_and_concat_tensors raises ValueError when later dict misses key."""
+        """concat_padded_tensors raises ValueError when later dict misses key."""
         dicts = [
             {"a": torch.tensor([1]), "b": torch.tensor([2])},
             {"a": torch.tensor([3])},
         ]
         with pytest.raises(ValueError):
-            pad_and_concat_tensors(dicts)
+            concat_padded_tensors(dicts)
 
 
 class TestSplitAndUnpadTensorRefSafety:
@@ -1044,11 +1046,11 @@ class TestSplitAndUnpadTensorRefSafety:
 
 
 class TestPackUnpackBatch:
-    """Tests for M2: pack_batch and unpack_batch."""
+    """Tests for M2: concat_batch and split_batch."""
 
     def test_pack_batch_basic(self):
-        """pack_batch concatenates trajectory dicts and returns TrajBatchMeta."""
-        from areal.utils.datapack import TrajBatchMeta, pack_batch
+        """concat_batch concatenates trajectory dicts and returns TrajBatchMeta."""
+        from areal.utils.data import TrajBatchMeta, concat_batch
 
         traj_list = [
             {
@@ -1060,7 +1062,7 @@ class TestPackUnpackBatch:
                 "attention_mask": torch.tensor([[1, 1, 0]]),
             },
         ]
-        batched, meta = pack_batch(traj_list)
+        batched, meta = concat_batch(traj_list)
         assert batched["input_ids"].shape == (2, 3)
         assert isinstance(meta, TrajBatchMeta)
         assert meta.n_trajs == 2
@@ -1068,56 +1070,56 @@ class TestPackUnpackBatch:
         assert meta.traj_seqlens == [3, 3]
 
     def test_pack_batch_rejects_non_list(self):
-        """pack_batch raises AssertionError for non-list input."""
-        from areal.utils.datapack import pack_batch
+        """concat_batch raises AssertionError for non-list input."""
+        from areal.utils.data import concat_batch
 
         with pytest.raises(AssertionError):
-            pack_batch({"a": 1})
+            concat_batch({"a": 1})
 
     def test_pack_batch_rejects_non_dict_elements(self):
-        """pack_batch raises AssertionError for list of non-dicts."""
-        from areal.utils.datapack import pack_batch
+        """concat_batch raises AssertionError for list of non-dicts."""
+        from areal.utils.data import concat_batch
 
         with pytest.raises(AssertionError):
-            pack_batch(["not", "dicts"])
+            concat_batch(["not", "dicts"])
 
     def test_unpack_batch_basic(self):
-        """unpack_batch splits batched dict back into trajectory list."""
-        from areal.utils.datapack import TrajBatchMeta, unpack_batch
+        """split_batch splits batched dict back into trajectory list."""
+        from areal.utils.data import TrajBatchMeta, split_batch
 
         batched = {"input_ids": torch.tensor([[1, 2], [3, 4]])}
         meta = TrajBatchMeta(n_trajs=2, traj_group_sizes=[1, 1], traj_seqlens=[2, 2])
-        splits = unpack_batch(batched, meta)
+        splits = split_batch(batched, meta)
         assert len(splits) == 2
         assert splits[0]["input_ids"].shape == (1, 2)
 
     def test_unpack_batch_with_traj_group_sizes(self):
-        """unpack_batch handles traj_group_sizes > 1."""
-        from areal.utils.datapack import TrajBatchMeta, unpack_batch
+        """split_batch handles traj_group_sizes > 1."""
+        from areal.utils.data import TrajBatchMeta, split_batch
 
         batched = {"x": torch.tensor([[1], [2], [3], [4]])}
         meta = TrajBatchMeta(n_trajs=2, traj_group_sizes=[2, 2], traj_seqlens=[1, 1])
-        splits = unpack_batch(batched, meta)
+        splits = split_batch(batched, meta)
         assert len(splits) == 2
         assert splits[0]["x"].shape == (2, 1)
 
     def test_roundtrip(self):
-        """pack_batch and unpack_batch are inverses."""
-        from areal.utils.datapack import pack_batch, unpack_batch
+        """concat_batch and split_batch are inverses."""
+        from areal.utils.data import concat_batch, split_batch
 
         traj_list = [
             {"x": torch.tensor([[1.0, 2.0]]), "attention_mask": torch.tensor([[1, 1]])},
             {"x": torch.tensor([[3.0, 4.0]]), "attention_mask": torch.tensor([[1, 1]])},
         ]
-        batched, meta = pack_batch(traj_list)
-        recovered = unpack_batch(batched, meta)
+        batched, meta = concat_batch(traj_list)
+        recovered = split_batch(batched, meta)
         assert len(recovered) == 2
         torch.testing.assert_close(recovered[0]["x"], traj_list[0]["x"])
         torch.testing.assert_close(recovered[1]["x"], traj_list[1]["x"])
 
     def test_roundtrip_multiple_keys(self):
         """Roundtrip preserves multiple keys per trajectory dict."""
-        from areal.utils.datapack import pack_batch, unpack_batch
+        from areal.utils.data import concat_batch, split_batch
 
         traj_list = [
             {
@@ -1131,8 +1133,8 @@ class TestPackUnpackBatch:
                 "attention_mask": torch.tensor([[1]]),
             },
         ]
-        batched, meta = pack_batch(traj_list)
-        recovered = unpack_batch(batched, meta)
+        batched, meta = concat_batch(traj_list)
+        recovered = split_batch(batched, meta)
         assert len(recovered) == 2
         torch.testing.assert_close(recovered[0]["a"], traj_list[0]["a"])
         torch.testing.assert_close(recovered[0]["b"], traj_list[0]["b"])
@@ -1140,13 +1142,13 @@ class TestPackUnpackBatch:
         torch.testing.assert_close(recovered[1]["b"], traj_list[1]["b"])
 
     def test_roundtrip_unpadding(self):
-        """Roundtrip unpadding: unpack_batch trims over-padded tensors."""
-        from areal.utils.datapack import TrajBatchMeta, unpack_batch
+        """Roundtrip unpadding: split_batch trims over-padded tensors."""
+        from areal.utils.data import TrajBatchMeta, split_batch
 
         # Simulate engine output padded to global max (5) while traj seqlens are 3 and 4
         result = {"logp": torch.randn(2, 5)}
         meta = TrajBatchMeta(n_trajs=2, traj_group_sizes=[1, 1], traj_seqlens=[3, 4])
-        splits = unpack_batch(result, meta)
+        splits = split_batch(result, meta)
         assert splits[0]["logp"].shape == (1, 3)
         assert splits[1]["logp"].shape == (1, 4)
 

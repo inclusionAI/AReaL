@@ -8,8 +8,11 @@ from areal.api.cli_args import MicroBatchSpec, PPOCriticConfig
 from areal.infra import TrainController
 from areal.trainer.ppo.stats import infer_token_denominator
 from areal.utils import stats_tracker
-from areal.utils.data import split_padded_tensor_dict_into_mb_list
-from areal.utils.datapack import pack_batch, unpack_batch
+from areal.utils.data import (
+    concat_batch,
+    split_batch,
+    split_padded_tensor_dict_into_mb_list,
+)
 from areal.utils.functional import ppo_critic_loss_fn
 from areal.utils.perf_tracer import trace_perf
 
@@ -36,12 +39,12 @@ class PPOCritic:
             Per-trajectory dicts to be concatenated.
         unpack : bool
             If True (default), split the result back into per-trajectory list
-            via ``unpack_batch``.
+            via ``split_batch``.
         """
-        batched, meta = pack_batch(data)
+        batched, meta = concat_batch(data)
         result = fn(batched)
         if unpack:
-            return unpack_batch(result, meta)
+            return split_batch(result, meta)
         return result
 
     @trace_perf("ppo_critic.compute_values", category="compute")

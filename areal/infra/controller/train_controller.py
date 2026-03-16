@@ -21,8 +21,8 @@ from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
 from areal.infra.rpc.rtensor import RTensor
 from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, stats_tracker
-from areal.utils.datapack import balanced_greedy_partition
 from areal.utils.network import find_free_ports
+from areal.utils.seqpack import balanced_greedy_partition
 
 from .rollout_callback import RolloutCallback
 from .rollout_controller import RolloutController

@@ -10,9 +10,10 @@ from areal.infra.platforms import current_platform
 from areal.utils.data import (
     all_gather_tensor_container,
     broadcast_tensor_container,
+    split_and_unpad_tensor,
     tensor_container_to,
 )
-from areal.utils.datapack import ffd_allocate, split_and_unpad_tensor
+from areal.utils.seqpack import ffd_allocate
 
 
 @dataclass
