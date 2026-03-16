@@ -18,6 +18,7 @@ import aiohttp
 import numpy as np
 import ray
 import requests
+import torch
 import torch.distributed as dist
 import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -202,6 +203,24 @@ class RemoteInfBackendProtocol(Protocol):
         -------
         WeightUpdateRequests
             Collection of HTTP requests for distributed update
+        """
+        ...
+
+    def build_tensor_weight_update_requests(
+        self,
+        named_tensors: list[tuple[str, torch.Tensor]],
+    ) -> WeightUpdateRequests:
+        """Build requests for tensor-based weight update (colocation mode).
+
+        Parameters
+        ----------
+        named_tensors : list of (name, tensor) tuples
+            Parameter name-tensor pairs to update.
+
+        Returns
+        -------
+        WeightUpdateRequests
+            Collection of HTTP requests for tensor-based update.
         """
         ...
 
@@ -991,6 +1010,35 @@ class RemoteInfEngine(InferenceEngine):
         fut.add_done_callback(callback)
         return fut
 
+    def update_weights_from_tensor(
+        self,
+        named_tensors: list[tuple[str, torch.Tensor]],
+    ) -> Future[None]:
+        """Update weights by direct tensor passing (colocation mode).
+
+        In colocation mode, the rollout controller is in the same process
+        or on the same node. We pass tensors directly to the controller
+        for loading into the inference engine.
+
+        Parameters
+        ----------
+        named_tensors : list of (name, tensor) tuples
+            Parameter name-tensor pairs to update.
+
+        Returns
+        -------
+        Future[None]
+            A future representing the async weight update operation.
+        """
+        fut = get_executor().submit(
+            _update_weights_from_tensor,
+            self.backend,
+            named_tensors,
+            self.addresses,
+            self.config.request_timeout,
+        )
+        return fut
+
     def submit(
         self,
         data: dict[str, Any],
@@ -1393,6 +1441,45 @@ def _update_weights_from_distributed(
         )
 
         # Execute all requests sequentially (they may have dependencies)
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=request_timeout),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        ) as session:
+            for http_req in weight_reqs.requests:
+                jobs = [
+                    arequest_with_retry(
+                        session=session,
+                        addr=addr,
+                        endpoint=http_req.endpoint,
+                        payload=http_req.payload,
+                        method=http_req.method,
+                        max_retries=1,
+                        timeout=request_timeout,
+                    )
+                    for addr in addresses
+                ]
+                await asyncio.gather(*jobs)
+
+    return uvloop.run(_fn())
+
+
+def _update_weights_from_tensor(
+    backend: RemoteInfBackendProtocol,
+    named_tensors: list[tuple[str, torch.Tensor]],
+    addresses: list[str],
+    request_timeout: float,
+):
+    """Helper to update weights via direct tensor passing (colocation mode).
+
+    Serializes tensor data and sends to inference servers. For colocation, both
+    processes are on the same GPU, so the data transfer is efficient.
+    """
+
+    async def _fn():
+        # Build update requests with tensor data
+        weight_reqs = backend.build_tensor_weight_update_requests(named_tensors)
+
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=request_timeout),
             read_bufsize=1024 * 1024 * 10,

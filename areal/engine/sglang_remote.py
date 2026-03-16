@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import pybase64
+import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
@@ -182,6 +183,35 @@ class SGLangBackend:
             ]
         )
 
+    def build_tensor_weight_update_requests(
+        self,
+        named_tensors: list[tuple[str, torch.Tensor]],
+    ) -> WeightUpdateRequests:
+        """Build SGLang tensor-based weight update requests (colocation mode).
+
+        Uses SGLang's /update_weights_from_tensor endpoint which accepts
+        serialized tensor data for zero-copy weight updates on the same GPU.
+        """
+        from areal.infra.rpc.serialization import serialize_value
+
+        names = [name for name, _ in named_tensors]
+        weights = {
+            name: serialize_value(tensor.detach().cpu())
+            for name, tensor in named_tensors
+        }
+        return WeightUpdateRequests(
+            requests=[
+                HttpRequest(
+                    endpoint="/update_weights_from_tensor",
+                    payload={
+                        "names": names,
+                        "weights": weights,
+                        "abort_all_requests": True,
+                    },
+                )
+            ]
+        )
+
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
@@ -315,6 +345,13 @@ class RemoteSGLangEngine(InferenceEngine):
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""
         return self._engine.update_weights_from_disk(meta)
+
+    def update_weights_from_tensor(
+        self,
+        named_tensors: list[tuple[str, torch.Tensor]],
+    ) -> Future[None]:
+        """Update weights by direct tensor passing (colocation mode)."""
+        return self._engine.update_weights_from_tensor(named_tensors)
 
     def submit(
         self,

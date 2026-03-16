@@ -163,7 +163,7 @@ def get_versioned_lora_name(lora_name: str, version: int) -> str:
 
 @dataclass
 class WeightUpdateMeta:
-    type: Literal["disk", "nccl"]
+    type: Literal["disk", "nccl", "tensor"]
     path: str | None = None
     alloc_mode: AllocationMode | None = None
 
@@ -249,6 +249,32 @@ class WeightUpdateMeta:
     ):
         return cls(
             type="xccl",
+            alloc_mode=allocation_mode,
+            weight_chunked_mem_mb=weight_chunked_mem_mb,
+            use_lora=use_lora,
+            lora_name=lora_name,
+            lora_int_id=lora_int_id,
+            base_model_name=base_model_name,
+        )
+
+    @classmethod
+    def from_colocation(
+        cls,
+        allocation_mode: AllocationMode,
+        weight_chunked_mem_mb: int = 1024,
+        use_lora: bool = False,
+        lora_name: str = "",
+        lora_int_id: int = 1,
+        base_model_name: str = "",
+    ):
+        """Create a WeightUpdateMeta for colocation mode (tensor-based sync).
+
+        In colocation mode, training and inference share the same GPU, so
+        NCCL cannot be used for inter-process communication. Instead, we use
+        CUDA IPC or direct tensor passing to synchronize weights.
+        """
+        return cls(
+            type="tensor",
             alloc_mode=allocation_mode,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
             use_lora=use_lora,

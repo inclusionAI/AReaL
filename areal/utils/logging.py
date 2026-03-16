@@ -101,6 +101,8 @@ LOGGER_COLORS_EXACT = {
     "ToolCallParser": "light_purple",
     "TokenLogpReward": "light_purple",
     "ProxyUtils": "light_purple",
+    # Colocation - cyan (compute backend)
+    "ColocationSync": "cyan",
 }
 
 # Prefix patterns checked in order (first match wins)

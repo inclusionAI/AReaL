@@ -496,6 +496,15 @@ class MegatronEngine(TrainEngine):
             )
             with tms_context:
                 self._update_weights_from_distributed(meta)
+        elif meta.type == "tensor":
+            # Colocation mode: direct tensor passing (no NCCL)
+            tms_context = (
+                torch_memory_saver.disable()
+                if self.is_offload and not torch.version.hip
+                else nullcontext()
+            )
+            with tms_context:
+                self._update_weights_from_tensor(meta)
         elif meta.type == "disk":
             self._update_weights_from_disk(meta)
         else:
@@ -1319,6 +1328,20 @@ class MegatronEngine(TrainEngine):
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
+
+    @trace_perf("megatron_engine.update_weights_from_tensor", category="comm")
+    def _update_weights_from_tensor(self, meta: WeightUpdateMeta):
+        """Update weights via direct tensor passing (colocation mode)."""
+        from areal.engine.core.colocation_sync import update_weights_from_tensor
+
+        update_weights_from_tensor(
+            model=self.model,
+            meta=meta,
+            rollout_engine=self.rollout_engine,
+            cpu_group=self.cpu_group,
+            use_lora=False,
+            get_model_name_parameters=self._get_model_name_parameters,
+        )
 
     @trace_perf("megatron_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta) -> None:
