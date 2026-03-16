@@ -2,7 +2,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -13,7 +12,7 @@ from areal.utils.data import (
     broadcast_tensor_container,
     tensor_container_to,
 )
-from areal.utils.datapack import ffd_allocate
+from areal.utils.datapack import ffd_allocate, split_and_unpad_tensor
 
 
 @dataclass
@@ -22,28 +21,6 @@ class RedistributedData:
     data: list[dict[str, Any]]
     rank: int
     group_indices: list[list[int]]
-
-
-def _remove_padding_from_trajectory(d: dict[str, Any]) -> dict[str, Any]:
-    """Remove padding from a single trajectory dict based on attention_mask.
-
-    Modifies the dict in-place and returns it.
-    """
-    if "attention_mask" not in d:
-        return d.copy()
-    new_d = {}
-    max_sequence_length = int(d["attention_mask"].sum(-1).max().item())
-    attn_mask_shape = d["attention_mask"].shape
-    for k, v in d.items():
-        if (
-            torch.is_tensor(v)
-            and len(v.shape) >= 2
-            and v.shape[:2] == attn_mask_shape[:2]
-        ):
-            new_d[k] = v[:, :max_sequence_length]
-        else:
-            new_d[k] = v
-    return new_d
 
 
 def redistribute_trajectories(
@@ -84,9 +61,14 @@ def redistribute_trajectories(
     # Compute sequence lengths for load balancing
     seqlens = [d["attention_mask"].sum().item() for d in all_data]
 
-    # Remove pad positions from each trajectory
-    for d in all_data:
-        _remove_padding_from_trajectory(d)
+    # Remove pad positions from each trajectory (split_and_unpad_tensor
+    # auto-derives trim lengths from attention_mask when traj_seqlens=None)
+    all_data = [
+        split_and_unpad_tensor(
+            d, n_trajs=1, traj_group_sizes=[d["attention_mask"].shape[0]]
+        )[0]
+        for d in all_data
+    ]
 
     # Allocate trajectories to ranks using first-fit-decreasing
     # No capacity limit leads to balanced partition across this group

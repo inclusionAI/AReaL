@@ -13,7 +13,6 @@ import torch
 from areal.infra.rpc.rtensor import (
     RTensor,
     TensorShardInfo,
-    extract_layouts_from_container,
 )
 from areal.infra.rpc.serialization import serialize_value
 from areal.infra.utils.proc import kill_process_tree
@@ -79,8 +78,6 @@ class TestRTensorIntegration:
             shard=TensorShardInfo(
                 shard_id=shard_id,
                 node_addr=rpc_server,
-                size=tensor.shape[0],
-                seqlens=[int(tensor.shape[0])],
             ),
             data=tensor.to("meta"),
         )
@@ -88,7 +85,7 @@ class TestRTensorIntegration:
         # Verify RTensor structure
         assert rtensor.shard.shard_id == shard_id
         assert rtensor.shard.node_addr == rpc_server
-        assert rtensor.shard.size == tensor.shape[0]
+        assert rtensor.shape[0] == tensor.shape[0]
 
         # Store on server
         serialized_tensor = serialize_value(tensor)
@@ -128,8 +125,6 @@ class TestRTensorIntegration:
                 shard=TensorShardInfo(
                     shard_id=shard_id1,
                     node_addr=rpc_server,
-                    size=tensor1.shape[0],
-                    seqlens=[int(tensor1.shape[0])],
                 ),
                 data=torch.empty(tensor1.shape, device="meta"),
             ),
@@ -138,8 +133,6 @@ class TestRTensorIntegration:
                 shard=TensorShardInfo(
                     shard_id=shard_id2,
                     node_addr=rpc_server,
-                    size=tensor2.shape[0],
-                    seqlens=[int(tensor2.shape[0])],
                 ),
                 data=torch.empty(tensor2.shape, device="meta"),
             ),
@@ -156,31 +149,15 @@ class TestRTensorIntegration:
         assert torch.allclose(localized["values"], tensor2)
 
     def test_remotize_and_localize_roundtrip(self, rpc_server):
-        """Test remotize with pre-existing layout and localize roundtrip."""
-        # Create a layout RTensor with actual shard IDs
-        shard_id = str(uuid.uuid4())
-        layout = RTensor(
-            shard=TensorShardInfo(
-                shard_id=shard_id,
-                node_addr=rpc_server,
-                size=4,
-                seqlens=[10, 10, 10, 10],  # Match sequence length
-            ),
-            data=None,
-        )
-
+        """Test remotize and localize roundtrip."""
         # Simulate output with tensors
         output = {
             "logits": torch.randn(4, 10).cpu(),
             "score": 0.95,
         }
 
-        # remotize using existing layout (creates new shard IDs)
-        remotized = RTensor.remotize(
-            output,
-            layout=layout,
-            node_addr=rpc_server,
-        )
+        # remotize using new 2-arg signature
+        remotized = RTensor.remotize(output, node_addr=rpc_server)
 
         # Verify RTensor was created
         assert isinstance(remotized["logits"], RTensor)
@@ -236,81 +213,6 @@ class TestRTensorIntegration:
             assert resp.status_code == 404
 
 
-class TestRTensorExtractLayout:
-    """Test layout extraction from various input structures."""
-
-    def test_extract_layout_from_attention_mask(self):
-        """Verify seqlens extracted correctly from attention_mask."""
-        attention_mask = torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0], [1, 1, 1, 1]])
-        batch = {"attention_mask": attention_mask, "input_ids": torch.randn(3, 4)}
-        node_addr = "localhost:8080"
-
-        layout = RTensor.extract_layout(batch, layouts={}, node_addr=node_addr)
-
-        assert isinstance(layout, RTensor)
-        assert layout.shard.size == 3
-        assert layout.shard.seqlens == [3, 2, 4]
-        assert layout.shard.node_addr == node_addr
-
-    def test_extract_layout_missing_attention_mask(self):
-        """Returns None when attention_mask missing."""
-        batch = {"input_ids": torch.randn(3, 4)}
-
-        layout = RTensor.extract_layout(batch, node_addr="localhost:8080")
-
-        assert layout is None
-
-    def test_extract_layout_non_dict_batch(self):
-        """Returns None for non-dict, non-tensor input."""
-        batch = [torch.randn(3, 4), torch.randn(2, 5)]
-
-        layout = RTensor.extract_layout(batch, node_addr="localhost:8080")
-
-        assert layout is None
-
-    def test_extract_layout_with_existing_rtensor(self):
-        """Returns existing RTensor from layouts."""
-        existing_rtensor = RTensor(
-            shard=TensorShardInfo(
-                shard_id=str(uuid.uuid4()),
-                node_addr="node1",
-                size=5,
-                seqlens=[10, 15, 20, 12, 8],
-            ),
-            data=torch.empty(5, 20, device="meta"),
-        )
-        layouts = {"input": existing_rtensor}
-        batch = {"output": torch.randn(5, 10)}
-
-        layout = RTensor.extract_layout(
-            batch, layouts=layouts, node_addr="localhost:8080"
-        )
-
-        assert layout is existing_rtensor
-
-    def test_extract_layout_standalone_tensor(self):
-        """Verify layout created from standalone tensor shape."""
-        tensor = torch.randn(3, 10)
-        layout = RTensor.extract_layout(tensor, node_addr="localhost:8080")
-        assert isinstance(layout, RTensor)
-        assert layout.shard.size == 3
-        assert layout.shard.seqlens == [10, 10, 10]
-
-    def test_extract_layout_standalone_1d_tensor(self):
-        """Verify 1D tensor gets seqlens=[1]."""
-        tensor = torch.randn(5)
-        layout = RTensor.extract_layout(tensor, node_addr="localhost:8080")
-        assert isinstance(layout, RTensor)
-        assert layout.shard.size == 5
-        assert layout.shard.seqlens == [1, 1, 1, 1, 1]
-
-    def test_extract_layout_float_dict_returns_none(self):
-        """Dict without attention_mask (e.g., stats dict) returns None."""
-        obj = {"lr": 0.001, "grad_norm": 1.5}
-        layout = RTensor.extract_layout(obj, node_addr="localhost:8080")
-        assert layout is None
-
-
 class TestRTensorErrorHandling:
     """Test error handling for network and storage failures."""
 
@@ -320,8 +222,6 @@ class TestRTensorErrorHandling:
             shard=TensorShardInfo(
                 shard_id="nonexistent-shard-id",
                 node_addr=rpc_server,
-                size=3,
-                seqlens=[10, 15, 12],
             ),
             data=torch.empty(3, 20, device="meta"),
         )
@@ -338,9 +238,7 @@ class TestRTensorErrorHandling:
         store(shard_id, tensor)
 
         rtensor = RTensor(
-            shard=TensorShardInfo(
-                shard_id=shard_id, node_addr=rpc_server, size=2, seqlens=[8, 12]
-            ),
+            shard=TensorShardInfo(shard_id=shard_id, node_addr=rpc_server),
             data=torch.empty(2, 5, device="meta"),
         )
 
@@ -399,8 +297,6 @@ class TestRTensorConcurrency:
                 shard=TensorShardInfo(
                     shard_id=shard_id,
                     node_addr=rpc_server,
-                    size=5,
-                    seqlens=[40],
                 ),
                 data=torch.empty(5, 8, device="meta"),
             )
@@ -476,8 +372,6 @@ class TestRTensorComplexPadding:
                 shard=TensorShardInfo(
                     shard_id=shard_id1,
                     node_addr=rpc_server,
-                    size=2,
-                    seqlens=[10, 8],
                 ),
                 data=torch.empty(2, 5, 16, device="meta"),
             ),
@@ -485,8 +379,6 @@ class TestRTensorComplexPadding:
                 shard=TensorShardInfo(
                     shard_id=shard_id2,
                     node_addr=rpc_server,
-                    size=3,
-                    seqlens=[15, 12, 10],
                 ),
                 data=torch.empty(3, 8, 16, device="meta"),
             ),
@@ -505,18 +397,9 @@ class TestRTensorEdgeCases:
 
     def test_remotize_with_none_values(self):
         """None preserved in structures."""
-        layout = RTensor(
-            shard=TensorShardInfo(
-                shard_id=str(uuid.uuid4()),
-                node_addr="node1",
-                size=4,
-                seqlens=[20],
-            ),
-            data=torch.empty(4, 10, device="meta"),
-        )
         obj = {"logits": torch.randn(4, 10).cpu(), "mask": None, "score": 0.95}
 
-        remotized = RTensor.remotize(obj, layout=layout, node_addr="node1")
+        remotized = RTensor.remotize(obj, node_addr="node1")
 
         assert remotized["mask"] is None
         assert remotized["score"] == 0.95
@@ -563,8 +446,6 @@ class TestRTensorMemoryCleanup:
                 shard=TensorShardInfo(
                     shard_id=shard_ids[0],
                     node_addr=rpc_server,
-                    size=3,
-                    seqlens=[15],
                 ),
                 data=torch.empty(3, 5, device="meta"),
             ),
@@ -573,8 +454,6 @@ class TestRTensorMemoryCleanup:
                     shard=TensorShardInfo(
                         shard_id=shard_ids[1],
                         node_addr=rpc_server,
-                        size=2,
-                        seqlens=[8],
                     ),
                     data=torch.empty(2, 4, device="meta"),
                 )
@@ -610,8 +489,6 @@ class TestRTensorMemoryCleanup:
             shard=TensorShardInfo(
                 shard_id=shard_id,
                 node_addr=rpc_server,
-                size=4,
-                seqlens=[20],
             ),
             data=torch.empty(4, 6, device="meta"),
         )
@@ -624,10 +501,10 @@ class TestRTensorMemoryCleanup:
         assert resp.status_code == 200
 
 
-class TestAutoRemotize:
-    """Test auto_remotize method with various input types."""
+class TestRemotize:
+    """Test remotize method with various input types."""
 
-    def test_auto_remotize_list_of_dicts(self, rpc_server):
+    def test_remotize_list_of_dicts(self, rpc_server):
         """Test remotizing list of dicts with different attention masks."""
         # Create two trajectory dicts with different seqlens
         traj1 = {
@@ -643,7 +520,7 @@ class TestAutoRemotize:
             "logits": torch.randn(3, 5).cpu(),
         }
 
-        result = RTensor.auto_remotize([traj1, traj2], node_addr=rpc_server)
+        result = RTensor.remotize([traj1, traj2], node_addr=rpc_server)
 
         assert isinstance(result, list)
         assert len(result) == 2
@@ -653,34 +530,32 @@ class TestAutoRemotize:
         assert isinstance(result[1]["logits"], RTensor)
         # Verify different shard_ids (per-trajectory isolation)
         assert result[0]["logits"].shard.shard_id != result[1]["logits"].shard.shard_id
-        # Verify seqlens match attention masks
-        assert result[0]["logits"].shard.seqlens == [3, 2]
-        assert result[1]["logits"].shard.seqlens == [4, 3, 2]
+        # Verify size matches batch dimension
+        assert result[0]["logits"].shape[0] == 2
+        assert result[1]["logits"].shape[0] == 3
 
-    def test_auto_remotize_list_of_tensors(self, rpc_server):
+    def test_remotize_list_of_tensors(self, rpc_server):
         """Test remotizing list of standalone tensors."""
         tensors = [torch.randn(2, 5).cpu(), torch.randn(3, 7).cpu()]
 
-        result = RTensor.auto_remotize(tensors, node_addr=rpc_server)
+        result = RTensor.remotize(tensors, node_addr=rpc_server)
 
         assert isinstance(result, list)
         assert len(result) == 2
         assert all(isinstance(r, RTensor) for r in result)
-        assert result[0].shard.size == 2
-        assert result[0].shard.seqlens == [5, 5]
-        assert result[1].shard.size == 3
-        assert result[1].shard.seqlens == [7, 7, 7]
+        assert result[0].shape[0] == 2
+        assert result[0].data.shape == torch.Size([2, 5])
+        assert result[1].shape[0] == 3
+        assert result[1].data.shape == torch.Size([3, 7])
 
-    def test_auto_remotize_list_with_none(self, rpc_server):
+    def test_remotize_list_with_none(self, rpc_server):
         """Test remotizing list with None values interspersed."""
         traj_dict = {
             "attention_mask": torch.tensor([[1, 1, 1, 0]]),
             "logits": torch.randn(1, 4).cpu(),
         }
 
-        result = RTensor.auto_remotize(
-            [traj_dict, None, traj_dict], node_addr=rpc_server
-        )
+        result = RTensor.remotize([traj_dict, None, traj_dict], node_addr=rpc_server)
 
         assert isinstance(result, list)
         assert len(result) == 3
@@ -690,57 +565,58 @@ class TestAutoRemotize:
         assert isinstance(result[0]["logits"], RTensor)
         assert isinstance(result[2]["logits"], RTensor)
 
-    def test_auto_remotize_single_dict(self, rpc_server):
+    def test_remotize_single_dict(self, rpc_server):
         """Test remotizing single dict (not wrapped in list)."""
         traj_dict = {
             "attention_mask": torch.tensor([[1, 1, 1, 0]]),
             "logits": torch.randn(1, 4).cpu(),
         }
 
-        result = RTensor.auto_remotize(traj_dict, node_addr=rpc_server)
+        result = RTensor.remotize(traj_dict, node_addr=rpc_server)
 
         assert isinstance(result, dict)
         assert isinstance(result["logits"], RTensor)
-        assert result["logits"].shard.seqlens == [3]
+        assert result["logits"].shape[0] == 1
 
-    def test_auto_remotize_standalone_tensor(self, rpc_server):
+    def test_remotize_standalone_tensor(self, rpc_server):
         """Test remotizing standalone tensor (not in dict or list)."""
         tensor = torch.randn(2, 5).cpu()
 
-        result = RTensor.auto_remotize(tensor, node_addr=rpc_server)
+        result = RTensor.remotize(tensor, node_addr=rpc_server)
 
         assert isinstance(result, RTensor)
-        assert result.shard.size == 2
-        assert result.shard.seqlens == [5, 5]
+        assert result.shape[0] == 2
+        assert result.data.shape == torch.Size([2, 5])
 
-    def test_auto_remotize_none(self):
+    def test_remotize_none(self):
         """Test that None input returns None."""
-        result = RTensor.auto_remotize(None, node_addr="localhost:8080")
+        result = RTensor.remotize(None, node_addr="localhost:8080")
         assert result is None
 
-    def test_auto_remotize_scalar(self):
+    def test_remotize_scalar(self):
         """Test that scalar values pass through unchanged."""
-        result_int = RTensor.auto_remotize(42, node_addr="localhost:8080")
+        result_int = RTensor.remotize(42, node_addr="localhost:8080")
         assert result_int == 42
 
-        result_bool = RTensor.auto_remotize(True, node_addr="localhost:8080")
+        result_bool = RTensor.remotize(True, node_addr="localhost:8080")
         assert result_bool is True
 
-        result_float = RTensor.auto_remotize(3.14, node_addr="localhost:8080")
+        result_float = RTensor.remotize(3.14, node_addr="localhost:8080")
         assert result_float == 3.14
 
-    def test_auto_remotize_float_dict(self):
-        """Test that dict without attention_mask returns unchanged."""
+    def test_remotize_float_dict(self):
+        """Test that dict without tensors returns with values unchanged."""
         obj = {"lr": 0.001, "grad_norm": 1.5}
-        result = RTensor.auto_remotize(obj, node_addr="localhost:8080")
-        assert result == obj
+        result = RTensor.remotize(obj, node_addr="localhost:8080")
+        assert result["lr"] == 0.001
+        assert result["grad_norm"] == 1.5
 
-    def test_auto_remotize_empty_list(self):
+    def test_remotize_empty_list(self):
         """Test that empty list returns empty list."""
-        result = RTensor.auto_remotize([], node_addr="localhost:8080")
+        result = RTensor.remotize([], node_addr="localhost:8080")
         assert result == []
 
-    def test_auto_remotize_roundtrip(self, rpc_server):
+    def test_remotize_roundtrip(self, rpc_server):
         """Test remotize->localize roundtrip for trajectory dict."""
         original_traj = {
             "attention_mask": torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]]),
@@ -749,9 +625,9 @@ class TestAutoRemotize:
         original_logits = original_traj["logits"].clone()
 
         # Remotize
-        remotized = RTensor.auto_remotize(original_traj, node_addr=rpc_server)
+        remotized = RTensor.remotize(original_traj, node_addr=rpc_server)
 
-        # Store tensors on server using the NEW shard_ids created by auto_remotize
+        # Store tensors on server using the NEW shard_ids created by remotize
         from areal.infra.rpc.rtensor import fetch
 
         for key in ["attention_mask", "logits"]:
@@ -769,184 +645,75 @@ class TestAutoRemotize:
         localized = RTensor.localize(remotized)
 
         assert isinstance(localized["logits"], torch.Tensor)
-        assert torch.allclose(localized["logits"], original_logits, atol=1e-5)
+        # After unpadding, logits are trimmed to max seqlen=3 (from attention_mask)
+        assert localized["logits"].shape == (2, 3)
+        assert torch.allclose(localized["logits"], original_logits[:, :3], atol=1e-5)
 
-    def test_extract_layouts_from_container_traj_list(self, rpc_server):
-        """Test that extract_layouts_from_container returns list[RTensor] for traj-list."""
-        # Arrange: Create traj-list input like compute_logp receives
-        rt1 = RTensor(
-            shard=TensorShardInfo(
-                size=2, seqlens=[5, 12], shard_id="s1", node_addr=rpc_server
-            ),
-            data=torch.empty(2, 20, device="meta"),
-        )
-        rt2 = RTensor(
-            shard=TensorShardInfo(
-                size=1, seqlens=[8], shard_id="s2", node_addr=rpc_server
-            ),
-            data=torch.empty(1, 20, device="meta"),
-        )
-        traj_list = [
-            {"input_ids": rt1, "attention_mask": rt1},
-            {"input_ids": rt2, "attention_mask": rt2},
-        ]
+    def test_remotize_trims_padding_from_attention_mask(self, rpc_server):
+        """Verify remotize trims padding when dict has attention_mask.
 
-        # Act
-        result = extract_layouts_from_container(traj_list)
-
-        # Assert
-        assert result is not None
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert isinstance(result[0], RTensor)
-        assert isinstance(result[1], RTensor)
-        assert result[0].shard.seqlens == [5, 12]
-        assert result[1].shard.seqlens == [8]
-
-    def test_extract_layouts_from_container_no_rtensor(self):
-        """Test that extract_layouts_from_container returns None for non-traj inputs."""
-        # Scalars
-        assert extract_layouts_from_container(42) is None
-        # Dict of Tensor (NOT RTensor) — not a container of dicts
-        assert extract_layouts_from_container({"x": torch.zeros(3)}) is None
-        # String
-        assert extract_layouts_from_container("hello") is None
-
-    def test_extract_layouts_from_container_empty_list(self):
-        """Test that empty list input returns None."""
-        assert extract_layouts_from_container([]) is None
-
-    def test_auto_remotize_list_tensor_with_layouts(self, rpc_server):
-        """Test that auto_remotize with layouts propagates seqlens from input RTensors.
-
-        This is the core test: compute_logp returns list[Tensor], and layouts
-        from the input traj-list should give each output RTensor the correct seqlens
-        (valid token counts), NOT tensor shape.
+        Create a dict with attention_mask [[1,1,1,0,0], [1,1,0,0,0]] (seqlen 5,
+        actual max 3). Remotize and localize. Assert tensors trimmed to seqlen 3.
         """
-        # Arrange: output tensors (like compute_logp results)
-        tensor1 = torch.randn(2, 20).cpu()  # shape[1]=20, but valid tokens are [5, 12]
-        tensor2 = torch.randn(1, 20).cpu()  # shape[1]=20, but valid tokens are [8]
+        traj = {
+            "attention_mask": torch.tensor([[1, 1, 1, 0, 0], [1, 1, 0, 0, 0]]),
+            "input_ids": torch.randn(2, 5),
+            "logits": torch.randn(2, 5),
+        }
 
-        # Input layouts: RTensors with correct seqlens from attention_mask
-        layout1 = RTensor(
-            shard=TensorShardInfo(
-                size=2, seqlens=[5, 12], shard_id="l1", node_addr=rpc_server
-            ),
-            data=torch.empty(2, 20, device="meta"),
-        )
-        layout2 = RTensor(
-            shard=TensorShardInfo(
-                size=1, seqlens=[8], shard_id="l2", node_addr=rpc_server
-            ),
-            data=torch.empty(1, 20, device="meta"),
-        )
+        remotized = RTensor.remotize(traj, node_addr=rpc_server)
 
-        # Act: auto_remotize with layouts
-        result = RTensor.auto_remotize(
-            [tensor1, tensor2], node_addr=rpc_server, layouts=[layout1, layout2]
-        )
+        # All tensor values should be RTensors
+        assert isinstance(remotized["attention_mask"], RTensor)
+        assert isinstance(remotized["input_ids"], RTensor)
+        assert isinstance(remotized["logits"], RTensor)
 
-        # Assert: output RTensors have seqlens from layouts, NOT from tensor shape
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert isinstance(result[0], RTensor)
-        assert isinstance(result[1], RTensor)
-        # This is the CRITICAL assertion: seqlens should be [5, 12] not [20, 20]
-        assert result[0].shard.seqlens == [5, 12]
-        # This is the CRITICAL assertion: seqlens should be [8] not [20]
-        assert result[1].shard.seqlens == [8]
+        # The data (meta tensor) should reflect the compacted shape
+        assert remotized["attention_mask"].data.shape == torch.Size([2, 3])
+        assert remotized["input_ids"].data.shape == torch.Size([2, 3])
+        assert remotized["logits"].data.shape == torch.Size([2, 3])
 
-    def test_auto_remotize_list_tensor_without_layouts(self, rpc_server):
-        """Test that auto_remotize without layouts uses tensor shape (existing behavior)."""
-        tensor1 = torch.randn(2, 20).cpu()
-        tensor2 = torch.randn(1, 15).cpu()
+        # Verify via localize roundtrip
+        from areal.infra.rpc.rtensor import fetch
 
-        result = RTensor.auto_remotize([tensor1, tensor2], node_addr=rpc_server)
+        for key in ["attention_mask", "input_ids", "logits"]:
+            actual_shard_id = remotized[key].shard.shard_id
+            tensor_from_local = fetch(actual_shard_id)
+            serialized = serialize_value(tensor_from_local)
+            resp = requests.put(
+                f"http://{rpc_server}/data/{actual_shard_id}",
+                data=orjson.dumps(serialized),
+            )
+            assert resp.status_code == 200
 
-        assert isinstance(result, list)
-        assert len(result) == 2
-        # Without layouts: seqlens = [shape[1]] * shape[0]
-        assert result[0].shard.seqlens == [20, 20]
-        assert result[1].shard.seqlens == [15]
-
-    def test_auto_remotize_layouts_length_mismatch(self, rpc_server):
-        """Test that mismatched layout length falls back to shape-based seqlens."""
-        tensor1 = torch.randn(2, 20).cpu()
-        tensor2 = torch.randn(1, 15).cpu()
-
-        # Layout has 3 items but obj has 2 — mismatch
-        layout1 = RTensor(
-            shard=TensorShardInfo(
-                size=2, seqlens=[5, 12], shard_id="m1", node_addr=rpc_server
-            ),
-            data=torch.empty(2, 20, device="meta"),
-        )
-        layout2 = RTensor(
-            shard=TensorShardInfo(
-                size=1, seqlens=[8], shard_id="m2", node_addr=rpc_server
-            ),
-            data=torch.empty(1, 20, device="meta"),
-        )
-        layout3 = RTensor(
-            shard=TensorShardInfo(
-                size=1, seqlens=[3], shard_id="m3", node_addr=rpc_server
-            ),
-            data=torch.empty(1, 20, device="meta"),
-        )
-
-        # Act: layouts has 3 items, obj has 2 — should fall back
-        result = RTensor.auto_remotize(
-            [tensor1, tensor2],
-            node_addr=rpc_server,
-            layouts=[layout1, layout2, layout3],
-        )
-
-        # Assert: falls back to shape-based seqlens
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert result[0].shard.seqlens == [20, 20]
-        assert result[1].shard.seqlens == [15]
+        localized = RTensor.localize(remotized)
+        assert localized["attention_mask"].shape == (2, 3)
+        assert localized["input_ids"].shape == (2, 3)
+        assert localized["logits"].shape == (2, 3)
+        # attention_mask should be trimmed to [[1,1,1],[1,1,0]]
+        expected_mask = torch.tensor([[1, 1, 1], [1, 1, 0]])
+        assert torch.equal(localized["attention_mask"], expected_mask)
 
 
 class TestTensorShardInfoDocumentation:
     """Tests verifying TensorShardInfo construction and field semantics."""
 
     def test_construction_with_all_fields(self):
-        """TensorShardInfo can be constructed with all required fields."""
+        """TensorShardInfo can be constructed with required fields."""
         from areal.infra.rpc.rtensor import TensorShardInfo
 
         shard = TensorShardInfo(
-            size=4,
-            seqlens=[10, 20, 15, 8],
             shard_id="test-shard-001",
             node_addr="localhost:8080",
         )
-        assert shard.size == 4
-        assert shard.seqlens == [10, 20, 15, 8]
         assert shard.shard_id == "test-shard-001"
         assert shard.node_addr == "localhost:8080"
-
-    def test_seqlens_length_matches_size(self):
-        """seqlens list length should equal size (one entry per sequence)."""
-        from areal.infra.rpc.rtensor import TensorShardInfo
-
-        size = 3
-        seqlens = [100, 200, 150]
-        shard = TensorShardInfo(
-            size=size,
-            seqlens=seqlens,
-            shard_id="",
-            node_addr="",
-        )
-        assert len(shard.seqlens) == shard.size
 
     def test_ray_backend_empty_node_addr(self):
         """Ray backend uses empty string for node_addr."""
         from areal.infra.rpc.rtensor import TensorShardInfo
 
         shard = TensorShardInfo(
-            size=1,
-            seqlens=[50],
             shard_id="",  # Will be filled by Ray ObjectRef
             node_addr="",  # Empty for Ray backend
         )
@@ -957,8 +724,6 @@ class TestTensorShardInfoDocumentation:
         from areal.infra.rpc.rtensor import TensorShardInfo
 
         shard = TensorShardInfo(
-            size=2,
-            seqlens=[100, 200],
             shard_id="some-uuid",
             node_addr="192.168.1.1:8080",
         )

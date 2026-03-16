@@ -469,10 +469,8 @@ class TestDispatchTrajList:
         """Helper to create a list of trajectory dicts (one per sequence)."""
         traj_list = []
         for slen in seqlens:
-            shard = TensorShardInfo(
-                size=1, seqlens=[slen], shard_id="test", node_addr=""
-            )
-            data = torch.zeros(1, slen)
+            shard = TensorShardInfo(shard_id="test", node_addr="")
+            data = torch.empty(1, slen, device="meta")
             traj_list.append({"input_ids": RTensor(shard=shard, data=data)})
         return traj_list
 
@@ -688,13 +686,12 @@ class TestDispatchTrajList:
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=500, seed=42)
         traj_list = []
         for slen in seqlens:
-            shard = TensorShardInfo(
-                size=1, seqlens=[slen], shard_id="test", node_addr=""
-            )
+            shard = TensorShardInfo(shard_id="test", node_addr="")
+            data = torch.empty(1, slen, device="meta")
             traj_list.append(
                 {
-                    "input_ids": RTensor(shard=shard, data=torch.zeros(1, slen)),
-                    "labels": RTensor(shard=shard, data=torch.ones(1, slen)),
+                    "input_ids": RTensor(shard=shard, data=data),
+                    "labels": RTensor(shard=shard, data=data),
                 }
             )
 
@@ -751,10 +748,8 @@ class TestTrainControllerDispatchIntegration:
         """Helper to create a list of trajectory dicts (one per sequence)."""
         traj_list = []
         for slen in seqlens:
-            shard = TensorShardInfo(
-                size=1, seqlens=[slen], shard_id="test", node_addr=""
-            )
-            data = torch.zeros(1, slen)
+            shard = TensorShardInfo(shard_id="test", node_addr="")
+            data = torch.empty(1, slen, device="meta")
             traj_list.append({"input_ids": RTensor(shard=shard, data=data)})
         return traj_list
 
@@ -1214,8 +1209,8 @@ class TestIsTrajList:
 
     def test_accepts_rtensor_dict_list(self):
         """_is_traj_list returns True for list of dicts with RTensor values."""
-        shard = TensorShardInfo(size=1, seqlens=[5], shard_id="test", node_addr="")
-        rtensor = RTensor(shard=shard, data=torch.zeros(1, 5))
+        shard = TensorShardInfo(shard_id="test", node_addr="")
+        rtensor = RTensor(shard=shard, data=torch.empty(1, 5, device="meta"))
         assert TrainController._is_traj_list([{"input_ids": rtensor}])
 
     def test_rejects_empty_list(self):

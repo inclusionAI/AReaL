@@ -335,33 +335,11 @@ def split_and_unpad_tensor(
     traj_group_sizes: list[int] | int = 1,
     traj_seqlens: list[int] | None = None,
 ) -> Any:
-    """Split a batched result back into per-trajectory list, optionally unpadding.
+    """Inverse of pad_and_concat_tensors: split batched result into per-trajectory
+    list and trim trailing padding. Handles Tensor, dict, and None inputs.
 
-    Inverse of pad_and_concat_tensors for engine outputs. Handles:
-    - torch.Tensor → list[torch.Tensor] (split along dim 0)
-    - dict[str, Tensor] → list[dict[str, Tensor]]
-    - None → None
-
-    When traj_seqlens is provided, each split tensor is trimmed along the last
-    dimension to its original sequence length (undoing the padding from
-    pad_and_concat_tensors).
-
-    Parameters
-    ----------
-    result : Any
-        Batched result from engine computation.
-    n_trajs : int
-        Number of trajectories to split into.
-    traj_group_sizes : list[int] | int
-        Per-trajectory batch sizes (dim 0) for splitting. Accepts a single int
-        for uniform sizes (backward compatibility). Default 1.
-    traj_seqlens : list[int] | None
-        Per-trajectory sequence lengths for unpadding. Default None (no unpadding).
-
-    Returns
-    -------
-    Any
-        Per-trajectory results as a list, or None.
+    When traj_seqlens is None and result is a dict with attention_mask,
+    seqlens are auto-derived via attention_mask.sum(-1).max() per group.
     """
     if result is None:
         return None
@@ -369,6 +347,16 @@ def split_and_unpad_tensor(
     if isinstance(traj_group_sizes, int):
         traj_group_sizes = [traj_group_sizes] * n_trajs
     total = sum(traj_group_sizes)
+
+    # Auto-derive traj_seqlens from attention_mask when not provided
+    if traj_seqlens is None and isinstance(result, dict):
+        attn_mask = result.get("attention_mask")
+        if isinstance(attn_mask, torch.Tensor) and attn_mask.ndim >= 2:
+            am_splits = list(attn_mask.split(traj_group_sizes, dim=0))
+            derived = [int(am.sum(-1).max().item()) for am in am_splits]
+            # Only apply if there's actual padding to trim
+            if any(sl < attn_mask.shape[-1] for sl in derived):
+                traj_seqlens = derived
     if isinstance(result, torch.Tensor):
         splits = list(result.split(traj_group_sizes, dim=0))
         return _unpad_splits(splits, traj_seqlens)
@@ -390,12 +378,7 @@ def split_and_unpad_tensor(
 
 @dataclasses.dataclass
 class TrajBatchMeta:
-    """Metadata captured by pack_batch for unpack_batch to reverse the transformation.
-
-    Carries context needed to symmetrically undo the concat+pad done by
-    pack_batch, including per-trajectory batch sizes and sequence lengths
-    for unpadding engine outputs that may have been padded to a different max.
-    """
+    """Metadata for reversing pack_batch: traj counts, group sizes, seqlens."""
 
     n_trajs: int
     traj_group_sizes: list[int]
@@ -405,19 +388,7 @@ class TrajBatchMeta:
 def pack_batch(
     data: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], TrajBatchMeta]:
-    """Concat list[dict] trajectories into a single batched dict.
-
-    Parameters
-    ----------
-    data : list[dict[str, Any]]
-        List of trajectory dicts to concatenate.
-
-    Returns
-    -------
-    tuple[dict[str, Any], TrajBatchMeta]
-        (batched_dict, meta) where meta carries n_trajs, per-traj batch sizes,
-        and per-traj sequence lengths for later unpadding.
-    """
+    """Concat list[dict] trajectories into a single batched dict with metadata."""
     assert isinstance(data, list) and all(isinstance(d, dict) for d in data), (
         f"Expected list[dict], got {type(data)}"
     )
@@ -442,20 +413,7 @@ def unpack_batch(
     result: Any,
     meta: TrajBatchMeta,
 ) -> list[Any] | None:
-    """Split batched result back into per-trajectory list and unpad.
-
-    Parameters
-    ----------
-    result : Any
-        Batched result from engine computation.
-    meta : TrajBatchMeta
-        Metadata from pack_batch containing per-traj sequence lengths.
-
-    Returns
-    -------
-    list[Any] | None
-        Per-trajectory results as a list, or None.
-    """
+    """Inverse of pack_batch: split batched result back into per-trajectory list."""
     return split_and_unpad_tensor(
         result, meta.n_trajs, meta.traj_group_sizes, meta.traj_seqlens
     )
@@ -482,50 +440,32 @@ def dispatch_traj_list(
     traj_list: list[dict[str, Any]],
     dp_size: int,
 ) -> tuple[list[list[dict[str, Any]]], list[list[int]]]:
-    """Partition a trajectory list across DP groups by balanced token count.
+    """Partition trajectories across DP groups by balanced token count.
 
-    Parameters
-    ----------
-    traj_list : list[dict[str, Any]]
-        List of trajectory dicts. Dicts may contain RTensor values whose
-        shard seqlens are used as partition weights.
-    dp_size : int
-        Number of data parallel groups.
-
-    Returns
-    -------
-    tuple[list[list[dict[str, Any]]], list[list[int]]]
-        (splits, group_indices) where splits[i] is the traj subset for DP group i.
+    Token weights are estimated from tensor shapes (numel for RTensor or Tensor).
+    Returns (splits, group_indices).
     """
     from areal.infra.rpc.rtensor import RTensor
 
-    seqlens = []
+    token_weights = []
     for d in traj_list:
+        weight = 1  # fallback for dicts without tensors
         for v in d.values():
             if isinstance(v, RTensor):
-                seqlens.append(sum(v.shard.seqlens))
+                weight = v.data.numel()
                 break
-        else:
-            seqlens.append(1)
+            if isinstance(v, torch.Tensor) and v.ndim >= 2:
+                weight = v.numel()
+                break
+        token_weights.append(weight)
 
-    group_indices = balanced_greedy_partition(seqlens, K=dp_size)
+    group_indices = balanced_greedy_partition(token_weights, K=dp_size)
     splits = [[traj_list[i] for i in idxs] for idxs in group_indices]
     return splits, group_indices
 
 
 def data_parallel_merge(results: list[Any]) -> Any:
-    """Merge results from data parallel processing. Standalone version.
-
-    Parameters
-    ----------
-    results : list[Any]
-        Results from each DP group.
-
-    Returns
-    -------
-    Any
-        Merged result with original ordering restored.
-    """
+    """Merge scalar/dict/list results from DP groups (returns first for scalars)."""
     from areal.infra.rpc.rtensor import RTensor  # Lazy import to avoid circular dep
 
     if not results:

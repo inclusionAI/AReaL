@@ -7,7 +7,7 @@ import ray
 
 from areal.api import InferenceEngine, TrainEngine
 from areal.api.cli_args import BaseExperimentConfig
-from areal.infra.rpc.rtensor import RTensor, extract_layouts_from_container
+from areal.infra.rpc.rtensor import RTensor
 from areal.utils import logging, name_resolve, seeding
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -117,11 +117,6 @@ class RayRPCServer:
 
         raw_args = list(args)
         raw_kwargs = kwargs.copy()
-        input_layouts = None
-        for arg in list(raw_args) + list(raw_kwargs.values()):
-            input_layouts = extract_layouts_from_container(arg)
-            if input_layouts is not None:
-                break
         # Fetch remote tensors
         args = RTensor.localize(raw_args)
         kwargs = RTensor.localize(raw_kwargs)
@@ -166,7 +161,7 @@ class RayRPCServer:
             if isinstance(result, Future):
                 result = result.result()
             # Convert all tensors to RTensors and store the tensor locally
-            result = RTensor.auto_remotize(result, node_addr="", layouts=input_layouts)
+            result = RTensor.remotize(result, node_addr="")
             # put back to cpu to mimic RPCServer encode/decode
             result = tensor_container_to(result, "cpu")
             self.logger.debug(f"Successfully completed RayRPCServer call {result}")

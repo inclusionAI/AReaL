@@ -12,7 +12,6 @@ import ray
 import torch
 
 from areal.infra.utils.concurrent import run_async_task
-from areal.utils.datapack import find_in_structure
 
 
 class TensorBackend(Protocol):
@@ -68,20 +67,12 @@ class TensorShardInfo:
 
     Attributes
     ----------
-    size : int
-        Batch size (shape[0]) of this shard
-    seqlens : list[int]
-        Actual token counts per sequence in this shard, derived from attention_mask.
-        The stored tensor data may include padding tokens beyond these lengths
-
     shard_id : Any
         Unique identifier for the shard (str for HTTP, ray.ObjectRef for Ray)
     node_addr : str
         Network address where shard is stored (empty for Ray backend)
     """
 
-    size: int
-    seqlens: list[int]
     shard_id: Any
     node_addr: str
 
@@ -172,77 +163,16 @@ class RTensor:
         return self.data
 
     @staticmethod
-    def extract_layout(
-        obj: Any, node_addr: str | None, layouts: Any = None
-    ) -> RTensor | None:
-        """Extract layout RTensor from object or create from attention_mask or standalone tensor.
-
-        Handles three cases in priority order:
-        1. If layouts is provided, find and return existing RTensor in layouts
-        2. If obj is a dict with attention_mask, create layout from attention_mask
-        3. If obj is a standalone Tensor, create layout from tensor shape
-
-        Parameters
-        ----------
-        obj : Any
-            Object potentially containing tensors
-        node_addr : str | None
-            Node address for creating new shard info
-        layouts : Any, optional
-            Layouts potentially containing RTensor (default: None)
-
-        Returns
-        -------
-        RTensor | None
-            Layout RTensor or None if not found or created
-        """
-        # Fallback: existing RTensor in layouts
-        if layouts is not None:
-            existing = find_in_structure(layouts, RTensor)
-            if existing is not None:
-                return existing
-
-        # Dict with attention_mask
-        if isinstance(obj, dict):
-            attn_mask = obj.get("attention_mask")
-            if isinstance(attn_mask, torch.Tensor):
-                shard = TensorShardInfo(
-                    size=attn_mask.shape[0],
-                    seqlens=[int(am.sum()) for am in attn_mask],
-                    shard_id="",
-                    node_addr=node_addr or "",
-                )
-                return RTensor(
-                    shard=shard,
-                    data=torch.empty_like(attn_mask, device="meta"),
-                )
-            return None  # dict without attention_mask (e.g., dict[str, float])
-
-        # Standalone Tensor
-        if isinstance(obj, torch.Tensor):
-            shard = TensorShardInfo(
-                size=obj.shape[0],
-                seqlens=[int(obj.shape[1])] * obj.shape[0]
-                if obj.ndim > 1
-                else [1] * obj.shape[0],
-                shard_id="",
-                node_addr=node_addr or "",
-            )
-            return RTensor(shard=shard, data=torch.empty(0, device="meta"))
-
-        # Everything else
-        return None
-
-    @staticmethod
-    def remotize(obj: Any, layout: RTensor, node_addr: str) -> Any:
+    def remotize(obj: Any, node_addr: str) -> Any:
         """Convert tensors to RTensors in nested structures.
 
+        For dict objects that look like trajectory dicts (contain attention_mask),
+        trailing padding is trimmed before storage to keep each RTensor compact.
+
         Parameters
         ----------
         obj : Any
             Object potentially containing tensors
-        layout : RTensor
-            Layout for creating RTensors
         node_addr : str
             Node address for shard storage
 
@@ -251,82 +181,39 @@ class RTensor:
         Any
             Object with tensors converted to RTensors
         """
+        if obj is None:
+            return None
+
         if isinstance(obj, torch.Tensor):
             tensor = obj.detach().cpu()
             shard_id = get_backend().store(tensor)
             shard = TensorShardInfo(
-                size=tensor.shape[0],
-                seqlens=layout.shard.seqlens,
                 shard_id=shard_id,
                 node_addr=node_addr,
             )
             return RTensor(shard=shard, data=tensor.to("meta"))
 
         if isinstance(obj, dict):
-            return {
-                k: RTensor.remotize(obj=v, layout=layout, node_addr=node_addr)
-                for k, v in obj.items()
-            }
+            # Compact trajectory dicts by trimming padding before storage.
+            # split_and_unpad_tensor auto-derives trim lengths from attention_mask.
+            attn_mask = obj.get("attention_mask")
+            if isinstance(attn_mask, torch.Tensor) and attn_mask.ndim >= 2:
+                from areal.utils.datapack import split_and_unpad_tensor
 
-        if isinstance(obj, list):
-            return [
-                RTensor.remotize(obj=item, layout=layout, node_addr=node_addr)
-                for item in obj
-            ]
-
-        if isinstance(obj, tuple):
-            return tuple(
-                RTensor.remotize(obj=item, layout=layout, node_addr=node_addr)
-                for item in obj
-            )
-
-        return obj
-
-    @staticmethod
-    def auto_remotize(obj: Any, node_addr: str, layouts: Any = None) -> Any:
-        """Recursively discover layouts and remotize tensors in nested structures.
-
-        Parameters
-        ----------
-        obj : Any
-            Object potentially containing tensors (dict, list, tuple, Tensor, None, etc.)
-        node_addr : str
-            Node address for shard storage (e.g., "host:port" or "" for Ray backend)
-        layouts : Any, optional
-            Trajectory layouts to pair with list/tuple items by position (default: None)
-
-        Returns
-        -------
-        Any
-            Object with tensors converted to RTensors
-        """
-
-        if obj is None:
-            return None
-
-        # When layouts is a same-length list/tuple, it is a per-element list of layouts,
-        # not a single layout for the whole container. Always do position-pairing here
-        # so extract_layout is never called on the container itself with a list of layouts.
-        if isinstance(obj, list):
-            if isinstance(layouts, (list, tuple)) and len(layouts) == len(obj):
-                return [
-                    RTensor.auto_remotize(item, node_addr, layouts=layout_item)
-                    for item, layout_item in zip(obj, layouts)
-                ]
-            return [RTensor.auto_remotize(item, node_addr) for item in obj]
-
-        if isinstance(obj, tuple):
-            if isinstance(layouts, (list, tuple)) and len(layouts) == len(obj):
-                return tuple(
-                    RTensor.auto_remotize(item, node_addr, layouts=layout_item)
-                    for item, layout_item in zip(obj, layouts)
+                compacted = split_and_unpad_tensor(
+                    obj,
+                    n_trajs=1,
+                    traj_group_sizes=[attn_mask.shape[0]],
                 )
-            return tuple(RTensor.auto_remotize(item, node_addr) for item in obj)
+                if compacted is not None:
+                    obj = compacted[0]
+            return {k: RTensor.remotize(v, node_addr=node_addr) for k, v in obj.items()}
 
-        # For individual items (Tensor, dict, scalar): use extract_layout.
-        layout = RTensor.extract_layout(obj, node_addr=node_addr, layouts=layouts)
-        if layout is not None:
-            return RTensor.remotize(obj, layout, node_addr)
+        if isinstance(obj, list):
+            return [RTensor.remotize(item, node_addr=node_addr) for item in obj]
+
+        if isinstance(obj, tuple):
+            return tuple(RTensor.remotize(item, node_addr=node_addr) for item in obj)
 
         return obj
 
@@ -423,38 +310,6 @@ class RTensor:
     def ndim(self) -> int:
         """Number of dimensions."""
         return self.data.ndim
-
-
-def extract_layouts_from_container(container: Any) -> list[RTensor] | None:
-    """Extract per-element RTensor layouts from a container of dicts.
-
-    For each dict in the container, finds one RTensor via DFS.
-    Returns a list with one RTensor per element, or None if the container
-    doesn't match the expected pattern (list/tuple of dicts with RTensors).
-
-    Parameters
-    ----------
-    container : Any
-        A list or tuple of dicts potentially containing RTensors.
-
-    Returns
-    -------
-    list[RTensor] | None
-        One RTensor per dict element, or None if pattern doesn't match.
-    """
-    if not isinstance(container, (list, tuple)) or not container:
-        return None
-    if not isinstance(container[0], dict):
-        return None
-    rtensors: list[RTensor] = []
-    for d in container:
-        if not isinstance(d, dict):
-            return None
-        rt = find_in_structure(d, RTensor)
-        if rt is None:
-            return None
-        rtensors.append(rt)
-    return rtensors
 
 
 # =============================================================================
