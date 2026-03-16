@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
@@ -14,19 +15,19 @@ import torch
 from areal.infra.utils.concurrent import run_async_task
 
 
-class TensorBackend(Protocol):
-    def fetch(self, shard: TensorShardInfo) -> torch.Tensor:
-        """Fetch tensor for the given shard.
+class RTensorBackend(Protocol):
+    def fetch(self, shards: list[TensorShardInfo]) -> list[torch.Tensor]:
+        """Fetch multiple tensors concurrently.
 
         Parameters
         ----------
-        shard : TensorShardInfo
-            Shard metadata to fetch
+        shards : list[TensorShardInfo]
+            List of shard metadata to fetch
 
         Returns
         -------
-        torch.Tensor
-            Tensor corresponding to the shard
+        list[torch.Tensor]
+            List of tensors in the same order as the input shards
         """
         ...
 
@@ -63,7 +64,7 @@ class TensorShardInfo:
     """Metadata for a single shard of an RTensor.
 
     This is a pure data class containing only shard metadata.
-    All storage operations are handled by TensorBackend implementations.
+    All storage operations are handled by RTensorBackend implementations.
 
     Attributes
     ----------
@@ -77,18 +78,7 @@ class TensorShardInfo:
     node_addr: str
 
 
-class HttpTensorBackend:
-    def fetch(self, shard: TensorShardInfo) -> torch.Tensor:
-        """Fetch shard via HTTP."""
-
-        async def _fetch():
-            async with aiohttp.ClientSession() as session:
-                return await self._fetch_tensor(
-                    session, shard.shard_id, shard.node_addr
-                )
-
-        return run_async_task(_fetch)
-
+class HttpRTensorBackend:
     async def _fetch_tensor(
         self, session: aiohttp.ClientSession, shard_id: str, node_addr: str
     ) -> torch.Tensor:
@@ -102,6 +92,20 @@ class HttpTensorBackend:
             data_bytes = await resp.read()
             serialized_data = orjson.loads(data_bytes)
             return deserialize_value(serialized_data)
+
+    def fetch(self, shards: list[TensorShardInfo]) -> list[torch.Tensor]:
+        """Fetch multiple shards concurrently via HTTP using a single session."""
+        if not shards:
+            return []
+
+        async def _fetch():
+            async with aiohttp.ClientSession() as session:
+                tasks = [
+                    self._fetch_tensor(session, s.shard_id, s.node_addr) for s in shards
+                ]
+                return await asyncio.gather(*tasks)
+
+        return run_async_task(_fetch)
 
     def store(self, tensor: torch.Tensor) -> str:
         """Store tensor in local storage, return UUID shard_id."""
@@ -119,10 +123,12 @@ class HttpTensorBackend:
                     await resp.json()
 
 
-class RayTensorBackend:
-    def fetch(self, shard: TensorShardInfo) -> torch.Tensor:
-        """Fetch shard from Ray object store."""
-        return ray.get(shard.shard_id)
+class RayRTensorBackend:
+    def fetch(self, shards: list[TensorShardInfo]) -> list[torch.Tensor]:
+        """Fetch multiple shards from Ray object store."""
+        if not shards:
+            return []
+        return ray.get([s.shard_id for s in shards])
 
     def store(self, tensor: torch.Tensor) -> ray.ObjectRef:
         """Store tensor in Ray object store, return ObjectRef."""
@@ -133,20 +139,20 @@ class RayTensorBackend:
         ray.internal.free(shard_ids)
 
 
-_backend: TensorBackend | None = None
+_backend: RTensorBackend | None = None
 
 
-def get_backend() -> TensorBackend:
+def get_backend() -> RTensorBackend:
     global _backend
     if _backend is None:
         if ray.is_initialized():
-            _backend = RayTensorBackend()
+            _backend = RayRTensorBackend()
         else:
-            _backend = HttpTensorBackend()
+            _backend = HttpRTensorBackend()
     return _backend
 
 
-def set_backend(backend: TensorBackend | None) -> None:
+def set_backend(backend: RTensorBackend | None) -> None:
     global _backend
     _backend = backend
 
@@ -159,7 +165,7 @@ class RTensor:
     def to_local(self) -> torch.Tensor:
         if not self.data.is_meta:
             return self.data
-        self.data = get_backend().fetch(self.shard)
+        self.data = get_backend().fetch([self.shard])[0]
         return self.data
 
     @staticmethod
@@ -222,6 +228,7 @@ class RTensor:
         """Convert RTensors to local tensors in nested structures.
 
         Inverse of remotize() - fetches remote data and converts to local tensors.
+        All remote fetches are batched concurrently for performance.
 
         Parameters
         ----------
@@ -233,17 +240,45 @@ class RTensor:
         Any
             Object with RTensors converted to local tensors
         """
+        # Pre-fetch all remote tensors concurrently
+        rtensors: list[RTensor] = []
+        RTensor._collect_all(obj, rtensors)
+        meta_rtensors = [rt for rt in rtensors if rt.data.is_meta]
+        if meta_rtensors:
+            shards = [rt.shard for rt in meta_rtensors]
+            results = get_backend().fetch(shards)
+            for rt, tensor in zip(meta_rtensors, results):
+                rt.data = tensor
+
+        # Recursively replace RTensors with local tensors (all cache hits now)
+        return RTensor._localize_recursive(obj)
+
+    @staticmethod
+    def _collect_all(obj: Any, result: list[RTensor]) -> None:
+        """Collect all RTensor instances from a nested structure."""
+        if isinstance(obj, RTensor):
+            result.append(obj)
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                RTensor._collect_all(v, result)
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                RTensor._collect_all(item, result)
+
+    @staticmethod
+    def _localize_recursive(obj: Any) -> Any:
+        """Recursively replace RTensors with their local tensor data."""
         if isinstance(obj, RTensor):
             return obj.to_local()
 
         if isinstance(obj, dict):
-            return {k: RTensor.localize(v) for k, v in obj.items()}
+            return {k: RTensor._localize_recursive(v) for k, v in obj.items()}
 
         if isinstance(obj, list):
-            return [RTensor.localize(item) for item in obj]
+            return [RTensor._localize_recursive(item) for item in obj]
 
         if isinstance(obj, tuple):
-            return tuple(RTensor.localize(item) for item in obj)
+            return tuple(RTensor._localize_recursive(item) for item in obj)
 
         return obj
 
@@ -313,7 +348,7 @@ class RTensor:
 
 
 # =============================================================================
-# Local Storage (used by HttpTensorBackend)
+# Local Storage (used by HttpRTensorBackend)
 # =============================================================================
 
 # Global tensor data storage for distributed batch
