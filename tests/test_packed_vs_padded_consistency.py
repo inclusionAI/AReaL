@@ -212,6 +212,7 @@ def mock_padded_vlm_data(model_path):
     return padded_data
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "model_path",
     [
