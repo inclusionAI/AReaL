@@ -9,11 +9,13 @@ import torch
 from areal.api import AllocationMode, TrainEngine
 from areal.api.cli_args import SchedulingSpec, TrainEngineConfig
 from areal.infra import TrainController
+from areal.infra.controller.train_controller import (
+    _dispatch_tensors,
+    _is_tensor_like,
+)
 from areal.infra.rpc.rtensor import RTensor, TensorShardInfo
 from areal.utils.datapack import (
     balanced_greedy_partition,
-    data_parallel_merge,
-    dispatch_traj_list,
     ffd_allocate,
     pad_and_concat_tensors,
     split_and_unpad_tensor,
@@ -454,12 +456,12 @@ class TestFFDAllocate:
 
 
 # =============================================================================
-# Integration Tests: dispatch_traj_list
+# Integration Tests: _dispatch_tensors
 # =============================================================================
 
 
 class TestDispatchTrajList:
-    """Integration tests for dispatch_traj_list with balanced_greedy_partition.
+    """Integration tests for _dispatch_tensors with balanced_greedy_partition.
 
     These tests verify that trajectory lists (list[dict[str, RTensor]]) are
     partitioned into equal-size groups for different DP ranks.
@@ -481,7 +483,7 @@ class TestDispatchTrajList:
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=1000, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         assert len(splits) == dp_size
         expected_size = n_seqs // dp_size
@@ -504,7 +506,7 @@ class TestDispatchTrajList:
         )
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, group in enumerate(splits):
@@ -517,7 +519,7 @@ class TestDispatchTrajList:
         seqlens = generate_skewed_seqlens(n=n_seqs, max_len=2000, skew=3.0, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, group in enumerate(splits):
@@ -530,7 +532,7 @@ class TestDispatchTrajList:
         seqlens = generate_exponential_seqlens(n=n_seqs, scale=500.0, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, group in enumerate(splits):
@@ -543,7 +545,7 @@ class TestDispatchTrajList:
         seqlens = generate_code_seqlens(n=n_seqs, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, group in enumerate(splits):
@@ -556,7 +558,7 @@ class TestDispatchTrajList:
         seqlens = generate_chat_seqlens(n=n_seqs, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, group in enumerate(splits):
@@ -569,7 +571,7 @@ class TestDispatchTrajList:
         seqlens = generate_math_seqlens(n=n_seqs, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, group in enumerate(splits):
@@ -582,7 +584,7 @@ class TestDispatchTrajList:
         seqlens = generate_power_law_seqlens(n=n_seqs, alpha=2.0, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, group in enumerate(splits):
@@ -602,7 +604,7 @@ class TestDispatchTrajList:
         )
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for i, group in enumerate(splits):
@@ -615,7 +617,7 @@ class TestDispatchTrajList:
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=500, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        _, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        _, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         all_indices = sorted(i for g in group_indices for i in g)
         assert all_indices == list(range(n_seqs))
@@ -632,7 +634,7 @@ class TestDispatchTrajList:
         )
         traj_list = self._create_traj_list(seqlens)
 
-        _, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        _, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         tokens_per_rank = [sum(seqlens[i] for i in g) for g in group_indices]
         avg_tokens = sum(tokens_per_rank) / dp_size
@@ -658,7 +660,7 @@ class TestDispatchTrajList:
         seqlens = generate_uniform_seqlens(n=batch_size, low=100, high=2000, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = batch_size // dp_size
         for i, group in enumerate(splits):
@@ -670,7 +672,7 @@ class TestDispatchTrajList:
         seqlens = [100, 200, 300, 400]
         traj_list = self._create_traj_list(seqlens)
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         # Every dispatched trajectory should be a dict with 'input_ids' RTensor
         for group in splits:
@@ -695,7 +697,7 @@ class TestDispatchTrajList:
                 }
             )
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         expected_size = n_seqs // dp_size
         for group in splits:
@@ -714,7 +716,7 @@ class TestDispatchTrajList:
             {"text": "bar"},
         ]
 
-        splits, group_indices = dispatch_traj_list(traj_list, dp_size=dp_size)
+        splits, group_indices = _dispatch_tensors(traj_list, dp_size=dp_size)
 
         assert len(splits) == dp_size
         total = sum(len(g) for g in splits)
@@ -722,7 +724,7 @@ class TestDispatchTrajList:
 
 
 class TestTrainControllerDispatchIntegration:
-    """Integration tests for TrainController._dispatch_inputs with equal-size splits.
+    """Integration tests for TrainController._prepare_dispatch with equal-size splits.
 
     These tests simulate the full dispatch flow from TrainController to verify
     that batches are split into equal sizes for different DP ranks.
@@ -782,7 +784,9 @@ class TestTrainControllerDispatchIntegration:
         )
         traj_list = self._create_traj_list(seqlens)
 
-        split_args, split_kwargs, group_indices = controller._dispatch_inputs(traj_list)
+        split_args, split_kwargs, group_indices = controller._prepare_dispatch(
+            traj_list
+        )
 
         # Verify equal split
         expected_size = n_seqs // dp_size
@@ -835,7 +839,7 @@ class TestTrainControllerDispatchIntegration:
         seqlens = generator_func(n_seqs, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        _, _, group_indices = controller._dispatch_inputs(traj_list)
+        _, _, group_indices = controller._prepare_dispatch(traj_list)
 
         expected_size = n_seqs // dp_size
         for i, g in enumerate(group_indices):
@@ -866,7 +870,7 @@ class TestTrainControllerDispatchIntegration:
         seqlens = generate_uniform_seqlens(n=n_seqs, low=100, high=500, seed=42)
         traj_list = self._create_traj_list(seqlens)
 
-        _, _, group_indices = controller._dispatch_inputs(traj_list)
+        _, _, group_indices = controller._prepare_dispatch(traj_list)
 
         all_indices = sorted(i for g in group_indices for i in g)
         assert all_indices == list(range(n_seqs))
@@ -899,11 +903,11 @@ class TestTrainControllerDispatchIntegration:
         )
         traj_list = self._create_traj_list(seqlens)
 
-        _, _, group_indices1 = controller._dispatch_inputs(traj_list)
+        _, _, group_indices1 = controller._prepare_dispatch(traj_list)
 
         # Dispatch again with same data
         traj_list2 = self._create_traj_list(seqlens)
-        _, _, group_indices2 = controller._dispatch_inputs(traj_list2)
+        _, _, group_indices2 = controller._prepare_dispatch(traj_list2)
 
         assert group_indices1 == group_indices2
 
@@ -1147,86 +1151,43 @@ class TestPackUnpackBatch:
         assert splits[1]["logp"].shape == (1, 4)
 
 
-class TestDataParallelMergeTypes:
-    """Tests for M3: data_parallel_merge list/tuple handling."""
-
-    def test_merge_list_of_lists_preserves_type(self):
-        """data_parallel_merge preserves list type for list-of-lists."""
-        results = [[42], [43]]
-        merged = data_parallel_merge(results)
-        assert isinstance(merged, list)
-
-    def test_merge_list_of_tuples_preserves_type(self):
-        """data_parallel_merge preserves tuple type for list-of-tuples."""
-        results = [(42,), (43,)]
-        merged = data_parallel_merge(results)
-        assert isinstance(merged, tuple)
-
-    def test_merge_nested_lists(self):
-        """data_parallel_merge handles nested list structures."""
-        results = [[[1, 2]], [[3, 4]]]
-        merged = data_parallel_merge(results)
-        assert isinstance(merged, list)
-        assert isinstance(merged[0], list)
-
-    def test_merge_nested_tuples(self):
-        """data_parallel_merge handles nested tuple structures."""
-        results = [((1,), (2,)), ((3,), (4,))]
-        merged = data_parallel_merge(results)
-        assert isinstance(merged, tuple)
-
-    def test_merge_empty_returns_none(self):
-        """data_parallel_merge returns None for empty results."""
-        merged = data_parallel_merge([])
-        assert merged is None
-
-    def test_merge_dict_of_lists(self):
-        """data_parallel_merge handles dicts containing list values."""
-        results = [{"a": [1, 2]}, {"a": [3, 4]}]
-        merged = data_parallel_merge(results)
-        assert isinstance(merged, dict)
-        assert isinstance(merged["a"], list)
-
-
 class TestIsTrajList:
-    """Tests for H1: TrainController._is_traj_list tensor check."""
+    """Tests for H1: _is_tensor_like tensor check."""
 
     def test_rejects_non_tensor_dict_list(self):
-        """_is_traj_list returns False for list of dicts without tensor values."""
-        assert not TrainController._is_traj_list([{"key": "string_value"}])
+        """_is_tensor_like returns False for list of dicts without tensor values."""
+        assert not _is_tensor_like([{"key": "string_value"}])
 
     def test_rejects_dict_with_int_values(self):
-        """_is_traj_list returns False for list of dicts with int values."""
-        assert not TrainController._is_traj_list([{"count": 42}])
+        """_is_tensor_like returns False for list of dicts with int values."""
+        assert not _is_tensor_like([{"count": 42}])
 
     def test_rejects_dict_with_nested_dict(self):
-        """_is_traj_list returns False for list of dicts with nested dict."""
-        assert not TrainController._is_traj_list([{"config": {"key": "value"}}])
+        """_is_tensor_like returns False for list of dicts with nested dict."""
+        assert not _is_tensor_like([{"config": {"key": "value"}}])
 
     def test_accepts_torch_tensor_dict_list(self):
-        """_is_traj_list returns True for list of dicts with torch.Tensor values."""
-        assert TrainController._is_traj_list([{"logits": torch.tensor([1.0])}])
+        """_is_tensor_like returns True for list of dicts with torch.Tensor values."""
+        assert _is_tensor_like([{"logits": torch.tensor([1.0])}])
 
     def test_accepts_rtensor_dict_list(self):
-        """_is_traj_list returns True for list of dicts with RTensor values."""
+        """_is_tensor_like returns True for list of dicts with RTensor values."""
         shard = TensorShardInfo(shard_id="test", node_addr="")
         rtensor = RTensor(shard=shard, data=torch.empty(1, 5, device="meta"))
-        assert TrainController._is_traj_list([{"input_ids": rtensor}])
+        assert _is_tensor_like([{"input_ids": rtensor}])
 
     def test_rejects_empty_list(self):
-        """_is_traj_list returns False for empty list."""
-        assert not TrainController._is_traj_list([])
+        """_is_tensor_like returns False for empty list."""
+        assert not _is_tensor_like([])
 
     def test_rejects_non_list(self):
-        """_is_traj_list returns False for non-list input."""
-        assert not TrainController._is_traj_list({"key": "value"})
+        """_is_tensor_like returns False for non-list input."""
+        assert not _is_tensor_like({"key": "value"})
 
     def test_rejects_list_of_non_dicts(self):
-        """_is_traj_list returns False for list of non-dicts."""
-        assert not TrainController._is_traj_list([1, 2, 3])
+        """_is_tensor_like returns False for list of non-dicts."""
+        assert not _is_tensor_like([1, 2, 3])
 
     def test_accepts_dict_with_mixed_tensor_and_non_tensor(self):
-        """_is_traj_list returns True when at least one value is tensor."""
-        assert TrainController._is_traj_list(
-            [{"data": torch.tensor([1.0]), "meta": "string"}]
-        )
+        """_is_tensor_like returns True when at least one value is tensor."""
+        assert _is_tensor_like([{"data": torch.tensor([1.0]), "meta": "string"}])
