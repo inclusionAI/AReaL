@@ -93,6 +93,10 @@ DENSE_MODEL_PATHS = {
         "/storage/openpsi/models/Qwen__Qwen3-0.6B/",
         "Qwen/Qwen3-0.6B",
     ),
+    "qwen3_5": get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3.5-0.8B/",
+        "Qwen/Qwen3.5-0.8B",
+    ),
 }
 
 # MoE models (slow to instantiate due to large number of experts)
@@ -100,6 +104,10 @@ MOE_MODEL_PATHS = {
     "qwen3_moe": get_model_path(
         "/storage/openpsi/models/Qwen__Qwen3-30B-A3B/",
         "Qwen/Qwen3-30B-A3B",
+    ),
+    "qwen3_5_moe": get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3.5-35B-A3B",
+        "Qwen/Qwen3.5-35B-A3B",
     ),
 }
 
