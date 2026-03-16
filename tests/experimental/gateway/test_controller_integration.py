@@ -663,7 +663,7 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
 
     Unlike ``gateway_controller`` which passes pre-existing ``server_infos``,
     this fixture lets the controller create RPC workers, create
-    GatewaySGLangEngine on them, and call ``launch_server`` internally.
+    RPCGuard on them, and fork SGLang servers internally.
     """
     if not has_gpu():
         pytest.skip("GPU required")
@@ -714,7 +714,7 @@ class TestControllerFullInitialization:
     """Test the full initialization path where the controller launches SGLang itself.
 
     This covers the code path where ``server_infos`` is **not** provided, so the
-    controller creates RPC workers, creates GatewaySGLangEngine on each, calls
+    controller creates RPC workers, creates RPCGuard on each, forks
     ``launch_server``, then forks data proxies from the workers.
     """
 

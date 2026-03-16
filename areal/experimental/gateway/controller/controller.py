@@ -2,12 +2,12 @@
 
 Routes inference and pause/continue traffic through the gateway HTTP stack
 (Gateway → Router → Data Proxy → SGLang).
-All servers are launched as worker processes via the scheduler.
+All servers are launched as worker processes via the scheduler.  SGLang
+processes are forked through RPCGuard (a lightweight process manager).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import socket
 import time
@@ -17,11 +17,12 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from areal.api.io_struct import (
-        LocalInfServerInfo,
         ModelRequest,
         ModelResponse,
     )
     from areal.api.scheduler_api import Scheduler, Worker
+
+from areal.api.io_struct import LocalInfServerInfo
 
 from areal.experimental.gateway.controller.config import GatewayControllerConfig
 from areal.experimental.gateway.controller.inf_engine import GatewayInfEngine
@@ -83,11 +84,6 @@ class GatewayRolloutController:
         self._proxy_started = False
         self.proxy_workers: list = []
         self.proxy_addrs: list[str] = []
-
-    # -- Naming helpers (match RolloutController conventions) ---------------
-
-    def _engine_name(self, rank: int) -> str:
-        return f"{self._worker_role}/{rank}"
 
     # -- Initialize --------------------------------------------------------
 
@@ -170,11 +166,15 @@ class GatewayRolloutController:
                 len(server_infos),
             )
         else:
-            # -- RPC server workers + GatewaySGLangEngine (like RolloutController) --
-            # Workers run areal.infra.rpc.rpc_server (the standard cmd from
-            # scheduling_spec). We then create a GatewaySGLangEngine on each
-            # worker and call launch_server to start SGLang as a subprocess.
-            # This keeps the /fork endpoint available for data-proxy colocation.
+            # -- RPCGuard workers for SGLang launch ---
+            # Workers run areal.experimental.gateway.guard (the RPCGuard
+            # Flask app).  We then POST to each guard to allocate a port,
+            # build the SGLang command via SGLangConfig.build_cmd(), and
+            # POST /fork with raw_cmd to launch SGLang as a subprocess.
+            import requests
+
+            from areal.api.cli_args import SGLangConfig
+
             sglang_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
             if alloc_mode is not None:
                 sglang_spec.cpu *= alloc_mode.gen_instance_size
@@ -188,6 +188,9 @@ class GatewayRolloutController:
             sglang_spec.env_vars["AREAL_DP_LOG_LEVEL"] = cfg.log_level
             sglang_spec.env_vars["AREAL_DP_REQUEST_TIMEOUT"] = str(cfg.request_timeout)
 
+            # Override cmd to launch RPCGuard instead of RPC server
+            sglang_spec.cmd = "python -m areal.experimental.gateway.guard"
+
             sglang_role = f"{self._worker_role}{self._SGLANG_SUFFIX}"
             sglang_job = Job(
                 replicas=dp_size,
@@ -196,41 +199,69 @@ class GatewayRolloutController:
                 role=sglang_role,
             )
 
-            # 1a. Create RPC server workers
+            # 1a. Create RPCGuard workers
             self.scheduler.create_workers(job=sglang_job)
             self._service_roles.append(sglang_role)
             sglang_workers = self.scheduler.get_workers(role=sglang_role)
             self.workers = sglang_workers
-            logger.info("SGLang RPC workers ready: %s", [w.id for w in sglang_workers])
+            logger.info("RPCGuard workers ready: %s", [w.id for w in sglang_workers])
 
-            # 1b. Create GatewaySGLangEngine on each worker
-            engine_class = "areal.experimental.gateway.data_proxy.sglang_engine.GatewaySGLangEngine"
-            create_tasks = [
-                self.scheduler.create_engine(
-                    worker_id=worker.id,
-                    engine=engine_class,
-                    engine_name=self._engine_name(rank),
-                    config=cfg,
-                )
-                for rank, worker in enumerate(sglang_workers)
-            ]
-            await asyncio.gather(*create_tasks)
-            logger.info("GatewaySGLangEngine created on all workers")
+            # 1b. For each RPCGuard worker: alloc port, build cmd, fork SGLang
+            sglang_config = SGLangConfig(
+                model_path=cfg.model_path or cfg.tokenizer_path,
+            )
+            # Merge caller-supplied server_args into sglang_config fields
+            if server_args:
+                for k, v in server_args.items():
+                    if hasattr(sglang_config, k):
+                        object.__setattr__(sglang_config, k, v)
 
-            # 1c. Call launch_server on each engine to start SGLang subprocess
-            launch_tasks = [
-                self.scheduler.async_call_engine(
-                    worker_id=worker.id,
-                    method="launch_server",
-                    engine_name=self._engine_name(rank),
-                    server_args=server_args or {},
+            tp_size = alloc_mode.gen.tp_size if alloc_mode is not None else 1
+
+            for rank, worker in enumerate(sglang_workers):
+                guard_addr = f"http://{worker.ip}:{worker.worker_ports[0]}"
+
+                # Allocate a free port on the guard node for SGLang
+                resp = requests.post(
+                    f"{guard_addr}/alloc_ports",
+                    json={"count": 1},
+                    timeout=30,
                 )
-                for rank, worker in enumerate(sglang_workers)
-            ]
-            self.server_infos = await asyncio.gather(*launch_tasks)
-            self._sglang_addrs = [
-                f"http://{info.host}:{info.port}" for info in self.server_infos
-            ]
+                resp.raise_for_status()
+                port_data = resp.json()
+                sglang_host = port_data["host"]
+                sglang_port = port_data["ports"][0]
+
+                # Build native SGLang launch command
+                cmd = SGLangConfig.build_cmd(
+                    sglang_config=sglang_config,
+                    tp_size=tp_size,
+                    base_gpu_id=0,
+                    host=sglang_host,
+                    port=sglang_port,
+                )
+
+                # Fork SGLang via RPCGuard raw_cmd mode
+                resp = requests.post(
+                    f"{guard_addr}/fork",
+                    json={
+                        "role": "sglang-server",
+                        "worker_index": rank,
+                        "raw_cmd": cmd,
+                    },
+                    timeout=30,
+                )
+                resp.raise_for_status()
+
+                addr = f"http://{sglang_host}:{sglang_port}"
+                self._sglang_addrs.append(addr)
+                self.server_infos.append(
+                    LocalInfServerInfo(
+                        host=sglang_host,
+                        port=sglang_port,
+                        process=None,  # type: ignore[arg-type]  # RPCGuard manages process
+                    )
+                )
 
             # Wait for SGLang servers to be healthy
             for i, addr in enumerate(self._sglang_addrs):
@@ -440,29 +471,8 @@ class GatewayRolloutController:
             self._gateway_inf_engine.destroy()
             self._gateway_inf_engine = None
 
-        # Teardown SGLang servers on RPC workers before deleting workers
-        sglang_role = f"{self._worker_role}{self._SGLANG_SUFFIX}"
-        if sglang_role in self._service_roles:
-            try:
-                from areal.infra.utils.concurrent import run_async_task
-
-                async def _teardown():
-                    tasks = [
-                        self.scheduler.async_call_engine(
-                            worker_id=worker.id,
-                            method="teardown_server",
-                            engine_name=self._engine_name(rank),
-                        )
-                        for rank, worker in enumerate(self.workers)
-                    ]
-                    await asyncio.gather(*tasks, return_exceptions=True)
-
-                run_async_task(_teardown)
-            except Exception:
-                logger.error(
-                    "Error tearing down SGLang servers: %s", traceback.format_exc()
-                )
-
+        # RPCGuard's shutdown `finally` block automatically kills all
+        # forked children (SGLang, data proxies), so no explicit teardown needed.
         # Delete all service workers via scheduler
         for role in reversed(self._service_roles):
             try:
