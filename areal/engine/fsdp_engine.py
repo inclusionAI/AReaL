@@ -858,6 +858,8 @@ class FSDPEngine(TrainEngine):
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
+        if self.config.use_kernels:
+            model.use_kernels = True
         self.logger.info(
             f"Model creation and loading time: {time.perf_counter() - tik:.2f}s"
         )

@@ -14,6 +14,11 @@ from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
+from areal.engine.fsdp_utils.attn_impl import (
+    BUILTIN_ATTN_IMPLS,
+    get_attn_impl_validation_error,
+    is_valid_attn_impl,
+)
 from areal.utils import logging, name_resolve, pkg_version
 from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
@@ -928,8 +933,16 @@ class TrainEngineConfig:
     attn_impl: str = field(
         default="flash_attention_2",
         metadata={
-            "help": "Attention implementation for huggingface transformers model.",
-            "choices": ["flash_attention_2"],
+            "help": "Attention implementation for huggingface transformers model. "
+            "Accepts builtin transformers backends or a Hugging Face kernels repo ID "
+            "formatted as org/repo[@revision][:entrypoint].",
+            "choices": list(BUILTIN_ATTN_IMPLS),
+        },
+    )
+    use_kernels: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable Hugging Face kernels model kernelization after model creation."
         },
     )
     init_from_scratch: bool = field(
@@ -1029,6 +1042,8 @@ class TrainEngineConfig:
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
             )
+        if not is_valid_attn_impl(self.attn_impl):
+            raise ValueError(get_attn_impl_validation_error(self.attn_impl))
         if self.fsdp.memory_efficient_load and self.init_from_scratch:
             raise ValueError(
                 "memory_efficient_load cannot be used with init_from_scratch=True. "

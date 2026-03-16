@@ -56,6 +56,22 @@ python3 examples/math/gsm8k_rl.py \
     +sglang.attention_backend=triton
 ```
 
+To enable [Hugging Face Kernels](https://github.com/huggingface/kernels) in training,
+add the train engine overrides explicitly:
+
+```bash
+python3 examples/math/gsm8k_rl.py \
+    --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=local \
+    experiment_name=<your experiment name> \
+    trial_name=<your trial name> \
+    +actor.attn_impl=kernels-community/flash-attn \
+    +actor.use_kernels=true
+```
+
+Apply the same overrides to `critic` or `teacher` if those engines should also use
+kernels.
+
 (distributed-experiments-with-ray-or-slurm)=
 
 ## Distributed Experiments with Ray or Slurm

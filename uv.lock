@@ -361,6 +361,7 @@ dependencies = [
 [package.optional-dependencies]
 cuda = [
     { name = "flash-attn", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "kernels", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "mbridge", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "megatron-core", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "sglang", extra = ["tracing"], marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-5-areal-cuda') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (extra != 'extra-5-areal-cuda' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
@@ -368,12 +369,16 @@ cuda = [
 ]
 cuda-train = [
     { name = "flash-attn", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
+    { name = "kernels", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
     { name = "mbridge", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
     { name = "megatron-core", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
     { name = "torch-memory-saver", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
 ]
 flash-attn = [
     { name = "flash-attn", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
+]
+kernels = [
+    { name = "kernels", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
 ]
 megatron = [
     { name = "mbridge", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (platform_machine != 'x86_64' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
@@ -415,6 +420,7 @@ requires-dist = [
     { name = "anthropic" },
     { name = "areal", extras = ["cuda-train"], marker = "extra == 'cuda'" },
     { name = "areal", extras = ["flash-attn"], marker = "extra == 'cuda-train'" },
+    { name = "areal", extras = ["kernels"], marker = "extra == 'cuda-train'" },
     { name = "areal", extras = ["megatron"], marker = "extra == 'cuda-train'" },
     { name = "areal", extras = ["sglang"], marker = "extra == 'cuda'" },
     { name = "areal", extras = ["tms"], marker = "extra == 'cuda-train'" },
@@ -436,6 +442,7 @@ requires-dist = [
     { name = "huggingface-hub" },
     { name = "hydra-core", specifier = "==1.4.0.dev1" },
     { name = "json5" },
+    { name = "kernels", marker = "extra == 'kernels'", specifier = "==0.12.2" },
     { name = "langchain" },
     { name = "langchain-openai" },
     { name = "lark" },
@@ -497,7 +504,7 @@ requires-dist = [
     { name = "wheel", specifier = ">=0.43.0" },
     { name = "word2number" },
 ]
-provides-extras = ["sglang", "vllm", "tms", "flash-attn", "megatron", "cuda-train", "cuda"]
+provides-extras = ["sglang", "vllm", "tms", "flash-attn", "kernels", "megatron", "cuda-train", "cuda"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2602,6 +2609,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/02/49/9d1284d0dc65e2c757b74c6687b6d319b02f822ad039e5c512df9194d9dd/jupyter_core-5.9.1.tar.gz", hash = "sha256:4d09aaff303b9566c3ce657f580bd089ff5c91f5f89cf7d8846c3cdf465b5508", size = 89814, upload-time = "2025-10-16T19:19:18.444Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/e7/80988e32bf6f73919a113473a604f5a8f09094de312b9d52b79c2df7612b/jupyter_core-5.9.1-py3-none-any.whl", hash = "sha256:ebf87fdc6073d142e114c72c9e29a9d7ca03fad818c5d300ce2adc1fb0743407", size = 29032, upload-time = "2025-10-16T19:19:16.783Z" },
+]
+
+[[package]]
+name = "kernels"
+version = "0.12.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
+    { name = "packaging", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
+    { name = "pyyaml", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'darwin' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-cuda' and extra == 'extra-5-areal-vllm') or (sys_platform == 'linux' and extra == 'extra-5-areal-sglang' and extra == 'extra-5-areal-vllm')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/07/d2b635e965b232cae1aa873c6e0458947196be8dca7bb02e64d3cd6e8d19/kernels-0.12.2.tar.gz", hash = "sha256:812fc43c2814f046cee655cbebf3918cddd489715773670bdb38cca3f5203b5b", size = 57108, upload-time = "2026-03-04T10:03:00.379Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/be/f5d6758b48633e4f6a28198fcf4bf9f763cc6a82e2335d9fe8802a5cb440/kernels-0.12.2-py3-none-any.whl", hash = "sha256:1289261804748cf3cf8e3afab80b505b0f1b28e4ec88379cdf08dc31e64964b8", size = 55205, upload-time = "2026-03-04T10:02:59.305Z" },
 ]
 
 [[package]]

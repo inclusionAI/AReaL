@@ -82,8 +82,8 @@ uv sync --extra cuda
 # uv sync --group dev
 ```
 
-这将安装 CUDA 依赖的训练包（Megatron、Flash Attention、Torch Memory Saver）以及 **SGLang**
-作为默认推理后端。这些包需要 Linux x86_64 和 CUDA 12.x 及兼容的 NVIDIA 驱动。
+这将安装 CUDA 依赖的训练包（Megatron、Flash Attention、Hugging Face Kernels、Torch Memory Saver）以及
+**SGLang** 作为默认推理后端。这些包需要 Linux x86_64 和 CUDA 12.x 及兼容的 NVIDIA 驱动。
 
 如果您希望使用 **vLLM** 作为推理后端而非 SGLang：
 
@@ -101,17 +101,40 @@ uv sync --extra cuda-train --extra vllm
 - `megatron`：Megatron 训练后端
 - `tms`：Torch Memory Saver
 - `flash-attn`：Flash Attention v2
-- `cuda-train`：仅训练包（megatron + tms + flash-attn，不含推理后端）
+- `kernels`：Hugging Face Kernels 运行时
+- `cuda-train`：仅训练包（megatron + tms + flash-attn + kernels，不含推理后端）
 - `cuda`：cuda-train + sglang（默认，向后兼容）
 
 **注意**：您可以混合搭配各个 extra：
 
 ```bash
-# vLLM 仅带 flash-attn（不含 megatron 和 tms）
-uv sync --extra vllm --extra flash-attn
+# vLLM 带 Hugging Face Kernels 和 flash-attn（不含 megatron 和 tms）
+uv sync --extra vllm --extra flash-attn --extra kernels
 # vLLM 加所有训练包
 uv sync --extra cuda-train --extra vllm
 ```
+
+### 在训练中使用 Hugging Face Kernels
+
+安装 `kernels` extra 只会让 [Hugging Face Kernels](https://github.com/huggingface/kernels)
+运行时可用；训练仍然保持现有默认值，除非您在配置中显式启用。
+
+对训练引擎配置（例如 `actor`、`critic` 或 `teacher`）使用以下字段：
+
+- `attn_impl`：选择注意力后端。除了 `sdpa`、`flash_attention_2` 等内置后端外，还可以填写 Hugging Face kernels 仓库
+  ID，例如 `kernels-community/flash-attn` 或
+  `kernels-community/flash-attn@main:flash_attn_varlen_func`。
+- `use_kernels`：设为 `true` 后，会在模型创建完成后对模型执行 kernelize。
+
+示例：
+
+```yaml
+actor:
+  attn_impl: kernels-community/flash-attn
+  use_kernels: true
+```
+
+为了获得可预测的行为，建议显式指定 kernels 仓库 ID，而不是依赖 `flash_attention_*` 的自动回退。
 
 ### 额外的 CUDA 包（可选，手动安装）
 

@@ -97,9 +97,9 @@ Activation is required before running `pre-commit` or `git commit`. If you use
 `uv run <command>` instead, activation is not needed as `uv run` automatically uses the
 virtual environment.
 
-This installs CUDA-dependent training packages (Megatron, Flash Attention, Torch Memory
-Saver) plus **SGLang** as the default inference backend. These packages require Linux
-x86_64 with CUDA 12.x and compatible NVIDIA drivers.
+This installs CUDA-dependent training packages (Megatron, Flash Attention, Hugging Face
+Kernels, Torch Memory Saver) plus **SGLang** as the default inference backend. These
+packages require Linux x86_64 with CUDA 12.x and compatible NVIDIA drivers.
 
 If you prefer **vLLM** as the inference backend instead of SGLang:
 
@@ -119,18 +119,45 @@ You can also install individual extras instead of the full `cuda` bundle:
 - `megatron`: Megatron training backend
 - `tms`: Torch Memory Saver
 - `flash-attn`: Flash Attention v2
-- `cuda-train`: Training packages only (megatron + tms + flash-attn, no inference
-  backend)
+- `kernels`: Hugging Face Kernels runtime
+- `cuda-train`: Training packages only (megatron + tms + flash-attn + kernels, no
+  inference backend)
 - `cuda`: cuda-train + sglang (default, backward-compatible)
 
 **Note**: You can mix and match individual extras:
 
 ```bash
-# vLLM with just flash-attn (no megatron, no tms)
-uv sync --extra vllm --extra flash-attn
+# vLLM with Hugging Face Kernels and flash-attn (no megatron, no tms)
+uv sync --extra vllm --extra flash-attn --extra kernels
 # vLLM with all training packages
 uv sync --extra cuda-train --extra vllm
 ```
+
+### Using Hugging Face Kernels in Training
+
+Installing the `kernels` extra only makes the
+[Hugging Face Kernels](https://github.com/huggingface/kernels) runtime available.
+Training keeps the existing defaults unless you opt in through configuration.
+
+Use the following fields on your train engine config (for example `actor`, `critic`, or
+`teacher`):
+
+- `attn_impl`: Select the attention backend. In addition to built-in backends such as
+  `sdpa` and `flash_attention_2`, this can point to a Hugging Face kernels repo ID such
+  as `kernels-community/flash-attn` or
+  `kernels-community/flash-attn@main:flash_attn_varlen_func`.
+- `use_kernels`: Set to `true` to kernelize the model after creation.
+
+Example:
+
+```yaml
+actor:
+  attn_impl: kernels-community/flash-attn
+  use_kernels: true
+```
+
+For predictable behavior, prefer an explicit kernels repo ID instead of relying on
+automatic fallback from `flash_attention_*`.
 
 ### Additional CUDA Packages (Optional, Manual Installation)
 
