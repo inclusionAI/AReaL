@@ -20,9 +20,9 @@ from vllm.entrypoints.openai.protocol import (
     ErrorResponse,
     OpenAIBaseModel,
 )
-from vllm.lora.request import LoRARequest
 from vllm.entrypoints.utils import cli_env_setup, load_aware_call, with_cancellation
 from vllm.logger import init_logger
+from vllm.lora.request import LoRARequest
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 from vllm.v1.engine import EngineCoreOutput, EngineCoreOutputs, FinishReason
 from vllm.v1.engine.core import EngineCore
@@ -145,9 +145,7 @@ def _register_runtime_lora_name(
         return
 
     requests = serving_models.lora_requests
-    runtime_lora_path = _infer_runtime_lora_path(
-        serving_models, lora_name, lora_int_id
-    )
+    runtime_lora_path = _infer_runtime_lora_path(serving_models, lora_name, lora_int_id)
 
     # Keep at most one public name per adapter id so /v1/models and request
     # routing reflect the current versioned adapter name.
