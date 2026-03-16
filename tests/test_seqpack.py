@@ -920,7 +920,9 @@ class TestPadAndConcatTensors:
     def test_concat_single_dict_returns_same(self):
         d = {"x": torch.randn(2, 3)}
         result = concat_padded_tensors([d])
-        assert result is d
+        assert set(result.keys()) == set(d.keys())
+        for k in d:
+            torch.testing.assert_close(result[k], d[k])
 
     def test_concat_two_dicts_pads_and_cats(self):
         d1 = {"x": torch.ones(2, 3), "y": torch.ones(2, 5)}

@@ -408,13 +408,13 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["teacher_logp"] = self.teacher.compute_logp(
-                        rollout_batch
-                    )
-                    rollout_batch["rl_loss_weight"] = self.config.teacher.rl_loss_weight
-                    rollout_batch["distill_loss_weight"] = (
-                        self.config.teacher.distill_loss_weight
-                    )
+                    teacher_logps = self.teacher.compute_logp(rollout_batch)
+                    for traj, logp in zip(rollout_batch, teacher_logps):
+                        traj["teacher_logp"] = logp
+                        traj["rl_loss_weight"] = self.config.teacher.rl_loss_weight
+                        traj["distill_loss_weight"] = (
+                            self.config.teacher.distill_loss_weight
+                        )
                     self.teacher.get_device_stats().log("teacher logp")
 
             with (

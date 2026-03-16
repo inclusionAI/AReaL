@@ -256,7 +256,7 @@ def concat_padded_tensors(
     if not tensor_dicts:
         return {}
     if len(tensor_dicts) == 1:
-        return tensor_dicts[0]
+        return dict(tensor_dicts[0])
 
     # Validate key consistency
     first_keys = set(tensor_dicts[0].keys())

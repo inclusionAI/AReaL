@@ -615,7 +615,7 @@ class TrainController:
         should_accept_fn: str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         return self.rollout.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,
@@ -632,7 +632,7 @@ class TrainController:
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         return self.rollout.rollout_batch(
             data=data,
             workflow=workflow,
