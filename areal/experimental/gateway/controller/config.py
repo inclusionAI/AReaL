@@ -63,6 +63,7 @@ class GatewayControllerConfig:
     experiment_name: str | None = None
     trial_name: str | None = None
     check_trajectory_format: bool = False
+    dump_to_file: bool = False
 
     # -- Scheduler / allocation (passed through from trainer) --------------
     scheduling_spec: tuple = field(default_factory=tuple)
@@ -70,4 +71,6 @@ class GatewayControllerConfig:
     pause_grace_period: float = 0.5
 
     # -- OpenAI proxy configuration (for agent-like workflows) ---------------
-    openai: OpenAIProxyConfig | None = None  # Optional; lazy import to avoid PEP 695 issues
+    openai: OpenAIProxyConfig | None = (
+        None  # Optional; lazy import to avoid PEP 695 issues
+    )

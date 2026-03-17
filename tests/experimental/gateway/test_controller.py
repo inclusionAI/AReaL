@@ -1,4 +1,4 @@
-"""Tests for GatewayRolloutController and GatewayInfEngine."""
+"""Tests for GatewayRolloutController."""
 
 from __future__ import annotations
 
@@ -7,9 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from areal.experimental.gateway.controller.config import GatewayControllerConfig
-from areal.experimental.gateway.controller.inf_engine import (
-    GatewayInfEngine,
-    _GatewayInfEngineConfig,
+from areal.experimental.gateway.controller.controller import (
+    GatewayRolloutController,
 )
 
 
@@ -57,104 +56,50 @@ class TestGatewayControllerConfig:
         assert cfg.setup_timeout == 600.0
         assert cfg.max_resubmit_retries == 10
 
-
-# =============================================================================
-# _GatewayInfEngineConfig adapter
-# =============================================================================
-
-
-class TestGatewayInfEngineConfigAdapter:
-    def test_proxies_fields(self):
-        cfg = GatewayControllerConfig(
-            consumer_batch_size=32,
-            max_concurrent_rollouts=64,
-            enable_rollout_tracing=True,
-        )
-        adapter = _GatewayInfEngineConfig(cfg)
-        assert adapter.consumer_batch_size == 32
-        assert adapter.max_concurrent_rollouts == 64
-        assert adapter.enable_rollout_tracing is True
-        assert adapter.max_head_offpolicyness == 0
-        assert adapter.queue_size is None
-
-
-# =============================================================================
-# GatewayInfEngine
-# =============================================================================
-
-
-class TestGatewayInfEngine:
-    def test_construction(self):
+    def test_dump_to_file_defaults_to_false(self):
         cfg = GatewayControllerConfig()
-        engine = GatewayInfEngine("http://localhost:8080", cfg)
-        assert engine.gateway_addr == "http://localhost:8080"
-        assert engine.get_version() == 0
-        assert engine.initialized is False
+        assert cfg.dump_to_file is False
 
-    def test_version_management(self):
-        cfg = GatewayControllerConfig()
-        engine = GatewayInfEngine("http://localhost:8080", cfg)
-        engine.set_version(42)
-        assert engine.get_version() == 42
-        engine.set_version(0)
-        assert engine.get_version() == 0
 
-    def test_has_required_methods(self):
-        """Verify GatewayInfEngine has all methods needed by WorkflowExecutor."""
-        methods = [
-            "agenerate",
-            "submit",
-            "wait",
-            "wait_for_task",
-            "rollout_batch",
-            "prepare_batch",
-            "set_version",
-            "get_version",
-            "pause",
-            "resume",
-            "initialize",
-            "destroy",
-        ]
-        for m in methods:
-            assert hasattr(GatewayInfEngine, m), f"Missing method: {m}"
+# =============================================================================
+# GatewayRolloutController — workflow resolution helpers
+# =============================================================================
 
-    def test_workflow_executor_raises_before_init(self):
-        cfg = GatewayControllerConfig()
-        engine = GatewayInfEngine("http://localhost:8080", cfg)
-        with pytest.raises(RuntimeError, match="not initialized"):
-            _ = engine.workflow_executor
 
+class TestControllerWorkflowResolution:
     def test_resolve_workflow_with_instance(self):
         """Test _resolve_workflow raises for non-RolloutWorkflow instances without proxy."""
-        # Non-RolloutWorkflow instances hit case 5 (agent-like) and need proxy_addr + engine.
-        with pytest.raises(ValueError, match="proxy_addr and engine are required"):
-            GatewayInfEngine._resolve_workflow(12345)
+        # Non-RolloutWorkflow instances hit case 5 (agent-like) and need proxy_addr + controller.
+        with pytest.raises(ValueError, match="proxy_addr and controller are required"):
+            GatewayRolloutController._resolve_workflow(12345)
 
     def test_resolve_workflow_none_raises(self):
         with pytest.raises(ValueError, match="must be specified"):
-            GatewayInfEngine._resolve_workflow(None)
+            GatewayRolloutController._resolve_workflow(None)
 
     def test_resolve_should_accept_fn_none(self):
-        assert GatewayInfEngine._resolve_should_accept_fn(None) is None
+        assert GatewayRolloutController._resolve_should_accept_fn(None) is None
 
     def test_resolve_should_accept_fn_callable(self):
         fn = lambda x: True  # noqa: E731
-        assert GatewayInfEngine._resolve_should_accept_fn(fn) is fn
+        assert GatewayRolloutController._resolve_should_accept_fn(fn) is fn
 
     def test_resolve_workflow_with_agent_class(self):
         """Test _resolve_workflow wraps agent-like classes in OpenAIProxyWorkflow."""
         cfg = GatewayControllerConfig()
-        engine = GatewayInfEngine("http://test:8080", cfg)
+        scheduler = MagicMock()
+        controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
+        controller._gateway_addr = "http://test:8080"
 
         class MockAgent:
             async def run(self, data, **kwargs):
                 return 1.0
 
-        resolved = GatewayInfEngine._resolve_workflow(
+        resolved = GatewayRolloutController._resolve_workflow(
             MockAgent,
             workflow_kwargs={},
             proxy_addr="http://test:8080",
-            engine=engine,
+            controller=controller,
         )
         # Avoid importing areal.experimental.openai at module/test level
         # (PEP 695 syntax in that package breaks Python 3.10-3.12 collection).
@@ -168,8 +113,8 @@ class TestGatewayInfEngine:
             async def run(self, data, **kwargs):
                 return 1.0
 
-        with pytest.raises(ValueError, match="proxy_addr and engine are required"):
-            GatewayInfEngine._resolve_workflow(MockAgent, workflow_kwargs={})
+        with pytest.raises(ValueError, match="proxy_addr and controller are required"):
+            GatewayRolloutController._resolve_workflow(MockAgent, workflow_kwargs={})
 
 
 # =============================================================================
@@ -179,10 +124,6 @@ class TestGatewayInfEngine:
 
 class TestGatewayRolloutControllerAPISurface:
     def test_has_all_public_methods(self):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         methods = [
             "initialize",
             "destroy",
@@ -191,6 +132,7 @@ class TestGatewayRolloutControllerAPISurface:
             "rollout_batch",
             "prepare_batch",
             "agenerate",
+            "chat_completion",
             "set_version",
             "get_version",
             "get_capacity",
@@ -208,13 +150,10 @@ class TestGatewayRolloutControllerAPISurface:
             assert hasattr(GatewayRolloutController, m), f"Missing method: {m}"
 
     def test_has_properties(self):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         properties = [
             "callback_addr",
             "staleness_manager",
+            "workflow_executor",
             "dispatcher",
             "runner",
             "proxy_gateway_addr",
@@ -224,10 +163,6 @@ class TestGatewayRolloutControllerAPISurface:
 
     def test_not_subclass_of_rollout_controller(self):
         """GatewayRolloutController must NOT be a subclass of RolloutController."""
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         # Verify it doesn't inherit from any class except object
         bases = GatewayRolloutController.__bases__
         assert bases == (object,), f"Unexpected bases: {bases}"
@@ -240,10 +175,6 @@ class TestGatewayRolloutControllerAPISurface:
 
 class TestGatewayRolloutControllerConstruction:
     def test_constructor(self):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
@@ -257,10 +188,6 @@ class TestGatewayRolloutControllerConstruction:
 
     def test_version_management_without_services(self):
         """set_version / get_version work even without gateway services."""
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
@@ -270,10 +197,6 @@ class TestGatewayRolloutControllerConstruction:
         assert controller.get_version() == 42
 
     def test_export_stats_returns_dict(self):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
@@ -281,10 +204,6 @@ class TestGatewayRolloutControllerConstruction:
         assert isinstance(stats, dict)
 
     def test_start_proxy_is_noop(self):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
@@ -293,33 +212,21 @@ class TestGatewayRolloutControllerConstruction:
         controller.start_proxy_gateway()
 
     def test_proxy_gateway_addr(self):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         cfg = GatewayControllerConfig(gateway_port=9999)
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
         # Before initialize, proxy_gateway_addr returns the empty _gateway_addr
         assert controller.proxy_gateway_addr == ""
 
-    def test_engine_raises_before_init(self):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
+    def test_workflow_executor_raises_before_init(self):
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
         with pytest.raises(RuntimeError, match="initialize"):
-            _ = controller._engine
+            _ = controller.workflow_executor
 
     def test_callback_addr_returns_gateway_address(self):
         """callback_addr should return gateway host:port without requiring a callback server."""
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
@@ -330,10 +237,6 @@ class TestGatewayRolloutControllerConstruction:
         assert host != "0.0.0.0"
 
     def test_config_perf_tracer_is_noop(self):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
@@ -349,10 +252,6 @@ class TestGatewayRolloutControllerConstruction:
 
 class TestGatewayRolloutControllerHTTP:
     def test_gateway_http_post_logs_on_failure(self):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
@@ -363,10 +262,6 @@ class TestGatewayRolloutControllerHTTP:
 
     @patch("requests.post")
     def test_gateway_http_post_sends_auth(self, mock_post):
-        from areal.experimental.gateway.controller.controller import (
-            GatewayRolloutController,
-        )
-
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_post.return_value = mock_resp

@@ -12,8 +12,11 @@ import logging
 import socket
 import time
 import traceback
+from collections.abc import AsyncGenerator
 from threading import Lock
 from typing import TYPE_CHECKING, Any
+
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 if TYPE_CHECKING:
     from areal.api.io_struct import (
@@ -25,7 +28,6 @@ if TYPE_CHECKING:
 from areal.api.io_struct import LocalInfServerInfo
 
 from areal.experimental.gateway.controller.config import GatewayControllerConfig
-from areal.experimental.gateway.controller.inf_engine import GatewayInfEngine
 
 logger = logging.getLogger("GatewayRolloutController")
 
@@ -71,8 +73,8 @@ class GatewayRolloutController:
         self._version_lock = Lock()
         self._version = 0
 
-        # Inference engine (routes through gateway HTTP)
-        self._gateway_inf_engine: GatewayInfEngine | None = None
+        # WorkflowExecutor (created in initialize)
+        self._workflow_executor = None
 
         # Staleness manager (created in initialize)
         self._staleness_manager = None
@@ -111,9 +113,14 @@ class GatewayRolloutController:
         # Register data proxies in the router
         self._register_data_proxies_in_router()
 
-        # Create inference engine pointed at the gateway
-        self._gateway_inf_engine = GatewayInfEngine(self._gateway_addr, self.config)
-        self._gateway_inf_engine.initialize()
+        # Create WorkflowExecutor directly (no intermediate engine)
+        from areal.infra.workflow_executor import WorkflowExecutor
+
+        self._workflow_executor = WorkflowExecutor(
+            config=self.config,
+            inference_engine=self,
+        )
+        self._workflow_executor.initialize()
 
         # Create staleness manager
         from areal.infra.staleness_manager import StalenessManager
@@ -466,10 +473,10 @@ class GatewayRolloutController:
 
     def destroy(self) -> None:
         """Tear down all services and release resources."""
-        # Destroy gateway inference engine
-        if self._gateway_inf_engine is not None:
-            self._gateway_inf_engine.destroy()
-            self._gateway_inf_engine = None
+        # Destroy workflow executor
+        if self._workflow_executor is not None:
+            self._workflow_executor.destroy()
+            self._workflow_executor = None
 
         # RPCGuard's shutdown `finally` block automatically kills all
         # forked children (SGLang, data proxies), so no explicit teardown needed.
@@ -499,8 +506,6 @@ class GatewayRolloutController:
     def set_version(self, version: int) -> None:
         with self._version_lock:
             self._version = version
-            if self._gateway_inf_engine is not None:
-                self._gateway_inf_engine.set_version(version)
         # TODO: Weight-update forwarding (set_version broadcast to workers via
         # gateway HTTP) has been removed. Re-implement when the gateway
         # natively supports weight synchronisation.
@@ -514,7 +519,7 @@ class GatewayRolloutController:
     def get_capacity(self) -> int:
         return self.staleness_manager.get_capacity()
 
-    # -- Submit / Wait / Batch (delegate to GatewayInfEngine) --------------
+    # -- Submit / Wait / Batch ---------------------------------------------
 
     def submit(
         self,
@@ -527,12 +532,20 @@ class GatewayRolloutController:
         group_size: int = 1,
         proxy_addr: str | None = None,
     ) -> int:
-        return self._engine.submit(
-            data=data,
-            workflow=workflow,
-            workflow_kwargs=workflow_kwargs,
-            should_accept_fn=should_accept_fn,
-            group_size=group_size,
+        if proxy_addr is None:
+            proxy_addr = self._gateway_addr
+        resolved_workflow = self._resolve_workflow(
+            workflow,
+            workflow_kwargs,
+            group_size,
+            proxy_addr=proxy_addr,
+            controller=self,
+        )
+        resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
+        return self.workflow_executor.submit(
+            data,
+            workflow=resolved_workflow,
+            should_accept_fn=resolved_accept_fn,
             task_id=task_id,
             is_eval=is_eval,
         )
@@ -543,7 +556,9 @@ class GatewayRolloutController:
         timeout: float | None = None,
         raise_timeout: bool = True,
     ) -> list[dict[str, Any] | None]:
-        return self._engine.wait(count, timeout=timeout, raise_timeout=raise_timeout)
+        return self.workflow_executor.wait(
+            count, timeout=timeout, raise_timeout=raise_timeout
+        )
 
     def rollout_batch(
         self,
@@ -553,13 +568,30 @@ class GatewayRolloutController:
         should_accept_fn: Any = None,
         group_size: int = 1,
     ) -> dict[str, Any]:
-        return self._engine.rollout_batch(
-            data=data,
-            workflow=workflow,
-            workflow_kwargs=workflow_kwargs,
-            should_accept_fn=should_accept_fn,
-            group_size=group_size,
+        if not self._gateway_addr:
+            raise RuntimeError(
+                "GatewayRolloutController.initialize() must be called first"
+            )
+        proxy_addr = self._gateway_addr
+        resolved_workflow = self._resolve_workflow(
+            workflow,
+            workflow_kwargs,
+            group_size,
+            proxy_addr=proxy_addr,
+            controller=self,
         )
+        resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
+        for item in data:
+            self.workflow_executor.submit(
+                data=item,
+                workflow=resolved_workflow,
+                should_accept_fn=resolved_accept_fn,
+            )
+        results = self.workflow_executor.wait(count=len(data))
+        # Concatenate into batch tensor format (matching RolloutController API)
+        from areal.utils.data import concat_padded_tensors
+
+        return concat_padded_tensors([r for r in results if r is not None])
 
     def prepare_batch(
         self,
@@ -570,30 +602,232 @@ class GatewayRolloutController:
         group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> dict[str, Any]:
-        return self._engine.prepare_batch(
+        if not self._gateway_addr:
+            raise RuntimeError(
+                "GatewayRolloutController.initialize() must be called first"
+            )
+        proxy_addr = self._gateway_addr
+        resolved_workflow = self._resolve_workflow(
+            workflow,
+            workflow_kwargs,
+            group_size,
+            proxy_addr=proxy_addr,
+            controller=self,
+        )
+        resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
+        results = self.workflow_executor.prepare_batch(
             dataloader=dataloader,
-            workflow=workflow,
-            workflow_kwargs=workflow_kwargs,
-            should_accept_fn=should_accept_fn,
-            group_size=group_size,
+            workflow=resolved_workflow,
+            should_accept_fn=resolved_accept_fn,
             dynamic_bs=dynamic_bs,
         )
+        # Concatenate into batch tensor format (matching RolloutController API)
+        from areal.utils.data import concat_padded_tensors
+
+        return concat_padded_tensors([r for r in results if r is not None])
+
+    # -- Core generation ---------------------------------------------------
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
-        return await self._engine.agenerate(req)
+        """Send a generation request through the gateway HTTP stack.
 
-    async def chat_completion(self, messages, session_api_key=None, **kwargs):
-        result = await self._engine.chat_completion(
-            messages, session_api_key=session_api_key, **kwargs
+        The gateway routes the request to a data proxy (via the router),
+        which forwards it to a co-located SGLang server.  The response is
+        streamed back as SSE chunks which we accumulate into a
+        ``ModelResponse``.
+        """
+        from areal.api.io_struct import ModelResponse
+
+        start_time = time.perf_counter()
+
+        # Build payload matching the gateway /generate endpoint format
+        payload: dict[str, Any] = {
+            "input_ids": req.input_ids,
+            "sampling_params": {
+                "max_new_tokens": req.gconfig.max_new_tokens,
+                "temperature": req.gconfig.temperature,
+                "top_p": req.gconfig.top_p,
+                "skip_special_tokens": False,
+            },
+        }
+        if hasattr(req.gconfig, "stop_token_ids") and req.gconfig.stop_token_ids:
+            payload["sampling_params"]["stop_token_ids"] = req.gconfig.stop_token_ids
+
+        import aiohttp
+
+        accumulated_tokens: list[int] = []
+        accumulated_logprobs: list[float] = []
+        stop_reason: str | None = None
+
+        url = f"{self._gateway_addr}/generate"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.config.admin_api_key}",
+        }
+
+        timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(
+                        f"Gateway /generate returned {resp.status}: {text}"
+                    )
+
+                import json as json_mod
+
+                # Parse SSE stream
+                buffer = b""
+                async for chunk in resp.content.iter_any():
+                    buffer += chunk
+                    while b"\n\n" in buffer:
+                        frame, buffer = buffer.split(b"\n\n", 1)
+                        for line in frame.split(b"\n"):
+                            line = line.strip()
+                            if line.startswith(b"data: "):
+                                data_str = line[6:].decode()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    data = json_mod.loads(data_str)
+                                except json_mod.JSONDecodeError:
+                                    continue
+                                token_id = data.get("token")
+                                logprob = data.get("logprob", 0.0)
+                                if token_id is not None:
+                                    accumulated_tokens.append(token_id)
+                                    accumulated_logprobs.append(logprob)
+                                if data.get("finished"):
+                                    stop_reason = data.get("stop_reason", "stop")
+
+        if stop_reason is None:
+            stop_reason = "stop"
+
+        latency = time.perf_counter() - start_time
+
+        response = ModelResponse(
+            input_tokens=req.input_ids,
+            output_tokens=accumulated_tokens,
+            output_logprobs=accumulated_logprobs,
+            output_versions=[self.get_version()] * len(accumulated_tokens),
+            stop_reason=stop_reason,
+            latency=latency,
+            ttft=latency,
+            tokenizer=getattr(req, "tokenizer", None),
+            processor=getattr(req, "processor", None),
         )
-        return result
+        return response
+
+    async def chat_completion(
+        self,
+        messages: list[dict],
+        session_api_key: str | None = None,
+        **kwargs,
+    ) -> ChatCompletion | AsyncGenerator[ChatCompletionChunk, None]:
+        """Send a chat completion request through the gateway HTTP stack.
+
+        Parameters
+        ----------
+        messages : list[dict]
+            OpenAI-style chat messages.
+        session_api_key : str | None
+            If provided, authenticate as this session; otherwise use the
+            admin API key from the controller config.
+        **kwargs
+            Optional overrides: ``temperature``, ``top_p``,
+            ``max_completion_tokens``, ``stream``.
+
+        Returns
+        -------
+        ChatCompletion | AsyncGenerator[ChatCompletionChunk, None]
+            When ``stream=False`` (default): parsed OpenAI ChatCompletion object.
+            When ``stream=True``: async generator yielding ChatCompletionChunk.
+        """
+        import aiohttp
+
+        stream = kwargs.get("stream", False)
+        body: dict[str, Any] = {
+            "messages": messages,
+            "temperature": kwargs.get("temperature", 1.0),
+            "top_p": kwargs.get("top_p", 1.0),
+            "max_completion_tokens": kwargs.get("max_completion_tokens", 512),
+            "stream": stream,
+        }
+        # Forward extra body params (e.g. chat_template_kwargs)
+        extra_body = kwargs.get("extra_body")
+        if extra_body and isinstance(extra_body, dict):
+            body.update(extra_body)
+
+        api_key = (
+            session_api_key
+            if session_api_key is not None
+            else self.config.admin_api_key
+        )
+        url = f"{self._gateway_addr}/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+
+        if stream:
+            return self._stream_chat_completion(url, body, headers)
+
+        # Non-streaming path
+        timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=body, headers=headers) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(
+                        f"Gateway /chat/completions returned {resp.status}: {text}"
+                    )
+                resp_json = await resp.json()
+
+        return ChatCompletion.model_validate(resp_json)
+
+    async def _stream_chat_completion(
+        self,
+        url: str,
+        body: dict[str, Any],
+        headers: dict[str, str],
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
+        """Parse SSE stream from the gateway into ChatCompletionChunk objects."""
+        import aiohttp
+
+        timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
+        session = aiohttp.ClientSession(timeout=timeout)
+        try:
+            resp = await session.post(url, json=body, headers=headers)
+            if resp.status != 200:
+                text = await resp.text()
+                await resp.release()
+                await session.close()
+                raise RuntimeError(
+                    f"Gateway /chat/completions returned {resp.status}: {text}"
+                )
+
+            async for line in resp.content:
+                decoded = line.decode("utf-8").strip()
+                if not decoded or not decoded.startswith("data: "):
+                    continue
+                payload = decoded[len("data: ") :]
+                if payload == "[DONE]":
+                    break
+                import json as _json
+
+                chunk_data = _json.loads(payload)
+                yield ChatCompletionChunk.model_validate(chunk_data)
+
+            await resp.release()
+        finally:
+            await session.close()
 
     # -- Pause / Resume ----------------------------------------------------
 
     def pause(self) -> None:
         """Pause dispatcher + broadcast pause to all workers."""
-        if self._gateway_inf_engine is not None:
-            self._gateway_inf_engine.pause()
+        if self._workflow_executor is not None:
+            self._workflow_executor.pause()
         if self._gateway_addr:
             self._gateway_http_post("/pause_generation", {})
 
@@ -601,8 +835,8 @@ class GatewayRolloutController:
         """Broadcast resume to all workers + resume dispatcher."""
         if self._gateway_addr:
             self._gateway_http_post("/continue_generation", {})
-        if self._gateway_inf_engine is not None:
-            self._gateway_inf_engine.resume()
+        if self._workflow_executor is not None:
+            self._workflow_executor.resume()
 
     async def pause_generation(self) -> None:
         if self._gateway_addr:
@@ -677,20 +911,168 @@ class GatewayRolloutController:
         return self._staleness_manager
 
     @property
+    def workflow_executor(self):
+        if self._workflow_executor is None:
+            raise RuntimeError(
+                "GatewayRolloutController.initialize() must be called first"
+            )
+        return self._workflow_executor
+
+    @property
     def dispatcher(self):
-        return self._engine.workflow_executor.dispatcher
+        return self.workflow_executor.dispatcher
 
     @property
     def runner(self):
         return self.dispatcher.runner
 
-    @property
-    def _engine(self) -> GatewayInfEngine:
-        if self._gateway_inf_engine is None:
-            raise RuntimeError(
-                "GatewayRolloutController.initialize() must be called first"
+    # -- Workflow resolution helpers ----------------------------------------
+
+    def _wrap_openai_agent(self, agent: Any, proxy_addr: str):
+        """Wrap an agent workflow in OpenAIProxyWorkflow (HTTP mode only).
+
+        Parameters
+        ----------
+        agent : Any | None
+            The agent workflow to wrap (any class with async run() method).
+            ``None`` is valid when ``mode='online'``.
+        proxy_addr : str
+            HTTP address of the proxy server (required)
+        """
+        from areal.experimental.openai import OpenAIProxyWorkflow
+
+        openai_cfg = self.config.openai
+        mode = getattr(openai_cfg, "mode", "inline")
+        admin_api_key = getattr(openai_cfg, "admin_api_key", self.config.admin_api_key)
+        turn_discount = getattr(openai_cfg, "turn_discount", 1.0)
+        export_style = getattr(openai_cfg, "export_style", "individual")
+        subproc_max_workers = getattr(openai_cfg, "subproc_max_workers", 4)
+
+        return OpenAIProxyWorkflow(
+            mode=mode,
+            agent=agent,
+            proxy_addr=proxy_addr,
+            admin_api_key=admin_api_key,
+            discount=turn_discount,
+            export_style=export_style,
+            subproc_max_workers=subproc_max_workers,
+            proxy_gateway_addr=self._gateway_addr,
+        )
+
+    @staticmethod
+    def _resolve_workflow(
+        workflow,
+        workflow_kwargs=None,
+        group_size=1,
+        proxy_addr=None,
+        controller=None,
+    ):
+        """Resolve a WorkflowLike to a RolloutWorkflow instance.
+
+        Handles both RolloutWorkflow types (cases 1-3) and agent-like
+        workflows that need wrapping in OpenAIProxyWorkflow (cases 4-5).
+
+        Parameters
+        ----------
+        workflow : WorkflowLike
+            A RolloutWorkflow instance, class, import path string,
+            agent class, or agent instance.
+        workflow_kwargs : dict, optional
+            Keyword arguments passed to the workflow/agent constructor.
+        group_size : int
+            Number of times to run the workflow per input.
+        proxy_addr : str, optional
+            HTTP address of the proxy server, required for agent workflows.
+        controller : GatewayRolloutController, optional
+            The controller instance, required for agent workflows (_wrap_openai_agent).
+        """
+        from areal.api.workflow_api import RolloutWorkflow
+        from areal.utils.dynamic_import import import_from_string
+
+        if workflow is None:
+            raise ValueError("workflow must be specified")
+
+        resolved: RolloutWorkflow
+
+        # 1. Already a RolloutWorkflow instance
+        if isinstance(workflow, RolloutWorkflow):
+            resolved = workflow
+
+        # 2. RolloutWorkflow class
+        elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
+            if workflow_kwargs is None:
+                raise ValueError("workflow_kwargs required when workflow is a class")
+            resolved = workflow(**workflow_kwargs)
+
+        # 3. String import path
+        elif isinstance(workflow, str):
+            imported = import_from_string(workflow)
+            if isinstance(imported, type) and issubclass(imported, RolloutWorkflow):
+                if workflow_kwargs is None:
+                    raise ValueError(
+                        "workflow_kwargs required when workflow is a class"
+                    )
+                resolved = imported(**workflow_kwargs)
+            elif isinstance(imported, RolloutWorkflow):
+                resolved = imported
+            else:
+                # Treat as agent-like workflow (needs proxy wrapping)
+                if proxy_addr is None or controller is None:
+                    raise ValueError(
+                        f"proxy_addr and controller are required for agent workflows "
+                        f"(non-RolloutWorkflow). Got workflow={workflow!r}"
+                    )
+                if isinstance(imported, type):
+                    agent = imported(**(workflow_kwargs or {}))
+                else:
+                    agent = imported
+                resolved = controller._wrap_openai_agent(agent, proxy_addr=proxy_addr)
+
+        # 4. Callable class (agent-like workflow)
+        elif isinstance(workflow, type):
+            if proxy_addr is None or controller is None:
+                raise ValueError(
+                    "proxy_addr and controller are required for agent workflows "
+                    "(non-RolloutWorkflow). "
+                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                )
+            agent = workflow(**(workflow_kwargs or {}))
+            resolved = controller._wrap_openai_agent(agent, proxy_addr=proxy_addr)
+
+        # 5. Instance of agent-like workflow
+        else:
+            if proxy_addr is None or controller is None:
+                raise ValueError(
+                    "proxy_addr and controller are required for agent workflows "
+                    "(non-RolloutWorkflow). "
+                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                )
+            resolved = controller._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
+
+        if group_size > 1:
+            import logging as _logging
+
+            from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
+
+            resolved = GroupedRolloutWorkflow(
+                resolved, group_size, _logging.getLogger("GatewayRolloutController")
             )
-        return self._gateway_inf_engine
+
+        return resolved
+
+    @staticmethod
+    def _resolve_should_accept_fn(should_accept_fn):
+        """Resolve should_accept_fn to a callable or None."""
+        if should_accept_fn is None or callable(should_accept_fn):
+            return should_accept_fn
+        if isinstance(should_accept_fn, str):
+            from areal.utils.dynamic_import import import_from_string
+
+            func = import_from_string(should_accept_fn)
+            if not callable(func):
+                raise TypeError(f"Imported {should_accept_fn!r} is not callable")
+            return func
+        raise TypeError(f"Invalid should_accept_fn type: {type(should_accept_fn)}")
 
     # -- Internal HTTP helpers ---------------------------------------------
 
