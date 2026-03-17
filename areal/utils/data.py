@@ -1,6 +1,7 @@
 # Pad/unpad operations are modified from flash-attention under BSD-3 license.
 # Copyright (c) 2023, Tri Dao.
 
+import copy
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple
@@ -15,7 +16,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import MicroBatchSpec, NormConfig
 from areal.infra.platforms import current_platform
-from areal.utils import datapack, logging
+from areal.utils import logging, seqpack
 from areal.utils.math import align
 
 logger = logging.getLogger("DataUtils")
@@ -142,6 +143,41 @@ def pad_sequences_to_tensors(
     return result
 
 
+def collate_samples_to_list(
+    sequence_list: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert raw dataset samples into per-sample tensor dicts.
+
+    Each sample is converted to a dict of 2-D tensors ``[1, seqlen]``
+    with an ``attention_mask`` added.  Returns ``list[dict[str, Tensor]]``,
+    the canonical per-trajectory format expected by :func:`batched_call` /
+    :func:`concat_batch`.
+    """
+    result: list[dict[str, Any]] = []
+    for item in sequence_list:
+        sample: dict[str, Any] = {}
+        seqlen: int | None = None
+        for key, value in item.items():
+            if is_multi_modal_key(key):
+                if isinstance(value, list):
+                    for v in value:
+                        if isinstance(v, dict):
+                            for k, t in v.items():
+                                if not torch.is_tensor(t):
+                                    v[k] = torch.tensor(t)
+                sample[key] = value if isinstance(value, list) else [value]
+                continue
+            if not torch.is_tensor(value):
+                value = torch.tensor(value)
+            if seqlen is None:
+                seqlen = value.shape[0]
+            sample[key] = value.unsqueeze(0)  # [seqlen] -> [1, seqlen]
+        if "attention_mask" not in sample and seqlen is not None:
+            sample["attention_mask"] = torch.ones(1, seqlen, dtype=torch.bool)
+        result.append(sample)
+    return result
+
+
 def unpad_input(
     hidden_states, attention_mask
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
@@ -163,17 +199,75 @@ def pad_input(hidden_states, indices, batch, seqlen):
     return rearrange(output, "(b s) ... -> b s ...", b=batch)
 
 
+def _pad_cat_dim0(tensors: list[torch.Tensor], pad_value: float = 0.0) -> torch.Tensor:
+    """Pad tensors to the same non-batch dims and concatenate along dim 0.
+
+    For 0D/1D tensors no padding is needed — they are simply concatenated.
+    For ≥2D tensors, dimensions 1…N-1 are right-padded to the per-dimension
+    maximum across *tensors* before concatenation along dim 0.
+    """
+    if not tensors:
+        raise ValueError("_pad_cat_dim0 requires a non-empty list of tensors.")
+    ndim = tensors[0].ndim
+    if ndim <= 1:
+        return torch.cat(tensors, dim=0)
+
+    # Compute the maximum shape for dims 1 … N-1
+    max_shape = [0] * (ndim - 1)
+    for t in tensors:
+        if t.ndim != ndim:
+            raise ValueError(
+                f"Dimension mismatch: expected {ndim}D tensors, got {t.ndim}D"
+            )
+        for i in range(1, ndim):
+            max_shape[i - 1] = max(max_shape[i - 1], t.shape[i])
+
+    padded_tensors = []
+    for t in tensors:
+        pad_sizes = [max_shape[i - 1] - t.shape[i] for i in range(1, ndim)]
+        if any(pad_sizes):
+            # F.pad expects sizes in reversed dimension order (innermost first)
+            pad = []
+            for ps in reversed(pad_sizes):
+                pad.extend([0, ps])
+            t = F.pad(t, tuple(pad), "constant", pad_value)
+        padded_tensors.append(t)
+
+    return torch.cat(padded_tensors, dim=0)
+
+
 def concat_padded_tensors(
     tensor_dicts: list[dict[str, Any]], pad_value: float = 0.0
 ) -> dict[str, Any]:
-    """Concatenate and pad tensors from multiple dictionaries of padded tensors."""
+    """Concatenate and pad tensors from multiple dictionaries.
+
+    For each key present in the input dicts:
+
+    * **Tensor values** — all non-batch dimensions (dims 1…N-1) are right-padded
+      to the per-dimension maximum across dicts, then concatenated along dim 0.
+      ``attention_mask`` is always zero-padded regardless of *pad_value*.
+    * **List values** — flat-concatenated.
+    * **Multimodal keys** (``multi_modal_input*``) — list-extended with per-dict
+      batch-size awareness.
+    * **Other values** — the first dict's value is kept (assumed identical).
+
+    All input dicts must share the same set of keys.
+    """
     if not tensor_dicts:
         return {}
+    if len(tensor_dicts) == 1:
+        return dict(tensor_dicts[0])
 
-    # Find max sequence length across all dictionaries
-    assert all("attention_mask" in td for td in tensor_dicts)
-    max_length = max([x["attention_mask"].shape[1] for x in tensor_dicts])
-    result = {}
+    # Validate key consistency
+    first_keys = set(tensor_dicts[0].keys())
+    for i, d in enumerate(tensor_dicts[1:], 1):
+        if set(d.keys()) != first_keys:
+            raise ValueError(
+                f"concat_padded_tensors: dict[{i}] has different keys than dict[0]. "
+                f"Expected {sorted(first_keys)}, got {sorted(d.keys())}"
+            )
+
+    result: dict[str, Any] = {}
 
     multimodal_keys = {
         key for td in tensor_dicts for key in td if is_multi_modal_key(key)
@@ -186,42 +280,150 @@ def concat_padded_tensors(
             merged_multi_modal.extend(td.get(mm_key, [{} for _ in range(bs)]))
         result[mm_key] = merged_multi_modal
 
-    # Process each key
-    for key in tensor_dicts[0].keys():
-        tensors_to_concat = []
-        if is_multi_modal_key(key):
+    # Process remaining keys
+    for key in tensor_dicts[0]:
+        if key in multimodal_keys:
             continue
-        for tensor_dict in tensor_dicts:
-            tensor = tensor_dict[key]
-            # Skip 1D tensors like rewards
-            if len(tensor.shape) == 1:
-                tensors_to_concat.append(tensor)
-                continue
-            current_length = tensor.shape[1]
-            if current_length < max_length:
-                # Pad tensor to max_length
-                pad_width = max_length - current_length
-                if key == "attention_mask":
-                    # Pad attention mask with 0s
-                    padding = torch.zeros(
-                        (tensor.shape[0], pad_width),
-                        dtype=tensor.dtype,
-                        device=tensor.device,
-                    )
+        values = [td[key] for td in tensor_dicts]
+        if isinstance(values[0], torch.Tensor):
+            pv = 0.0 if key == "attention_mask" else pad_value
+            result[key] = _pad_cat_dim0(values, pad_value=pv)
+        elif isinstance(values[0], list):
+            result[key] = [item for v in values for item in v]
+        else:
+            result[key] = values[0]
 
-                else:
-                    # Pad feature tensors with pad_value
-                    padding = torch.full(
-                        (tensor.shape[0], pad_width),
-                        pad_value,
-                        dtype=tensor.dtype,
-                        device=tensor.device,
-                    )
+    return result
 
-                tensor = torch.cat([tensor, padding], dim=1)
-            tensors_to_concat.append(tensor)
 
-        result[key] = torch.cat(tensors_to_concat, dim=0)
+def _unpad_splits(
+    splits: list[torch.Tensor], traj_seqlens: list[int] | None
+) -> list[torch.Tensor]:
+    """Trim each split tensor's last dim to its original sequence length."""
+    if traj_seqlens is None:
+        return splits
+    for i, s in enumerate(splits):
+        if s.ndim >= 2 and s.shape[-1] > traj_seqlens[i]:
+            splits[i] = s[..., : traj_seqlens[i]]
+    return splits
+
+
+def split_and_unpad_tensor(
+    result: Any,
+    n_trajs: int,
+    traj_group_sizes: list[int] | int = 1,
+    traj_seqlens: list[int] | None = None,
+) -> Any:
+    """Inverse of concat_padded_tensors: split batched result into per-trajectory
+    list and trim trailing padding. Handles Tensor, dict, and None inputs.
+
+    When traj_seqlens is None and result is a dict with attention_mask,
+    seqlens are auto-derived via attention_mask.sum(-1).max() per group.
+    """
+    if result is None:
+        return None
+    # Normalize to list for uniform handling
+    if isinstance(traj_group_sizes, int):
+        traj_group_sizes = [traj_group_sizes] * n_trajs
+    total = sum(traj_group_sizes)
+
+    # Auto-derive traj_seqlens from attention_mask when not provided
+    if traj_seqlens is None and isinstance(result, dict):
+        attn_mask = result.get("attention_mask")
+        if isinstance(attn_mask, torch.Tensor) and attn_mask.ndim >= 2:
+            am_splits = list(attn_mask.split(traj_group_sizes, dim=0))
+            derived = [int(am.sum(-1).max().item()) for am in am_splits]
+            # Only apply if there's actual padding to trim
+            if any(sl < attn_mask.shape[-1] for sl in derived):
+                traj_seqlens = derived
+    if isinstance(result, torch.Tensor):
+        splits = list(result.split(traj_group_sizes, dim=0))
+        return _unpad_splits(splits, traj_seqlens)
+    if isinstance(result, dict):
+        split_result = [{} for _ in range(n_trajs)]
+        for key, value in result.items():
+            if isinstance(value, torch.Tensor) and value.shape[0] == total:
+                splits = _unpad_splits(
+                    list(value.split(traj_group_sizes, dim=0)), traj_seqlens
+                )
+                for i, s in enumerate(splits):
+                    split_result[i][key] = s
+            else:
+                for i in range(n_trajs):
+                    split_result[i][key] = copy.deepcopy(value)
+        return split_result
+    return result
+
+
+@dataclass
+class TrajBatchMeta:
+    """Metadata for reversing concat_batch: traj counts, group sizes, seqlens."""
+
+    n_trajs: int
+    traj_group_sizes: list[int]
+    traj_seqlens: list[int]
+
+
+def concat_batch(
+    data: list[dict[str, Any]],
+) -> tuple[dict[str, Any], "TrajBatchMeta"]:
+    """Concat list[dict] trajectories into a single batched dict with metadata."""
+    assert isinstance(data, list) and all(isinstance(d, dict) for d in data), (
+        f"Expected list[dict], got {type(data)}"
+    )
+    traj_group_sizes = []
+    for d in data:
+        first_tensor = next(
+            (v for v in d.values() if isinstance(v, torch.Tensor)), None
+        )
+        traj_group_sizes.append(
+            first_tensor.shape[0] if first_tensor is not None else 1
+        )
+    traj_seqlens = [d["attention_mask"].shape[-1] for d in data]
+    meta = TrajBatchMeta(
+        n_trajs=len(data),
+        traj_group_sizes=traj_group_sizes,
+        traj_seqlens=traj_seqlens,
+    )
+    return concat_padded_tensors(data), meta
+
+
+def split_batch(
+    result: Any,
+    meta: TrajBatchMeta,
+) -> list[Any] | None:
+    """Inverse of concat_batch: split batched result back into per-trajectory list."""
+    return split_and_unpad_tensor(
+        result, meta.n_trajs, meta.traj_group_sizes, meta.traj_seqlens
+    )
+
+
+def batched_call(
+    fn: Callable[[dict[str, Any]], Any],
+    data: list[dict[str, Any]],
+    *,
+    unpack: bool = True,
+) -> Any:
+    """Concatenate per-trajectory dicts into one batch, call *fn*, optionally unpack.
+
+    This is the canonical way to bridge the per-trajectory data representation
+    (``list[dict[str, Any]]``) used by trainers/workflows with the single-batch
+    representation (``dict[str, Any]``) expected by engine forward/backward methods.
+
+    Parameters
+    ----------
+    fn : Callable[[dict[str, Any]], Any]
+        Implementation function that receives the batched dict.
+    data : list[dict[str, Any]]
+        Per-trajectory dicts to be concatenated.
+    unpack : bool
+        If True (default), split the result back into a per-trajectory list
+        via :func:`split_batch`.
+    """
+    batched, meta = concat_batch(data)
+    result = fn(batched)
+    if unpack:
+        return split_batch(result, meta)
     return result
 
 
@@ -243,7 +445,7 @@ def unpack_sequence(
 
 def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: list[int]) -> list[list[int]]:
     assert mb_spec.max_tokens_per_mb is not None
-    group_indices = datapack.ffd_allocate(
+    group_indices = seqpack.ffd_allocate(
         lens,
         mb_spec.max_tokens_per_mb,
         min_groups=mb_spec.n_mbs,
@@ -531,7 +733,7 @@ def split_padded_tensor_dict_into_mb_list(
     # split
     group_indices = allocate_balanced_mbs_synced(mb_spec, input_lens, group=group)
     group_indices = [
-        datapack.flat2d(
+        seqpack.flat2d(
             [list(range(i * granularity, (i + 1) * granularity)) for i in group_index]
         )
         for group_index in group_indices
@@ -542,7 +744,7 @@ def split_padded_tensor_dict_into_mb_list(
     group_n_seqs = [len(x) for x in splitted_lens]
     group_lens = [sum(x) for x in splitted_lens]
 
-    forward_indices = datapack.flat2d(group_indices)
+    forward_indices = seqpack.flat2d(group_indices)
     backward_indices = np.zeros(bs, dtype=np.int64)
     backward_indices[forward_indices] = np.arange(bs)
 
