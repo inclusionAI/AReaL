@@ -60,6 +60,17 @@ class WorkerInfo:
     log_file: str
     env_vars: dict[str, str] = field(default_factory=dict)
 
+def _apply_env_patch(
+    base_env: dict[str, str],
+    env_overrides: dict[str, Any] | None = None,
+    unset_env_keys: list[str] | None = None,
+) -> dict[str, str]:
+    env = dict(base_env)
+    for key in unset_env_keys or []:
+        env.pop(key, None)
+    for key, value in (env_overrides or {}).items():
+        env[key] = str(value)
+    return env
 
 def _get_device_count_safely() -> int | None:
     """
@@ -258,6 +269,8 @@ class LocalScheduler(Scheduler):
         target_wi: WorkerInfo,
         target_role: str,
         command: str | None = None,
+        env_overrides: dict[str, Any] | None = None,
+        unset_env_keys: list[str] | None = None,
     ) -> WorkerInfo:
         """Fork a single worker asynchronously.
 
@@ -266,6 +279,10 @@ class LocalScheduler(Scheduler):
         command : str, optional
             Custom module path to run instead of the default rpc_server.
             If specified, the forked process runs this module.
+        env_overrides : dict[str, Any], optional
+            Environment variables to override/add in the forked child.
+        unset_env_keys : list[str], optional
+            Environment variable names to remove from the forked child.
         """
         worker_id = f"{role}/{idx}"
         target_url = (
@@ -273,9 +290,14 @@ class LocalScheduler(Scheduler):
         )
 
         try:
-            payload = {"role": role, "worker_index": idx}
+            payload: dict[str, Any] = {"role": role, "worker_index": idx}
             if command is not None:
                 payload["command"] = command
+            if env_overrides:
+                payload["env_overrides"] = env_overrides
+            if unset_env_keys:
+                payload["unset_env_keys"] = unset_env_keys
+
             async with session.post(
                 target_url,
                 json=payload,
@@ -330,7 +352,11 @@ class LocalScheduler(Scheduler):
             gpu_devices=target_wi.gpu_devices,  # Inherited from target
             created_at=time.time(),
             log_file=str(self.log_dir / f"{role}.log"),
-            env_vars=target_wi.env_vars.copy(),  # Inherited from target
+            env_vars=_apply_env_patch(
+                target_wi.env_vars,
+                env_overrides=env_overrides,
+                unset_env_keys=unset_env_keys,
+            ),
         )
 
     async def _kill_forked_worker(
@@ -399,6 +425,8 @@ class LocalScheduler(Scheduler):
         target_role: str,
         target_workers: list[WorkerInfo],
         command: str | None = None,
+        env_overrides: dict[str, Any] | None = None,
+        unset_env_keys: list[str] | None = None,
     ) -> list[str]:
         """Create forked workers concurrently using async requests.
 
@@ -407,22 +435,31 @@ class LocalScheduler(Scheduler):
         command : str, optional
             Custom module path to run instead of the default rpc_server.
             If specified, the forked processes run this module.
+        env_overrides : dict[str, Any], optional
+            Environment variables to override/add in forked children.
+        unset_env_keys : list[str], optional
+            Environment variable names to remove from forked children.
         """
         timeout = aiohttp.ClientTimeout(total=120.0)
         async with aiohttp.ClientSession(
             timeout=timeout,
             connector=get_default_connector(),
         ) as session:
-            # Launch all fork requests concurrently with exception handling
             tasks = [
                 self._fork_single_worker(
-                    session, role, idx, target_wi, target_role, command
+                    session,
+                    role,
+                    idx,
+                    target_wi,
+                    target_role,
+                    command=command,
+                    env_overrides=env_overrides,
+                    unset_env_keys=unset_env_keys,
                 )
                 for idx, target_wi in enumerate(target_workers)
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Separate successful workers from failures
         workers = []
         failed_indices = []
         for idx, result in enumerate(results):
@@ -434,13 +471,11 @@ class LocalScheduler(Scheduler):
             else:
                 workers.append(result)
 
-        # If any fork failed, cleanup successful workers and raise
         if failed_indices:
             if workers:
                 logger.warning(
                     f"Cleaning up {len(workers)} successfully forked workers due to partial failure"
                 )
-                # Kill the forked processes via parent RPC servers
                 try:
                     await self._cleanup_forked_workers_async(role, target_role, workers)
                 except Exception as cleanup_error:
@@ -461,7 +496,6 @@ class LocalScheduler(Scheduler):
             f"created {len(workers)} new worker processes"
         )
 
-        # Configure forked workers if exp_config is available
         if self.exp_config is not None:
             for worker_rank, worker_info in enumerate(workers):
                 self._configure_worker(worker_info, worker_rank)
@@ -473,6 +507,8 @@ class LocalScheduler(Scheduler):
         role: str,
         target_role: str,
         command: str | None = None,
+        env_overrides: dict[str, Any] | None = None,
+        unset_env_keys: list[str] | None = None,
     ) -> list[str]:
         """Fork new worker processes from existing workers.
 
@@ -488,6 +524,10 @@ class LocalScheduler(Scheduler):
         command : str, optional
             Custom module path to run instead of the default rpc_server.
             If specified, the forked process runs this module.
+        env_overrides : dict[str, Any], optional
+            Environment variables to override/add in the forked child.
+        unset_env_keys : list[str], optional
+            Environment variable names to remove from the forked child.
 
         Returns
         -------
@@ -504,10 +544,11 @@ class LocalScheduler(Scheduler):
                 role,
                 target_role,
                 target_workers,
-                command,
+                command=command,
+                env_overrides=env_overrides,
+                unset_env_keys=unset_env_keys,
             )
         except Exception:
-            # Cleanup on failure
             if role in self._workers:
                 del self._workers[role]
             if role in self._colocated_roles:
@@ -555,6 +596,8 @@ class LocalScheduler(Scheduler):
             )
 
         schedulings = self._prepare_worker_specs(role, num_workers, job.tasks)
+        fork_env_overrides = kwargs.get("fork_env_overrides")
+        fork_unset_env_keys = kwargs.get("fork_unset_env_keys")
 
         strategy = job.scheduling_strategy
         strategy_type = SchedulingStrategyType(strategy.type)
@@ -589,7 +632,12 @@ class LocalScheduler(Scheduler):
             # Check if fork mode is enabled
             if strategy.fork:
                 # Fork mode: spawn new processes on same GPUs via /fork endpoint
-                worker_ids = self.fork_workers(role, colocate_role)
+                worker_ids = self.fork_workers(
+                    role,
+                    colocate_role,
+                    env_overrides=fork_env_overrides,
+                    unset_env_keys=fork_unset_env_keys,
+                )
             else:
                 # Reuse existing workers - no new processes spawned
                 worker_ids = [w.worker.id for w in target_workers]

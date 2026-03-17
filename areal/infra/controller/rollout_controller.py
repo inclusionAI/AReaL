@@ -33,6 +33,7 @@ from areal.api.cli_args import (
     InferenceEngineConfig,
     PerfTracerConfig,
     SchedulingSpec,
+    SchedulingStrategyType,
 )
 from areal.infra.rpc.serialization import deserialize_value
 from areal.infra.utils.concurrent import run_async_task
@@ -47,6 +48,11 @@ from ..workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 
 logger = logging.getLogger("RolloutController")
 
+_ROLLOUT_FORK_UNSET_ENV_KEYS = [
+    "LD_PRELOAD",
+    "TMS_INIT_ENABLE",
+    "TMS_INIT_ENABLE_CPU_BACKUP",
+]
 
 # NOTE: remote task input has a slightly different
 # type annotation, which disallows workflow object or types
@@ -151,6 +157,25 @@ class RolloutController:
         """
         return f"{self._worker_role}/{rank}"
 
+    @staticmethod
+    def _build_create_worker_kwargs(job: Job) -> dict[str, Any]:
+        """Build scheduler kwargs for rollout worker creation.
+
+        For colocated rollout->actor with fork=True, sanitize inherited actor-side
+        TMS env vars at the fork boundary so the rollout child and its SGLang server
+        do not inherit training-side memory-saver hooks.
+        """
+        strategy = job.scheduling_strategy
+        if (
+            SchedulingStrategyType(strategy.type) == SchedulingStrategyType.colocation
+            and strategy.target == "actor"
+            and strategy.fork
+        ):
+            return {
+                "fork_unset_env_keys": list(_ROLLOUT_FORK_UNSET_ENV_KEYS),
+            }
+        return {}
+
     def initialize(
         self,
         role: str,
@@ -232,8 +257,16 @@ class RolloutController:
         **kwargs,
     ):
         # Create workers via scheduler
-        logger.info("Creating workers via scheduler...")
-        worker_ids = self.scheduler.create_workers(job=job)
+        create_worker_kwargs = self._build_create_worker_kwargs(job)
+        if create_worker_kwargs:
+            logger.info(
+                "Creating workers via scheduler with fork env cleanup: "
+                f"{create_worker_kwargs}"
+            )
+        else:
+            logger.info("Creating workers via scheduler...")
+
+        worker_ids = self.scheduler.create_workers(job=job, **create_worker_kwargs)
         logger.info(f"Workers created: {worker_ids}")
 
         # Wait for workers to be ready
@@ -566,12 +599,12 @@ class RolloutController:
 
         @app.route("/callback/pause_generation", methods=["POST"])
         def pause_generation():
-            self._callback_loop.run_until_complete(self.pause_generation())
+            self.pause_generation()
             return jsonify({"status": "ok"})
 
         @app.route("/callback/continue_generation", methods=["POST"])
         def continue_generation():
-            self._callback_loop.run_until_complete(self.continue_generation())
+            self.continue_generation()
             return jsonify({"status": "ok"})
 
         @app.route("/callback/rollout_complete", methods=["POST"])
@@ -1028,11 +1061,17 @@ class RolloutController:
     def sync_weights_from_disk(self, meta: WeightUpdateMeta) -> None:
         run_async_task(self.update_weights_from_disk, meta)
 
-    async def pause_generation(self):
+    async def _pause_generation_async(self):
         await self._collective_rpc_async("pause_generation")
 
-    async def continue_generation(self):
+    def pause_generation(self):
+        run_async_task(self._pause_generation_async)
+
+    async def _continue_generation_async(self):
         await self._collective_rpc_async("continue_generation")
+
+    def continue_generation(self):
+        run_async_task(self._continue_generation_async)
 
     def set_version(self, version: int) -> None:
         with self._version_lock:

@@ -5,7 +5,7 @@ trial_name: trial0
 
 seed: 1
 enable_offload: true  # Enables torch_memory_saver for train-side offload/onload
-total_train_epochs: 10
+total_train_epochs: 1
 tokenizer_path: ${actor.path}
 
 cluster:
@@ -45,7 +45,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-1.5B
+  path: /data/data/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -108,7 +108,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: openai/gsm8k
+  path: /data/data/datasets--openai--gsm8k/snapshots/cc7b047b6e5bb11b4f1af84efc572db110a51b3c
   type: rl
   max_length: 1024
 
@@ -116,7 +116,7 @@ valid_dataset:
   batch_size: 256
   pin_memory: true
   num_workers: 4
-  path: openai/gsm8k
+  path: /data/data/datasets--openai--gsm8k/snapshots/cc7b047b6e5bb11b4f1af84efc572db110a51b3c
   type: rl
 
 # Utilities

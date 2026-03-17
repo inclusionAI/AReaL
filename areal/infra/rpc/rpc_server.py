@@ -203,13 +203,15 @@ def fork_worker():
 
     This endpoint spawns a new RPC server process as a child of this worker.
     The child inherits the same environment (including CUDA_VISIBLE_DEVICES)
-    but runs as an independent process with its own engine registry.
+    unless env overrides/unsets are explicitly requested.
 
     Expected JSON payload:
     {
-        "role": "ref",           # Role name for the forked worker
-        "worker_index": 0,       # Worker index
-        "command": "areal.infra.rpc.rpc_server"  # Optional: custom module to run
+        "role": "ref",                    # Role name for the forked worker
+        "worker_index": 0,                # Worker index
+        "command": "areal.infra.rpc.rpc_server",  # Optional custom module to run
+        "env_overrides": {"FOO": "bar"},  # Optional env overrides for child
+        "unset_env_keys": ["LD_PRELOAD"]  # Optional env keys removed from child
     }
 
     Returns:
@@ -229,20 +231,27 @@ def fork_worker():
 
         role = data.get("role")
         worker_index = data.get("worker_index")
-        command = data.get("command")  # Optional custom module path
+        command = data.get("command")
+        env_overrides = data.get("env_overrides") or {}
+        unset_env_keys = data.get("unset_env_keys") or []
 
         if role is None:
             return jsonify({"error": "Missing 'role' field in request"}), 400
         if worker_index is None:
             return jsonify({"error": "Missing 'worker_index' field in request"}), 400
+        if not isinstance(env_overrides, dict):
+            return jsonify({"error": "'env_overrides' must be a dictionary"}), 400
+        if not isinstance(unset_env_keys, list) or not all(
+            isinstance(key, str) for key in unset_env_keys
+        ):
+            return jsonify({"error": "'unset_env_keys' must be a list[str]"}), 400
+        if not all(isinstance(key, str) for key in env_overrides):
+            return jsonify({"error": "All env_overrides keys must be strings"}), 400
 
-        # Allocate a free port for the child process
         ports = find_free_ports(1, exclude_ports=_allocated_ports)
         child_port = ports[0]
         _allocated_ports.add(child_port)
 
-        # Build command for child process
-        # Use custom module if specified, otherwise default to rpc_server
         module = command if command else "areal.infra.rpc.rpc_server"
         cmd = [
             sys.executable,
@@ -275,8 +284,6 @@ def fork_worker():
             f"on port {child_port}"
         )
 
-        # Build shell command with tee/sed for streaming logs to terminal and files
-        # This matches LocalScheduler's logging pattern
         log_dir = (
             Path(_fileroot)
             / "logs"
@@ -290,23 +297,32 @@ def fork_worker():
 
         logger.info(f"Forked worker logs will be written to: {log_file}")
 
-        # Use streaming log utility for terminal, role log, and merged log output
+        child_env = os.environ.copy()
+        for key in unset_env_keys:
+            child_env.pop(key, None)
+        for key, value in env_overrides.items():
+            child_env[key] = str(value)
+
+        if unset_env_keys or env_overrides:
+            logger.info(
+                f"Fork child env patch for role '{role}' index {worker_index}: "
+                f"unset={unset_env_keys}, overrides={list(env_overrides.keys())}"
+            )
+
         child_process = run_with_streaming_logs(
             cmd,
             log_file,
             merged_log,
             role,
-            env=os.environ.copy(),
+            env=child_env,
         )
 
         with _forked_children_lock:
             _forked_children.append(child_process)
             _forked_children_map[(role, worker_index)] = child_process
 
-        # Wait for child to be ready
         child_host = _server_host
         if not _wait_for_worker_ready(child_host, child_port):
-            # Cleanup on failure
             try:
                 kill_process_tree(child_process.pid, timeout=3, graceful=True)
             except Exception:
@@ -668,7 +684,16 @@ def call_engine_method():
         def execute_in_engine_thread():
             try:
                 # Broadcast args when engine is a TrainEngine and has been initialized
-                if isinstance(engine, TrainEngine) and engine.initialized:
+                NON_COLLECTIVE_TRAIN_ENGINE_METHODS = {
+                    "config_perf_tracer",
+                    # 如有必要，可后续加入其它纯控制类方法
+                }
+                should_broadcast = (
+                    isinstance(engine, TrainEngine)
+                    and engine.initialized
+                    and method_name not in NON_COLLECTIVE_TRAIN_ENGINE_METHODS
+                )
+                if should_broadcast:
                     logger.debug(
                         f"Broadcasting data for TrainEngine method: {method_name}"
                     )

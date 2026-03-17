@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import os
 from collections.abc import Callable
+from contextlib import contextmanager
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -41,7 +42,7 @@ from areal.infra import (
     SlurmScheduler,
     current_platform,
 )
-from areal.utils import logging, perf_tracer, seeding, stats_tracker
+from areal.utils import logging, name_resolve, names, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
@@ -309,15 +310,7 @@ class PPOTrainer:
             _initial_lora_meta = None
             if self._initial_lora_path is not None:
                 _initial_lora_meta = self.weight_update_meta.with_version(0)
-                self.actor.save(
-                    SaveLoadMeta(
-                        path=_initial_lora_meta.path,
-                        weight_format="hf",
-                        with_optim=False,
-                        tokenizer=self.tokenizer,
-                        processor=self.processor,
-                    )
-                )
+                self._save_actor_weights_for_rollout(_initial_lora_meta)
 
             self.colocated_orch.initial_offload_training()
 
@@ -367,15 +360,7 @@ class PPOTrainer:
                 versioned_meta = self.weight_update_meta.with_version(recovery_version)
                 # save() must be called while actor is on GPU; onload first.
                 self.colocated_orch.prepare_for_training()
-                self.actor.save(
-                    SaveLoadMeta(
-                        path=versioned_meta.path,
-                        weight_format="hf",
-                        with_optim=False,
-                        tokenizer=self.tokenizer,
-                        processor=self.processor,
-                    )
-                )
+                self._save_actor_weights_for_rollout(versioned_meta)
                 self.actor.set_version(recovery_version)
                 self.rollout.set_version(recovery_version)
                 # offload training, onload inference, and load new weights
@@ -450,6 +435,7 @@ class PPOTrainer:
                     },
                 ),
                 self.actor.prepare_batch_context(),
+                self._colocated_prepare_batch_context(global_step),
             ):
                 rollout_batch = self.actor.prepare_batch(
                     self.train_dataloader,
@@ -459,21 +445,6 @@ class PPOTrainer:
                     group_size=config.gconfig.n_samples,
                     dynamic_bs=self.config.dynamic_bs,
                 )
-                if self._colocated:
-                    self.rollout.pause()
-
-            # === Colocated mode: switch from inference to training ===
-            if self._colocated:
-                assert self.colocated_orch is not None
-                with (
-                    stats_tracker.record_timing("colocated_switch_to_train"),
-                    perf_tracer.trace_scope(
-                        "train.colocated_switch_to_train",
-                        category=Category.COMM,
-                        args={"global_step": global_step},
-                    ),
-                ):
-                    self.colocated_orch.prepare_for_training()
 
             if self.critic is not None:
                 with (
@@ -591,16 +562,9 @@ class PPOTrainer:
 
                 if self._colocated:
                     # Colocated mode: save weights to the versioned disk path
-                    # while training engine is still on GPU
-                    self.actor.save(
-                        SaveLoadMeta(
-                            path=versioned_meta.path,
-                            weight_format="hf",
-                            with_optim=False,
-                            tokenizer=self.tokenizer,
-                            processor=self.processor,
-                        )
-                    )
+                    # while training engine is still on GPU, then publish the
+                    # rendezvous signal expected by remote rollout workers.
+                    self._save_actor_weights_for_rollout(versioned_meta)
                 else:
                     # Standard mode: use FSDP's update_weights (xccl or disk)
                     self.actor.update_weights(versioned_meta)
@@ -757,6 +721,77 @@ class PPOTrainer:
             and getattr(strategy, "target", None) == "actor"
         )
 
+    @contextmanager
+    def _colocated_prepare_batch_context(self, global_step: int):
+        if self.colocated_orch is None:
+            yield
+            return
+
+        try:
+            yield
+        except Exception:
+            raise
+        else:
+            with (
+                stats_tracker.record_timing("colocated_switch_to_train"),
+                perf_tracer.trace_scope(
+                    "train.colocated_switch_to_train",
+                    category=Category.COMM,
+                    args={"global_step": global_step},
+                ),
+            ):
+                self.colocated_orch.prepare_for_training()
+
+    def _save_actor_weights_for_rollout(self, meta: WeightUpdateMeta) -> None:
+        if meta.type != "disk":
+            raise ValueError(
+                "Colocated rollout sync only supports disk-based weight updates. "
+                f"Got '{meta.type}'."
+            )
+
+        self.actor.save(
+            SaveLoadMeta(
+                path=meta.path,
+                weight_format="hf",
+                with_optim=False,
+                tokenizer=self.tokenizer,
+                processor=self.processor,
+            )
+        )
+        self._publish_disk_weight_update_ready(meta)
+
+    def _publish_disk_weight_update_ready(self, meta: WeightUpdateMeta) -> None:
+        import time
+        
+        if meta.version is None:
+            raise ValueError("Colocated disk weight sync requires meta.version.")
+        
+        if not dist.is_initialized():
+            update_name = names.update_weights_from_disk(
+                self.config.experiment_name,
+                self.config.trial_name,
+                meta.version,
+                )
+            name_resolve.add(
+                update_name,
+                str(time.time()),
+                keepalive_ttl=120,
+                )
+            return
+    
+        if dist.get_rank() == 0:
+            update_name = names.update_weights_from_disk(
+                self.config.experiment_name,
+                self.config.trial_name,
+                meta.version,
+            )
+            name_resolve.add(
+                update_name,
+                str(time.time()),
+                keepalive_ttl=120,
+            )
+        dist.barrier(group=self.actor.cpu_group)
+
     def _init_scheduler(self) -> Scheduler:
         cfg = self.config.scheduler
         if cfg.type == "local":
@@ -790,10 +825,6 @@ class PPOTrainer:
         if self.config.enable_offload or self._colocated:
             tms_env_vars = get_tms_env_vars()
             for spec in self.config.actor.scheduling_spec:
-                spec.env_vars.update(tms_env_vars)
-
-        if self._colocated and tms_env_vars is not None:
-            for spec in self.config.rollout.scheduling_spec:
                 spec.env_vars.update(tms_env_vars)
 
         if self.allocation_mode.gen_backend != "sglang":

@@ -616,16 +616,29 @@ class TrainController:
             return await asyncio.gather(*tasks)
 
         run_async_task(_call)
-
+    
     def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
-        self._custom_function_call("save_perf_tracer", step=step, force=force)
+        async def _call():
+            tasks = [
+                self.scheduler.async_call_engine(
+                    worker_id=worker.id,
+                    method="save_perf_tracer",
+                    engine_name=self._engine_name(rank),
+                    step=step,
+                    force=force,
+                )
+                for rank, worker in enumerate(self.workers)
+            ]
+            return await asyncio.gather(*tasks)
+
+        run_async_task(_call)
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        should_accept_fn: str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> list[dict[str, Any]]:
@@ -643,7 +656,7 @@ class TrainController:
         data: list[dict[str, Any]],
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        should_accept_fn: str | None = None,
         group_size: int = 1,
     ) -> list[dict[str, Any]]:
         return self.rollout.rollout_batch(
