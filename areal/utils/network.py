@@ -1,5 +1,6 @@
 import random
 import socket
+from ipaddress import ip_address
 
 
 def gethostname():
@@ -8,25 +9,30 @@ def gethostname():
 
 def gethostip(probe_host: str = "8.8.8.8", probe_port: int = 80) -> str:
     """
-    Find the local IPv4 address for outbound route to `probe_host:probe_port` (typically
-    a LAN/private IP). Use hostname resolution first; if it fails or returns loopback (127.*),
-    fall back to a UDP connect.
+    Find the local IP address for outbound route to `probe_host:probe_port`.
 
     Args:
-        probe_host: Remote IPv4 address used to trigger route selection, default to Google
-                    Public DNS IP.
+        probe_host: Remote IPv4 address used to trigger route selection.
         probe_port: Remote port used for the UDP probe.
 
     Returns:
-        The selected local IPv4 address as a string
+        The selected local IP address as a string
 
     Raises:
-        RuntimeError: If no suitable IPv4 address can be determined
+        RuntimeError: If no suitable address can be determined
     """
     try:
-        ip = socket.gethostbyname(socket.gethostname())
-        if ip and not ip.startswith("127."):
-            return ip
+        hostname = socket.gethostname()
+        infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_DGRAM)
+        for family, _, _, _, sockaddr in infos:
+            if family == socket.AF_INET:
+                ip = sockaddr[0]
+                if ip and not ip.startswith("127."):
+                    return ip
+            elif family == socket.AF_INET6:
+                ip = sockaddr[0]
+                if ip and ip != "::1":
+                    return ip
     except socket.gaierror:
         pass
 
@@ -35,7 +41,66 @@ def gethostip(probe_host: str = "8.8.8.8", probe_port: int = 80) -> str:
             sock.connect((probe_host, probe_port))
             return sock.getsockname()[0]
     except OSError as e:
-        raise RuntimeError("Could not determine host IP") from e
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
+                sock.connect(("2001:4860:4860::8888", probe_port))
+                ip6 = sock.getsockname()[0]
+                if ip6 and ip6 != "::1":
+                    return ip6
+        except OSError:
+            raise RuntimeError("Could not determine host IP") from e
+
+
+def get_loopback_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+        return "127.0.0.1"
+    except OSError:
+        pass
+    if socket.has_ipv6:
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as sock:
+                sock.bind(("::1", 0))
+            return "::1"
+        except OSError:
+            pass
+    raise RuntimeError("Could not determine loopback IP")
+
+
+def format_host_for_url(host: str) -> str:
+    if host.startswith("[") and host.endswith("]"):
+        return host
+    if ":" in host:
+        return f"[{host}]"
+    return host
+
+
+def format_hostport(host: str, port: int) -> str:
+    return f"{format_host_for_url(host)}:{port}"
+
+
+def split_hostport(addr: str) -> tuple[str, int]:
+    if addr.startswith("["):
+        end = addr.find("]")
+        if end == -1:
+            raise ValueError(f"Invalid bracketed address: {addr}")
+        host = addr[1:end]
+        rest = addr[end + 1 :]
+        if not rest.startswith(":"):
+            raise ValueError(f"Invalid bracketed address: {addr}")
+        return host, int(rest[1:])
+
+    if addr.count(":") == 1:
+        host, port_s = addr.split(":", 1)
+        return host, int(port_s)
+
+    host, port_s = addr.rsplit(":", 1)
+    try:
+        ip_address(host)
+    except ValueError as e:
+        raise ValueError(f"Invalid host:port address: {addr}") from e
+    return host, int(port_s)
 
 
 def find_free_ports(

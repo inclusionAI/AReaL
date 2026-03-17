@@ -106,8 +106,14 @@ class HttpTensorBackend:
     ) -> torch.Tensor:
         # Avoid circular import
         from areal.infra.rpc.serialization import deserialize_value
+        from areal.utils.network import format_hostport, split_hostport
 
-        url = f"http://{node_addr}/data/{shard_id}"
+        try:
+            host, port = split_hostport(node_addr)
+            base = format_hostport(host, port)
+        except ValueError:
+            base = node_addr
+        url = f"http://{base}/data/{shard_id}"
         async with session.get(url) as resp:
             if resp.status != 200:
                 raise RuntimeError(f"Failed to fetch shard from {url}: {resp.status}")
@@ -123,9 +129,16 @@ class HttpTensorBackend:
 
     async def delete(self, node_addr: str, shard_ids: list[str]) -> None:
         """Delete shards via HTTP DELETE request."""
+        from areal.utils.network import format_hostport, split_hostport
+
+        try:
+            host, port = split_hostport(node_addr)
+            base = format_hostport(host, port)
+        except ValueError:
+            base = node_addr
         async with aiohttp.ClientSession() as session:
             async with session.delete(
-                f"http://{node_addr}/data/clear", json={"shard_ids": shard_ids}
+                f"http://{base}/data/clear", json={"shard_ids": shard_ids}
             ) as resp:
                 if resp.status == 200:
                     await resp.json()

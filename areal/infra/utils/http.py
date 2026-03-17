@@ -5,6 +5,7 @@ from typing import Any
 import aiohttp
 
 from areal.utils import logging
+from areal.utils.network import format_hostport, split_hostport
 
 DEFAULT_RETRIES = 1
 DEFAULT_REQUEST_TIMEOUT = 3600
@@ -32,7 +33,11 @@ async def arequest_with_retry(
         timeout = DEFAULT_REQUEST_TIMEOUT
     last_exception = None
     max_retries = max_retries or DEFAULT_RETRIES
-    base_url = f"http://{addr}"
+    try:
+        host, port = split_hostport(addr)
+        base_url = f"http://{format_hostport(host, port)}"
+    except ValueError:
+        base_url = f"http://{addr}"
     url = f"{base_url}{endpoint}"
 
     timeo = aiohttp.ClientTimeout(

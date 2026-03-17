@@ -45,7 +45,7 @@ from areal.infra.utils.launcher import (
 from areal.infra.utils.proc import kill_process_tree, run_with_streaming_logs
 from areal.utils import logging, name_resolve, names
 from areal.utils.fs import validate_shared_path
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_hostport, get_loopback_ip
 
 logger = logging.getLogger("LocalScheduler")
 
@@ -155,6 +155,7 @@ class LocalScheduler(Scheduler):
 
         self.startup_timeout = startup_timeout
         self.health_check_interval = health_check_interval
+        self._worker_host = get_loopback_ip()
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._workers: dict[str, list[WorkerInfo]] = {}
@@ -268,9 +269,7 @@ class LocalScheduler(Scheduler):
             If specified, the forked process runs this module.
         """
         worker_id = f"{role}/{idx}"
-        target_url = (
-            f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/fork"
-        )
+        target_url = f"http://{format_hostport(target_wi.worker.ip, int(target_wi.worker.worker_ports[0]))}/fork"
 
         try:
             payload = {"role": role, "worker_index": idx}
@@ -341,7 +340,7 @@ class LocalScheduler(Scheduler):
         target_wi: WorkerInfo,
     ) -> None:
         """Kill a single forked worker via its parent's RPC server."""
-        target_url = f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/kill_forked_worker"
+        target_url = f"http://{format_hostport(target_wi.worker.ip, int(target_wi.worker.worker_ports[0]))}/kill_forked_worker"
 
         try:
             payload = {"role": role, "worker_index": idx}
@@ -662,6 +661,8 @@ class LocalScheduler(Scheduler):
                         "The scheduler automatically allocates and provides the port.",
                     )
                 cmd = shlex.split(scheduling.cmd)
+                if "--host" not in cmd:
+                    cmd.extend(["--host", self._worker_host])
                 cmd.extend(["--port", str(ports[0])])
                 # Add name_resolve and worker identity args
                 cmd.extend(["--experiment-name", str(self.experiment_name)])
@@ -707,7 +708,7 @@ class LocalScheduler(Scheduler):
 
                 worker = Worker(
                     id=worker_id,
-                    ip=gethostip(),
+                    ip=self._worker_host,
                     worker_ports=[str(p) for p in ports],
                     engine_ports=[],
                 )
@@ -830,7 +831,7 @@ class LocalScheduler(Scheduler):
 
     def _is_worker_ready(self, worker_info: WorkerInfo) -> bool:
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/health"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/health"
 
         try:
             response = requests.get(url, timeout=2.0)
@@ -839,12 +840,26 @@ class LocalScheduler(Scheduler):
             return False
 
     def _configure_worker(self, worker_info: WorkerInfo, worker_rank: int):
+        timeout = self.startup_timeout
+        start_time = time.time()
         while not self._is_worker_ready(worker_info):
+            if time.time() - start_time > timeout:
+                raise WorkerTimeoutError(worker_info.role, timeout)
+            if (
+                worker_info.process is not None
+                and worker_info.process.poll() is not None
+            ):
+                stderr = self._read_log_tail(worker_info.log_file)
+                raise WorkerFailedError(
+                    worker_info.worker.id,
+                    worker_info.process.returncode,
+                    stderr,
+                )
             time.sleep(0.1)
 
         worker_id = worker_info.worker.id
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/configure"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/configure"
 
         try:
             response = requests.post(
@@ -1000,7 +1015,7 @@ class LocalScheduler(Scheduler):
 
         payload = {"env": env}
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/set_env"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/set_env"
 
         try:
             timeout = aiohttp.ClientTimeout(total=30.0)
@@ -1091,7 +1106,7 @@ class LocalScheduler(Scheduler):
 
         # Send HTTP request to create engine
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/create_engine"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/create_engine"
 
         try:
             logger.debug(
@@ -1226,7 +1241,7 @@ class LocalScheduler(Scheduler):
 
         # Retry logic with exponential backoff
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/call"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/call"
         last_error = None
 
         for attempt in range(1, max_retries + 1):
@@ -1342,7 +1357,7 @@ class LocalScheduler(Scheduler):
         # Route to different endpoint based on method
         port = int(worker_info.worker.worker_ports[0])
         # Standard engine method call
-        url = f"http://{worker_info.worker.ip}:{port}/call"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/call"
         # Serialize args and kwargs
         serialized_args = serialize_value(list(args))
         serialized_kwargs = serialize_value(kwargs)

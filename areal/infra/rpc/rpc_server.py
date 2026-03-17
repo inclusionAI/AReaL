@@ -34,7 +34,12 @@ from areal.utils.data import (
     tensor_container_to,
 )
 from areal.utils.dynamic_import import import_from_string
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import (
+    find_free_ports,
+    format_hostport,
+    gethostip,
+    get_loopback_ip,
+)
 
 logger = logging.getLogger("SyncRPCServer")
 
@@ -52,6 +57,7 @@ _engine_thread_lock = Lock()
 
 # Server address (set at startup)
 _server_host: str = "0.0.0.0"
+_bind_host: str = "0.0.0.0"
 _server_port: int = 8000
 
 _allocated_ports: set[int] = set()
@@ -182,7 +188,7 @@ def _wait_for_worker_ready(host: str, port: int, timeout: float = 60) -> bool:
     Returns:
         True if the worker is ready, False if timeout is reached.
     """
-    url = f"http://{host}:{port}/health"
+    url = f"http://{format_hostport(host, port)}/health"
     deadline = time.time() + timeout
 
     while time.time() < deadline:
@@ -249,7 +255,7 @@ def fork_worker():
             "-m",
             module,
             "--host",
-            "0.0.0.0",
+            _bind_host,
             "--port",
             str(child_port),
             "--experiment-name",
@@ -985,6 +991,7 @@ def main():
 
     # Set global server address variables
     global _server_host, _server_port, _role
+    global _bind_host
     global \
         _experiment_name, \
         _trial_name, \
@@ -992,9 +999,13 @@ def main():
         _nfs_record_root, \
         _etcd3_addr, \
         _fileroot
+    _bind_host = args.host
     _server_host = args.host
     if _server_host == "0.0.0.0":
-        _server_host = gethostip()
+        try:
+            _server_host = gethostip()
+        except RuntimeError:
+            _server_host = get_loopback_ip()
     _role = args.role
 
     # Set global config for fork endpoint
@@ -1029,7 +1040,7 @@ def main():
     key = names.worker_discovery(
         args.experiment_name, args.trial_name, args.role, worker_index
     )
-    name_resolve.add(key, f"{_server_host}:{_server_port}", replace=True)
+    name_resolve.add(key, format_hostport(_server_host, _server_port), replace=True)
 
     global _allocated_ports
     _allocated_ports.add(_server_port)
