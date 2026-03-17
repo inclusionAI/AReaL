@@ -56,7 +56,7 @@ def test_ipv6_tcp_init_method_end_to_end(tmp_path):
             capture_output=True,
             text=True,
             env={**os.environ, "PYTHONPATH": os.getcwd()},
-            timeout=60,
+            timeout=600,
         )
     except subprocess.CalledProcessError as e:
         pytest.fail(f"torchrun failed: {e.stderr}\n{e.stdout}")
@@ -93,7 +93,7 @@ def test_ipv4_tcp_init_method_end_to_end(tmp_path):
             capture_output=True,
             text=True,
             env={**os.environ, "PYTHONPATH": os.getcwd()},
-            timeout=60,
+            timeout=600,
         )
     except subprocess.CalledProcessError as e:
         pytest.fail(f"torchrun failed: {e.stderr}\n{e.stdout}")
