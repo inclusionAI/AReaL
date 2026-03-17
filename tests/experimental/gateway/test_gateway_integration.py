@@ -236,6 +236,7 @@ def gateway_stack(sglang_server, model_path):
         timeout=5.0,
     )
     assert resp.status_code == 200, f"Failed to register worker: {resp.text}"
+    worker_id = resp.json()["worker_id"]
 
     # Wait briefly for router health poller to mark worker healthy
     time.sleep(3)
@@ -245,6 +246,7 @@ def gateway_stack(sglang_server, model_path):
         "router_addr": router_addr,
         "data_proxy_addr": data_proxy_addr,
         "admin_key": ADMIN_KEY,
+        "worker_id": worker_id,
     }
 
     # Daemon threads die with the process — no explicit cleanup needed.
@@ -719,9 +721,9 @@ class TestGatewayAuth:
             )
             assert resp.status_code == 403
 
-            # /pause_generation requires admin key
+            # /pause_generation/{worker_id} requires admin key (use fake id — auth check is first)
             resp = await client.post(
-                f"{gw}/pause_generation",
+                f"{gw}/pause_generation/fake-worker-id",
                 content=b"{}",
                 headers={"Authorization": "Bearer not-admin"},
             )
@@ -731,17 +733,18 @@ class TestGatewayAuth:
 @pytest.mark.slow
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewayPauseContinue:
-    """Test pause/continue generation through the gateway (broadcast to workers)."""
+    """Test pause/continue generation through the gateway (targets worker by ID)."""
 
     @pytest.mark.asyncio
-    async def test_pause_continue_broadcast(self, gateway_stack):
+    async def test_pause_continue_by_worker_id(self, gateway_stack):
         """Pause → verify data proxy paused → Continue → verify resumed → generate."""
         gw = gateway_stack["gateway_addr"]
         dp = gateway_stack["data_proxy_addr"]
+        worker_id = gateway_stack["worker_id"]
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Pause via gateway (broadcasts to all workers)
+            # Pause via gateway (targets specific worker by ID)
             resp = await client.post(
-                f"{gw}/pause_generation",
+                f"{gw}/pause_generation/{worker_id}",
                 content=b"{}",
                 headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
@@ -756,7 +759,7 @@ class TestGatewayPauseContinue:
 
             # Continue via gateway
             resp = await client.post(
-                f"{gw}/continue_generation",
+                f"{gw}/continue_generation/{worker_id}",
                 content=b"{}",
                 headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
@@ -788,12 +791,13 @@ class TestGatewayPauseContinue:
         """Pause SGLang while /generate is in-flight through gateway, resume, verify.
 
         Task A: POST /generate (large max_new_tokens)
-        Task B: sleep → /pause_generation → sleep → /continue_generation
+        Task B: sleep → /pause_generation/{worker_id} → sleep → /continue_generation/{worker_id}
         After both: verify Task A returned valid SSE with tokens.
         """
         import asyncio
 
         gw = gateway_stack["gateway_addr"]
+        worker_id = gateway_stack["worker_id"]
         async with httpx.AsyncClient(timeout=120.0) as client:
 
             async def do_generate():
@@ -812,13 +816,13 @@ class TestGatewayPauseContinue:
             async def pause_then_resume():
                 await asyncio.sleep(0.5)
                 await client.post(
-                    f"{gw}/pause_generation",
+                    f"{gw}/pause_generation/{worker_id}",
                     content=b"{}",
                     headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                 )
                 await asyncio.sleep(1.0)
                 await client.post(
-                    f"{gw}/continue_generation",
+                    f"{gw}/continue_generation/{worker_id}",
                     content=b"{}",
                     headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                 )
@@ -847,6 +851,7 @@ class TestGatewayPauseContinue:
         import asyncio
 
         gw = gateway_stack["gateway_addr"]
+        worker_id = gateway_stack["worker_id"]
         async with httpx.AsyncClient(timeout=120.0) as client:
             # Start session
             resp = await client.post(
@@ -877,13 +882,13 @@ class TestGatewayPauseContinue:
             async def pause_then_resume():
                 await asyncio.sleep(0.5)
                 await client.post(
-                    f"{gw}/pause_generation",
+                    f"{gw}/pause_generation/{worker_id}",
                     content=b"{}",
                     headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                 )
                 await asyncio.sleep(1.0)
                 await client.post(
-                    f"{gw}/continue_generation",
+                    f"{gw}/continue_generation/{worker_id}",
                     content=b"{}",
                     headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                 )

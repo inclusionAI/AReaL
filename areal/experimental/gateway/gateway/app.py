@@ -30,6 +30,7 @@ from areal.experimental.gateway.gateway.streaming import (
     grant_capacity_in_router,
     query_router,
     register_session_in_router,
+    resolve_worker_addr,
 )
 
 logger = logging.getLogger("Gateway")
@@ -241,44 +242,50 @@ def create_app(config: GatewayConfig) -> FastAPI:
         )
 
     # =========================================================================
-    # POST /pause_generation — admin key ONLY, broadcast
+    # POST /pause_generation/{worker_id} — admin key ONLY, target single worker
     # =========================================================================
 
-    @app.post("/pause_generation")
-    async def pause_generation(request: Request):
+    @app.post("/pause_generation/{worker_id}")
+    async def pause_generation(worker_id: str, request: Request):
         require_admin_key(request, config.admin_api_key)
         try:
-            worker_addrs = await get_all_worker_addrs(
-                config.router_addr, config.admin_api_key, config.router_timeout
+            worker_addr = await resolve_worker_addr(
+                config.router_addr,
+                config.admin_api_key,
+                worker_id,
+                config.router_timeout,
             )
-        except RouterUnreachableError as exc:
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
 
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         results = await broadcast_to_workers(
-            worker_addrs, "/pause_generation", body, headers
+            [worker_addr], "/pause_generation", body, headers
         )
         return {"results": results}
 
     # =========================================================================
-    # POST /continue_generation — admin key ONLY, broadcast
+    # POST /continue_generation/{worker_id} — admin key ONLY, target single worker
     # =========================================================================
 
-    @app.post("/continue_generation")
-    async def continue_generation(request: Request):
+    @app.post("/continue_generation/{worker_id}")
+    async def continue_generation(worker_id: str, request: Request):
         require_admin_key(request, config.admin_api_key)
         try:
-            worker_addrs = await get_all_worker_addrs(
-                config.router_addr, config.admin_api_key, config.router_timeout
+            worker_addr = await resolve_worker_addr(
+                config.router_addr,
+                config.admin_api_key,
+                worker_id,
+                config.router_timeout,
             )
-        except RouterUnreachableError as exc:
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
 
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         results = await broadcast_to_workers(
-            worker_addrs, "/continue_generation", body, headers
+            [worker_addr], "/continue_generation", body, headers
         )
         return {"results": results}
 
@@ -349,21 +356,21 @@ def create_app(config: GatewayConfig) -> FastAPI:
         return result
 
     # =========================================================================
-    # Compatibility aliases for RolloutCallback — map /callback/* to broadcast endpoints
+    # Compatibility aliases for RolloutCallback — map /callback/* to endpoints
     # =========================================================================
     # RolloutCallback uses /callback/* prefixed paths for generation control.
     # Gateway implements the actual handlers at unprefixed paths.  These aliases
     # register the SAME handler functions on both routes.
-    # POST /callback/pause_generation → pause_generation
+    # POST /callback/pause_generation/{worker_id} → pause_generation
     app.add_api_route(
-        "/callback/pause_generation",
+        "/callback/pause_generation/{worker_id}",
         pause_generation,
         methods=["POST"],
     )
 
-    # POST /callback/continue_generation → continue_generation
+    # POST /callback/continue_generation/{worker_id} → continue_generation
     app.add_api_route(
-        "/callback/continue_generation",
+        "/callback/continue_generation/{worker_id}",
         continue_generation,
         methods=["POST"],
     )

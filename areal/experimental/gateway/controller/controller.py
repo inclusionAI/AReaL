@@ -69,6 +69,9 @@ class GatewayRolloutController:
         self._data_proxy_addrs: list[str] = []
         self._gateway_addr: str = ""
 
+        # Worker ID mapping (data proxy addr → router-assigned worker_id)
+        self._worker_ids: dict[str, str] = {}  # dp_addr -> worker_id
+
         # Version management
         self._version_lock = Lock()
         self._version = 0
@@ -441,7 +444,7 @@ class GatewayRolloutController:
         logger.info("Configured data proxy %s -> backend %s", dp_addr, backend_addr)
 
     def _register_data_proxies_in_router(self) -> None:
-        """Register all data proxy workers in the router."""
+        """Register all data proxy workers in the router and store their worker IDs."""
         import requests
 
         for dp_addr in self._data_proxy_addrs:
@@ -452,7 +455,12 @@ class GatewayRolloutController:
                 timeout=5,
             )
             resp.raise_for_status()
-            logger.info("Registered data proxy %s in router", dp_addr)
+            worker_id = resp.json().get("worker_id")
+            if worker_id:
+                self._worker_ids[dp_addr] = worker_id
+            logger.info(
+                "Registered data proxy %s in router (worker_id=%s)", dp_addr, worker_id
+            )
 
     @property
     def callback_addr(self) -> str:
@@ -497,6 +505,7 @@ class GatewayRolloutController:
         self.server_infos.clear()
         self._sglang_addrs.clear()
         self._data_proxy_addrs.clear()
+        self._worker_ids.clear()
         self._router_addr = ""
         self._gateway_addr = ""
         self._staleness_manager = None
@@ -825,26 +834,38 @@ class GatewayRolloutController:
     # -- Pause / Resume ----------------------------------------------------
 
     def pause(self) -> None:
-        """Pause dispatcher + broadcast pause to all workers."""
+        """Pause dispatcher + pause all workers."""
         if self._workflow_executor is not None:
             self._workflow_executor.pause()
         if self._gateway_addr:
-            self._gateway_http_post("/pause_generation", {})
+            for worker_id in self._worker_ids.values():
+                self._gateway_http_post(f"/pause_generation/{worker_id}", {})
 
     def resume(self) -> None:
-        """Broadcast resume to all workers + resume dispatcher."""
+        """Resume all workers + resume dispatcher."""
         if self._gateway_addr:
-            self._gateway_http_post("/continue_generation", {})
+            for worker_id in self._worker_ids.values():
+                self._gateway_http_post(f"/continue_generation/{worker_id}", {})
         if self._workflow_executor is not None:
             self._workflow_executor.resume()
 
-    async def pause_generation(self) -> None:
+    async def pause_generation(self, worker_id: str | None = None) -> None:
+        """Pause generation on a specific worker, or all workers if worker_id is None."""
         if self._gateway_addr:
-            self._gateway_http_post("/pause_generation", {})
+            if worker_id is not None:
+                self._gateway_http_post(f"/pause_generation/{worker_id}", {})
+            else:
+                for wid in self._worker_ids.values():
+                    self._gateway_http_post(f"/pause_generation/{wid}", {})
 
-    async def continue_generation(self) -> None:
+    async def continue_generation(self, worker_id: str | None = None) -> None:
+        """Continue generation on a specific worker, or all workers if worker_id is None."""
         if self._gateway_addr:
-            self._gateway_http_post("/continue_generation", {})
+            if worker_id is not None:
+                self._gateway_http_post(f"/continue_generation/{worker_id}", {})
+            else:
+                for wid in self._worker_ids.values():
+                    self._gateway_http_post(f"/continue_generation/{wid}", {})
 
     # -- Weight updates (not yet implemented in gateway) --------------------
 
@@ -905,6 +926,11 @@ class GatewayRolloutController:
         return self._gateway_addr
 
     # -- Properties --------------------------------------------------------
+
+    @property
+    def worker_ids(self) -> dict[str, str]:
+        """Return mapping from data proxy address to router-assigned worker_id."""
+        return dict(self._worker_ids)
 
     @property
     def staleness_manager(self):

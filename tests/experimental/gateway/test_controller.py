@@ -157,6 +157,7 @@ class TestGatewayRolloutControllerAPISurface:
             "dispatcher",
             "runner",
             "proxy_gateway_addr",
+            "worker_ids",
         ]
         for p in properties:
             assert hasattr(GatewayRolloutController, p), f"Missing property: {p}"
@@ -185,6 +186,8 @@ class TestGatewayRolloutControllerConstruction:
         assert controller.server_infos == []
         assert controller.get_version() == 0
         assert controller.staleness_manager is None
+        assert controller._worker_ids == {}
+        assert controller.worker_ids == {}
 
     def test_version_management_without_services(self):
         """set_version / get_version work even without gateway services."""

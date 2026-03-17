@@ -197,6 +197,48 @@ async def get_all_worker_addrs(
         raise RouterUnreachableError(f"Failed to get workers: {exc}") from exc
 
 
+async def resolve_worker_addr(
+    router_addr: str,
+    admin_api_key: str,
+    worker_id: str,
+    timeout: float,
+) -> str:
+    """Resolve a worker_id to its address via the Router.
+
+    GET ``{router_addr}/resolve_worker/{worker_id}`` with admin key auth.
+
+    Raises
+    ------
+    RouterKeyRejectedError
+        Worker ID not found (404).
+    RouterUnreachableError
+        Router connection failed.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(
+                f"{router_addr}/resolve_worker/{worker_id}",
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        if resp.status_code == 404:
+            data = resp.json()
+            raise RouterKeyRejectedError(
+                data.get("detail", f"Worker ID {worker_id} not found"), 404
+            )
+        resp.raise_for_status()
+        return resp.json()["worker_addr"]
+    except RouterKeyRejectedError:
+        raise
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise RouterUnreachableError(
+            f"Router unreachable for resolve_worker: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise RouterUnreachableError(
+            f"Failed to resolve worker {worker_id}: {exc}"
+        ) from exc
+
+
 def _forwarding_headers(raw_headers: dict[str, str]) -> dict[str, str]:
     """Build headers to forward to data proxy.
 

@@ -399,56 +399,59 @@ class TestSessionEndpoints:
 class TestBroadcast:
     @pytest.mark.asyncio
     @patch(f"{MODULE}.broadcast_to_workers", new_callable=AsyncMock)
-    @patch(f"{MODULE}.get_all_worker_addrs", new_callable=AsyncMock)
-    async def test_pause_generation_broadcast_all(
-        self, mock_get_workers, mock_broadcast, client
+    @patch(f"{MODULE}.resolve_worker_addr", new_callable=AsyncMock)
+    async def test_pause_generation_targets_worker(
+        self, mock_resolve, mock_broadcast, client
     ):
-        """Admin key → /pause_generation → broadcast to all workers."""
-        mock_get_workers.return_value = [WORKER_ADDR, WORKER_ADDR_2]
+        """Admin key → /pause_generation/{worker_id} → resolves and targets single worker."""
+        mock_resolve.return_value = WORKER_ADDR
         mock_broadcast.return_value = [
             {"worker_addr": WORKER_ADDR, "status": 200, "ok": True},
-            {"worker_addr": WORKER_ADDR_2, "status": 200, "ok": True},
         ]
 
         resp = await client.post(
-            "/pause_generation", content=b"{}", headers=admin_headers()
+            "/pause_generation/some-worker-id",
+            content=b"{}",
+            headers=admin_headers(),
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["results"]) == 2
-        assert all(r["ok"] for r in data["results"])
+        assert len(data["results"]) == 1
+        assert data["results"][0]["ok"] is True
+        mock_resolve.assert_called_once()
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.broadcast_to_workers", new_callable=AsyncMock)
-    @patch(f"{MODULE}.get_all_worker_addrs", new_callable=AsyncMock)
-    async def test_continue_generation_broadcast_all(
-        self, mock_get_workers, mock_broadcast, client
+    @patch(f"{MODULE}.resolve_worker_addr", new_callable=AsyncMock)
+    async def test_continue_generation_targets_worker(
+        self, mock_resolve, mock_broadcast, client
     ):
-        """Admin key → /continue_generation → broadcast to all workers."""
-        mock_get_workers.return_value = [WORKER_ADDR]
+        """Admin key → /continue_generation/{worker_id} → resolves and targets single worker."""
+        mock_resolve.return_value = WORKER_ADDR
         mock_broadcast.return_value = [
             {"worker_addr": WORKER_ADDR, "status": 200, "ok": True},
         ]
 
         resp = await client.post(
-            "/continue_generation", content=b"{}", headers=admin_headers()
+            "/continue_generation/some-worker-id",
+            content=b"{}",
+            headers=admin_headers(),
         )
         assert resp.status_code == 200
         assert len(resp.json()["results"]) == 1
+        mock_resolve.assert_called_once()
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.broadcast_to_workers", new_callable=AsyncMock)
-    @patch(f"{MODULE}.get_all_worker_addrs", new_callable=AsyncMock)
-    async def test_broadcast_partial_failure(
-        self, mock_get_workers, mock_broadcast, client
+    @patch(f"{MODULE}.resolve_worker_addr", new_callable=AsyncMock)
+    async def test_pause_worker_broadcast_failure(
+        self, mock_resolve, mock_broadcast, client
     ):
-        """Some workers fail → response shows per-worker results with ok=False."""
-        mock_get_workers.return_value = [WORKER_ADDR, WORKER_ADDR_2, WORKER_ADDR_3]
+        """Worker returns error → response shows ok=False for that worker."""
+        mock_resolve.return_value = WORKER_ADDR
         mock_broadcast.return_value = [
-            {"worker_addr": WORKER_ADDR, "status": 200, "ok": True},
-            {"worker_addr": WORKER_ADDR_2, "status": 200, "ok": True},
             {
-                "worker_addr": WORKER_ADDR_3,
+                "worker_addr": WORKER_ADDR,
                 "status": 502,
                 "ok": False,
                 "error": "Connection refused",
@@ -456,15 +459,14 @@ class TestBroadcast:
         ]
 
         resp = await client.post(
-            "/pause_generation", content=b"{}", headers=admin_headers()
+            "/pause_generation/some-worker-id",
+            content=b"{}",
+            headers=admin_headers(),
         )
         assert resp.status_code == 200
         results = resp.json()["results"]
-        assert len(results) == 3
-        ok_count = sum(1 for r in results if r["ok"])
-        fail_count = sum(1 for r in results if not r["ok"])
-        assert ok_count == 2
-        assert fail_count == 1
+        assert len(results) == 1
+        assert results[0]["ok"] is False
 
 
 # =============================================================================
@@ -506,13 +508,15 @@ class TestRouterErrors:
         assert "No healthy workers" in resp.json()["error"]
 
     @pytest.mark.asyncio
-    @patch(f"{MODULE}.get_all_worker_addrs", new_callable=AsyncMock)
-    async def test_router_unreachable_on_broadcast(self, mock_get_workers, client):
-        """Router unreachable when getting workers for broadcast → 502."""
-        mock_get_workers.side_effect = RouterUnreachableError("Router down")
+    @patch(f"{MODULE}.resolve_worker_addr", new_callable=AsyncMock)
+    async def test_router_unreachable_on_pause(self, mock_resolve, client):
+        """Router unreachable when resolving worker for pause → 502."""
+        mock_resolve.side_effect = RouterUnreachableError("Router down")
 
         resp = await client.post(
-            "/pause_generation", content=b"{}", headers=admin_headers()
+            "/pause_generation/some-worker-id",
+            content=b"{}",
+            headers=admin_headers(),
         )
         assert resp.status_code == 502
 

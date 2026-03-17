@@ -63,7 +63,8 @@ class RegisterWorkerRequest(BaseModel):
 
 
 class DeleteWorkerRequest(BaseModel):
-    worker_addr: str
+    worker_addr: str | None = None
+    worker_id: str | None = None
 
 
 class RouteRequest(BaseModel):
@@ -160,19 +161,41 @@ def create_app(config: RouterConfig) -> FastAPI:
     @app.post("/register_worker")
     async def register_worker(body: RegisterWorkerRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
-        await worker_registry.register(body.worker_addr)
-        logger.info("Worker registered: %s", body.worker_addr)
-        return {"status": "ok"}
+        worker_id = await worker_registry.register(body.worker_addr)
+        logger.info("Worker registered: %s (id=%s)", body.worker_addr, worker_id)
+        return {"status": "ok", "worker_id": worker_id}
 
     @app.delete("/delete_worker")
     async def delete_worker(body: DeleteWorkerRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
-        await worker_registry.deregister(body.worker_addr)
-        revoked = await session_registry.revoke_by_worker(body.worker_addr)
-        logger.info(
-            "Worker deleted: %s (revoked %d sessions)", body.worker_addr, revoked
-        )
-        return {"status": "ok", "sessions_revoked": revoked}
+        if body.worker_id is not None:
+            worker_addr = await worker_registry.deregister_by_id(body.worker_id)
+            if worker_addr is None:
+                raise HTTPException(
+                    status_code=404, detail=f"Worker ID {body.worker_id} not found"
+                )
+            revoked = await session_registry.revoke_by_worker(worker_addr)
+            logger.info(
+                "Worker deleted by id: %s addr=%s (revoked %d sessions)",
+                body.worker_id,
+                worker_addr,
+                revoked,
+            )
+            return {"status": "ok", "sessions_revoked": revoked}
+        elif body.worker_addr is not None:
+            await worker_registry.deregister(body.worker_addr)
+            revoked = await session_registry.revoke_by_worker(body.worker_addr)
+            logger.info(
+                "Worker deleted: %s (revoked %d sessions)",
+                body.worker_addr,
+                revoked,
+            )
+            return {"status": "ok", "sessions_revoked": revoked}
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="Either 'worker_id' or 'worker_addr' must be provided",
+            )
 
     # =========================================================================
     # Routing (internal — no auth)
@@ -239,6 +262,7 @@ def create_app(config: RouterConfig) -> FastAPI:
         return {
             "workers": [
                 {
+                    "worker_id": w.worker_id,
                     "addr": w.worker_addr,
                     "healthy": w.is_healthy,
                     "active_requests": w.active_requests,
@@ -246,6 +270,26 @@ def create_app(config: RouterConfig) -> FastAPI:
                 for w in all_workers
             ]
         }
+
+    # =========================================================================
+    # Worker resolution by ID (admin key required)
+    # =========================================================================
+
+    @app.get("/resolve_worker/{worker_id}")
+    async def resolve_worker(worker_id: str, request: Request):
+        """Resolve a worker_id to its address.
+
+        Returns the worker address for a given worker ID.
+        Used by the gateway to target specific workers for
+        pause/continue generation.
+        """
+        _require_admin_key(request, config.admin_api_key)
+        worker = await worker_registry.get_by_id(worker_id)
+        if worker is None:
+            raise HTTPException(
+                status_code=404, detail=f"Worker ID {worker_id} not found"
+            )
+        return {"worker_id": worker.worker_id, "worker_addr": worker.worker_addr}
 
     # =========================================================================
     # Capacity management (admin key required)

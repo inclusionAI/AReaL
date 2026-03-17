@@ -45,17 +45,21 @@ class TestWorkerRegistry:
     @pytest.mark.asyncio
     async def test_register_worker(self):
         reg = WorkerRegistry()
-        await reg.register(WORKER_1)
+        worker_id = await reg.register(WORKER_1)
+        assert isinstance(worker_id, str)
+        assert len(worker_id) > 0  # UUID string
         workers = await reg.get_all_workers()
         assert len(workers) == 1
         assert workers[0].worker_addr == WORKER_1
+        assert workers[0].worker_id == worker_id
         assert workers[0].is_healthy is True
 
     @pytest.mark.asyncio
     async def test_register_duplicate_noop(self):
         reg = WorkerRegistry()
-        await reg.register(WORKER_1)
-        await reg.register(WORKER_1)
+        worker_id_1 = await reg.register(WORKER_1)
+        worker_id_2 = await reg.register(WORKER_1)
+        assert worker_id_1 == worker_id_2
         workers = await reg.get_all_workers()
         assert len(workers) == 1
 
@@ -107,6 +111,36 @@ class TestWorkerRegistry:
         await reg.register(WORKER_2)
         addrs = await reg.list_worker_addrs()
         assert set(addrs) == {WORKER_1, WORKER_2}
+
+    @pytest.mark.asyncio
+    async def test_deregister_by_id(self):
+        reg = WorkerRegistry()
+        worker_id = await reg.register(WORKER_1)
+        addr = await reg.deregister_by_id(worker_id)
+        assert addr == WORKER_1
+        workers = await reg.get_all_workers()
+        assert len(workers) == 0
+
+    @pytest.mark.asyncio
+    async def test_deregister_by_id_unknown_returns_none(self):
+        reg = WorkerRegistry()
+        result = await reg.deregister_by_id("nonexistent-id")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_by_id(self):
+        reg = WorkerRegistry()
+        worker_id = await reg.register(WORKER_1)
+        info = await reg.get_by_id(worker_id)
+        assert info is not None
+        assert info.worker_addr == WORKER_1
+        assert info.worker_id == worker_id
+
+    @pytest.mark.asyncio
+    async def test_get_by_id_unknown_returns_none(self):
+        reg = WorkerRegistry()
+        result = await reg.get_by_id("nonexistent-id")
+        assert result is None
 
 
 # =============================================================================
@@ -185,9 +219,9 @@ class TestSessionRegistry:
 class TestRoutingStrategies:
     def test_round_robin_cycling(self):
         s = RoundRobinStrategy()
-        w1 = WorkerInfo(worker_addr=WORKER_1)
-        w2 = WorkerInfo(worker_addr=WORKER_2)
-        w3 = WorkerInfo(worker_addr=WORKER_3)
+        w1 = WorkerInfo(worker_id="w1", worker_addr=WORKER_1)
+        w2 = WorkerInfo(worker_id="w2", worker_addr=WORKER_2)
+        w3 = WorkerInfo(worker_id="w3", worker_addr=WORKER_3)
         workers = [w1, w2, w3]
         picks = [s.pick(workers).worker_addr for _ in range(6)]  # type: ignore[union-attr]
         assert picks == [
@@ -205,9 +239,9 @@ class TestRoutingStrategies:
 
     def test_least_busy_picks_minimum(self):
         s = LeastBusyStrategy()
-        w1 = WorkerInfo(worker_addr=WORKER_1, active_requests=5)
-        w2 = WorkerInfo(worker_addr=WORKER_2, active_requests=1)
-        w3 = WorkerInfo(worker_addr=WORKER_3, active_requests=3)
+        w1 = WorkerInfo(worker_id="w1", worker_addr=WORKER_1, active_requests=5)
+        w2 = WorkerInfo(worker_id="w2", worker_addr=WORKER_2, active_requests=1)
+        w3 = WorkerInfo(worker_id="w3", worker_addr=WORKER_3, active_requests=3)
         result = s.pick([w1, w2, w3])
         assert result is not None
         assert result.worker_addr == WORKER_2
@@ -284,6 +318,9 @@ class TestRouterEndpoints:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        assert "worker_id" in resp.json()
+        assert isinstance(resp.json()["worker_id"], str)
+        assert len(resp.json()["worker_id"]) > 0
 
         # Verify via /health
         health = (await client.get("/health")).json()
@@ -529,11 +566,92 @@ class TestRouterEndpoints:
         addrs = {w["addr"] for w in data["workers"]}
         assert addrs == {WORKER_1, WORKER_2}
         assert all(w["healthy"] is True for w in data["workers"])
+        assert all("worker_id" in w for w in data["workers"])
+        assert all(isinstance(w["worker_id"], str) for w in data["workers"])
 
     @pytest.mark.asyncio
     async def test_workers_list_no_auth_401(self, client):
         resp = await client.get("/workers")
         assert resp.status_code == 401
+
+    # ----- /delete_worker by worker_id -----
+
+    @pytest.mark.asyncio
+    async def test_delete_worker_by_id(self, client):
+        """Delete a worker by worker_id instead of worker_addr."""
+        # Register
+        reg_resp = await client.post(
+            "/register_worker",
+            json={"worker_addr": WORKER_1},
+            headers=admin_headers(),
+        )
+        worker_id = reg_resp.json()["worker_id"]
+
+        # Delete by worker_id
+        resp = await client.request(
+            "DELETE",
+            "/delete_worker",
+            json={"worker_id": worker_id},
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+        # Verify worker is gone
+        health = (await client.get("/health")).json()
+        assert health["workers"] == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_worker_by_id_not_found_404(self, client):
+        """Delete by unknown worker_id → 404."""
+        resp = await client.request(
+            "DELETE",
+            "/delete_worker",
+            json={"worker_id": "nonexistent-id"},
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_worker_missing_both_422(self, client):
+        """Delete without worker_id or worker_addr → 422."""
+        resp = await client.request(
+            "DELETE",
+            "/delete_worker",
+            json={},
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 422
+
+    # ----- /resolve_worker/{worker_id} -----
+
+    @pytest.mark.asyncio
+    async def test_resolve_worker_200(self, client):
+        """Resolve a registered worker by ID → 200 with worker_id and worker_addr."""
+        reg_resp = await client.post(
+            "/register_worker",
+            json={"worker_addr": WORKER_1},
+            headers=admin_headers(),
+        )
+        worker_id = reg_resp.json()["worker_id"]
+
+        resp = await client.get(
+            f"/resolve_worker/{worker_id}",
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["worker_id"] == worker_id
+        assert data["worker_addr"] == WORKER_1
+
+    @pytest.mark.asyncio
+    async def test_resolve_worker_not_found_404(self, client):
+        """Resolve an unknown worker_id → 404."""
+        resp = await client.get(
+            "/resolve_worker/nonexistent-id",
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 404
 
 
 # =============================================================================

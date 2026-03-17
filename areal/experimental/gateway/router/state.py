@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from dataclasses import dataclass, field
 
 
@@ -14,6 +15,7 @@ from dataclasses import dataclass, field
 class WorkerInfo:
     """A registered data proxy worker."""
 
+    worker_id: str
     worker_addr: str
     is_healthy: bool = True
     active_requests: int = 0
@@ -24,19 +26,44 @@ class WorkerRegistry:
     """Thread-safe worker registry with health tracking."""
 
     def __init__(self) -> None:
-        self._workers: dict[str, WorkerInfo] = {}
+        self._workers: dict[str, WorkerInfo] = {}  # worker_addr -> WorkerInfo
+        self._id_to_addr: dict[str, str] = {}  # worker_id -> worker_addr
         self._lock = asyncio.Lock()
 
-    async def register(self, worker_addr: str) -> None:
-        """Add a worker. No-op if already registered."""
+    async def register(self, worker_addr: str) -> str:
+        """Add a worker. Returns existing worker_id if already registered."""
         async with self._lock:
-            if worker_addr not in self._workers:
-                self._workers[worker_addr] = WorkerInfo(worker_addr=worker_addr)
+            if worker_addr in self._workers:
+                return self._workers[worker_addr].worker_id
+            worker_id = str(uuid.uuid4())
+            self._workers[worker_addr] = WorkerInfo(
+                worker_id=worker_id, worker_addr=worker_addr
+            )
+            self._id_to_addr[worker_id] = worker_addr
+            return worker_id
 
     async def deregister(self, worker_addr: str) -> None:
-        """Remove a worker. No-op if not found."""
+        """Remove a worker by address. No-op if not found."""
         async with self._lock:
-            self._workers.pop(worker_addr, None)
+            w = self._workers.pop(worker_addr, None)
+            if w is not None:
+                self._id_to_addr.pop(w.worker_id, None)
+
+    async def deregister_by_id(self, worker_id: str) -> str | None:
+        """Remove a worker by ID. Returns the worker_addr or None if not found."""
+        async with self._lock:
+            worker_addr = self._id_to_addr.pop(worker_id, None)
+            if worker_addr is not None:
+                self._workers.pop(worker_addr, None)
+            return worker_addr
+
+    async def get_by_id(self, worker_id: str) -> WorkerInfo | None:
+        """Look up a worker by its ID."""
+        async with self._lock:
+            addr = self._id_to_addr.get(worker_id)
+            if addr is None:
+                return None
+            return self._workers.get(addr)
 
     async def update_health(self, worker_addr: str, healthy: bool) -> None:
         """Set the health flag for a worker."""
