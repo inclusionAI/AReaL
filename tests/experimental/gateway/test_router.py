@@ -448,7 +448,7 @@ class TestRouterEndpoints:
         assert resp.status_code == 503
         assert "Pinned worker unhealthy" in resp.json()["detail"]
 
-    # ----- /route_by_session_id -----
+    # ----- /route — session_id lookup -----
 
     @pytest.mark.asyncio
     async def test_route_by_session_id(self, client):
@@ -460,18 +460,21 @@ class TestRouterEndpoints:
                 "worker_addr": WORKER_1,
             },
         )
-        resp = await client.post(
-            "/route_by_session_id", json={"session_id": "task-0-0"}
-        )
+        resp = await client.post("/route", json={"session_id": "task-0-0"})
         assert resp.status_code == 200
         assert resp.json()["worker_addr"] == WORKER_1
 
     @pytest.mark.asyncio
     async def test_route_by_session_id_unknown_404(self, client):
-        resp = await client.post(
-            "/route_by_session_id", json={"session_id": "nonexistent"}
-        )
+        resp = await client.post("/route", json={"session_id": "nonexistent"})
         assert resp.status_code == 404
+
+    # ----- /route — missing both api_key and session_id -----
+
+    @pytest.mark.asyncio
+    async def test_route_missing_both_keys_422(self, client):
+        resp = await client.post("/route", json={})
+        assert resp.status_code == 422
 
     # ----- /register_session -----
 

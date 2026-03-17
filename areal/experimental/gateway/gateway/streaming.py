@@ -28,13 +28,16 @@ class RouterKeyRejectedError(Exception):
 
 async def query_router(
     router_addr: str,
-    api_key: str,
-    path: str,
-    timeout: float,
+    api_key: str | None = None,
+    path: str | None = None,
+    timeout: float = 2.0,
+    *,
+    session_id: str | None = None,
 ) -> str:
     """Ask the Router for a worker address.
 
-    POST ``{router_addr}/route`` with ``{"api_key": ..., "path": ...}``.
+    POST ``{router_addr}/route`` with ``{"api_key": ..., "path": ...}``
+    or ``{"session_id": ...}``.
     Returns the ``worker_addr`` string.
 
     Raises
@@ -42,43 +45,32 @@ async def query_router(
     RouterUnreachableError
         Router connection failed.
     RouterKeyRejectedError
-        Router returned 404 (unknown key) or 503 (no healthy workers).
+        Router returned 404 (unknown key / session) or 503 (no healthy workers).
     """
+    payload: dict[str, str] = {}
+    if session_id is not None:
+        payload["session_id"] = session_id
+    else:
+        if api_key is not None:
+            payload["api_key"] = api_key
+        if path is not None:
+            payload["path"] = path
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 f"{router_addr}/route",
-                json={"api_key": api_key, "path": path},
+                json=payload,
             )
         if resp.status_code == 404:
             data = resp.json()
-            raise RouterKeyRejectedError(data.get("error", "Unknown API key"), 404)
+            raise RouterKeyRejectedError(
+                data.get("detail", data.get("error", "Not found")), 404
+            )
         if resp.status_code == 503:
             data = resp.json()
-            raise RouterKeyRejectedError(data.get("error", "No healthy workers"), 503)
-        resp.raise_for_status()
-        return resp.json()["worker_addr"]
-    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-        raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
-
-
-async def query_router_by_session_id(
-    router_addr: str,
-    session_id: str,
-    timeout: float,
-) -> str:
-    """Ask the Router for a worker by session ID.
-
-    POST ``{router_addr}/route_by_session_id``.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                f"{router_addr}/route_by_session_id",
-                json={"session_id": session_id},
+            raise RouterKeyRejectedError(
+                data.get("detail", data.get("error", "No healthy workers")), 503
             )
-        if resp.status_code == 404:
-            raise RouterKeyRejectedError("Session not found", 404)
         resp.raise_for_status()
         return resp.json()["worker_addr"]
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:

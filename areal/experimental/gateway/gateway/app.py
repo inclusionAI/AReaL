@@ -26,7 +26,6 @@ from areal.experimental.gateway.gateway.streaming import (
     forward_sse_stream,
     get_all_worker_addrs,
     query_router,
-    query_router_by_session_id,
     register_session_in_router,
 )
 
@@ -292,8 +291,10 @@ def create_app(config: GatewayConfig) -> FastAPI:
             return JSONResponse({"error": "session_id is required"}, status_code=400)
 
         try:
-            worker_addr = await query_router_by_session_id(
-                config.router_addr, session_id, config.router_timeout
+            worker_addr = await query_router(
+                config.router_addr,
+                timeout=config.router_timeout,
+                session_id=session_id,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -332,7 +333,6 @@ def create_app(config: GatewayConfig) -> FastAPI:
             worker_addrs, "/grant_capacity", body, headers
         )
         return {"results": results}
-
 
     # =========================================================================
     # Compatibility aliases for RolloutCallback — map /callback/* to broadcast endpoints

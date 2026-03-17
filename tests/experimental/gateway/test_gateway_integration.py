@@ -643,7 +643,7 @@ class TestGatewaySessionLifecycle:
 
             # Query router directly for session pinning
             resp = await client.post(
-                f"{router}/route_by_session_id",
+                f"{router}/route",
                 json={"session_id": session_id},
             )
             assert resp.status_code == 200

@@ -63,12 +63,9 @@ class DeleteWorkerRequest(BaseModel):
 
 
 class RouteRequest(BaseModel):
-    api_key: str
-    path: str
-
-
-class RouteBySessionIdRequest(BaseModel):
-    session_id: str
+    api_key: str | None = None
+    path: str | None = None
+    session_id: str | None = None
 
 
 class RegisterSessionRequest(BaseModel):
@@ -174,6 +171,19 @@ def create_app(config: RouterConfig) -> FastAPI:
 
     @app.post("/route")
     async def route(body: RouteRequest):
+        # 0. session_id lookup takes precedence
+        if body.session_id is not None:
+            worker = await session_registry.lookup_by_id(body.session_id)
+            if worker is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            return {"worker_addr": worker}
+
+        if body.api_key is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Either 'api_key' or 'session_id' must be provided",
+            )
+
         # 1. Admin key → pick healthy worker via strategy
         if hmac.compare_digest(body.api_key, config.admin_api_key):
             healthy = await worker_registry.get_healthy_workers()
@@ -197,13 +207,6 @@ def create_app(config: RouterConfig) -> FastAPI:
 
         # 3. Unknown key
         raise HTTPException(status_code=404, detail="Unknown API key")
-
-    @app.post("/route_by_session_id")
-    async def route_by_session_id(body: RouteBySessionIdRequest):
-        worker = await session_registry.lookup_by_id(body.session_id)
-        if worker is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {"worker_addr": worker}
 
     # =========================================================================
     # Session registration (internal — no auth)
