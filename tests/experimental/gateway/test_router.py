@@ -15,6 +15,7 @@ import pytest_asyncio
 from areal.experimental.gateway.router.app import create_app
 from areal.experimental.gateway.router.config import RouterConfig
 from areal.experimental.gateway.router.state import (
+    CapacityManager,
     SessionRegistry,
     WorkerInfo,
     WorkerRegistry,
@@ -533,3 +534,207 @@ class TestRouterEndpoints:
     async def test_workers_list_no_auth_401(self, client):
         resp = await client.get("/workers")
         assert resp.status_code == 401
+
+
+# =============================================================================
+# CapacityManager unit tests
+# =============================================================================
+
+
+class TestCapacityManager:
+    @pytest.mark.asyncio
+    async def test_initial_capacity_zero(self):
+        cm = CapacityManager()
+        assert await cm.get_capacity() == 0
+
+    @pytest.mark.asyncio
+    async def test_grant_increments(self):
+        cm = CapacityManager()
+        result = await cm.grant()
+        assert result == 1
+        assert await cm.get_capacity() == 1
+
+    @pytest.mark.asyncio
+    async def test_grant_multiple(self):
+        cm = CapacityManager()
+        await cm.grant()
+        await cm.grant()
+        result = await cm.grant()
+        assert result == 3
+        assert await cm.get_capacity() == 3
+
+    @pytest.mark.asyncio
+    async def test_try_acquire_success(self):
+        cm = CapacityManager()
+        await cm.grant()
+        assert await cm.try_acquire() is True
+        assert await cm.get_capacity() == 0
+
+    @pytest.mark.asyncio
+    async def test_try_acquire_empty_fails(self):
+        cm = CapacityManager()
+        assert await cm.try_acquire() is False
+        assert await cm.get_capacity() == 0
+
+    @pytest.mark.asyncio
+    async def test_grant_then_acquire_then_empty(self):
+        """Grant 2, acquire 2, then acquire again fails."""
+        cm = CapacityManager()
+        await cm.grant()
+        await cm.grant()
+        assert await cm.try_acquire() is True
+        assert await cm.try_acquire() is True
+        assert await cm.try_acquire() is False
+        assert await cm.get_capacity() == 0
+
+    @pytest.mark.asyncio
+    async def test_interleaved_grant_acquire(self):
+        """Interleaved grants and acquires track correctly."""
+        cm = CapacityManager()
+        await cm.grant()  # 1
+        assert await cm.try_acquire() is True  # 0
+        assert await cm.try_acquire() is False  # still 0
+        await cm.grant()  # 1
+        await cm.grant()  # 2
+        assert await cm.try_acquire() is True  # 1
+        assert await cm.get_capacity() == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_grants(self):
+        """Multiple concurrent grants all succeed."""
+        cm = CapacityManager()
+        results = await asyncio.gather(*[cm.grant() for _ in range(10)])
+        # Results should be 1..10 in some order (each grant increments atomically)
+        assert sorted(results) == list(range(1, 11))
+        assert await cm.get_capacity() == 10
+
+    @pytest.mark.asyncio
+    async def test_concurrent_acquires(self):
+        """Grant N, then N+M concurrent acquires → exactly N succeed."""
+        cm = CapacityManager()
+        for _ in range(5):
+            await cm.grant()
+        results = await asyncio.gather(*[cm.try_acquire() for _ in range(8)])
+        assert sum(results) == 5  # exactly 5 succeed
+        assert results.count(False) == 3  # 3 fail
+        assert await cm.get_capacity() == 0
+
+
+# =============================================================================
+# Router capacity endpoint tests
+# =============================================================================
+
+
+class TestRouterCapacityEndpoints:
+    @pytest.mark.asyncio
+    async def test_health_includes_capacity(self, client):
+        """Health response includes capacity field."""
+        resp = await client.get("/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "capacity" in data
+        assert data["capacity"] == 0
+
+    # ----- /grant_capacity -----
+
+    @pytest.mark.asyncio
+    async def test_grant_capacity_200(self, client):
+        """Admin key → /grant_capacity → capacity incremented."""
+        resp = await client.post("/grant_capacity", headers=admin_headers())
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["capacity"] == 1
+
+    @pytest.mark.asyncio
+    async def test_grant_capacity_increments(self, client):
+        """Multiple grants increment capacity."""
+        await client.post("/grant_capacity", headers=admin_headers())
+        resp = await client.post("/grant_capacity", headers=admin_headers())
+        assert resp.json()["capacity"] == 2
+
+        # Verify via /health
+        health = (await client.get("/health")).json()
+        assert health["capacity"] == 2
+
+    @pytest.mark.asyncio
+    async def test_grant_capacity_no_auth_401(self, client):
+        """/grant_capacity without auth → 401."""
+        resp = await client.post("/grant_capacity")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_grant_capacity_wrong_key_403(self, client):
+        """/grant_capacity with wrong key → 403."""
+        resp = await client.post(
+            "/grant_capacity",
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+        assert resp.status_code == 403
+
+    # ----- /acquire_capacity -----
+
+    @pytest.mark.asyncio
+    async def test_acquire_capacity_success(self, client):
+        """Grant then acquire → 200."""
+        await client.post("/grant_capacity", headers=admin_headers())
+        resp = await client.post("/acquire_capacity", headers=admin_headers())
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+        # Capacity should be back to 0
+        health = (await client.get("/health")).json()
+        assert health["capacity"] == 0
+
+    @pytest.mark.asyncio
+    async def test_acquire_capacity_empty_429(self, client):
+        """Acquire with no capacity → 429."""
+        resp = await client.post("/acquire_capacity", headers=admin_headers())
+        assert resp.status_code == 429
+        assert "capacity" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_acquire_capacity_depletes(self, client):
+        """Grant 2, acquire 2, then acquire → 429."""
+        await client.post("/grant_capacity", headers=admin_headers())
+        await client.post("/grant_capacity", headers=admin_headers())
+
+        resp1 = await client.post("/acquire_capacity", headers=admin_headers())
+        assert resp1.status_code == 200
+        resp2 = await client.post("/acquire_capacity", headers=admin_headers())
+        assert resp2.status_code == 200
+        resp3 = await client.post("/acquire_capacity", headers=admin_headers())
+        assert resp3.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_acquire_capacity_no_auth_401(self, client):
+        """/acquire_capacity without auth → 401."""
+        resp = await client.post("/acquire_capacity")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_acquire_capacity_wrong_key_403(self, client):
+        """/acquire_capacity with wrong key → 403."""
+        resp = await client.post(
+            "/acquire_capacity",
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+        assert resp.status_code == 403
+
+    # ----- Grant + Acquire interleaved -----
+
+    @pytest.mark.asyncio
+    async def test_grant_acquire_interleaved(self, client):
+        """Grant, acquire, grant again, acquire → all succeed."""
+        await client.post("/grant_capacity", headers=admin_headers())
+        resp = await client.post("/acquire_capacity", headers=admin_headers())
+        assert resp.status_code == 200
+
+        # No capacity left
+        resp = await client.post("/acquire_capacity", headers=admin_headers())
+        assert resp.status_code == 429
+
+        # Grant again
+        await client.post("/grant_capacity", headers=admin_headers())
+        resp = await client.post("/acquire_capacity", headers=admin_headers())
+        assert resp.status_code == 200

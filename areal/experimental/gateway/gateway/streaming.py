@@ -105,6 +105,76 @@ async def register_session_in_router(
         raise RouterUnreachableError(f"Failed to register session: {exc}") from exc
 
 
+async def grant_capacity_in_router(
+    router_addr: str,
+    admin_api_key: str,
+    timeout: float,
+) -> dict:
+    """Forward a grant_capacity request to the Router.
+
+    POST ``{router_addr}/grant_capacity`` with admin key auth.
+    Returns the JSON response body from the router.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{router_addr}/grant_capacity",
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        resp.raise_for_status()
+        return resp.json()
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise RouterUnreachableError(
+            f"Router unreachable for grant_capacity: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise RouterUnreachableError(
+            f"Failed to grant capacity in router: {exc}"
+        ) from exc
+
+
+class CapacityExhaustedError(Exception):
+    """Router has no capacity permits remaining (HTTP 429)."""
+
+    def __init__(self, detail: str = "No available capacity to start a new session"):
+        super().__init__(detail)
+        self.detail = detail
+
+
+async def acquire_capacity_in_router(
+    router_addr: str,
+    admin_api_key: str,
+    timeout: float,
+) -> None:
+    """Acquire one capacity permit from the Router.
+
+    POST ``{router_addr}/acquire_capacity`` with admin key auth.
+    Raises ``CapacityExhaustedError`` if the router returns 429.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{router_addr}/acquire_capacity",
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        if resp.status_code == 429:
+            data = resp.json()
+            raise CapacityExhaustedError(
+                data.get("detail", "No available capacity to start a new session")
+            )
+        resp.raise_for_status()
+    except CapacityExhaustedError:
+        raise
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise RouterUnreachableError(
+            f"Router unreachable for acquire_capacity: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise RouterUnreachableError(
+            f"Failed to acquire capacity from router: {exc}"
+        ) from exc
+
+
 async def get_all_worker_addrs(
     router_addr: str,
     admin_api_key: str,

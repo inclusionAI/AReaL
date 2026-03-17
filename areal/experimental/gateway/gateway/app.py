@@ -18,13 +18,16 @@ from areal.experimental.gateway.gateway.auth import (
 )
 from areal.experimental.gateway.gateway.config import GatewayConfig
 from areal.experimental.gateway.gateway.streaming import (
+    CapacityExhaustedError,
     RouterKeyRejectedError,
     RouterUnreachableError,
     _forwarding_headers,
+    acquire_capacity_in_router,
     broadcast_to_workers,
     forward_request,
     forward_sse_stream,
     get_all_worker_addrs,
+    grant_capacity_in_router,
     query_router,
     register_session_in_router,
 )
@@ -34,6 +37,8 @@ logger = logging.getLogger("Gateway")
 
 def _router_error_response(exc: Exception) -> JSONResponse:
     """Convert router exceptions to HTTP responses."""
+    if isinstance(exc, CapacityExhaustedError):
+        return JSONResponse({"error": exc.detail}, status_code=429)
     if isinstance(exc, RouterUnreachableError):
         return JSONResponse({"error": str(exc)}, status_code=502)
     if isinstance(exc, RouterKeyRejectedError):
@@ -132,6 +137,16 @@ def create_app(config: GatewayConfig) -> FastAPI:
     @app.post("/rl/start_session")
     async def start_session(request: Request):
         token = require_admin_key(request, config.admin_api_key)
+
+        # Acquire a capacity permit from the router before proceeding.
+        # If no permits remain the router returns 429, which we propagate.
+        try:
+            await acquire_capacity_in_router(
+                config.router_addr, config.admin_api_key, config.router_timeout
+            )
+        except (CapacityExhaustedError, RouterUnreachableError) as exc:
+            return _router_error_response(exc)
+
         try:
             worker_addr = await query_router(
                 config.router_addr, token, "/rl/start_session", config.router_timeout
@@ -319,20 +334,19 @@ def create_app(config: GatewayConfig) -> FastAPI:
 
     @app.post("/grant_capacity")
     async def grant_capacity(request: Request):
+        """Forward capacity grant to the Router (not data proxies).
+
+        Staleness control lives at the router level — data proxies do not
+        track capacity.
+        """
         require_admin_key(request, config.admin_api_key)
         try:
-            worker_addrs = await get_all_worker_addrs(
+            result = await grant_capacity_in_router(
                 config.router_addr, config.admin_api_key, config.router_timeout
             )
         except RouterUnreachableError as exc:
             return _router_error_response(exc)
-
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
-        results = await broadcast_to_workers(
-            worker_addrs, "/grant_capacity", body, headers
-        )
-        return {"results": results}
+        return result
 
     # =========================================================================
     # Compatibility aliases for RolloutCallback — map /callback/* to broadcast endpoints

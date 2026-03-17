@@ -19,7 +19,11 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from areal.experimental.gateway.router.config import RouterConfig
-from areal.experimental.gateway.router.state import SessionRegistry, WorkerRegistry
+from areal.experimental.gateway.router.state import (
+    CapacityManager,
+    SessionRegistry,
+    WorkerRegistry,
+)
 from areal.experimental.gateway.router.strategies import get_strategy
 
 logger = logging.getLogger("Router")
@@ -84,6 +88,7 @@ def create_app(config: RouterConfig) -> FastAPI:
 
     worker_registry = WorkerRegistry()
     session_registry = SessionRegistry()
+    capacity_manager = CapacityManager()
     strategy = get_strategy(config.routing_strategy)
 
     async def _poll_workers() -> None:
@@ -113,6 +118,7 @@ def create_app(config: RouterConfig) -> FastAPI:
         poll_task = asyncio.create_task(_poll_workers())
         app.state.worker_registry = worker_registry
         app.state.session_registry = session_registry
+        app.state.capacity_manager = capacity_manager
         app.state.strategy = strategy
         yield
         poll_task.cancel()
@@ -127,6 +133,7 @@ def create_app(config: RouterConfig) -> FastAPI:
     # Expose registries on app.state for tests that bypass lifespan
     app.state.worker_registry = worker_registry
     app.state.session_registry = session_registry
+    app.state.capacity_manager = capacity_manager
     app.state.strategy = strategy
 
     # =========================================================================
@@ -137,10 +144,12 @@ def create_app(config: RouterConfig) -> FastAPI:
     async def health():
         all_workers = await worker_registry.get_all_workers()
         session_count = await session_registry.count()
+        capacity = await capacity_manager.get_capacity()
         return {
             "status": "ok",
             "workers": len(all_workers),
             "sessions": session_count,
+            "capacity": capacity,
             "strategy": config.routing_strategy,
         }
 
@@ -237,5 +246,38 @@ def create_app(config: RouterConfig) -> FastAPI:
                 for w in all_workers
             ]
         }
+
+    # =========================================================================
+    # Capacity management (admin key required)
+    # =========================================================================
+
+    @app.post("/grant_capacity")
+    async def grant_capacity(request: Request):
+        """Increment session capacity by 1.
+
+        Called by the rollout controller (via the gateway) when the current
+        weight version is within the allowed staleness window.  Each call
+        issues one permit for a future ``/rl/start_session`` request.
+        """
+        _require_admin_key(request, config.admin_api_key)
+        new_capacity = await capacity_manager.grant()
+        logger.info("Capacity granted — now %d", new_capacity)
+        return {"status": "ok", "capacity": new_capacity}
+
+    @app.post("/acquire_capacity")
+    async def acquire_capacity(request: Request):
+        """Try to consume one capacity permit.
+
+        Called by the gateway before forwarding ``/rl/start_session`` to a
+        data proxy.  Returns 200 on success, 429 when no permits remain.
+        """
+        _require_admin_key(request, config.admin_api_key)
+        acquired = await capacity_manager.try_acquire()
+        if not acquired:
+            raise HTTPException(
+                status_code=429,
+                detail="No available capacity to start a new session",
+            )
+        return {"status": "ok"}
 
     return app

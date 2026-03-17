@@ -61,6 +61,40 @@ class WorkerRegistry:
             return list(self._workers.keys())
 
 
+class CapacityManager:
+    """Tracks available capacity for new RL sessions (staleness control).
+
+    The rollout controller calls ``grant()`` once per episode to add one
+    permit.  ``try_acquire()`` is called when ``/rl/start_session`` arrives
+    — if no permits remain, it returns *False* so the gateway can respond
+    with HTTP 429.  This prevents users from starting sessions outside
+    the allowed weight-staleness window.
+    """
+
+    def __init__(self) -> None:
+        self._capacity: int = 0
+        self._lock = asyncio.Lock()
+
+    async def grant(self) -> int:
+        """Increment capacity by 1. Returns the new capacity value."""
+        async with self._lock:
+            self._capacity += 1
+            return self._capacity
+
+    async def try_acquire(self) -> bool:
+        """Try to decrement capacity by 1. Returns True on success."""
+        async with self._lock:
+            if self._capacity <= 0:
+                return False
+            self._capacity -= 1
+            return True
+
+    async def get_capacity(self) -> int:
+        """Return current capacity (for health / debug endpoints)."""
+        async with self._lock:
+            return self._capacity
+
+
 class SessionRegistry:
     """Maps session API keys and session IDs to worker addresses.
 

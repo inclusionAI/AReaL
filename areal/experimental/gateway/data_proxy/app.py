@@ -479,16 +479,10 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # update_weights_from_distributed, init_weights_update_group, set_version)
     # have been removed. Re-add when the gateway natively supports weight sync.
 
-    # =========================================================================
-    # Capacity management (mirrors proxy_rollout_server.grant_capacity)
-    # =========================================================================
-
-    @app.post("/grant_capacity")
-    async def grant_capacity(request: Request):
-        store: SessionStore = app.state.session_store
-        _require_admin_key(request, store)
-        return {"status": "ok"}
-
+    # NOTE: /grant_capacity has been removed from data proxy. Capacity-based
+    # staleness control is now managed at the router level — see
+    # areal.experimental.gateway.router.app for the /grant_capacity and
+    # /acquire_capacity endpoints.
 
     # =========================================================================
     # Runtime backend reconfiguration (for fork-based deployment)
