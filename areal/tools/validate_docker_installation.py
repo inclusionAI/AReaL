@@ -4,7 +4,7 @@ Docker Installation Validation Script for AReaL
 
 This script validates dependencies in the Docker environment, which includes
 additional packages (grouped_gemm, apex, transformer_engine, flash_attn_3)
-and flash-attn version 2.8.1 (installed separately in Dockerfile).
+and flash-attn version 2.8.3 (installed separately in Dockerfile).
 
 Also validates DeepSeek-V3 related packages:
 - FlashMLA: Multi-head Latent Attention (requires SM90+ GPU)
@@ -40,6 +40,7 @@ class DockerInstallationValidator(BaseInstallationValidator):
         "deep_gemm": ["deep_gemm"],
         "deep_ep": ["deep_ep"],
         "fla": ["fla.ops", "fla.layers", "fla.modules"],
+        "causal_conv1d": ["causal_conv1d_cuda"],
     }
 
     # Add Docker-specific packages to critical list
@@ -53,6 +54,7 @@ class DockerInstallationValidator(BaseInstallationValidator):
         "flash_attn_3",
         "megatron-core",
         "mbridge",
+        "causal_conv1d",
     }
 
     def __init__(self, pyproject_path: Path | None = None):
@@ -72,8 +74,8 @@ class DockerInstallationValidator(BaseInstallationValidator):
         super().parse_pyproject()
 
         # Add flash-attn (installed separately in Dockerfile, not in pyproject.toml)
-        self.add_additional_package("flash-attn", "==2.8.1", required=True)
-        print("  Note: Expecting flash-attn version 2.8.1 for Docker environment")
+        self.add_additional_package("flash-attn", "==2.8.3", required=True)
+        print("  Note: Expecting flash-attn version 2.8.3 for Docker environment")
 
         # Add Docker-specific packages not in pyproject.toml
         self.add_additional_package("grouped_gemm", required=True)
@@ -96,14 +98,14 @@ class DockerInstallationValidator(BaseInstallationValidator):
             )
 
         if has_sglang:
-            self.add_additional_package("sglang", "==0.5.7", required=True)
+            self.add_additional_package("sglang", "==0.5.9", required=True)
             self.CRITICAL_PACKAGES = {*self.CRITICAL_PACKAGES, "sglang"}
             print("  Detected variant: sglang")
         else:
             self.add_additional_package("sglang", required=False)
 
         if has_vllm:
-            self.add_additional_package("vllm", "==0.14.0", required=True)
+            self.add_additional_package("vllm", "==0.17.0", required=True)
             self.CRITICAL_PACKAGES = {*self.CRITICAL_PACKAGES, "vllm"}
             print("  Detected variant: vllm")
         else:
@@ -118,8 +120,8 @@ class DockerInstallationValidator(BaseInstallationValidator):
                 "No inference backend installed (need either sglang or vllm)"
             )
 
-        self.add_additional_package("megatron-core", "==0.13.1", required=True)
-        self.add_additional_package("mbridge", "==0.13.0", required=True)
+        self.add_additional_package("megatron-core", "==0.16.0", required=True)
+        self.add_additional_package("mbridge", "==0.15.1", required=True)
 
         # Add DeepSeek-V3 related packages (installed in Dockerfile, not pyproject.toml)
         self.add_additional_package("flash_mla", required=False)  # SM90+ only
@@ -128,6 +130,9 @@ class DockerInstallationValidator(BaseInstallationValidator):
         self.add_additional_package(
             "fla", required=True
         )  # Pure Triton, works everywhere
+
+        # Mamba-related packages (installed in Dockerfile, not pyproject.toml)
+        self.add_additional_package("causal_conv1d", "==1.6.0", required=True)
 
     def test_cuda_functionality(self):
         """Run CUDA functionality tests including Docker-specific packages."""
@@ -209,6 +214,16 @@ class DockerInstallationValidator(BaseInstallationValidator):
             print("⚠ Grouped GEMM not available")
         except Exception as e:
             print(f"⚠ Grouped GEMM test failed: {e}")
+
+        # Test causal_conv1d CUDA extension
+        try:
+            import causal_conv1d_cuda  # noqa: F401
+
+            print("✓ causal-conv1d CUDA extension imported successfully")
+        except ImportError:
+            print("⚠ causal-conv1d CUDA extension not available")
+        except Exception as e:
+            print(f"⚠ causal-conv1d CUDA extension test failed: {e}")
 
         print("\n=== DeepSeek-V3 Package Tests ===")
 

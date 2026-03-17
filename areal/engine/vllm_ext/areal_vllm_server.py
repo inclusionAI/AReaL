@@ -4,22 +4,17 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import uvloop
-from fastapi import Depends, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from vllm.entrypoints.openai.api_server import (
+from vllm.entrypoints.openai.api_server import build_app as _original_build_app
+from vllm.entrypoints.openai.api_server import run_server
+from vllm.entrypoints.openai.cli_args import make_arg_parser, validate_parsed_serve_args
+from vllm.entrypoints.openai.completion.api_router import (
     create_completion as original_create_completion,
 )
-from vllm.entrypoints.openai.api_server import (
-    router,
-    run_server,
-    validate_json_request,
-)
-from vllm.entrypoints.openai.cli_args import make_arg_parser, validate_parsed_serve_args
-from vllm.entrypoints.openai.protocol import (
-    CompletionRequest,
-    ErrorResponse,
-    OpenAIBaseModel,
-)
+from vllm.entrypoints.openai.completion.protocol import CompletionRequest
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse, OpenAIBaseModel
+from vllm.entrypoints.openai.utils import validate_json_request
 from vllm.entrypoints.utils import cli_env_setup, load_aware_call, with_cancellation
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
@@ -28,6 +23,9 @@ from vllm.v1.engine import EngineCoreOutput, EngineCoreOutputs, FinishReason
 from vllm.v1.engine.core import EngineCore
 from vllm.v1.metrics.stats import LoRARequestStates
 from vllm.v1.request import RequestStatus
+
+# AReaL's own router for custom endpoints (replaces vLLM's removed global router)
+router = APIRouter()
 
 if TYPE_CHECKING:
     from vllm.v1.engine.output_processor import RequestState
@@ -169,8 +167,8 @@ def _register_runtime_lora_name(
 
 
 @router.post("/areal_update_weights")
-async def update_weight(request: UpdateWeightsRequest, raw_request: Request):
-    logger.info(f"API server starts update_weight, {request.model_path}")
+async def areal_update_weight(request: UpdateWeightsRequest, raw_request: Request):
+    logger.info(f"API server starts areal_update_weight, {request.model_path}")
     llm = raw_request.app.state.engine_client
     ret_list = await llm.engine_core.call_utility_async(
         "areal_injected_update_weight",
@@ -180,9 +178,11 @@ async def update_weight(request: UpdateWeightsRequest, raw_request: Request):
 
 
 @router.post("/areal_update_weights_lora")
-async def update_weight_lora(request: UpdateWeightsRequestLora, raw_request: Request):
+async def areal_update_weight_lora(
+    request: UpdateWeightsRequestLora, raw_request: Request
+):
     logger.info(
-        f"API server starts update_weight_lora, lora_model_path-{request.lora_model_path}, lora_name-{request.lora_name}, lora_int_id-{request.lora_int_id}, base_model_name-{request.base_model_name}"
+        f"API server starts areal_update_weight_lora, lora_model_path-{request.lora_model_path}, lora_name-{request.lora_name}, lora_int_id-{request.lora_int_id}, base_model_name-{request.base_model_name}"
     )
     llm = raw_request.app.state.engine_client
     ret_list = await llm.engine_core.call_utility_async(
@@ -196,8 +196,8 @@ async def update_weight_lora(request: UpdateWeightsRequestLora, raw_request: Req
 
 
 @router.post("/areal_update_weights_xccl")
-async def update_weight_xccl(raw_request: Request):
-    logger.info("API server starts update_weight")
+async def areal_update_weight_xccl(raw_request: Request):
+    logger.info("API server starts areal_update_weight_xccl")
     llm = raw_request.app.state.engine_client
     ret_list = await llm.engine_core.call_utility_async(
         "areal_injected_update_weight_xccl",
@@ -206,10 +206,10 @@ async def update_weight_xccl(raw_request: Request):
 
 
 @router.post("/areal_update_weights_lora_xccl")
-async def update_weight_lora_xccl(
+async def areal_update_weight_lora_xccl(
     request: UpdateWeightsFromXcclRequestLora, raw_request: Request
 ):
-    logger.info("API server starts update_weight_lora via XCCL")
+    logger.info("API server starts areal_update_weight_lora_xccl")
     llm = raw_request.app.state.engine_client
     ret_list = await llm.engine_core.call_utility_async(
         "areal_injected_update_weight_lora_xccl",
@@ -225,11 +225,13 @@ async def update_weight_lora_xccl(
 
 
 @router.post("/areal_init_weights_update_group")
-async def init_weights_update_group(request: UpdateGroupRequest, raw_request: Request):
-    logger.info("API server starts init_weights_update_group")
+async def areal_init_weights_update_group(
+    request: UpdateGroupRequest, raw_request: Request
+):
+    logger.info("API server starts areal_init_weights_update_group")
     llm = raw_request.app.state.engine_client
     ret_list = await llm.collective_rpc(
-        "init_update_weight_group",
+        "areal_init_update_weight_group",
         args=(
             request.master_address,
             request.master_port,
@@ -243,13 +245,13 @@ async def init_weights_update_group(request: UpdateGroupRequest, raw_request: Re
 
 
 @router.post("/areal_set_update_weight_meta")
-async def set_weight_meta_xccl(
+async def areal_set_weight_meta_xccl(
     request: UpdateWeightsFromXcclRequest, raw_request: Request
 ):
-    logger.info("API server starts upload meta")
+    logger.info("API server starts areal_set_update_weight_meta_xccl")
     llm = raw_request.app.state.engine_client
     ret_list = await llm.collective_rpc(
-        "set_weight_meta",
+        "areal_set_weight_meta",
         args=(
             request.names,
             request.dtypes,
@@ -261,15 +263,15 @@ async def set_weight_meta_xccl(
 
 
 @router.post("/areal_set_update_weight_meta_lora")
-async def set_weight_meta_xccl_lora(
+async def areal_set_weight_meta_xccl_lora(
     request: UpdateWeightsFromXcclRequestLora, raw_request: Request
 ):
     logger.info(
-        f"API server starts upload lora meta for {request.lora_name} with id {request.lora_int_id}"
+        f"API server starts areal_set_update_weight_meta_lora for {request.lora_name} with id {request.lora_int_id}"
     )
     llm = raw_request.app.state.engine_client
     ret_list = await llm.collective_rpc(
-        "set_weight_meta_lora",
+        "areal_set_weight_meta_lora",
         args=(
             request.names,
             request.dtypes,
@@ -288,8 +290,8 @@ async def set_weight_meta_xccl_lora(
 
 
 @router.post("/areal_pause_generation")
-async def pause_generation(raw_request: Request):
-    logger.info("API server starts pause_generation and aborts all requests")
+async def areal_pause_generation(raw_request: Request):
+    logger.info("API server starts areal_pause_generation and aborts all requests")
     llm = raw_request.app.state.engine_client
     # Abort all running and waiting requests
     _generation_run_event.clear()
@@ -298,8 +300,8 @@ async def pause_generation(raw_request: Request):
 
 
 @router.post("/areal_continue_generation")
-async def continue_generation(raw_request: Request):
-    logger.info("API server starts continue_generation")
+async def areal_continue_generation(raw_request: Request):
+    logger.info("API server starts areal_continue_generation")
     _generation_run_event.set()
     return to_json_response(True, "Generation continued")
 
@@ -378,7 +380,7 @@ def abort_all_reqs(self):
 
 def areal_injected_update_weight(self, path):
     self.abort_all_reqs()
-    return self.collective_rpc("update_weights", args=(path,))
+    return self.collective_rpc("areal_update_weights", args=(path,))
 
 
 def areal_injected_update_weight_lora(
@@ -386,7 +388,7 @@ def areal_injected_update_weight_lora(
 ):
     self.abort_all_reqs()
     return self.collective_rpc(
-        "update_weights_lora",
+        "areal_update_weights_lora",
         args=(
             lora_model_path,
             lora_name,
@@ -398,12 +400,12 @@ def areal_injected_update_weight_lora(
 
 def areal_injected_update_weight_xccl(self):
     self.abort_all_reqs()
-    return self.collective_rpc("update_weight_xccl")
+    return self.collective_rpc("areal_update_weight_xccl")
 
 
 def areal_injected_update_weight_lora_xccl(self):
     self.abort_all_reqs()
-    return self.collective_rpc("update_weight_lora_xccl")
+    return self.collective_rpc("areal_update_weight_lora_xccl")
 
 
 def finish_request(self, req_state: "RequestState"):
@@ -452,7 +454,31 @@ hook()
 if __name__ == "__main__":
     # NOTE(simon):
     # This section should be in sync with vllm/entrypoints/cli/main.py for CLI
-    # entrypoints.f
+    # entrypoints.
+    import vllm.entrypoints.openai.api_server as _api_server_module
+
+    def _areal_build_app(args, supported_tasks=None):
+        """Monkey-patched build_app that replaces vLLM's /v1/completions route
+        with AReaL's wrapped version and adds AReaL custom endpoints."""
+        app = _original_build_app(args, supported_tasks=supported_tasks)
+        # Remove vLLM's /v1/completions POST route so AReaL's takes precedence
+        app.router.routes = [
+            route
+            for route in app.router.routes
+            if not (
+                hasattr(route, "path")
+                and route.path == "/v1/completions"
+                and hasattr(route, "methods")
+                and "POST" in route.methods
+            )
+        ]
+        # Include AReaL's router with custom endpoints + overridden /v1/completions
+        app.include_router(router)
+        return app
+
+    # Patch build_app so run_server uses our version
+    _api_server_module.build_app = _areal_build_app
+
     cli_env_setup()
     parser = FlexibleArgumentParser(
         description="vLLM OpenAI-Compatible RESTful API server."

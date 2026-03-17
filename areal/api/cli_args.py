@@ -1344,9 +1344,6 @@ class vLLMConfig:
     # for non-pooling tasks (generation tasks). And no_enable_chunked_prefill=True
     # has NO effect for generation tasks in vLLM v0.11.0.
     #
-    # TODO(vllm-v0.11.0): vLLM v0.11.0 has inference quality issues when
-    # temperature=1.0 - multiple sampling runs produce garbled/corrupted outputs.
-    # This affects generation quality in RL training workflows.
     no_enable_chunked_prefill: bool = False
     # NOTE: Disables prefix caching (vLLM default is enabled) because it will
     # make RL training corrupted in single controller mode.

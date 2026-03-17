@@ -13,14 +13,16 @@ from areal.utils import logging
 
 logger = logging.getLogger("TreeAttentionFSDP")
 
+_FLEX_DYNAMIC = not (os.environ.get("AREAL_DISABLE_FLEX_ATTENTION_DYNAMIC", "0") == "1")
+# max_autotune benchmarks kernel candidates with concrete tensor sizes, which is
+# incompatible with dynamic=True (symbolic shapes).  Disable it in dynamic mode.
 _TORCH_COMPILE_OPTIONS = {
     "epilogue_fusion": True,
-    "max_autotune": True,
+    "max_autotune": not _FLEX_DYNAMIC,
     "shape_padding": True,
     "trace.enabled": False,
     "triton.cudagraphs": False,
 }
-_FLEX_DYNAMIC = not (os.environ.get("AREAL_DISABLE_FLEX_ATTENTION_DYNAMIC", "0") == "1")
 logger.info(
     "Compiled torch flex attention. Options: %s, dynamic: %s",
     str(_TORCH_COMPILE_OPTIONS),
