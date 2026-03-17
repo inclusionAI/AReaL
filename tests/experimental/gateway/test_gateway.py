@@ -270,13 +270,13 @@ class TestAdminEndpoints:
         assert "registration failed" in resp.json()["error"]
 
     @pytest.mark.asyncio
-    @patch(f"{MODULE}.query_router_by_session_id", new_callable=AsyncMock)
+    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
     async def test_admin_export_trajectories(
-        self, mock_forward, mock_query_by_session, client
+        self, mock_forward, mock_query_router, client
     ):
         """Admin key → /export_trajectories → routed by session_id."""
-        mock_query_by_session.return_value = WORKER_ADDR
+        mock_query_router.return_value = WORKER_ADDR
         mock_forward.return_value = httpx.Response(200, json={"interactions": []})
 
         resp = await client.post(
@@ -285,8 +285,8 @@ class TestAdminEndpoints:
             headers=admin_headers(),
         )
         assert resp.status_code == 200
-        mock_query_by_session.assert_called_once()
-        assert mock_query_by_session.call_args.args[1] == "task-1-0"
+        mock_query_router.assert_called_once()
+        assert mock_query_router.call_args.kwargs["session_id"] == "task-1-0"
 
     @pytest.mark.asyncio
     async def test_export_trajectories_missing_session_id(self, client):
@@ -511,12 +511,10 @@ class TestRouterErrors:
         assert resp.status_code == 502
 
     @pytest.mark.asyncio
-    @patch(f"{MODULE}.query_router_by_session_id", new_callable=AsyncMock)
-    async def test_session_not_found_for_export(self, mock_query_by_session, client):
+    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
+    async def test_session_not_found_for_export(self, mock_query_router, client):
         """Session not found for export_trajectories → 401."""
-        mock_query_by_session.side_effect = RouterKeyRejectedError(
-            "Session not found", 404
-        )
+        mock_query_router.side_effect = RouterKeyRejectedError("Session not found", 404)
 
         resp = await client.post(
             "/export_trajectories",
