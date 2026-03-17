@@ -58,7 +58,7 @@ def alloc_ports():
     }
     """
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if data is None:
             return jsonify({"error": "Invalid JSON in request body"}), 400
 
@@ -146,7 +146,7 @@ def fork_worker():
     global _forked_children, _forked_children_map, _allocated_ports
 
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if data is None:
             return jsonify({"error": "Invalid JSON in request body"}), 400
 
@@ -300,7 +300,7 @@ def kill_forked_worker():
     global _forked_children, _forked_children_map
 
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if data is None:
             return jsonify({"error": "Invalid JSON in request body"}), 400
 
