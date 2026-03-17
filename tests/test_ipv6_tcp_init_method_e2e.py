@@ -94,11 +94,13 @@ def _run_e2e(*, host: str, family: int, tmp_path, output_name: str) -> None:
     assert output.read_text().strip() == "Passed"
 
 
-def test_ipv6_tcp_init_method_end_to_end(tmp_path):
+def test_ipv6_tcp_init_method_end_to_end(tmp_path, ip_stack):
     if sys.platform != "linux":
         pytest.skip("Run this test on Linux hosts")
     if not socket.has_ipv6:
         pytest.skip("IPv6 is not supported on this host")
+    if not ip_stack["ipv6_route"]:
+        pytest.skip("Not an IPv6-routable host")
 
     if not _can_bind("::1", socket.AF_INET6):
         pytest.skip("IPv6 loopback (::1) is not available on this host")
@@ -110,9 +112,11 @@ def test_ipv6_tcp_init_method_end_to_end(tmp_path):
     )
 
 
-def test_ipv4_tcp_init_method_end_to_end(tmp_path):
+def test_ipv4_tcp_init_method_end_to_end(tmp_path, ip_stack):
     if sys.platform != "linux":
         pytest.skip("Run this test on Linux hosts")
+    if not ip_stack["ipv4_route"]:
+        pytest.skip("Not an IPv4-routable host")
     if not _can_bind("127.0.0.1", socket.AF_INET):
         pytest.skip("IPv4 loopback (127.0.0.1) is not available on this host")
     _run_e2e(
