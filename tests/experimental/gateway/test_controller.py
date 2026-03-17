@@ -131,7 +131,6 @@ class TestGatewayRolloutControllerAPISurface:
             "wait",
             "rollout_batch",
             "prepare_batch",
-            "agenerate",
             "chat_completion",
             "set_version",
             "get_version",

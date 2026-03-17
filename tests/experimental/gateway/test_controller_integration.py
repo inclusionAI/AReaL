@@ -295,105 +295,6 @@ class TestControllerPauseResume:
 
 
 # =============================================================================
-# TestControllerGeneration
-# =============================================================================
-
-
-@pytest.mark.slow
-@pytest.mark.skipif(not has_gpu(), reason="GPU required")
-class TestControllerGeneration:
-    """Test agenerate through the controller (async, real SGLang)."""
-
-    @pytest.mark.asyncio
-    async def test_agenerate_returns_model_response(
-        self, gateway_controller, model_path
-    ):
-        """agenerate should return a ModelResponse with real output tokens."""
-        from areal.api.cli_args import GenerationHyperparameters
-        from areal.api.io_struct import ModelRequest, ModelResponse
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        tok = TokenizerProxy(model_path)
-        input_ids = await tok.tokenize("What is 2+2?")
-
-        req = ModelRequest(
-            input_ids=input_ids,
-            gconfig=GenerationHyperparameters(
-                max_new_tokens=16,
-                temperature=0.0,
-            ),
-        )
-
-        resp = await gateway_controller.agenerate(req)
-
-        assert isinstance(resp, ModelResponse)
-        assert len(resp.output_tokens) > 0
-        assert len(resp.output_logprobs) > 0
-        assert resp.stop_reason in ("stop", "length")
-
-    @pytest.mark.asyncio
-    async def test_agenerate_respects_max_tokens(self, gateway_controller, model_path):
-        """agenerate should respect max_new_tokens limit."""
-        from areal.api.cli_args import GenerationHyperparameters
-        from areal.api.io_struct import ModelRequest
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        tok = TokenizerProxy(model_path)
-        input_ids = await tok.tokenize("Tell me a long story about dragons.")
-
-        max_tokens = 8
-        req = ModelRequest(
-            input_ids=input_ids,
-            gconfig=GenerationHyperparameters(
-                max_new_tokens=max_tokens,
-                temperature=0.0,
-            ),
-        )
-
-        resp = await gateway_controller.agenerate(req)
-
-        assert len(resp.output_tokens) <= max_tokens + 1  # allow small overshoot
-
-    @pytest.mark.asyncio
-    async def test_agenerate_output_tokens_are_valid(
-        self, gateway_controller, model_path
-    ):
-        """agenerate output tokens should be decodable by the tokenizer."""
-        from areal.api.cli_args import GenerationHyperparameters
-        from areal.api.io_struct import ModelRequest
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        tok = TokenizerProxy(model_path)
-        input_ids = await tok.tokenize("Hello world")
-
-        req = ModelRequest(
-            input_ids=input_ids,
-            gconfig=GenerationHyperparameters(
-                max_new_tokens=16,
-                temperature=0.0,
-            ),
-        )
-
-        resp = await gateway_controller.agenerate(req)
-
-        # All output tokens should be non-negative integers
-        for token_id in resp.output_tokens:
-            assert isinstance(token_id, int)
-            assert token_id >= 0
-
-        # Should be decodable
-        decoded = tok.decode_tokens(resp.output_tokens)
-        assert isinstance(decoded, str)
-        assert len(decoded) > 0
-
-
-# =============================================================================
 # TestControllerRolloutBatch
 # =============================================================================
 
@@ -678,7 +579,9 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
     config = GatewayControllerConfig(
         tokenizer_path=model_path,
         model_path=model_path,
-        scheduling_spec=(SchedulingSpec(gpu=1, cmd="python -m areal.experimental.gateway.guard"),),
+        scheduling_spec=(
+            SchedulingSpec(gpu=1, cmd="python -m areal.experimental.gateway.guard"),
+        ),
         admin_api_key="test-admin",
         consumer_batch_size=2,
         setup_timeout=300.0,
@@ -749,28 +652,3 @@ class TestControllerFullInitialization:
         # Both roles should be in service_roles
         assert sglang_role in ctrl._service_roles
         assert dp_role in ctrl._service_roles
-
-    @pytest.mark.asyncio
-    async def test_agenerate_works(self, gateway_controller_full_init, model_path):
-        """agenerate should work through the full init path."""
-        from areal.api.cli_args import GenerationHyperparameters
-        from areal.api.io_struct import ModelRequest, ModelResponse
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        ctrl = gateway_controller_full_init
-        tok = TokenizerProxy(model_path)
-        input_ids = await tok.tokenize("What is 2+2?")
-
-        req = ModelRequest(
-            input_ids=input_ids,
-            gconfig=GenerationHyperparameters(
-                max_new_tokens=16,
-                temperature=0.0,
-            ),
-        )
-
-        resp = await ctrl.agenerate(req)
-        assert isinstance(resp, ModelResponse)
-        assert len(resp.output_tokens) > 0

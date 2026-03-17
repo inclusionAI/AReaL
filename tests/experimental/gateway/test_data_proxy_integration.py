@@ -1,12 +1,12 @@
-"""Integration tests for data proxy /generate with a real SGLang server.
+"""Integration tests for data proxy with a real SGLang server.
 
 Requires GPU and a model. Marked @pytest.mark.slow to exclude from default CI.
 Run manually:
     uv run pytest tests/experimental/gateway/test_data_proxy_integration.py -v -s
 
 The test launches an SGLang server subprocess, starts the data proxy FastAPI app,
-and exercises both the SGLangBackend (non-streaming call to SGLang) and the
-full /generate endpoint (SSE streaming response from the data proxy).
+and exercises the /chat/completions endpoint (full session lifecycle) and
+pause/resume behavior.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import json
 import subprocess
 import sys
 import time
-from typing import Any
 
 import httpx
 import pytest
@@ -49,16 +48,6 @@ def _check_server_health(base_url: str) -> bool:
         return resp.status_code == 200
     except httpx.HTTPError:
         return False
-
-
-def _parse_sse_events(content: bytes) -> list[dict[str, Any]]:
-    """Parse ``data: {...}`` lines from an SSE byte-stream."""
-    events: list[dict[str, Any]] = []
-    for line in content.decode().strip().split("\n"):
-        line = line.strip()
-        if line.startswith("data: "):
-            events.append(json.loads(line[6:]))
-    return events
 
 
 # ---------------------------------------------------------------------------
@@ -115,328 +104,6 @@ def model_path() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tests — SGLangBackend (non-streaming call to SGLang directly)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.slow
-@pytest.mark.skipif(not _has_gpu(), reason="GPU required")
-class TestSGLangBackendIntegration:
-    """Test ``SGLangBackend.generate`` directly against a real SGLang server."""
-
-    @pytest.mark.asyncio
-    async def test_generate_non_streaming(self, sglang_server, model_path):
-        """Call SGLang /generate non-streaming and verify output structure."""
-        from areal.experimental.gateway.data_proxy.backend import SGLangBackend
-        from areal.experimental.gateway.data_proxy.pause import PauseState
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        pause_state = PauseState()
-        backend = SGLangBackend(
-            backend_addr=sglang_server["base_url"],
-            pause_state=pause_state,
-            request_timeout=60.0,
-        )
-        tok = TokenizerProxy(model_path)
-
-        input_ids = await tok.tokenize("What is 2+2?")
-        assert len(input_ids) > 0
-
-        result = await backend.generate(
-            input_ids=input_ids,
-            sampling_params={
-                "max_new_tokens": 32,
-                "temperature": 0.0,
-                "top_p": 1.0,
-                "skip_special_tokens": False,
-            },
-        )
-
-        # Structure checks
-        assert isinstance(result.output_tokens, list)
-        assert isinstance(result.output_logprobs, list)
-        assert len(result.output_tokens) == len(result.output_logprobs)
-        assert len(result.output_tokens) > 0
-        assert result.stop_reason in ("stop", "length")
-
-        # Token IDs should be non-negative integers
-        for tid in result.output_tokens:
-            assert isinstance(tid, int)
-            assert tid >= 0
-
-        # Log-probs should be finite floats (typically <= 0)
-        for lp in result.output_logprobs:
-            assert isinstance(lp, float)
-
-        # Decode to sanity-check
-        decoded = tok.decode_tokens(result.output_tokens)
-        assert isinstance(decoded, str)
-        assert len(decoded) > 0
-
-    @pytest.mark.asyncio
-    async def test_generate_with_stop_token_ids(self, sglang_server, model_path):
-        """Verify that stop_token_ids causes early stopping."""
-        from areal.experimental.gateway.data_proxy.backend import SGLangBackend
-        from areal.experimental.gateway.data_proxy.pause import PauseState
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        pause_state = PauseState()
-        backend = SGLangBackend(
-            backend_addr=sglang_server["base_url"],
-            pause_state=pause_state,
-            request_timeout=60.0,
-        )
-        tok = TokenizerProxy(model_path)
-
-        input_ids = await tok.tokenize("Hello")
-
-        result = await backend.generate(
-            input_ids=input_ids,
-            sampling_params={
-                "max_new_tokens": 64,
-                "temperature": 0.0,
-                "stop_token_ids": [tok.eos_token_id],
-                "skip_special_tokens": False,
-            },
-        )
-
-        assert result.stop_reason in ("stop", "length")
-        assert isinstance(result.output_tokens, list)
-
-
-# ---------------------------------------------------------------------------
-# Tests — /generate endpoint (SSE streaming through data proxy)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.slow
-@pytest.mark.skipif(not _has_gpu(), reason="GPU required")
-class TestDataProxyGenerateIntegration:
-    """Test the full ``/generate`` endpoint with real SGLang backend."""
-
-    @pytest.mark.asyncio
-    async def test_generate_streaming_with_text(self, sglang_server, model_path):
-        """POST /generate with ``text`` field -> SSE stream of token chunks."""
-        from areal.experimental.gateway.data_proxy.app import create_app
-        from areal.experimental.gateway.data_proxy.backend import (
-            SGLangBackend,
-            SGLangBackend,
-        )
-        from areal.experimental.gateway.data_proxy.config import DataProxyConfig
-        from areal.experimental.gateway.data_proxy.pause import PauseState
-        from areal.experimental.gateway.data_proxy.session import SessionStore
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        config = DataProxyConfig(
-            host="127.0.0.1",
-            port=0,  # not binding
-            backend_addr=sglang_server["base_url"],
-            tokenizer_path=model_path,
-            request_timeout=60.0,
-        )
-        app = create_app(config)
-
-        # httpx.ASGITransport does not trigger ASGI lifespan events,
-        # so we must initialize app.state manually.
-        tok = TokenizerProxy(model_path)
-        pause_state = PauseState()
-        backend = SGLangBackend(
-            backend_addr=sglang_server["base_url"],
-            pause_state=pause_state,
-            request_timeout=60.0,
-        )
-        app.state.tokenizer = tok
-        app.state.backend = backend
-        app.state.pause_state = pause_state
-        app.state.config = config
-        app.state.session_store = SessionStore()
-
-        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
-            # --- health ---
-            health_resp = await client.get("/health")
-            assert health_resp.status_code == 200
-            assert health_resp.json()["status"] == "ok"
-
-            # --- generate with text ---
-            resp = await client.post(
-                "/generate",
-                json={
-                    "text": "What is 2+2?",
-                    "sampling_params": {
-                        "max_new_tokens": 16,
-                        "temperature": 0.0,
-                    },
-                },
-                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                timeout=60.0,
-            )
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers.get("content-type", "")
-
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0
-
-            # Every event has the required fields
-            for evt in events:
-                assert "token" in evt
-                assert "text" in evt
-                assert "logprob" in evt
-                assert "finished" in evt
-                assert isinstance(evt["token"], int)
-                assert isinstance(evt["text"], str)
-                assert isinstance(evt["logprob"], float)
-
-            # Only last event is finished
-            for evt in events[:-1]:
-                assert evt["finished"] is False
-            assert events[-1]["finished"] is True
-            assert events[-1]["stop_reason"] in ("stop", "length")
-
-    @pytest.mark.asyncio
-    async def test_generate_streaming_with_input_ids(self, sglang_server, model_path):
-        """POST /generate with ``input_ids`` -> SSE stream, no tokenization."""
-        from areal.experimental.gateway.data_proxy.app import create_app
-        from areal.experimental.gateway.data_proxy.backend import (
-            SGLangBackend,
-            SGLangBackend,
-        )
-        from areal.experimental.gateway.data_proxy.config import DataProxyConfig
-        from areal.experimental.gateway.data_proxy.pause import PauseState
-        from areal.experimental.gateway.data_proxy.session import SessionStore
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        tok = TokenizerProxy(model_path)
-        input_ids = await tok.tokenize("Hello world")
-
-        config = DataProxyConfig(
-            host="127.0.0.1",
-            port=0,
-            backend_addr=sglang_server["base_url"],
-            tokenizer_path=model_path,
-            request_timeout=60.0,
-        )
-        app = create_app(config)
-
-        pause_state = PauseState()
-        backend = SGLangBackend(
-            backend_addr=sglang_server["base_url"],
-            pause_state=pause_state,
-            request_timeout=60.0,
-        )
-        app.state.tokenizer = tok
-        app.state.backend = backend
-        app.state.pause_state = pause_state
-        app.state.config = config
-        app.state.session_store = SessionStore()
-
-        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
-            resp = await client.post(
-                "/generate",
-                json={
-                    "input_ids": input_ids,
-                    "sampling_params": {
-                        "max_new_tokens": 8,
-                        "temperature": 0.0,
-                    },
-                },
-                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                timeout=60.0,
-            )
-            assert resp.status_code == 200
-
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0
-            assert events[-1]["finished"] is True
-
-            # Collect all output token IDs and decode
-            output_token_ids = [e["token"] for e in events]
-            decoded = tok.decode_tokens(output_token_ids)
-            assert isinstance(decoded, str)
-            assert len(decoded) > 0
-
-    @pytest.mark.asyncio
-    async def test_generate_streaming_token_text_consistency(
-        self, sglang_server, model_path
-    ):
-        """Verify that each SSE chunk's ``text`` matches decoding its ``token``."""
-        from areal.experimental.gateway.data_proxy.app import create_app
-        from areal.experimental.gateway.data_proxy.backend import (
-            SGLangBackend,
-            SGLangBackend,
-        )
-        from areal.experimental.gateway.data_proxy.config import DataProxyConfig
-        from areal.experimental.gateway.data_proxy.pause import PauseState
-        from areal.experimental.gateway.data_proxy.session import SessionStore
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        tok = TokenizerProxy(model_path)
-
-        config = DataProxyConfig(
-            host="127.0.0.1",
-            port=0,
-            backend_addr=sglang_server["base_url"],
-            tokenizer_path=model_path,
-            request_timeout=60.0,
-        )
-        app = create_app(config)
-
-        pause_state = PauseState()
-        backend = SGLangBackend(
-            backend_addr=sglang_server["base_url"],
-            pause_state=pause_state,
-            request_timeout=60.0,
-        )
-        app.state.tokenizer = tok
-        app.state.backend = backend
-        app.state.pause_state = pause_state
-        app.state.config = config
-        app.state.session_store = SessionStore()
-
-        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
-            resp = await client.post(
-                "/generate",
-                json={
-                    "text": "Count from 1 to 5:",
-                    "sampling_params": {
-                        "max_new_tokens": 32,
-                        "temperature": 0.0,
-                    },
-                },
-                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                timeout=60.0,
-            )
-            assert resp.status_code == 200
-            events = _parse_sse_events(resp.content)
-
-            # Each chunk's text must equal decode_token(chunk's token)
-            for evt in events:
-                expected_text = tok.decode_token(evt["token"])
-                assert evt["text"] == expected_text, (
-                    f"Token {evt['token']}: expected {expected_text!r}, "
-                    f"got {evt['text']!r}"
-                )
-
-
-# ---------------------------------------------------------------------------
 # Tests — /chat/completions endpoint (full session lifecycle)
 # ---------------------------------------------------------------------------
 
@@ -444,15 +111,12 @@ class TestDataProxyGenerateIntegration:
 def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     """Create a fully-wired data proxy app with session support."""
     from areal.experimental.gateway.data_proxy.app import create_app
-    from areal.experimental.gateway.data_proxy.backend import (
-        SGLangBackend,
-        SGLangBackend,
-    )
-    from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
     from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+    from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
     from areal.experimental.gateway.data_proxy.pause import PauseState
     from areal.experimental.gateway.data_proxy.session import SessionStore
     from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
+    from areal.experimental.openai.client import ArealOpenAI
 
     config = DataProxyConfig(
         host="127.0.0.1",
@@ -467,7 +131,7 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     # so we must initialize app.state manually.
     tok = TokenizerProxy(model_path)
     pause_state = PauseState()
-    backend = SGLangBackend(
+    backend = InfBridge(
         backend_addr=sglang_server["base_url"],
         pause_state=pause_state,
         request_timeout=60.0,
@@ -475,11 +139,11 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     store = SessionStore()
 
     app.state.tokenizer = tok
-    app.state.backend = backend
+    app.state.inf_bridge = backend
+    app.state.areal_client = ArealOpenAI(engine=backend, tokenizer=tok._tok)
     app.state.pause_state = pause_state
     app.state.config = config
     app.state.session_store = store
-    app.state.chat_handler = ChatCompletionHandler(backend, tok)
 
     return app, store
 
@@ -832,9 +496,8 @@ class TestPauseResumeIntegration:
 
     These tests verify that:
       1. The pause/continue endpoints return correct responses.
-      2. A paused data proxy blocks /generate until resumed.
-      3. A paused data proxy blocks /chat/completions until resumed.
-      4. After resume, generation completes normally.
+      2. A paused data proxy blocks /chat/completions until resumed.
+      3. After resume, generation completes normally.
     """
 
     @pytest.mark.asyncio
@@ -872,87 +535,6 @@ class TestPauseResumeIntegration:
             # Health should show paused=False again
             resp = await client.get("/health")
             assert resp.json()["paused"] is False
-
-    @pytest.mark.asyncio
-    async def test_generate_blocked_while_paused(self, sglang_server, model_path):
-        """While PauseState is set, /generate blocks until resumed."""
-        import asyncio
-
-        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
-        pause_state = app.state.pause_state
-
-        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
-            # Set paused directly (avoid calling real SGLang /pause_generation
-            # which would abort in-flight requests — there are none yet)
-            await pause_state.set_paused(True)
-
-            # Fire /generate in a background task — should block
-            gen_task = asyncio.create_task(
-                client.post(
-                    "/generate",
-                    json={
-                        "text": "What is 1+1?",
-                        "sampling_params": {
-                            "max_new_tokens": 16,
-                            "temperature": 0.0,
-                        },
-                    },
-                    headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                    timeout=30.0,
-                )
-            )
-
-            # Give the request time to reach the pause-wait loop
-            await asyncio.sleep(1.0)
-            assert not gen_task.done(), "/generate should be blocked while paused"
-
-            # Resume — the request should now complete
-            await pause_state.set_paused(False)
-            resp = await asyncio.wait_for(gen_task, timeout=30.0)
-
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers.get("content-type", "")
-
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0
-            assert events[-1]["finished"] is True
-            assert events[-1]["stop_reason"] in ("stop", "length")
-
-    @pytest.mark.asyncio
-    async def test_generate_after_pause_continue_cycle(self, sglang_server, model_path):
-        """Full cycle: pause → continue → /generate works normally."""
-        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
-
-        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
-            # Pause then immediately continue
-            resp = await client.post("/pause_generation")
-            assert resp.status_code == 200
-            resp = await client.post("/continue_generation")
-            assert resp.status_code == 200
-
-            # Generate should work normally after resume
-            resp = await client.post(
-                "/generate",
-                json={
-                    "text": "Hello world",
-                    "sampling_params": {
-                        "max_new_tokens": 8,
-                        "temperature": 0.0,
-                    },
-                },
-                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                timeout=60.0,
-            )
-            assert resp.status_code == 200
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0
-            assert events[-1]["finished"] is True
 
     @pytest.mark.asyncio
     async def test_chat_completions_blocked_while_paused(
@@ -1137,78 +719,13 @@ class TestPauseResumeIntegration:
 class TestConcurrentPauseDuringGeneration:
     """Test the real abort/resubmit cycle by pausing SGLang mid-generation.
 
-    These tests fire a long-running /generate or /chat/completions request
+    These tests fire a long-running /chat/completions request
     and concurrently call /pause_generation + /continue_generation. When
     SGLang is paused, in-flight requests abort with stop_reason='abort'.
-    The SGLangBackend loop detects this, waits for resume,
+    The InfBridge loop detects this, waits for resume,
     and resubmits with accumulated tokens — making the cycle transparent
     to the caller.
     """
-
-    @pytest.mark.asyncio
-    async def test_pause_during_generate_then_resume(self, sglang_server, model_path):
-        """Pause SGLang while /generate is in-flight, resume, verify completion.
-
-        Flow:
-          Task A: POST /generate (large max_new_tokens to ensure it takes time)
-          Task B: sleep briefly → POST /pause_generation → sleep → POST /continue_generation
-          After both: verify Task A returned valid SSE with tokens.
-        """
-        import asyncio
-
-        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
-
-        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
-
-            async def do_generate():
-                return await client.post(
-                    "/generate",
-                    json={
-                        "text": "Write a detailed story about a cat exploring a garden.",
-                        "sampling_params": {
-                            "max_new_tokens": 256,
-                            "temperature": 0.7,
-                        },
-                    },
-                    headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                    timeout=120.0,
-                )
-
-            async def pause_then_resume():
-                # Give generation time to start and send request to SGLang
-                await asyncio.sleep(0.5)
-                # Pause — SGLang will abort the in-flight request
-                await client.post("/pause_generation")
-                # Keep paused briefly to ensure abort is processed
-                await asyncio.sleep(1.0)
-                # Resume — SGLang accepts requests again
-                await client.post("/continue_generation")
-
-            # Run both concurrently
-            gen_task = asyncio.create_task(do_generate())
-            pause_task = asyncio.create_task(pause_then_resume())
-
-            # Wait for both to complete
-            resp, _ = await asyncio.gather(gen_task, pause_task)
-
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers.get("content-type", "")
-
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0, "Expected at least one token in response"
-            assert events[-1]["finished"] is True
-            assert events[-1]["stop_reason"] in ("stop", "length")
-
-            # Verify token integrity — every event has required fields
-            for evt in events:
-                assert "token" in evt
-                assert "text" in evt
-                assert "logprob" in evt
-                assert isinstance(evt["token"], int)
-                assert isinstance(evt["text"], str)
 
     @pytest.mark.asyncio
     async def test_pause_during_chat_completions_then_resume(
@@ -1369,58 +886,3 @@ class TestConcurrentPauseDuringGeneration:
                 c for c in chunks if c["choices"][0]["delta"].get("content")
             ]
             assert len(content_chunks) >= 1
-
-    @pytest.mark.asyncio
-    async def test_multiple_pause_resume_cycles_during_generate(
-        self, sglang_server, model_path
-    ):
-        """Multiple pause/resume cycles during a single long generation.
-
-        Tests that the resubmit loop can handle repeated abort/resubmit rounds
-        and still produce a valid final result.
-        """
-        import asyncio
-
-        app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
-
-        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
-
-            async def do_generate():
-                return await client.post(
-                    "/generate",
-                    json={
-                        "text": "Write a very long and detailed essay about the history of mathematics.",
-                        "sampling_params": {
-                            "max_new_tokens": 512,
-                            "temperature": 0.7,
-                        },
-                    },
-                    headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                    timeout=180.0,
-                )
-
-            async def multiple_pause_resume():
-                for i in range(3):
-                    await asyncio.sleep(0.3 + i * 0.2)  # stagger timing
-                    await client.post("/pause_generation")
-                    await asyncio.sleep(0.5)
-                    await client.post("/continue_generation")
-
-            gen_task = asyncio.create_task(do_generate())
-            pause_task = asyncio.create_task(multiple_pause_resume())
-
-            resp, _ = await asyncio.gather(gen_task, pause_task)
-
-            assert resp.status_code == 200
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0
-            assert events[-1]["finished"] is True
-            assert events[-1]["stop_reason"] in ("stop", "length")
-
-            # All tokens should be valid integers
-            for evt in events:
-                assert isinstance(evt["token"], int)
-                assert isinstance(evt["text"], str)

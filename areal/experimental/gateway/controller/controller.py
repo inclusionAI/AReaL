@@ -19,10 +19,6 @@ from typing import TYPE_CHECKING, Any
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 if TYPE_CHECKING:
-    from areal.api.io_struct import (
-        ModelRequest,
-        ModelResponse,
-    )
     from areal.api.scheduler_api import Scheduler, Worker
 
 from areal.api.io_struct import LocalInfServerInfo
@@ -634,98 +630,6 @@ class GatewayRolloutController:
         from areal.utils.data import concat_padded_tensors
 
         return concat_padded_tensors([r for r in results if r is not None])
-
-    # -- Core generation ---------------------------------------------------
-
-    async def agenerate(self, req: ModelRequest) -> ModelResponse:
-        """Send a generation request through the gateway HTTP stack.
-
-        The gateway routes the request to a data proxy (via the router),
-        which forwards it to a co-located SGLang server.  The response is
-        streamed back as SSE chunks which we accumulate into a
-        ``ModelResponse``.
-        """
-        from areal.api.io_struct import ModelResponse
-
-        start_time = time.perf_counter()
-
-        # Build payload matching the gateway /generate endpoint format
-        payload: dict[str, Any] = {
-            "input_ids": req.input_ids,
-            "sampling_params": {
-                "max_new_tokens": req.gconfig.max_new_tokens,
-                "temperature": req.gconfig.temperature,
-                "top_p": req.gconfig.top_p,
-                "skip_special_tokens": False,
-            },
-        }
-        if hasattr(req.gconfig, "stop_token_ids") and req.gconfig.stop_token_ids:
-            payload["sampling_params"]["stop_token_ids"] = req.gconfig.stop_token_ids
-
-        import aiohttp
-
-        accumulated_tokens: list[int] = []
-        accumulated_logprobs: list[float] = []
-        stop_reason: str | None = None
-
-        url = f"{self._gateway_addr}/generate"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.config.admin_api_key}",
-        }
-
-        timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise RuntimeError(
-                        f"Gateway /generate returned {resp.status}: {text}"
-                    )
-
-                import json as json_mod
-
-                # Parse SSE stream
-                buffer = b""
-                async for chunk in resp.content.iter_any():
-                    buffer += chunk
-                    while b"\n\n" in buffer:
-                        frame, buffer = buffer.split(b"\n\n", 1)
-                        for line in frame.split(b"\n"):
-                            line = line.strip()
-                            if line.startswith(b"data: "):
-                                data_str = line[6:].decode()
-                                if data_str == "[DONE]":
-                                    break
-                                try:
-                                    data = json_mod.loads(data_str)
-                                except json_mod.JSONDecodeError:
-                                    continue
-                                token_id = data.get("token")
-                                logprob = data.get("logprob", 0.0)
-                                if token_id is not None:
-                                    accumulated_tokens.append(token_id)
-                                    accumulated_logprobs.append(logprob)
-                                if data.get("finished"):
-                                    stop_reason = data.get("stop_reason", "stop")
-
-        if stop_reason is None:
-            stop_reason = "stop"
-
-        latency = time.perf_counter() - start_time
-
-        response = ModelResponse(
-            input_tokens=req.input_ids,
-            output_tokens=accumulated_tokens,
-            output_logprobs=accumulated_logprobs,
-            output_versions=[self.get_version()] * len(accumulated_tokens),
-            stop_reason=stop_reason,
-            latency=latency,
-            ttft=latency,
-            tokenizer=getattr(req, "tokenizer", None),
-            processor=getattr(req, "processor", None),
-        )
-        return response
 
     async def chat_completion(
         self,

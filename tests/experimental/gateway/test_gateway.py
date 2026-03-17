@@ -1,12 +1,11 @@
-"""Unit tests for the inference gateway (Plan 1, Task 5).
+"""Unit tests for the inference gateway.
 
-Tests all 9 gateway endpoints with mocked Router and data proxy workers.
+Tests gateway endpoints with mocked Router and data proxy workers.
 Uses ``unittest.mock.patch`` to mock ``streaming.py`` functions at module level.
 """
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -90,12 +89,6 @@ class TestHealthEndpoint:
 
 class TestAuthRejection:
     @pytest.mark.asyncio
-    async def test_missing_auth_generate_401(self, client):
-        """POST /generate without auth → 401."""
-        resp = await client.post("/generate", json={"input_ids": [1, 2, 3]})
-        assert resp.status_code == 401
-
-    @pytest.mark.asyncio
     async def test_missing_auth_chat_401(self, client):
         """POST /chat/completions without auth → 401."""
         resp = await client.post(
@@ -103,19 +96,6 @@ class TestAuthRejection:
             json={"model": "sglang", "messages": [{"role": "user", "content": "hi"}]},
         )
         assert resp.status_code == 401
-
-    @pytest.mark.asyncio
-    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
-    async def test_unknown_key_401(self, mock_query_router, client):
-        """POST /generate with unknown key (router returns 404) → 401."""
-        mock_query_router.side_effect = RouterKeyRejectedError("Unknown key", 404)
-        resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
-            headers={"Authorization": "Bearer unknown-key"},
-        )
-        assert resp.status_code == 401
-        assert "Unknown key" in resp.json()["error"]
 
     @pytest.mark.asyncio
     async def test_session_key_on_admin_endpoint_rejected(self, client):
@@ -134,33 +114,6 @@ class TestAuthRejection:
 
 
 class TestAdminEndpoints:
-    @pytest.mark.asyncio
-    @patch(f"{MODULE}.forward_sse_stream")
-    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
-    async def test_admin_generate_sse_stream(
-        self, mock_query_router, mock_forward_sse, client
-    ):
-        """Admin key → /generate → SSE stream forwarded from worker."""
-        mock_query_router.return_value = WORKER_ADDR
-
-        async def _stream():
-            yield b'data: {"token": 1}\n\n'
-            yield b'data: {"token": 2, "finished": true}\n\n'
-
-        mock_forward_sse.return_value = _stream()
-
-        resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
-            headers=admin_headers(),
-        )
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers["content-type"]
-        mock_query_router.assert_called_once()
-        call_args = mock_query_router.call_args
-        assert call_args.args[1] == ADMIN_KEY
-        assert call_args.args[2] == "/generate"
-
     @pytest.mark.asyncio
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
     @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
@@ -313,28 +266,6 @@ class TestAdminEndpoints:
 
 class TestSessionEndpoints:
     @pytest.mark.asyncio
-    @patch(f"{MODULE}.forward_sse_stream")
-    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
-    async def test_session_generate(self, mock_query_router, mock_forward_sse, client):
-        """Session key → /generate → routed to pinned worker."""
-        mock_query_router.return_value = WORKER_ADDR
-
-        async def _stream():
-            yield b'data: {"token": 1, "finished": true}\n\n'
-
-        mock_forward_sse.return_value = _stream()
-
-        resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
-            headers=session_headers(),
-        )
-        assert resp.status_code == 200
-        # Verify router was called with session key
-        call_args = mock_query_router.call_args
-        assert call_args.args[1] == SESSION_KEY
-
-    @pytest.mark.asyncio
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
     @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
     async def test_session_chat_completions(
@@ -484,8 +415,11 @@ class TestRouterErrors:
         )
 
         resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
+            "/chat/completions",
+            json={
+                "model": "sglang",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
             headers=admin_headers(),
         )
         assert resp.status_code == 502
@@ -500,8 +434,11 @@ class TestRouterErrors:
         )
 
         resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
+            "/chat/completions",
+            json={
+                "model": "sglang",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
             headers=admin_headers(),
         )
         assert resp.status_code == 503

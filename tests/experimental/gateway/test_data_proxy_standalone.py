@@ -1,14 +1,12 @@
 """Unit tests for data proxy standalone mode (no-session requests).
 
-Tests that /chat/completions and /generate work without a session.
-For /chat/completions: if the bearer token is a known session key, use session
-cache; otherwise (no auth, admin key, unknown key) → standalone mode (no caching).
-For /generate: no authentication at all — always accepted.
+Tests that /chat/completions works without a session.
+If the bearer token is a known session key, use session cache;
+otherwise (no auth, admin key, unknown key) → standalone mode (no caching).
 """
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -16,11 +14,6 @@ import pytest
 import pytest_asyncio
 
 from areal.experimental.gateway.data_proxy.app import create_app
-from areal.experimental.gateway.data_proxy.backend import (
-    GenerationResult,
-    SGLangBackend,
-)
-from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
 from areal.experimental.gateway.data_proxy.session import SessionStore
 
@@ -58,13 +51,13 @@ def mock_tokenizer():
 
 
 @pytest.fixture
-def mock_chat_handler():
-    """Mock ChatCompletionHandler that returns a valid ChatCompletion."""
+def mock_areal_client():
+    """Mock ArealOpenAI client that returns a valid ChatCompletion."""
     from openai.types.chat import ChatCompletion, ChatCompletionMessage
     from openai.types.chat.chat_completion import Choice
     from openai.types.completion_usage import CompletionUsage
 
-    handler = MagicMock(spec=ChatCompletionHandler)
+    mock_client = MagicMock()
 
     completion = ChatCompletion(
         id="chatcmpl-standalone-test",
@@ -85,37 +78,31 @@ def mock_chat_handler():
     async def _mock_create(*, areal_cache=None, **kwargs):
         return completion
 
-    handler.create = AsyncMock(side_effect=_mock_create)
-    return handler
+    mock_client.chat.completions.create = AsyncMock(side_effect=_mock_create)
+    return mock_client
 
 
 @pytest_asyncio.fixture
-async def client(config, mock_tokenizer, mock_chat_handler):
+async def client(config, mock_tokenizer, mock_areal_client):
     """Create app with mocked deps and yield an httpx async client (no auth header)."""
+    from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
     from areal.experimental.gateway.data_proxy.pause import PauseState
 
     app = create_app(config)
     pause_state = PauseState()
-    backend = SGLangBackend(
+    inf_bridge = InfBridge(
         backend_addr=config.backend_addr,
         pause_state=pause_state,
         request_timeout=config.request_timeout,
         max_resubmit_retries=config.max_resubmit_retries,
         resubmit_wait=0.01,
     )
-    backend._call_sglang = AsyncMock(
-        return_value=GenerationResult(
-            output_tokens=[1234, 5678, 2],
-            output_logprobs=[-0.5, -0.3, -0.1],
-            stop_reason="stop",
-        )
-    )
     app.state.tokenizer = mock_tokenizer
-    app.state.backend = backend
+    app.state.inf_bridge = inf_bridge
+    app.state.areal_client = mock_areal_client
     app.state.pause_state = pause_state
     app.state.config = config
     app.state.session_store = SessionStore()
-    app.state.chat_handler = mock_chat_handler
     transport = httpx.ASGITransport(app=app)
     # No default auth header — tests supply their own
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
@@ -124,15 +111,6 @@ async def client(config, mock_tokenizer, mock_chat_handler):
 
 def admin_headers():
     return {"Authorization": f"Bearer {ADMIN_KEY}"}
-
-
-def parse_sse_events(content: bytes) -> list[dict]:
-    events = []
-    for line in content.decode().strip().split("\n"):
-        line = line.strip()
-        if line.startswith("data: "):
-            events.append(json.loads(line[6:]))
-    return events
 
 
 # =============================================================================
@@ -202,7 +180,7 @@ class TestStandaloneChat:
         assert store.session_count == 0
 
     @pytest.mark.asyncio
-    async def test_standalone_chat_passes_none_cache(self, client, mock_chat_handler):
+    async def test_standalone_chat_passes_none_cache(self, client, mock_areal_client):
         """Standalone mode passes areal_cache=None (no caching)."""
         resp = await client.post(
             "/chat/completions",
@@ -213,61 +191,9 @@ class TestStandaloneChat:
         )
         assert resp.status_code == 200
         # Verify create was called with areal_cache=None
-        mock_chat_handler.create.assert_called_once()
-        call_kwargs = mock_chat_handler.create.call_args
+        mock_areal_client.chat.completions.create.assert_called_once()
+        call_kwargs = mock_areal_client.chat.completions.create.call_args
         assert call_kwargs.kwargs.get("areal_cache") is None
-
-
-# =============================================================================
-# Standalone /generate (no auth required)
-# =============================================================================
-
-
-class TestStandaloneGenerate:
-    @pytest.mark.asyncio
-    async def test_generate_no_auth_returns_sse_stream(self, client):
-        """No auth header → /generate works fine."""
-        resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
-        )
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers["content-type"]
-        events = parse_sse_events(resp.content)
-        assert len(events) == 3
-        assert events[-1]["finished"] is True
-
-    @pytest.mark.asyncio
-    async def test_generate_with_admin_key(self, client):
-        """Admin key on /generate → accepted (auth is ignored)."""
-        resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
-            headers=admin_headers(),
-        )
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers["content-type"]
-
-    @pytest.mark.asyncio
-    async def test_generate_with_unknown_key(self, client):
-        """Unknown key on /generate → accepted (auth is ignored)."""
-        resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
-            headers={"Authorization": "Bearer unknown-key-12345"},
-        )
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers["content-type"]
-
-    @pytest.mark.asyncio
-    async def test_generate_with_text_no_auth(self, client, mock_tokenizer):
-        """No auth → /generate with text field works."""
-        resp = await client.post(
-            "/generate",
-            json={"text": "What is 2+2?"},
-        )
-        assert resp.status_code == 200
-        mock_tokenizer.tokenize.assert_called_once_with("What is 2+2?")
 
 
 # =============================================================================
@@ -278,7 +204,7 @@ class TestStandaloneGenerate:
 class TestSessionKeyUnchanged:
     @pytest.mark.asyncio
     async def test_session_chat_completions_still_works(
-        self, client, mock_chat_handler
+        self, client, mock_areal_client
     ):
         """Session key callers still use the session-based flow."""
         # Start a session first
@@ -302,24 +228,3 @@ class TestSessionKeyUnchanged:
         assert resp.status_code == 200
         data = resp.json()
         assert data["choices"][0]["message"]["content"] == "Hello!"
-
-    @pytest.mark.asyncio
-    async def test_session_generate_still_works(self, client):
-        """Session key callers can also use /generate (auth ignored anyway)."""
-        # Start a session
-        resp = await client.post(
-            "/rl/start_session",
-            json={"task_id": "test-task"},
-            headers=admin_headers(),
-        )
-        assert resp.status_code == 201
-        session_api_key = resp.json()["api_key"]
-
-        # Use session key for generate (accepted regardless)
-        resp = await client.post(
-            "/generate",
-            json={"input_ids": [1, 2, 3]},
-            headers={"Authorization": f"Bearer {session_api_key}"},
-        )
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers["content-type"]

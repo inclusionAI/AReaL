@@ -1,21 +1,16 @@
 from __future__ import annotations
 
 import hmac
-import json
 import logging
 import types
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from pydantic import BaseModel
 
-from areal.experimental.gateway.data_proxy.backend import (
-    GenerationResult,
-    SGLangBackend,
-)
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
 from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
 from areal.experimental.gateway.data_proxy.pause import PauseState
@@ -32,32 +27,6 @@ from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
 from areal.experimental.openai.client import ArealOpenAI
 
 logger = logging.getLogger("DataProxy")
-
-
-class GenerateRequest(BaseModel):
-    """Request body for POST /generate."""
-
-    text: Optional[str] = None
-    input_ids: Optional[list[int]] = None
-    sampling_params: Optional[dict[str, Any]] = None
-
-
-async def stream_tokens(result: GenerationResult, tok: TokenizerProxy):
-    """Async generator that yields one SSE chunk per output token."""
-    for i, (token_id, logprob) in enumerate(
-        zip(result.output_tokens, result.output_logprobs)
-    ):
-        is_last = i == len(result.output_tokens) - 1
-        text_piece = tok.decode_token(token_id)
-        chunk = {
-            "token": token_id,
-            "text": text_piece,
-            "logprob": logprob,
-            "finished": is_last,
-        }
-        if is_last:
-            chunk["stop_reason"] = result.stop_reason
-        yield f"data: {json.dumps(chunk)}\n\n".encode()
 
 
 # =============================================================================
@@ -153,17 +122,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         inf_bridge = _create_inf_bridge(config.backend_addr, pause_state, config)
         areal_client = _create_areal_client(inf_bridge, tok)
 
-        # Legacy SGLangBackend for /generate (removed in Task 7)
-        backend = SGLangBackend(
-            backend_addr=config.backend_addr,
-            pause_state=pause_state,
-            request_timeout=config.request_timeout,
-            max_resubmit_retries=config.max_resubmit_retries,
-            resubmit_wait=config.resubmit_wait,
-        )
-
         app.state.tokenizer = tok
-        app.state.backend = backend
         app.state.inf_bridge = inf_bridge
         app.state.areal_client = areal_client
         app.state.pause_state = pause_state
@@ -189,51 +148,6 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             "sessions": store.session_count,
             "paused": await pause_state.is_paused(),
         }
-
-    # =========================================================================
-    # Low-level generate — no authentication
-    # =========================================================================
-
-    @app.post("/generate")
-    async def generate(req: GenerateRequest):
-        if req.text is None and req.input_ids is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Either 'text' or 'input_ids' must be provided",
-            )
-
-        tok: TokenizerProxy = app.state.tokenizer
-        backend: SGLangBackend = app.state.backend
-
-        # Resolve input_ids
-        if req.input_ids is not None:
-            input_ids = req.input_ids
-        else:
-            input_ids = await tok.tokenize(req.text)  # type: ignore[arg-type]  # guarded by HTTPException above
-
-        # Merge sampling params with defaults
-        defaults = {
-            "max_new_tokens": 512,
-            "temperature": 1.0,
-            "top_p": 1.0,
-            "skip_special_tokens": False,
-            "stop_token_ids": [tok.eos_token_id],
-        }
-        sampling_params = {**defaults, **(req.sampling_params or {})}
-
-        # Call SGLang (with transparent pause/resubmit) — get all tokens at once
-        result = await backend.generate(input_ids, sampling_params)
-
-        # Stream back one token per SSE chunk
-        return StreamingResponse(
-            stream_tokens(result, tok),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
 
     # =========================================================================
     # Pause/Resume — internal control plane (no auth at data proxy level)
@@ -433,7 +347,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
     @app.post("/configure_backend")
     async def configure_backend(request: Request):
-        """Reconfigure the SGLang backend address after process start.
+        """Reconfigure the inference backend address after process start.
 
         Called by the controller after ``fork_workers`` to tell this data
         proxy which SGLang server to connect to.
@@ -452,16 +366,6 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         new_areal_client = _create_areal_client(new_inf_bridge, tok)
         app.state.inf_bridge = new_inf_bridge
         app.state.areal_client = new_areal_client
-
-        # Recreate legacy SGLangBackend for /generate (removed in Task 7)
-        new_backend = SGLangBackend(
-            backend_addr=new_addr,
-            pause_state=pause_state,
-            request_timeout=app.state.config.request_timeout,
-            max_resubmit_retries=app.state.config.max_resubmit_retries,
-            resubmit_wait=app.state.config.resubmit_wait,
-        )
-        app.state.backend = new_backend
         app.state.config.backend_addr = new_addr
 
         logger.info("Backend reconfigured to %s", new_addr)

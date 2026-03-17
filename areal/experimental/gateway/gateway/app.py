@@ -62,30 +62,6 @@ def create_app(config: GatewayConfig) -> FastAPI:
         return {"status": "ok", "router_addr": config.router_addr}
 
     # =========================================================================
-    # POST /generate — admin OR session key, SSE streaming
-    # =========================================================================
-
-    @app.post("/generate")
-    async def generate(request: Request):
-        token = extract_bearer_token(request)
-        try:
-            worker_addr = await query_router(
-                config.router_addr, token, "/generate", config.router_timeout
-            )
-        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
-            return _router_error_response(exc)
-
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
-        return StreamingResponse(
-            forward_sse_stream(
-                f"{worker_addr}/generate", body, headers, config.forward_timeout
-            ),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    # =========================================================================
     # POST /chat/completions — admin OR session key, streaming or non-streaming
     # =========================================================================
 

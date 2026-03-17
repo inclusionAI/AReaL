@@ -21,7 +21,6 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any
 
 import httpx
 import pytest
@@ -78,19 +77,6 @@ def _wait_for_health(base_url: str, timeout: float, label: str) -> None:
     raise RuntimeError(
         f"{label} at {base_url} did not become healthy within {timeout}s"
     )
-
-
-def _parse_sse_events(content: bytes) -> list[dict[str, Any]]:
-    """Parse ``data: {...}`` lines from an SSE byte-stream."""
-    events: list[dict[str, Any]] = []
-    for line in content.decode().strip().split("\n"):
-        line = line.strip()
-        if line.startswith("data: "):
-            payload = line[6:]
-            if payload == "[DONE]":
-                continue
-            events.append(json.loads(payload))
-    return events
 
 
 def _run_uvicorn(app, host: str, port: int) -> None:
@@ -282,81 +268,6 @@ class TestGatewayStackHealth:
             resp = await client.get(f"{gateway_stack['data_proxy_addr']}/health")
             assert resp.status_code == 200
             assert resp.json()["status"] == "ok"
-
-
-@pytest.mark.slow
-@pytest.mark.skipif(not _has_gpu(), reason="GPU required")
-class TestGatewayGenerate:
-    """Test /generate endpoint through the full stack."""
-
-    @pytest.mark.asyncio
-    async def test_admin_generate_sse_stream(self, gateway_stack):
-        """Admin key → Gateway /generate → Router → Data Proxy → SGLang → SSE stream."""
-        gw = gateway_stack["gateway_addr"]
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{gw}/generate",
-                json={
-                    "text": "What is 2+2?",
-                    "sampling_params": {
-                        "max_new_tokens": 16,
-                        "temperature": 0.0,
-                    },
-                },
-                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-            )
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers.get("content-type", "")
-
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0
-
-            # Every event has required fields
-            for evt in events:
-                assert "token" in evt
-                assert "text" in evt
-                assert "logprob" in evt
-                assert "finished" in evt
-                assert isinstance(evt["token"], int)
-
-            # Last event is finished
-            assert events[-1]["finished"] is True
-            assert events[-1]["stop_reason"] in ("stop", "length")
-
-    @pytest.mark.asyncio
-    async def test_admin_generate_with_input_ids(self, gateway_stack, model_path):
-        """Admin key → Gateway /generate with input_ids → SSE stream."""
-        from areal.experimental.gateway.data_proxy.tokenizer_proxy import (
-            TokenizerProxy,
-        )
-
-        gw = gateway_stack["gateway_addr"]
-        tok = TokenizerProxy(model_path)
-        input_ids = await tok.tokenize("Hello world")
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{gw}/generate",
-                json={
-                    "input_ids": input_ids,
-                    "sampling_params": {
-                        "max_new_tokens": 8,
-                        "temperature": 0.0,
-                    },
-                },
-                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-            )
-            assert resp.status_code == 200
-
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0
-            assert events[-1]["finished"] is True
-
-            # Decode output tokens
-            output_token_ids = [e["token"] for e in events]
-            decoded = tok.decode_tokens(output_token_ids)
-            assert isinstance(decoded, str)
-            assert len(decoded) > 0
 
 
 @pytest.mark.slow
@@ -678,13 +589,6 @@ class TestGatewayAuth:
         """Requests without Authorization header are rejected."""
         gw = gateway_stack["gateway_addr"]
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # /generate without auth → 401
-            resp = await client.post(
-                f"{gw}/generate",
-                json={"text": "hello"},
-            )
-            assert resp.status_code == 401
-
             # /chat/completions without auth → 401
             resp = await client.post(
                 f"{gw}/chat/completions",
@@ -692,19 +596,6 @@ class TestGatewayAuth:
                     "model": "sglang",
                     "messages": [{"role": "user", "content": "hi"}],
                 },
-            )
-            assert resp.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_unknown_key_rejected(self, gateway_stack):
-        """Requests with an unknown API key are rejected."""
-        gw = gateway_stack["gateway_addr"]
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            # Unknown key on /generate → router returns 404 → gateway returns 401
-            resp = await client.post(
-                f"{gw}/generate",
-                json={"text": "hello"},
-                headers={"Authorization": "Bearer unknown-key-xyz"},
             )
             assert resp.status_code == 401
 
@@ -737,7 +628,7 @@ class TestGatewayPauseContinue:
 
     @pytest.mark.asyncio
     async def test_pause_continue_by_worker_id(self, gateway_stack):
-        """Pause → verify data proxy paused → Continue → verify resumed → generate."""
+        """Pause → verify data proxy paused → Continue → verify resumed → chat works."""
         gw = gateway_stack["gateway_addr"]
         dp = gateway_stack["data_proxy_addr"]
         worker_id = gateway_stack["worker_id"]
@@ -772,78 +663,21 @@ class TestGatewayPauseContinue:
             resp = await client.get(f"{dp}/health")
             assert resp.json()["paused"] is False
 
-            # Generation should work after resume
+            # Chat completions should work after resume
             resp = await client.post(
-                f"{gw}/generate",
+                f"{gw}/chat/completions",
                 json={
-                    "text": "Hello",
-                    "sampling_params": {"max_new_tokens": 8, "temperature": 0.0},
+                    "model": "sglang",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "max_completion_tokens": 8,
+                    "temperature": 0.0,
                 },
                 headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
             assert resp.status_code == 200
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0
-            assert events[-1]["finished"] is True
-
-    @pytest.mark.asyncio
-    async def test_pause_during_generate_then_resume(self, gateway_stack):
-        """Pause SGLang while /generate is in-flight through gateway, resume, verify.
-
-        Task A: POST /generate (large max_new_tokens)
-        Task B: sleep → /pause_generation/{worker_id} → sleep → /continue_generation/{worker_id}
-        After both: verify Task A returned valid SSE with tokens.
-        """
-        import asyncio
-
-        gw = gateway_stack["gateway_addr"]
-        worker_id = gateway_stack["worker_id"]
-        async with httpx.AsyncClient(timeout=120.0) as client:
-
-            async def do_generate():
-                return await client.post(
-                    f"{gw}/generate",
-                    json={
-                        "text": "Write a detailed story about a cat in a garden.",
-                        "sampling_params": {
-                            "max_new_tokens": 256,
-                            "temperature": 0.7,
-                        },
-                    },
-                    headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                )
-
-            async def pause_then_resume():
-                await asyncio.sleep(0.5)
-                await client.post(
-                    f"{gw}/pause_generation/{worker_id}",
-                    content=b"{}",
-                    headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                )
-                await asyncio.sleep(1.0)
-                await client.post(
-                    f"{gw}/continue_generation/{worker_id}",
-                    content=b"{}",
-                    headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-                )
-
-            gen_task = asyncio.create_task(do_generate())
-            pause_task = asyncio.create_task(pause_then_resume())
-
-            resp, _ = await asyncio.gather(gen_task, pause_task)
-
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers.get("content-type", "")
-
-            events = _parse_sse_events(resp.content)
-            assert len(events) > 0
-            assert events[-1]["finished"] is True
-            assert events[-1]["stop_reason"] in ("stop", "length")
-
-            # All tokens valid
-            for evt in events:
-                assert isinstance(evt["token"], int)
-                assert isinstance(evt["text"], str)
+            data = resp.json()
+            assert data["object"] == "chat.completion"
+            assert len(data["choices"][0]["message"]["content"]) > 0
 
     @pytest.mark.asyncio
     async def test_pause_during_chat_completions_then_resume(self, gateway_stack):

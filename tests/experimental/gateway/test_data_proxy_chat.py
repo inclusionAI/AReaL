@@ -11,8 +11,6 @@ import pytest
 import pytest_asyncio
 
 from areal.experimental.gateway.data_proxy.app import create_app
-from areal.experimental.gateway.data_proxy.backend import GenerationResult
-from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
 from areal.experimental.gateway.data_proxy.session import (
     SessionData,
@@ -55,34 +53,20 @@ def mock_tokenizer():
 
 
 @pytest.fixture
-def mock_backend():
-    backend = MagicMock()
-    backend.generate = AsyncMock(
-        return_value=GenerationResult(
-            output_tokens=[1234, 5678, 2],
-            output_logprobs=[-0.5, -0.3, -0.1],
-            stop_reason="stop",
-        )
-    )
-    return backend
-
-
-@pytest.fixture
-def mock_chat_handler():
-    """Mock ChatCompletionHandler that returns a valid ChatCompletion.
+def mock_areal_client():
+    """Mock ArealOpenAI client that returns a valid ChatCompletion.
     Also stores the interaction in the session's InteractionCache.
 
-    The mock accepts **kwargs to match the new OpenAI-compatible create() signature.
+    The mock has `.chat.completions.create()` as an AsyncMock to match
+    the ArealOpenAI interface used by the data proxy app.
     """
     from openai.types.chat import ChatCompletion, ChatCompletionMessage
     from openai.types.chat.chat_completion import Choice
     from openai.types.completion_usage import CompletionUsage
 
-    from areal.experimental.gateway.data_proxy.types import (
-        InteractionWithTokenLogpReward,
-    )
+    from areal.experimental.openai.types import InteractionWithTokenLogpReward
 
-    handler = MagicMock(spec=ChatCompletionHandler)
+    mock_client = MagicMock()
 
     completion = ChatCompletion(
         id="chatcmpl-test123",
@@ -124,39 +108,37 @@ def mock_chat_handler():
             areal_cache[completion.id] = interaction
         return completion
 
-    handler.create = AsyncMock(side_effect=_mock_create)
-    return handler
+    mock_client.chat.completions.create = AsyncMock(side_effect=_mock_create)
+    return mock_client
 
 
 @pytest_asyncio.fixture
-async def client(config, mock_tokenizer, mock_backend, mock_chat_handler):
+async def client(config, mock_tokenizer, mock_areal_client):
     """Create app with mocked deps and yield an httpx async client."""
-    from areal.experimental.gateway.data_proxy.backend import (
-        SGLangBackend,
-    )
+    from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
     from areal.experimental.gateway.data_proxy.pause import PauseState
 
     app = create_app(config)
     # Bypass lifespan — inject mocks directly into app.state
     pause_state = PauseState()
-    backend = SGLangBackend(
+    inf_bridge = InfBridge(
         backend_addr=config.backend_addr,
         pause_state=pause_state,
         request_timeout=config.request_timeout,
         max_resubmit_retries=5,
         resubmit_wait=0.01,
     )
-    backend._call_sglang = mock_backend.generate
     app.state.tokenizer = mock_tokenizer
-    app.state.backend = backend
+    app.state.inf_bridge = inf_bridge
+    app.state.areal_client = mock_areal_client
     app.state.pause_state = pause_state
     app.state.config = config
     store = SessionStore()
     app.state.session_store = store
-    app.state.chat_handler = mock_chat_handler
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
 
 def admin_headers():
     return {"Authorization": f"Bearer {ADMIN_KEY}"}
@@ -268,7 +250,7 @@ async def test_start_session_wrong_admin_key(client):
 
 
 @pytest.mark.asyncio
-async def test_chat_completions_with_session_key(client, mock_chat_handler):
+async def test_chat_completions_with_session_key(client, mock_areal_client):
     # Start session first
     resp = await client.post(
         "/rl/start_session",
@@ -290,7 +272,7 @@ async def test_chat_completions_with_session_key(client, mock_chat_handler):
     data = resp.json()
     assert data["object"] == "chat.completion"
     assert data["choices"][0]["message"]["content"] == "Hello!"
-    mock_chat_handler.create.assert_called_once()
+    mock_areal_client.chat.completions.create.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -319,7 +301,7 @@ async def test_chat_completions_with_invalid_key(client):
 
 
 @pytest.mark.asyncio
-async def test_chat_completions_passes_sampling_params(client, mock_chat_handler):
+async def test_chat_completions_passes_sampling_params(client, mock_areal_client):
     # Start session
     resp = await client.post(
         "/rl/start_session",
@@ -342,9 +324,8 @@ async def test_chat_completions_passes_sampling_params(client, mock_chat_handler
     )
     assert resp.status_code == 200
 
-    # Check that params were passed to handler.create (via _call_client_create)
-    call_kwargs = mock_chat_handler.create.call_args
-    # _call_client_create passes kwargs as keyword args
+    # Check that params were passed to areal_client.chat.completions.create
+    call_kwargs = mock_areal_client.chat.completions.create.call_args
     kw = call_kwargs.kwargs if call_kwargs.kwargs else call_kwargs[1]
     assert kw["temperature"] == 0.5
     assert kw["top_p"] == 0.9
@@ -554,7 +535,7 @@ async def test_health_sessions_count_after_start(client):
 
 
 @pytest.mark.asyncio
-async def test_full_session_lifecycle(client, mock_chat_handler):
+async def test_full_session_lifecycle(client, mock_areal_client):
     """Test the complete flow: start → chat → reward → end → export."""
     # 1. Start session
     resp = await client.post(

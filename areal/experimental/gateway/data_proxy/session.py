@@ -1,7 +1,7 @@
 """Session lifecycle management for the data proxy.
 
-Adapted from areal/experimental/openai/proxy/server.py — self-contained,
-no imports from areal.experimental.openai.
+Adapted from areal/experimental/openai/proxy/server.py — uses cache and
+type definitions from areal.experimental.openai.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING, Any
 import torch
 from pydantic import BaseModel
 
-from areal.experimental.gateway.data_proxy.cache import InteractionCache
+from areal.experimental.openai.cache import InteractionCache
 
 if TYPE_CHECKING:
-    from areal.experimental.gateway.data_proxy.types import (
+    from areal.experimental.openai.types import (
         InteractionWithTokenLogpReward,
     )
 
@@ -277,7 +277,7 @@ def deserialize_interactions(
     matching the behaviour of the original ``RolloutController`` path
     where the RPC server calls ``RTensor.remotize()``.
     """
-    from areal.experimental.gateway.data_proxy.types import (
+    from areal.experimental.openai.types import (
         InteractionWithTokenLogpReward,
     )
     from areal.infra.rpc.rtensor import RTensor
