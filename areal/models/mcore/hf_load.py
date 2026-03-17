@@ -70,6 +70,53 @@ def _merge_qkv_weights(
     return torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
 
 
+def _load_fused_qkv_weight(
+    hf_config,
+    hf_weights_safe_slice: list,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor:
+    """Load fused QKV weight for Lightning Attention, with format conversion and TP slicing.
+
+    HF stores Lightning Attention QKV in concatenated format:
+        [Q_all, K_all, V_all] along dim 0, i.e., [q0,...,qH, k0,...,kH, v0,...,vH].
+    Megatron-core expects interleaved format:
+        [H, 3, D] along dim 0, i.e., [q0,k0,v0, q1,k1,v1, ...].
+
+    This function converts from HF concatenated to mcore interleaved, then TP-slices.
+    """
+    assert len(hf_weights_safe_slice) == 1
+    x = hf_weights_safe_slice[0]
+    x = x[:] if not isinstance(x, torch.Tensor) else x
+
+    num_heads = hf_config.num_attention_heads
+    num_kv_heads = getattr(hf_config, "num_key_value_heads", num_heads)
+    head_dim = x.shape[0] // (num_heads + 2 * num_kv_heads)
+    hidden = x.shape[1]
+
+    # Split concatenated [Q_all(H*D), K_all(Kv*D), V_all(Kv*D)] into separate Q, K, V
+    q = x[: num_heads * head_dim].view(num_heads, head_dim, hidden)
+    k = x[num_heads * head_dim : (num_heads + num_kv_heads) * head_dim].view(
+        num_kv_heads, head_dim, hidden
+    )
+    v = x[(num_heads + num_kv_heads) * head_dim :].view(
+        num_kv_heads, head_dim, hidden
+    )
+
+    # For Lightning Attention, num_kv_heads == num_heads (no GQA)
+    # Convert to interleaved: [H, 3, D, hidden] -> [H*3*D, hidden]
+    x = torch.stack([q, k, v], dim=1)  # [H, 3, D, hidden]
+    x = x.reshape(-1, hidden)  # [H*3*D, hidden]
+
+    if tp_size > 1:
+        heads_per_tp = num_heads // tp_size
+        x = x.view(num_heads, 3 * head_dim, hidden)
+        x = x[tp_rank * heads_per_tp : (tp_rank + 1) * heads_per_tp]
+        x = x.reshape(-1, hidden)
+
+    return x.contiguous()
+
+
 def _merge_gate_up_weights(
     hf_weights_safe_slice: list,
     tp_rank: int,
@@ -146,9 +193,16 @@ def _weight_to_mcore_tp(
         "self_attention.linear_qkv." in mcore_weights_name
         and "layer_norm" not in mcore_weights_name
     ):
-        res = _merge_qkv_weights(
-            hf_config, mcore_weights_name, hf_weights_safe_slice, tp_rank, tp_size
-        )
+        if len(hf_weights_safe_slice) == 3:
+            res = _merge_qkv_weights(
+                hf_config, mcore_weights_name, hf_weights_safe_slice, tp_rank, tp_size
+            )
+        else:
+            # Fused QKV weight (e.g., Lightning Attention query_key_value)
+            # Already in megatron interleaved format [H, 3, D] — just TP-slice
+            res = _load_fused_qkv_weight(
+                hf_config, hf_weights_safe_slice, tp_rank, tp_size
+            )
     elif (
         "linear_fc1.weight" in mcore_weights_name
         or "linear_fc1.bias" in mcore_weights_name

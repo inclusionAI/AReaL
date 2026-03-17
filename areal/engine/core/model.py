@@ -37,6 +37,8 @@ def is_gemma3_model(model_type: str) -> bool:
 
 VALID_MOE_MODELS = [
     "qwen3_moe",
+    "bailing_moe_v2",
+    "bailing_moe_linear",
 ]
 # This registry is used to check if a model is a MoE model that we have checked it works with AReaL.
 

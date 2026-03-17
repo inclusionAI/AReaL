@@ -135,7 +135,7 @@ dependencies = [
 # CUDA-dependent extras - these packages only have Linux x86_64 wheels
 # Platform markers ensure they're skipped on unsupported platforms
 sglang = [
-    "sglang[tracing]==0.5.7; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sglang[tracing]>=0.5.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 vllm = [
     "vllm==0.14.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -150,6 +150,9 @@ megatron = [
     "megatron-core==0.13.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "mbridge==0.13.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+fla = [
+    "flash-linear-attention>=0.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 # Convenience extra for all CUDA packages (requires Linux x86_64 with CUDA)
 cuda = [
     "areal[vllm]",
@@ -157,6 +160,7 @@ cuda = [
     "areal[tms]",
     "areal[megatron]",
     "areal[flash-attn]",
+    "areal[fla]",
 ]
 # 'all' extra - kept for compatibility, CUDA packages skipped on non-Linux via markers
 all = [
