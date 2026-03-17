@@ -15,24 +15,25 @@ def _load_network_module():
 
 
 def test_ipv4_only_environment_executes_correct_branch(ip_stack):
-    if not (ip_stack["ipv4"] and not ip_stack["ipv6"]):
-        pytest.skip("Not an IPv4-only host")
+    if not (ip_stack["ipv4_route"] and not ip_stack["ipv6_route"]):
+        pytest.skip("Not an IPv4-only host (route-level)")
     network = _load_network_module()
-    assert network.get_loopback_ip() == "127.0.0.1"
+    assert ":" not in network.gethostip()
 
 
 def test_ipv6_only_environment_executes_correct_branch(ip_stack):
-    if not (ip_stack["ipv6"] and not ip_stack["ipv4"]):
-        pytest.skip("Not an IPv6-only host")
+    if not (ip_stack["ipv6_route"] and not ip_stack["ipv4_route"]):
+        pytest.skip("Not an IPv6-only host (route-level)")
     network = _load_network_module()
-    assert network.get_loopback_ip() == "::1"
+    assert ":" in network.gethostip()
 
 
 def test_dual_stack_environment_executes_correct_branch(ip_stack):
-    if not (ip_stack["ipv4"] and ip_stack["ipv6"]):
-        pytest.skip("Not a dual-stack host")
+    if not (ip_stack["ipv4_route"] and ip_stack["ipv6_route"]):
+        pytest.skip("Not a dual-stack host (route-level)")
     network = _load_network_module()
-    assert network.get_loopback_ip() == "127.0.0.1"
+    ip = network.gethostip()
+    assert ip not in {"127.0.0.1", "::1"}
 
 
 def test_split_hostport_accepts_unbracketed_ipv6():
