@@ -361,10 +361,7 @@ def local_main(config, run_id: int = 0):
             launcher.stop_all(signal="SIGINT")
             raise e
 
-    # Detect colocated mode: training and inference share the same GPUs.
-    is_colocated = config.get("actor", {}).get("colocated", False)
-
-    if is_colocated or config.get("enable_offload", False):
+    if config.get("enable_offload", False):
         tms_env_vars = get_tms_env_vars()
     else:
         tms_env_vars = {}
@@ -379,22 +376,6 @@ def local_main(config, run_id: int = 0):
             # Required by NCCL weight update group.
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
-
-        # In colocated mode, trainer must reuse the same GPUs that the
-        # inference server is already running on.  Roll back the GPU
-        # counter so that ``submit_array`` allocates the overlapping
-        # device set instead of the next sequential slice.
-        if is_colocated:
-            gen_gpu_count = (
-                alloc_mode.gen.pp_size * alloc_mode.gen.tp_size * alloc_mode.gen.dp_size
-            )
-            launcher._gpu_counter -= gen_gpu_count
-            logger.info(
-                "Colocated mode: trainer will share GPUs with inference server "
-                "(GPU counter rolled back by %d)",
-                gen_gpu_count,
-            )
-
         # All experiment configs should have the `actor` field.
         actor_spec = get_scheduling_spec(config.actor)
         actor_env_vars = actor_spec.env_vars

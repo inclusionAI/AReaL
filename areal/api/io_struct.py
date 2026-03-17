@@ -257,52 +257,6 @@ class WeightUpdateMeta:
             base_model_name=base_model_name,
         )
 
-    @classmethod
-    def from_colocated_disk(
-        cls,
-        weight_path: str = "/dev/shm/areal_colocated_weights",
-        use_lora: bool = False,
-        lora_name: str = "",
-        lora_int_id: int = 1,
-        base_model_name: str = "",
-    ) -> "WeightUpdateMeta":
-        """Create WeightUpdateMeta for colocated mode using local disk (e.g. /dev/shm).
-
-        Unlike ``from_disk()``, this does NOT depend on experiment_name/trial_name/Saver,
-        because the weights are ephemeral and local. The ``with_version()`` method can
-        be used to create versioned subdirectories under ``weight_path``.
-
-        Parameters
-        ----------
-        weight_path : str
-            Base path for temporary weight storage. Defaults to
-            ``/dev/shm/areal_colocated_weights``.
-        use_lora : bool
-            Whether LoRA adapters are used.
-        lora_name : str
-            Name of the LoRA adapter.
-        lora_int_id : int
-            Integer ID of the LoRA adapter.
-        base_model_name : str
-            Path to the base model (used for LoRA).
-
-        Returns
-        -------
-        WeightUpdateMeta
-            A configured meta for colocated disk-based weight updates.
-        """
-        path = os.path.join(weight_path, "weight_update")
-        return cls(
-            type="disk",
-            path=path,
-            use_lora=use_lora,
-            clear_checkpoint_after_load=False,  # Orchestrator handles cleanup
-            lora_name=lora_name,
-            lora_int_id=lora_int_id,
-            base_model_name=base_model_name,
-        )
-
-
 @dataclass
 class HttpRequest:
     """Represents an HTTP request to be sent to a remote inference server."""

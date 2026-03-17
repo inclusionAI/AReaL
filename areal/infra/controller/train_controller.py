@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 from typing import Any
 
 import torch
@@ -139,6 +140,7 @@ class TrainController:
         self._own_process_group = False
 
         self.rollout: RolloutController = None
+        self.is_offload = False
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Placeholder method for process group creation.
@@ -584,6 +586,17 @@ class TrainController:
         self._check_rollout_engine_connected()
         self._custom_function_call("update_weights", meta=meta)
 
+    def offload(self) -> None:
+        self._custom_function_call("offload")
+        self.is_offload = True
+
+    def onload(self) -> None:
+        self._custom_function_call("onload")
+        self.is_offload = False
+
+    def prepare_batch_context(self):
+        return nullcontext()
+
     def get_device_stats(self):
         return self._custom_function_call("get_device_stats")
 
@@ -611,8 +624,8 @@ class TrainController:
         self,
         dataloader: StatefulDataLoader,
         workflow: WorkflowLike,
-        workflow_kwargs: dict[str, Any],
-        should_accept_fn: str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> list[dict[str, Any]]:
@@ -629,8 +642,8 @@ class TrainController:
         self,
         data: list[dict[str, Any]],
         workflow: WorkflowLike,
-        workflow_kwargs: dict[str, Any],
-        should_accept_fn: str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
     ) -> list[dict[str, Any]]:
         return self.rollout.rollout_batch(

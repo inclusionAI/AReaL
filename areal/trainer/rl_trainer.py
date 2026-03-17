@@ -3,7 +3,6 @@ from __future__ import annotations
 import functools
 import os
 from collections.abc import Callable
-from contextlib import nullcontext
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -47,7 +46,7 @@ from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
-from areal.utils.offload import torch_memory_saver
+from areal.utils.offload import get_tms_env_vars
 from areal.utils.perf_tracer import Category
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
@@ -107,6 +106,7 @@ class PPOTrainer:
             logging.setup_file_logging(StatsLogger.get_log_path(config.stats_logger))
 
         self.config = config
+        self._colocated: bool = self._is_colocated_rollout(self.config.rollout)
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
             config.tokenizer_path
         )
@@ -189,8 +189,6 @@ class PPOTrainer:
             "alloc_mode": self.allocation_mode,
         }
 
-        self._colocated = getattr(config.actor, "colocated", False)
-
         if self._colocated:
             # SPMD: actor first, then connect to existing SGLang/vLLM server
             self.actor.initialize(**engine_init_kwargs, role="actor")
@@ -258,23 +256,7 @@ class PPOTrainer:
         self._proxy_started = False
 
         # Prepare weight update meta and connect to inference engine
-        if self._colocated:
-            # Colocated mode: use local disk path for weight transfer
-            colocated_kwargs = {
-                "weight_path": config.actor.colocated_weight_path,
-            }
-            if config.actor.use_lora:
-                colocated_kwargs.update(
-                    {
-                        "use_lora": config.actor.use_lora,
-                        "lora_name": config.gconfig.lora_name,
-                        "base_model_name": config.actor.path,
-                    }
-                )
-            self.weight_update_meta = WeightUpdateMeta.from_colocated_disk(
-                **colocated_kwargs
-            )
-        elif self.config.actor.weight_update_mode == "disk":
+        if self.config.actor.weight_update_mode == "disk":
             disk_kwargs = {
                 "experiment_name": config.experiment_name,
                 "trial_name": config.trial_name,
@@ -317,18 +299,13 @@ class PPOTrainer:
         # Initialize colocated orchestrator if enabled
         self.colocated_orch = None
         if self._colocated:
-            from areal.infra.colocated import ColocatedConfig, ColocatedOrchestrator
+            from areal.infra.colocated import ColocatedOrchestrator
 
             self.colocated_orch = ColocatedOrchestrator(
                 train_engine=self.actor,
                 inf_engine=self.rollout,
-                config=ColocatedConfig(
-                    weight_path=config.actor.colocated_weight_path,
-                ),
             )
 
-            # If LoRA is enabled, save initial adapter to the colocated weight
-            # path BEFORE offloading (actor is still on GPU at this point).
             _initial_lora_meta = None
             if self._initial_lora_path is not None:
                 _initial_lora_meta = self.weight_update_meta.with_version(0)
@@ -342,18 +319,12 @@ class PPOTrainer:
                     )
                 )
 
-            # After initialization both engines sit on GPU.  Offload the
-            # training engine so inference has exclusive GPU access for the
-            # first rollout.
             self.colocated_orch.initial_offload_training()
 
-            # Sync initial LoRA weights to inference engine (actor now offloaded).
             if _initial_lora_meta is not None:
-                self.colocated_orch.direct_disk_weight_update(_initial_lora_meta)
+                self.rollout.sync_weights_from_disk(_initial_lora_meta)
 
-            logger.info(
-                f"Colocated mode enabled. Weight transfer path: {config.actor.colocated_weight_path}"
-            )
+            logger.info("Colocated mode enabled via rollout.scheduling_strategy.")
 
         # Set up evaluation helpers.
         self.evaluator = Evaluator(config.evaluator, ft_spec)
@@ -478,24 +449,22 @@ class PPOTrainer:
                         "epoch_step": step,
                     },
                 ),
+                self.actor.prepare_batch_context(),
             ):
-                tms_ctx: Any | nullcontext[None] = (
-                    torch_memory_saver.disable() if self._colocated else nullcontext()
+                rollout_batch = self.actor.prepare_batch(
+                    self.train_dataloader,
+                    workflow=workflow,
+                    workflow_kwargs=workflow_kwargs,
+                    should_accept_fn=dynamic_filter_fn,
+                    group_size=config.gconfig.n_samples,
+                    dynamic_bs=self.config.dynamic_bs,
                 )
-                with tms_ctx:
-                    rollout_batch = self.actor.prepare_batch(
-                        self.train_dataloader,
-                        workflow=workflow,
-                        workflow_kwargs=workflow_kwargs,
-                        should_accept_fn=dynamic_filter_fn,
-                        group_size=config.gconfig.n_samples,
-                        dynamic_bs=self.config.dynamic_bs,
-                    )
-                    if self._colocated:
-                        self.rollout.pause()
+                if self._colocated:
+                    self.rollout.pause()
 
             # === Colocated mode: switch from inference to training ===
             if self._colocated:
+                assert self.colocated_orch is not None
                 with (
                     stats_tracker.record_timing("colocated_switch_to_train"),
                     perf_tracer.trace_scope(
@@ -686,6 +655,7 @@ class PPOTrainer:
 
             # === Colocated mode: switch from training to inference ===
             if self._colocated:
+                assert self.colocated_orch is not None
                 with (
                     stats_tracker.record_timing("colocated_switch_to_inference"),
                     perf_tracer.trace_scope(
@@ -731,8 +701,6 @@ class PPOTrainer:
             self._save_perf_tracer(step=global_step)
 
     def close(self):
-        if self.colocated_orch is not None:
-            self.colocated_orch.cleanup()
         self.saver.finalize()
         self.stats_logger.close()
         if self.eval_rollout is not None:
@@ -780,6 +748,15 @@ class PPOTrainer:
         self.rollout.save_perf_tracer(step=step)
         perf_tracer.save(step=step)
 
+    @staticmethod
+    def _is_colocated_rollout(rollout_config: InferenceEngineConfig) -> bool:
+        strategy = getattr(rollout_config, "scheduling_strategy", None)
+        return (
+            strategy is not None
+            and getattr(strategy, "type", None) == SchedulingStrategyType.colocation
+            and getattr(strategy, "target", None) == "actor"
+        )
+
     def _init_scheduler(self) -> Scheduler:
         cfg = self.config.scheduler
         if cfg.type == "local":
@@ -808,6 +785,17 @@ class PPOTrainer:
         if not is_single_controller():
             # These environs are set by the launcher in the SPMD mode.
             return
+
+        tms_env_vars = None
+        if self.config.enable_offload or self._colocated:
+            tms_env_vars = get_tms_env_vars()
+            for spec in self.config.actor.scheduling_spec:
+                spec.env_vars.update(tms_env_vars)
+
+        if self._colocated and tms_env_vars is not None:
+            for spec in self.config.rollout.scheduling_spec:
+                spec.env_vars.update(tms_env_vars)
+
         if self.allocation_mode.gen_backend != "sglang":
             return
 
@@ -904,10 +892,8 @@ class PPOTrainer:
     ) -> InferenceEngine | RolloutController:
         if lora_path is not None and not is_single_controller() and not self._colocated:
             raise ValueError(
-                "LoRA is only supported in single-controller mode or colocated mode. "
-                "Use `python3 train.py scheduler.type=local` instead of "
-                "`python3 -m areal.infra.launcher.local`, or enable colocated mode "
-                "with `actor.colocated=true` and `actor.weight_update_mode=disk`."
+                "LoRA is only supported in single-controller mode or when rollout is "
+                "colocated with actor via rollout.scheduling_strategy and actor.weight_update_mode=disk."
             )
         # Create a working copy of config
         config = deepcopy(rollout_config)
@@ -1152,19 +1138,19 @@ class PPOTrainer:
                 "Please disable return_routed_experts or switch to SGLang backend."
             )
 
-        if not getattr(self.config.actor, "colocated", False):
+        if not self._colocated:
             return
-
-        if is_single_controller():
-            raise ValueError(
-                "Colocated mode only supports SPMD mode. "
-                "Launch with `python3 -m areal.infra.launcher.local` instead."
-            )
 
         if self.config.cluster.n_nodes != 1:
             raise ValueError(
                 "Colocated mode only supports single-node runs. "
                 f"Got cluster.n_nodes={self.config.cluster.n_nodes}."
+            )
+
+        if self.config.actor.weight_update_mode != "disk":
+            raise ValueError(
+                "Colocated mode requires actor.weight_update_mode='disk'. "
+                f"Got '{self.config.actor.weight_update_mode}'."
             )
 
         if train_dataset is None:

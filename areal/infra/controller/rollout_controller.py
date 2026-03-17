@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import shutil
 import threading
 import traceback
@@ -1018,9 +1019,14 @@ class RolloutController:
         )
 
     async def update_weights_from_disk(self, meta: WeightUpdateMeta):
-        meta.clear_checkpoint_after_load = False
-        await self._collective_rpc_async("update_weights_from_disk", meta=meta)
-        shutil.rmtree(meta.path, ignore_errors=True)
+        update_meta = copy.copy(meta)
+        update_meta.clear_checkpoint_after_load = False
+        await self._collective_rpc_async("update_weights_from_disk", meta=update_meta)
+        if meta.clear_checkpoint_after_load and meta.path is not None:
+            shutil.rmtree(meta.path, ignore_errors=True)
+
+    def sync_weights_from_disk(self, meta: WeightUpdateMeta) -> None:
+        run_async_task(self.update_weights_from_disk, meta)
 
     async def pause_generation(self):
         await self._collective_rpc_async("pause_generation")
@@ -1040,6 +1046,12 @@ class RolloutController:
     def get_version(self) -> int:
         with self._version_lock:
             return self._version
+
+    def offload(self) -> None:
+        self._collective_rpc("offload", http_timeout=60.0)
+
+    def onload(self, tags: list[str] | None = None) -> None:
+        self._collective_rpc("onload", tags=tags, http_timeout=60.0)
 
     def pause(self):
         self.dispatcher.pause()

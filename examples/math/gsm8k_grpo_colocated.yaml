@@ -1,23 +1,10 @@
 # GSM8K GRPO with colocated (GPU time-sharing) training
-#
-# In colocated mode, training and inference share the same GPUs by alternating
-# between offloaded/onloaded states. Weights are transferred via /dev/shm
-# (in-memory filesystem) for fast weight synchronization.
-#
-# Requirements:
-# - torch_memory_saver must be installed and LD_PRELOAD configured
-# - /dev/shm must have enough space (model_size_bytes * 2, ~14GB for 7B bf16)
-# - Single node only (multi-node colocated is not supported)
-#
-# Usage (SPMD / Launcher mode):
-#   python3 -m areal.infra.launcher.local \
-#     --config examples/math/gsm8k_grpo_colocated.yaml
 
 experiment_name: gsm8k-grpo-colocated
 trial_name: trial0
 
 seed: 1
-enable_offload: true  # Required for colocated mode (enables torch_memory_saver)
+enable_offload: true  # Enables torch_memory_saver for train-side offload/onload
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
@@ -39,6 +26,9 @@ rollout:
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 0  # On-policy: no off-policyness allowed
+  scheduling_strategy:
+    type: colocation
+    target: actor
   scheduling_spec: ${actor.scheduling_spec}
   enable_rollout_tracing: false
   fileroot: ${cluster.fileroot}
@@ -79,10 +69,7 @@ actor:
   kl_ctl: 0.0
   ppo_n_minibatches: 1
   recompute_logprob: true
-  # Colocated mode configuration
-  colocated: true
-  colocated_weight_path: /dev/shm/areal_colocated_weights
-  weight_update_mode: disk  # Must be disk for colocated mode
+  weight_update_mode: disk  # Colocated mode uses ordinary disk sync under cluster.fileroot
   max_new_tokens: ${gconfig.max_new_tokens}
   scheduling_spec:
     - task_type: worker

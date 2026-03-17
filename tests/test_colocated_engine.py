@@ -1,112 +1,65 @@
-"""Unit tests for colocated orchestration and trainer validation."""
+"""Unit tests for colocated orchestration and scheduler-driven trainer behavior."""
 
 from __future__ import annotations
 
-import os
+import asyncio
 import shutil
 import tempfile
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from areal.infra.colocated import ColocatedConfig, ColocatedOrchestrator
+from areal.api.cli_args import SchedulingStrategy, SchedulingStrategyType
+from areal.api.io_struct import WeightUpdateMeta
+from areal.infra.colocated import ColocatedOrchestrator
+from areal.infra.controller.rollout_controller import RolloutController
+from areal.infra.controller.train_controller import TrainController
 from areal.trainer.rl_trainer import PPOTrainer
 
 
 @pytest.fixture
-def temp_weight_dir():
-    """Create a temporary directory for weight storage."""
-    tmpdir = tempfile.mkdtemp(prefix="areal_colocated_test_")
-    yield tmpdir
-    shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-@pytest.fixture
 def mock_train_engine():
-    """Create a mock training engine."""
     engine = MagicMock()
     engine.offload = MagicMock()
     engine.onload = MagicMock()
-    engine.save = MagicMock()
     return engine
 
 
 @pytest.fixture
 def mock_inf_engine():
-    """Create a mock inference engine."""
     engine = MagicMock()
     engine.offload = MagicMock()
     engine.onload = MagicMock()
-    engine.backend = MagicMock()
-    engine.addresses = ["127.0.0.1:30000"]
-    engine.config = MagicMock()
-    engine.config.request_retries = 1
-    engine.config.request_timeout = 30.0
+    engine.sync_weights_from_disk = MagicMock()
     return engine
 
 
 @pytest.fixture
-def orchestrator(mock_train_engine, mock_inf_engine, temp_weight_dir):
-    """Create a ColocatedOrchestrator with mock engines."""
-    config = ColocatedConfig(
-        weight_path=temp_weight_dir,
-        cleanup_weights_after_load=True,
-    )
+def orchestrator(mock_train_engine, mock_inf_engine):
     return ColocatedOrchestrator(
         train_engine=mock_train_engine,
         inf_engine=mock_inf_engine,
-        config=config,
     )
 
 
-class TestColocatedConfig:
-    """Tests for ColocatedConfig dataclass."""
-
-    def test_default_config(self):
-        config = ColocatedConfig()
-        assert config.weight_path == "/dev/shm/areal_colocated_weights"
-        assert config.cleanup_weights_after_load is True
-
-    def test_custom_config(self):
-        config = ColocatedConfig(
-            weight_path="/tmp/custom_weights",
-            cleanup_weights_after_load=False,
-        )
-        assert config.weight_path == "/tmp/custom_weights"
-        assert config.cleanup_weights_after_load is False
-
-
 class TestColocatedOrchestrator:
-    """Tests for ColocatedOrchestrator."""
-
     def test_initial_state(self, orchestrator):
-        """Test that orchestrator starts with both engines on GPU.
-
-        The caller must call ``initial_offload_training()`` before the
-        first rollout to move the training engine off GPU.
-        """
-        assert orchestrator._inf_on_gpu is True
         assert orchestrator._train_on_gpu is True
+        assert orchestrator._inf_on_gpu is True
 
     def test_initial_offload_training(self, orchestrator, mock_train_engine):
-        """Test that initial_offload_training offloads the training engine."""
-        assert orchestrator._train_on_gpu is True
         orchestrator.initial_offload_training()
+
         mock_train_engine.offload.assert_called_once()
         assert orchestrator._train_on_gpu is False
+        assert orchestrator._inf_on_gpu is True
 
-    def test_initial_offload_training_idempotent(self, orchestrator, mock_train_engine):
-        """Test that calling initial_offload_training twice is safe."""
-        orchestrator.initial_offload_training()
-        orchestrator.initial_offload_training()  # Should skip
-        mock_train_engine.offload.assert_called_once()
-
-    def test_prepare_for_training_offloads_inf_and_onloads_train(
+    def test_prepare_for_training_switches_gpu_owner(
         self, orchestrator, mock_train_engine, mock_inf_engine
     ):
-        """Test that prepare_for_training switches GPU ownership correctly."""
-        # Must offload training first (mimics real init sequence)
         orchestrator.initial_offload_training()
         mock_train_engine.offload.reset_mock()
 
@@ -114,156 +67,144 @@ class TestColocatedOrchestrator:
 
         mock_inf_engine.offload.assert_called_once()
         mock_train_engine.onload.assert_called_once()
-        assert orchestrator._inf_on_gpu is False
         assert orchestrator._train_on_gpu is True
+        assert orchestrator._inf_on_gpu is False
 
-    def test_prepare_for_training_idempotent(
+    def test_prepare_for_inference_switches_gpu_owner_and_syncs_weights(
         self, orchestrator, mock_train_engine, mock_inf_engine
     ):
-        """Test that calling prepare_for_training twice doesn't double offload/onload."""
-        orchestrator.initial_offload_training()
-        mock_train_engine.offload.reset_mock()
-
-        orchestrator.prepare_for_training()
-        orchestrator.prepare_for_training()
-
-        # Should only be called once (second call is a no-op)
-        mock_inf_engine.offload.assert_called_once()
-        mock_train_engine.onload.assert_called_once()
-
-    def test_prepare_for_inference_offloads_train_and_onloads_inf(
-        self, orchestrator, mock_train_engine, mock_inf_engine
-    ):
-        """Test that prepare_for_inference switches GPU ownership correctly."""
-        # Must offload training first, then switch to training mode
         orchestrator.initial_offload_training()
         orchestrator.prepare_for_training()
         mock_inf_engine.offload.reset_mock()
         mock_train_engine.onload.reset_mock()
         mock_train_engine.offload.reset_mock()
 
-        meta = MagicMock()
-        meta.path = "/tmp/test_weights"
-
-        with patch.object(orchestrator, "_direct_disk_weight_update"):
-            orchestrator.prepare_for_inference(meta)
+        meta = WeightUpdateMeta(type="disk", path="/tmp/weight_update_v1")
+        orchestrator.prepare_for_inference(meta)
 
         mock_train_engine.offload.assert_called_once()
         mock_inf_engine.onload.assert_called_once()
+        mock_inf_engine.sync_weights_from_disk.assert_called_once_with(meta)
         assert orchestrator._train_on_gpu is False
         assert orchestrator._inf_on_gpu is True
 
-    def test_prepare_for_inference_calls_weight_update(
-        self, orchestrator, mock_train_engine, mock_inf_engine
-    ):
-        """Test that prepare_for_inference triggers disk weight update."""
-        # Must offload training first, then switch to training mode
+    def test_prepare_calls_are_idempotent(self, orchestrator, mock_train_engine, mock_inf_engine):
         orchestrator.initial_offload_training()
         orchestrator.prepare_for_training()
-
-        meta = MagicMock()
-        meta.path = "/tmp/test_weights"
-
-        with patch.object(orchestrator, "_direct_disk_weight_update") as mock_update:
-            orchestrator.prepare_for_inference(meta)
-            mock_update.assert_called_once_with(meta)
-
-    def test_cleanup_removes_weight_directory(self, orchestrator, temp_weight_dir):
-        """Test that cleanup removes the weight directory."""
-        # Create the directory
-        os.makedirs(temp_weight_dir, exist_ok=True)
-        assert os.path.exists(temp_weight_dir)
-
-        orchestrator.cleanup()
-        assert not os.path.exists(temp_weight_dir)
-
-    def test_cleanup_ignores_missing_directory(self, orchestrator):
-        """Test that cleanup handles missing directory gracefully."""
-        orchestrator.config.weight_path = "/nonexistent/path"
-        # Should not raise
-        orchestrator.cleanup()
-
-    def test_full_cycle_train_infer(
-        self, orchestrator, mock_train_engine, mock_inf_engine
-    ):
-        """Test a full cycle: init offload → training → inference."""
-        # Initial state: both engines on GPU
-        assert orchestrator._inf_on_gpu is True
-        assert orchestrator._train_on_gpu is True
-
-        # Offload training engine (real init sequence)
-        orchestrator.initial_offload_training()
-        assert orchestrator._train_on_gpu is False
-        assert orchestrator._inf_on_gpu is True
-
-        # Reset mocks after initial offload
-        mock_train_engine.offload.reset_mock()
-
-        # Switch to training
         orchestrator.prepare_for_training()
-        assert orchestrator._train_on_gpu is True
-        assert orchestrator._inf_on_gpu is False
 
-        # Switch back to inference
-        meta = MagicMock()
-        meta.path = "/tmp/test_weights"
-        with patch.object(orchestrator, "_direct_disk_weight_update"):
-            orchestrator.prepare_for_inference(meta)
-        assert orchestrator._train_on_gpu is False
-        assert orchestrator._inf_on_gpu is True
-
-        # Verify call order
-        assert mock_inf_engine.offload.call_count == 1
-        assert mock_train_engine.onload.call_count == 1
-        assert mock_train_engine.offload.call_count == 1
-        assert mock_inf_engine.onload.call_count == 1
+        mock_inf_engine.offload.assert_called_once()
+        mock_train_engine.onload.assert_called_once()
 
 
-class TestWeightUpdateMetaColocated:
-    """Tests for WeightUpdateMeta.from_colocated_disk factory method."""
+class TestTrainControllerColocatedInterfaces:
+    def test_offload_updates_state_and_dispatches(self):
+        controller = TrainController.__new__(TrainController)
+        controller._custom_function_call = MagicMock()
+        controller.is_offload = False
 
-    def test_from_colocated_disk_default(self):
-        from areal.api.io_struct import WeightUpdateMeta
+        controller.offload()
 
-        meta = WeightUpdateMeta.from_colocated_disk()
-        assert meta.type == "disk"
-        assert meta.path == "/dev/shm/areal_colocated_weights/weight_update"
-        assert meta.use_lora is False
-        assert meta.clear_checkpoint_after_load is False
+        controller._custom_function_call.assert_called_once_with("offload")
+        assert controller.is_offload is True
 
-    def test_from_colocated_disk_custom_path(self):
-        from areal.api.io_struct import WeightUpdateMeta
+    def test_onload_updates_state_and_dispatches(self):
+        controller = TrainController.__new__(TrainController)
+        controller._custom_function_call = MagicMock()
+        controller.is_offload = True
 
-        meta = WeightUpdateMeta.from_colocated_disk(weight_path="/tmp/custom_weights")
-        assert meta.path == "/tmp/custom_weights/weight_update"
+        controller.onload()
 
-    def test_from_colocated_disk_with_lora(self):
-        from areal.api.io_struct import WeightUpdateMeta
+        controller._custom_function_call.assert_called_once_with("onload")
+        assert controller.is_offload is False
 
-        meta = WeightUpdateMeta.from_colocated_disk(
-            use_lora=True,
-            lora_name="test_lora",
-            base_model_name="Qwen/Qwen2.5-1.5B",
+    def test_prepare_batch_context_is_noop(self):
+        controller = TrainController.__new__(TrainController)
+
+        with controller.prepare_batch_context():
+            pass
+
+
+class TestRolloutControllerColocatedInterfaces:
+    def test_sync_weights_from_disk_uses_run_async_task(self):
+        controller = RolloutController.__new__(RolloutController)
+        meta = WeightUpdateMeta(type="disk", path="/tmp/weight_update_v2")
+
+        with patch(
+            "areal.infra.controller.rollout_controller.run_async_task"
+        ) as mock_run_async_task:
+            controller.sync_weights_from_disk(meta)
+
+        mock_run_async_task.assert_called_once_with(
+            controller.update_weights_from_disk, meta
         )
-        assert meta.use_lora is True
-        assert meta.lora_name == "test_lora"
-        assert meta.base_model_name == "Qwen/Qwen2.5-1.5B"
 
-    def test_from_colocated_disk_with_version(self):
-        from areal.api.io_struct import WeightUpdateMeta
+    def test_offload_and_onload_delegate_to_collective_rpc(self):
+        controller = RolloutController.__new__(RolloutController)
+        controller._collective_rpc = MagicMock()
 
-        meta = WeightUpdateMeta.from_colocated_disk(weight_path="/dev/shm/test_weights")
-        versioned = meta.with_version(5)
-        assert versioned.path == "/dev/shm/test_weights/weight_update_v5"
-        assert versioned.version == 5
+        controller.offload()
+        controller.onload(tags=["lora"])
+
+        assert controller._collective_rpc.call_args_list == [
+            (("offload",), {"http_timeout": 60.0}),
+            (("onload",), {"tags": ["lora"], "http_timeout": 60.0}),
+        ]
+
+    def test_update_weights_from_disk_does_not_mutate_original_meta(self):
+        controller = RolloutController.__new__(RolloutController)
+        controller._collective_rpc_async = AsyncMock()
+
+        temp_dir = Path(tempfile.mkdtemp(prefix="areal-colocated-test-"))
+        try:
+            meta = WeightUpdateMeta(
+                type="disk",
+                path=str(temp_dir),
+                clear_checkpoint_after_load=True,
+            )
+
+            asyncio.run(controller.update_weights_from_disk(meta))
+
+            assert meta.clear_checkpoint_after_load is True
+            assert not temp_dir.exists()
+            await_args = controller._collective_rpc_async.await_args
+            assert await_args is not None
+            sent_meta = await_args.kwargs["meta"]
+            assert sent_meta.clear_checkpoint_after_load is False
+            assert sent_meta.path == meta.path
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def _make_validation_trainer() -> PPOTrainer:
-    trainer = PPOTrainer.__new__(PPOTrainer)
+def _make_validation_trainer(
+    *,
+    colocated: bool = True,
+    weight_update_mode: str = "disk",
+) -> Any:
+    trainer = cast(Any, PPOTrainer.__new__(PPOTrainer))
     trainer.allocation_mode = SimpleNamespace(gen_backend="sglang")
+    scheduling_strategy = SchedulingStrategy(
+        type=(
+            SchedulingStrategyType.colocation
+            if colocated
+            else SchedulingStrategyType.separation
+        ),
+        target="actor" if colocated else None,
+    )
+    trainer._colocated = colocated
     trainer.config = SimpleNamespace(
-        actor=SimpleNamespace(colocated=True, kl_ctl=0),
-        rollout=SimpleNamespace(return_routed_experts=False, openai=None),
+        enable_offload=False,
+        actor=SimpleNamespace(
+            kl_ctl=0,
+            weight_update_mode=weight_update_mode,
+            scheduling_spec=[SimpleNamespace(env_vars={})],
+        ),
+        rollout=SimpleNamespace(
+            return_routed_experts=False,
+            openai=None,
+            scheduling_strategy=scheduling_strategy,
+            scheduling_spec=[SimpleNamespace(env_vars={})],
+        ),
         critic=None,
         ref=None,
         teacher=None,
@@ -272,43 +213,57 @@ def _make_validation_trainer() -> PPOTrainer:
     return trainer
 
 
-class TestPPOTrainerColocatedValidation:
-    def test_validate_cfg_rejects_single_controller(self):
+class TestPPOTrainerColocatedScheduling:
+    def test_is_colocated_rollout_detects_actor_colocation(self):
+        rollout_cfg = SimpleNamespace(
+            scheduling_strategy=SchedulingStrategy(
+                type=SchedulingStrategyType.colocation,
+                target="actor",
+            )
+        )
+
+        assert cast(Any, PPOTrainer)._is_colocated_rollout(rollout_cfg) is True
+
+    def test_is_colocated_rollout_rejects_other_topologies(self):
+        rollout_cfg = SimpleNamespace(
+            scheduling_strategy=SchedulingStrategy(
+                type=SchedulingStrategyType.colocation,
+                target="critic",
+            )
+        )
+
+        assert cast(Any, PPOTrainer)._is_colocated_rollout(rollout_cfg) is False
+
+    def test_validate_cfg_allows_single_controller(self):
         trainer = _make_validation_trainer()
 
-        with (
-            patch("areal.trainer.rl_trainer.is_single_controller", return_value=True),
-            pytest.raises(ValueError, match="only supports SPMD mode"),
-        ):
+        with patch("areal.trainer.rl_trainer.is_single_controller", return_value=True):
             trainer._validate_cfg(train_dataset=object())
 
     def test_validate_cfg_rejects_multi_node(self):
         trainer = _make_validation_trainer()
         trainer.config.cluster.n_nodes = 2
 
-        with (
-            patch("areal.trainer.rl_trainer.is_single_controller", return_value=False),
-            pytest.raises(ValueError, match="single-node runs"),
-        ):
+        with pytest.raises(ValueError, match="single-node runs"):
+            trainer._validate_cfg(train_dataset=object())
+
+    def test_validate_cfg_rejects_non_disk_weight_update(self):
+        trainer = _make_validation_trainer(weight_update_mode="xccl")
+
+        with pytest.raises(ValueError, match="weight_update_mode='disk'"):
             trainer._validate_cfg(train_dataset=object())
 
     def test_validate_cfg_rejects_missing_train_dataset(self):
         trainer = _make_validation_trainer()
 
-        with (
-            patch("areal.trainer.rl_trainer.is_single_controller", return_value=False),
-            pytest.raises(ValueError, match="requires a train_dataset"),
-        ):
+        with pytest.raises(ValueError, match="requires a train_dataset"):
             trainer._validate_cfg(train_dataset=None)
 
     def test_validate_cfg_rejects_online_mode(self):
         trainer = _make_validation_trainer()
         trainer.config.rollout.openai = SimpleNamespace(mode="online")
 
-        with (
-            patch("areal.trainer.rl_trainer.is_single_controller", return_value=False),
-            pytest.raises(ValueError, match="rollout.openai.mode='online'"),
-        ):
+        with pytest.raises(ValueError, match="rollout.openai.mode='online'"):
             trainer._validate_cfg(train_dataset=object())
 
     @pytest.mark.parametrize(
@@ -338,20 +293,31 @@ class TestPPOTrainerColocatedValidation:
         trainer = _make_validation_trainer()
         mutate(trainer)
 
-        with (
-            patch("areal.trainer.rl_trainer.is_single_controller", return_value=False),
-            pytest.raises(ValueError, match=expected_error),
-        ):
+        with pytest.raises(ValueError, match=expected_error):
             trainer._validate_cfg(train_dataset=object())
 
-    def test_validate_cfg_does_not_apply_colocated_restrictions_to_standard_mode(self):
-        trainer = _make_validation_trainer()
-        trainer.config.actor.colocated = False
+    def test_validate_cfg_skips_colocated_restrictions_for_standard_mode(self):
+        trainer = _make_validation_trainer(colocated=False)
         trainer.config.cluster.n_nodes = 4
         trainer.config.rollout.openai = SimpleNamespace(mode="online")
         trainer.config.critic = object()
         trainer.config.ref = object()
         trainer.config.teacher = object()
 
-        with patch("areal.trainer.rl_trainer.is_single_controller", return_value=True):
-            trainer._validate_cfg(train_dataset=None)
+        trainer._validate_cfg(train_dataset=None)
+
+    def test_amend_xccl_weight_update_envvar_injects_tms_for_colocated_controller(self):
+        trainer = _make_validation_trainer()
+        trainer.allocation_mode = SimpleNamespace(gen_backend="vllm")
+
+        with (
+            patch("areal.trainer.rl_trainer.is_single_controller", return_value=True),
+            patch(
+                "areal.trainer.rl_trainer.get_tms_env_vars",
+                return_value={"LD_PRELOAD": "/tmp/libtms.so", "TMS_INIT_ENABLE": "1"},
+            ),
+        ):
+            trainer._amend_xccl_weight_update_envvar()
+
+        assert trainer.config.actor.scheduling_spec[0].env_vars["LD_PRELOAD"] == "/tmp/libtms.so"
+        assert trainer.config.rollout.scheduling_spec[0].env_vars["LD_PRELOAD"] == "/tmp/libtms.so"

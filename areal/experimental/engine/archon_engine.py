@@ -718,6 +718,13 @@ class ArchonEngine(TrainEngine):
             data.update(data_list[0])
         return data
 
+    def prepare_batch_context(self):
+        return (
+            torch_memory_saver.disable()
+            if self.is_offload and not torch.version.hip
+            else nullcontext()
+        )
+
     def get_device_stats(self) -> DeviceRuntimeInfo:
         return DeviceRuntimeInfo.get_current()
 

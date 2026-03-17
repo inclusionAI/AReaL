@@ -767,6 +767,13 @@ class MegatronEngine(TrainEngine):
             data.update(data_list[0])
         return data
 
+    def prepare_batch_context(self):
+        return (
+            torch_memory_saver.disable()
+            if self.is_offload and not torch.version.hip
+            else nullcontext()
+        )
+
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver.
 

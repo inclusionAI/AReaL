@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from concurrent.futures import Future
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -262,6 +263,10 @@ class TrainEngine(abc.ABC):
             The prepared batch data.
         """
         raise NotImplementedError()
+
+    def prepare_batch_context(self):
+        """Return a context manager for rollout batch preparation."""
+        return nullcontext()
 
     @abc.abstractmethod
     def set_version(self, version: int):
@@ -679,6 +684,10 @@ class InferenceEngine(abc.ABC):
             A future object representing the asynchronous weight update operation
         """
         raise NotImplementedError()
+
+    def sync_weights_from_disk(self, meta: WeightUpdateMeta) -> None:
+        """Update weights from disk in a blocking manner."""
+        self.update_weights_from_disk(meta).result()
 
     def set_version(self, version: int) -> None:
         """Set the current weight version in the inference engine.

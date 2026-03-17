@@ -718,6 +718,13 @@ class FSDPEngine(TrainEngine):
     def export_stats(self) -> dict[str, float]:
         return stats_tracker.export_all(reduce_group=self.data_parallel_group)
 
+    def prepare_batch_context(self):
+        return (
+            torch_memory_saver.disable()
+            if self.is_offload and not torch.version.hip
+            else nullcontext()
+        )
+
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver.
 
