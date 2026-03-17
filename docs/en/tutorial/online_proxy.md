@@ -1,9 +1,12 @@
-# Online RL Training with Proxy Mode
+# Online RL Training
 
-This guide explains how to train language models using **online proxy mode**, where
-external applications (agent runtimes, human evaluators, or any OpenAI-compatible
-client) interact with the model through a proxy gateway, and each interaction is
-automatically collected as RL training data.
+This guide explains how to train language models using the online mode, where the user
+first launches an AReaL RL service that exposes a proxy gateway, and external
+applications (agent runtimes, human evaluators, or any OpenAI-compatible client)
+interact with the model through this gateway. Each interaction is automatically
+collected as RL training data.
+
+**Disclaimer:** This API is experimental and subject to change.
 
 ## Overview
 
@@ -18,6 +21,8 @@ AReaL supports three execution modes for agent workflows:
 This guide focuses on **online mode**, which is unique because the agent code lives
 _outside_ of AReaL. AReaL exposes an OpenAI-compatible HTTP API, and any application
 that speaks the chat completions protocol can connect to it.
+
+For the offline training guide, see [agentic RL guide](./agentic_rl.md).
 
 ## Architecture
 
@@ -104,20 +109,21 @@ After initialization, AReaL prints the gateway address:
 Use the provided helper script or any HTTP client:
 
 ```bash
-python examples/openclaw/start_session.py http://<gateway> \
-    --admin-key my-secret-admin-key
+curl -X POST http://<gateway>/rl/start_session \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer my-secret-admin-key" \
+  -d '{"task_id": "demo-task-0"}'
 ```
 
-Output:
+You should see the current session ID and the API key for this agent session in the
+output.
 
-```
-Session started!
-  -> Session ID : demo-task-0
-  -> API Key    : sk-sess-xxxxxxxxxxxx
-
-  export OPENAI_API_KEY=sk-sess-xxxxxxxxxxxx
-  export OPENAI_BASE_URL=http://<gateway>
-```
+**Why a unique API key for each agent session?** Since there may be many concurrent
+agent applications running, and they invoke the same endpoint (e.g.,
+"/chat/completions") in the URL, we need a mechanism to differentiate the trajectories
+from different agents. Therefore, we allocate unique API keys for each agent session or
+trajectory, and they have one-to-one relationship. In this way, we can track the
+interactions within the same trajectory and set rewards as well.
 
 ### Step 4: Interact with the Model
 
@@ -134,7 +140,7 @@ curl http://<gateway>/chat/completions \
   }'
 ```
 
-Or with the OpenAI Python SDK:
+Or any evaluation scripts with the OpenAI Python SDK:
 
 ```python
 from openai import OpenAI
@@ -151,17 +157,9 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-### Step 5: Assign a Reward
+### Step 5: Assign a Reward and End the Session
 
 After the interaction, assign a reward to provide the RL training signal:
-
-```bash
-python examples/openclaw/set_reward.py http://<gateway> \
-    --api-key sk-sess-xxxxxxxxxxxx \
-    --reward 1.0
-```
-
-Or with `curl`:
 
 ```bash
 curl http://<gateway>/rl/set_reward \
@@ -170,65 +168,58 @@ curl http://<gateway>/rl/set_reward \
   -d '{"reward": 1.0}'
 ```
 
-### Step 6: Start the Next Episode
+You can also use the completion ID during agent rollout to set rewards for intermediate
+steps.
 
-There are two approaches depending on your use case.
-
-**Session refresh** (for personalized agents like OpenClaw):
-
-Refresh the session by calling `start_session` with the same API key. The old session is
-automatically ended, its trajectory exported for training, and a new session starts with
-the same API key:
+Then, finish the session with:
 
 ```bash
-python examples/openclaw/start_session.py http://<gateway> \
-    --admin-key my-secret-admin-key \
-    --api-key sk-sess-xxxxxxxxxxxx
+curl http://<gateway>/rl/end_session \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-sess-xxxxxxxxxxxx" \
+  -d '{}'
 ```
 
-No reconfiguration of your application is needed between episodes. This is designed for
-personalized agents where the application cannot switch API keys during chats.
+### Step 6: Batched Sampling
 
-**Batched sampling** (for evaluation pipelines):
+Integrate Steps 3 through 5 into a single bash script, and then run it concurrently with
+tools like `sbatch`. **You must call `/rl/start_session` again to obtain a new API key
+for each agent session.**
 
-For each agent trajectory, run `start_session` → agent eval code → `set_reward` →
-`end_session`. Each sample in the batch gets its own unique API key, so the gateway can
-differentiate which session a completion belongs to. This is more convenient for batched
-sampling with existing evaluation code, where each sample can be processed independently
-and in parallel.
+After enough data has been accumulated in AReaL's buffer, AReaL will automatically enter
+the training stage.
 
-## Session Lifecycle
+## FAQ
 
-Each training episode follows this lifecycle:
+> Q: When will the updated model be loaded for inference?
 
-```
-start_session (admin auth)
-      |
-      v
-  [Interact: chat/completions, set_reward]  (session auth)
-      |
-      v
-  start_session with same api_key  (refresh)
-      |
-      +---> Old session ended
-      +---> Trajectory exported to RL trainer
-      +---> New session started (same API key)
-      |
-      v
-  [Next episode...]
-```
+The model will be loaded after every training step. In other words, the model used for
+inference is always the latest. For model saving and checkpointing, see
+[CLI reference](../cli_reference.md)
 
-### Session Refresh
+> Q: How to control the submission rate of the agent script? Will the RL server be
+> overloaded?
 
-When you call `start_session` with an API key that already has an active session, the
-gateway performs a **session refresh**:
+AReaL has its internal rate limit, referred to as **staleness control**. If too many
+concurrent requests have been submitted, the gateway will return 429 to the client. See
+[async RL guide](../algorithms/async.md) for details about staleness control.
 
-1. The existing session is ended
-1. If no reward was set, a default reward of 0 is assigned
-1. The trajectory is exported to the RL training pipeline
-1. A new session starts bound to the same API key
+> Q: Can I use this approach to train OpenClaw?
 
-This allows continuous data collection without restarting the external application.
+The approach in this documentation is different from training a personalized agent,
+because:
+
+- OpenClaw assumes single-threaded interaction with the user, meaning that the user
+  cannot open many concurrent sessions that may mutually interfere
+- OpenClaw requires one-time setup with a fixed URL and API key
+
+The core usage difference is that the OpenClaw example uses a **fixed** API key all over
+the interaction. By calling `start_session` multiple times, the old session is
+automatically ended, its trajectory exported for training, and a new session starts with
+the same API key. No reconfiguration of your application is needed between episodes.
+
+For details of training the OpenClaw agent, see
+[OpenClaw example](../../../examples/openclaw/README.md).
 
 ## Authentication
 
