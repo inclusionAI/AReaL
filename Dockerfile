@@ -197,7 +197,16 @@ RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_D
     && curl -fsSL https://claude.ai/install.sh | bash \
     && curl -fsSL https://opencode.ai/install | bash \
     && npm install -g @openai/codex \
-    && npm install -g @google/gemini-cli
+    && npm install -g @google/gemini-cli \
+    && npm install -g openclaw@latest
+
+ENV PATH="/root/.cargo/bin:$PATH"
+RUN curl --proto '=https' --tlsv1.2 -LsSf \
+    https://github.com/nearai/ironclaw/releases/latest/download/ironclaw-installer.sh | sh
+RUN curl -fsSL \
+    https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/install.sh \
+    | bash -s -- --prefer-prebuilt --skip-onboard
+RUN uv pip install nanobot-ai
 
 ##############################################################
 # STAGE 3: Install project dependencies from pyproject.toml
