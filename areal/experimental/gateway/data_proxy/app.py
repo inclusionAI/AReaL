@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hmac
-import inspect
 import json
 import logging
 import types
@@ -17,13 +16,9 @@ from areal.experimental.gateway.data_proxy.backend import (
     GenerationResult,
     SGLangBackend,
 )
-from areal.experimental.gateway.data_proxy.chat import ChatCompletionHandler
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
-from areal.experimental.gateway.data_proxy.pause import (
-    PauseState,
-    pause_backend,
-    resume_backend,
-)
+from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
+from areal.experimental.gateway.data_proxy.pause import PauseState
 from areal.experimental.gateway.data_proxy.session import (
     ExportTrajectoriesRequest,
     ExportTrajectoriesResponse,
@@ -34,16 +29,9 @@ from areal.experimental.gateway.data_proxy.session import (
     serialize_interactions,
 )
 from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
+from areal.experimental.openai.client import ArealOpenAI
 
 logger = logging.getLogger("DataProxy")
-
-_warned_params: set[str] = set()
-
-
-def _warn_once(msg: str) -> None:
-    if msg not in _warned_params:
-        _warned_params.add(msg)
-        logger.warning(msg)
 
 
 class GenerateRequest(BaseModel):
@@ -122,92 +110,30 @@ def _try_extract_bearer_token(request: Request) -> str | None:
     return None
 
 
-async def _call_client_create(
-    create_fn,
-    request: dict[str, Any] | CompletionCreateParams,
-    session_data,
-    extra_ignored_args: list[str] | None = None,
-    stream: bool = False,
-):
-    """Common logic for chat completions — mirrors proxy_rollout_server._call_client_create.
-
-    Introspects create_fn signature, filters kwargs, passes areal_cache.
-    """
-    sig = inspect.signature(create_fn)
-    areal_client_ignored_args = ["model"] + (extra_ignored_args or [])
-    areal_client_disallowed_args = ["areal_cache"]
-
-    # Check if the function accepts **kwargs (VAR_KEYWORD).
-    # If so, any key not explicitly ignored/disallowed is allowed through.
-    has_var_keyword = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+def _create_inf_bridge(
+    backend_addr: str,
+    pause_state: PauseState,
+    config: DataProxyConfig,
+) -> InfBridge:
+    """Create an InfBridge instance from proxy config."""
+    return InfBridge(
+        backend_addr=backend_addr,
+        pause_state=pause_state,
+        request_timeout=config.request_timeout,
+        max_resubmit_retries=config.max_resubmit_retries,
+        resubmit_wait=config.resubmit_wait,
     )
-    if has_var_keyword:
-        areal_client_allowed_args = None  # sentinel: allow everything
-    else:
-        areal_client_allowed_args = list(
-            k
-            for k in sig.parameters.keys()
-            if k not in areal_client_ignored_args
-            and k not in areal_client_disallowed_args
-        )
 
-    if isinstance(request, BaseModel):
-        kwargs = request.model_dump()
-    elif isinstance(request, dict):
-        kwargs = dict(request)
-    else:
-        kwargs = dict(request)
 
-    dropped_args = []
-    for k, v in list(kwargs.items()):
-        # If areal_client_allowed_args is None, only drop ignored/disallowed args
-        if areal_client_allowed_args is not None:
-            if k not in areal_client_allowed_args:
-                dropped_args.append((k, v))
-        elif k in areal_client_ignored_args or k in areal_client_disallowed_args:
-            dropped_args.append((k, v))
-
-    for k, _ in dropped_args:
-        del kwargs[k]
-
-    def _is_default_value(k: str, v: Any) -> bool:
-        if isinstance(request, BaseModel):
-            field_info = type(request).model_fields.get(k)
-            if field_info is not None:
-                return v == field_info.default
-        return False
-
-    dropped_non_default_args = [
-        (k, v)
-        for k, v in dropped_args
-        if k not in areal_client_ignored_args and not _is_default_value(k, v)
-    ]
-    if len(dropped_non_default_args):
-        dropped_args_str = "\n".join(
-            [f"  {k}: {v}" for k, v in dropped_non_default_args]
-        )
-        _warn_once(
-            f"dropped unsupported non-default arguments for data proxy handler:\n"
-            f"{dropped_args_str}"
-        )
-
-    if "temperature" not in kwargs:
-        kwargs["temperature"] = 1.0
-        _warn_once("temperature not set in request, defaulting to 1.0")
-    if "top_p" not in kwargs:
-        kwargs["top_p"] = 1.0
-        _warn_once("top_p not set in request, defaulting to 1.0")
-
-    if stream:
-        kwargs["stream"] = True
-
-    try:
-        return await create_fn(areal_cache=session_data.completions, **kwargs)
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+def _create_areal_client(
+    inf_bridge: InfBridge,
+    tok: TokenizerProxy,
+) -> ArealOpenAI:
+    """Create an ArealOpenAI client backed by the given InfBridge."""
+    return ArealOpenAI(
+        engine=inf_bridge,
+        tokenizer=tok._tok,
+    )
 
 
 def create_app(config: DataProxyConfig) -> FastAPI:
@@ -222,6 +148,12 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         )
         tok = TokenizerProxy(config.tokenizer_path)
         pause_state = PauseState()
+
+        # InfBridge + ArealOpenAI for /chat/completions
+        inf_bridge = _create_inf_bridge(config.backend_addr, pause_state, config)
+        areal_client = _create_areal_client(inf_bridge, tok)
+
+        # Legacy SGLangBackend for /generate (removed in Task 7)
         backend = SGLangBackend(
             backend_addr=config.backend_addr,
             pause_state=pause_state,
@@ -229,13 +161,15 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             max_resubmit_retries=config.max_resubmit_retries,
             resubmit_wait=config.resubmit_wait,
         )
+
         app.state.tokenizer = tok
         app.state.backend = backend
+        app.state.inf_bridge = inf_bridge
+        app.state.areal_client = areal_client
         app.state.pause_state = pause_state
         app.state.config = config
         app.state.session_store = SessionStore()
         app.state.session_store.set_admin_key(config.admin_api_key)
-        app.state.chat_handler = ChatCompletionHandler(backend, tok)
         yield
         logger.info("Data proxy shutting down")
 
@@ -307,16 +241,14 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
     @app.post("/pause_generation")
     async def pause_generation():
-        state: PauseState = app.state.pause_state
-        await state.set_paused(True)
-        await pause_backend(config.backend_addr)
+        inf_bridge: InfBridge = app.state.inf_bridge
+        await inf_bridge.pause()
         return {"status": "ok", "paused": True}
 
     @app.post("/continue_generation")
     async def continue_generation():
-        state: PauseState = app.state.pause_state
-        await resume_backend(config.backend_addr)
-        await state.set_paused(False)
+        inf_bridge: InfBridge = app.state.inf_bridge
+        await inf_bridge.resume()
         return {"status": "ok", "paused": False}
 
     # =========================================================================
@@ -387,6 +319,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     @app.post("/chat/completions")
     async def chat_completions(body: CompletionCreateParams, request: Request):
         store: SessionStore = app.state.session_store
+        areal_client: ArealOpenAI = app.state.areal_client
 
         # Try to resolve a session from the bearer token
         token = _try_extract_bearer_token(request)
@@ -404,23 +337,33 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             # Standalone mode: no session, no caching
             session_data = types.SimpleNamespace(completions=None)
 
-        chat_handler: ChatCompletionHandler = app.state.chat_handler
+        # Build kwargs from request body
+        if isinstance(body, BaseModel):
+            kwargs = body.model_dump()
+        else:
+            kwargs = dict(body)
 
-        # Determine if streaming before _call_client_create (for SSE wrapping)
-        request_dict = body if isinstance(body, dict) else body
-        is_streaming = False
-        if isinstance(request_dict, BaseModel):
-            dumped = request_dict.model_dump()
-            is_streaming = dumped.get("stream", False) or False
-        elif isinstance(request_dict, dict):
-            is_streaming = request_dict.get("stream", False) or False
+        # Remove model (ArealOpenAI ignores it)
+        kwargs.pop("model", None)
 
-        result = await _call_client_create(
-            create_fn=chat_handler.create,
-            request=body,
-            session_data=session_data,
-            stream=is_streaming,
-        )
+        # Determine streaming
+        is_streaming = kwargs.get("stream", False) or False
+
+        # Apply defaults for temperature/top_p if not set
+        if "temperature" not in kwargs:
+            kwargs["temperature"] = 1.0
+        if "top_p" not in kwargs:
+            kwargs["top_p"] = 1.0
+
+        try:
+            result = await areal_client.chat.completions.create(
+                areal_cache=session_data.completions,
+                **kwargs,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
         if is_streaming:
             # result is an async generator of ChatCompletionChunk
@@ -502,6 +445,15 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         if not new_addr:
             raise HTTPException(status_code=400, detail="backend_addr is required")
         pause_state: PauseState = app.state.pause_state
+        tok: TokenizerProxy = app.state.tokenizer
+
+        # Recreate InfBridge + ArealOpenAI with new backend address
+        new_inf_bridge = _create_inf_bridge(new_addr, pause_state, app.state.config)
+        new_areal_client = _create_areal_client(new_inf_bridge, tok)
+        app.state.inf_bridge = new_inf_bridge
+        app.state.areal_client = new_areal_client
+
+        # Recreate legacy SGLangBackend for /generate (removed in Task 7)
         new_backend = SGLangBackend(
             backend_addr=new_addr,
             pause_state=pause_state,
@@ -511,8 +463,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         )
         app.state.backend = new_backend
         app.state.config.backend_addr = new_addr
-        # Re-create chat handler with new backend
-        app.state.chat_handler = ChatCompletionHandler(new_backend, app.state.tokenizer)
+
         logger.info("Backend reconfigured to %s", new_addr)
         return {"status": "ok", "backend_addr": new_addr}
 
