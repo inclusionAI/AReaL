@@ -23,7 +23,7 @@ logger = logging.getLogger("DataProxy")
 
 @dataclass
 class _SessionData:
-    history: list[dict[str, str]] = field(default_factory=list)
+    history: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     last_active: float = field(default_factory=time.monotonic)
 
@@ -102,17 +102,30 @@ def create_data_proxy_app(
 
         for evt in result.get("events", []):
             if evt.get("type") == "tool_call":
+                call_id = f"call_{evt.get('name', '')}_{run_id}"
                 session.history.append(
                     {
                         "role": "assistant",
-                        "content": f"[tool_call] {evt.get('name', '')}: {evt.get('args', '')}",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": evt.get("name", ""),
+                                    "arguments": evt.get("args", ""),
+                                },
+                            }
+                        ],
                     }
                 )
             elif evt.get("type") == "tool_result":
+                call_id = f"call_{evt.get('name', '')}_{run_id}"
                 session.history.append(
                     {
                         "role": "tool",
-                        "content": f"[tool_result] {evt.get('name', '')}: {evt.get('result', '')}",
+                        "tool_call_id": call_id,
+                        "content": evt.get("result", ""),
                     }
                 )
 
@@ -171,7 +184,7 @@ class DataProxyClient:
         )
         resp.raise_for_status()
 
-    async def get_history(self, session_key: str) -> list[dict[str, str]]:
+    async def get_history(self, session_key: str) -> list[dict[str, Any]]:
         resp = await self._http.get(
             f"{self._addr}/session/{session_key}/history",
         )

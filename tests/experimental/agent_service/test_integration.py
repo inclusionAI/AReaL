@@ -213,10 +213,9 @@ class TestToolCallFlow:
                 # History should include tool call records
                 h = await proxy_client.get("/session/s1/history")
                 history = h.json()["history"]
-                tool_msgs = [
-                    m for m in history if "[tool_call]" in m.get("content", "")
-                ]
+                tool_msgs = [m for m in history if m.get("role") == "tool"]
                 assert len(tool_msgs) > 0
+                assert "tool_call_id" in tool_msgs[0]
 
 
 class TestGatewayHealth:

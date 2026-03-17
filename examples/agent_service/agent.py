@@ -134,6 +134,8 @@ class Tau2Agent:
         from pydantic_ai.messages import (
             ModelRequest,
             TextPart,
+            ToolCallPart,
+            ToolReturnPart,
             UserPromptPart,
         )
         from pydantic_ai.messages import (
@@ -144,13 +146,41 @@ class Tau2Agent:
         for msg in request.history:
             role = msg.get("role", "user")
             content = msg.get("content", "")
+
             if role == "user":
                 message_history.append(
-                    ModelRequest(parts=[UserPromptPart(content=content)])
+                    ModelRequest(parts=[UserPromptPart(content=content or "")])
                 )
             elif role == "assistant":
+                tool_calls = msg.get("tool_calls")
+                if tool_calls:
+                    parts = []
+                    for tc in tool_calls:
+                        fn = tc.get("function", tc)
+                        parts.append(
+                            ToolCallPart(
+                                tool_name=fn.get("name", ""),
+                                args=fn.get("arguments", ""),
+                                tool_call_id=tc.get("id", ""),
+                            )
+                        )
+                    message_history.append(PAModelResponse(parts=parts))
+                elif content:
+                    message_history.append(
+                        PAModelResponse(parts=[TextPart(content=content)])
+                    )
+            elif role == "tool":
+                tool_call_id = msg.get("tool_call_id", "")
                 message_history.append(
-                    PAModelResponse(parts=[TextPart(content=content)])
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name=tool_call_id,
+                                content=content or "",
+                                tool_call_id=tool_call_id,
+                            )
+                        ]
+                    )
                 )
 
         result = await self._agent.run(

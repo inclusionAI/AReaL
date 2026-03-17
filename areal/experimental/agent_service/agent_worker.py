@@ -39,7 +39,7 @@ class AgentRequest:
     message: str
     session_key: str
     run_id: str
-    history: list[dict[str, str]] = field(default_factory=list)
+    history: list[dict[str, Any]] = field(default_factory=list)
     queue_mode: QueueMode = QueueMode.COLLECT
     metadata: dict[str, Any] = field(default_factory=dict)
 

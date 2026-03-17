@@ -164,10 +164,8 @@ areal/experimental/agent_service/
 └── agent_bridge.py      # OpenResponses HTTP bridge
 
 examples/agent_service/
-├── agent.py             # DemoAgent example
-├── start_router.py      # Launch Router
-├── start_worker.py      # Launch Worker + DataProxy
-├── start_gateway.py     # Launch Gateway
+├── agent.py             # Tau2Agent (PydanticAI)
+├── config.yaml          # Demo configuration
 ├── run_demo.py          # One-click demo
 └── README.md            # Example documentation
 ```

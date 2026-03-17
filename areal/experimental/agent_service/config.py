@@ -38,7 +38,7 @@ class AgentServiceConfig:
                 "Import path for the agent class, e.g., "
                 "'myproject.agents.WebSearchAgent'. "
                 "The class must implement the AgentRunnable protocol "
-                "(async def run(request, *, llm, emitter))."
+                "(async def run(request, *, emitter))."
             ),
         },
     )
