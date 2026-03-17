@@ -39,7 +39,6 @@ def _load_network_module():
 def _worker_init_pg_and_allreduce(
     rank: int,
     world_size: int,
-    *,
     init_method: str,
     output_path: str,
 ) -> None:
@@ -81,8 +80,7 @@ def _run_e2e(*, host: str, family: int, tmp_path, output_name: str) -> None:
         try:
             torch.multiprocessing.start_processes(
                 _worker_init_pg_and_allreduce,
-                args=(2,),
-                kwargs={"init_method": init_method, "output_path": str(output)},
+                args=(2, init_method, str(output)),
                 nprocs=2,
                 start_method="spawn",
                 join=True,
