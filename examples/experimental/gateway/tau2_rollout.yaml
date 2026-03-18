@@ -11,13 +11,13 @@ model_path: Qwen/Qwen3-1.7B  # HuggingFace model path
 
 cluster:
   n_nodes: 1
-  n_gpus_per_node: 8
+  n_gpus_per_node: 2
   fileroot: /path/to/experiments  # Replace with your experiment directory
   name_resolve:
     type: nfs
     nfs_record_root: /path/to/name_resolve  # Replace with your name resolve directory
 
-allocation_mode: sglang:d8
+allocation_mode: sglang:d2
 
 scheduler:
   type: local
@@ -40,7 +40,7 @@ rollout:
   enable_rollout_tracing: true
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
-  dump_to_file: true
+  dump_to_file: false
   openai:
     mode: inline
     tool_call_parser: qwen25
@@ -60,7 +60,7 @@ rollout:
 
 # Tau2 environment configuration
 econfig:
-  domain: airline
+  domain: telecom
   max_steps: 50
   add_thinking_tool: false
   solo_mode: false

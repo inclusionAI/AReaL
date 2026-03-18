@@ -151,6 +151,10 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             "paused": await pause_state.is_paused(),
         }
 
+    @app.post("/configure")
+    async def configure():
+        return {"status": "ok"}
+
     # =========================================================================
     # Pause/Resume — internal control plane (no auth at data proxy level)
     # =========================================================================

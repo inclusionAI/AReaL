@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import sys
 import time
 import traceback
 from collections.abc import AsyncGenerator
@@ -83,6 +84,10 @@ class GatewayRolloutController:
 
         # Track which service roles were created for cleanup
         self._service_roles: list[str] = []
+
+        # Track services forked directly via RPCGuard /fork (raw_cmd mode).
+        # Each entry: (guard_addr, role, worker_index) for /kill_forked_worker.
+        self._forked_services: list[tuple[str, str, int]] = []
 
         # Proxy compatibility (no-ops — gateway IS the proxy)
         self._proxy_started = False
@@ -295,34 +300,57 @@ class GatewayRolloutController:
                 )
         logger.info("Inference servers: %s", self._inf_addrs)
 
-        # -- 2. Launch Router -----------------------------------------------
-        router_spec = SchedulingSpec(
-            gpu=0,
-            cpu=1,
-            mem=4,
-            cmd=(
-                f"python -m areal.experimental.gateway.router"
-                f" --admin-api-key {cfg.admin_api_key}"
-                f" --routing-strategy {cfg.routing_strategy}"
-                f" --poll-interval {cfg.poll_interval}"
-                f" --log-level {cfg.log_level}"
-            ),
-        )
-        router_role = f"{self._worker_role}{self._ROUTER_SUFFIX}"
-        router_job = Job(
-            replicas=1,
-            tasks=[router_spec],
-            scheduling_strategy=SchedulingStrategy(),
-            role=router_role,
-        )
-        self.scheduler.create_workers(job=router_job)
-        self._service_roles.append(router_role)
+        inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
+        has_inf_workers = inf_role in self._service_roles
 
-        router_workers = self.scheduler.get_workers(role=router_role)
-        self._router_addr = (
-            f"http://{router_workers[0].ip}:{router_workers[0].worker_ports[0]}"
-        )
-        self._wait_for_service(f"{self._router_addr}/health", "Router")
+        # -- 2. Launch Router -----------------------------------------------
+        router_cmd = [
+            sys.executable,
+            "-m",
+            "areal.experimental.gateway.router",
+            "--admin-api-key",
+            cfg.admin_api_key,
+            "--routing-strategy",
+            cfg.routing_strategy,
+            "--poll-interval",
+            str(cfg.poll_interval),
+            "--log-level",
+            cfg.log_level,
+        ]
+
+        if has_inf_workers:
+            guard_addr = (
+                f"http://{self.workers[0].ip}:{self.workers[0].worker_ports[0]}"
+            )
+            router_host, router_port = self._fork_on_guard(
+                guard_addr=guard_addr,
+                role="router",
+                worker_index=0,
+                raw_cmd=router_cmd,
+            )
+            self._router_addr = f"http://{router_host}:{router_port}"
+        else:
+            router_spec = SchedulingSpec(
+                gpu=0,
+                cpu=1,
+                mem=4,
+                cmd=" ".join(router_cmd),
+            )
+            router_role = f"{self._worker_role}{self._ROUTER_SUFFIX}"
+            router_job = Job(
+                replicas=1,
+                tasks=[router_spec],
+                scheduling_strategy=SchedulingStrategy(),
+                role=router_role,
+            )
+            self.scheduler.create_workers(job=router_job)
+            self._service_roles.append(router_role)
+
+            router_workers = self.scheduler.get_workers(role=router_role)
+            self._router_addr = (
+                f"http://{router_workers[0].ip}:{router_workers[0].worker_ports[0]}"
+            )
+            self._wait_for_service(f"{self._router_addr}/health", "Router")
         logger.info("Router: %s", self._router_addr)
 
         # -- 3. Launch Data Proxies -----------------------------------------
@@ -332,9 +360,6 @@ class GatewayRolloutController:
         #   When pre-existing server_infos were provided (e.g. tests), data
         #   proxies are created as standalone workers instead.
         dp_role = f"{self._worker_role}{self._DATA_PROXY_SUFFIX}"
-
-        inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
-        has_inf_workers = inf_role in [r for r in self._service_roles]
 
         if has_inf_workers:
             # Fork data proxies from inference workers (colocated deployment)
@@ -390,33 +415,53 @@ class GatewayRolloutController:
             self._wait_for_service(f"{dp_addr}/health", f"DataProxy-{i}")
 
         # -- 4. Launch Gateway ----------------------------------------------
-        gw_spec = SchedulingSpec(
-            gpu=0,
-            cpu=1,
-            mem=4,
-            cmd=(
-                f"python -m areal.experimental.gateway.gateway"
-                f" --admin-api-key {cfg.admin_api_key}"
-                f" --router-addr {self._router_addr}"
-                f" --forward-timeout {cfg.request_timeout}"
-                f" --log-level {cfg.log_level}"
-            ),
-        )
-        gw_role = f"{self._worker_role}{self._GATEWAY_SUFFIX}"
-        gw_job = Job(
-            replicas=1,
-            tasks=[gw_spec],
-            scheduling_strategy=SchedulingStrategy(),
-            role=gw_role,
-        )
-        self.scheduler.create_workers(job=gw_job)
-        self._service_roles.append(gw_role)
+        gw_cmd = [
+            sys.executable,
+            "-m",
+            "areal.experimental.gateway.gateway",
+            "--admin-api-key",
+            cfg.admin_api_key,
+            "--router-addr",
+            self._router_addr,
+            "--forward-timeout",
+            str(cfg.request_timeout),
+            "--log-level",
+            cfg.log_level,
+        ]
 
-        gw_workers = self.scheduler.get_workers(role=gw_role)
-        self._gateway_addr = (
-            f"http://{gw_workers[0].ip}:{gw_workers[0].worker_ports[0]}"
-        )
-        self._wait_for_service(f"{self._gateway_addr}/health", "Gateway")
+        if has_inf_workers:
+            guard_addr = (
+                f"http://{self.workers[0].ip}:{self.workers[0].worker_ports[0]}"
+            )
+            gw_host, gw_port = self._fork_on_guard(
+                guard_addr=guard_addr,
+                role="gateway",
+                worker_index=0,
+                raw_cmd=gw_cmd,
+            )
+            self._gateway_addr = f"http://{gw_host}:{gw_port}"
+        else:
+            gw_spec = SchedulingSpec(
+                gpu=0,
+                cpu=1,
+                mem=4,
+                cmd=" ".join(gw_cmd),
+            )
+            gw_role = f"{self._worker_role}{self._GATEWAY_SUFFIX}"
+            gw_job = Job(
+                replicas=1,
+                tasks=[gw_spec],
+                scheduling_strategy=SchedulingStrategy(),
+                role=gw_role,
+            )
+            self.scheduler.create_workers(job=gw_job)
+            self._service_roles.append(gw_role)
+
+            gw_workers = self.scheduler.get_workers(role=gw_role)
+            self._gateway_addr = (
+                f"http://{gw_workers[0].ip}:{gw_workers[0].worker_ports[0]}"
+            )
+            self._wait_for_service(f"{self._gateway_addr}/health", "Gateway")
         logger.info("Gateway: %s", self._gateway_addr)
 
     # -- Service health checks & registration ------------------------------
@@ -500,6 +545,19 @@ class GatewayRolloutController:
         if self._workflow_executor is not None:
             self._workflow_executor.destroy()
             self._workflow_executor = None
+
+        # Kill services forked directly via RPCGuard /fork (router, gateway)
+        for guard_addr, role, worker_index in reversed(self._forked_services):
+            try:
+                self._kill_forked_service(guard_addr, role, worker_index)
+            except Exception:
+                logger.error(
+                    "Error killing forked service %s/%d: %s",
+                    role,
+                    worker_index,
+                    traceback.format_exc(),
+                )
+        self._forked_services.clear()
 
         # RPCGuard's shutdown `finally` block automatically kills all
         # forked children (inference servers, data proxies), so no explicit teardown needed.
@@ -892,7 +950,7 @@ class GatewayRolloutController:
 
         openai_cfg = self.config.openai
         mode = getattr(openai_cfg, "mode", "inline")
-        admin_api_key = getattr(openai_cfg, "admin_api_key", self.config.admin_api_key)
+        admin_api_key = self.config.admin_api_key
         turn_discount = getattr(openai_cfg, "turn_discount", 1.0)
         export_style = getattr(openai_cfg, "export_style", "individual")
         subproc_max_workers = getattr(openai_cfg, "subproc_max_workers", 4)
@@ -1024,6 +1082,76 @@ class GatewayRolloutController:
         raise TypeError(f"Invalid should_accept_fn type: {type(should_accept_fn)}")
 
     # -- Internal HTTP helpers ---------------------------------------------
+
+    def _fork_on_guard(
+        self,
+        guard_addr: str,
+        role: str,
+        worker_index: int,
+        raw_cmd: list[str],
+        health_path: str = "/health",
+    ) -> tuple[str, int]:
+        """Fork a process on a RPCGuard worker via ``/fork`` with ``raw_cmd``.
+
+        Returns ``(host, port)`` of the forked service and records the entry
+        in ``_forked_services`` for cleanup.
+        """
+        import requests
+
+        resp = requests.post(
+            f"{guard_addr}/alloc_ports",
+            json={"count": 1},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        port_data = resp.json()
+        host = port_data["host"]
+        port = port_data["ports"][0]
+
+        cmd = list(raw_cmd) + ["--host", host, "--port", str(port)]
+
+        resp = requests.post(
+            f"{guard_addr}/fork",
+            json={
+                "role": role,
+                "worker_index": worker_index,
+                "raw_cmd": cmd,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+
+        self._forked_services.append((guard_addr, role, worker_index))
+
+        addr = f"http://{host}:{port}"
+        self._wait_for_service(f"{addr}{health_path}", role)
+
+        return host, port
+
+    def _kill_forked_service(
+        self, guard_addr: str, role: str, worker_index: int
+    ) -> None:
+        import requests
+
+        try:
+            resp = requests.post(
+                f"{guard_addr}/kill_forked_worker",
+                json={"role": role, "worker_index": worker_index},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                logger.info("Killed forked service %s/%d", role, worker_index)
+            else:
+                logger.warning(
+                    "Failed to kill forked service %s/%d: %s",
+                    role,
+                    worker_index,
+                    resp.text,
+                )
+        except requests.RequestException as exc:
+            logger.error(
+                "Error killing forked service %s/%d: %s", role, worker_index, exc
+            )
 
     def _gateway_http_post(self, endpoint: str, payload: dict[str, Any]) -> None:
         """Make an HTTP POST to the gateway with admin auth."""

@@ -48,6 +48,19 @@ def health_check():
     )
 
 
+@app.route("/configure", methods=["POST"])
+def configure():
+    """No-op configuration endpoint for scheduler compatibility.
+
+    The LocalScheduler calls ``/configure`` on every worker after creation
+    when ``exp_config`` is set.  RPCGuard does not need experiment config
+    (the GatewayRolloutController handles setup via ``/alloc_ports`` and
+    ``/fork``), so we simply acknowledge the request.
+    """
+    logger.debug("Received /configure request (no-op for RPCGuard)")
+    return jsonify({"status": "ok"})
+
+
 @app.route("/alloc_ports", methods=["POST"])
 def alloc_ports():
     """Allocate multiple free ports.
