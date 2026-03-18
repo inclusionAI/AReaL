@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from pydantic import BaseModel
 
+from areal.experimental.gateway.data_proxy.backend import SGLangBridgeBackend
 from areal.experimental.gateway.data_proxy.config import DataProxyConfig
 from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
 from areal.experimental.gateway.data_proxy.pause import PauseState
@@ -86,6 +87,7 @@ def _create_inf_bridge(
 ) -> InfBridge:
     """Create an InfBridge instance from proxy config."""
     return InfBridge(
+        backend=SGLangBridgeBackend(),
         backend_addr=backend_addr,
         pause_state=pause_state,
         request_timeout=config.request_timeout,

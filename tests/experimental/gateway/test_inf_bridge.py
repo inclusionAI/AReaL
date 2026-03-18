@@ -1,4 +1,4 @@
-"""Unit tests for InfBridge -- _AsyncGenerateEngine protocol via SGLang HTTP."""
+"""Unit tests for InfBridge -- _AsyncGenerateEngine protocol via pluggable backend."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import pytest
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest, ModelResponse
+from areal.experimental.gateway.data_proxy.backend import SGLangBridgeBackend
 from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
 from areal.experimental.gateway.data_proxy.pause import PauseState
 
@@ -66,6 +67,22 @@ def _make_request(
     )
 
 
+def _make_bridge(
+    pause_state: PauseState | None = None,
+    **kwargs: Any,
+) -> InfBridge:
+    """Create an InfBridge with SGLangBridgeBackend and sensible test defaults."""
+    if pause_state is None:
+        pause_state = PauseState()
+    kwargs.setdefault("backend_addr", "http://mock")
+    kwargs.setdefault("resubmit_wait", 0.01)
+    return InfBridge(
+        backend=SGLangBridgeBackend(),
+        pause_state=pause_state,
+        **kwargs,
+    )
+
+
 # =============================================================================
 # TestInfBridge
 # =============================================================================
@@ -80,12 +97,10 @@ class TestInfBridge:
     async def test_normal_stop_returns_model_response(self):
         """SGLang returns stop -- verify all ModelResponse fields populated."""
         pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
+        bridge = _make_bridge(pause_state=pause_state)
 
         sglang_resp = _make_sglang_response([(-0.5, 100), (-0.3, 101)], "stop")
-        bridge._call_sglang = AsyncMock(return_value=sglang_resp)
+        bridge._send_request = AsyncMock(return_value=sglang_resp)
 
         req = _make_request(input_ids=[1, 2, 3])
         resp = await bridge.agenerate(req)
@@ -96,7 +111,7 @@ class TestInfBridge:
         assert resp.stop_reason == "stop"
         assert resp.input_tokens == [1, 2, 3]
         assert resp.latency > 0
-        bridge._call_sglang.assert_called_once()
+        bridge._send_request.assert_called_once()
 
     # -- 2. Single abort then stop -----------------------------------------------
 
@@ -105,18 +120,15 @@ class TestInfBridge:
         """One abort, then stop -- verify token accumulation across resubmits."""
         call_count = 0
 
-        async def mock_call(input_ids, sampling_params, *, return_routed_experts=False):
+        async def mock_send(http_req, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 return _make_sglang_response([(-0.5, 100), (-0.3, 101)], "abort")
             return _make_sglang_response([(-0.4, 200), (-0.2, 201)], "stop")
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
-        bridge._call_sglang = mock_call
+        bridge = _make_bridge()
+        bridge._send_request = mock_send
 
         req = _make_request(input_ids=[1, 2, 3], max_new_tokens=20)
         resp = await bridge.agenerate(req)
@@ -133,19 +145,20 @@ class TestInfBridge:
         """Verify resubmit passes input_ids + accumulated output as new input."""
         calls: list[dict[str, Any]] = []
 
-        async def mock_call(input_ids, sampling_params, *, return_routed_experts=False):
+        async def mock_send(http_req, **kwargs):
+            # Capture the payload that InfBridge sends
             calls.append(
-                {"input_ids": list(input_ids), "params": dict(sampling_params)}
+                {
+                    "input_ids": list(http_req.payload["input_ids"]),
+                    "params": dict(http_req.payload["sampling_params"]),
+                }
             )
             if len(calls) == 1:
                 return _make_sglang_response([(-0.5, 100), (-0.3, 101)], "abort")
             return _make_sglang_response([(-0.4, 200)], "stop")
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
-        bridge._call_sglang = mock_call
+        bridge = _make_bridge()
+        bridge._send_request = mock_send
 
         req = _make_request(input_ids=[1, 2, 3], max_new_tokens=20)
         await bridge.agenerate(req)
@@ -163,19 +176,19 @@ class TestInfBridge:
         """Verify max_new_tokens decreases by accumulated token count."""
         calls: list[dict[str, Any]] = []
 
-        async def mock_call(input_ids, sampling_params, *, return_routed_experts=False):
+        async def mock_send(http_req, **kwargs):
             calls.append(
-                {"input_ids": list(input_ids), "params": dict(sampling_params)}
+                {
+                    "input_ids": list(http_req.payload["input_ids"]),
+                    "params": dict(http_req.payload["sampling_params"]),
+                }
             )
             if len(calls) == 1:
                 return _make_sglang_response([(-0.5, 100), (-0.3, 101)], "abort")
             return _make_sglang_response([(-0.4, 200)], "stop")
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
-        bridge._call_sglang = mock_call
+        bridge = _make_bridge()
+        bridge._send_request = mock_send
 
         req = _make_request(input_ids=[1, 2, 3], max_new_tokens=20)
         await bridge.agenerate(req)
@@ -193,7 +206,7 @@ class TestInfBridge:
         """When accumulated tokens reach max_new_tokens, stop_reason='length'."""
         call_count = 0
 
-        async def mock_call(input_ids, sampling_params, *, return_routed_experts=False):
+        async def mock_send(http_req, **kwargs):
             nonlocal call_count
             call_count += 1
             # Always return 5 tokens with abort
@@ -202,14 +215,8 @@ class TestInfBridge:
                 "abort",
             )
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock",
-            pause_state=pause_state,
-            max_resubmit_retries=10,
-            resubmit_wait=0.01,
-        )
-        bridge._call_sglang = mock_call
+        bridge = _make_bridge(max_resubmit_retries=10)
+        bridge._send_request = mock_send
 
         req = _make_request(input_ids=[1, 2], max_new_tokens=10)
         resp = await bridge.agenerate(req)
@@ -227,19 +234,13 @@ class TestInfBridge:
         """After max retries, final abort is converted to 'length'."""
         sglang_resp = _make_sglang_response([(-0.1, 10)], "abort")
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock",
-            pause_state=pause_state,
-            max_resubmit_retries=3,
-            resubmit_wait=0.01,
-        )
-        bridge._call_sglang = AsyncMock(return_value=sglang_resp)
+        bridge = _make_bridge(max_resubmit_retries=3)
+        bridge._send_request = AsyncMock(return_value=sglang_resp)
 
         req = _make_request(input_ids=[1, 2], max_new_tokens=100)
         resp = await bridge.agenerate(req)
 
-        assert bridge._call_sglang.call_count == 3
+        assert bridge._send_request.call_count == 3
         assert resp.stop_reason == "length"
         assert len(resp.output_tokens) == 3  # 1 token per retry
 
@@ -251,10 +252,8 @@ class TestInfBridge:
         sglang_resp = _make_sglang_response([(-0.5, 100)], "stop")
 
         pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
-        bridge._call_sglang = AsyncMock(return_value=sglang_resp)
+        bridge = _make_bridge(pause_state=pause_state)
+        bridge._send_request = AsyncMock(return_value=sglang_resp)
 
         await pause_state.set_paused(True)
         req = _make_request(input_ids=[1, 2, 3], max_new_tokens=5)
@@ -274,18 +273,15 @@ class TestInfBridge:
         """stop_reason='tool_calls' exits the loop normally."""
         sglang_resp = _make_sglang_response([(-0.5, 100), (-0.3, 101)], "tool_calls")
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
-        bridge._call_sglang = AsyncMock(return_value=sglang_resp)
+        bridge = _make_bridge()
+        bridge._send_request = AsyncMock(return_value=sglang_resp)
 
         req = _make_request(input_ids=[1, 2], max_new_tokens=20)
         resp = await bridge.agenerate(req)
 
         assert resp.stop_reason == "tool_calls"
         assert resp.output_tokens == [100, 101]
-        bridge._call_sglang.assert_called_once()
+        bridge._send_request.assert_called_once()
 
     # -- 9. output_versions populated correctly ----------------------------------
 
@@ -296,14 +292,8 @@ class TestInfBridge:
             [(-0.5, 100), (-0.3, 101), (-0.2, 102)], "stop"
         )
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock",
-            pause_state=pause_state,
-            resubmit_wait=0.01,
-            version=42,
-        )
-        bridge._call_sglang = AsyncMock(return_value=sglang_resp)
+        bridge = _make_bridge(version=42)
+        bridge._send_request = AsyncMock(return_value=sglang_resp)
 
         req = _make_request(input_ids=[1, 2, 3])
         resp = await bridge.agenerate(req)
@@ -316,14 +306,8 @@ class TestInfBridge:
         """output_versions uses the version at call time, not construction time."""
         sglang_resp = _make_sglang_response([(-0.5, 100)], "stop")
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock",
-            pause_state=pause_state,
-            resubmit_wait=0.01,
-            version=1,
-        )
-        bridge._call_sglang = AsyncMock(return_value=sglang_resp)
+        bridge = _make_bridge(version=1)
+        bridge._send_request = AsyncMock(return_value=sglang_resp)
 
         bridge.set_version(7)
         req = _make_request(input_ids=[1, 2, 3])
@@ -336,10 +320,7 @@ class TestInfBridge:
     @pytest.mark.asyncio
     async def test_n_samples_validation_raises_value_error(self):
         """n_samples != 1 raises ValueError."""
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
+        bridge = _make_bridge()
 
         req = _make_request(input_ids=[1, 2, 3], n_samples=4)
         with pytest.raises(ValueError, match="n_samples=1"):
@@ -352,17 +333,17 @@ class TestInfBridge:
         """max_new_tokens = min(max_tokens - input_len, max_new_tokens)."""
         calls: list[dict[str, Any]] = []
 
-        async def mock_call(input_ids, sampling_params, *, return_routed_experts=False):
+        async def mock_send(http_req, **kwargs):
             calls.append(
-                {"input_ids": list(input_ids), "params": dict(sampling_params)}
+                {
+                    "input_ids": list(http_req.payload["input_ids"]),
+                    "params": dict(http_req.payload["sampling_params"]),
+                }
             )
             return _make_sglang_response([(-0.5, 100)], "stop")
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
-        bridge._call_sglang = mock_call
+        bridge = _make_bridge()
+        bridge._send_request = mock_send
 
         # input_len=3, max_tokens=10 -> effective max_new_tokens = min(7, 20) = 7
         req = _make_request(input_ids=[1, 2, 3], max_new_tokens=20, max_tokens=10)
@@ -375,10 +356,7 @@ class TestInfBridge:
     @pytest.mark.asyncio
     async def test_set_get_version(self):
         """Version tracking works via set_version / get_version."""
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, version=0
-        )
+        bridge = _make_bridge(version=0)
 
         assert bridge.get_version() == 0
         bridge.set_version(5)
@@ -393,17 +371,17 @@ class TestInfBridge:
         """gconfig.greedy=True -> sampling_params temperature=0.0 in HTTP payload."""
         calls: list[dict[str, Any]] = []
 
-        async def mock_call(input_ids, sampling_params, *, return_routed_experts=False):
+        async def mock_send(http_req, **kwargs):
             calls.append(
-                {"input_ids": list(input_ids), "params": dict(sampling_params)}
+                {
+                    "input_ids": list(http_req.payload["input_ids"]),
+                    "params": dict(http_req.payload["sampling_params"]),
+                }
             )
             return _make_sglang_response([(-0.5, 100)], "stop")
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
-        bridge._call_sglang = mock_call
+        bridge = _make_bridge()
+        bridge._send_request = mock_send
 
         req = _make_request(input_ids=[1, 2, 3], greedy=True, temperature=0.8)
         await bridge.agenerate(req)
@@ -417,14 +395,11 @@ class TestInfBridge:
         """stop_reason='length' exits the loop normally without resubmit."""
         sglang_resp = _make_sglang_response([(-0.5, 100)], "length")
 
-        pause_state = PauseState()
-        bridge = InfBridge(
-            backend_addr="http://mock", pause_state=pause_state, resubmit_wait=0.01
-        )
-        bridge._call_sglang = AsyncMock(return_value=sglang_resp)
+        bridge = _make_bridge()
+        bridge._send_request = AsyncMock(return_value=sglang_resp)
 
         req = _make_request(input_ids=[1, 2], max_new_tokens=20)
         resp = await bridge.agenerate(req)
 
         assert resp.stop_reason == "length"
-        bridge._call_sglang.assert_called_once()
+        bridge._send_request.assert_called_once()

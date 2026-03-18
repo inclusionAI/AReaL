@@ -85,12 +85,14 @@ def mock_areal_client():
 @pytest_asyncio.fixture
 async def client(config, mock_tokenizer, mock_areal_client):
     """Create app with mocked deps and yield an httpx async client (no auth header)."""
+    from areal.experimental.gateway.data_proxy.backend import SGLangBridgeBackend
     from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
     from areal.experimental.gateway.data_proxy.pause import PauseState
 
     app = create_app(config)
     pause_state = PauseState()
     inf_bridge = InfBridge(
+        backend=SGLangBridgeBackend(),
         backend_addr=config.backend_addr,
         pause_state=pause_state,
         request_timeout=config.request_timeout,

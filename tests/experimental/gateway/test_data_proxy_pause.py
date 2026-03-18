@@ -100,12 +100,14 @@ def mock_areal_client():
 @pytest_asyncio.fixture
 async def app_client(config, mock_tokenizer, mock_areal_client):
     """Create an ASGI test client with all app.state attributes injected."""
+    from areal.experimental.gateway.data_proxy.backend import SGLangBridgeBackend
     from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
 
     app = create_app(config)
 
     pause_state = PauseState()
     inf_bridge = InfBridge(
+        backend=SGLangBridgeBackend(),
         backend_addr=config.backend_addr,
         pause_state=pause_state,
         request_timeout=config.request_timeout,

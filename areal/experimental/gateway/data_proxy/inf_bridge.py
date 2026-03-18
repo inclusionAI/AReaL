@@ -1,48 +1,77 @@
-"""InfBridge -- HTTP client implementing _AsyncGenerateEngine protocol for SGLang."""
+"""InfBridge -- HTTP client implementing _AsyncGenerateEngine protocol.
+
+Supports pluggable backends (SGLang, vLLM, etc.) via the InfBridgeBackend protocol.
+InfBridge owns the HTTP transport and pause/abort/resubmit loop; the backend
+translates between ModelRequest / raw JSON and endpoint-specific payloads.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Literal
-
-_StopReason = Literal["length", "stop", "tool_calls", "abort"]
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 import numpy as np
-import pybase64
+
+from areal.api.io_struct import HttpRequest
+from areal.experimental.gateway.data_proxy.backend import InfBridgeBackend
 
 if TYPE_CHECKING:
     from areal.api.io_struct import ModelRequest, ModelResponse
     from areal.experimental.gateway.data_proxy.pause import PauseState
 
+_StopReason = Literal["length", "stop", "tool_calls", "abort"]
+
 logger = logging.getLogger("InfBridge")
 
 
 class InfBridge:
-    """SGLang HTTP client implementing _AsyncGenerateEngine protocol.
+    """Backend-agnostic HTTP client implementing ``_AsyncGenerateEngine`` protocol.
 
-    Translates ModelRequest into SGLang /generate HTTP calls and ModelResponse.
-    Handles pause/abort/resubmit loop transparently.
+    All inference-server specifics are delegated to *backend*
+    (:class:`InfBridgeBackend`).  InfBridge owns:
+
+    * HTTP transport (send / receive)
+    * Pause / resume coordination via :class:`PauseState`
+    * Abort → resubmit loop with token accumulation
+    * Version tracking
+
+    Parameters
+    ----------
+    backend:
+        An object satisfying :class:`InfBridgeBackend`.
+    backend_addr:
+        Base URL of the inference server (e.g. ``http://localhost:30000``).
+    pause_state:
+        Shared pause flag (set by the weight-update path).
+    request_timeout:
+        HTTP timeout per generation call (seconds).
+    max_resubmit_retries:
+        Maximum number of abort → resubmit cycles.
+    resubmit_wait:
+        Sleep duration (seconds) between pause-state polls.
+    version:
+        Initial weight version.
     """
 
     def __init__(
         self,
+        backend: InfBridgeBackend,
         backend_addr: str,
         pause_state: PauseState,
         request_timeout: float = 120.0,
         max_resubmit_retries: int = 20,
         resubmit_wait: float = 0.5,
-        stream: bool = False,
         version: int = 0,
     ) -> None:
+        self.backend = backend
         self.backend_addr = backend_addr.rstrip("/")
         self.pause_state = pause_state
         self.request_timeout = request_timeout
         self.max_resubmit_retries = max_resubmit_retries
         self.resubmit_wait = resubmit_wait
-        self.stream = stream
         self._version = version
 
     # -- version tracking ---------------------------------------------------
@@ -56,194 +85,129 @@ class InfBridge:
     # -- pause / resume -----------------------------------------------------
 
     async def pause(self) -> None:
-        """Pause generation by setting pause_state and calling SGLang."""
+        """Pause generation by setting pause_state and calling the backend."""
         await self.pause_state.set_paused(True)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(f"{self.backend_addr}/pause_generation", json={})
-            resp.raise_for_status()
-        logger.info("SGLang pause_generation called on %s", self.backend_addr)
+        http_req = self.backend.get_pause_request()
+        await self._send_request(http_req, timeout=10.0)
+        logger.info("Pause request sent to %s", self.backend_addr)
 
     async def resume(self) -> None:
-        """Resume generation by calling SGLang and clearing pause_state."""
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{self.backend_addr}/continue_generation", json={}
-            )
-            resp.raise_for_status()
+        """Resume generation by calling the backend and clearing pause_state."""
+        http_req = self.backend.get_resume_request()
+        await self._send_request(http_req, timeout=10.0)
         await self.pause_state.set_paused(False)
-        logger.info("SGLang continue_generation called on %s", self.backend_addr)
+        logger.info("Resume request sent to %s", self.backend_addr)
 
-    # -- internal SGLang HTTP call ------------------------------------------
+    # -- HTTP transport (shared across all backends) -------------------------
 
-    async def _call_sglang(
+    async def _send_request(
         self,
-        input_ids: list[int],
-        sampling_params: dict[str, Any],
+        http_req: HttpRequest,
         *,
-        return_routed_experts: bool = False,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Call SGLang /generate and return the raw JSON response.
+        """Send an :class:`HttpRequest` and return the parsed JSON body.
 
-        Args:
-            input_ids: Pre-tokenized input token IDs.
-            sampling_params: SGLang sampling parameters.
-            return_routed_experts: Whether to request routed expert info.
+        Parameters
+        ----------
+        http_req:
+            The endpoint + payload to send.
+        timeout:
+            Per-request timeout override.  Falls back to
+            ``self.request_timeout``.
 
-        Returns:
-            Raw JSON dict from SGLang /generate endpoint.
+        Returns
+        -------
+        dict
+            Parsed JSON response.
 
-        Raises:
-            httpx.HTTPStatusError: On non-2xx response from SGLang.
+        Raises
+        ------
+        httpx.HTTPStatusError
+            On non-2xx responses.
         """
-        payload: dict[str, Any] = {
-            "input_ids": input_ids,
-            "sampling_params": sampling_params,
-            "return_logprob": True,
-            "stream": self.stream,
-        }
-        if return_routed_experts:
-            payload["return_routed_experts"] = True
-
-        async with httpx.AsyncClient(timeout=self.request_timeout) as client:
-            resp = await client.post(
-                f"{self.backend_addr}/generate",
-                json=payload,
-            )
+        _timeout = timeout if timeout is not None else self.request_timeout
+        url = f"{self.backend_addr}{http_req.endpoint}"
+        async with httpx.AsyncClient(timeout=_timeout) as client:
+            if http_req.method == "GET":
+                resp = await client.get(url)
+            else:
+                resp = await client.post(url, json=http_req.payload)
             resp.raise_for_status()
             return resp.json()
-
-    # -- response parsing ---------------------------------------------------
-
-    @staticmethod
-    def _parse_response(
-        data: dict[str, Any],
-        *,
-        return_routed_experts: bool = False,
-    ) -> tuple[list[int], list[float], _StopReason, np.ndarray | None]:
-        """Parse SGLang /generate response.
-
-        Returns:
-            Tuple of (output_tokens, output_logprobs, stop_reason, routed_experts).
-        """
-        meta_info = data["meta_info"]
-        finish_reason = meta_info["finish_reason"]
-        stop_reason: _StopReason = finish_reason["type"]
-
-        # Extract routed_experts if requested and present
-        routed_experts: np.ndarray | None = None
-        if return_routed_experts:
-            raw_experts = meta_info.get("routed_experts", None)
-            if raw_experts is not None:
-                num_sgl_token = (
-                    meta_info["prompt_tokens"] + meta_info["completion_tokens"] - 1
-                )
-                routed_experts = np.frombuffer(
-                    pybase64.b64decode(raw_experts.encode("utf-8")),
-                    dtype=np.int32,
-                ).reshape(num_sgl_token, -1)
-
-        # Handle abort-before-prefill: no output tokens
-        output_token_logprobs = meta_info.get("output_token_logprobs", [])
-        output_tokens = [x[1] for x in output_token_logprobs]
-        output_logprobs = [x[0] for x in output_token_logprobs]
-
-        return output_tokens, output_logprobs, stop_reason, routed_experts
 
     # -- main generation with pause/abort/resubmit --------------------------
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
-        """Generate response for ModelRequest via SGLang HTTP.
+        """Generate a response for *req* via the configured backend.
 
-        Implements _AsyncGenerateEngine protocol.
-        Handles pause/abort/resubmit loop transparently.
+        Implements the ``_AsyncGenerateEngine`` protocol.
+        Handles the pause → abort → resubmit loop transparently.
         """
         from areal.api.io_struct import ModelResponse
 
-        # Validate n_samples
         if req.gconfig.n_samples != 1:
             raise ValueError(
                 f"InfBridge only supports n_samples=1, got {req.gconfig.n_samples}"
             )
 
-        # Compute effective max_new_tokens
-        max_new_tokens = min(
-            req.gconfig.max_tokens - len(req.input_ids),
-            req.gconfig.max_new_tokens,
+        # Build the initial HTTP request via the backend
+        http_req = self.backend.build_generation_request(
+            req,
+            with_lora=False,
+            version=self._version,
         )
-        if max_new_tokens <= 0:
+
+        # Extract effective max_new_tokens from the payload the backend built
+        ori_max_new_tokens: int = http_req.payload["sampling_params"]["max_new_tokens"]
+        if ori_max_new_tokens <= 0:
             raise ValueError(
-                f"max_new_tokens must be > 0, got {max_new_tokens} "
+                f"max_new_tokens must be > 0, got {ori_max_new_tokens} "
                 f"(max_tokens={req.gconfig.max_tokens}, "
                 f"input_len={len(req.input_ids)}, "
                 f"max_new_tokens={req.gconfig.max_new_tokens})"
             )
 
-        gconfig = req.gconfig
         return_routed_experts = req.metadata.get("return_routed_experts", False)
 
-        # Build sampling params (matches backend.py:69-74 + sglang_remote.py)
-        sampling_params: dict[str, Any] = {
-            "top_p": gconfig.top_p,
-            "top_k": gconfig.top_k,
-            "max_new_tokens": max_new_tokens,
-            "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
-            "stop_token_ids": gconfig.stop_token_ids,
-            "ignore_eos": gconfig.ignore_eos,
-            "skip_special_tokens": gconfig.skip_special_tokens,
-            "frequency_penalty": gconfig.frequency_penalty,
-        }
-        if gconfig.stop:
-            sampling_params["stop"] = gconfig.stop
-
-        ori_max_new_tokens = max_new_tokens
         accumulated_tokens: list[int] = []
         accumulated_logprobs: list[float] = []
         stop_reason: _StopReason | None = None
-        # Only keep the last routed_experts result (from final segment)
         final_routed_experts: np.ndarray | None = None
 
         t0 = time.monotonic()
 
-        # Pause/abort/resubmit loop (ported from backend.py:98-165)
         for _attempt in range(self.max_resubmit_retries):
             # Wait while paused (weight update in progress)
             while await self.pause_state.is_paused():
                 await asyncio.sleep(self.resubmit_wait)
 
-            # Update max_new_tokens to account for already-generated tokens
-            updated_params = dict(sampling_params)
-            updated_params["max_new_tokens"] = ori_max_new_tokens - len(
-                accumulated_tokens
-            )
-            if updated_params["max_new_tokens"] <= 0:
+            # Adjust max_new_tokens for already-generated tokens
+            remaining = ori_max_new_tokens - len(accumulated_tokens)
+            if remaining <= 0:
                 stop_reason = "length"
                 break
 
-            # Build current input: original + accumulated output
-            current_input_ids = list(req.input_ids) + accumulated_tokens
+            # Patch the payload for this iteration (extend input, shrink budget)
+            payload = http_req.payload
+            payload["input_ids"] = list(req.input_ids) + accumulated_tokens
+            payload["sampling_params"]["max_new_tokens"] = remaining
 
-            data = await self._call_sglang(
-                current_input_ids,
-                updated_params,
-                return_routed_experts=return_routed_experts,
-            )
-            tokens, logprobs, stop_reason, routed_experts = self._parse_response(
-                data,
-                return_routed_experts=return_routed_experts,
-            )
+            data = await self._send_request(http_req)
+            result = self.backend.parse_generation_response(data)
 
-            # Always accumulate output tokens
-            accumulated_tokens.extend(tokens)
-            accumulated_logprobs.extend(logprobs)
-            if routed_experts is not None:
+            accumulated_tokens.extend(result.output_tokens)
+            accumulated_logprobs.extend(result.output_logprobs)
+            stop_reason = cast(_StopReason, result.stop_reason)
+
+            if result.routed_experts is not None:
                 if final_routed_experts is None:
-                    final_routed_experts = routed_experts
+                    final_routed_experts = result.routed_experts
                 else:
                     final_routed_experts = np.concatenate(
-                        [final_routed_experts, routed_experts], axis=0
+                        [final_routed_experts, result.routed_experts], axis=0
                     )
 
-            # Check loop exit conditions (matches remote_inf_engine.py:771-773)
             if stop_reason in ("stop", "tool_calls", "length"):
                 break
 
@@ -251,15 +215,14 @@ class InfBridge:
                 stop_reason = "length"
                 break
 
-            # stop_reason == 'abort' -> continue loop (resubmit)
+            # stop_reason == "abort" → continue loop (resubmit)
             logger.debug(
                 "Abort detected, resubmit attempt %d, accumulated %d tokens",
                 _attempt + 1,
                 len(accumulated_tokens),
             )
 
-        # Final abort at max retries -> treat as length
-        # (matches remote_inf_engine.py:839-843)
+        # Final abort at max retries → treat as length
         if stop_reason == "abort" or stop_reason is None:
             stop_reason = "length"
 

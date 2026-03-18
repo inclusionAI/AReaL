@@ -112,6 +112,7 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     """Create a fully-wired data proxy app with session support."""
     from areal.experimental.gateway.data_proxy.app import create_app
     from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+    from areal.experimental.gateway.data_proxy.backend import SGLangBridgeBackend
     from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
     from areal.experimental.gateway.data_proxy.pause import PauseState
     from areal.experimental.gateway.data_proxy.session import SessionStore
@@ -132,6 +133,7 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     tok = TokenizerProxy(model_path)
     pause_state = PauseState()
     backend = InfBridge(
+        backend=SGLangBridgeBackend(),
         backend_addr=sglang_server["base_url"],
         pause_state=pause_state,
         request_timeout=60.0,
