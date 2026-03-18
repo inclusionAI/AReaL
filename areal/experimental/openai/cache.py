@@ -17,6 +17,22 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         self._total_reward = 0.0
         self._lock = threading.Lock()
 
+    def __deepcopy__(self, memo):
+        """Allow deep-copy of the empty cache.
+
+        ``threading.Lock`` cannot be deep-copied.  Controllers that hold
+        an ``InteractionCache`` (e.g. ``ChatTracer``) are cloned via
+        ``Controller.clone()`` (``copy.deepcopy``).  The cache must be
+        empty at clone time; a non-empty cache indicates a bug in the
+        caller.
+        """
+        assert len(self) == 0, (
+            f"InteractionCache must be empty when deep-copied, but has {len(self)} items"
+        )
+        new = InteractionCache()
+        memo[id(self)] = new
+        return new
+
     @property
     def last_interaction_id(self) -> str:
         return next(reversed(self))
