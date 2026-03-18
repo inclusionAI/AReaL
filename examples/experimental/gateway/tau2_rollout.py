@@ -244,9 +244,19 @@ def main(argv: list[str]) -> None:
                 workflow_kwargs=workflow_kwargs,
             )
             if result:
-                logger.info("Batch %d collected, contents:", batch_idx)
-                for key, tensor in result.items():
-                    logger.info("  %-20s shape=%s", key, tuple(tensor.shape))
+                # Localize RTensors to local torch tensors
+                from areal.infra.rpc.rtensor import RTensor
+
+                local_result = RTensor.localize(result)
+                batch_size = next(iter(local_result.values())).shape[0]
+                rewards = local_result["rewards"]
+                logger.info(
+                    "Batch %d: batch_size=%d, rewards=%s, avg_reward=%.4f",
+                    batch_idx,
+                    batch_size,
+                    rewards,
+                    rewards.mean().item(),
+                )
             else:
                 logger.warning("Batch %d: empty result (all rejected?)", batch_idx)
             batch_count += 1
