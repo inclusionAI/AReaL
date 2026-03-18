@@ -652,3 +652,94 @@ class TestControllerFullInitialization:
         # Both roles should be in service_roles
         assert inf_role in ctrl._service_roles
         assert dp_role in ctrl._service_roles
+
+    def test_chat_completion_via_gateway(self, gateway_controller_full_init):
+        """Full e2e: start_session → /chat/completions → validate → end_session."""
+        ctrl = gateway_controller_full_init
+        gw = ctrl._gateway_addr
+        admin_key = "test-admin"
+
+        # --- start session ---
+        resp = httpx.post(
+            f"{gw}/rl/start_session",
+            json={"task_id": "full-init-chat-test"},
+            headers={"Authorization": f"Bearer {admin_key}"},
+            timeout=30.0,
+        )
+        assert resp.status_code == 201, resp.text
+        session = resp.json()
+        session_api_key = session["api_key"]
+
+        # --- non-streaming chat completion ---
+        resp = httpx.post(
+            f"{gw}/chat/completions",
+            json={
+                "model": "sglang",
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "max_completion_tokens": 64,
+                "temperature": 0.0,
+                "stream": False,
+            },
+            headers={"Authorization": f"Bearer {session_api_key}"},
+            timeout=60.0,
+        )
+        assert resp.status_code == 200, resp.text
+        completion = resp.json()
+
+        # Validate OpenAI-compatible structure
+        assert completion["object"] == "chat.completion"
+        assert "id" in completion
+        assert "choices" in completion
+        assert len(completion["choices"]) == 1
+
+        choice = completion["choices"][0]
+        assert "message" in choice
+        assert choice["message"]["role"] == "assistant"
+        assert isinstance(choice["message"]["content"], str)
+        assert len(choice["message"]["content"]) > 0
+        assert choice["finish_reason"] in ("stop", "length")
+
+        # Validate usage
+        assert "usage" in completion
+        usage = completion["usage"]
+        assert usage["prompt_tokens"] > 0
+        assert usage["completion_tokens"] > 0
+        assert usage["total_tokens"] == (
+            usage["prompt_tokens"] + usage["completion_tokens"]
+        )
+
+        # --- end session ---
+        resp = httpx.post(
+            f"{gw}/rl/end_session",
+            headers={"Authorization": f"Bearer {session_api_key}"},
+            timeout=10.0,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["interaction_count"] == 1
+
+    def test_rollout_batch_with_simple_agent(self, gateway_controller_full_init):
+        """rollout_batch with SimpleAgent should return concatenated batch dict."""
+        ctrl = gateway_controller_full_init
+        data = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            }
+        ]
+
+        result = ctrl.rollout_batch(
+            data=data,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+        )
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert len(result) > 0
+        assert "input_ids" in result
+        # Values should be RTensor (matching RolloutController API)
+        from areal.infra.rpc.rtensor import RTensor
+
+        assert isinstance(result["input_ids"], RTensor)
+        assert result["input_ids"].ndim == 2
+        assert hasattr(result["input_ids"], "shards")
+        assert len(result["input_ids"].shards) > 0
