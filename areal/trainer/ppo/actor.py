@@ -992,21 +992,22 @@ def _log_proximal_approximation_stats(
                     prox_logp_gt=prox_logp_gt,
                 )
         if logprobs is not None:
-            # We calculate the difference between Training and Inference
-            # .float() is used for NPU high-precision comparison
+            # Log KL divergence estimators to check for policy drift between the
+            # training-time policy (logprobs) and the inference-time policy (old_logp).
             log_ratio = (logprobs.float() - old_logp.float()).detach()
             
-            # Implementation of k1, k2, k3
-            k1 = -log_ratio
-            k2 = log_ratio**2 / 2.0
-            k3 = log_ratio.exp() - 1 - log_ratio
- 
+            # Implementation of different estimators for KL divergence.
+            # See: https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/#true-on-policy-rl
+            kl_div_estimator_direct = -log_ratio
+            kl_div_estimator_taylor = log_ratio**2 / 2.0
+            kl_div_estimator_dual = log_ratio.exp() - 1 - log_ratio
+
             # Register these to TensorBoard
             stats_tracker.stat(
-                parity_k1=k1,
-                parity_k2=k2,
-                parity_k3=k3,
-                denominator="n_valid_tokens", # Normalizes by active tokens
+                kl_div_direct=kl_div_estimator_direct,
+                kl_div_taylor=kl_div_estimator_taylor,
+                kl_div_dual=kl_div_estimator_dual,
+                denominator="n_valid_tokens",
             )
 
 
