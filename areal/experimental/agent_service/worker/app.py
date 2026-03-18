@@ -11,7 +11,7 @@ from areal.utils import logging
 from areal.utils.dynamic_import import import_from_string
 
 from ..protocol import QueueMode
-from ..types import AgentRequest, AgentResponse, AgentRunnable
+from ..types import AgentRequest, AgentRunnable
 
 logger = logging.getLogger("AgentWorker")
 
