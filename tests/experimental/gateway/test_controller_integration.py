@@ -327,8 +327,8 @@ class TestControllerRolloutBatch:
 
         assert isinstance(result["input_ids"], RTensor)
         assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shards")
-        assert len(result["input_ids"].shards) > 0
+        assert hasattr(result["input_ids"], "shard")
+        assert result["input_ids"].shard is not None
 
     def test_rollout_batch_with_should_accept_fn_rejects(self, gateway_controller):
         """rollout_batch with a rejecting should_accept_fn returns empty dict."""
@@ -380,8 +380,8 @@ class TestControllerRolloutBatch:
 
         assert isinstance(result["input_ids"], RTensor)
         assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shards")
-        assert len(result["input_ids"].shards) > 0
+        assert hasattr(result["input_ids"], "shard")
+        assert result["input_ids"].shard is not None
 
 
 # =============================================================================
@@ -438,8 +438,8 @@ class TestControllerPrepareBatch:
 
         assert isinstance(result["input_ids"], RTensor)
         assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shards")
-        assert len(result["input_ids"].shards) > 0
+        assert hasattr(result["input_ids"], "shard")
+        assert result["input_ids"].shard is not None
 
     def test_prepare_batch_with_should_accept_fn_rejects(self, gateway_controller):
         """prepare_batch with a rejecting should_accept_fn returns empty dict."""
@@ -498,8 +498,8 @@ class TestControllerPrepareBatch:
 
         assert isinstance(result["input_ids"], RTensor)
         assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shards")
-        assert len(result["input_ids"].shards) > 0
+        assert hasattr(result["input_ids"], "shard")
+        assert result["input_ids"].shard is not None
 
 
 # =============================================================================
@@ -659,6 +659,14 @@ class TestControllerFullInitialization:
         gw = ctrl._gateway_addr
         admin_key = "test-admin"
 
+        # --- grant capacity (required before start_session) ---
+        resp = httpx.post(
+            f"{gw}/grant_capacity",
+            headers={"Authorization": f"Bearer {admin_key}"},
+            timeout=10.0,
+        )
+        assert resp.status_code == 200, resp.text
+
         # --- start session ---
         resp = httpx.post(
             f"{gw}/rl/start_session",
@@ -741,5 +749,5 @@ class TestControllerFullInitialization:
 
         assert isinstance(result["input_ids"], RTensor)
         assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shards")
-        assert len(result["input_ids"].shards) > 0
+        assert hasattr(result["input_ids"], "shard")
+        assert result["input_ids"].shard is not None

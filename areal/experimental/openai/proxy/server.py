@@ -159,9 +159,7 @@ def deserialize_interactions(
     for key, item in data.items():
         tensor_dict = {k: torch.tensor(v) for k, v in item["tensor_dict"].items()}
         # Convert plain tensors to RTensor (mirrors RPC server remotize)
-        layout = RTensor.extract_layout(tensor_dict, layouts={}, node_addr=node_addr)
-        if layout is not None:
-            tensor_dict = RTensor.remotize(tensor_dict, layout, node_addr=node_addr)
+        tensor_dict = RTensor.remotize(tensor_dict, node_addr=node_addr)
         # Create a minimal InteractionWithTokenLogpReward with cached tensor dict
         interaction = InteractionWithTokenLogpReward()
         interaction._cache = tensor_dict
