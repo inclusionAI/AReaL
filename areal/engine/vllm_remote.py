@@ -201,7 +201,7 @@ class VLLMBackend:
         )
         payload = {
             "master_address": format_host_for_url(meta.nccl_master_address),
-            "master_port": meta.nccl_master_port,
+            "master_port": str(meta.nccl_master_port),
             "rank_offset": rank_offset,
             "world_size": meta.alloc_mode.gen.world_size + 1,
             "backend": current_platform.communication_backend,
