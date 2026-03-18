@@ -246,19 +246,23 @@ def main(argv: list[str]) -> None:
                 workflow_kwargs=workflow_kwargs,
             )
             if result:
-                # Localize RTensors to local torch tensors for each trajectory
+                # Localize RTensors and collect rewards across the batch
+                import torch
+
                 from areal.infra.rpc.rtensor import RTensor
 
-                for traj_idx, traj in enumerate(result):
+                batch_rewards = []
+                for traj in result:
                     local_traj = RTensor.localize(traj)
-                    rewards = local_traj["rewards"]
-                    logger.info(
-                        "Batch %d traj %d: rewards=%s, avg_reward=%.4f",
-                        batch_idx,
-                        traj_idx,
-                        rewards,
-                        rewards.mean().item(),
-                    )
+                    batch_rewards.append(local_traj["rewards"])
+                all_rewards = torch.cat(batch_rewards, dim=0)
+                logger.info(
+                    "Batch %d: n_trajs=%d, rewards=%s, avg_reward=%.4f",
+                    batch_idx,
+                    len(result),
+                    all_rewards,
+                    all_rewards.mean().item(),
+                )
             else:
                 logger.warning("Batch %d: empty result (all rejected?)", batch_idx)
             batch_count += 1
