@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import FastAPI
@@ -11,7 +12,7 @@ from areal.utils import logging
 from areal.utils.dynamic_import import import_from_string
 
 from ..protocol import QueueMode
-from ..types import AgentRequest, AgentRunnable
+from ..types import AgentRequest, AgentResponse, AgentRunnable
 
 logger = logging.getLogger("AgentWorker")
 
@@ -63,7 +64,7 @@ def create_worker_app(
         emitter = _CollectingEmitter()
 
         try:
-            response = await agent.run(request, emitter=emitter)
+            response: AgentResponse = await agent.run(request, emitter=emitter)
         except Exception as exc:
             logger.exception("Agent run failed (session=%s)", request.session_key)
             return JSONResponse(
@@ -71,10 +72,6 @@ def create_worker_app(
                 status_code=500,
             )
 
-        return {
-            "summary": response.summary,
-            "metadata": response.metadata,
-            "events": emitter.events,
-        }
+        return {**asdict(response), "events": emitter.events}
 
     return app
