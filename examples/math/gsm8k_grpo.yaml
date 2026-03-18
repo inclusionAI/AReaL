@@ -166,7 +166,9 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: disabled
+    mode: "online"
+    project: "my-awesome-project"
+    entity: "2633363995-personal"
 
 perf_tracer:
   experiment_name: ${experiment_name}
