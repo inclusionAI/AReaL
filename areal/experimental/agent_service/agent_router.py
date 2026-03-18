@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from areal.utils import logging
 
@@ -20,6 +21,8 @@ logger = logging.getLogger("AgentRouter")
 
 def create_router_app() -> FastAPI:
     """Create the Agent Router HTTP application."""
+    # TODO(agent-service): add admin key auth for /register, /unregister
+    # and session key auth for /route. See #1043 for reference.
     app = FastAPI(title="AReaL Agent Router")
 
     registered_proxies: list[str] = []
@@ -70,7 +73,9 @@ def create_router_app() -> FastAPI:
                 return {"data_proxy_addr": session_map[session_key]}
 
             if not registered_proxies:
-                return {"error": "No DataProxy registered"}, 503
+                return JSONResponse(
+                    {"error": "No DataProxy registered"}, status_code=503
+                )
 
             addr = registered_proxies[rr_idx % len(registered_proxies)]
             rr_idx += 1

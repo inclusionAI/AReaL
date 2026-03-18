@@ -18,7 +18,7 @@ from fastapi import FastAPI
 
 from areal.utils import logging
 
-logger = logging.getLogger("DataProxy")
+logger = logging.getLogger("AgentDataProxy")
 
 
 @dataclass
@@ -59,7 +59,7 @@ def create_data_proxy_app(
 
     @app.on_event("startup")
     async def startup():
-        asyncio.create_task(_reap_idle_sessions())
+        app.state.reaper_task = asyncio.create_task(_reap_idle_sessions())
 
     @app.on_event("shutdown")
     async def shutdown():
@@ -75,6 +75,12 @@ def create_data_proxy_app(
 
     @app.post("/session/{session_key}/turn")
     async def turn(session_key: str, body: dict[str, Any]):
+        """Process one turn. session_key must be unique per agent session.
+
+        When used with the rollout service, uniqueness is ensured by
+        ``/rl/start_session``.  When used standalone, callers must
+        generate unique keys (e.g. ``f"{model}:{user_id}"``).
+        """
         session = sessions.get(session_key)
         if session is None:
             session = _SessionData()
@@ -100,9 +106,11 @@ def create_data_proxy_app(
 
         session.history.append({"role": "user", "content": message})
 
+        call_counter = 0
         for evt in result.get("events", []):
             if evt.get("type") == "tool_call":
-                call_id = f"call_{evt.get('name', '')}_{run_id}"
+                call_id = f"call_{evt.get('name', '')}_{run_id}_{call_counter}"
+                call_counter += 1
                 session.history.append(
                     {
                         "role": "assistant",
@@ -120,11 +128,15 @@ def create_data_proxy_app(
                     }
                 )
             elif evt.get("type") == "tool_result":
-                call_id = f"call_{evt.get('name', '')}_{run_id}"
+                result_call_id = (
+                    f"call_{evt.get('name', '')}_{run_id}_{call_counter - 1}"
+                    if call_counter > 0
+                    else f"call_{evt.get('name', '')}_{run_id}_0"
+                )
                 session.history.append(
                     {
                         "role": "tool",
-                        "tool_call_id": call_id,
+                        "tool_call_id": result_call_id,
                         "content": evt.get("result", ""),
                     }
                 )

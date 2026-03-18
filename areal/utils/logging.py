@@ -106,6 +106,7 @@ LOGGER_COLORS_EXACT = {
     "AgentBridge": "light_purple",
     "AgentRouter": "light_purple",
     "AgentWorker": "light_purple",
+    "AgentDataProxy": "light_purple",
     "AgentServiceController": "light_purple",
 }
 

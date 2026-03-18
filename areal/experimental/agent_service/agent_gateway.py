@@ -23,6 +23,7 @@ from .protocol import (
     FrameType,
     RequestFrame,
     RequestMethod,
+    RunStatus,
     generate_run_id,
     make_complete_response,
     make_delta_event,
@@ -41,7 +42,7 @@ def _make_accepted_json(request_id: str, run_id: str) -> str:
             "type": FrameType.RES,
             "id": request_id,
             "ok": True,
-            "payload": {"runId": run_id, "status": "accepted"},
+            "payload": {"runId": run_id, "status": RunStatus.ACCEPTED},
         }
     )
 

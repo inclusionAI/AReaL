@@ -45,6 +45,9 @@ class OpenResponsesBridge(AgentBridge):
         self._router_addr = router_addr
         self._http = httpx.AsyncClient(timeout=600.0)
 
+    async def close(self) -> None:
+        await self._http.aclose()
+
     async def handle_request(self, request: Request) -> Any:
         body = await request.json()
 
@@ -52,6 +55,17 @@ class OpenResponsesBridge(AgentBridge):
         instructions: str = body.get("instructions", "")
         model: str = body.get("model", "")
         user: str = body.get("user", "")
+
+        if not user:
+            return JSONResponse(
+                {
+                    "error": {
+                        "message": "'user' field is required for session affinity",
+                        "type": "invalid_request",
+                    }
+                },
+                status_code=400,
+            )
 
         message = self._extract_message(input_items, instructions)
         session_key = self._derive_session_key(user, model)
@@ -154,8 +168,10 @@ class OpenResponsesBridge(AgentBridge):
 
 
 def mount_bridge(app: FastAPI, bridge: OpenResponsesBridge) -> None:
-    """Mount the OpenResponses bridge on an existing FastAPI app."""
-
     @app.post("/v1/responses")
     async def responses_endpoint(request: Request):
         return await bridge.handle_request(request)
+
+    @app.on_event("shutdown")
+    async def shutdown_bridge():
+        await bridge.close()
