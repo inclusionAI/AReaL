@@ -11,6 +11,7 @@ parts:
     - file: tutorial/installation_npu
     - file: tutorial/quickstart
     - file: tutorial/agentic_rl
+    - file: tutorial/online_proxy
     - file: tutorial/eval
     - file: tutorial/megatron
     - file: tutorial/archon
@@ -32,6 +33,7 @@ parts:
   - caption: Algorithms
     chapters:
     - file: algorithms/async
+    - file: algorithms/distillation
     - file: algorithms/grpo_series
     - file: algorithms/m2po
     - file: algorithms/prox_approx

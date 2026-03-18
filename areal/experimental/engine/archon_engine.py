@@ -603,7 +603,7 @@ class ArchonEngine(TrainEngine):
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Perform rollout using connected inference engine."""
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
@@ -621,7 +621,7 @@ class ArchonEngine(TrainEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Prepare batch from dataloader with rollout."""
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
@@ -938,7 +938,10 @@ class ArchonEngine(TrainEngine):
 
     def _create_device_model(self):
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.device(int(os.environ["LOCAL_RANK"]))
+        if current_platform.device_type == "cpu":
+            self.device = torch.device("cpu")
+        else:
+            self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
@@ -973,10 +976,15 @@ class ArchonEngine(TrainEngine):
             )
             attn_type = "varlen"
 
+        # Map moe_router_dtype string config to torch.dtype; None means no override
+        router_dtype = (
+            torch.float32 if self.config.archon.moe_router_dtype == "fp32" else None
+        )
         model_args = self.spec.model_args_class.from_hf_config(
             self.model_config,
             is_critic=self.config.is_critic,
             attn_type=attn_type,
+            router_dtype=router_dtype,
         )
         return self.spec.model_class(model_args)
 
@@ -1251,11 +1259,11 @@ class ArchonPPOActor(ArchonEngine):
         self.actor = PPOActor(config, self)
 
     @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+    def compute_logp(self, *args, **kwargs) -> list[torch.Tensor] | None:
         return self.actor.compute_logp(*args, **kwargs)
 
     @torch.no_grad()
-    def compute_advantages(self, *args, **kwargs) -> dict[str, Any]:
+    def compute_advantages(self, *args, **kwargs) -> list[dict[str, Any]]:
         return self.actor.compute_advantages(*args, **kwargs)
 
     def ppo_update(self, *args, **kwargs) -> None:

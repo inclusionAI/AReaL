@@ -24,7 +24,7 @@
 | Git LFS                  | 用于下载模型、数据集和 AReaL 代码。请参阅[安装指南](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
 | Docker                   |                                                                                 27.5.1                                                                                 |
 | NVIDIA Container Toolkit |                             请参阅[安装指南](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)                              |
-| AReaL 镜像               |                                                `ghcr.io/inclusionai/areal-runtime:v0.5.3`（包含运行时依赖和 Ray 组件）                                                 |
+| AReaL 镜像               |                                 `ghcr.io/inclusionai/areal-runtime:v1.0.2-sglang`（默认）或 `v1.0.2-vllm`。包含运行时依赖和 Ray 组件。                                 |
 
 **注意**：本教程不涵盖 NVIDIA 驱动、CUDA 或共享存储挂载的安装，因为这些取决于您具体的节点配置和系统版本。请独立完成这些安装。
 
@@ -37,16 +37,19 @@
 我们推荐使用 Docker 和提供的镜像。Dockerfile 位于 AReaL 仓库的顶级目录。
 
 ```bash
-docker pull ghcr.io/inclusionai/areal-runtime:v0.5.3
+docker pull ghcr.io/inclusionai/areal-runtime:v1.0.2-sglang
 docker run -it --name areal-node1 \
    --privileged --gpus all --network host \
    --shm-size 700g -v /path/to/mount:/path/to/mount \
-   ghcr.io/inclusionai/areal-runtime:v0.5.3 \
+   ghcr.io/inclusionai/areal-runtime:v1.0.2-sglang \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL /path/to/mount/AReaL
 cd /path/to/mount/AReaL
 uv pip install -e . --no-deps
 ```
+
+vLLM 变体的 Docker 镜像也可使用： `ghcr.io/inclusionai/areal-runtime:v1.0.2-vllm`。如果您偏好使用 vLLM
+作为推理后端，请将上述命令中的镜像标签替换为该变体。
 
 ### 方式 2：自定义环境安装
 
@@ -82,11 +85,43 @@ uv sync --extra cuda
 # uv sync --group dev
 ```
 
-这将安装所有 CUDA 依赖的包，包括 SGLang、vLLM、Megatron、Flash Attention 等。这些包需要 Linux x86_64 和 CUDA
-12.x 及兼容的 NVIDIA 驱动。
+这将安装 CUDA 依赖的训练包（Megatron、Torch Memory Saver）以及 **SGLang** 作为默认推理后端。这些包需要 Linux x86_64 和
+CUDA 12.x 及兼容的 NVIDIA 驱动。
 
-同样的命令也适用于 macOS 和不带 CUDA 支持的 Linux。CUDA 包会通过平台标记自动跳过。但是，需要 CUDA
-的训练和推理功能将不可用。此配置仅适用于开发、测试和非 GPU 工作流。
+#### Flash Attention 预编译 Wheel
+
+Flash Attention v2 包含在 `--extra cuda` 和 `--extra cuda-vllm` 中，但 PyPI 仅提供源码分发包，从源码编译耗时约
+30 分钟。为跳过编译，请在运行 `uv sync` **之前**安装**预编译 wheel**。
+
+Flash Attention wheel 在编译时与特定 PyTorch 版本绑定。SGLang 使用 **torch 2.9**， vLLM 使用 **torch
+2.10**，请选择对应的 wheel。将 `cpXYZ` 替换为您的 Python 版本 （3.11 对应 `cp311`，3.12 对应 `cp312`）。
+
+**SGLang**（默认，torch 2.9）：
+
+```bash
+# Python 3.12
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
+# Python 3.11
+# uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp311-cp311-linux_x86_64.whl"
+
+uv sync --extra cuda
+```
+
+**vLLM**（torch 2.10）：
+
+```bash
+# Python 3.12
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp312-cp312-linux_x86_64.whl"
+# Python 3.11
+# uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp311-cp311-linux_x86_64.whl"
+
+uv sync --extra cuda-vllm
+```
+
+浏览所有可用 wheel： <https://github.com/mjun0812/flash-attention-prebuild-wheels/releases>。
+
+同样的 `uv sync` 命令也适用于 macOS 和不带 CUDA 支持的 Linux。CUDA 包（包括 flash-attn） 会通过平台标记自动跳过。但是，需要
+CUDA 的训练和推理功能将不可用。此配置仅适用于开发、测试和非 GPU 工作流。
 
 您也可以单独安装各个 extra，而不是完整的 `cuda` 捆绑包：
 
@@ -95,16 +130,42 @@ uv sync --extra cuda
 - `megatron`：Megatron 训练后端
 - `tms`：Torch Memory Saver
 - `flash-attn`：Flash Attention v2
-- `cuda`：上述所有（便捷 extra）
+- `kernels`：Hugging Face Kernels 运行时
+- `cuda-train`：仅训练包（megatron + tms，不含推理后端）
+- `cuda-sglang`：cuda-train + sglang + flash-attn
+- `cuda-vllm`：cuda-train + vllm + flash-attn
+- `cuda`：cuda-sglang 的别名（默认，向后兼容）
 
-**注意**：您可以单独安装这些 extra：
+**注意**：您可以混合搭配各个 extra：
 
 ```bash
-# 如果不需要 SGLang 和 Megatron
-uv sync --extra vllm --extra flash-attn
-# 如果安装 flash-attn 时遇到连接问题
-uv sync --extra vllm --extra sglang --extra megatron --extra tms
+# vLLM 带 Hugging Face Kernels 和 flash-attn（不含 megatron 和 tms）
+uv sync --extra vllm --extra flash-attn --extra kernels
+# vLLM 加所有训练包
+uv sync --extra cuda-train --extra vllm
 ```
+
+### 在训练中使用 Hugging Face Kernels
+
+安装 `kernels` extra 只会让 [Hugging Face Kernels](https://github.com/huggingface/kernels)
+运行时可用；训练仍然保持现有默认值，除非您在配置中显式启用。
+
+对训练引擎配置（例如 `actor`、`critic` 或 `teacher`）使用以下字段：
+
+- `attn_impl`：选择注意力后端。除了 `sdpa`、`flash_attention_2` 等内置后端外，还可以填写 Hugging Face kernels 仓库
+  ID，例如 `kernels-community/flash-attn` 或
+  `kernels-community/flash-attn@main:flash_attn_varlen_func`。
+- `use_kernels`：设为 `true` 后，会在模型创建完成后对模型执行 kernelize。
+
+示例：
+
+```yaml
+actor:
+  attn_impl: kernels-community/flash-attn
+  use_kernels: true
+```
+
+为了获得可预测的行为，建议显式指定 kernels 仓库 ID，而不是依赖 `flash_attention_*` 的自动回退。
 
 ### 额外的 CUDA 包（可选，手动安装）
 

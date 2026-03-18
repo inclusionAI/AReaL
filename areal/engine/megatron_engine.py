@@ -456,7 +456,7 @@ class MegatronEngine(TrainEngine):
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
             data,
@@ -473,7 +473,7 @@ class MegatronEngine(TrainEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
             dataloader,
@@ -977,15 +977,7 @@ class MegatronEngine(TrainEngine):
             torch, self.mcore_config.exp_avg_sq_dtype
         )
 
-        self.optimizer = get_megatron_optimizer(
-            mcore_opt_config,
-            self.model,
-            no_weight_decay_cond=lambda n, p: any(
-                k in n for k in ["bias", "ln.weight", "ln_f.weight"]
-            ),
-            scale_lr_cond=None,
-            lr_mult=1.0,
-        )
+        self.optimizer = get_megatron_optimizer(mcore_opt_config, self.model)
 
         warmup_steps_proportion = self.optimizer_config.warmup_steps_proportion
         warmup_steps = int(warmup_steps_proportion * ft_spec.total_train_steps)
@@ -1588,11 +1580,11 @@ class MegatronPPOActor(MegatronEngine):
         self.actor = PPOActor(config, self)
 
     @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+    def compute_logp(self, *args, **kwargs) -> list[torch.Tensor] | None:
         return self.actor.compute_logp(*args, **kwargs)
 
     @torch.no_grad()
-    def compute_advantages(self, *args, **kwargs) -> dict[str, Any]:
+    def compute_advantages(self, *args, **kwargs) -> list[dict[str, Any]]:
         return self.actor.compute_advantages(*args, **kwargs)
 
     def ppo_update(self, *args, **kwargs) -> None:

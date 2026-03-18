@@ -99,7 +99,10 @@ First, install the package:
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
 pip install uv
-uv sync --extra cuda
+# Install flash-attn pre-built wheel first to avoid compiling from source
+# (pick the wheel matching your Python version; see https://github.com/mjun0812/flash-attention-prebuild-wheels/releases)
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
+uv sync --extra cuda  # installs training packages + SGLang (default inference backend)
 ```
 
 Our training scripts automatically download the required dataset (openai/gsm8k) and
@@ -266,8 +269,12 @@ cd AReaL
 
 # Install uv and sync dependencies
 pip install uv
-# Use `--extra cuda` on Linux with CUDA for full functionality
+# Install flash-attn pre-built wheel to avoid compiling from source
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
+# Use `--extra cuda` on Linux with CUDA (installs training packages + SGLang)
 uv sync --extra cuda --group dev
+# For vLLM instead (note: use torch2.10 flash-attn wheel):
+# uv sync --extra cuda-vllm --group dev
 # Or without CUDA support
 # uv sync --group dev
 

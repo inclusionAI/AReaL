@@ -113,15 +113,17 @@ def is_port_free(port: int) -> bool:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.bind(("", port))
-        sock.close()
     except OSError:
         return False
+    finally:
+        sock.close()
 
     # Check UDP
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind(("", port))
-        sock.close()
         return True
     except OSError:
         return False
+    finally:
+        sock.close()

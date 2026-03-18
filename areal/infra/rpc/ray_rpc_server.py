@@ -117,7 +117,7 @@ class RayRPCServer:
 
         raw_args = list(args)
         raw_kwargs = kwargs.copy()
-        # fetch remote tensors if any
+        # Fetch remote tensors
         args = RTensor.localize(raw_args)
         kwargs = RTensor.localize(raw_kwargs)
 
@@ -161,11 +161,7 @@ class RayRPCServer:
             if isinstance(result, Future):
                 result = result.result()
             # Convert all tensors to RTensors and store the tensor locally
-            layout = RTensor.extract_layout(
-                result, layouts=dict(args=raw_args, kwargs=raw_kwargs), node_addr=""
-            )
-            if layout is not None:
-                result = RTensor.remotize(result, layout, node_addr="")
+            result = RTensor.remotize(result, node_addr="")
             # put back to cpu to mimic RPCServer encode/decode
             result = tensor_container_to(result, "cpu")
             self.logger.debug(f"Successfully completed RayRPCServer call {result}")

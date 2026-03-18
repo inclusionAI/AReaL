@@ -17,6 +17,7 @@ repos:
     hooks:
       - id: check-yaml
         files: \.(yaml|yml)$
+        exclude: \.github/workflows/
       - id: end-of-file-fixer
         files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh|ipynb)$
       - id: trailing-whitespace
@@ -41,7 +42,7 @@ repos:
           - mdformat-gfm
           - mdformat-tables
           - mdformat-frontmatter
-        exclude: ^(docs/algorithms/.*\.md|docs/best_practices/algo_perf.md)$
+        exclude: ^(docs/(en|zh)/algorithms/.*\.md|docs/(en|zh)/best_practices/algo_perf\.md)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.

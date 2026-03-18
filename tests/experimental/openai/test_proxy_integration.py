@@ -23,6 +23,7 @@ from areal.infra.scheduler.local import LocalScheduler
 from areal.infra.utils.proc import kill_process_tree
 from areal.utils import network, seeding
 
+pytestmark = pytest.mark.sglang
 # =============================================================================
 # Test Configuration
 # =============================================================================
@@ -205,11 +206,13 @@ class TestProxyIntegration:
                 workflow="tests.experimental.openai.utils.SimpleAgent",
             )
 
-            # Verify result structure
-            assert isinstance(result, dict)
-            assert "input_ids" in result
-            assert isinstance(result["input_ids"], RTensor)
-            assert result["input_ids"].ndim == 2  # [batch, seq_len]
+            # Verify result structure - rollout_batch now returns list[dict]
+            assert isinstance(result, list)
+            assert len(result) > 0
+            assert isinstance(result[0], dict)
+            assert "input_ids" in result[0]
+            assert isinstance(result[0]["input_ids"], RTensor)
+            assert result[0]["input_ids"].ndim == 2  # [batch, seq_len]
 
         finally:
             rollout.destroy()

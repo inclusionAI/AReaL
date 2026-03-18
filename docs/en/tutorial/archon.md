@@ -141,6 +141,8 @@ Archon-specific options are configured under `actor.archon.*`:
 
 See [Performance Tuning](#performance-tuning) for detailed guidance on these options.
 
+(performance-tuning)=
+
 ## Performance Tuning
 
 ### torch.compile
@@ -210,6 +212,8 @@ Enable AC debugging to capture detailed information (slower):
 ```bash
 +actor.archon.ac_debug=True
 ```
+
+(deterministic-mode)=
 
 ### Deterministic Mode
 
@@ -351,6 +355,8 @@ python3 examples/math/gsm8k_rl.py --config archon_qwen3_moe.yaml
   mode syntax
 - [Fine-tuning Large MoE Models](megatron.md) - MegatronEngine alternative for MoE
   models
+
+(appendix-pipeline-parallelism-memory-guide)=
 
 ## Appendix: Pipeline Parallelism Memory Guide
 

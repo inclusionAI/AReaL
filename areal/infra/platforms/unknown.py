@@ -30,18 +30,18 @@ class UnknownPlatform(Platform):
     @classmethod
     def get_vllm_worker_class(clas):
         try:
-            from vllm import envs
+            from vllm.v1.worker.gpu_worker import Worker
 
-            if envs.VLLM_USE_V1:
-                from vllm.v1.worker.gpu_worker import Worker
+            logger.info("Successfully imported vLLM V1 Worker.")
+            return Worker
+        except ImportError:
+            pass
 
-                logger.info("Successfully imported vLLM V1 Worker.")
-                return Worker
-            else:
-                from vllm.worker.worker import Worker
+        try:
+            from vllm.worker.worker import Worker
 
-                logger.info("Successfully imported vLLM V0 Worker.")
-                return Worker
+            logger.info("Successfully imported vLLM V0 Worker.")
+            return Worker
         except ImportError as e:
             logger.error(
                 "Failed to import vLLM Worker. "

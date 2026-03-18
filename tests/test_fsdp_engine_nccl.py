@@ -15,6 +15,7 @@ from areal.api.cli_args import (
 from areal.engine import FSDPEngine, RemoteSGLangEngine
 from areal.utils import network
 
+pytestmark = pytest.mark.sglang
 EXPR_NAME = "test_fsdp_engine_nccl"
 TRIAL_NAME = "trial_nccl"
 MODEL_PATH = get_model_path(

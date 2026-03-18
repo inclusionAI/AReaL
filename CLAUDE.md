@@ -39,7 +39,7 @@ python --version              # Requires 3.12+
 uv --version                  # Install: https://docs.astral.sh/uv/
 
 # Sync dependencies
-uv sync --extra cuda          # With CUDA support (or `uv sync` without CUDA)
+uv sync --extra cuda          # CUDA + SGLang inference (default)
 uv sync --group dev           # Include dev/test packages
 uv run python3 areal/tools/validate_installation.py  # Validate installation
 
@@ -54,6 +54,11 @@ uv run pytest tests/test_<topic>.py
 
 # Generate CLI docs
 uv run python docs/generate_cli_docs.py
+
+# Build docs (canonical, release-aligned)
+./docs/build_all.sh
+# Do NOT use `jupyter-book build docs/en|docs/zh` directly for final preview/release,
+# because it skips AReaL-specific static setup and output packaging.
 ```
 
 ## Boundaries

@@ -23,8 +23,8 @@ from areal.infra import (
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
+    collate_samples_to_list,
     cycle_dataloader,
-    pad_sequences_to_tensors,
     tensor_container_to,
 )
 from areal.utils.dataloader import create_dataloader
@@ -278,7 +278,7 @@ class SFTTrainer:
             rank=rank,
             world_size=world_size,
             dataset_config=dataset_config,
-            collate_fn=pad_sequences_to_tensors,
+            collate_fn=collate_samples_to_list,
         )
 
     def _create_actor(
@@ -403,5 +403,4 @@ class SFTTrainer:
         if exc_type is not None:
             logger.error(f"Training failed with exception: {exc_value}", exc_info=True)
         self.close()
-        if exc_type is not None:
-            raise exc_value
+        return False

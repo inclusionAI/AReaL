@@ -25,11 +25,18 @@ from packaging.version import Version
 
 
 class BaseInstallationValidator:
-    """Base class for validating installation dependencies."""
+    """Base class for validating installation dependencies.
+
+    Note: sglang and vllm are intentionally excluded from CRITICAL_PACKAGES
+    because they are mutually exclusive inference backends. Subclasses must
+    validate them dynamically based on the environment (e.g.,
+    DockerInstallationValidator detects which variant is installed at runtime).
+    """
 
     # Map package names to their import names (when different)
     PACKAGE_IMPORT_MAP = {
         "hydra-core": "hydra",
+        "python-dotenv": "dotenv",
         "megatron-core": "megatron",
         "PyYAML": "yaml",
         "python-dateutil": "dateutil",
@@ -62,7 +69,8 @@ class BaseInstallationValidator:
         "torch",
         "transformers",
         "flash-attn",
-        "sglang",
+        # sglang/vllm are NOT listed here — they are mutually exclusive
+        # and should be validated dynamically by subclasses
         "megatron-core",
         "mbridge",
         "ray",

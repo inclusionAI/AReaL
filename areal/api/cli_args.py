@@ -14,6 +14,11 @@ from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
+from areal.engine.fsdp_utils.attn_impl import (
+    BUILTIN_ATTN_IMPLS,
+    get_attn_impl_validation_error,
+    is_valid_attn_impl,
+)
 from areal.utils import logging, name_resolve, pkg_version
 from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
@@ -354,9 +359,6 @@ class OptimizerConfig:
             "help": "Proportion of training steps for warmup",
         },
     )
-    offload: bool = field(
-        default=False, metadata={"help": "Enable optimizer state offloading"}
-    )
     initial_loss_scale: float = field(
         default=2**32, metadata={"help": "Initial loss scaling factor"}
     )
@@ -406,6 +408,25 @@ class FSDPEngineConfig:
             "not used; each rank loads weights independently on CPU."
         },
     )
+    per_layer_optim_step: bool = field(
+        default=False,
+        metadata={
+            "help": "Run Adam step on GPU by streaming optimizer states layer-by-layer "
+            "with async prefetching, instead of running on CPU. Optimizer states are "
+            "automatically managed on CPU by the per-layer wrapper regardless of "
+            "offload_params setting. Requires optimizer type 'adam' (AdamW)."
+        },
+    )
+    optim_step_prefetch_layers: int = field(
+        default=1,
+        metadata={"help": "Number of layers to prefetch during per-layer optim step."},
+    )
+
+    def __post_init__(self):
+        if self.optim_step_prefetch_layers < 0:
+            raise ValueError(
+                f"optim_step_prefetch_layers must be >= 0, got {self.optim_step_prefetch_layers}"
+            )
 
     shard_vision_across_sp: bool = field(
         default=False,
@@ -542,6 +563,17 @@ class ArchonEngineConfig:
         },
     )
 
+    # MoE
+    moe_router_dtype: str | None = field(
+        default="fp32",
+        metadata={
+            "help": "Data type for MoE router gate GEMM computation. "
+            "'fp32' runs gate linear in float32 for numerical stability. "
+            "None uses model dtype (no override).",
+            "choices": ["fp32", None],
+        },
+    )
+
     def __post_init__(self):
         if self.pp_layers_per_stage is not None and self.pp_layers_per_stage < 1:
             raise ValueError(
@@ -562,6 +594,12 @@ class ArchonEngineConfig:
             raise ValueError(
                 f"reshard_after_forward_policy must be one of {valid_reshard_policies}, "
                 f"got '{self.reshard_after_forward_policy}'"
+            )
+        valid_router_dtypes = ("fp32", None)
+        if self.moe_router_dtype not in valid_router_dtypes:
+            raise ValueError(
+                f"moe_router_dtype must be one of {valid_router_dtypes}, "
+                f"got '{self.moe_router_dtype}'"
             )
 
 
@@ -895,8 +933,16 @@ class TrainEngineConfig:
     attn_impl: str = field(
         default="flash_attention_2",
         metadata={
-            "help": "Attention implementation for huggingface transformers model.",
-            "choices": ["flash_attention_2"],
+            "help": "Attention implementation for huggingface transformers model. "
+            "Accepts builtin transformers backends or a Hugging Face kernels repo ID "
+            "formatted as org/repo[@revision][:entrypoint].",
+            "choices": list(BUILTIN_ATTN_IMPLS),
+        },
+    )
+    use_kernels: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable Hugging Face kernels model kernelization after model creation."
         },
     )
     init_from_scratch: bool = field(
@@ -996,6 +1042,8 @@ class TrainEngineConfig:
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
             )
+        if not is_valid_attn_impl(self.attn_impl):
+            raise ValueError(get_attn_impl_validation_error(self.attn_impl))
         if self.fsdp.memory_efficient_load and self.init_from_scratch:
             raise ValueError(
                 "memory_efficient_load cannot be used with init_from_scratch=True. "
@@ -1296,9 +1344,6 @@ class vLLMConfig:
     # for non-pooling tasks (generation tasks). And no_enable_chunked_prefill=True
     # has NO effect for generation tasks in vLLM v0.11.0.
     #
-    # TODO(vllm-v0.11.0): vLLM v0.11.0 has inference quality issues when
-    # temperature=1.0 - multiple sampling runs produce garbled/corrupted outputs.
-    # This affects generation quality in RL training workflows.
     no_enable_chunked_prefill: bool = False
     # NOTE: Disables prefix caching (vLLM default is enabled) because it will
     # make RL training corrupted in single controller mode.

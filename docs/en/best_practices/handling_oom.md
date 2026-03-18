@@ -147,12 +147,34 @@ We recommend pipeline and expert parallelism over tensor/context parallelism. Ch
 ```{seealso}
 Pipeline parallelism introduces unique memory challenges (microbatch warmup accumulation,
 zero-bubble `retain_graph` overhead, FSDP resharding trade-offs, gradient accumulation
-costs, and per-rank memory budgeting). See the
-[Archon PP Memory Guide](../tutorial/archon.md#appendix-pipeline-parallelism-memory-guide)
-for a comprehensive walkthrough.
+costs, and per-rank memory budgeting). See
+{ref}`Archon PP Memory Guide <appendix-pipeline-parallelism-memory-guide>` for a
+comprehensive walkthrough.
 ```
 
-### 4. Switch to a Lightweight Optimizer
+### 4. Enable Per-Layer Optim Step
+
+When using FSDP CPU offloading (`offload_params: true`), the default CPU Adam step can
+be very slow. Enable per-layer optim step to stream optimizer states per-layer to device
+for a significant speedup:
+
+```yaml
+actor:
+  fsdp:
+    per_layer_optim_step: true
+    optim_step_prefetch_layers: 1  # Number of layers to prefetch (default: 1)
+```
+
+This streams one layer at a time to device instead of running Adam on CPU, keeping
+device memory usage low while achieving much faster optimizer updates.
+
+**Requirements:**
+
+- Compatible with both `offload_params: true` and `false` (optimizer states are
+  automatically managed on CPU by the per-layer wrapper; when `offload_params` is also
+  enabled, params/grads are streamed per-layer to device as well)
+
+### 5. Switch to a Lightweight Optimizer
 
 AReaL supports different optimizers depending on the training engine.
 
@@ -166,7 +188,7 @@ AReaL supports different optimizers depending on the training engine.
 `actor.optimizer.type: <name>` in your YAML configuration file (e.g.,
 `actor.optimizer.type: sgd`).
 
-### 5. Use Memory-Efficient Model Loading
+### 6. Use Memory-Efficient Model Loading
 
 If OOM occurs during model initialization (before training starts), enable
 memory-efficient loading:
