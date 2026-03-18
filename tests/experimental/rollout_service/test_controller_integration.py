@@ -196,14 +196,6 @@ class TestControllerLifecycle:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
-    def test_callback_addr_set(self, gateway_controller):
-        """callback_addr should be a valid host:port string after init."""
-        addr = gateway_controller.callback_addr
-        assert ":" in addr
-        host, port_str = addr.rsplit(":", 1)
-        assert len(host) > 0
-        assert int(port_str) > 0
-
     def test_proxy_gateway_addr_set(self, gateway_controller):
         """proxy_gateway_addr should point to the gateway port."""
         addr = gateway_controller.proxy_gateway_addr

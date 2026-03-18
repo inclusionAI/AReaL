@@ -20,8 +20,6 @@ from areal.experimental.rollout_service.controller.controller import (
 class TestGatewayControllerConfig:
     def test_defaults(self):
         cfg = GatewayControllerConfig()
-        assert cfg.gateway_host == "0.0.0.0"
-        assert cfg.gateway_port == 8080
         assert cfg.admin_api_key == "areal-admin-key"
         assert cfg.consumer_batch_size == 16
         assert cfg.max_concurrent_rollouts is None
@@ -30,13 +28,11 @@ class TestGatewayControllerConfig:
 
     def test_custom_values(self):
         cfg = GatewayControllerConfig(
-            gateway_port=9090,
             admin_api_key="custom-key",
             consumer_batch_size=32,
             max_concurrent_rollouts=64,
             max_head_offpolicyness=5,
         )
-        assert cfg.gateway_port == 9090
         assert cfg.admin_api_key == "custom-key"
         assert cfg.consumer_batch_size == 32
         assert cfg.max_concurrent_rollouts == 64
@@ -144,7 +140,6 @@ class TestGatewayRolloutControllerAPISurface:
 
     def test_has_properties(self):
         properties = [
-            "callback_addr",
             "staleness_manager",
             "workflow_executor",
             "dispatcher",
@@ -208,7 +203,7 @@ class TestGatewayRolloutControllerConstruction:
         controller.start_proxy_gateway()
 
     def test_proxy_gateway_addr(self):
-        cfg = GatewayControllerConfig(gateway_port=9999)
+        cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
         # Before initialize, proxy_gateway_addr returns the empty _gateway_addr
@@ -220,17 +215,6 @@ class TestGatewayRolloutControllerConstruction:
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
         with pytest.raises(RuntimeError, match="initialize"):
             _ = controller.workflow_executor
-
-    def test_callback_addr_returns_gateway_address(self):
-        """callback_addr should return gateway host:port without requiring a callback server."""
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
-        controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
-        addr = controller.callback_addr
-        assert ":" in addr
-        host, port = addr.rsplit(":", 1)
-        assert int(port) == cfg.gateway_port
-        assert host != "0.0.0.0"
 
     def test_config_perf_tracer_is_noop(self):
         cfg = GatewayControllerConfig()

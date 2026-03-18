@@ -770,52 +770,7 @@ class PPOTrainer:
             )
             return engine
 
-        # --- Gateway rollout controller path ---
-        if config.use_gateway:
-            from areal.experimental.rollout_service.controller.config import (
-                GatewayControllerConfig,
-            )
-            from areal.experimental.rollout_service.controller.controller import (
-                GatewayRolloutController,
-            )
-
-            gw_cfg = GatewayControllerConfig(
-                tokenizer_path=config.tokenizer_path or self.config.tokenizer_path,
-                model_path=self.config.actor.path,
-                consumer_batch_size=config.consumer_batch_size,
-                max_concurrent_rollouts=config.max_concurrent_rollouts,
-                max_head_offpolicyness=config.max_head_offpolicyness,
-                queue_size=config.queue_size,
-                enable_rollout_tracing=config.enable_rollout_tracing,
-                check_trajectory_format=config.check_trajectory_format,
-                fileroot=config.fileroot or self.config.cluster.fileroot,
-                experiment_name=config.experiment_name or self.config.experiment_name,
-                trial_name=config.trial_name or self.config.trial_name,
-                scheduling_spec=tuple(config.scheduling_spec),
-                request_timeout=config.request_timeout,
-                setup_timeout=config.setup_timeout,
-                pause_grace_period=config.pause_grace_period,
-                openai=config.openai,
-                admin_api_key=(
-                    config.openai.admin_api_key
-                    if config.openai is not None
-                    else "areal-admin-key"
-                ),
-            )
-            controller = GatewayRolloutController(gw_cfg, self.scheduler)
-            init_kwargs = dict(
-                role="rollout",
-                alloc_mode=self.allocation_mode,
-                server_args=server_args,
-            )
-            if is_eval:
-                assert len(self.rollout.server_infos) > 0
-                init_kwargs["server_infos"] = self.rollout.server_infos
-                init_kwargs["role"] = "eval-rollout"
-            controller.initialize(**init_kwargs)
-            return controller
-
-        # --- Standard RolloutController path ---
+        # Single-controller mode - no engine instantiation needed
         controller = engine_cls.as_controller(config, self.scheduler)
         init_kwargs = dict(
             role="rollout",
@@ -1032,21 +987,9 @@ class PPOTrainer:
         or when online mode is configured. It creates proxy workers colocated with
         rollout workers to handle OpenAI-compatible API requests.
 
-        When ``use_gateway`` is enabled the gateway HTTP stack already acts as
-        the proxy, so no additional worker setup is required.
-
         In online mode, also starts the proxy gateway for external access.
         """
         if self._proxy_started:
-            return
-
-        # GatewayRolloutController already embeds the proxy — nothing to do.
-        from areal.experimental.rollout_service.controller.controller import (
-            GatewayRolloutController,
-        )
-
-        if isinstance(self.rollout, GatewayRolloutController):
-            self._proxy_started = True
             return
 
         # Only initialize proxy in single-controller mode with RolloutController

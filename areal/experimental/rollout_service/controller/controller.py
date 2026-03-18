@@ -8,7 +8,6 @@ server processes are forked through RPCGuard (a lightweight process manager).
 
 from __future__ import annotations
 
-import socket
 import sys
 import time
 import traceback
@@ -520,21 +519,6 @@ class GatewayRolloutController:
             logger.info(
                 "Registered data proxy %s in router (worker_id=%s)", dp_addr, worker_id
             )
-
-    @property
-    def callback_addr(self) -> str:
-        """Return gateway address as 'host:port' for training controller callbacks."""
-        if self._gateway_addr:
-            # Strip the http:// prefix to match the host:port format
-            addr = self._gateway_addr
-            if addr.startswith("http://"):
-                addr = addr[len("http://") :]
-            return addr
-        # Fallback: construct from config (before deployment)
-        host = self.config.gateway_host
-        if host == "0.0.0.0":
-            host = socket.gethostname()
-        return f"{host}:{self.config.gateway_port}"
 
     # -- Destroy -----------------------------------------------------------
 

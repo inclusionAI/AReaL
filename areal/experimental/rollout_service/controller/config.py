@@ -17,10 +17,6 @@ class GatewayControllerConfig:
     and the WorkflowExecutor / staleness management.
     """
 
-    # -- Gateway service (fallback for callback_addr before deployment) -----
-    gateway_host: str = "0.0.0.0"
-    gateway_port: int = 8080
-
     # -- Shared credentials ------------------------------------------------
     admin_api_key: str = "areal-admin-key"
 
