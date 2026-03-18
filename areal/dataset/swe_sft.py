@@ -18,8 +18,8 @@ Produces three pairs::
 In each pair, only the **last** assistant segment is trained (loss=1);
 earlier assistant turns are treated as context (loss=0).
 
-Pairs whose current segment contains a tool result with ``is_error=True``
-are discarded.
+By default, pairs whose current segment contains a tool result with
+``is_error=True`` are discarded.  Set ``filter_errors=False`` to keep them.
 """
 
 import json
@@ -101,9 +101,12 @@ def _clean_message(msg, strip_thinking=True):
             cleaned["content"] = _extract_thinking(content)
         else:
             cleaned["content"] = content
-    elif msg["role"] != "assistant" or not msg.get("tool_calls"):
-        # Non-assistant messages or assistant without tool_calls:
-        # default to empty string for safety.
+    elif msg["role"] == "assistant" and msg.get("tool_calls"):
+        # Assistant with tool_calls but content=None: preserve None explicitly
+        # so chat templates that distinguish None vs "" render correctly.
+        cleaned["content"] = None
+    else:
+        # Non-assistant messages without content: default to empty string.
         cleaned["content"] = ""
 
     # Copy tool_calls for assistant messages
@@ -131,12 +134,18 @@ def _clean_message(msg, strip_thinking=True):
     return cleaned
 
 
-def _split_and_filter(messages):
-    """Split trajectory into progressive pairs and filter by ``is_error``.
+def _split_and_filter(messages, filter_errors=True):
+    """Split trajectory into progressive pairs and optionally filter by ``is_error``.
 
     For each pair, thinking (``<think>...</think>``) is stripped from all
     context assistant turns.  Only the last assistant turn (the training
     target) keeps its content unchanged.
+
+    Args:
+        messages: Raw trajectory messages.
+        filter_errors: If True (default), discard pairs whose current segment
+            contains a tool result with ``is_error=True``.  Set to False to
+            keep all pairs regardless of tool errors.
 
     Returns:
         List of cleaned message sequences (one per valid pair).
@@ -147,7 +156,7 @@ def _split_and_filter(messages):
 
     for asst_start, seg_end in segments:
         # Check if current segment has any tool errors
-        if _segment_has_error(messages, asst_start, seg_end):
+        if filter_errors and _segment_has_error(messages, asst_start, seg_end):
             n_filtered += 1
             continue
 
@@ -200,39 +209,19 @@ class _TokenizeAndMask:
 
         loss_mask = [0] * len(input_ids)
 
-        if self.assistant_pattern is not None:
-            # 3a) Find the LAST assistant segment char range via regex.
-            # In progressive SFT, only the newest (last) assistant turn is
-            # the training target; earlier turns are context.
-            last_match = None
-            for m in self.assistant_pattern.finditer(full_text):
-                last_match = m
-            if last_match is not None:
-                # m.start(1) = first char of assistant content
-                # m.end(0)   = char after end-of-turn token
-                rs, re_ = last_match.start(1), last_match.end(0)
-                for tok_idx, (cs, ce) in enumerate(offset_mapping):
-                    if ce > rs and cs < re_:
-                        loss_mask[tok_idx] = 1
-        else:
-            # 3b) Fallback: mark only the last assistant message as loss=1.
-            # Tokenize prefix (before last assistant) and prefix+assistant to
-            # find the exact token range — excludes tool responses that follow.
-            last_asst = None
-            for i, m in enumerate(messages):
-                if m["role"] == "assistant":
-                    last_asst = i
-            if last_asst is not None:
-                prefix_ids = self.tokenizer.apply_chat_template(
-                    messages[:last_asst], tokenize=True
-                )
-                asst_end_ids = self.tokenizer.apply_chat_template(
-                    messages[: last_asst + 1], tokenize=True
-                )
-                for j in range(len(prefix_ids), min(len(asst_end_ids), len(loss_mask))):
-                    loss_mask[j] = 1
-            else:
-                loss_mask = [1] * len(input_ids)
+        # 3) Find the LAST assistant segment char range via regex.
+        # In progressive SFT, only the newest (last) assistant turn is
+        # the training target; earlier turns are context.
+        last_match = None
+        for m in self.assistant_pattern.finditer(full_text):
+            last_match = m
+        if last_match is not None:
+            # m.start(1) = first char of assistant content
+            # m.end(0)   = char after end-of-turn token
+            rs, re_ = last_match.start(1), last_match.end(0)
+            for tok_idx, (cs, ce) in enumerate(offset_mapping):
+                if ce > rs and cs < re_:
+                    loss_mask[tok_idx] = 1
 
         return {"input_ids": input_ids, "loss_mask": loss_mask}
 
@@ -245,8 +234,9 @@ def _detect_template_pattern(tokenizer):
         2. Fall back to double-probe diff: render the template with a known
            marker and with empty content, then diff the two strings to extract
            the exact header and end-of-turn delimiters.
-        3. Return ``None`` if both strategies fail (caller uses token-level
-           fallback).
+
+    Raises:
+        ValueError: If both strategies fail to detect a usable pattern.
     """
     _PROBE_CONTENT = "PROBE_MARKER"
 
@@ -302,19 +292,22 @@ def _detect_template_pattern(tokenizer):
     except (ValueError, IndexError):
         pass  # PROBE_CONTENT not found in rendered text, skip
 
-    logger.warning(
-        "Could not detect chat template style from probe text. "
-        "Falling back to marking tokens in the last assistant "
-        "turn as loss=1.  Probe text: %s",
-        probe_text[:200],
+    raise ValueError(
+        "Could not detect chat template assistant delimiters. "
+        "Unable to build a reliable loss mask. "
+        f"Probe text: {probe_text[:200]!r}"
     )
-    return None
 
 
-def _load_trajectory_pairs(path: str):
+def _load_trajectory_pairs(path: str, filter_errors: bool = True):
     """Load trajectory JSONL and split into progressive pairs.
 
     Each line has ``{"conversations": [{"messages": [...]}]}``.
+
+    Args:
+        path: Path to the JSONL file.
+        filter_errors: If True, discard pairs whose current segment contains
+            a tool result with ``is_error=True``.
     """
     all_pairs = []
     records_in = 0
@@ -343,7 +336,7 @@ def _load_trajectory_pairs(path: str):
             if not messages:
                 continue
 
-            pairs, n_filtered = _split_and_filter(messages)
+            pairs, n_filtered = _split_and_filter(messages, filter_errors=filter_errors)
             total_filtered += n_filtered
             all_pairs.extend(pairs)
 
@@ -384,6 +377,7 @@ def get_swe_sft_dataset(
     max_length: int | None = None,
     num_proc: int | None = None,
     pre_split: bool = False,
+    filter_errors: bool = True,
 ):
     """Load SWE trajectory data and convert to SFT training pairs.
 
@@ -396,6 +390,9 @@ def get_swe_sft_dataset(
             Defaults to ``min(os.cpu_count(), DATASET_NUM_PROC)``.
         pre_split: If True, treat input as pre-split pairs (each line is
             ``{"messages": [...]}``) instead of full trajectories.
+        filter_errors: If True (default), discard pairs whose current segment
+            contains a tool result with ``is_error=True``.  Set to False to
+            keep all pairs regardless of tool errors.
 
     Returns:
         A HuggingFace ``Dataset`` with ``input_ids`` and ``loss_mask`` columns.
@@ -406,7 +403,7 @@ def get_swe_sft_dataset(
     if pre_split:
         all_pairs = _load_presplit_pairs(path)
     else:
-        all_pairs = _load_trajectory_pairs(path)
+        all_pairs = _load_trajectory_pairs(path, filter_errors=filter_errors)
 
     if not all_pairs:
         raise ValueError(f"No valid SFT pairs generated from {path}")
@@ -498,13 +495,20 @@ if __name__ == "__main__":
         help="Only verify pair generation (no tokenization). "
         "Combine with --output to export pairs.",
     )
+    parser.add_argument(
+        "--no-filter-errors",
+        action="store_true",
+        help="Keep pairs whose current segment contains tool results with "
+        "is_error=True (by default these are discarded).",
+    )
     args = parser.parse_args()
 
     # --- Load pairs (always full load, then truncate) ---
+    filter_errors = not args.no_filter_errors
     if args.pre_split:
         all_pairs = _load_presplit_pairs(args.path)
     else:
-        all_pairs = _load_trajectory_pairs(args.path)
+        all_pairs = _load_trajectory_pairs(args.path, filter_errors=filter_errors)
 
     total_pairs = len(all_pairs)
     if args.num_samples is not None:
@@ -554,6 +558,7 @@ if __name__ == "__main__":
             max_length=args.max_length,
             num_proc=args.num_proc,
             pre_split=True,
+            filter_errors=filter_errors,
         )
     finally:
         os.unlink(tmp_path)
