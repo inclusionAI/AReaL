@@ -1,4 +1,4 @@
-"""Unit tests for RPCGuard Flask app (areal.experimental.gateway.guard.app).
+"""Unit tests for RPCGuard Flask app (areal.experimental.rollout_service.guard.app).
 
 Tests all 4 endpoints (/health, /alloc_ports, /fork, /kill_forked_worker)
 and the cleanup_forked_children() function using Flask test client with
@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from areal.experimental.gateway.guard import app as guard_module
-from areal.experimental.gateway.guard.app import app, cleanup_forked_children
+from areal.experimental.rollout_service.guard import app as guard_module
+from areal.experimental.rollout_service.guard.app import app, cleanup_forked_children
 
 
 # =============================================================================
@@ -85,7 +85,7 @@ class TestHealth:
 class TestAllocPorts:
     """POST /alloc_ports allocates unique ports and tracks exclusions."""
 
-    @patch("areal.experimental.gateway.guard.app.find_free_ports")
+    @patch("areal.experimental.rollout_service.guard.app.find_free_ports")
     def test_alloc_ports_success(self, mock_find, client):
         mock_find.return_value = [9001, 9002, 9003]
         resp = client.post("/alloc_ports", json={"count": 3})
@@ -97,7 +97,7 @@ class TestAllocPorts:
         # Ports tracked in exclusion set
         assert guard_module._allocated_ports == {9001, 9002, 9003}
 
-    @patch("areal.experimental.gateway.guard.app.find_free_ports")
+    @patch("areal.experimental.rollout_service.guard.app.find_free_ports")
     def test_alloc_ports_excludes_previous(self, mock_find, client):
         """Second allocation excludes ports from the first."""
         mock_find.return_value = [9001, 9002, 9003]
@@ -149,10 +149,10 @@ class TestForkModulePath:
     """POST /fork with command field — module-path mode."""
 
     @patch(
-        "areal.experimental.gateway.guard.app._wait_for_worker_ready", return_value=True
+        "areal.experimental.rollout_service.guard.app._wait_for_worker_ready", return_value=True
     )
-    @patch("areal.experimental.gateway.guard.app.run_with_streaming_logs")
-    @patch("areal.experimental.gateway.guard.app.find_free_ports")
+    @patch("areal.experimental.rollout_service.guard.app.run_with_streaming_logs")
+    @patch("areal.experimental.rollout_service.guard.app.find_free_ports")
     def test_fork_module_path_builds_correct_cmd(
         self, mock_find, mock_run, mock_wait, client
     ):
@@ -188,10 +188,10 @@ class TestForkModulePath:
         assert "8001" in cmd
 
     @patch(
-        "areal.experimental.gateway.guard.app._wait_for_worker_ready", return_value=True
+        "areal.experimental.rollout_service.guard.app._wait_for_worker_ready", return_value=True
     )
-    @patch("areal.experimental.gateway.guard.app.run_with_streaming_logs")
-    @patch("areal.experimental.gateway.guard.app.find_free_ports")
+    @patch("areal.experimental.rollout_service.guard.app.run_with_streaming_logs")
+    @patch("areal.experimental.rollout_service.guard.app.find_free_ports")
     def test_fork_module_path_tracks_child(
         self, mock_find, mock_run, mock_wait, client
     ):
@@ -209,10 +209,10 @@ class TestForkModulePath:
         assert guard_module._forked_children_map[("test", 0)] is mock_proc
 
     @patch(
-        "areal.experimental.gateway.guard.app._wait_for_worker_ready", return_value=True
+        "areal.experimental.rollout_service.guard.app._wait_for_worker_ready", return_value=True
     )
-    @patch("areal.experimental.gateway.guard.app.run_with_streaming_logs")
-    @patch("areal.experimental.gateway.guard.app.find_free_ports")
+    @patch("areal.experimental.rollout_service.guard.app.run_with_streaming_logs")
+    @patch("areal.experimental.rollout_service.guard.app.find_free_ports")
     def test_fork_module_path_waits_for_ready(
         self, mock_find, mock_run, mock_wait, client
     ):
@@ -227,13 +227,13 @@ class TestForkModulePath:
 
         mock_wait.assert_called_once_with("10.0.0.1", 8001)
 
-    @patch("areal.experimental.gateway.guard.app.kill_process_tree")
+    @patch("areal.experimental.rollout_service.guard.app.kill_process_tree")
     @patch(
-        "areal.experimental.gateway.guard.app._wait_for_worker_ready",
+        "areal.experimental.rollout_service.guard.app._wait_for_worker_ready",
         return_value=False,
     )
-    @patch("areal.experimental.gateway.guard.app.run_with_streaming_logs")
-    @patch("areal.experimental.gateway.guard.app.find_free_ports")
+    @patch("areal.experimental.rollout_service.guard.app.run_with_streaming_logs")
+    @patch("areal.experimental.rollout_service.guard.app.find_free_ports")
     def test_fork_module_path_cleanup_on_ready_timeout(
         self, mock_find, mock_run, mock_wait, mock_kill, client
     ):
@@ -266,9 +266,9 @@ class TestForkModulePath:
 class TestForkRawCommand:
     """POST /fork with raw_cmd field — raw-command mode."""
 
-    @patch("areal.experimental.gateway.guard.app._wait_for_worker_ready")
-    @patch("areal.experimental.gateway.guard.app.run_with_streaming_logs")
-    @patch("areal.experimental.gateway.guard.app.find_free_ports")
+    @patch("areal.experimental.rollout_service.guard.app._wait_for_worker_ready")
+    @patch("areal.experimental.rollout_service.guard.app.run_with_streaming_logs")
+    @patch("areal.experimental.rollout_service.guard.app.find_free_ports")
     def test_fork_raw_cmd_passes_command_as_is(
         self, mock_find, mock_run, mock_wait, client
     ):
@@ -293,9 +293,9 @@ class TestForkRawCommand:
         assert "--experiment-name" not in cmd
         assert "--role" not in cmd
 
-    @patch("areal.experimental.gateway.guard.app._wait_for_worker_ready")
-    @patch("areal.experimental.gateway.guard.app.run_with_streaming_logs")
-    @patch("areal.experimental.gateway.guard.app.find_free_ports")
+    @patch("areal.experimental.rollout_service.guard.app._wait_for_worker_ready")
+    @patch("areal.experimental.rollout_service.guard.app.run_with_streaming_logs")
+    @patch("areal.experimental.rollout_service.guard.app.find_free_ports")
     def test_fork_raw_cmd_skips_readiness_polling(
         self, mock_find, mock_run, mock_wait, client
     ):
@@ -314,8 +314,8 @@ class TestForkRawCommand:
 
         mock_wait.assert_not_called()
 
-    @patch("areal.experimental.gateway.guard.app.run_with_streaming_logs")
-    @patch("areal.experimental.gateway.guard.app.find_free_ports")
+    @patch("areal.experimental.rollout_service.guard.app.run_with_streaming_logs")
+    @patch("areal.experimental.rollout_service.guard.app.find_free_ports")
     def test_fork_raw_cmd_allocates_port_but_not_injected(
         self, mock_find, mock_run, client
     ):
@@ -377,7 +377,7 @@ class TestForkErrorHandling:
 class TestKillForkedWorker:
     """POST /kill_forked_worker kills correct child."""
 
-    @patch("areal.experimental.gateway.guard.app.kill_process_tree")
+    @patch("areal.experimental.rollout_service.guard.app.kill_process_tree")
     def test_kill_known_worker(self, mock_kill, client):
         """Kill a tracked worker — removes from tracking, calls kill_process_tree."""
         mock_proc = _make_mock_process(pid=123)
@@ -407,7 +407,7 @@ class TestKillForkedWorker:
         assert resp.status_code == 404
         assert "not found" in resp.get_json()["error"].lower()
 
-    @patch("areal.experimental.gateway.guard.app.kill_process_tree")
+    @patch("areal.experimental.rollout_service.guard.app.kill_process_tree")
     def test_kill_already_exited_worker(self, mock_kill, client):
         """Worker that already exited (poll() != None) — no kill needed."""
         mock_proc = _make_mock_process(pid=456, running=False)
@@ -431,7 +431,7 @@ class TestKillForkedWorker:
         assert resp.status_code == 400
         assert "worker_index" in resp.get_json()["error"].lower()
 
-    @patch("areal.experimental.gateway.guard.app.kill_process_tree")
+    @patch("areal.experimental.rollout_service.guard.app.kill_process_tree")
     def test_kill_then_kill_again_returns_404(self, mock_kill, client):
         """Killing the same worker twice — second attempt gets 404."""
         mock_proc = _make_mock_process(pid=789)
@@ -457,7 +457,7 @@ class TestKillForkedWorker:
 class TestCleanup:
     """cleanup_forked_children() kills all tracked children."""
 
-    @patch("areal.experimental.gateway.guard.app.kill_process_tree")
+    @patch("areal.experimental.rollout_service.guard.app.kill_process_tree")
     def test_cleanup_kills_all_running_children(self, mock_kill):
         proc1 = _make_mock_process(pid=100)
         proc2 = _make_mock_process(pid=200)
@@ -474,7 +474,7 @@ class TestCleanup:
         assert guard_module._forked_children == []
         assert guard_module._forked_children_map == {}
 
-    @patch("areal.experimental.gateway.guard.app.kill_process_tree")
+    @patch("areal.experimental.rollout_service.guard.app.kill_process_tree")
     def test_cleanup_skips_already_exited(self, mock_kill):
         """Already-exited children (poll() != None) are not killed."""
         running = _make_mock_process(pid=100, running=True)
@@ -491,13 +491,13 @@ class TestCleanup:
         assert guard_module._forked_children == []
         assert guard_module._forked_children_map == {}
 
-    @patch("areal.experimental.gateway.guard.app.kill_process_tree")
+    @patch("areal.experimental.rollout_service.guard.app.kill_process_tree")
     def test_cleanup_no_children_is_noop(self, mock_kill):
         """Cleanup with no children does nothing."""
         cleanup_forked_children()
         mock_kill.assert_not_called()
 
-    @patch("areal.experimental.gateway.guard.app.kill_process_tree")
+    @patch("areal.experimental.rollout_service.guard.app.kill_process_tree")
     def test_cleanup_tolerates_kill_exception(self, mock_kill):
         """If kill_process_tree raises, other children are still cleaned."""
         proc1 = _make_mock_process(pid=100)

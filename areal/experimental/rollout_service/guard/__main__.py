@@ -1,4 +1,4 @@
-"""CLI entrypoint: python -m areal.experimental.gateway.guard"""
+"""CLI entrypoint: python -m areal.experimental.rollout_service.guard"""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import os
 from werkzeug.serving import make_server
 
 from areal.api.cli_args import NameResolveConfig
-from areal.experimental.gateway.guard import app as guard_app
-from areal.experimental.gateway.guard.app import app as flask_app
+from areal.experimental.rollout_service.guard import app as guard_app
+from areal.experimental.rollout_service.guard.app import app as flask_app
 from areal.utils import logging, name_resolve, names
 from areal.utils.network import gethostip
 

@@ -12,12 +12,12 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from areal.experimental.gateway.gateway.auth import (
+from areal.experimental.rollout_service.gateway.auth import (
     extract_bearer_token,
     require_admin_key,
 )
-from areal.experimental.gateway.gateway.config import GatewayConfig
-from areal.experimental.gateway.gateway.streaming import (
+from areal.experimental.rollout_service.gateway.config import GatewayConfig
+from areal.experimental.rollout_service.gateway.streaming import (
     CapacityExhaustedError,
     RouterKeyRejectedError,
     RouterUnreachableError,

@@ -12,15 +12,15 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from areal.experimental.gateway.router.app import create_app
-from areal.experimental.gateway.router.config import RouterConfig
-from areal.experimental.gateway.router.state import (
+from areal.experimental.rollout_service.router.app import create_app
+from areal.experimental.rollout_service.router.config import RouterConfig
+from areal.experimental.rollout_service.router.state import (
     CapacityManager,
     SessionRegistry,
     WorkerInfo,
     WorkerRegistry,
 )
-from areal.experimental.gateway.router.strategies import (
+from areal.experimental.rollout_service.router.strategies import (
     LeastBusyStrategy,
     RoundRobinStrategy,
     get_strategy,

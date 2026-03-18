@@ -12,9 +12,9 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from areal.experimental.gateway.gateway.app import create_app
-from areal.experimental.gateway.gateway.config import GatewayConfig
-from areal.experimental.gateway.gateway.streaming import (
+from areal.experimental.rollout_service.gateway.app import create_app
+from areal.experimental.rollout_service.gateway.config import GatewayConfig
+from areal.experimental.rollout_service.gateway.streaming import (
     CapacityExhaustedError,
     RouterKeyRejectedError,
     RouterUnreachableError,
@@ -30,7 +30,7 @@ WORKER_ADDR = "http://worker-1:18082"
 WORKER_ADDR_2 = "http://worker-2:18082"
 WORKER_ADDR_3 = "http://worker-3:18082"
 
-MODULE = "areal.experimental.gateway.gateway.app"
+MODULE = "areal.experimental.rollout_service.gateway.app"
 
 
 @pytest.fixture

@@ -110,13 +110,13 @@ def model_path() -> str:
 
 def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     """Create a fully-wired data proxy app with session support."""
-    from areal.experimental.gateway.data_proxy.app import create_app
-    from areal.experimental.gateway.data_proxy.config import DataProxyConfig
-    from areal.experimental.gateway.data_proxy.backend import SGLangBridgeBackend
-    from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
-    from areal.experimental.gateway.data_proxy.pause import PauseState
-    from areal.experimental.gateway.data_proxy.session import SessionStore
-    from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
+    from areal.experimental.rollout_service.data_proxy.app import create_app
+    from areal.experimental.rollout_service.data_proxy.config import DataProxyConfig
+    from areal.experimental.rollout_service.data_proxy.backend import SGLangBridgeBackend
+    from areal.experimental.rollout_service.data_proxy.inf_bridge import InfBridge
+    from areal.experimental.rollout_service.data_proxy.pause import PauseState
+    from areal.experimental.rollout_service.data_proxy.session import SessionStore
+    from areal.experimental.rollout_service.data_proxy.tokenizer_proxy import TokenizerProxy
     from areal.experimental.openai.client import ArealOpenAI
 
     config = DataProxyConfig(

@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from areal.experimental.gateway.controller.config import GatewayControllerConfig
-from areal.experimental.gateway.controller.controller import (
+from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
+from areal.experimental.rollout_service.controller.controller import (
     GatewayRolloutController,
 )
 

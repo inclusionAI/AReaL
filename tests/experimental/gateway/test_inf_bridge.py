@@ -10,9 +10,9 @@ import pytest
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest, ModelResponse
-from areal.experimental.gateway.data_proxy.backend import SGLangBridgeBackend
-from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
-from areal.experimental.gateway.data_proxy.pause import PauseState
+from areal.experimental.rollout_service.data_proxy.backend import SGLangBridgeBackend
+from areal.experimental.rollout_service.data_proxy.inf_bridge import InfBridge
+from areal.experimental.rollout_service.data_proxy.pause import PauseState
 
 
 # =============================================================================

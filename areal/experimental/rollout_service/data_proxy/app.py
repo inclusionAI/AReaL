@@ -11,11 +11,11 @@ from fastapi.responses import StreamingResponse
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from pydantic import BaseModel
 
-from areal.experimental.gateway.data_proxy.backend import SGLangBridgeBackend
-from areal.experimental.gateway.data_proxy.config import DataProxyConfig
-from areal.experimental.gateway.data_proxy.inf_bridge import InfBridge
-from areal.experimental.gateway.data_proxy.pause import PauseState
-from areal.experimental.gateway.data_proxy.session import (
+from areal.experimental.rollout_service.data_proxy.backend import SGLangBridgeBackend
+from areal.experimental.rollout_service.data_proxy.config import DataProxyConfig
+from areal.experimental.rollout_service.data_proxy.inf_bridge import InfBridge
+from areal.experimental.rollout_service.data_proxy.pause import PauseState
+from areal.experimental.rollout_service.data_proxy.session import (
     ExportTrajectoriesRequest,
     ExportTrajectoriesResponse,
     SessionStore,
@@ -24,7 +24,7 @@ from areal.experimental.gateway.data_proxy.session import (
     StartSessionResponse,
     serialize_interactions,
 )
-from areal.experimental.gateway.data_proxy.tokenizer_proxy import TokenizerProxy
+from areal.experimental.rollout_service.data_proxy.tokenizer_proxy import TokenizerProxy
 from areal.experimental.openai.client import ArealOpenAI
 
 logger = logging.getLogger("DataProxy")
@@ -344,7 +344,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
     # NOTE: /grant_capacity has been removed from data proxy. Capacity-based
     # staleness control is now managed at the router level — see
-    # areal.experimental.gateway.router.app for the /grant_capacity and
+    # areal.experimental.rollout_service.router.app for the /grant_capacity and
     # /acquire_capacity endpoints.
 
     # =========================================================================

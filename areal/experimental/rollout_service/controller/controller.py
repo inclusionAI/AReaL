@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 from areal.api.io_struct import LocalInfServerInfo
 
-from areal.experimental.gateway.controller.config import GatewayControllerConfig
+from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
 
 logger = logging.getLogger("GatewayRolloutController")
 
@@ -184,7 +184,7 @@ class GatewayRolloutController:
             )
         else:
             # -- RPCGuard workers for inference server launch ---
-            # Workers run areal.experimental.gateway.guard (the RPCGuard
+            # Workers run areal.experimental.rollout_service.guard (the RPCGuard
             # Flask app).  We then POST to each guard to allocate a port,
             # build the backend-specific launch command, and POST /fork
             # with raw_cmd to start the inference server as a subprocess.
@@ -204,7 +204,7 @@ class GatewayRolloutController:
             inf_spec.env_vars["AREAL_DP_REQUEST_TIMEOUT"] = str(cfg.request_timeout)
 
             # Override cmd to launch RPCGuard instead of RPC server
-            inf_spec.cmd = "python -m areal.experimental.gateway.guard"
+            inf_spec.cmd = "python -m areal.experimental.rollout_service.guard"
 
             inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
             inf_job = Job(
@@ -307,7 +307,7 @@ class GatewayRolloutController:
         router_cmd = [
             sys.executable,
             "-m",
-            "areal.experimental.gateway.router",
+            "areal.experimental.rollout_service.router",
             "--admin-api-key",
             cfg.admin_api_key,
             "--routing-strategy",
@@ -363,7 +363,7 @@ class GatewayRolloutController:
 
         if has_inf_workers:
             # Fork data proxies from inference workers (colocated deployment)
-            dp_command = "areal.experimental.gateway.data_proxy"
+            dp_command = "areal.experimental.rollout_service.data_proxy"
             worker_ids = self.scheduler.fork_workers(
                 role=dp_role,
                 target_role=inf_role,
@@ -388,7 +388,7 @@ class GatewayRolloutController:
                     cpu=1,
                     mem=4,
                     cmd=(
-                        f"python -m areal.experimental.gateway.data_proxy"
+                        f"python -m areal.experimental.rollout_service.data_proxy"
                         f" --backend-addr {inf_addr}"
                         f" --tokenizer-path {cfg.tokenizer_path}"
                         f" --admin-api-key {cfg.admin_api_key}"
@@ -418,7 +418,7 @@ class GatewayRolloutController:
         gw_cmd = [
             sys.executable,
             "-m",
-            "areal.experimental.gateway.gateway",
+            "areal.experimental.rollout_service.gateway",
             "--admin-api-key",
             cfg.admin_api_key,
             "--router-addr",

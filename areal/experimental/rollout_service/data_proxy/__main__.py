@@ -1,4 +1,4 @@
-"""CLI entrypoint: python -m areal.experimental.gateway.data_proxy"""
+"""CLI entrypoint: python -m areal.experimental.rollout_service.data_proxy"""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import os
 
 import uvicorn
 
-from areal.experimental.gateway.data_proxy.app import create_app
-from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+from areal.experimental.rollout_service.data_proxy.app import create_app
+from areal.experimental.rollout_service.data_proxy.config import DataProxyConfig
 
 
 def main():

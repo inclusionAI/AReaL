@@ -772,10 +772,10 @@ class PPOTrainer:
 
         # --- Gateway rollout controller path ---
         if config.use_gateway:
-            from areal.experimental.gateway.controller.config import (
+            from areal.experimental.rollout_service.controller.config import (
                 GatewayControllerConfig,
             )
-            from areal.experimental.gateway.controller.controller import (
+            from areal.experimental.rollout_service.controller.controller import (
                 GatewayRolloutController,
             )
 
@@ -1041,7 +1041,7 @@ class PPOTrainer:
             return
 
         # GatewayRolloutController already embeds the proxy — nothing to do.
-        from areal.experimental.gateway.controller.controller import (
+        from areal.experimental.rollout_service.controller.controller import (
             GatewayRolloutController,
         )
 

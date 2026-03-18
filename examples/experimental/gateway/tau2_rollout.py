@@ -27,8 +27,8 @@ from areal.api.cli_args import (
     TrainDatasetConfig,
     load_expr_config,
 )
-from areal.experimental.gateway.controller.config import GatewayControllerConfig
-from areal.experimental.gateway.controller.controller import GatewayRolloutController
+from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
+from areal.experimental.rollout_service.controller.controller import GatewayRolloutController
 from areal.utils import logging
 
 logger = logging.getLogger("Tau2GatewayRollout")

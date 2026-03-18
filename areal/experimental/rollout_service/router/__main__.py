@@ -1,4 +1,4 @@
-"""CLI entrypoint for the router: ``python -m areal.experimental.gateway.router``."""
+"""CLI entrypoint for the router: ``python -m areal.experimental.rollout_service.router``."""
 
 from __future__ import annotations
 
@@ -46,8 +46,8 @@ def main():
         format="[Router] %(levelname)s %(message)s",
     )
 
-    from areal.experimental.gateway.router.app import create_app
-    from areal.experimental.gateway.router.config import RouterConfig
+    from areal.experimental.rollout_service.router.app import create_app
+    from areal.experimental.rollout_service.router.config import RouterConfig
 
     config = RouterConfig(
         host=args.host,

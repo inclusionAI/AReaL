@@ -18,13 +18,13 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-from areal.experimental.gateway.router.config import RouterConfig
-from areal.experimental.gateway.router.state import (
+from areal.experimental.rollout_service.router.config import RouterConfig
+from areal.experimental.rollout_service.router.state import (
     CapacityManager,
     SessionRegistry,
     WorkerRegistry,
 )
-from areal.experimental.gateway.router.strategies import get_strategy
+from areal.experimental.rollout_service.router.strategies import get_strategy
 
 logger = logging.getLogger("Router")
 

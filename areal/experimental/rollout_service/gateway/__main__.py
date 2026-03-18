@@ -1,4 +1,4 @@
-"""CLI entrypoint for the inference gateway: ``python -m areal.experimental.gateway.gateway``."""
+"""CLI entrypoint for the inference gateway: ``python -m areal.experimental.rollout_service.gateway``."""
 
 from __future__ import annotations
 
@@ -45,8 +45,8 @@ def main():
         format="[Gateway] %(levelname)s %(message)s",
     )
 
-    from areal.experimental.gateway.gateway.app import create_app
-    from areal.experimental.gateway.gateway.config import GatewayConfig
+    from areal.experimental.rollout_service.gateway.app import create_app
+    from areal.experimental.rollout_service.gateway.config import GatewayConfig
 
     config = GatewayConfig(
         host=args.host,

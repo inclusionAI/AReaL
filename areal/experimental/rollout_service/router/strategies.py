@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from areal.experimental.gateway.router.state import WorkerInfo
+from areal.experimental.rollout_service.router.state import WorkerInfo
 
 
 class RoutingStrategy(Protocol):

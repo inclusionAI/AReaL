@@ -16,11 +16,11 @@ import httpx
 import numpy as np
 
 from areal.api.io_struct import HttpRequest
-from areal.experimental.gateway.data_proxy.backend import InfBridgeBackend
+from areal.experimental.rollout_service.data_proxy.backend import InfBridgeBackend
 
 if TYPE_CHECKING:
     from areal.api.io_struct import ModelRequest, ModelResponse
-    from areal.experimental.gateway.data_proxy.pause import PauseState
+    from areal.experimental.rollout_service.data_proxy.pause import PauseState
 
 _StopReason = Literal["length", "stop", "tool_calls", "abort"]
 

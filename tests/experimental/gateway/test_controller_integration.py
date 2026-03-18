@@ -121,8 +121,8 @@ def gateway_controller(sglang_server, local_scheduler, model_path, tmp_path):
     from areal.api.alloc_mode import AllocationMode
     from areal.api.cli_args import SchedulingSpec
     from areal.api.io_struct import LocalInfServerInfo
-    from areal.experimental.gateway.controller.config import GatewayControllerConfig
-    from areal.experimental.gateway.controller.controller import (
+    from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
+    from areal.experimental.rollout_service.controller.controller import (
         GatewayRolloutController,
     )
 
@@ -571,8 +571,8 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
 
     from areal.api.alloc_mode import AllocationMode
     from areal.api.cli_args import SchedulingSpec
-    from areal.experimental.gateway.controller.config import GatewayControllerConfig
-    from areal.experimental.gateway.controller.controller import (
+    from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
+    from areal.experimental.rollout_service.controller.controller import (
         GatewayRolloutController,
     )
 
@@ -580,7 +580,7 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
         tokenizer_path=model_path,
         model_path=model_path,
         scheduling_spec=(
-            SchedulingSpec(gpu=1, cmd="python -m areal.experimental.gateway.guard"),
+            SchedulingSpec(gpu=1, cmd="python -m areal.experimental.rollout_service.guard"),
         ),
         admin_api_key="test-admin",
         consumer_batch_size=2,

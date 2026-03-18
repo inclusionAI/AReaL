@@ -153,8 +153,8 @@ def gateway_stack(sglang_server, model_path):
     gateway_addr = f"http://{bind_host}:{gateway_port}"
 
     # --- Create Data Proxy app ---
-    from areal.experimental.gateway.data_proxy.app import create_app as create_dp_app
-    from areal.experimental.gateway.data_proxy.config import DataProxyConfig
+    from areal.experimental.rollout_service.data_proxy.app import create_app as create_dp_app
+    from areal.experimental.rollout_service.data_proxy.config import DataProxyConfig
 
     dp_config = DataProxyConfig(
         host=bind_host,
@@ -167,8 +167,8 @@ def gateway_stack(sglang_server, model_path):
     dp_app = create_dp_app(dp_config)
 
     # --- Create Router app ---
-    from areal.experimental.gateway.router.app import create_app as create_router_app
-    from areal.experimental.gateway.router.config import RouterConfig
+    from areal.experimental.rollout_service.router.app import create_app as create_router_app
+    from areal.experimental.rollout_service.router.config import RouterConfig
 
     router_config = RouterConfig(
         host=bind_host,
@@ -181,8 +181,8 @@ def gateway_stack(sglang_server, model_path):
     router_app = create_router_app(router_config)
 
     # --- Create Gateway app ---
-    from areal.experimental.gateway.gateway.app import create_app as create_gw_app
-    from areal.experimental.gateway.gateway.config import GatewayConfig
+    from areal.experimental.rollout_service.gateway.app import create_app as create_gw_app
+    from areal.experimental.rollout_service.gateway.config import GatewayConfig
 
     gw_config = GatewayConfig(
         host=bind_host,
