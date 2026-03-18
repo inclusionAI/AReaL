@@ -2,7 +2,7 @@
 
 Requires GPU and a model. Marked @pytest.mark.slow to exclude from default CI.
 Run manually:
-    uv run pytest tests/experimental/gateway/test_gateway_integration.py -v -s
+    uv run pytest tests/experimental/rollout_service/test_gateway_integration.py -v -s
 
 The test launches:
   1. A real SGLang server (GPU subprocess)
@@ -153,7 +153,9 @@ def gateway_stack(sglang_server, model_path):
     gateway_addr = f"http://{bind_host}:{gateway_port}"
 
     # --- Create Data Proxy app ---
-    from areal.experimental.rollout_service.data_proxy.app import create_app as create_dp_app
+    from areal.experimental.rollout_service.data_proxy.app import (
+        create_app as create_dp_app,
+    )
     from areal.experimental.rollout_service.data_proxy.config import DataProxyConfig
 
     dp_config = DataProxyConfig(
@@ -167,7 +169,9 @@ def gateway_stack(sglang_server, model_path):
     dp_app = create_dp_app(dp_config)
 
     # --- Create Router app ---
-    from areal.experimental.rollout_service.router.app import create_app as create_router_app
+    from areal.experimental.rollout_service.router.app import (
+        create_app as create_router_app,
+    )
     from areal.experimental.rollout_service.router.config import RouterConfig
 
     router_config = RouterConfig(
@@ -181,7 +185,9 @@ def gateway_stack(sglang_server, model_path):
     router_app = create_router_app(router_config)
 
     # --- Create Gateway app ---
-    from areal.experimental.rollout_service.gateway.app import create_app as create_gw_app
+    from areal.experimental.rollout_service.gateway.app import (
+        create_app as create_gw_app,
+    )
     from areal.experimental.rollout_service.gateway.config import GatewayConfig
 
     gw_config = GatewayConfig(

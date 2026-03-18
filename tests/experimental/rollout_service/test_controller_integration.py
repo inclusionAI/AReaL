@@ -2,7 +2,7 @@
 
 Requires GPU and a model. Marked @pytest.mark.slow to exclude from default CI.
 Run manually:
-    uv run pytest tests/experimental/gateway/test_controller_integration.py -v -s
+    uv run pytest tests/experimental/rollout_service/test_controller_integration.py -v -s
 
 The test launches:
   1. A real SGLang server (GPU subprocess)
@@ -21,7 +21,7 @@ import httpx
 import pytest
 import torch
 
-from tests.experimental.gateway.integration_utils import (
+from tests.experimental.rollout_service.integration_utils import (
     EXPR_NAME,
     TRIAL_NAME,
     check_server_health,

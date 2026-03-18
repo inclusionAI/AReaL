@@ -4,8 +4,8 @@ This example demonstrates how to run rollouts (data generation) without
 training, using the gateway HTTP stack to route inference requests.
 
 Usage:
-    python3 examples/experimental/gateway/tau2_rollout.py \
-        --config examples/experimental/gateway/tau2_rollout.yaml \
+    python3 examples/experimental/rollout_service/tau2_rollout.py \
+        --config examples/experimental/rollout_service/tau2_rollout.yaml \
         econfig.user_llm_base_url=http://localhost:8000/v1/
 """
 
