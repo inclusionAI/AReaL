@@ -1,0 +1,108 @@
+experiment_name: swe-sft
+trial_name: 30b-moe
+
+seed: 1
+enable_offload: false
+total_train_epochs: 200
+total_train_steps: 500
+tokenizer_path: ${actor.path}
+
+cluster:
+  n_nodes: 4
+  n_gpus_per_node: 8
+  fileroot: /tmp/experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/name_resolve
+
+allocation_mode: "megatron:(attn:d4p4t2|ffn:d2p4e4)"
+
+scheduler:
+  type: slurm
+
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: Qwen/Qwen3-30B-A3B-Thinking
+  init_from_scratch: false
+  gradient_checkpointing: true
+  dtype: bfloat16
+  grad_reduce_dtype: float32
+  mb_spec:
+    n_mbs: 1
+    granularity: 1
+    max_tokens_per_mb: 32768
+    n_mbs_divisor: 1
+  optimizer:
+    type: adam
+    lr: 5e-6
+    weight_decay: 0.005
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1.0e-08
+    lr_scheduler_type: cosine
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.03
+    min_loss_scale: 1.0
+    loss_scale_window: 5.0
+    hysteresis: 2
+  megatron:
+    wrap_with_ddp: true
+    ddp:
+      grad_reduce_in_fp32: true
+      overlap_grad_reduce: false
+      overlap_param_gather: false
+      use_distributed_optimizer: true
+    use_deterministic_algorithms: true
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    moe_router_dtype: fp32
+    moe_token_dispatcher_type: alltoall
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.infra.rpc.rpc_server
+      env_vars:
+        NCCL_DEBUG: "WARN"
+
+train_dataset:
+  batch_size: 16
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  drop_last: true
+  path: /path/to/swe_trajectories.jsonl
+  type: sft
+  max_length: 32768
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
