@@ -636,9 +636,7 @@ def convert_bailingmoe_to_hf(
         elif rest == "mlp.router.weight":
             return [(f"model.layers.{layer_idx}.mlp.gate.weight", param)]
         elif rest == "mlp.router.expert_bias":
-            return [
-                (f"model.layers.{layer_idx}.mlp.gate.e_score_correction_bias", param)
-            ]
+            return [(f"model.layers.{layer_idx}.mlp.gate.expert_bias", param)]
 
         # === Lightning Attention layers (fused QKV) ===
         elif rest == "self_attention.linear_qkv.weight":

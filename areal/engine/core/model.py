@@ -39,6 +39,7 @@ VALID_MOE_MODELS = [
     "qwen3_moe",
     "bailing_moe_v2",
     "bailing_moe_linear",
+    "bailing_hybrid",
 ]
 # This registry is used to check if a model is a MoE model that we have checked it works with AReaL.
 
