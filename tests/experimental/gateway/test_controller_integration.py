@@ -803,3 +803,43 @@ class TestControllerFullInitialization:
         if "attention_mask" in local_result:
             assert isinstance(local_result["attention_mask"], torch.Tensor)
             assert not local_result["attention_mask"].is_meta
+
+    def test_rtensor_localize_batch4(self, gateway_controller_full_init):
+        """RTensor.localize() on a batch of 4 should produce tensors with dim0 == 4."""
+        ctrl = gateway_controller_full_init
+        batch_size = 4
+        data = [
+            {
+                "messages": [{"role": "user", "content": f"What is {i}+{i}?"}],
+                "answer": str(i * 2),
+            }
+            for i in range(batch_size)
+        ]
+
+        result = ctrl.rollout_batch(
+            data=data,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+        )
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert len(result) > 0
+        assert "input_ids" in result
+
+        from areal.infra.rpc.rtensor import RTensor
+
+        # Localize all tensors from the data proxy
+        local_result = RTensor.localize(result)
+
+        assert isinstance(local_result, dict)
+        assert "input_ids" in local_result
+        assert isinstance(local_result["input_ids"], torch.Tensor)
+        assert local_result["input_ids"].ndim == 2
+        assert local_result["input_ids"].shape[0] == batch_size
+
+        # All 2-D tensor values should share the same batch dimension
+        for key, value in local_result.items():
+            if isinstance(value, torch.Tensor) and value.ndim == 2:
+                assert value.shape[0] == batch_size, (
+                    f"Expected dim0=={batch_size} for key '{key}', got {value.shape[0]}"
+                )
