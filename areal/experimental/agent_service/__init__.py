@@ -10,7 +10,6 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING
 
-from .config import AgentServiceConfig
 from .protocol import (
     EventFrame,
     Frame,
@@ -71,7 +70,6 @@ __all__ = [
     "AgentRequest",
     "AgentResponse",
     "AgentRunnable",
-    "AgentServiceConfig",
     "DataProxyClient",
     "EventEmitter",
     "EventFrame",
