@@ -991,6 +991,23 @@ def _log_proximal_approximation_stats(
                     logprobs=logprobs,
                     prox_logp_gt=prox_logp_gt,
                 )
+        if logprobs is not None:
+            # We calculate the difference between Training and Inference
+            # .float() is used for NPU high-precision comparison
+            log_ratio = (logprobs.float() - old_logp.float()).detach()
+            
+            # Implementation of k1, k2, k3
+            k1 = -log_ratio
+            k2 = log_ratio**2 / 2.0
+            k3 = log_ratio.exp() - 1 - log_ratio
+ 
+            # Register these to TensorBoard
+            stats_tracker.stat(
+                parity_k1=k1,
+                parity_k2=k2,
+                parity_k3=k3,
+                denominator="n_valid_tokens", # Normalizes by active tokens
+            )
 
 
 def _log_version_staleness_stats(
