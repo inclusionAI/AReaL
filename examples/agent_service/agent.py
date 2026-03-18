@@ -22,7 +22,7 @@ from tau2.environment.environment import Environment
 from tau2.environment.tool import Tool as Tau2Tool
 from tau2.registry import registry
 
-from areal.experimental.agent_service.agent_worker import (
+from areal.experimental.agent_service.types import (
     AgentRequest,
     AgentResponse,
     EventEmitter,

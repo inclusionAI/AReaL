@@ -1,10 +1,4 @@
-"""Data Proxy — stateful session proxy between Gateway and Worker.
-
-Each DataProxy is paired 1:1 with an Agent Worker.  It maintains
-per-session conversation history and forwards requests to the Worker
-with the accumulated context.  The Gateway never talks to Workers
-directly — all traffic flows through DataProxy.
-"""
+"""Data Proxy — stateful session proxy between Gateway and Worker."""
 
 from __future__ import annotations
 
@@ -32,15 +26,6 @@ def create_data_proxy_app(
     worker_addr: str,
     session_timeout: int = 3600,
 ) -> FastAPI:
-    """Create the DataProxy HTTP application.
-
-    Parameters
-    ----------
-    worker_addr : str
-        HTTP address of the paired Agent Worker (e.g. ``http://localhost:9000``).
-    session_timeout : int
-        Idle timeout in seconds before a session is reaped.
-    """
     app = FastAPI(title="AReaL Data Proxy")
     sessions: dict[str, _SessionData] = {}
     http_client = httpx.AsyncClient(timeout=600.0)
@@ -161,47 +146,3 @@ def create_data_proxy_app(
         return {"history": session.history}
 
     return app
-
-
-class DataProxyClient:
-    """HTTP client for calling a DataProxy service."""
-
-    def __init__(self, data_proxy_addr: str) -> None:
-        self._addr = data_proxy_addr
-        self._http = httpx.AsyncClient(timeout=600.0)
-
-    async def turn(
-        self,
-        session_key: str,
-        message: str,
-        run_id: str = "",
-        queue_mode: str = "collect",
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        resp = await self._http.post(
-            f"{self._addr}/session/{session_key}/turn",
-            json={
-                "message": message,
-                "run_id": run_id,
-                "queue_mode": queue_mode,
-                "metadata": metadata or {},
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    async def close_session(self, session_key: str) -> None:
-        resp = await self._http.post(
-            f"{self._addr}/session/{session_key}/close",
-        )
-        resp.raise_for_status()
-
-    async def get_history(self, session_key: str) -> list[dict[str, Any]]:
-        resp = await self._http.get(
-            f"{self._addr}/session/{session_key}/history",
-        )
-        resp.raise_for_status()
-        return resp.json()["history"]
-
-    async def close(self) -> None:
-        await self._http.aclose()

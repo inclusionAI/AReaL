@@ -10,16 +10,16 @@ from unittest.mock import patch
 
 import pytest
 
-from areal.experimental.agent_service.agent_bridge import OpenResponsesBridge
-from areal.experimental.agent_service.agent_gateway import create_gateway_app
-from areal.experimental.agent_service.agent_router import create_router_app
-from areal.experimental.agent_service.agent_worker import (
+from areal.experimental.agent_service.data_proxy.app import create_data_proxy_app
+from areal.experimental.agent_service.gateway.app import create_gateway_app
+from areal.experimental.agent_service.gateway.bridge import OpenResponsesBridge
+from areal.experimental.agent_service.router.app import create_router_app
+from areal.experimental.agent_service.types import (
     AgentRequest,
     AgentResponse,
     EventEmitter,
-    create_worker_app,
 )
-from areal.experimental.agent_service.data_proxy import create_data_proxy_app
+from areal.experimental.agent_service.worker.app import create_worker_app
 
 httpx = pytest.importorskip("httpx")
 
@@ -48,7 +48,7 @@ class _ToolAgent:
 
 def _make_worker_app(agent_cls):
     with patch(
-        "areal.experimental.agent_service.agent_worker.import_from_string",
+        "areal.experimental.agent_service.worker.app.import_from_string",
         return_value=agent_cls,
     ):
         return create_worker_app("mock.path")

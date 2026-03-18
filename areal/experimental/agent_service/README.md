@@ -156,12 +156,22 @@ areal/experimental/agent_service/
 ├── __init__.py          # Public exports
 ├── README.md            # This document
 ├── protocol.py          # Gateway protocol frame types
-├── config.py            # AgentServiceConfig dataclass
-├── agent_worker.py      # Worker HTTP server + AgentRunnable protocol
-├── data_proxy.py        # DataProxy HTTP server + DataProxyClient
-├── agent_router.py      # Router HTTP server + RouterClient
-├── agent_gateway.py     # Gateway HTTP server (WebSocket)
-└── agent_bridge.py      # OpenResponses HTTP bridge
+├── types.py             # AgentRequest, AgentResponse, EventEmitter, AgentRunnable
+├── gateway/
+│   ├── __main__.py      # python -m areal.experimental.agent_service.gateway
+│   ├── app.py           # create_gateway_app()
+│   └── bridge.py        # OpenResponsesBridge, mount_bridge()
+├── router/
+│   ├── __main__.py      # python -m areal.experimental.agent_service.router
+│   ├── app.py           # create_router_app()
+│   └── client.py        # RouterClient
+├── data_proxy/
+│   ├── __main__.py      # python -m areal.experimental.agent_service.data_proxy
+│   ├── app.py           # create_data_proxy_app()
+│   └── client.py        # DataProxyClient
+└── worker/
+    ├── __main__.py      # python -m areal.experimental.agent_service.worker
+    └── app.py           # create_worker_app()
 
 examples/agent_service/
 ├── agent.py             # Tau2Agent (PydanticAI)

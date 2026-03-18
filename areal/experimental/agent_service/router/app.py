@@ -1,16 +1,10 @@
-"""Agent Router — independent HTTP service for session-affine routing.
-
-DataProxy instances register with the Router at startup.  The Gateway
-calls ``POST /route`` to discover which DataProxy owns a given session.
-New sessions are assigned round-robin across registered proxies.
-"""
+"""Agent Router — session-affine routing service."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
@@ -20,7 +14,6 @@ logger = logging.getLogger("AgentRouter")
 
 
 def create_router_app() -> FastAPI:
-    """Create the Agent Router HTTP application."""
     # TODO(agent-service): add admin key auth for /register, /unregister
     # and session key auth for /route. See #1043 for reference.
     app = FastAPI(title="AReaL Agent Router")
@@ -92,52 +85,3 @@ def create_router_app() -> FastAPI:
         return {"status": "ok"}
 
     return app
-
-
-class RouterClient:
-    """HTTP client for calling the Router service."""
-
-    def __init__(self, router_addr: str) -> None:
-        self._addr = router_addr
-        self._http = httpx.AsyncClient(timeout=30.0)
-
-    async def register(self, addr: str) -> None:
-        resp = await self._http.post(f"{self._addr}/register", json={"addr": addr})
-        resp.raise_for_status()
-
-    async def unregister(self, addr: str) -> None:
-        resp = await self._http.post(f"{self._addr}/unregister", json={"addr": addr})
-        resp.raise_for_status()
-
-    async def route(self, session_key: str) -> str:
-        resp = await self._http.post(
-            f"{self._addr}/route", json={"session_key": session_key}
-        )
-        resp.raise_for_status()
-        return resp.json()["data_proxy_addr"]
-
-    async def remove_session(self, session_key: str) -> None:
-        resp = await self._http.post(
-            f"{self._addr}/remove_session", json={"session_key": session_key}
-        )
-        resp.raise_for_status()
-
-    async def close(self) -> None:
-        await self._http.aclose()
-
-
-def main() -> None:
-    import argparse
-
-    import uvicorn
-
-    parser = argparse.ArgumentParser(description="Agent Router")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8081)
-    args = parser.parse_args()
-
-    uvicorn.run(create_router_app(), host=args.host, port=args.port)
-
-
-if __name__ == "__main__":
-    main()

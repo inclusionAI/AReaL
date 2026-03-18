@@ -95,17 +95,17 @@ showing tool calls and history accumulation.
 
 ```bash
 # Terminal 1: Router
-python -m areal.experimental.agent_service.agent_router --port 8081
+python -m areal.experimental.agent_service.router --port 8081
 
 # Terminal 2: Worker + DataProxy
-python -m areal.experimental.agent_service.agent_worker \
+python -m areal.experimental.agent_service.worker \
     --agent examples.agent_service.agent.Tau2Agent \
     --router-addr http://localhost:8081 \
     --worker-port 9000 \
     --proxy-port 9100
 
 # Terminal 3: Gateway
-python -m areal.experimental.agent_service.agent_gateway \
+python -m areal.experimental.agent_service.gateway \
     --router-addr http://localhost:8081 \
     --port 8080
 ```
@@ -152,7 +152,7 @@ class MyAgent:
 Then start a worker with your agent:
 
 ```bash
-python -m areal.experimental.agent_service.agent_worker \
+python -m areal.experimental.agent_service.worker \
     --agent mypackage.myagent.MyAgent \
     --router-addr http://localhost:8081
 ```

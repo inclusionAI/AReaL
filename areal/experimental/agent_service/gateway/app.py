@@ -1,13 +1,4 @@
-"""Agent Gateway — independent HTTP/WebSocket server.
-
-The Gateway is the public-facing entry point for the Agent Service.
-It accepts client connections (WebSocket or HTTP via the OpenResponses
-bridge), resolves session routing through the Router, and forwards
-requests to the appropriate DataProxy.
-
-All inter-service communication is HTTP — Gateway holds no direct
-Python references to Router, DataProxy, or Worker.
-"""
+"""Agent Gateway — public-facing HTTP/WebSocket server."""
 
 from __future__ import annotations
 
@@ -19,7 +10,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from areal.utils import logging
 
-from .protocol import (
+from ..protocol import (
     FrameType,
     RequestFrame,
     RequestMethod,
@@ -48,20 +39,12 @@ def _make_accepted_json(request_id: str, run_id: str) -> str:
 
 
 def create_gateway_app(router_addr: str) -> FastAPI:
-    """Create the Agent Gateway ASGI application.
-
-    Parameters
-    ----------
-    router_addr : str
-        HTTP address of the Router service (e.g. ``http://localhost:8081``).
-    """
     app = FastAPI(title="AReaL Agent Gateway")
     http_client = httpx.AsyncClient(timeout=600.0)
 
     async def _route(session_key: str) -> str:
         resp = await http_client.post(
-            f"{router_addr}/route",
-            json={"session_key": session_key},
+            f"{router_addr}/route", json={"session_key": session_key}
         )
         resp.raise_for_status()
         return resp.json()["data_proxy_addr"]
@@ -170,10 +153,7 @@ def create_gateway_app(router_addr: str) -> FastAPI:
                     )
                 except Exception as exc:
                     logger.error(
-                        "Run %s failed: %s\n%s",
-                        run_id,
-                        exc,
-                        traceback.format_exc(),
+                        "Run %s failed: %s\n%s", run_id, exc, traceback.format_exc()
                     )
                     await websocket.send_text(
                         serialize_frame(
@@ -191,25 +171,3 @@ def create_gateway_app(router_addr: str) -> FastAPI:
         await http_client.aclose()
 
     return app
-
-
-def main() -> None:
-    import argparse
-
-    import uvicorn
-
-    from .agent_bridge import OpenResponsesBridge, mount_bridge
-
-    parser = argparse.ArgumentParser(description="Agent Gateway")
-    parser.add_argument("--router-addr", required=True, help="Router HTTP address")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8080)
-    args = parser.parse_args()
-
-    app = create_gateway_app(router_addr=args.router_addr)
-    mount_bridge(app, OpenResponsesBridge(router_addr=args.router_addr))
-    uvicorn.run(app, host=args.host, port=args.port)
-
-
-if __name__ == "__main__":
-    main()

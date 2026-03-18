@@ -27,34 +27,23 @@ from .protocol import (
     parse_frame,
     serialize_frame,
 )
+from .types import AgentRequest, AgentResponse, AgentRunnable, EventEmitter
 
 if TYPE_CHECKING:
-    from .agent_bridge import AgentBridge, OpenResponsesBridge, mount_bridge
-    from .agent_gateway import create_gateway_app
-    from .agent_router import RouterClient, create_router_app
-    from .agent_worker import (
-        AgentRequest,
-        AgentResponse,
-        AgentRunnable,
-        EventEmitter,
-        create_worker_app,
-    )
     from .data_proxy import DataProxyClient, create_data_proxy_app
+    from .gateway import OpenResponsesBridge, create_gateway_app, mount_bridge
+    from .router import RouterClient, create_router_app
+    from .worker import create_worker_app
 
 _LAZY_IMPORTS: dict[str, str] = {
-    "AgentBridge": ".agent_bridge",
-    "AgentRequest": ".agent_worker",
-    "AgentResponse": ".agent_worker",
-    "AgentRunnable": ".agent_worker",
     "DataProxyClient": ".data_proxy",
-    "EventEmitter": ".agent_worker",
-    "OpenResponsesBridge": ".agent_bridge",
-    "RouterClient": ".agent_router",
+    "OpenResponsesBridge": ".gateway",
+    "RouterClient": ".router",
     "create_data_proxy_app": ".data_proxy",
-    "create_gateway_app": ".agent_gateway",
-    "create_router_app": ".agent_router",
-    "create_worker_app": ".agent_worker",
-    "mount_bridge": ".agent_bridge",
+    "create_gateway_app": ".gateway",
+    "create_router_app": ".router",
+    "create_worker_app": ".worker",
+    "mount_bridge": ".gateway",
 }
 
 
@@ -66,7 +55,6 @@ def __getattr__(name: str):
 
 
 __all__ = [
-    "AgentBridge",
     "AgentRequest",
     "AgentResponse",
     "AgentRunnable",

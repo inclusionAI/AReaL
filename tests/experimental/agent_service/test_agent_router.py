@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from areal.experimental.agent_service.agent_router import create_router_app
+from areal.experimental.agent_service.router.app import create_router_app
 
 httpx = pytest.importorskip("httpx")
 

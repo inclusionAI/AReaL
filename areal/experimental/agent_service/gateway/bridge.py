@@ -1,14 +1,4 @@
-"""Agent Bridge — HTTP protocol translation layer.
-
-Provides :class:`OpenResponsesBridge` which exposes an OpenAI
-Responses-compatible ``POST /v1/responses`` endpoint.  Requests are
-translated into DataProxy ``/session/{key}/turn`` calls, routed through
-the Router for session affinity.
-
-All inter-service communication is HTTP.
-
-Reference: https://docs.openclaw.ai/gateway/openresponses-http-api
-"""
+"""OpenResponses HTTP bridge — translates POST /v1/responses to DataProxy turns."""
 
 from __future__ import annotations
 
@@ -22,25 +12,17 @@ from fastapi.responses import JSONResponse
 
 from areal.utils import logging
 
-from .protocol import generate_run_id
+from ..protocol import generate_run_id
 
 logger = logging.getLogger("AgentBridge")
 
 
 class AgentBridge(ABC):
-    """Base class for HTTP bridge adapters."""
-
     @abstractmethod
     async def handle_request(self, request: Request) -> Any: ...
 
 
 class OpenResponsesBridge(AgentBridge):
-    """OpenAI Responses API bridge (``POST /v1/responses``).
-
-    Translates between the OpenResponses item-based request format and the
-    internal DataProxy turn API.
-    """
-
     def __init__(self, router_addr: str) -> None:
         self._router_addr = router_addr
         self._http = httpx.AsyncClient(timeout=600.0)

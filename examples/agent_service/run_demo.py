@@ -247,7 +247,7 @@ def main() -> None:
         return _Configured
 
     with patch(
-        "areal.experimental.agent_service.agent_worker.import_from_string",
+        "areal.experimental.agent_service.worker.app.import_from_string",
         return_value=_make_agent_cls(),
     ):
         worker_app = create_worker_app("examples.agent_service.agent.Tau2Agent")
