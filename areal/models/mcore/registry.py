@@ -1,7 +1,9 @@
 import dataclasses
+from typing import Any
 
 import torch
 from mbridge.core.bridge import Bridge
+from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDDPConfig
@@ -96,12 +98,20 @@ def unwrap_to_gpt_model(model: torch.nn.Module) -> GPTModel:
 
 # Model registry for different architectures
 def make_hf_and_mcore_config(
-    hf_path: str, dtype: torch.dtype, bridge=None
+    hf_path: str,
+    dtype: torch.dtype,
+    bridge=None,
+    bridge_type: str = "mbridge",
 ) -> tuple[PretrainedConfig, TransformerConfig]:
-    if bridge is not None:
+    if bridge is not None and bridge_type == "mbridge":
         hf_config = bridge.hf_config
         hf_config._name_or_path = hf_path
         return hf_config, bridge.config
+    elif bridge is not None and bridge_type == "megatron-bridge":
+        hf_config = getattr(bridge.hf_pretrained, "config", bridge.hf_pretrained)
+        if hasattr(hf_config, "_name_or_path"):
+            hf_config._name_or_path = hf_path
+        return hf_config, bridge.transformer_config
     else:
         hf_config: PretrainedConfig = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=hf_path,
@@ -132,10 +142,11 @@ def make_mcore_model(
     hf_config: PretrainedConfig,
     tf_config: TransformerConfig,
     mcore_config: MegatronEngineConfig | None = None,
-    bridge: Bridge | None = None,
+    bridge: Bridge | Any | None = None,
+    bridge_type: str = "mbridge",
     is_critic: bool = False,
 ) -> list[GPTModel | DDP]:
-    if bridge is not None:
+    if bridge is not None and bridge_type == "mbridge":
         models = bridge.get_model(
             # TODO: Add DDP options when supporting training
             wrap_with_ddp=mcore_config.wrap_with_ddp,
@@ -156,6 +167,76 @@ def make_mcore_model(
                 _replace_output_layer_with_value_head(_model, tf_config)
 
         return models
+
+    if bridge is not None and bridge_type == "megatron-bridge":
+        provider = bridge.to_megatron_provider(load_weights=False)
+        vpp_size = mcore_config.virtual_pipeline_parallel_size or 0
+
+        provider.tensor_model_parallel_size = mpu.get_tensor_model_parallel_world_size()
+        provider.pipeline_model_parallel_size = (
+            mpu.get_pipeline_model_parallel_world_size()
+        )
+        provider.virtual_pipeline_model_parallel_size = (
+            vpp_size if vpp_size > 1 else None
+        )
+        provider.context_parallel_size = mpu.get_context_parallel_world_size()
+        provider.expert_model_parallel_size = mpu.get_expert_model_parallel_world_size()
+        provider.expert_tensor_parallel_size = (
+            mpu.get_expert_tensor_parallel_world_size()
+        )
+        provider.sequence_parallel = mpu.get_tensor_model_parallel_world_size() > 1
+        provider.pipeline_dtype = tf_config.params_dtype
+
+        provider.recompute_granularity = mcore_config.recompute_granularity
+        provider.recompute_method = mcore_config.recompute_method
+        provider.recompute_num_layers = mcore_config.recompute_num_layers
+        provider.distribute_saved_activations = (
+            mcore_config.distribute_saved_activations
+        )
+        provider.recompute_modules = mcore_config.recompute_modules
+
+        provider.account_for_embedding_in_pipeline_split = False
+        provider.account_for_loss_in_pipeline_split = False
+
+        # Keep these four flags aligned with mbridge base defaults.
+        provider.variable_seq_lengths = True
+        logger.warning(
+            "Ignoring mcore_config.moe_token_dispatcher_type=%s for bridge_type='megatron-bridge'; "
+            "using 'alltoall' and variable_seq_lengths=True.",
+            mcore_config.moe_token_dispatcher_type,
+        )
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.batch_p2p_comm = False
+        provider.overlap_p2p_comm = (
+            vpp_size > 1 and provider.pipeline_model_parallel_size > 1
+        )
+
+        # Aligning tf config settings with provider for consistency.
+        tf_config.variable_seq_lengths = provider.variable_seq_lengths
+        tf_config.moe_token_dispatcher_type = provider.moe_token_dispatcher_type
+        tf_config.batch_p2p_comm = provider.batch_p2p_comm
+        tf_config.overlap_p2p_comm = provider.overlap_p2p_comm
+
+        provider.finalize()
+
+        models = provider.provide_distributed_model(
+            ddp_config=MCoreDDPConfig(**dataclasses.asdict(mcore_config.ddp)),
+            fp16=tf_config.fp16,
+            bf16=tf_config.bf16,
+            use_megatron_fsdp=mcore_config.use_custom_fsdp,
+            use_torch_fsdp2=mcore_config.use_torch_fsdp2,
+            wrap_with_ddp=mcore_config.wrap_with_ddp,
+            overlap_param_gather_with_optimizer_step=mcore_config.overlap_param_gather_with_optimizer_step,
+        )
+        models = list(models)
+
+        if is_critic:
+            for model in models:
+                _model = unwrap_to_gpt_model(model)
+                _replace_output_layer_with_value_head(_model, tf_config)
+
+        return models
+
     else:
         if (
             mcore_config is not None

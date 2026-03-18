@@ -73,6 +73,7 @@ class BaseInstallationValidator:
         # and should be validated dynamically by subclasses
         "megatron-core",
         "mbridge",
+        "megatron-bridge",
         "ray",
         "datasets",
         "hydra-core",

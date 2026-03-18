@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import mbridge
 import torch
 import torch.distributed as dist
+from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
@@ -166,6 +167,7 @@ class MegatronEngine(TrainEngine):
             self.fp8_config.direct_convert if self.enable_fp8 else False
         )
         self.quantization_config: dict[str, int | str | list[str]] | None = None
+        self.bridge_cls: str = getattr(self.mcore_config, "bridge_type", "mbridge")
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -237,31 +239,21 @@ class MegatronEngine(TrainEngine):
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
-        with patch_bridge_for_tree_training(self.enable_tree_training):
-            self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
-            self.bridge.dtype = self.dtype
-            # Set gradient checkpointing options
-            if self.config.gradient_checkpointing:
-                self.bridge.set_extra_args(
-                    recompute_granularity=self.mcore_config.recompute_granularity,
-                    recompute_method=self.mcore_config.recompute_method,
-                    recompute_num_layers=self.mcore_config.recompute_num_layers,
-                    distribute_saved_activations=self.mcore_config.distribute_saved_activations,
-                    recompute_modules=self.mcore_config.recompute_modules,
-                )
-
-            self.logger.info(
-                "Using mbridge to create models and hf model save/load in MegatronEngine."
-            )
+        with patch_bridge_for_tree_training(
+            self.enable_tree_training and self.bridge_cls == "mbridge"
+        ):
+            self.bridge = self._build_hf_mcore_bridge()
 
             self.hf_config, self.tf_config = make_hf_and_mcore_config(
-                self.config.path, dtype=self.dtype, bridge=self.bridge
+                self.config.path,
+                dtype=self.dtype,
+                bridge=self.bridge,
+                bridge_type=self.bridge_cls,
             )
             self.tf_config = configure_pipeline_layer_splits(
                 self.parallel_strategy, self.hf_config, self.tf_config
             )
 
-            # Get quantization_config from hf_config if available (for FP8 weight updates)
             self.quantization_config = getattr(
                 self.hf_config, "quantization_config", None
             )
@@ -269,15 +261,15 @@ class MegatronEngine(TrainEngine):
             self._check_and_apply_fp8_config()
             self._validate_fp8_consistency()
 
-            # initialize mcore (DDP Wrapped) GPTModel
-            with self.device:
-                models = make_mcore_model(
-                    hf_config=self.hf_config,
-                    tf_config=self.tf_config,
-                    mcore_config=self.mcore_config,
-                    bridge=self.bridge,
-                    is_critic=self.config.is_critic,
-                )
+        with self.device:
+            models = make_mcore_model(
+                hf_config=self.hf_config,
+                tf_config=self.tf_config,
+                mcore_config=self.mcore_config,
+                bridge=self.bridge,
+                bridge_type=self.bridge_cls,
+                is_critic=self.config.is_critic,
+            )
 
         self.model = _MegatronModelList(models)
 
@@ -323,6 +315,7 @@ class MegatronEngine(TrainEngine):
 
         primary_model = self.model[0]
         model_config = get_model_config(primary_model)
+
         # NOTE: It is recommended to set this option to True for RL training on MoE models for stability.
         if self.mcore_config.use_deterministic_algorithms:
             set_deterministic_algorithms(model_config)
@@ -356,6 +349,43 @@ class MegatronEngine(TrainEngine):
         model_config.finalize_model_grads_func = finalize_model_grads
         self._create_optimizer(ft_spec)
         self._initialized = True
+
+    def _build_hf_mcore_bridge(self):
+        if self.bridge_cls == "mbridge":
+            self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
+            self.bridge.dtype = self.dtype
+            if self.config.gradient_checkpointing:
+                self.bridge.set_extra_args(
+                    recompute_granularity=self.mcore_config.recompute_granularity,
+                    recompute_method=self.mcore_config.recompute_method,
+                    recompute_num_layers=self.mcore_config.recompute_num_layers,
+                    distribute_saved_activations=self.mcore_config.distribute_saved_activations,
+                    recompute_modules=self.mcore_config.recompute_modules,
+                )
+            self.logger.info(
+                "Using mbridge to create models and hf model save/load in MegatronEngine."
+            )
+
+        elif self.bridge_cls == "megatron-bridge":
+            if self.enable_tree_training:
+                raise NotImplementedError(
+                    "Tree training is not supported with bridge_type='megatron-bridge'."
+                )
+            self.bridge = MegatronBridgeAutoBridge.from_hf_pretrained(
+                self.config.path,
+                trust_remote_code=True,
+                dtype=self.config.dtype,
+            )
+            self.logger.info(
+                "Using megatron-bridge to create models and hf model save/load in MegatronEngine."
+            )
+
+        else:
+            self.logger.info(
+                "Not using bridge to create models and hf model save/load in MegatronEngine."
+            )
+            self.bridge = None
+        return self.bridge
 
     @property
     def initialized(self) -> bool:
@@ -1347,16 +1377,23 @@ class MegatronEngine(TrainEngine):
         assert self.model is not None, "Model is not initialized."
         os.makedirs(path, exist_ok=True)
 
-        save_weights_to_hf_with_mbridge_fast(
-            bridge=self.bridge,
-            models=self.model,
-            weights_path=path,
-            base_model_path=base_model_path,
-            max_shard_size_byte=int(3e9),
-            max_workers=None,
-            is_critic=self.config.is_critic,
-            fp8_direct_convert=self.fp8_direct_convert,
-        )
+        if self.bridge_cls == "megatron-bridge":
+            self.bridge.save_hf_pretrained(
+                self.model,
+                path,
+                source_path=base_model_path,
+            )
+        else:
+            save_weights_to_hf_with_mbridge_fast(
+                bridge=self.bridge,
+                models=self.model,
+                weights_path=path,
+                base_model_path=base_model_path,
+                max_shard_size_byte=int(3e9),
+                max_workers=None,
+                is_critic=self.config.is_critic,
+                fp8_direct_convert=self.fp8_direct_convert,
+            )
 
         if dist.get_rank() == 0:
             if tokenizer is not None:
@@ -1369,14 +1406,18 @@ class MegatronEngine(TrainEngine):
 
     def _load_model_from_hf(self, path: str) -> None:
         assert self.model is not None, "Model is not initialized."
-        load_weights_from_hf_with_mbridge_fast(
-            bridge=self.bridge,
-            models=self.model,
-            weights_path=path,
-            max_workers=None,
-            is_critic=self.config.is_critic,
-            fp8_direct_convert=self.fp8_direct_convert,
-        )
+
+        if self.bridge_cls == "megatron-bridge":
+            self.bridge.load_hf_weights(self.model, hf_path=path)
+        else:
+            load_weights_from_hf_with_mbridge_fast(
+                bridge=self.bridge,
+                models=self.model,
+                weights_path=path,
+                max_workers=None,
+                is_critic=self.config.is_critic,
+                fp8_direct_convert=self.fp8_direct_convert,
+            )
 
     def _prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_

@@ -54,6 +54,7 @@ class DockerInstallationValidator(BaseInstallationValidator):
         "flash_attn_3",
         "megatron-core",
         "mbridge",
+        "megatron-bridge",
         "causal_conv1d",
     }
 

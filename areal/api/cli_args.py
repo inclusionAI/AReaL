@@ -808,6 +808,15 @@ class MegatronEngineConfig:
     # FP8 Training Configuration
     fp8_config: FP8EngineConfig | None = None
 
+    # Bridge backend used for HF<->Megatron conversion/model creation.
+    bridge_type: str = field(
+        default="mbridge",
+        metadata={
+            "help": "Bridge backend for MegatronEngine. Choices: 'mbridge' or 'megatron-bridge'.",
+            "choices": ["mbridge", "megatron-bridge"],
+        },
+    )
+
 
 class SchedulingStrategyType(str, Enum):
     separation = "separation"
