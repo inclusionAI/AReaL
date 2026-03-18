@@ -28,7 +28,9 @@ from areal.api.cli_args import (
     load_expr_config,
 )
 from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
-from areal.experimental.rollout_service.controller.controller import GatewayRolloutController
+from areal.experimental.rollout_service.controller.controller import (
+    GatewayRolloutController,
+)
 from areal.utils import logging
 
 logger = logging.getLogger("Tau2GatewayRollout")
@@ -244,19 +246,19 @@ def main(argv: list[str]) -> None:
                 workflow_kwargs=workflow_kwargs,
             )
             if result:
-                # Localize RTensors to local torch tensors
+                # Localize RTensors to local torch tensors for each trajectory
                 from areal.infra.rpc.rtensor import RTensor
 
-                local_result = RTensor.localize(result)
-                batch_size = next(iter(local_result.values())).shape[0]
-                rewards = local_result["rewards"]
-                logger.info(
-                    "Batch %d: batch_size=%d, rewards=%s, avg_reward=%.4f",
-                    batch_idx,
-                    batch_size,
-                    rewards,
-                    rewards.mean().item(),
-                )
+                for traj_idx, traj in enumerate(result):
+                    local_traj = RTensor.localize(traj)
+                    rewards = local_traj["rewards"]
+                    logger.info(
+                        "Batch %d traj %d: rewards=%s, avg_reward=%.4f",
+                        batch_idx,
+                        traj_idx,
+                        rewards,
+                        rewards.mean().item(),
+                    )
             else:
                 logger.warning("Batch %d: empty result (all rejected?)", batch_idx)
             batch_count += 1

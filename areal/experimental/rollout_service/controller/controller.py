@@ -649,7 +649,7 @@ class GatewayRolloutController:
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Any = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         if not self._gateway_addr:
             raise RuntimeError(
                 "GatewayRolloutController.initialize() must be called first"
@@ -670,10 +670,8 @@ class GatewayRolloutController:
                 should_accept_fn=resolved_accept_fn,
             )
         results = self.workflow_executor.wait(count=len(data))
-        # Concatenate into batch tensor format (matching RolloutController API)
-        from areal.utils.data import concat_padded_tensors
-
-        return concat_padded_tensors([r for r in results if r is not None])
+        # Return list of trajectories (matching RolloutController API)
+        return [r for r in results if r is not None]
 
     def prepare_batch(
         self,
@@ -683,7 +681,7 @@ class GatewayRolloutController:
         should_accept_fn: Any = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         if not self._gateway_addr:
             raise RuntimeError(
                 "GatewayRolloutController.initialize() must be called first"
@@ -703,10 +701,8 @@ class GatewayRolloutController:
             should_accept_fn=resolved_accept_fn,
             dynamic_bs=dynamic_bs,
         )
-        # Concatenate into batch tensor format (matching RolloutController API)
-        from areal.utils.data import concat_padded_tensors
-
-        return concat_padded_tensors([r for r in results if r is not None])
+        # Return list of trajectories (matching RolloutController API)
+        return [r for r in results if r is not None]
 
     async def chat_completion(
         self,

@@ -307,7 +307,7 @@ class TestControllerRolloutBatch:
     """Test rollout_batch through the controller with SimpleAgent workflow."""
 
     def test_rollout_batch_with_simple_agent(self, gateway_controller):
-        """rollout_batch with SimpleAgent should return concatenated batch dict."""
+        """rollout_batch with SimpleAgent should return list of trajectory dicts."""
         data = [
             {
                 "messages": [{"role": "user", "content": "What is 2+2?"}],
@@ -321,19 +321,19 @@ class TestControllerRolloutBatch:
         )
 
         assert result is not None
-        assert isinstance(result, dict)
-        assert len(result) > 0
-        assert "input_ids" in result
+        assert isinstance(result, list)
+        assert len(result) == 1
+        traj = result[0]
+        assert isinstance(traj, dict)
+        assert "input_ids" in traj
         # Values should be RTensor (matching RolloutController API)
         from areal.infra.rpc.rtensor import RTensor
 
-        assert isinstance(result["input_ids"], RTensor)
-        assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shard")
-        assert result["input_ids"].shard is not None
+        assert isinstance(traj["input_ids"], RTensor)
+        assert traj["input_ids"].ndim == 2
 
     def test_rollout_batch_with_should_accept_fn_rejects(self, gateway_controller):
-        """rollout_batch with a rejecting should_accept_fn returns empty dict."""
+        """rollout_batch with a rejecting should_accept_fn returns empty list."""
 
         def reject_all(trajectory: dict) -> bool:
             return False
@@ -351,12 +351,12 @@ class TestControllerRolloutBatch:
             should_accept_fn=reject_all,
         )
 
-        # All trajectories should be rejected, so the result is an empty dict
-        assert isinstance(result, dict)
+        # All trajectories should be rejected, so the result is an empty list
+        assert isinstance(result, list)
         assert len(result) == 0
 
     def test_rollout_batch_with_should_accept_fn_accepts(self, gateway_controller):
-        """rollout_batch with an accepting should_accept_fn returns concatenated batch dict."""
+        """rollout_batch with an accepting should_accept_fn returns list of trajectory dicts."""
 
         def accept_all(trajectory: dict) -> bool:
             return True
@@ -374,16 +374,15 @@ class TestControllerRolloutBatch:
             should_accept_fn=accept_all,
         )
 
-        assert isinstance(result, dict)
-        assert len(result) > 0
-        assert "input_ids" in result
-        # Values should be RTensor (matching RolloutController API)
+        assert isinstance(result, list)
+        assert len(result) == 1
+        traj = result[0]
+        assert isinstance(traj, dict)
+        assert "input_ids" in traj
         from areal.infra.rpc.rtensor import RTensor
 
-        assert isinstance(result["input_ids"], RTensor)
-        assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shard")
-        assert result["input_ids"].shard is not None
+        assert isinstance(traj["input_ids"], RTensor)
+        assert traj["input_ids"].ndim == 2
 
 
 # =============================================================================
@@ -414,7 +413,7 @@ class TestControllerPrepareBatch:
     """Test prepare_batch through the controller with SimpleAgent workflow."""
 
     def test_prepare_batch_returns_results(self, gateway_controller):
-        """prepare_batch should return a concatenated batch dict."""
+        """prepare_batch should return a list of trajectory dicts."""
         items = [
             {
                 "messages": [{"role": "user", "content": "What is 2+2?"}],
@@ -432,19 +431,18 @@ class TestControllerPrepareBatch:
             workflow="tests.experimental.openai.utils.SimpleAgent",
         )
 
-        assert isinstance(result, dict)
+        assert isinstance(result, list)
         assert len(result) > 0
-        assert "input_ids" in result
-        # Values should be RTensor (matching RolloutController API)
+        traj = result[0]
+        assert isinstance(traj, dict)
+        assert "input_ids" in traj
         from areal.infra.rpc.rtensor import RTensor
 
-        assert isinstance(result["input_ids"], RTensor)
-        assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shard")
-        assert result["input_ids"].shard is not None
+        assert isinstance(traj["input_ids"], RTensor)
+        assert traj["input_ids"].ndim == 2
 
     def test_prepare_batch_with_should_accept_fn_rejects(self, gateway_controller):
-        """prepare_batch with a rejecting should_accept_fn returns empty dict."""
+        """prepare_batch with a rejecting should_accept_fn returns empty list."""
 
         def reject_all(trajectory: dict) -> bool:
             return False
@@ -464,12 +462,12 @@ class TestControllerPrepareBatch:
             dynamic_bs=True,
         )
 
-        # All trajectories should be rejected, so the result is an empty dict
-        assert isinstance(result, dict)
+        # All trajectories should be rejected, so the result is an empty list
+        assert isinstance(result, list)
         assert len(result) == 0
 
     def test_prepare_batch_with_should_accept_fn_accepts(self, gateway_controller):
-        """prepare_batch with an accepting should_accept_fn returns concatenated batch dict."""
+        """prepare_batch with an accepting should_accept_fn returns list of trajectory dicts."""
 
         def accept_all(trajectory: dict) -> bool:
             return True
@@ -492,16 +490,15 @@ class TestControllerPrepareBatch:
             should_accept_fn=accept_all,
         )
 
-        assert isinstance(result, dict)
+        assert isinstance(result, list)
         assert len(result) > 0
-        assert "input_ids" in result
-        # Values should be RTensor (matching RolloutController API)
+        traj = result[0]
+        assert isinstance(traj, dict)
+        assert "input_ids" in traj
         from areal.infra.rpc.rtensor import RTensor
 
-        assert isinstance(result["input_ids"], RTensor)
-        assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shard")
-        assert result["input_ids"].shard is not None
+        assert isinstance(traj["input_ids"], RTensor)
+        assert traj["input_ids"].ndim == 2
 
 
 # =============================================================================
@@ -733,7 +730,7 @@ class TestControllerFullInitialization:
         assert resp.json()["interaction_count"] == 1
 
     def test_rollout_batch_with_simple_agent(self, gateway_controller_full_init):
-        """rollout_batch with SimpleAgent should return concatenated batch dict."""
+        """rollout_batch with SimpleAgent should return list of trajectory dicts."""
         ctrl = gateway_controller_full_init
         data = [
             {
@@ -748,16 +745,15 @@ class TestControllerFullInitialization:
         )
 
         assert result is not None
-        assert isinstance(result, dict)
-        assert len(result) > 0
-        assert "input_ids" in result
-        # Values should be RTensor (matching RolloutController API)
+        assert isinstance(result, list)
+        assert len(result) == 1
+        traj = result[0]
+        assert isinstance(traj, dict)
+        assert "input_ids" in traj
         from areal.infra.rpc.rtensor import RTensor
 
-        assert isinstance(result["input_ids"], RTensor)
-        assert result["input_ids"].ndim == 2
-        assert hasattr(result["input_ids"], "shard")
-        assert result["input_ids"].shard is not None
+        assert isinstance(traj["input_ids"], RTensor)
+        assert traj["input_ids"].ndim == 2
 
     def test_rtensor_localize_on_rollout_result(self, gateway_controller_full_init):
         """RTensor.localize() should successfully fetch tensors from data proxy."""
@@ -775,38 +771,40 @@ class TestControllerFullInitialization:
         )
 
         assert result is not None
-        assert isinstance(result, dict)
-        assert len(result) > 0
-        assert "input_ids" in result
+        assert isinstance(result, list)
+        assert len(result) == 1
+        traj = result[0]
+        assert isinstance(traj, dict)
+        assert "input_ids" in traj
 
         from areal.infra.rpc.rtensor import RTensor
 
         # The result values should be RTensors with meta data (not yet fetched)
-        rtensor_input_ids = result["input_ids"]
+        rtensor_input_ids = traj["input_ids"]
         assert isinstance(rtensor_input_ids, RTensor)
         assert rtensor_input_ids.data.is_meta
 
         # Verify shard points to a data proxy address (not just a bare IP)
         assert ":" in rtensor_input_ids.shard.node_addr
 
-        # Localize the full result — this fetches tensors from the data proxy
-        local_result = RTensor.localize(result)
+        # Localize the trajectory — this fetches tensors from the data proxy
+        local_traj = RTensor.localize(traj)
 
         # After localization, values should be real tensors (not RTensor)
-        assert isinstance(local_result, dict)
-        assert "input_ids" in local_result
-        assert isinstance(local_result["input_ids"], torch.Tensor)
-        assert not local_result["input_ids"].is_meta
-        assert local_result["input_ids"].ndim == 2
-        assert local_result["input_ids"].shape[0] >= 1  # at least 1 sample
+        assert isinstance(local_traj, dict)
+        assert "input_ids" in local_traj
+        assert isinstance(local_traj["input_ids"], torch.Tensor)
+        assert not local_traj["input_ids"].is_meta
+        assert local_traj["input_ids"].ndim == 2
+        assert local_traj["input_ids"].shape[0] >= 1  # at least 1 sample
 
         # Check other expected keys are also localized
-        if "attention_mask" in local_result:
-            assert isinstance(local_result["attention_mask"], torch.Tensor)
-            assert not local_result["attention_mask"].is_meta
+        if "attention_mask" in local_traj:
+            assert isinstance(local_traj["attention_mask"], torch.Tensor)
+            assert not local_traj["attention_mask"].is_meta
 
     def test_rtensor_localize_batch4(self, gateway_controller_full_init):
-        """RTensor.localize() on a batch of 4 should produce tensors with dim0 == 4."""
+        """RTensor.localize() on a batch of 4 should produce 4 trajectory dicts."""
         ctrl = gateway_controller_full_init
         batch_size = 4
         data = [
@@ -823,24 +821,17 @@ class TestControllerFullInitialization:
         )
 
         assert result is not None
-        assert isinstance(result, dict)
-        assert len(result) > 0
-        assert "input_ids" in result
+        assert isinstance(result, list)
+        assert len(result) == batch_size
 
         from areal.infra.rpc.rtensor import RTensor
 
-        # Localize all tensors from the data proxy
-        local_result = RTensor.localize(result)
+        # Localize each trajectory and verify tensors
+        for i, traj in enumerate(result):
+            assert isinstance(traj, dict), f"Trajectory {i} is not a dict"
+            assert "input_ids" in traj, f"Trajectory {i} missing input_ids"
 
-        assert isinstance(local_result, dict)
-        assert "input_ids" in local_result
-        assert isinstance(local_result["input_ids"], torch.Tensor)
-        assert local_result["input_ids"].ndim == 2
-        assert local_result["input_ids"].shape[0] == batch_size
-
-        # All 2-D tensor values should share the same batch dimension
-        for key, value in local_result.items():
-            if isinstance(value, torch.Tensor) and value.ndim == 2:
-                assert value.shape[0] == batch_size, (
-                    f"Expected dim0=={batch_size} for key '{key}', got {value.shape[0]}"
-                )
+            local_traj = RTensor.localize(traj)
+            assert isinstance(local_traj["input_ids"], torch.Tensor)
+            assert not local_traj["input_ids"].is_meta
+            assert local_traj["input_ids"].ndim == 2
