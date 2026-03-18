@@ -227,6 +227,16 @@ def gateway_stack(sglang_server, model_path):
     # Wait briefly for router health poller to mark worker healthy
     time.sleep(3)
 
+    # Grant capacity permits so /rl/start_session requests are not rejected
+    # with 429 by the CapacityManager (which starts at 0).
+    for _ in range(10):
+        resp = httpx.post(
+            f"{router_addr}/grant_capacity",
+            headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+            timeout=5.0,
+        )
+        assert resp.status_code == 200, f"Failed to grant capacity: {resp.text}"
+
     yield {
         "gateway_addr": gateway_addr,
         "router_addr": router_addr,

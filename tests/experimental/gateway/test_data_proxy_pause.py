@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -113,13 +112,18 @@ async def app_client(config, mock_tokenizer, mock_areal_client):
         max_resubmit_retries=config.max_resubmit_retries,
         resubmit_wait=config.resubmit_wait,
     )
-    # Mock pause/resume so they don't make real HTTP calls to SGLang
-    inf_bridge.pause = AsyncMock(
-        side_effect=lambda: asyncio.ensure_future(_set_paused(pause_state, True))
-    )
-    inf_bridge.resume = AsyncMock(
-        side_effect=lambda: asyncio.ensure_future(_set_paused(pause_state, False))
-    )
+
+    # Mock pause/resume so they don't make real HTTP calls to SGLang.
+    # side_effect must be an async function (not a lambda returning a coroutine)
+    # so that AsyncMock awaits the state change before the endpoint returns.
+    async def _mock_pause():
+        await _set_paused(pause_state, True)
+
+    async def _mock_resume():
+        await _set_paused(pause_state, False)
+
+    inf_bridge.pause = AsyncMock(side_effect=_mock_pause)
+    inf_bridge.resume = AsyncMock(side_effect=_mock_resume)
 
     app.state.tokenizer = mock_tokenizer
     app.state.inf_bridge = inf_bridge
