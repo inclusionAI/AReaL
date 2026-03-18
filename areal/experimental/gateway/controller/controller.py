@@ -1,9 +1,9 @@
 """GatewayRolloutController — parallel implementation to RolloutController.
 
 Routes inference and pause/continue traffic through the gateway HTTP stack
-(Gateway → Router → Data Proxy → SGLang).
-All servers are launched as worker processes via the scheduler.  SGLang
-processes are forked through RPCGuard (a lightweight process manager).
+(Gateway → Router → Data Proxy → inference backend).
+All servers are launched as worker processes via the scheduler.  Inference
+server processes are forked through RPCGuard (a lightweight process manager).
 """
 
 from __future__ import annotations
@@ -35,13 +35,16 @@ class GatewayRolloutController:
     subclass).  It is duck-type compatible: the trainer can use either one
     without code changes.
 
-    All servers (SGLang, Router, Data Proxy, Gateway) are launched as
-    worker sub-processes via the scheduler.  The controller talks to them
+    All servers (inference backend, Router, Data Proxy, Gateway) are launched
+    as worker sub-processes via the scheduler.  The controller talks to them
     directly over HTTP — no engine creation or RPC calls on workers.
+
+    The inference backend is determined from ``alloc_mode.gen_backend``
+    (currently ``"sglang"`` is supported; ``"vllm"`` is planned).
     """
 
     # Worker role suffixes for each service type
-    _SGLANG_SUFFIX = "-sglang"
+    _INF_SUFFIX = "-inf"
     _ROUTER_SUFFIX = "-router"
     _DATA_PROXY_SUFFIX = "-data-proxy"
     _GATEWAY_SUFFIX = "-gateway"
@@ -60,7 +63,7 @@ class GatewayRolloutController:
         self._worker_role: str = ""
 
         # Addresses resolved after initialization
-        self._sglang_addrs: list[str] = []
+        self._inf_addrs: list[str] = []
         self._router_addr: str = ""
         self._data_proxy_addrs: list[str] = []
         self._gateway_addr: str = ""
@@ -147,7 +150,7 @@ class GatewayRolloutController:
         """Launch all servers as worker processes via the scheduler.
 
         Creates four groups of workers:
-        1. SGLang inference servers (dp_size replicas, GPU)
+        1. Inference servers (dp_size replicas, GPU)
         2. Router (1 replica, CPU)
         3. Data Proxies (dp_size replicas, CPU)
         4. Gateway (1 replica, CPU)
@@ -160,74 +163,97 @@ class GatewayRolloutController:
         dp_size = alloc_mode.gen.dp_size if alloc_mode is not None else 1
         cfg = self.config
 
-        # -- 1. Launch SGLang servers ----------------------------------------
+        # Determine inference backend from allocation mode
+        inf_backend = alloc_mode.gen_backend if alloc_mode is not None else "sglang"
+
+        # -- 1. Launch inference servers --------------------------------------
         if server_infos is not None:
-            # Pre-existing servers — skip SGLang worker creation
+            # Pre-existing servers — skip inference worker creation
             self.server_infos = server_infos
-            self._sglang_addrs = [
+            self._inf_addrs = [
                 f"http://{info.host}:{info.port}" for info in server_infos
             ]
             logger.info(
-                "Using %d pre-existing server_infos, skipping SGLang worker creation",
+                "Using %d pre-existing server_infos, skipping inference worker creation",
                 len(server_infos),
             )
         else:
-            # -- RPCGuard workers for SGLang launch ---
+            # -- RPCGuard workers for inference server launch ---
             # Workers run areal.experimental.gateway.guard (the RPCGuard
             # Flask app).  We then POST to each guard to allocate a port,
-            # build the SGLang command via SGLangConfig.build_cmd(), and
-            # POST /fork with raw_cmd to launch SGLang as a subprocess.
+            # build the backend-specific launch command, and POST /fork
+            # with raw_cmd to start the inference server as a subprocess.
             import requests
 
-            from areal.api.cli_args import SGLangConfig
-
-            sglang_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
+            inf_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
             if alloc_mode is not None:
-                sglang_spec.cpu *= alloc_mode.gen_instance_size
-                sglang_spec.mem *= alloc_mode.gen_instance_size
-                if sglang_spec.gpu > 0:
-                    sglang_spec.gpu = alloc_mode.gen_instance_size
+                inf_spec.cpu *= alloc_mode.gen_instance_size
+                inf_spec.mem *= alloc_mode.gen_instance_size
+                if inf_spec.gpu > 0:
+                    inf_spec.gpu = alloc_mode.gen_instance_size
 
             # Env vars inherited by forked data-proxy children
-            sglang_spec.env_vars["AREAL_DP_TOKENIZER_PATH"] = cfg.tokenizer_path
-            sglang_spec.env_vars["AREAL_DP_ADMIN_API_KEY"] = cfg.admin_api_key
-            sglang_spec.env_vars["AREAL_DP_LOG_LEVEL"] = cfg.log_level
-            sglang_spec.env_vars["AREAL_DP_REQUEST_TIMEOUT"] = str(cfg.request_timeout)
+            inf_spec.env_vars["AREAL_DP_TOKENIZER_PATH"] = cfg.tokenizer_path
+            inf_spec.env_vars["AREAL_DP_ADMIN_API_KEY"] = cfg.admin_api_key
+            inf_spec.env_vars["AREAL_DP_LOG_LEVEL"] = cfg.log_level
+            inf_spec.env_vars["AREAL_DP_REQUEST_TIMEOUT"] = str(cfg.request_timeout)
 
             # Override cmd to launch RPCGuard instead of RPC server
-            sglang_spec.cmd = "python -m areal.experimental.gateway.guard"
+            inf_spec.cmd = "python -m areal.experimental.gateway.guard"
 
-            sglang_role = f"{self._worker_role}{self._SGLANG_SUFFIX}"
-            sglang_job = Job(
+            inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
+            inf_job = Job(
                 replicas=dp_size,
-                tasks=[sglang_spec for _ in range(dp_size)],
+                tasks=[inf_spec for _ in range(dp_size)],
                 scheduling_strategy=SchedulingStrategy(),
-                role=sglang_role,
+                role=inf_role,
             )
 
             # 1a. Create RPCGuard workers
-            self.scheduler.create_workers(job=sglang_job)
-            self._service_roles.append(sglang_role)
-            sglang_workers = self.scheduler.get_workers(role=sglang_role)
-            self.workers = sglang_workers
-            logger.info("RPCGuard workers ready: %s", [w.id for w in sglang_workers])
-
-            # 1b. For each RPCGuard worker: alloc port, build cmd, fork SGLang
-            sglang_config = SGLangConfig(
-                model_path=cfg.model_path or cfg.tokenizer_path,
-            )
-            # Merge caller-supplied server_args into sglang_config fields
-            if server_args:
-                for k, v in server_args.items():
-                    if hasattr(sglang_config, k):
-                        object.__setattr__(sglang_config, k, v)
+            self.scheduler.create_workers(job=inf_job)
+            self._service_roles.append(inf_role)
+            inf_workers = self.scheduler.get_workers(role=inf_role)
+            self.workers = inf_workers
+            logger.info("RPCGuard workers ready: %s", [w.id for w in inf_workers])
 
             tp_size = alloc_mode.gen.tp_size if alloc_mode is not None else 1
 
-            for rank, worker in enumerate(sglang_workers):
+            # 1b. Build backend-specific config and launch command builder
+            if inf_backend in ("sglang", None):
+                from areal.api.cli_args import SGLangConfig
+
+                sglang_config = SGLangConfig(
+                    model_path=cfg.model_path or cfg.tokenizer_path,
+                )
+                if server_args:
+                    for k, v in server_args.items():
+                        if hasattr(sglang_config, k):
+                            object.__setattr__(sglang_config, k, v)
+
+                def _build_launch_cmd(host: str, port: int) -> list[str]:
+                    return SGLangConfig.build_cmd(
+                        sglang_config=sglang_config,
+                        tp_size=tp_size,
+                        base_gpu_id=0,
+                        host=host,
+                        port=port,
+                    )
+
+            elif inf_backend == "vllm":
+                # Placeholder — raise early so we never reach here, but
+                # the structure is ready for a future vLLM implementation.
+                raise NotImplementedError(
+                    "vLLM backend is not yet supported by the gateway "
+                    "rollout controller."
+                )
+            else:
+                raise ValueError(f"Unsupported inference backend: {inf_backend!r}")
+
+            # 1c. For each RPCGuard worker: alloc port, build cmd, fork server
+            for rank, worker in enumerate(inf_workers):
                 guard_addr = f"http://{worker.ip}:{worker.worker_ports[0]}"
 
-                # Allocate a free port on the guard node for SGLang
+                # Allocate a free port on the guard node for inference server
                 resp = requests.post(
                     f"{guard_addr}/alloc_ports",
                     json={"count": 1},
@@ -235,23 +261,16 @@ class GatewayRolloutController:
                 )
                 resp.raise_for_status()
                 port_data = resp.json()
-                sglang_host = port_data["host"]
-                sglang_port = port_data["ports"][0]
+                inf_host = port_data["host"]
+                inf_port = port_data["ports"][0]
 
-                # Build native SGLang launch command
-                cmd = SGLangConfig.build_cmd(
-                    sglang_config=sglang_config,
-                    tp_size=tp_size,
-                    base_gpu_id=0,
-                    host=sglang_host,
-                    port=sglang_port,
-                )
+                cmd = _build_launch_cmd(inf_host, inf_port)
 
-                # Fork SGLang via RPCGuard raw_cmd mode
+                # Fork inference server via RPCGuard raw_cmd mode
                 resp = requests.post(
                     f"{guard_addr}/fork",
                     json={
-                        "role": "sglang-server",
+                        "role": "inf-server",
                         "worker_index": rank,
                         "raw_cmd": cmd,
                     },
@@ -259,22 +278,22 @@ class GatewayRolloutController:
                 )
                 resp.raise_for_status()
 
-                addr = f"http://{sglang_host}:{sglang_port}"
-                self._sglang_addrs.append(addr)
+                addr = f"http://{inf_host}:{inf_port}"
+                self._inf_addrs.append(addr)
                 self.server_infos.append(
                     LocalInfServerInfo(
-                        host=sglang_host,
-                        port=sglang_port,
+                        host=inf_host,
+                        port=inf_port,
                         process=None,  # type: ignore[arg-type]  # RPCGuard manages process
                     )
                 )
 
-            # Wait for SGLang servers to be healthy
-            for i, addr in enumerate(self._sglang_addrs):
+            # Wait for inference servers to be healthy
+            for i, addr in enumerate(self._inf_addrs):
                 self._wait_for_service(
-                    f"{addr}/health", f"SGLang-{i}", timeout=cfg.setup_timeout
+                    f"{addr}/health", f"InfServer-{i}", timeout=cfg.setup_timeout
                 )
-        logger.info("SGLang servers: %s", self._sglang_addrs)
+        logger.info("Inference servers: %s", self._inf_addrs)
 
         # -- 2. Launch Router -----------------------------------------------
         router_spec = SchedulingSpec(
@@ -307,22 +326,22 @@ class GatewayRolloutController:
         logger.info("Router: %s", self._router_addr)
 
         # -- 3. Launch Data Proxies -----------------------------------------
-        #   When SGLang workers were created by the controller, data proxies
+        #   When inference workers were created by the controller, data proxies
         #   are **forked** from them (similar to RolloutController.start_proxy),
         #   ensuring colocation on the same node/GPUs.
         #   When pre-existing server_infos were provided (e.g. tests), data
         #   proxies are created as standalone workers instead.
         dp_role = f"{self._worker_role}{self._DATA_PROXY_SUFFIX}"
 
-        sglang_role = f"{self._worker_role}{self._SGLANG_SUFFIX}"
-        has_sglang_workers = sglang_role in [r for r in self._service_roles]
+        inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
+        has_inf_workers = inf_role in [r for r in self._service_roles]
 
-        if has_sglang_workers:
-            # Fork data proxies from SGLang workers (colocated deployment)
+        if has_inf_workers:
+            # Fork data proxies from inference workers (colocated deployment)
             dp_command = "areal.experimental.gateway.data_proxy"
             worker_ids = self.scheduler.fork_workers(
                 role=dp_role,
-                target_role=sglang_role,
+                target_role=inf_role,
                 command=dp_command,
             )
             self._service_roles.append(dp_role)
@@ -333,19 +352,19 @@ class GatewayRolloutController:
                 f"http://{w.ip}:{w.worker_ports[0]}" for w in dp_workers
             ]
 
-            # Configure each data proxy with its corresponding SGLang backend.
-            for dp_addr, sglang_addr in zip(self._data_proxy_addrs, self._sglang_addrs):
-                self._configure_data_proxy_backend(dp_addr, sglang_addr)
+            # Configure each data proxy with its corresponding inference backend.
+            for dp_addr, inf_addr in zip(self._data_proxy_addrs, self._inf_addrs):
+                self._configure_data_proxy_backend(dp_addr, inf_addr)
         else:
             # Standalone data proxies (pre-existing server_infos)
-            for i, sglang_addr in enumerate(self._sglang_addrs):
+            for i, inf_addr in enumerate(self._inf_addrs):
                 dp_spec = SchedulingSpec(
                     gpu=0,
                     cpu=1,
                     mem=4,
                     cmd=(
                         f"python -m areal.experimental.gateway.data_proxy"
-                        f" --backend-addr {sglang_addr}"
+                        f" --backend-addr {inf_addr}"
                         f" --tokenizer-path {cfg.tokenizer_path}"
                         f" --admin-api-key {cfg.admin_api_key}"
                         f" --log-level {cfg.log_level}"
@@ -422,11 +441,11 @@ class GatewayRolloutController:
         raise TimeoutError(f"{name} did not become healthy at {url} within {timeout}s")
 
     def _configure_data_proxy_backend(self, dp_addr: str, backend_addr: str) -> None:
-        """Configure a data proxy's SGLang backend address after fork.
+        """Configure a data proxy's inference backend address after fork.
 
-        Called after ``fork_workers`` to tell each data proxy which SGLang
+        Called after ``fork_workers`` to tell each data proxy which inference
         server to connect to.  The data proxy exposes a ``/configure_backend``
-        endpoint that re-initialises its ``SGLangBackend``.
+        endpoint that re-initialises its backend connection.
         """
         import requests
 
@@ -483,7 +502,7 @@ class GatewayRolloutController:
             self._workflow_executor = None
 
         # RPCGuard's shutdown `finally` block automatically kills all
-        # forked children (SGLang, data proxies), so no explicit teardown needed.
+        # forked children (inference servers, data proxies), so no explicit teardown needed.
         # Delete all service workers via scheduler
         for role in reversed(self._service_roles):
             try:
@@ -499,7 +518,7 @@ class GatewayRolloutController:
         self._service_roles.clear()
         self.workers.clear()
         self.server_infos.clear()
-        self._sglang_addrs.clear()
+        self._inf_addrs.clear()
         self._data_proxy_addrs.clear()
         self._worker_ids.clear()
         self._router_addr = ""

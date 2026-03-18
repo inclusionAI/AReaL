@@ -624,10 +624,10 @@ class TestControllerFullInitialization:
         assert info.host
         assert info.port > 0
 
-    def test_sglang_health(self, gateway_controller_full_init):
-        """The SGLang server launched by the controller should be healthy."""
+    def test_inf_server_health(self, gateway_controller_full_init):
+        """The inference server launched by the controller should be healthy."""
         ctrl = gateway_controller_full_init
-        for addr in ctrl._sglang_addrs:
+        for addr in ctrl._inf_addrs:
             resp = httpx.get(f"{addr}/health", timeout=30.0)
             assert resp.status_code == 200
 
@@ -644,11 +644,11 @@ class TestControllerFullInitialization:
             resp = httpx.get(f"{dp_addr}/health", timeout=10.0)
             assert resp.status_code == 200
 
-    def test_data_proxy_forked_from_sglang(self, gateway_controller_full_init):
+    def test_data_proxy_forked_from_inf_workers(self, gateway_controller_full_init):
         """Data proxies should have been forked (not standalone) in full init path."""
         ctrl = gateway_controller_full_init
-        sglang_role = f"rollout-full{ctrl._SGLANG_SUFFIX}"
+        inf_role = f"rollout-full{ctrl._INF_SUFFIX}"
         dp_role = f"rollout-full{ctrl._DATA_PROXY_SUFFIX}"
         # Both roles should be in service_roles
-        assert sglang_role in ctrl._service_roles
+        assert inf_role in ctrl._service_roles
         assert dp_role in ctrl._service_roles

@@ -22,8 +22,6 @@ class TestGatewayControllerConfig:
         cfg = GatewayControllerConfig()
         assert cfg.gateway_host == "0.0.0.0"
         assert cfg.gateway_port == 8080
-        assert cfg.router_port == 8081
-        assert cfg.data_proxy_base_port == 8082
         assert cfg.admin_api_key == "areal-admin-key"
         assert cfg.consumer_batch_size == 16
         assert cfg.max_concurrent_rollouts is None
@@ -33,14 +31,12 @@ class TestGatewayControllerConfig:
     def test_custom_values(self):
         cfg = GatewayControllerConfig(
             gateway_port=9090,
-            router_port=9091,
             admin_api_key="custom-key",
             consumer_batch_size=32,
             max_concurrent_rollouts=64,
             max_head_offpolicyness=5,
         )
         assert cfg.gateway_port == 9090
-        assert cfg.router_port == 9091
         assert cfg.admin_api_key == "custom-key"
         assert cfg.consumer_batch_size == 32
         assert cfg.max_concurrent_rollouts == 64
@@ -50,11 +46,9 @@ class TestGatewayControllerConfig:
         cfg = GatewayControllerConfig(
             request_timeout=60.0,
             setup_timeout=600.0,
-            max_resubmit_retries=10,
         )
         assert cfg.request_timeout == 60.0
         assert cfg.setup_timeout == 600.0
-        assert cfg.max_resubmit_retries == 10
 
     def test_dump_to_file_defaults_to_false(self):
         cfg = GatewayControllerConfig()

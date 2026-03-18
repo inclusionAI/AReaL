@@ -17,17 +17,9 @@ class GatewayControllerConfig:
     and the WorkflowExecutor / staleness management.
     """
 
-    # -- Gateway service ---------------------------------------------------
+    # -- Gateway service (fallback for callback_addr before deployment) -----
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8080
-
-    # -- Router service ----------------------------------------------------
-    router_host: str = "0.0.0.0"
-    router_port: int = 8081
-
-    # -- Data proxy service ------------------------------------------------
-    data_proxy_host: str = "0.0.0.0"
-    data_proxy_base_port: int = 8082  # incremented per worker
 
     # -- Shared credentials ------------------------------------------------
     admin_api_key: str = "areal-admin-key"
@@ -43,10 +35,6 @@ class GatewayControllerConfig:
     # -- HTTP timeouts -----------------------------------------------------
     request_timeout: float = 120.0  # per-request timeout (seconds)
     setup_timeout: float = 300.0  # timeout waiting for services to start
-
-    # -- SGLang backend tuning ---------------------------------------------
-    max_resubmit_retries: int = 20
-    resubmit_wait: float = 0.5  # seconds between is_paused polls
 
     # -- Log level for gateway micro-services ------------------------------
     log_level: str = "info"
@@ -67,7 +55,6 @@ class GatewayControllerConfig:
 
     # -- Scheduler / allocation (passed through from trainer) --------------
     scheduling_spec: tuple = field(default_factory=tuple)
-    scheduling_strategy: str | None = None
     pause_grace_period: float = 0.5
 
     # -- OpenAI proxy configuration (for agent-like workflows) ---------------
