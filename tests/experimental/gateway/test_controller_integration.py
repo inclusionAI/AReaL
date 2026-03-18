@@ -589,7 +589,8 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
             ),
         ),
         admin_api_key="test-admin",
-        consumer_batch_size=2,
+        consumer_batch_size=8,
+        max_head_offpolicyness=4,
         setup_timeout=300.0,
     )
 
