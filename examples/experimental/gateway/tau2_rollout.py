@@ -169,7 +169,7 @@ def main(argv: list[str]) -> None:
 
     dataloader = DataLoader(
         train_dataset,
-        batch_size=rollout_cfg.consumer_batch_size,
+        batch_size=config.train_dataset.batch_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=0,  # in-process; tau2 dataset is lightweight
     )
@@ -231,19 +231,26 @@ def main(argv: list[str]) -> None:
     # --- Rollout loop ---
     try:
         logger.info("Starting rollout loop")
-        batch_idx = 0
-        result = ctrl.prepare_batch(
-            dataloader=dataloader,
-            workflow="examples.tau2.agent.Tau2AgentWorkflow",
-            workflow_kwargs=workflow_kwargs,
-        )
-        if result:
-            logger.info("Batch %d collected, contents:", batch_idx)
-            for key, tensor in result.items():
-                logger.info("  %-20s shape=%s", key, tuple(tensor.shape))
-        else:
-            logger.warning("Batch %d: empty result (all rejected?)", batch_idx)
-        logger.info("Rollout complete")
+        batch_count = 0
+        for batch_idx, batch in enumerate(dataloader):
+            # DataLoader yields column-oriented dicts; convert to list of row dicts
+            keys = list(batch.keys())
+            batch_size = len(batch[keys[0]])
+            data = [{k: batch[k][i] for k in keys} for i in range(batch_size)]
+
+            result = ctrl.rollout_batch(
+                data=data,
+                workflow="examples.tau2.agent.Tau2AgentWorkflow",
+                workflow_kwargs=workflow_kwargs,
+            )
+            if result:
+                logger.info("Batch %d collected, contents:", batch_idx)
+                for key, tensor in result.items():
+                    logger.info("  %-20s shape=%s", key, tuple(tensor.shape))
+            else:
+                logger.warning("Batch %d: empty result (all rejected?)", batch_idx)
+            batch_count += 1
+        logger.info("Rollout complete (%d batches)", batch_count)
     finally:
         ctrl.destroy()
         scheduler.delete_workers(None)

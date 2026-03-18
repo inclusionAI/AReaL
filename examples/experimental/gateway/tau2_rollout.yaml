@@ -2,6 +2,9 @@ experiment_name: tau2-gateway-rollout
 trial_name: 1.5b-airline
 
 seed: 1
+enable_offload: false
+total_train_epochs: 1
+total_train_steps: null
 tokenizer_path: ${model_path}
 
 model_path: Qwen/Qwen3-1.7B  # HuggingFace model path
@@ -88,3 +91,36 @@ train_dataset:
   path: tau2/train
   type: rl
   max_length: 1024
+
+# Utilities (required by BaseExperimentConfig)
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
