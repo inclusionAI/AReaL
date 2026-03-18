@@ -121,7 +121,9 @@ def gateway_controller(sglang_server, local_scheduler, model_path, tmp_path):
     from areal.api.alloc_mode import AllocationMode
     from areal.api.cli_args import SchedulingSpec
     from areal.api.io_struct import LocalInfServerInfo
-    from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
+    from areal.experimental.rollout_service.controller.config import (
+        GatewayControllerConfig,
+    )
     from areal.experimental.rollout_service.controller.controller import (
         GatewayRolloutController,
     )
@@ -571,7 +573,9 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
 
     from areal.api.alloc_mode import AllocationMode
     from areal.api.cli_args import SchedulingSpec
-    from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
+    from areal.experimental.rollout_service.controller.config import (
+        GatewayControllerConfig,
+    )
     from areal.experimental.rollout_service.controller.controller import (
         GatewayRolloutController,
     )
@@ -580,7 +584,9 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
         tokenizer_path=model_path,
         model_path=model_path,
         scheduling_spec=(
-            SchedulingSpec(gpu=1, cmd="python -m areal.experimental.rollout_service.guard"),
+            SchedulingSpec(
+                gpu=1, cmd="python -m areal.experimental.rollout_service.guard"
+            ),
         ),
         admin_api_key="test-admin",
         consumer_batch_size=2,
@@ -751,3 +757,49 @@ class TestControllerFullInitialization:
         assert result["input_ids"].ndim == 2
         assert hasattr(result["input_ids"], "shard")
         assert result["input_ids"].shard is not None
+
+    def test_rtensor_localize_on_rollout_result(self, gateway_controller_full_init):
+        """RTensor.localize() should successfully fetch tensors from data proxy."""
+        ctrl = gateway_controller_full_init
+        data = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            }
+        ]
+
+        result = ctrl.rollout_batch(
+            data=data,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+        )
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert len(result) > 0
+        assert "input_ids" in result
+
+        from areal.infra.rpc.rtensor import RTensor
+
+        # The result values should be RTensors with meta data (not yet fetched)
+        rtensor_input_ids = result["input_ids"]
+        assert isinstance(rtensor_input_ids, RTensor)
+        assert rtensor_input_ids.data.is_meta
+
+        # Verify shard points to a data proxy address (not just a bare IP)
+        assert ":" in rtensor_input_ids.shard.node_addr
+
+        # Localize the full result — this fetches tensors from the data proxy
+        local_result = RTensor.localize(result)
+
+        # After localization, values should be real tensors (not RTensor)
+        assert isinstance(local_result, dict)
+        assert "input_ids" in local_result
+        assert isinstance(local_result["input_ids"], torch.Tensor)
+        assert not local_result["input_ids"].is_meta
+        assert local_result["input_ids"].ndim == 2
+        assert local_result["input_ids"].shape[0] >= 1  # at least 1 sample
+
+        # Check other expected keys are also localized
+        if "attention_mask" in local_result:
+            assert isinstance(local_result["attention_mask"], torch.Tensor)
+            assert not local_result["attention_mask"].is_meta

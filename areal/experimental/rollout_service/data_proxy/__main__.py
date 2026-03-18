@@ -39,6 +39,13 @@ def main():
     )
     args, _ = parser.parse_known_args()
 
+    # Resolve the actual serving host (replace 0.0.0.0 with real IP)
+    from areal.utils.network import gethostip
+
+    serving_host = args.host
+    if serving_host == "0.0.0.0":
+        serving_host = gethostip()
+
     config = DataProxyConfig(
         host=args.host,
         port=args.port,
@@ -47,6 +54,7 @@ def main():
         log_level=args.log_level,
         request_timeout=args.request_timeout,
         admin_api_key=args.admin_api_key,
+        serving_addr=f"{serving_host}:{args.port}",
     )
     app = create_app(config)
     uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)

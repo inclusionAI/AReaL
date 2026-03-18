@@ -11,6 +11,9 @@ from fastapi.responses import StreamingResponse
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from pydantic import BaseModel
 
+import orjson
+from fastapi.responses import Response as RawResponse
+
 from areal.experimental.rollout_service.data_proxy.backend import SGLangBridgeBackend
 from areal.experimental.rollout_service.data_proxy.config import DataProxyConfig
 from areal.experimental.rollout_service.data_proxy.inf_bridge import InfBridge
@@ -26,6 +29,8 @@ from areal.experimental.rollout_service.data_proxy.session import (
 )
 from areal.experimental.rollout_service.data_proxy.tokenizer_proxy import TokenizerProxy
 from areal.experimental.openai.client import ArealOpenAI
+from areal.infra.rpc import rtensor as rtensor_storage
+from areal.infra.rpc.serialization import deserialize_value, serialize_value
 
 logger = logging.getLogger("DataProxy")
 
@@ -334,8 +339,15 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         # Remove session from store
         store.remove_session(body.session_id)
 
-        # Serialize for HTTP transport
-        serialized = serialize_interactions(interactions)
+        # Serialize for HTTP transport, storing tensors locally as RTensor shards
+        # so that RTensor.localize() on the client can fetch them via /data/ endpoints.
+        serving_addr = config.serving_addr
+        if not serving_addr:
+            logger.warning(
+                "serving_addr not configured; tensors will be serialized "
+                "as plain lists (RTensor.localize() will not work remotely)"
+            )
+        serialized = serialize_interactions(interactions, node_addr=serving_addr)
         return ExportTrajectoriesResponse(interactions=serialized)
 
     # NOTE: Weight-update forwarding endpoints (update_weights_from_disk,
@@ -346,6 +358,53 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # staleness control is now managed at the router level — see
     # areal.experimental.rollout_service.router.app for the /grant_capacity and
     # /acquire_capacity endpoints.
+
+    # =========================================================================
+    # RTensor data storage endpoints
+    #
+    # These endpoints mirror the /data/ endpoints on rpc_server.py so that
+    # RTensor.localize() can fetch tensor shards stored on this data proxy
+    # via HttpRTensorBackend._fetch_tensor().
+    # =========================================================================
+
+    @app.put("/data/{shard_id}")
+    async def store_data_shard(shard_id: str, request: Request):
+        """Store a tensor shard in local RTensor storage."""
+        data_bytes = await request.body()
+        serialized_data = orjson.loads(data_bytes)
+        data = deserialize_value(serialized_data)
+        rtensor_storage.store(shard_id, data)
+        logger.debug(
+            "Stored RTensor shard %s (size=%d bytes)", shard_id, len(data_bytes)
+        )
+        return {"status": "ok", "shard_id": shard_id}
+
+    @app.get("/data/{shard_id}")
+    async def retrieve_data_shard(shard_id: str):
+        """Retrieve a tensor shard from local RTensor storage."""
+        try:
+            data = rtensor_storage.fetch(shard_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Shard {shard_id} not found",
+            )
+        serialized_data = serialize_value(data)
+        data_bytes = orjson.dumps(serialized_data)
+        return RawResponse(content=data_bytes, media_type="application/octet-stream")
+
+    @app.delete("/data/clear")
+    async def clear_data_shards(request: Request):
+        """Clear specified tensor shards from local RTensor storage."""
+        body = await request.json()
+        shard_ids = body.get("shard_ids", [])
+        if not isinstance(shard_ids, list):
+            raise HTTPException(status_code=400, detail="'shard_ids' must be a list")
+        cleared_count = sum(rtensor_storage.remove(sid) for sid in shard_ids)
+        stats = dict(cleared_count=cleared_count, **rtensor_storage.storage_stats())
+        logger.info("Cleared %d RTensor shards. Stats: %s", cleared_count, stats)
+        stats.update({"status": "ok"})
+        return stats
 
     # =========================================================================
     # Runtime backend reconfiguration (for fork-based deployment)
