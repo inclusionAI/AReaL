@@ -8,7 +8,6 @@ server processes are forked through RPCGuard (a lightweight process manager).
 
 from __future__ import annotations
 
-import logging
 import socket
 import sys
 import time
@@ -23,10 +22,10 @@ if TYPE_CHECKING:
     from areal.api.scheduler_api import Scheduler, Worker
 
 from areal.api.io_struct import LocalInfServerInfo
-
 from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
+from areal.utils import logging
 
-logger = logging.getLogger("GatewayRolloutController")
+logger = logging.getLogger("RolloutController")
 
 
 class GatewayRolloutController:
@@ -1053,12 +1052,10 @@ class GatewayRolloutController:
             resolved = controller._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
 
         if group_size > 1:
-            import logging as _logging
-
             from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
 
             resolved = GroupedRolloutWorkflow(
-                resolved, group_size, _logging.getLogger("GatewayRolloutController")
+                resolved, group_size, logging.getLogger("RolloutController")
             )
 
         return resolved

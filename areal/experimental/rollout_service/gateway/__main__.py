@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 
 
 def main():
@@ -39,11 +38,6 @@ def main():
         help="Log level",
     )
     args, _ = parser.parse_known_args()
-
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper()),
-        format="[Gateway] %(levelname)s %(message)s",
-    )
 
     from areal.experimental.rollout_service.gateway.app import create_app
     from areal.experimental.rollout_service.gateway.config import GatewayConfig

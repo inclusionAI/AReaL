@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import logging
 
 import httpx
 from contextlib import asynccontextmanager
@@ -25,8 +24,9 @@ from areal.experimental.rollout_service.router.state import (
     WorkerRegistry,
 )
 from areal.experimental.rollout_service.router.strategies import get_strategy
+from areal.utils import logging
 
-logger = logging.getLogger("Router")
+logger = logging.getLogger("RolloutRouter")
 
 
 # =============================================================================

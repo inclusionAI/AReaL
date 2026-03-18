@@ -15,11 +15,12 @@ resubmits aborted requests once resumed.
 from __future__ import annotations
 
 import asyncio
-import logging
 
 import httpx
 
-logger = logging.getLogger("DataProxyPause")
+from areal.utils import logging
+
+logger = logging.getLogger("RolloutDataProxy")
 
 
 class PauseState:

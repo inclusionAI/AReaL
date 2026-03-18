@@ -8,7 +8,6 @@ translates between ModelRequest / raw JSON and endpoint-specific payloads.
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -17,6 +16,7 @@ import numpy as np
 
 from areal.api.io_struct import HttpRequest
 from areal.experimental.rollout_service.data_proxy.backend import InfBridgeBackend
+from areal.utils import logging
 
 if TYPE_CHECKING:
     from areal.api.io_struct import ModelRequest, ModelResponse
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 _StopReason = Literal["length", "stop", "tool_calls", "abort"]
 
-logger = logging.getLogger("InfBridge")
+logger = logging.getLogger("RolloutInfBridge")
 
 
 class InfBridge:

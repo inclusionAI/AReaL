@@ -7,7 +7,6 @@ session pinning, and routing strategies live in the Router service.
 from __future__ import annotations
 
 import json
-import logging
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -32,8 +31,9 @@ from areal.experimental.rollout_service.gateway.streaming import (
     register_session_in_router,
     resolve_worker_addr,
 )
+from areal.utils import logging
 
-logger = logging.getLogger("Gateway")
+logger = logging.getLogger("RolloutGateway")
 
 
 def _router_error_response(exc: Exception) -> JSONResponse:

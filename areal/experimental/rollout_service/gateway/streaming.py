@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any, AsyncGenerator
 
 import httpx
 
-logger = logging.getLogger("Gateway")
+from areal.utils import logging
+
+logger = logging.getLogger("RolloutGateway")
 
 
 class RouterUnreachableError(Exception):

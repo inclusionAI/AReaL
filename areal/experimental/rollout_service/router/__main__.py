@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 
 
 def main():
@@ -40,11 +39,6 @@ def main():
         help="Log level",
     )
     args, _ = parser.parse_known_args()
-
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper()),
-        format="[Router] %(levelname)s %(message)s",
-    )
 
     from areal.experimental.rollout_service.router.app import create_app
     from areal.experimental.rollout_service.router.config import RouterConfig

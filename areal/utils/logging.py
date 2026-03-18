@@ -108,6 +108,12 @@ LOGGER_COLORS_EXACT = {
     "AgentWorker": "light_purple",
     "AgentDataProxy": "light_purple",
     "AgentServiceController": "light_purple",
+    # Rollout service - white (orchestration)
+    "RolloutController": "white",
+    "RolloutDataProxy": "white",
+    "RolloutInfBridge": "white",
+    "RolloutRouter": "white",
+    "RolloutGateway": "white",
 }
 
 # Prefix patterns checked in order (first match wins)

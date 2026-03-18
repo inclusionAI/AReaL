@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hmac
-import logging
 import types
 from contextlib import asynccontextmanager
 from typing import Any
@@ -31,8 +30,9 @@ from areal.experimental.rollout_service.data_proxy.tokenizer_proxy import Tokeni
 from areal.experimental.openai.client import ArealOpenAI
 from areal.infra.rpc import rtensor as rtensor_storage
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
+from areal.utils import logging
 
-logger = logging.getLogger("DataProxy")
+logger = logging.getLogger("RolloutDataProxy")
 
 
 # =============================================================================
