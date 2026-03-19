@@ -25,8 +25,6 @@ from .server import (
     RL_START_SESSION_PATHNAME,
     SetRewardRequest,
     StartSessionRequest,
-)
-from areal.experimental.rollout_service.data_proxy.session import (
     deserialize_interactions,
 )
 

@@ -143,23 +143,12 @@ def serialize_interactions(
 def deserialize_interactions(
     data: dict[str, Any],
 ) -> dict[str, InteractionWithTokenLogpReward]:
-    """Deserialize interactions from HTTP response.
-
-    Tensor values are converted to RTensor so that downstream consumers
-    (e.g. ``concat_padded_tensors``) produce RTensor-backed batches,
-    matching the behaviour of the original ``RolloutController`` path
-    where the RPC server calls ``RTensor.remotize()``.
-    """
+    """Deserialize interactions from HTTP response."""
     from areal.experimental.openai.types import InteractionWithTokenLogpReward
-    from areal.infra.rpc.rtensor import RTensor
-    from areal.utils.network import gethostip
 
-    node_addr = gethostip()
     result = {}
     for key, item in data.items():
         tensor_dict = {k: torch.tensor(v) for k, v in item["tensor_dict"].items()}
-        # Convert plain tensors to RTensor (mirrors RPC server remotize)
-        tensor_dict = RTensor.remotize(tensor_dict, node_addr=node_addr)
         # Create a minimal InteractionWithTokenLogpReward with cached tensor dict
         interaction = InteractionWithTokenLogpReward()
         interaction._cache = tensor_dict
