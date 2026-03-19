@@ -1006,7 +1006,7 @@ def _log_proximal_approximation_stats(
             # Log KL divergence estimators to check for policy drift between the
             # training-time policy (logprobs) and the inference-time policy (old_logp).
             log_ratio = (logprobs.float() - old_logp.float()).detach()
-            
+
             # Implementation of different estimators for KL divergence.
             # See: https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/#true-on-policy-rl
             kl_div_estimator_direct = -log_ratio
