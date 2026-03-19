@@ -96,8 +96,9 @@ class SessionData:
             return time.time() - self._last_access_time > timeout_seconds
 
     def finish(self):
-        self._completed = True
-        self._end_time = time.time()
+        with self._lock:
+            self._completed = True
+            self._end_time = time.time()
         self._completed_event.set()
 
     @property
@@ -203,8 +204,10 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is None:
                 raise KeyError(f"Session {session_id} not found")
+            if session.is_completed:
+                raise KeyError(f"Session {session_id} already ended")
             interaction_count = len(session.completions)
-        session.finish()
+            session.finish()
         return interaction_count
 
     def get_session_by_api_key(self, api_key: str) -> SessionData | None:
