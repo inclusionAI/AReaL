@@ -24,7 +24,6 @@ from areal.experimental.inference_service.gateway.streaming import (
     broadcast_to_workers,
     forward_request,
     forward_sse_stream,
-    get_all_worker_addrs,
     grant_capacity_in_router,
     query_router,
     register_session_in_router,

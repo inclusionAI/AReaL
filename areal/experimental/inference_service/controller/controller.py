@@ -162,10 +162,10 @@ class GatewayInferenceController:
         """
         from dataclasses import asdict
 
+        import requests
+
         from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
         from areal.api.scheduler_api import Job
-
-        import requests
 
         dp_size = alloc_mode.gen.dp_size if alloc_mode is not None else 1
         cfg = self.config

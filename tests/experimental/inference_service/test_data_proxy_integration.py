@@ -111,10 +111,10 @@ def model_path() -> str:
 def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     """Create a fully-wired data proxy app with session support."""
     from areal.experimental.inference_service.data_proxy.app import create_app
-    from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
     from areal.experimental.inference_service.data_proxy.backend import (
         SGLangBridgeBackend,
     )
+    from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
     from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
     from areal.experimental.inference_service.data_proxy.pause import PauseState
     from areal.experimental.inference_service.data_proxy.session import SessionStore
@@ -182,7 +182,6 @@ class TestChatCompletionsIntegration:
             assert resp.status_code == 201, resp.text
             session = resp.json()
             session_api_key = session["api_key"]
-            session_id = session["session_id"]
 
             # --- non-streaming chat completion ---
             resp = await client.post(

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -13,10 +11,8 @@ import pytest_asyncio
 from areal.experimental.inference_service.data_proxy.app import create_app
 from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
 from areal.experimental.inference_service.data_proxy.session import (
-    SessionData,
     SessionStore,
 )
-
 
 # =============================================================================
 # Fixtures

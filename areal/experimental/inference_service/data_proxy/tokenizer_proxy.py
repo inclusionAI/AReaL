@@ -19,10 +19,13 @@ class TokenizerProxy:
     async def apply_chat_template(self, messages: list[dict], **kw) -> list[int]:
         """Apply chat template -> token IDs. Runs in executor."""
         loop = asyncio.get_running_loop()
-        fn = lambda: self._tok.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=True, **kw
-        )
-        return await loop.run_in_executor(None, fn)
+
+        def apply_chat_template():
+            return self._tok.apply_chat_template(
+                messages, tokenize=True, add_generation_prompt=True, **kw
+            )
+
+        return await loop.run_in_executor(None, apply_chat_template)
 
     def decode_token(self, token_id: int) -> str:
         """Decode single token ID -> string piece. Sync (fast dict lookup)."""

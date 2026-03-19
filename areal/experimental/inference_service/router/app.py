@@ -13,11 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+from contextlib import asynccontextmanager
 
 import httpx
-from contextlib import asynccontextmanager
-from typing import Any
-
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 

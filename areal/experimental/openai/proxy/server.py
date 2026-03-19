@@ -147,7 +147,7 @@ def serialize_interactions(
         Data proxy's serving address (host:port) for RTensor shard storage.
         If empty, falls back to plain tensor serialization.
     """
-    from areal.infra.rpc.rtensor import RTensor, TensorShardInfo, get_backend
+    from areal.infra.rpc.rtensor import get_backend
 
     result = {}
     for key, interaction in interactions.items():

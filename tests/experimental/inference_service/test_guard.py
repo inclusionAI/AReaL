@@ -15,7 +15,6 @@ import pytest
 from areal.experimental.inference_service.guard import app as guard_module
 from areal.experimental.inference_service.guard.app import app, cleanup_forked_children
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -149,7 +148,8 @@ class TestForkModulePath:
     """POST /fork with command field — module-path mode."""
 
     @patch(
-        "areal.experimental.inference_service.guard.app._wait_for_worker_ready", return_value=True
+        "areal.experimental.inference_service.guard.app._wait_for_worker_ready",
+        return_value=True,
     )
     @patch("areal.experimental.inference_service.guard.app.run_with_streaming_logs")
     @patch("areal.experimental.inference_service.guard.app.find_free_ports")
@@ -188,7 +188,8 @@ class TestForkModulePath:
         assert "8001" in cmd
 
     @patch(
-        "areal.experimental.inference_service.guard.app._wait_for_worker_ready", return_value=True
+        "areal.experimental.inference_service.guard.app._wait_for_worker_ready",
+        return_value=True,
     )
     @patch("areal.experimental.inference_service.guard.app.run_with_streaming_logs")
     @patch("areal.experimental.inference_service.guard.app.find_free_ports")
@@ -209,7 +210,8 @@ class TestForkModulePath:
         assert guard_module._forked_children_map[("test", 0)] is mock_proc
 
     @patch(
-        "areal.experimental.inference_service.guard.app._wait_for_worker_ready", return_value=True
+        "areal.experimental.inference_service.guard.app._wait_for_worker_ready",
+        return_value=True,
     )
     @patch("areal.experimental.inference_service.guard.app.run_with_streaming_logs")
     @patch("areal.experimental.inference_service.guard.app.find_free_ports")

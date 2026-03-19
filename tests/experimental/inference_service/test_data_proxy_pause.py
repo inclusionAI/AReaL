@@ -13,7 +13,6 @@ from areal.experimental.inference_service.data_proxy.config import DataProxyConf
 from areal.experimental.inference_service.data_proxy.pause import PauseState
 from areal.experimental.inference_service.data_proxy.session import SessionStore
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================

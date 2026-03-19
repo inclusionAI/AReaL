@@ -3,15 +3,13 @@ from __future__ import annotations
 import hmac
 import types
 from contextlib import asynccontextmanager
-from typing import Any
 
+import orjson
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response as RawResponse
 from fastapi.responses import StreamingResponse
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from pydantic import BaseModel
-
-import orjson
-from fastapi.responses import Response as RawResponse
 
 from areal.experimental.inference_service.data_proxy.backend import SGLangBridgeBackend
 from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
@@ -25,11 +23,11 @@ from areal.experimental.inference_service.data_proxy.session import (
     StartSessionRequest,
     StartSessionResponse,
 )
-from areal.experimental.openai.proxy.server import serialize_interactions
 from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
     TokenizerProxy,
 )
 from areal.experimental.openai.client import ArealOpenAI
+from areal.experimental.openai.proxy.server import serialize_interactions
 from areal.infra.rpc import rtensor as rtensor_storage
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging

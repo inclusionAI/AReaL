@@ -1,7 +1,7 @@
 # Offline Tau2 Bench Rollout with AReaL Inference Service
 
 This example runs rollout-only data generation on the
-[$\tau^2$-Bench](https://github.com/sierra-research/tau2-bench) using the AReaL
+[$\\tau^2$-Bench](https://github.com/sierra-research/tau2-bench) using the AReaL
 Inference Service (`GatewayInferenceController`). Unlike the full training pipeline in
 `examples/tau2/`, this script performs rollouts without a training step — useful for
 evaluation, data collection, or debugging agent behaviour.
@@ -10,7 +10,8 @@ evaluation, data collection, or debugging agent behaviour.
 
 ### AReaL
 
-Follow the [AReaL installation guide](https://inclusionai.github.io/AReaL/en/tutorial/installation.html).
+Follow the
+[AReaL installation guide](https://inclusionai.github.io/AReaL/en/tutorial/installation.html).
 
 ### Tau2
 
@@ -38,11 +39,11 @@ python3 examples/experimental/inference_service/tau2_rollout.py \
     cluster.name_resolve.nfs_record_root=<NAME_RESOLVE_ROOT>
 ```
 
-| Placeholder            | Description                                            | Example                         |
-| ---------------------- | ------------------------------------------------------ | ------------------------------- |
-| `<USER_LLM_BASE_URL>`  | OpenAI-compatible base URL of the user simulator LLM   | `http://localhost:8000/v1/`     |
-| `<EXPERIMENT_ROOT>`     | Directory for experiment artifacts (logs, trajectories) | `/tmp/areal/experiments`        |
-| `<NAME_RESOLVE_ROOT>`  | Shared path for name-resolve records                   | `/tmp/areal/name_resolve`       |
+| Placeholder           | Description                                             | Example                     |
+| --------------------- | ------------------------------------------------------- | --------------------------- |
+| `<USER_LLM_BASE_URL>` | OpenAI-compatible base URL of the user simulator LLM    | `http://localhost:8000/v1/` |
+| `<EXPERIMENT_ROOT>`   | Directory for experiment artifacts (logs, trajectories) | `/tmp/areal/experiments`    |
+| `<NAME_RESOLVE_ROOT>` | Shared path for name-resolve records                    | `/tmp/areal/name_resolve`   |
 
 ## Result
 

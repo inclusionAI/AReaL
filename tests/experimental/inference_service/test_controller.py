@@ -6,11 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from areal.experimental.inference_service.controller.config import GatewayControllerConfig
+from areal.experimental.inference_service.controller.config import (
+    GatewayControllerConfig,
+)
 from areal.experimental.inference_service.controller.controller import (
     GatewayInferenceController,
 )
-
 
 # =============================================================================
 # GatewayControllerConfig

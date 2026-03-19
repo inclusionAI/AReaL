@@ -8,8 +8,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from areal.api.cli_args import SchedulingSpec
 from areal.experimental.inference_service.controller.config import (
     GatewayControllerConfig,
@@ -17,7 +15,6 @@ from areal.experimental.inference_service.controller.config import (
 from areal.experimental.inference_service.controller.controller import (
     GatewayInferenceController,
 )
-
 
 # =============================================================================
 # Helpers

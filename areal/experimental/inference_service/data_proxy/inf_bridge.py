@@ -168,8 +168,6 @@ class InfBridge:
                 f"max_new_tokens={req.gconfig.max_new_tokens})"
             )
 
-        return_routed_experts = req.metadata.get("return_routed_experts", False)
-
         accumulated_tokens: list[int] = []
         accumulated_logprobs: list[float] = []
         stop_reason: _StopReason | None = None

@@ -12,7 +12,7 @@ from flask import Flask, jsonify, request
 
 from areal.infra.utils.proc import kill_process_tree, run_with_streaming_logs
 from areal.utils import logging
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports
 
 logger = logging.getLogger("RPCGuard")
 
