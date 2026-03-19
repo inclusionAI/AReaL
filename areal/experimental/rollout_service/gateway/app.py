@@ -31,6 +31,7 @@ from areal.experimental.rollout_service.gateway.streaming import (
     register_session_in_router,
     release_capacity_in_router,
     resolve_worker_addr,
+    revoke_session_in_router,
 )
 from areal.utils import logging
 
@@ -338,6 +339,17 @@ def create_app(config: GatewayConfig) -> FastAPI:
             headers,
             config.forward_timeout,
         )
+
+        # Clean up session from router registry after successful export
+        # to prevent unbounded memory growth (best-effort).
+        if resp.status_code == 200:
+            await revoke_session_in_router(
+                config.router_addr,
+                config.admin_api_key,
+                session_id,
+                config.router_timeout,
+            )
+
         return Response(
             content=resp.content,
             status_code=resp.status_code,

@@ -254,6 +254,21 @@ def create_app(config: RouterConfig) -> FastAPI:
         return {"status": "ok"}
 
     # =========================================================================
+    # Session cleanup (admin key required)
+    # =========================================================================
+
+    @app.post("/revoke_session/{session_id}")
+    async def revoke_session(session_id: str, request: Request):
+        """Remove a session from the registry after export.
+
+        Called by the gateway after ``/export_trajectories`` completes to
+        prevent unbounded memory growth in the session registry.
+        """
+        _require_admin_key(request, config.admin_api_key)
+        removed = await session_registry.revoke_session(session_id)
+        return {"status": "ok", "removed": removed}
+
+    # =========================================================================
     # Worker listing (admin key required)
     # =========================================================================
 

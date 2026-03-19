@@ -128,6 +128,32 @@ async def register_session_in_router(
         raise RouterUnreachableError(f"Failed to register session: {exc}") from exc
 
 
+async def revoke_session_in_router(
+    router_addr: str,
+    admin_api_key: str,
+    session_id: str,
+    timeout: float,
+) -> None:
+    """Remove a session from the Router's session registry.
+
+    POST ``{router_addr}/revoke_session/{session_id}`` with admin key auth.
+    Called after ``/export_trajectories`` to prevent unbounded memory growth.
+    Best-effort: logs errors but never raises.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{router_addr}/revoke_session/{session_id}",
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        if resp.status_code != 200:
+            logger.warning(
+                "revoke_session returned %d: %s", resp.status_code, resp.text
+            )
+    except Exception as exc:
+        logger.warning("Failed to revoke session %s in router: %s", session_id, exc)
+
+
 async def grant_capacity_in_router(
     router_addr: str,
     admin_api_key: str,
