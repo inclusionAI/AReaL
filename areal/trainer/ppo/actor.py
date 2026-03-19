@@ -855,7 +855,7 @@ def _apply_importance_ratio_token_filter(
         ratio_filtered_fraction: removed/candidate fraction.
     """
     ratio_filter_candidates = loss_mask.bool()
-    training_inference_ratio = torch.exp(logprobs.detach() - old_logp)
+    training_inference_ratio = torch.exp(logprobs.detach() - old_logp.detach())
 
     if enabled:
         ratio_in_bounds = (training_inference_ratio >= lower_bound).logical_and(
