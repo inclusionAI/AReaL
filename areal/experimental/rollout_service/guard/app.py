@@ -18,6 +18,7 @@ logger = logging.getLogger("RPCGuard")
 
 # Port tracking - allocated ports excluded from future allocations
 _allocated_ports: set[int] = set()
+_allocated_ports_lock = Lock()
 
 # Forked child processes - tracked for cleanup
 _forked_children: list[subprocess.Popen] = []
@@ -83,8 +84,9 @@ def alloc_ports():
             return jsonify({"error": "'count' must be a positive integer"}), 400
 
         global _allocated_ports
-        ports = find_free_ports(count, exclude_ports=_allocated_ports)
-        _allocated_ports.update(ports)
+        with _allocated_ports_lock:
+            ports = find_free_ports(count, exclude_ports=_allocated_ports)
+            _allocated_ports.update(ports)
 
         return jsonify({"status": "success", "ports": ports, "host": _server_host})
 
@@ -185,9 +187,10 @@ def fork_worker():
             )
 
         # Allocate a free port for the child process
-        ports = find_free_ports(1, exclude_ports=_allocated_ports)
-        child_port = ports[0]
-        _allocated_ports.add(child_port)
+        with _allocated_ports_lock:
+            ports = find_free_ports(1, exclude_ports=_allocated_ports)
+            child_port = ports[0]
+            _allocated_ports.add(child_port)
 
         # Determine if this is raw-command mode or module-path mode
         is_raw_mode = raw_cmd is not None
@@ -261,7 +264,8 @@ def fork_worker():
                     if child_process in _forked_children:
                         _forked_children.remove(child_process)
                     _forked_children_map.pop((role, worker_index), None)
-                _allocated_ports.discard(child_port)
+                with _allocated_ports_lock:
+                    _allocated_ports.discard(child_port)
                 return jsonify(
                     {"error": "Forked worker failed to start within timeout"}
                 ), 500
