@@ -283,11 +283,7 @@ class SlurmScheduler(Scheduler):
 
     def _configure_worker(self, worker_info: SlurmWorkerInfo, worker_rank: int) -> None:
         # Wait for worker to be ready
-        timeout = self.startup_timeout
-        start_time = time.time()
         while not self._is_worker_ready(worker_info):
-            if time.time() - start_time > timeout:
-                raise WorkerTimeoutError(worker_info.role, timeout)
             time.sleep(0.1)
 
         worker_id = worker_info.worker.id

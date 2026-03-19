@@ -155,7 +155,6 @@ class LocalScheduler(Scheduler):
 
         self.startup_timeout = startup_timeout
         self.health_check_interval = health_check_interval
-        self._worker_host = get_loopback_ip()
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._workers: dict[str, list[WorkerInfo]] = {}
@@ -661,8 +660,6 @@ class LocalScheduler(Scheduler):
                         "The scheduler automatically allocates and provides the port.",
                     )
                 cmd = shlex.split(scheduling.cmd)
-                if "--host" not in cmd:
-                    cmd.extend(["--host", self._worker_host])
                 cmd.extend(["--port", str(ports[0])])
                 # Add name_resolve and worker identity args
                 cmd.extend(["--experiment-name", str(self.experiment_name)])
@@ -708,7 +705,7 @@ class LocalScheduler(Scheduler):
 
                 worker = Worker(
                     id=worker_id,
-                    ip=self._worker_host,
+                    ip=gethostip(),
                     worker_ports=[str(p) for p in ports],
                     engine_ports=[],
                 )
@@ -840,21 +837,7 @@ class LocalScheduler(Scheduler):
             return False
 
     def _configure_worker(self, worker_info: WorkerInfo, worker_rank: int):
-        timeout = self.startup_timeout
-        start_time = time.time()
         while not self._is_worker_ready(worker_info):
-            if time.time() - start_time > timeout:
-                raise WorkerTimeoutError(worker_info.role, timeout)
-            if (
-                worker_info.process is not None
-                and worker_info.process.poll() is not None
-            ):
-                stderr = self._read_log_tail(worker_info.log_file)
-                raise WorkerFailedError(
-                    worker_info.worker.id,
-                    worker_info.process.returncode,
-                    stderr,
-                )
             time.sleep(0.1)
 
         worker_id = worker_info.worker.id

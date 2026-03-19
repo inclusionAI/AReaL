@@ -371,10 +371,6 @@ class RemoteInfEngine(InferenceEngine):
             base_url = f"http://{address}"
         tik = time.time()
         while time.time() - tik < self.config.setup_timeout:
-            if process is not None and process.poll() is not None:
-                raise TimeoutError(
-                    f"server launch failed (process exited with code {process.returncode})"
-                )
             if self.check_health(base_url):
                 return
             time.sleep(1)
@@ -385,11 +381,9 @@ class RemoteInfEngine(InferenceEngine):
         try:
             health_req = self.backend.get_health_check_request()
             url = f"{base_url}{health_req.endpoint}"
-            with requests.Session() as session:
-                session.trust_env = False
-                response = session.request(
-                    health_req.method, url, json=health_req.payload, timeout=30
-                )
+            response = requests.request(
+                health_req.method, url, json=health_req.payload, timeout=30
+            )
             return response.status_code == 200
         except requests.exceptions.RequestException:
             return False
@@ -1261,8 +1255,7 @@ class RemoteInfEngine(InferenceEngine):
 
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
         """Launch a local inference server."""
-        if "host" not in server_args:
-            server_args["host"] = get_loopback_ip()
+        server_args["host"] = gethostip()
         server_args["port"] = find_free_ports(1)[0]
         process = self.backend.launch_server(server_args)
         address = format_hostport(server_args["host"], server_args["port"])

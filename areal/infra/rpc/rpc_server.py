@@ -57,7 +57,6 @@ _engine_thread_lock = Lock()
 
 # Server address (set at startup)
 _server_host: str = "0.0.0.0"
-_bind_host: str = "0.0.0.0"
 _server_port: int = 8000
 
 _allocated_ports: set[int] = set()
@@ -255,7 +254,7 @@ def fork_worker():
             "-m",
             module,
             "--host",
-            _bind_host,
+            "0.0.0.0",
             "--port",
             str(child_port),
             "--experiment-name",
@@ -991,7 +990,6 @@ def main():
 
     # Set global server address variables
     global _server_host, _server_port, _role
-    global _bind_host
     global \
         _experiment_name, \
         _trial_name, \
@@ -999,13 +997,9 @@ def main():
         _nfs_record_root, \
         _etcd3_addr, \
         _fileroot
-    _bind_host = args.host
     _server_host = args.host
     if _server_host == "0.0.0.0":
-        try:
-            _server_host = gethostip()
-        except RuntimeError:
-            _server_host = get_loopback_ip()
+        _server_host = gethostip()
     _role = args.role
 
     # Set global config for fork endpoint
