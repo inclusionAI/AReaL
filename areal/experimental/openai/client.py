@@ -61,6 +61,33 @@ if TYPE_CHECKING:
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 
+def _build_rid_and_dp_rank(
+    cache: InteractionCache,
+    messages_list: list[dict],
+    sglang_dp_size: int,
+) -> tuple[str, int | None]:
+    """Build deterministic rid and dp_rank for DP attention cache affinity.
+
+    Returns (rid, data_parallel_rank). If cache has no rid_base, falls back
+    to a random UUID with no dp_rank (letting SGLang's load balancer decide).
+    """
+    rid_base = cache.rid_base
+    sample_idx = cache.sample_idx
+    if rid_base is not None:
+        round_idx = RolloutIdBuilder.infer_round_idx(messages_list)
+        rid = RolloutIdBuilder.build_rid(rid_base, sample_idx, round_idx)
+        dp_rank = RolloutIdBuilder.compute_dp_rank(rid, sglang_dp_size)
+        logger.debug(
+            "DP attention routing: rid=%s, dp_rank=%d/%d, round=%d",
+            rid,
+            dp_rank,
+            sglang_dp_size,
+            round_idx,
+        )
+        return rid, dp_rank
+    return str(uuid.uuid4()), None
+
+
 class _AsyncGenerateEngine(Protocol):
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         raise NotImplementedError()
@@ -515,22 +542,9 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Build deterministic rid for DP attention cache affinity.
         cache_for_rid = areal_cache if areal_cache is not None else self._cache
-        rid_base = cache_for_rid.rid_base
-        sample_idx = cache_for_rid.sample_idx
-        if rid_base is not None:
-            round_idx = RolloutIdBuilder.infer_round_idx(messages_list)
-            rid = RolloutIdBuilder.build_rid(rid_base, sample_idx, round_idx)
-            dp_rank = RolloutIdBuilder.compute_dp_rank(rid, self.sglang_dp_size)
-            logger.debug(
-                "DP attention routing: rid=%s, dp_rank=%d/%d, round=%d",
-                rid,
-                dp_rank,
-                self.sglang_dp_size,
-                round_idx,
-            )
-        else:
-            rid = str(uuid.uuid4())
-            dp_rank = None
+        rid, dp_rank = _build_rid_and_dp_rank(
+            cache_for_rid, messages_list, self.sglang_dp_size
+        )
 
         model_request = ModelRequest(
             input_ids=prompt_token_ids,
@@ -938,22 +952,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         # Build deterministic rid for DP attention cache affinity.
         cache_for_rid = areal_cache if areal_cache is not None else self._cache
-        rid_base = cache_for_rid.rid_base
-        sample_idx = cache_for_rid.sample_idx
-        if rid_base is not None:
-            round_idx = RolloutIdBuilder.infer_round_idx(messages_list)
-            rid = RolloutIdBuilder.build_rid(rid_base, sample_idx, round_idx)
-            dp_rank = RolloutIdBuilder.compute_dp_rank(rid, self.sglang_dp_size)
-            logger.debug(
-                "DP attention routing (responses): rid=%s, dp_rank=%d/%d, round=%d",
-                rid,
-                dp_rank,
-                self.sglang_dp_size,
-                round_idx,
-            )
-        else:
-            rid = str(uuid.uuid4())
-            dp_rank = None
+        rid, dp_rank = _build_rid_and_dp_rank(
+            cache_for_rid, messages_list, self.sglang_dp_size
+        )
 
         model_request = ModelRequest(
             input_ids=prompt_token_ids,

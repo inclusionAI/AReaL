@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import datetime
@@ -340,9 +341,9 @@ class RemoteInfEngine(InferenceEngine):
         self.config = config
         self.backend = backend
 
-        self.rid_to_address = {}
+        self.rid_to_address: dict[str, str] = {}
         # Maintain the addresses for the recent 128 requests
-        self.rid_queue = []
+        self.rid_queue: deque[str] = deque()
         self.addresses = []
         self.server_idx = 0
 
@@ -766,7 +767,7 @@ class RemoteInfEngine(InferenceEngine):
             server_addr = self.choose_server()
             if len(self.rid_queue) >= RID_CACHE_SIZE:
                 # Remove the oldest entry if cache is full
-                oldest_key = self.rid_queue.pop(0)
+                oldest_key = self.rid_queue.popleft()
                 self.rid_to_address.pop(oldest_key, None)
             self.rid_to_address[routing_key] = server_addr
             self.rid_queue.append(routing_key)

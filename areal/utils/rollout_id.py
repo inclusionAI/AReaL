@@ -11,6 +11,7 @@ routing_key (parse_rid_base): {qid}-{cnt}_{sample_idx}
 from __future__ import annotations
 
 import hashlib
+import threading
 import uuid
 from collections import defaultdict
 from typing import ClassVar
@@ -29,6 +30,7 @@ class RolloutIdBuilder:
 
     # Per-qid global counter (never resets across steps).
     _qid_counter: ClassVar[defaultdict[str, int]] = defaultdict(int)
+    _counter_lock: ClassVar[threading.Lock] = threading.Lock()
 
     @classmethod
     def fill_rid_base(cls, data_item: dict) -> None:
@@ -47,8 +49,9 @@ class RolloutIdBuilder:
             content = str(data_item.get("prompt", data_item.get("question", "")))
             qid = hashlib.sha256(content.encode()).hexdigest()[:16]
 
-        cnt = cls._qid_counter[qid]
-        cls._qid_counter[qid] += 1
+        with cls._counter_lock:
+            cnt = cls._qid_counter[qid]
+            cls._qid_counter[qid] += 1
         data_item[cls.EXT_QID_FIELD] = [f"{qid}-{cnt}"]
 
     @classmethod
@@ -99,11 +102,13 @@ class RolloutIdBuilder:
         """Compute deterministic DP rank from rid.
 
         Same routing_key → same DP rank, ensuring cache affinity.
+        Uses hashlib (not built-in hash()) for cross-process determinism.
         """
         if dp_size <= 1:
             return 0
         routing_key = cls.parse_routing_key(rid)
-        return hash(routing_key) % dp_size
+        h = int(hashlib.sha256(routing_key.encode()).hexdigest(), 16)
+        return h % dp_size
 
     @classmethod
     def reset(cls) -> None:
