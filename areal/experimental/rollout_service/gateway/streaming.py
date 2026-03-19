@@ -87,6 +87,12 @@ async def query_router(
         return resp.json()["worker_addr"]
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
+    except httpx.TimeoutException as exc:
+        raise RouterUnreachableError(f"Router timed out: {exc}") from exc
+    except httpx.HTTPStatusError as exc:
+        raise RouterUnreachableError(
+            f"Router returned HTTP {exc.response.status_code}: {exc}"
+        ) from exc
 
 
 async def register_session_in_router(
