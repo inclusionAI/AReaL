@@ -24,8 +24,8 @@ from areal.experimental.rollout_service.data_proxy.session import (
     SetRewardRequest,
     StartSessionRequest,
     StartSessionResponse,
-    serialize_interactions,
 )
+from areal.experimental.openai.proxy.server import serialize_interactions
 from areal.experimental.rollout_service.data_proxy.tokenizer_proxy import TokenizerProxy
 from areal.experimental.openai.client import ArealOpenAI
 from areal.infra.rpc import rtensor as rtensor_storage
