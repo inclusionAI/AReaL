@@ -231,14 +231,14 @@ class TestGatewayRolloutControllerConstruction:
 
 
 class TestGatewayRolloutControllerHTTP:
-    def test_gateway_http_post_logs_on_failure(self):
+    def test_gateway_http_post_raises_on_failure(self):
         cfg = GatewayControllerConfig()
         scheduler = MagicMock()
         controller = GatewayRolloutController(config=cfg, scheduler=scheduler)
-        # _gateway_addr is empty before init, so the URL is just the endpoint
-        # Should not raise — just logs the error
+        # _gateway_addr points to unreachable host — should raise RuntimeError
         controller._gateway_addr = "http://127.0.0.1:19999"
-        controller._gateway_http_post("/test", {"key": "value"})
+        with pytest.raises(RuntimeError, match="Failed to POST"):
+            controller._gateway_http_post("/test", {"key": "value"})
 
     @patch("requests.post")
     def test_gateway_http_post_sends_auth(self, mock_post):

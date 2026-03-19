@@ -574,6 +574,7 @@ class TestGatewaySessionLifecycle:
             resp = await client.post(
                 f"{router}/route",
                 json={"session_id": session_id},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
             assert resp.status_code == 200
             pinned_worker = resp.json()["worker_addr"]
@@ -583,6 +584,7 @@ class TestGatewaySessionLifecycle:
             resp = await client.post(
                 f"{router}/route",
                 json={"api_key": session_api_key, "path": "/chat/completions"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
             assert resp.status_code == 200
             assert resp.json()["worker_addr"] == pinned_worker

@@ -229,12 +229,13 @@ class TestAdminEndpoints:
         assert "registration failed" in resp.json()["error"]
 
     @pytest.mark.asyncio
+    @patch(f"{MODULE}.revoke_session_in_router", new_callable=AsyncMock)
     @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
     async def test_admin_export_trajectories(
-        self, mock_forward, mock_query_router, client
+        self, mock_forward, mock_query_router, mock_revoke, client
     ):
-        """Admin key → /export_trajectories → routed by session_id."""
+        """Admin key → /export_trajectories → routed by session_id, session revoked."""
         mock_query_router.return_value = WORKER_ADDR
         mock_forward.return_value = httpx.Response(200, json={"interactions": []})
 
@@ -246,6 +247,8 @@ class TestAdminEndpoints:
         assert resp.status_code == 200
         mock_query_router.assert_called_once()
         assert mock_query_router.call_args.kwargs["session_id"] == "task-1-0"
+        # Session should be revoked from router after successful export
+        mock_revoke.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_export_trajectories_missing_session_id(self, client):
