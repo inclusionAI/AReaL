@@ -739,40 +739,6 @@ class GatewayInferenceController:
             for wid in self._worker_ids.values():
                 await self._async_gateway_http_post(f"/continue_generation/{wid}", {})
 
-    # -- Weight updates (not yet implemented in gateway) --------------------
-
-    async def init_weights_update_group(self, meta: Any) -> None:
-        """Initialize NCCL weight-update group on all workers.
-
-        Not yet implemented — the gateway HTTP stack does not support
-        weight synchronisation yet.
-        """
-        raise NotImplementedError(
-            "init_weights_update_group is not yet supported by the gateway rollout controller"
-        )
-
-    async def update_weights_from_distributed(
-        self, meta: Any, param_specs: Any
-    ) -> None:
-        """Trigger a distributed (NCCL/XCCL) weight update on all workers.
-
-        Not yet implemented — the gateway HTTP stack does not support
-        weight synchronisation yet.
-        """
-        raise NotImplementedError(
-            "update_weights_from_distributed is not yet supported by the gateway rollout controller"
-        )
-
-    async def update_weights_from_disk(self, meta: Any) -> None:
-        """Trigger a disk-based weight update on all workers.
-
-        Not yet implemented — the gateway HTTP stack does not support
-        weight synchronisation yet.
-        """
-        raise NotImplementedError(
-            "update_weights_from_disk is not yet supported by the gateway rollout controller"
-        )
-
     # -- Stats -------------------------------------------------------------
 
     def export_stats(self) -> dict[str, float]:
