@@ -1183,6 +1183,24 @@ class PPOActorConfig(TrainEngineConfig):
             ],
         },
     )
+    enable_importance_ratio_token_filtering: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable token-level filtering by training/inference importance ratio (IcePop-style masking)."
+        },
+    )
+    importance_ratio_lower_bound: float = field(
+        default=0.5,
+        metadata={
+            "help": "Lower bound for training/inference importance ratio token filtering. Tokens with ratio below this bound are masked when filtering is enabled."
+        },
+    )
+    importance_ratio_upper_bound: float = field(
+        default=2.0,
+        metadata={
+            "help": "Upper bound for training/inference importance ratio token filtering. Tokens with ratio above this bound are masked when filtering is enabled."
+        },
+    )
     importance_sampling_level: str = field(
         default="token",
         metadata={

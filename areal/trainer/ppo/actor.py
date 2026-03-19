@@ -114,6 +114,12 @@ class PPOActor:
         logger.info(
             f"  reward_norm: {config.reward_norm if config.reward_norm else 'DISABLED (None)'}"
         )
+        logger.info(
+            "  importance_ratio_token_filtering: %s (bounds=[%.4f, %.4f])",
+            "ENABLED" if config.enable_importance_ratio_token_filtering else "DISABLED",
+            config.importance_ratio_lower_bound,
+            config.importance_ratio_upper_bound,
+        )
         logger.info(f"  eps_clip: {config.eps_clip}")
         logger.info("=" * 70)
 
@@ -340,6 +346,9 @@ class PPOActor:
                         c_clip=self.config.c_clip,
                         behave_imp_weight_cap=self.config.behave_imp_weight_cap,
                         m2_threshold=self.m2_threshold,
+                        enable_importance_ratio_token_filtering=self.config.enable_importance_ratio_token_filtering,
+                        importance_ratio_lower_bound=self.config.importance_ratio_lower_bound,
+                        importance_ratio_upper_bound=self.config.importance_ratio_upper_bound,
                         importance_sampling_level=self.config.importance_sampling_level,
                         current_version=current_version,
                         prox_logp_method=self.config.prox_logp_method,
@@ -373,6 +382,9 @@ def grpo_loss_fn(
     eps_clip_higher: float | None,
     c_clip: float | None,
     behave_imp_weight_cap: float | None,
+    enable_importance_ratio_token_filtering: bool = False,
+    importance_ratio_lower_bound: float = 0.5,
+    importance_ratio_upper_bound: float = 2.0,
     m2_threshold: float | None = None,
     importance_sampling_level: str = "token",
     current_version: int | None = None,
@@ -393,6 +405,17 @@ def grpo_loss_fn(
     prox_logp_gt = input_data.get("prox_logp")  # Could be None if skipped
 
     entropy = entropy.detach()
+
+
+    # Apply importance ratio filtering if 
+    loss_mask, ratio_filtered_fraction = _apply_importance_ratio_token_filter(
+        logprobs=logprobs,
+        old_logp=old_logp,
+        loss_mask=loss_mask,
+        enabled=enable_importance_ratio_token_filtering,
+        lower_bound=importance_ratio_lower_bound,
+        upper_bound=importance_ratio_upper_bound,
+    )
 
     # Resolve proximal log-probabilities based on method
     prox_logp = _resolve_proximal_logp(
@@ -498,6 +521,12 @@ def grpo_loss_fn(
         dual_clip_ratio=stat["dual_clip_mask"].float(),
         denominator="n_valid_tokens",
     )
+
+    if enable_importance_ratio_token_filtering:
+        stats_tracker.scalar(
+            ratio_filtered_fraction=ratio_filtered_fraction,
+        )
+
     if "behave_imp_weight" in stat:
         stats_tracker.denominator(unclipped_behave_tokens=stat["behave_mask"])
         stats_tracker.stat(
@@ -809,6 +838,43 @@ def _get_m2po_loss_mask(
 
     return loss_mask
 
+
+# IcePop masking (https://arxiv.org/pdf/2510.18855)
+def _apply_importance_ratio_token_filter(
+    logprobs: torch.Tensor,
+    old_logp: torch.Tensor,
+    loss_mask: torch.Tensor,
+    enabled: bool,
+    lower_bound: float,
+    upper_bound: float,
+) -> tuple[torch.Tensor, float]:
+    """Apply optional token filtering by training/inference importance ratio.
+
+    Returns:
+        filtered_loss_mask: loss mask after optional filtering.
+        ratio_filtered_fraction: removed/candidate fraction.
+    """
+    ratio_filter_candidates = loss_mask.bool()
+    training_inference_ratio = torch.exp(logprobs.detach() - old_logp)
+
+    if enabled:
+        ratio_in_bounds = (training_inference_ratio >= lower_bound).logical_and(
+            training_inference_ratio <= upper_bound
+        )
+        ratio_filtered_tokens = ratio_filter_candidates.logical_and(~ratio_in_bounds)
+        filtered_loss_mask = ratio_filter_candidates.logical_and(ratio_in_bounds)
+    else:
+        ratio_filtered_tokens = torch.zeros_like(ratio_filter_candidates)
+        filtered_loss_mask = ratio_filter_candidates
+
+    ratio_filter_candidate_count = ratio_filter_candidates.count_nonzero().item()
+    ratio_filtered_count = ratio_filtered_tokens.count_nonzero().item()
+    ratio_filtered_fraction = (
+        ratio_filtered_count / ratio_filter_candidate_count
+        if ratio_filter_candidate_count > 0
+        else 0.0
+    )
+    return filtered_loss_mask, ratio_filtered_fraction
 
 # =============================================================================
 # Logging Helper Functions
