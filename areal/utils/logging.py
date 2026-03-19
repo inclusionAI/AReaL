@@ -108,12 +108,12 @@ LOGGER_COLORS_EXACT = {
     "AgentWorker": "light_purple",
     "AgentDataProxy": "light_purple",
     "AgentServiceController": "light_purple",
-    # Rollout service - white (orchestration)
-    "GatewayRolloutController": "white",
-    "RolloutDataProxy": "white",
-    "RolloutInfBridge": "white",
-    "RolloutRouter": "white",
-    "RolloutGateway": "white",
+    # Inference service - white (orchestration)
+    "GatewayInferenceController": "white",
+    "InferenceDataProxy": "white",
+    "InferenceInfBridge": "white",
+    "InferenceRouter": "white",
+    "InferenceGateway": "white",
     "RPCGuard": "white",
 }
 
