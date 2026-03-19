@@ -285,15 +285,38 @@ async def forward_sse_stream(
 
     Uses ``httpx.AsyncClient.stream()`` so the client sees tokens
     as soon as the data proxy emits them.
+
+    On upstream HTTP errors or mid-stream failures, an SSE error event
+    (``data: {"error": ...}``) is emitted so clients can distinguish a
+    clean end-of-stream from a backend failure.
     """
+    import json as _json
+
     fwd_headers = _forwarding_headers(headers)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-        async with client.stream(
-            "POST", upstream_url, content=body, headers=fwd_headers
-        ) as resp:
-            resp.raise_for_status()
-            async for chunk in resp.aiter_bytes():
-                yield chunk
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
+            async with client.stream(
+                "POST", upstream_url, content=body, headers=fwd_headers
+            ) as resp:
+                if resp.status_code != 200:
+                    # Upstream returned a non-200 status — read body and emit
+                    # an SSE error event so the client sees the failure.
+                    error_body = await resp.aread()
+                    try:
+                        detail = _json.loads(error_body)
+                    except Exception:
+                        detail = error_body.decode("utf-8", errors="replace")
+                    error_event = _json.dumps(
+                        {"error": detail, "status_code": resp.status_code}
+                    )
+                    yield f"data: {error_event}\n\n".encode()
+                    return
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+    except Exception as exc:
+        logger.error("SSE stream error from %s: %s", upstream_url, exc)
+        error_event = _json.dumps({"error": str(exc)})
+        yield f"data: {error_event}\n\n".encode()
 
 
 async def forward_request(
