@@ -429,9 +429,16 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         # Recreate InfBridge + ArealOpenAI with new backend address
         new_inf_bridge = _create_inf_bridge(new_addr, pause_state, app.state.config)
         new_areal_client = _create_areal_client(new_inf_bridge, tok)
+
+        # Build updated config copy, then swap all three state fields.
+        # Concurrent requests already hold their own references so they
+        # finish with the old backend; new requests see the new one.
+        from dataclasses import replace as _dc_replace
+
+        new_config = _dc_replace(app.state.config, backend_addr=new_addr)
+        app.state.config = new_config
         app.state.inf_bridge = new_inf_bridge
         app.state.areal_client = new_areal_client
-        app.state.config.backend_addr = new_addr
 
         logger.info("Backend reconfigured to %s", new_addr)
         return {"status": "ok", "backend_addr": new_addr}
