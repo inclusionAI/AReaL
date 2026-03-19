@@ -69,6 +69,12 @@ actor:
       env_vars:
         NCCL_DEBUG: "WARN"
 
+# SWE-specific data processing
+swe:
+  filter_errors: true
+  pre_split: false
+  num_proc: 1
+
 train_dataset:
   batch_size: 16
   shuffle: true
@@ -77,7 +83,7 @@ train_dataset:
   drop_last: true
   path: /path/to/swe_trajectories.jsonl
   type: sft
-  max_length: 32768
+  max_length: 131072
 
 # Utilities
 saver:
