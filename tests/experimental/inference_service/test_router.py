@@ -298,7 +298,7 @@ class TestRouterEndpoints:
     @pytest.mark.asyncio
     async def test_register_worker_admin_key(self, client):
         resp = await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
@@ -314,13 +314,13 @@ class TestRouterEndpoints:
 
     @pytest.mark.asyncio
     async def test_register_worker_no_auth_401(self, client):
-        resp = await client.post("/register_worker", json={"worker_addr": WORKER_1})
+        resp = await client.post("/register", json={"worker_addr": WORKER_1})
         assert resp.status_code == 401
 
     @pytest.mark.asyncio
     async def test_register_worker_wrong_key_403(self, client):
         resp = await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers={"Authorization": "Bearer wrong-key"},
         )
@@ -332,10 +332,11 @@ class TestRouterEndpoints:
     async def test_delete_worker_cascades(self, client):
         # Register worker + session pinned to it
         await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
+        await client.post("/grant_capacity", headers=admin_headers())
         await client.post(
             "/register_session",
             json={
@@ -347,9 +348,8 @@ class TestRouterEndpoints:
         )
 
         # Delete the worker
-        resp = await client.request(
-            "DELETE",
-            "/delete_worker",
+        resp = await client.post(
+            "/unregister",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
@@ -370,12 +370,12 @@ class TestRouterEndpoints:
     async def test_route_admin_key_round_robin(self, client):
         # Register two workers
         await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
         await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_2},
             headers=admin_headers(),
         )
@@ -406,10 +406,11 @@ class TestRouterEndpoints:
     async def test_route_session_key_pinned(self, client):
         # Register worker + session
         await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
+        await client.post("/grant_capacity", headers=admin_headers())
         await client.post(
             "/register_session",
             json={
@@ -460,10 +461,11 @@ class TestRouterEndpoints:
     async def test_route_pinned_worker_unhealthy_503(self, client):
         # Register worker + session
         await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
+        await client.post("/grant_capacity", headers=admin_headers())
         await client.post(
             "/register_session",
             json={
@@ -490,6 +492,7 @@ class TestRouterEndpoints:
 
     @pytest.mark.asyncio
     async def test_route_by_session_id(self, client):
+        await client.post("/grant_capacity", headers=admin_headers())
         await client.post(
             "/register_session",
             json={
@@ -559,11 +562,12 @@ class TestRouterEndpoints:
     async def test_register_session(self, client):
         """Register a session, then verify pinned routing works."""
         await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
 
+        await client.post("/grant_capacity", headers=admin_headers())
         resp = await client.post(
             "/register_session",
             json={
@@ -590,12 +594,12 @@ class TestRouterEndpoints:
     @pytest.mark.asyncio
     async def test_workers_list_admin_key(self, client):
         await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
         await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_2},
             headers=admin_headers(),
         )
@@ -615,23 +619,22 @@ class TestRouterEndpoints:
         resp = await client.get("/workers")
         assert resp.status_code == 401
 
-    # ----- /delete_worker by worker_id -----
+    # ----- /unregister by worker_id -----
 
     @pytest.mark.asyncio
     async def test_delete_worker_by_id(self, client):
         """Delete a worker by worker_id instead of worker_addr."""
         # Register
         reg_resp = await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
         worker_id = reg_resp.json()["worker_id"]
 
         # Delete by worker_id
-        resp = await client.request(
-            "DELETE",
-            "/delete_worker",
+        resp = await client.post(
+            "/unregister",
             json={"worker_id": worker_id},
             headers=admin_headers(),
         )
@@ -645,9 +648,8 @@ class TestRouterEndpoints:
     @pytest.mark.asyncio
     async def test_delete_worker_by_id_not_found_404(self, client):
         """Delete by unknown worker_id → 404."""
-        resp = await client.request(
-            "DELETE",
-            "/delete_worker",
+        resp = await client.post(
+            "/unregister",
             json={"worker_id": "nonexistent-id"},
             headers=admin_headers(),
         )
@@ -656,9 +658,8 @@ class TestRouterEndpoints:
     @pytest.mark.asyncio
     async def test_delete_worker_missing_both_422(self, client):
         """Delete without worker_id or worker_addr → 422."""
-        resp = await client.request(
-            "DELETE",
-            "/delete_worker",
+        resp = await client.post(
+            "/unregister",
             json={},
             headers=admin_headers(),
         )
@@ -670,7 +671,7 @@ class TestRouterEndpoints:
     async def test_resolve_worker_200(self, client):
         """Resolve a registered worker by ID → 200 with worker_id and worker_addr."""
         reg_resp = await client.post(
-            "/register_worker",
+            "/register",
             json={"worker_addr": WORKER_1},
             headers=admin_headers(),
         )
@@ -831,69 +832,44 @@ class TestRouterCapacityEndpoints:
         )
         assert resp.status_code == 403
 
-    # ----- /acquire_capacity -----
+    # ----- Grant + register_session interleaved -----
 
     @pytest.mark.asyncio
-    async def test_acquire_capacity_success(self, client):
-        """Grant then acquire → 200."""
+    async def test_grant_register_session_interleaved(self, client):
+        """Grant, register_session (consumes capacity), grant again, register_session → all succeed."""
         await client.post("/grant_capacity", headers=admin_headers())
-        resp = await client.post("/acquire_capacity", headers=admin_headers())
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "ok"
-
-        # Capacity should be back to 0
-        health = (await client.get("/health")).json()
-        assert health["capacity"] == 0
-
-    @pytest.mark.asyncio
-    async def test_acquire_capacity_empty_429(self, client):
-        """Acquire with no capacity → 429."""
-        resp = await client.post("/acquire_capacity", headers=admin_headers())
-        assert resp.status_code == 429
-        assert "capacity" in resp.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_acquire_capacity_depletes(self, client):
-        """Grant 2, acquire 2, then acquire → 429."""
-        await client.post("/grant_capacity", headers=admin_headers())
-        await client.post("/grant_capacity", headers=admin_headers())
-
-        resp1 = await client.post("/acquire_capacity", headers=admin_headers())
-        assert resp1.status_code == 200
-        resp2 = await client.post("/acquire_capacity", headers=admin_headers())
-        assert resp2.status_code == 200
-        resp3 = await client.post("/acquire_capacity", headers=admin_headers())
-        assert resp3.status_code == 429
-
-    @pytest.mark.asyncio
-    async def test_acquire_capacity_no_auth_401(self, client):
-        """/acquire_capacity without auth → 401."""
-        resp = await client.post("/acquire_capacity")
-        assert resp.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_acquire_capacity_wrong_key_403(self, client):
-        """/acquire_capacity with wrong key → 403."""
         resp = await client.post(
-            "/acquire_capacity",
-            headers={"Authorization": "Bearer wrong-key"},
+            "/register_session",
+            json={
+                "session_api_key": "sess-key-1",
+                "session_id": "task-0-0",
+                "worker_addr": WORKER_1,
+            },
+            headers=admin_headers(),
         )
-        assert resp.status_code == 403
-
-    # ----- Grant + Acquire interleaved -----
-
-    @pytest.mark.asyncio
-    async def test_grant_acquire_interleaved(self, client):
-        """Grant, acquire, grant again, acquire → all succeed."""
-        await client.post("/grant_capacity", headers=admin_headers())
-        resp = await client.post("/acquire_capacity", headers=admin_headers())
         assert resp.status_code == 200
 
-        # No capacity left
-        resp = await client.post("/acquire_capacity", headers=admin_headers())
+        # No capacity left — register_session should fail with 429
+        resp = await client.post(
+            "/register_session",
+            json={
+                "session_api_key": "sess-key-2",
+                "session_id": "task-0-1",
+                "worker_addr": WORKER_1,
+            },
+            headers=admin_headers(),
+        )
         assert resp.status_code == 429
 
         # Grant again
         await client.post("/grant_capacity", headers=admin_headers())
-        resp = await client.post("/acquire_capacity", headers=admin_headers())
+        resp = await client.post(
+            "/register_session",
+            json={
+                "session_api_key": "sess-key-3",
+                "session_id": "task-0-2",
+                "worker_addr": WORKER_1,
+            },
+            headers=admin_headers(),
+        )
         assert resp.status_code == 200

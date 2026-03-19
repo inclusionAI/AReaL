@@ -3,6 +3,10 @@
 The Router is a separate FastAPI service from the Gateway.
 It owns worker health state, session→worker mappings, and routing strategy.
 It never proxies traffic — it only answers routing queries.
+
+Endpoint names are aligned with
+``areal.experimental.agent_service.router.app``:
+``/register``, ``/unregister``, ``/route``, ``/remove_session``.
 """
 
 from __future__ import annotations
@@ -62,7 +66,7 @@ class RegisterWorkerRequest(BaseModel):
     worker_addr: str
 
 
-class DeleteWorkerRequest(BaseModel):
+class UnregisterWorkerRequest(BaseModel):
     worker_addr: str | None = None
     worker_id: str | None = None
 
@@ -77,6 +81,10 @@ class RegisterSessionRequest(BaseModel):
     session_api_key: str
     session_id: str
     worker_addr: str
+
+
+class RemoveSessionRequest(BaseModel):
+    session_id: str
 
 
 # =============================================================================
@@ -158,15 +166,15 @@ def create_app(config: RouterConfig) -> FastAPI:
     # Worker management (admin key required)
     # =========================================================================
 
-    @app.post("/register_worker")
-    async def register_worker(body: RegisterWorkerRequest, request: Request):
+    @app.post("/register")
+    async def register(body: RegisterWorkerRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
         worker_id = await worker_registry.register(body.worker_addr)
         logger.info("Worker registered: %s (id=%s)", body.worker_addr, worker_id)
         return {"status": "ok", "worker_id": worker_id}
 
-    @app.delete("/delete_worker")
-    async def delete_worker(body: DeleteWorkerRequest, request: Request):
+    @app.post("/unregister")
+    async def unregister(body: UnregisterWorkerRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
         if body.worker_id is not None:
             worker_addr = await worker_registry.deregister_by_id(body.worker_id)
@@ -176,7 +184,7 @@ def create_app(config: RouterConfig) -> FastAPI:
                 )
             revoked = await session_registry.revoke_by_worker(worker_addr)
             logger.info(
-                "Worker deleted by id: %s addr=%s (revoked %d sessions)",
+                "Worker unregistered by id: %s addr=%s (revoked %d sessions)",
                 body.worker_id,
                 worker_addr,
                 revoked,
@@ -186,7 +194,7 @@ def create_app(config: RouterConfig) -> FastAPI:
             await worker_registry.deregister(body.worker_addr)
             revoked = await session_registry.revoke_by_worker(body.worker_addr)
             logger.info(
-                "Worker deleted: %s (revoked %d sessions)",
+                "Worker unregistered: %s (revoked %d sessions)",
                 body.worker_addr,
                 revoked,
             )
@@ -243,11 +251,23 @@ def create_app(config: RouterConfig) -> FastAPI:
 
     # =========================================================================
     # Session registration (admin key required)
+    #
+    # Acquires a capacity permit before registering. Returns 429 when
+    # no permits remain.
     # =========================================================================
 
     @app.post("/register_session")
     async def register_session(body: RegisterSessionRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
+
+        # Acquire a capacity permit — reject with 429 if none remain
+        acquired = await capacity_manager.try_acquire()
+        if not acquired:
+            raise HTTPException(
+                status_code=429,
+                detail="No available capacity to start a new session",
+            )
+
         await session_registry.register_session(
             body.session_api_key, body.session_id, body.worker_addr
         )
@@ -257,15 +277,15 @@ def create_app(config: RouterConfig) -> FastAPI:
     # Session cleanup (admin key required)
     # =========================================================================
 
-    @app.post("/revoke_session/{session_id}")
-    async def revoke_session(session_id: str, request: Request):
+    @app.post("/remove_session")
+    async def remove_session(body: RemoveSessionRequest, request: Request):
         """Remove a session from the registry after export.
 
         Called by the gateway after ``/export_trajectories`` completes to
         prevent unbounded memory growth in the session registry.
         """
         _require_admin_key(request, config.admin_api_key)
-        removed = await session_registry.revoke_session(session_id)
+        removed = await session_registry.revoke_session(body.session_id)
         return {"status": "ok", "removed": removed}
 
     # =========================================================================
@@ -318,35 +338,20 @@ def create_app(config: RouterConfig) -> FastAPI:
 
         Called by the rollout controller (via the gateway) when the current
         weight version is within the allowed staleness window.  Each call
-        issues one permit for a future ``/rl/start_session`` request.
+        issues one permit for a future ``/register_session`` request.
         """
         _require_admin_key(request, config.admin_api_key)
         new_capacity = await capacity_manager.grant()
         logger.info("Capacity granted — now %d", new_capacity)
         return {"status": "ok", "capacity": new_capacity}
 
-    @app.post("/acquire_capacity")
-    async def acquire_capacity(request: Request):
-        """Try to consume one capacity permit.
-
-        Called by the gateway before forwarding ``/rl/start_session`` to a
-        data proxy.  Returns 200 on success, 429 when no permits remain.
-        """
-        _require_admin_key(request, config.admin_api_key)
-        acquired = await capacity_manager.try_acquire()
-        if not acquired:
-            raise HTTPException(
-                status_code=429,
-                detail="No available capacity to start a new session",
-            )
-        return {"status": "ok"}
-
     @app.post("/release_capacity")
     async def release_capacity(request: Request):
         """Return one previously acquired capacity permit.
 
         Called by the gateway when ``/rl/start_session`` fails after
-        ``/acquire_capacity`` succeeded, to avoid leaking permits.
+        capacity was acquired via ``/register_session``, to avoid
+        leaking permits.
         """
         _require_admin_key(request, config.admin_api_key)
         new_capacity = await capacity_manager.release()

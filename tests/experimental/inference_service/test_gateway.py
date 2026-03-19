@@ -15,7 +15,6 @@ import pytest_asyncio
 from areal.experimental.inference_service.gateway.app import create_app
 from areal.experimental.inference_service.gateway.config import GatewayConfig
 from areal.experimental.inference_service.gateway.streaming import (
-    CapacityExhaustedError,
     RouterKeyRejectedError,
     RouterUnreachableError,
 )
@@ -170,12 +169,11 @@ class TestAdminEndpoints:
         assert "text/event-stream" in resp.headers["content-type"]
 
     @pytest.mark.asyncio
-    @patch(f"{MODULE}.acquire_capacity_in_router", new_callable=AsyncMock)
     @patch(f"{MODULE}.register_session_in_router", new_callable=AsyncMock)
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
     @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
     async def test_start_session_creates_and_registers(
-        self, mock_query_router, mock_forward, mock_register, mock_acquire, client
+        self, mock_query_router, mock_forward, mock_register, client
     ):
         """Admin key → /rl/start_session → forwarded, response intercepted, session registered."""
         mock_query_router.return_value = WORKER_ADDR
@@ -195,9 +193,6 @@ class TestAdminEndpoints:
         assert data["session_id"] == "task-1-0"
         assert data["api_key"] == "sess-key-xyz"
 
-        # Verify capacity was acquired
-        mock_acquire.assert_called_once()
-
         # Verify router registration
         mock_register.assert_called_once()
         reg_args = mock_register.call_args
@@ -206,12 +201,11 @@ class TestAdminEndpoints:
         assert reg_args.args[3] == WORKER_ADDR  # worker_addr
 
     @pytest.mark.asyncio
-    @patch(f"{MODULE}.acquire_capacity_in_router", new_callable=AsyncMock)
     @patch(f"{MODULE}.register_session_in_router", new_callable=AsyncMock)
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
     @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
     async def test_start_session_router_registration_fails(
-        self, mock_query_router, mock_forward, mock_register, mock_acquire, client
+        self, mock_query_router, mock_forward, mock_register, client
     ):
         """If router registration fails after session creation → 502."""
         mock_query_router.return_value = WORKER_ADDR
@@ -532,70 +526,17 @@ class TestGrantCapacity:
 
 class TestStartSessionCapacity:
     @pytest.mark.asyncio
-    @patch(f"{MODULE}.acquire_capacity_in_router", new_callable=AsyncMock)
-    async def test_start_session_no_capacity_429(self, mock_acquire, client):
-        """No capacity permits → /rl/start_session returns 429."""
-        mock_acquire.side_effect = CapacityExhaustedError(
-            "No available capacity to start a new session"
-        )
-
-        resp = await client.post(
-            "/rl/start_session",
-            json={"task_id": "task-1"},
-            headers=admin_headers(),
-        )
-        assert resp.status_code == 429
-        assert "capacity" in resp.json()["error"].lower()
-
-    @pytest.mark.asyncio
-    @patch(f"{MODULE}.acquire_capacity_in_router", new_callable=AsyncMock)
-    async def test_start_session_acquire_router_unreachable_502(
-        self, mock_acquire, client
-    ):
-        """Router unreachable during capacity acquire → 502."""
-        mock_acquire.side_effect = RouterUnreachableError(
-            "Router unreachable for acquire_capacity"
-        )
-
-        resp = await client.post(
-            "/rl/start_session",
-            json={"task_id": "task-1"},
-            headers=admin_headers(),
-        )
-        assert resp.status_code == 502
-        assert "Router unreachable" in resp.json()["error"]
-
-    @pytest.mark.asyncio
-    @patch(f"{MODULE}.acquire_capacity_in_router", new_callable=AsyncMock)
-    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
-    async def test_start_session_capacity_acquired_but_no_workers(
-        self, mock_query_router, mock_acquire, client
-    ):
-        """Capacity acquired but no healthy workers → 503.
-
-        acquire succeeds, but query_router fails with no workers.
-        """
-        mock_query_router.side_effect = RouterKeyRejectedError(
-            "No healthy workers", 503
-        )
-
-        resp = await client.post(
-            "/rl/start_session",
-            json={"task_id": "task-1"},
-            headers=admin_headers(),
-        )
-        assert resp.status_code == 503
-        mock_acquire.assert_called_once()
-
-    @pytest.mark.asyncio
-    @patch(f"{MODULE}.acquire_capacity_in_router", new_callable=AsyncMock)
     @patch(f"{MODULE}.register_session_in_router", new_callable=AsyncMock)
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
     @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
-    async def test_start_session_full_flow_with_capacity(
-        self, mock_query_router, mock_forward, mock_register, mock_acquire, client
+    async def test_start_session_full_flow(
+        self, mock_query_router, mock_forward, mock_register, client
     ):
-        """Full flow: acquire capacity → route → forward → register session."""
+        """Full flow: route → forward → register session.
+
+        Gateway no longer manages capacity — that is handled by the
+        router's ``/register_session`` endpoint.
+        """
         mock_query_router.return_value = WORKER_ADDR
         mock_forward.return_value = httpx.Response(
             201, json={"session_id": "t-0", "api_key": "k"}
@@ -608,8 +549,7 @@ class TestStartSessionCapacity:
         )
         assert resp.status_code == 201
 
-        # Verify call order: acquire → route → forward → register
-        mock_acquire.assert_called_once()
+        # Verify call order: route → forward → register
         mock_query_router.assert_called_once()
         mock_forward.assert_called_once()
         mock_register.assert_called_once()

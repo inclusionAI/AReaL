@@ -373,8 +373,8 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
     # NOTE: /grant_capacity has been removed from data proxy. Capacity-based
     # staleness control is now managed at the router level — see
-    # areal.experimental.inference_service.router.app for the /grant_capacity and
-    # /acquire_capacity endpoints.
+    # areal.experimental.inference_service.router.app for the /grant_capacity
+    # endpoint.
 
     # =========================================================================
     # RTensor data storage endpoints

@@ -136,22 +136,24 @@ async def revoke_session_in_router(
 ) -> None:
     """Remove a session from the Router's session registry.
 
-    POST ``{router_addr}/revoke_session/{session_id}`` with admin key auth.
+    POST ``{router_addr}/remove_session`` with admin key auth and
+    JSON body ``{"session_id": ...}``.
     Called after ``/export_trajectories`` to prevent unbounded memory growth.
     Best-effort: logs errors but never raises.
     """
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
-                f"{router_addr}/revoke_session/{session_id}",
+                f"{router_addr}/remove_session",
+                json={"session_id": session_id},
                 headers={"Authorization": f"Bearer {admin_api_key}"},
             )
         if resp.status_code != 200:
             logger.warning(
-                "revoke_session returned %d: %s", resp.status_code, resp.text
+                "remove_session returned %d: %s", resp.status_code, resp.text
             )
     except Exception as exc:
-        logger.warning("Failed to revoke session %s in router: %s", session_id, exc)
+        logger.warning("Failed to remove session %s in router: %s", session_id, exc)
 
 
 async def grant_capacity_in_router(
@@ -179,48 +181,6 @@ async def grant_capacity_in_router(
     except Exception as exc:
         raise RouterUnreachableError(
             f"Failed to grant capacity in router: {exc}"
-        ) from exc
-
-
-class CapacityExhaustedError(Exception):
-    """Router has no capacity permits remaining (HTTP 429)."""
-
-    def __init__(self, detail: str = "No available capacity to start a new session"):
-        super().__init__(detail)
-        self.detail = detail
-
-
-async def acquire_capacity_in_router(
-    router_addr: str,
-    admin_api_key: str,
-    timeout: float,
-) -> None:
-    """Acquire one capacity permit from the Router.
-
-    POST ``{router_addr}/acquire_capacity`` with admin key auth.
-    Raises ``CapacityExhaustedError`` if the router returns 429.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                f"{router_addr}/acquire_capacity",
-                headers={"Authorization": f"Bearer {admin_api_key}"},
-            )
-        if resp.status_code == 429:
-            data = resp.json()
-            raise CapacityExhaustedError(
-                data.get("detail", "No available capacity to start a new session")
-            )
-        resp.raise_for_status()
-    except CapacityExhaustedError:
-        raise
-    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-        raise RouterUnreachableError(
-            f"Router unreachable for acquire_capacity: {exc}"
-        ) from exc
-    except Exception as exc:
-        raise RouterUnreachableError(
-            f"Failed to acquire capacity from router: {exc}"
         ) from exc
 
 

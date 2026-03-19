@@ -414,7 +414,7 @@ class GatewayInferenceController:
 
         for data_proxy_addr in self._data_proxy_addrs:
             resp = requests.post(
-                f"{self._router_addr}/register_worker",
+                f"{self._router_addr}/register",
                 json={"worker_addr": data_proxy_addr},
                 headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
                 timeout=5,

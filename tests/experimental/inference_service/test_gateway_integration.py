@@ -222,7 +222,7 @@ def gateway_stack(sglang_server, model_path):
 
     # --- Register the data proxy worker in the router ---
     resp = httpx.post(
-        f"{router_addr}/register_worker",
+        f"{router_addr}/register",
         json={"worker_addr": data_proxy_addr},
         headers={"Authorization": f"Bearer {ADMIN_KEY}"},
         timeout=5.0,
