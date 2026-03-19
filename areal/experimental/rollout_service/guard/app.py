@@ -382,17 +382,20 @@ def cleanup_forked_children():
     """Clean up all forked child processes."""
     global _forked_children, _forked_children_map
 
+    # Copy the list under lock, then release before blocking kills
+    # to avoid holding the lock for up to 4s × N children.
     with _forked_children_lock:
         if not _forked_children:
             return
-
-        logger.info(f"Cleaning up {len(_forked_children)} forked child processes")
-        for child in _forked_children:
-            try:
-                if child.poll() is None:  # Still running
-                    kill_process_tree(child.pid, timeout=3, graceful=True)
-                    logger.info(f"Killed forked child process {child.pid}")
-            except Exception as e:
-                logger.error(f"Error killing forked child {child.pid}: {e}")
+        children_to_kill = list(_forked_children)
         _forked_children.clear()
         _forked_children_map.clear()
+
+    logger.info(f"Cleaning up {len(children_to_kill)} forked child processes")
+    for child in children_to_kill:
+        try:
+            if child.poll() is None:  # Still running
+                kill_process_tree(child.pid, timeout=3, graceful=True)
+                logger.info(f"Killed forked child process {child.pid}")
+        except Exception as e:
+            logger.error(f"Error killing forked child {child.pid}: {e}")
