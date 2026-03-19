@@ -21,7 +21,6 @@ from areal.experimental.rollout_service.router.state import (
     WorkerRegistry,
 )
 from areal.experimental.rollout_service.router.strategies import (
-    LeastBusyStrategy,
     RoundRobinStrategy,
     get_strategy,
 )
@@ -237,26 +236,13 @@ class TestRoutingStrategies:
         s = RoundRobinStrategy()
         assert s.pick([]) is None
 
-    def test_least_busy_picks_minimum(self):
-        s = LeastBusyStrategy()
-        w1 = WorkerInfo(worker_id="w1", worker_addr=WORKER_1, active_requests=5)
-        w2 = WorkerInfo(worker_id="w2", worker_addr=WORKER_2, active_requests=1)
-        w3 = WorkerInfo(worker_id="w3", worker_addr=WORKER_3, active_requests=3)
-        result = s.pick([w1, w2, w3])
-        assert result is not None
-        assert result.worker_addr == WORKER_2
-
-    def test_least_busy_empty(self):
-        s = LeastBusyStrategy()
-        assert s.pick([]) is None
-
     def test_get_strategy_round_robin(self):
         s = get_strategy("round_robin")
         assert isinstance(s, RoundRobinStrategy)
 
-    def test_get_strategy_least_busy(self):
-        s = get_strategy("least_busy")
-        assert isinstance(s, LeastBusyStrategy)
+    def test_get_strategy_least_busy_not_implemented(self):
+        with pytest.raises(NotImplementedError, match="least_busy"):
+            get_strategy("least_busy")
 
     def test_get_strategy_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown routing strategy"):

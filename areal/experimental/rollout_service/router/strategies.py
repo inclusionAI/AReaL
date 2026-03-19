@@ -29,19 +29,14 @@ class RoundRobinStrategy:
         return w
 
 
-class LeastBusyStrategy:
-    """Pick the worker with the fewest active requests."""
-
-    def pick(self, workers: list[WorkerInfo]) -> WorkerInfo | None:
-        if not workers:
-            return None
-        return min(workers, key=lambda w: w.active_requests)
-
-
 def get_strategy(name: str) -> RoutingStrategy:
     """Instantiate a routing strategy by name."""
     if name == "round_robin":
         return RoundRobinStrategy()
     if name == "least_busy":
-        return LeastBusyStrategy()
+        raise NotImplementedError(
+            "least_busy strategy is not yet implemented: "
+            "active_requests tracking is required but not wired up. "
+            "Use 'round_robin' instead."
+        )
     raise ValueError(f"Unknown routing strategy: {name}")
