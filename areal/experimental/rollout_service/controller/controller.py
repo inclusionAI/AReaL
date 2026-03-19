@@ -795,37 +795,39 @@ class GatewayRolloutController:
 
     def pause(self) -> None:
         """Pause dispatcher + pause all workers."""
+        from areal.infra.utils.concurrent import run_async_task
+
         if self._workflow_executor is not None:
             self._workflow_executor.pause()
-        if self._gateway_addr:
-            for worker_id in self._worker_ids.values():
-                self._gateway_http_post(f"/pause_generation/{worker_id}", {})
+        run_async_task(self.pause_generation)
 
     def resume(self) -> None:
         """Resume all workers + resume dispatcher."""
-        if self._gateway_addr:
-            for worker_id in self._worker_ids.values():
-                self._gateway_http_post(f"/continue_generation/{worker_id}", {})
+        from areal.infra.utils.concurrent import run_async_task
+
+        run_async_task(self.continue_generation)
         if self._workflow_executor is not None:
             self._workflow_executor.resume()
 
     async def pause_generation(self, worker_id: str | None = None) -> None:
         """Pause generation on a specific worker, or all workers if worker_id is None."""
-        if self._gateway_addr:
-            if worker_id is not None:
-                self._gateway_http_post(f"/pause_generation/{worker_id}", {})
-            else:
-                for wid in self._worker_ids.values():
-                    self._gateway_http_post(f"/pause_generation/{wid}", {})
+        if not self._gateway_addr:
+            return
+        if worker_id is not None:
+            await self._async_gateway_http_post(f"/pause_generation/{worker_id}", {})
+        else:
+            for wid in self._worker_ids.values():
+                await self._async_gateway_http_post(f"/pause_generation/{wid}", {})
 
     async def continue_generation(self, worker_id: str | None = None) -> None:
         """Continue generation on a specific worker, or all workers if worker_id is None."""
-        if self._gateway_addr:
-            if worker_id is not None:
-                self._gateway_http_post(f"/continue_generation/{worker_id}", {})
-            else:
-                for wid in self._worker_ids.values():
-                    self._gateway_http_post(f"/continue_generation/{wid}", {})
+        if not self._gateway_addr:
+            return
+        if worker_id is not None:
+            await self._async_gateway_http_post(f"/continue_generation/{worker_id}", {})
+        else:
+            for wid in self._worker_ids.values():
+                await self._async_gateway_http_post(f"/continue_generation/{wid}", {})
 
     # -- Weight updates (not yet implemented in gateway) --------------------
 
@@ -1131,7 +1133,11 @@ class GatewayRolloutController:
             )
 
     def _gateway_http_post(self, endpoint: str, payload: dict[str, Any]) -> None:
-        """Make an HTTP POST to the gateway with admin auth."""
+        """Make a synchronous HTTP POST to the gateway with admin auth.
+
+        Use ``_async_gateway_http_post`` from async contexts to avoid blocking
+        the event loop.
+        """
         import requests
 
         url = f"{self._gateway_addr}{endpoint}"
@@ -1147,4 +1153,28 @@ class GatewayRolloutController:
                     "Gateway %s returned %s: %s", endpoint, resp.status_code, resp.text
                 )
         except requests.RequestException as exc:
+            logger.error("Failed to POST %s: %s", endpoint, exc)
+
+    async def _async_gateway_http_post(
+        self, endpoint: str, payload: dict[str, Any]
+    ) -> None:
+        """Make a non-blocking HTTP POST to the gateway with admin auth."""
+        import httpx
+
+        url = f"{self._gateway_addr}{endpoint}"
+        try:
+            async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
+                resp = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+                )
+                if resp.status_code >= 400:
+                    logger.warning(
+                        "Gateway %s returned %s: %s",
+                        endpoint,
+                        resp.status_code,
+                        resp.text,
+                    )
+        except httpx.HTTPError as exc:
             logger.error("Failed to POST %s: %s", endpoint, exc)
