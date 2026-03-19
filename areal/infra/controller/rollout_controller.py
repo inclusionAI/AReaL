@@ -865,7 +865,7 @@ class RolloutController:
             workflow_kwargs = {}
 
         # Assign deterministic rid_base for DP attention cache affinity.
-        RolloutIdBuilder.fill_rid_base(data)
+        RolloutIdBuilder.fill_rid_base(data, global_step=self.get_version())
 
         # NOTE: RolloutController does not support `should_accept_fn`
         # If the workflow's result should be aborted,
@@ -950,7 +950,7 @@ class RolloutController:
             for data in cycle_dataloader(dataloader):
                 for item in data:
                     # Assign deterministic rid_base for DP attention cache affinity.
-                    RolloutIdBuilder.fill_rid_base(item)
+                    RolloutIdBuilder.fill_rid_base(item, global_step=self.get_version())
                     yield _RemoteRolloutTaskInput(
                         data=item,
                         workflow=workflow_str,

@@ -3,9 +3,9 @@
 Ensures multi-turn conversation requests route to the same DP rank,
 enabling prefix cache hits in SGLang's DP attention mode.
 
-rid format: {qid}-{cnt}-r-{round_idx}_{sample_idx}
-rid_base:   {qid}-{cnt}
-routing_key (parse_rid_base): {qid}-{cnt}_{sample_idx}
+rid format: {qid}-{step}-{dup_cnt}-r-{round_idx}_{sample_idx}
+rid_base:   {qid}-{step}-{dup_cnt}
+routing_key (parse_routing_key): {qid}-{step}-{dup_cnt}_{sample_idx}
 """
 
 from __future__ import annotations
@@ -28,17 +28,18 @@ class RolloutIdBuilder:
     EXT_QID_FIELD = "_ext_query_id"
     EXT_QID_IDX_FIELD = "_ext_query_id_idx"
 
-    # Per-qid global counter (never resets across steps).
+    # Per-(qid, step) dup counter. Resets implicitly when a new step appears.
     _qid_counter: ClassVar[defaultdict[str, int]] = defaultdict(int)
     _counter_lock: ClassVar[threading.Lock] = threading.Lock()
 
     @classmethod
-    def fill_rid_base(cls, data_item: dict) -> None:
+    def fill_rid_base(cls, data_item: dict, global_step: int = 0) -> None:
         """Assign a deterministic rid_base to a data item.
 
-        Format: "{qid}-{cnt}" where:
+        Format: "{qid}-{step}-{dup_cnt}" where:
         - qid: extracted from query_id/qid/id/instance_id, or hash(prompt)
-        - cnt: global counter for this qid (monotonically increasing)
+        - step: training global step (version)
+        - dup_cnt: per-(qid, step) duplicate counter
         """
         qid = None
         for key in ("query_id", "qid", "id", "instance_id"):
@@ -49,10 +50,12 @@ class RolloutIdBuilder:
             content = str(data_item.get("prompt", data_item.get("question", "")))
             qid = hashlib.sha256(content.encode()).hexdigest()[:16]
 
+        # Counter key includes step so dup_cnt resets per step.
+        counter_key = f"{qid}@{global_step}"
         with cls._counter_lock:
-            cnt = cls._qid_counter[qid]
-            cls._qid_counter[qid] += 1
-        data_item[cls.EXT_QID_FIELD] = [f"{qid}-{cnt}"]
+            dup_cnt = cls._qid_counter[counter_key]
+            cls._qid_counter[counter_key] += 1
+        data_item[cls.EXT_QID_FIELD] = [f"{qid}-{global_step}-{dup_cnt}"]
 
     @classmethod
     def get_rid_base(cls, data_item: dict) -> str:
@@ -85,8 +88,8 @@ class RolloutIdBuilder:
     def parse_routing_key(cls, rid: str) -> str:
         """Extract routing key (strip round part, keep sample_idx).
 
-        "django-123-0-r-2_0" → "django-123-0_0"
-        "django-123-0_0"     → "django-123-0_0" (no round, unchanged)
+        "django-123-5-0-r-2_0" → "django-123-5-0_0"
+        "django-123-5-0_0"     → "django-123-5-0_0" (no round, unchanged)
         """
         parts = rid.rsplit("-r-", 1)
         if len(parts) == 2:

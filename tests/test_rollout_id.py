@@ -16,30 +16,44 @@ def reset_counter():
 class TestFillRidBase:
     def test_basic_query_id(self):
         data = {"query_id": "gsm8k-42", "prompt": "What is 2+2?"}
+        RolloutIdBuilder.fill_rid_base(data, global_step=5)
+        assert data[RolloutIdBuilder.EXT_QID_FIELD] == ["gsm8k-42-5-0"]
+
+    def test_default_step_zero(self):
+        data = {"query_id": "q1"}
         RolloutIdBuilder.fill_rid_base(data)
-        assert data[RolloutIdBuilder.EXT_QID_FIELD] == ["gsm8k-42-0"]
+        assert data[RolloutIdBuilder.EXT_QID_FIELD] == ["q1-0-0"]
 
     def test_counter_increments(self):
         data1 = {"query_id": "q1"}
         data2 = {"query_id": "q1"}
         data3 = {"query_id": "q1"}
-        RolloutIdBuilder.fill_rid_base(data1)
-        RolloutIdBuilder.fill_rid_base(data2)
-        RolloutIdBuilder.fill_rid_base(data3)
-        assert data1[RolloutIdBuilder.EXT_QID_FIELD] == ["q1-0"]
-        assert data2[RolloutIdBuilder.EXT_QID_FIELD] == ["q1-1"]
-        assert data3[RolloutIdBuilder.EXT_QID_FIELD] == ["q1-2"]
+        RolloutIdBuilder.fill_rid_base(data1, global_step=3)
+        RolloutIdBuilder.fill_rid_base(data2, global_step=3)
+        RolloutIdBuilder.fill_rid_base(data3, global_step=3)
+        assert data1[RolloutIdBuilder.EXT_QID_FIELD] == ["q1-3-0"]
+        assert data2[RolloutIdBuilder.EXT_QID_FIELD] == ["q1-3-1"]
+        assert data3[RolloutIdBuilder.EXT_QID_FIELD] == ["q1-3-2"]
+
+    def test_counter_resets_per_step(self):
+        """dup_cnt resets when global_step changes."""
+        d1 = {"query_id": "q1"}
+        d2 = {"query_id": "q1"}
+        RolloutIdBuilder.fill_rid_base(d1, global_step=0)
+        RolloutIdBuilder.fill_rid_base(d2, global_step=1)
+        assert d1[RolloutIdBuilder.EXT_QID_FIELD] == ["q1-0-0"]
+        assert d2[RolloutIdBuilder.EXT_QID_FIELD] == ["q1-1-0"]  # dup_cnt resets
 
     def test_different_qids_independent_counters(self):
         data_a = {"query_id": "a"}
         data_b = {"query_id": "b"}
         data_a2 = {"query_id": "a"}
-        RolloutIdBuilder.fill_rid_base(data_a)
-        RolloutIdBuilder.fill_rid_base(data_b)
-        RolloutIdBuilder.fill_rid_base(data_a2)
-        assert data_a[RolloutIdBuilder.EXT_QID_FIELD] == ["a-0"]
-        assert data_b[RolloutIdBuilder.EXT_QID_FIELD] == ["b-0"]
-        assert data_a2[RolloutIdBuilder.EXT_QID_FIELD] == ["a-1"]
+        RolloutIdBuilder.fill_rid_base(data_a, global_step=0)
+        RolloutIdBuilder.fill_rid_base(data_b, global_step=0)
+        RolloutIdBuilder.fill_rid_base(data_a2, global_step=0)
+        assert data_a[RolloutIdBuilder.EXT_QID_FIELD] == ["a-0-0"]
+        assert data_b[RolloutIdBuilder.EXT_QID_FIELD] == ["b-0-0"]
+        assert data_a2[RolloutIdBuilder.EXT_QID_FIELD] == ["a-0-1"]
 
     def test_fallback_keys(self):
         """Test qid extraction from different key names."""
@@ -47,30 +61,31 @@ class TestFillRidBase:
             RolloutIdBuilder.reset()
             data = {key: "test-val"}
             RolloutIdBuilder.fill_rid_base(data)
-            assert data[RolloutIdBuilder.EXT_QID_FIELD] == ["test-val-0"]
+            assert data[RolloutIdBuilder.EXT_QID_FIELD] == ["test-val-0-0"]
 
     def test_fallback_hash(self):
         """When no ID key exists, hash the prompt."""
         data = {"prompt": "What is 2+2?"}
-        RolloutIdBuilder.fill_rid_base(data)
+        RolloutIdBuilder.fill_rid_base(data, global_step=7)
         rid_base = data[RolloutIdBuilder.EXT_QID_FIELD][0]
-        # Should be "{16-char-hash}-0"
-        parts = rid_base.rsplit("-", 1)
-        assert parts[1] == "0"
-        assert len(parts[0]) == 16
+        # Format: "{16-char-hash}-{step}-{dup_cnt}"
+        parts = rid_base.split("-")
+        assert len(parts[0]) == 16  # hash prefix
+        assert parts[1] == "7"  # step
+        assert parts[2] == "0"  # dup_cnt
 
     def test_priority_order(self):
         """query_id takes priority over qid, id, instance_id."""
         data = {"query_id": "winner", "qid": "loser", "id": "also-loser"}
-        RolloutIdBuilder.fill_rid_base(data)
-        assert data[RolloutIdBuilder.EXT_QID_FIELD] == ["winner-0"]
+        RolloutIdBuilder.fill_rid_base(data, global_step=1)
+        assert data[RolloutIdBuilder.EXT_QID_FIELD] == ["winner-1-0"]
 
 
 class TestGetRidBase:
     def test_returns_rid_base(self):
         data = {"query_id": "q1"}
-        RolloutIdBuilder.fill_rid_base(data)
-        assert RolloutIdBuilder.get_rid_base(data) == "q1-0"
+        RolloutIdBuilder.fill_rid_base(data, global_step=2)
+        assert RolloutIdBuilder.get_rid_base(data) == "q1-2-0"
 
     def test_returns_uuid_when_missing(self):
         data = {}
@@ -81,18 +96,18 @@ class TestGetRidBase:
 
 class TestBuildRid:
     def test_without_round(self):
-        rid = RolloutIdBuilder.build_rid("django-123-0", sample_idx=0)
-        assert rid == "django-123-0_0"
+        rid = RolloutIdBuilder.build_rid("django-123-5-0", sample_idx=0)
+        assert rid == "django-123-5-0_0"
 
     def test_with_round(self):
-        rid = RolloutIdBuilder.build_rid("django-123-0", sample_idx=0, round_idx=2)
-        assert rid == "django-123-0-r-2_0"
+        rid = RolloutIdBuilder.build_rid("django-123-5-0", sample_idx=0, round_idx=2)
+        assert rid == "django-123-5-0-r-2_0"
 
     def test_different_samples(self):
-        rid0 = RolloutIdBuilder.build_rid("q-0", sample_idx=0, round_idx=1)
-        rid1 = RolloutIdBuilder.build_rid("q-0", sample_idx=1, round_idx=1)
-        assert rid0 == "q-0-r-1_0"
-        assert rid1 == "q-0-r-1_1"
+        rid0 = RolloutIdBuilder.build_rid("q-0-0", sample_idx=0, round_idx=1)
+        rid1 = RolloutIdBuilder.build_rid("q-0-0", sample_idx=1, round_idx=1)
+        assert rid0 == "q-0-0-r-1_0"
+        assert rid1 == "q-0-0-r-1_1"
         assert rid0 != rid1
 
 
@@ -125,25 +140,28 @@ class TestInferRoundIdx:
 class TestParseRoutingKey:
     def test_with_round(self):
         assert (
-            RolloutIdBuilder.parse_routing_key("django-123-0-r-2_0") == "django-123-0_0"
+            RolloutIdBuilder.parse_routing_key("django-123-5-0-r-2_0")
+            == "django-123-5-0_0"
         )
 
     def test_without_round(self):
-        assert RolloutIdBuilder.parse_routing_key("django-123-0_0") == "django-123-0_0"
+        assert (
+            RolloutIdBuilder.parse_routing_key("django-123-5-0_0") == "django-123-5-0_0"
+        )
 
     def test_different_rounds_same_routing_key(self):
         """Different rounds should produce the same routing key."""
-        key0 = RolloutIdBuilder.parse_routing_key("q-0-r-0_0")
-        key1 = RolloutIdBuilder.parse_routing_key("q-0-r-1_0")
-        key2 = RolloutIdBuilder.parse_routing_key("q-0-r-5_0")
-        assert key0 == key1 == key2 == "q-0_0"
+        key0 = RolloutIdBuilder.parse_routing_key("q-5-0-r-0_0")
+        key1 = RolloutIdBuilder.parse_routing_key("q-5-0-r-1_0")
+        key2 = RolloutIdBuilder.parse_routing_key("q-5-0-r-5_0")
+        assert key0 == key1 == key2 == "q-5-0_0"
 
     def test_different_samples_different_routing_key(self):
-        key0 = RolloutIdBuilder.parse_routing_key("q-0-r-1_0")
-        key1 = RolloutIdBuilder.parse_routing_key("q-0-r-1_1")
+        key0 = RolloutIdBuilder.parse_routing_key("q-5-0-r-1_0")
+        key1 = RolloutIdBuilder.parse_routing_key("q-5-0-r-1_1")
         assert key0 != key1
-        assert key0 == "q-0_0"
-        assert key1 == "q-0_1"
+        assert key0 == "q-5-0_0"
+        assert key1 == "q-5-0_1"
 
     def test_plain_uuid(self):
         """UUID-style rid should pass through unchanged."""
@@ -157,23 +175,23 @@ class TestComputeDpRank:
 
     def test_deterministic(self):
         """Same rid should always produce the same rank."""
-        rid = "django-123-0-r-2_0"
+        rid = "django-123-5-0-r-2_0"
         rank1 = RolloutIdBuilder.compute_dp_rank(rid, dp_size=4)
         rank2 = RolloutIdBuilder.compute_dp_rank(rid, dp_size=4)
         assert rank1 == rank2
 
     def test_same_routing_key_same_rank(self):
         """Different rounds of the same episode → same DP rank."""
-        rank_r0 = RolloutIdBuilder.compute_dp_rank("q-0-r-0_0", dp_size=4)
-        rank_r1 = RolloutIdBuilder.compute_dp_rank("q-0-r-1_0", dp_size=4)
-        rank_r2 = RolloutIdBuilder.compute_dp_rank("q-0-r-2_0", dp_size=4)
+        rank_r0 = RolloutIdBuilder.compute_dp_rank("q-5-0-r-0_0", dp_size=4)
+        rank_r1 = RolloutIdBuilder.compute_dp_rank("q-5-0-r-1_0", dp_size=4)
+        rank_r2 = RolloutIdBuilder.compute_dp_rank("q-5-0-r-2_0", dp_size=4)
         assert rank_r0 == rank_r1 == rank_r2
 
     def test_rank_in_range(self):
         """Rank should always be in [0, dp_size)."""
         for dp_size in (2, 4, 8):
             for i in range(100):
-                rank = RolloutIdBuilder.compute_dp_rank(f"q-{i}-0_0", dp_size=dp_size)
+                rank = RolloutIdBuilder.compute_dp_rank(f"q-{i}-0-0_0", dp_size=dp_size)
                 assert 0 <= rank < dp_size
 
     def test_distribution(self):
@@ -181,7 +199,7 @@ class TestComputeDpRank:
         dp_size = 4
         counts = [0] * dp_size
         for i in range(1000):
-            rank = RolloutIdBuilder.compute_dp_rank(f"q-{i}-0_0", dp_size=dp_size)
+            rank = RolloutIdBuilder.compute_dp_rank(f"q-{i}-0-0_0", dp_size=dp_size)
             counts[rank] += 1
         # Each bucket should get roughly 250 ± 100
         for c in counts:
@@ -194,8 +212,9 @@ class TestEndToEnd:
     def test_multi_turn_affinity(self):
         """Simulate a multi-turn agent episode. All rounds should route to same DP rank."""
         data = {"instance_id": "swe-bench-123"}
-        RolloutIdBuilder.fill_rid_base(data)
+        RolloutIdBuilder.fill_rid_base(data, global_step=10)
         rid_base = RolloutIdBuilder.get_rid_base(data)
+        assert rid_base == "swe-bench-123-10-0"
 
         dp_size = 4
         ranks = []
@@ -213,13 +232,22 @@ class TestEndToEnd:
         assert len(set(ranks)) == 1
 
     def test_different_episodes_can_differ(self):
-        """Different episodes of the same qid get different rid_base."""
+        """Different episodes of the same qid (same step) get different dup_cnt."""
         data1 = {"query_id": "math-1"}
         data2 = {"query_id": "math-1"}
-        RolloutIdBuilder.fill_rid_base(data1)
-        RolloutIdBuilder.fill_rid_base(data2)
+        RolloutIdBuilder.fill_rid_base(data1, global_step=5)
+        RolloutIdBuilder.fill_rid_base(data2, global_step=5)
         rid_base1 = RolloutIdBuilder.get_rid_base(data1)
         rid_base2 = RolloutIdBuilder.get_rid_base(data2)
-        assert rid_base1 == "math-1-0"
-        assert rid_base2 == "math-1-1"
+        assert rid_base1 == "math-1-5-0"
+        assert rid_base2 == "math-1-5-1"
         assert rid_base1 != rid_base2
+
+    def test_cross_step_same_qid(self):
+        """Same qid in different steps gets independent dup_cnt."""
+        d1 = {"query_id": "q1"}
+        d2 = {"query_id": "q1"}
+        RolloutIdBuilder.fill_rid_base(d1, global_step=0)
+        RolloutIdBuilder.fill_rid_base(d2, global_step=1)
+        assert RolloutIdBuilder.get_rid_base(d1) == "q1-0-0"
+        assert RolloutIdBuilder.get_rid_base(d2) == "q1-1-0"
