@@ -6,8 +6,6 @@ from collections.abc import AsyncGenerator, Iterable, Mapping
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, cast, overload
 
-from pydantic import BaseModel
-
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
 from openai.resources.chat.completions.completions import (
@@ -48,6 +46,7 @@ from openai.types.responses.response_usage import (
 )
 from openai.types.responses.tool_param import ToolParam
 from openai.types.shared_params.metadata import Metadata
+from pydantic import BaseModel
 
 from areal.api import ModelRequest, ModelResponse
 from areal.api.cli_args import GenerationHyperparameters
