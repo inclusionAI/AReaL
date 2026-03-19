@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 
 from werkzeug.serving import make_server
 
@@ -89,10 +90,18 @@ def main():
         f"Starting RPCGuard on {guard_app._server_host}:{server_port} for worker {worker_id}"
     )
 
+    def _sigterm_handler(signum, frame):
+        """Convert SIGTERM to SystemExit so the finally block runs."""
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logger.info("Shutting down RPCGuard")
+        logger.info("Shutting down RPCGuard (SIGINT)")
+    except SystemExit:
+        logger.info("Shutting down RPCGuard (SIGTERM)")
     finally:
         guard_app.cleanup_forked_children()
         server.shutdown()
