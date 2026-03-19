@@ -407,7 +407,7 @@ def grpo_loss_fn(
     entropy = entropy.detach()
 
 
-    # Apply importance ratio filtering if 
+    # Apply importance ratio filtering
     loss_mask, ratio_filtered_fraction = _apply_importance_ratio_token_filter(
         logprobs=logprobs,
         old_logp=old_logp,
