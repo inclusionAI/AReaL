@@ -20,6 +20,7 @@ def main() -> None:
     mount_bridge(
         app,
         OpenResponsesBridge(router_addr=args.router_addr, admin_key=args.admin_key),
+        admin_key=args.admin_key,
     )
     uvicorn.run(app, host=args.host, port=args.port)
 

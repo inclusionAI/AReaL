@@ -73,7 +73,7 @@ async def _wait_healthy(url: str, timeout: float = 10.0) -> None:
     raise TimeoutError(f"Service at {url} did not become healthy")
 
 
-async def run_task(gateway_addr: str, task, domain: str) -> float:
+async def run_task(gateway_addr: str, task, domain: str, admin_key: str) -> float:
     """Run a single tau2 task. Returns the reward."""
     from tau2.data_model.message import AssistantMessage, UserMessage
     from tau2.data_model.simulation import SimulationRun, TerminationReason
@@ -102,6 +102,7 @@ async def run_task(gateway_addr: str, task, domain: str) -> float:
                     "model": "tau2-agent",
                     "user": session_key,
                 },
+                headers={"Authorization": f"Bearer {admin_key}"},
             )
             data = resp.json()
 
@@ -167,7 +168,7 @@ async def run_task(gateway_addr: str, task, domain: str) -> float:
     return reward
 
 
-async def run_demo(gateway_addr: str, domain: str, full: bool) -> None:
+async def run_demo(gateway_addr: str, domain: str, full: bool, admin_key: str) -> None:
     from tau2.registry import registry
 
     print(f"\n{'=' * 60}")
@@ -185,7 +186,7 @@ async def run_demo(gateway_addr: str, domain: str, full: bool) -> None:
 
     rewards = []
     for task in tasks:
-        reward = await run_task(gateway_addr, task, domain)
+        reward = await run_task(gateway_addr, task, domain, admin_key=admin_key)
         rewards.append((task.id, reward))
 
     print(f"\n{'=' * 60}")
@@ -265,6 +266,7 @@ def main() -> None:
     mount_bridge(
         gw_app,
         OpenResponsesBridge(router_addr=router_addr, admin_key=admin_key),
+        admin_key=admin_key,
     )
     _start_in_thread(gw_app, GATEWAY_PORT, "gateway")
 
@@ -287,7 +289,9 @@ def main() -> None:
     print("All services started.")
 
     # 6. Run demo
-    asyncio.run(run_demo(gateway_addr, domain=domain, full=args.full))
+    asyncio.run(
+        run_demo(gateway_addr, domain=domain, full=args.full, admin_key=admin_key)
+    )
 
 
 if __name__ == "__main__":

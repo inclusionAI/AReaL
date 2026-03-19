@@ -6,7 +6,7 @@ import json
 import traceback
 
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 
 from areal.utils import logging
 
@@ -78,7 +78,10 @@ def create_gateway_app(router_addr: str, admin_key: str = DEFAULT_ADMIN_KEY) -> 
         return {"status": "ok"}
 
     @app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
+    async def websocket_endpoint(websocket: WebSocket, token: str = Query(default="")):
+        if token != admin_key:
+            await websocket.close(code=4001, reason="Invalid admin key")
+            return
         await websocket.accept()
         logger.info("WebSocket connection accepted")
 

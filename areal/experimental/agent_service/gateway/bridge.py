@@ -7,12 +7,12 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from areal.utils import logging
 
-from ..auth import DEFAULT_ADMIN_KEY, admin_headers
+from ..auth import DEFAULT_ADMIN_KEY, admin_headers, make_admin_dependency
 from ..protocol import generate_run_id
 
 logger = logging.getLogger("AgentBridge")
@@ -152,8 +152,14 @@ class OpenResponsesBridge(AgentBridge):
         return f"agent:{model or 'default'}:{uuid.uuid4().hex[:8]}"
 
 
-def mount_bridge(app: FastAPI, bridge: OpenResponsesBridge) -> None:
-    @app.post("/v1/responses")
+def mount_bridge(
+    app: FastAPI,
+    bridge: OpenResponsesBridge,
+    admin_key: str = DEFAULT_ADMIN_KEY,
+) -> None:
+    auth = make_admin_dependency(admin_key)
+
+    @app.post("/v1/responses", dependencies=[Depends(auth)])
     async def responses_endpoint(request: Request):
         return await bridge.handle_request(request)
 
