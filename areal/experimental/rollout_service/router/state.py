@@ -116,6 +116,12 @@ class CapacityManager:
             self._capacity -= 1
             return True
 
+    async def release(self) -> int:
+        """Return one previously acquired permit. Returns the new capacity value."""
+        async with self._lock:
+            self._capacity += 1
+            return self._capacity
+
     async def get_capacity(self) -> int:
         """Return current capacity (for health / debug endpoints)."""
         async with self._lock:

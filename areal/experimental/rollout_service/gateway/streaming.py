@@ -176,6 +176,31 @@ async def acquire_capacity_in_router(
         ) from exc
 
 
+async def release_capacity_in_router(
+    router_addr: str,
+    admin_api_key: str,
+    timeout: float,
+) -> None:
+    """Return one capacity permit to the Router.
+
+    POST ``{router_addr}/release_capacity`` with admin key auth.
+    Best-effort: logs errors but never raises, since the caller is
+    already handling a failure path.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{router_addr}/release_capacity",
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        if resp.status_code != 200:
+            logger.warning(
+                "release_capacity returned %d: %s", resp.status_code, resp.text
+            )
+    except Exception as exc:
+        logger.warning("Failed to release capacity in router: %s", exc)
+
+
 async def get_all_worker_addrs(
     router_addr: str,
     admin_api_key: str,

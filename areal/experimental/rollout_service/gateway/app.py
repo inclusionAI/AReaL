@@ -29,6 +29,7 @@ from areal.experimental.rollout_service.gateway.streaming import (
     grant_capacity_in_router,
     query_router,
     register_session_in_router,
+    release_capacity_in_router,
     resolve_worker_addr,
 )
 from areal.utils import logging
@@ -124,48 +125,66 @@ def create_app(config: GatewayConfig) -> FastAPI:
         except (CapacityExhaustedError, RouterUnreachableError) as exc:
             return _router_error_response(exc)
 
+        # After acquiring capacity, any failure must release the permit
+        # to avoid starving the system.
+        session_created = False
         try:
-            worker_addr = await query_router(
-                config.router_addr, token, "/rl/start_session", config.router_timeout
-            )
-        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
-            return _router_error_response(exc)
-
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
-
-        resp = await forward_request(
-            f"{worker_addr}/rl/start_session", body, headers, config.forward_timeout
-        )
-
-        # Intercept: if data proxy returned 201, extract session info and register
-        if resp.status_code == 201:
             try:
-                resp_data = resp.json()
-                session_api_key = resp_data.get("api_key")
-                session_id = resp_data.get("session_id")
-                if session_api_key and session_id:
-                    await register_session_in_router(
-                        config.router_addr,
-                        session_api_key,
-                        session_id,
-                        worker_addr,
-                        config.router_timeout,
-                    )
-            except Exception as exc:
-                logger.error("Failed to register session in router: %s", exc)
-                return JSONResponse(
-                    {
-                        "error": f"Session created on worker but router registration failed: {exc}"
-                    },
-                    status_code=502,
+                worker_addr = await query_router(
+                    config.router_addr,
+                    token,
+                    "/rl/start_session",
+                    config.router_timeout,
                 )
+            except (RouterUnreachableError, RouterKeyRejectedError) as exc:
+                return _router_error_response(exc)
 
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type=resp.headers.get("content-type"),
-        )
+            body = await request.body()
+            headers = _forwarding_headers(dict(request.headers))
+
+            resp = await forward_request(
+                f"{worker_addr}/rl/start_session",
+                body,
+                headers,
+                config.forward_timeout,
+            )
+
+            # Intercept: if data proxy returned 201, extract session info and register
+            if resp.status_code == 201:
+                session_created = True
+                try:
+                    resp_data = resp.json()
+                    session_api_key = resp_data.get("api_key")
+                    session_id = resp_data.get("session_id")
+                    if session_api_key and session_id:
+                        await register_session_in_router(
+                            config.router_addr,
+                            session_api_key,
+                            session_id,
+                            worker_addr,
+                            config.router_timeout,
+                        )
+                except Exception as exc:
+                    logger.error("Failed to register session in router: %s", exc)
+                    return JSONResponse(
+                        {
+                            "error": f"Session created on worker but router registration failed: {exc}"
+                        },
+                        status_code=502,
+                    )
+
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type"),
+            )
+        finally:
+            if not session_created:
+                await release_capacity_in_router(
+                    config.router_addr,
+                    config.admin_api_key,
+                    config.router_timeout,
+                )
 
     # =========================================================================
     # POST /rl/end_session — session key ONLY

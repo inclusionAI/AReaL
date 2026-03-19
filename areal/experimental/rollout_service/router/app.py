@@ -324,4 +324,16 @@ def create_app(config: RouterConfig) -> FastAPI:
             )
         return {"status": "ok"}
 
+    @app.post("/release_capacity")
+    async def release_capacity(request: Request):
+        """Return one previously acquired capacity permit.
+
+        Called by the gateway when ``/rl/start_session`` fails after
+        ``/acquire_capacity`` succeeded, to avoid leaking permits.
+        """
+        _require_admin_key(request, config.admin_api_key)
+        new_capacity = await capacity_manager.release()
+        logger.info("Capacity released — now %d", new_capacity)
+        return {"status": "ok", "capacity": new_capacity}
+
     return app
