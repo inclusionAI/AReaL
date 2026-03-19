@@ -66,7 +66,12 @@ class SGLangBackend:
             "sampling_params": sample_params,
             "return_logprob": True,
             "stream": False,
+            "rid": req.rid,
         }
+
+        # DP attention: pass data_parallel_rank for cache affinity routing.
+        if req.data_parallel_rank is not None:
+            payload["data_parallel_rank"] = req.data_parallel_rank
 
         # Add return_routed_experts to payload if set
         if req.metadata.get("return_routed_experts", False):

@@ -27,6 +27,9 @@ class StartSessionRequest(BaseModel):
 
     task_id: str
     api_key: str | None = None  # Reuse a previously-issued key (refresh)
+    # DP attention: deterministic rid for cache affinity routing.
+    rid_base: str | None = None
+    sample_idx: int = 0
 
 
 class StartSessionResponse(BaseModel):
@@ -65,11 +68,18 @@ class ExportTrajectoriesResponse(BaseModel):
 class SessionData:
     """Data associated with a single RL session."""
 
-    def __init__(self, session_id: str):
+    def __init__(
+        self,
+        session_id: str,
+        rid_base: str | None = None,
+        sample_idx: int = 0,
+    ):
         self.session_id = session_id
 
         self._completed = False
         self._completions = InteractionCache()
+        self._completions.rid_base = rid_base
+        self._completions.sample_idx = sample_idx
         self._completed_event = threading.Event()
         self._start_time = time.time()
         self._last_access_time = time.time()

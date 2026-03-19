@@ -33,6 +33,10 @@ class ModelRequest:
     # tokenizer is used for encode-decode in the inference engine
     tokenizer: PreTrainedTokenizerFast | None = None
 
+    # DP attention: specify SGLang internal DP rank for cache affinity routing.
+    # None means let SGLang's load balancer decide.
+    data_parallel_rank: int | None = None
+
     # vlm
     image_data: list[str] | None = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
@@ -47,6 +51,7 @@ class ModelRequest:
             gconfig=self.gconfig.new(),
             metadata=self.metadata.copy(),
             tokenizer=self.tokenizer,
+            data_parallel_rank=self.data_parallel_rank,
             image_data=self.image_data.copy() if self.image_data is not None else None,
             processor=self.processor,
             vision_msg_vllm=(

@@ -83,6 +83,8 @@ class OpenAIProxyClient:
         base_url: str,
         task_id: str,
         admin_api_key: str,
+        rid_base: str | None = None,
+        sample_idx: int = 0,
     ):
         self._session = session
         self.base_url = ensure_end_with_slash(base_url)
@@ -90,6 +92,9 @@ class OpenAIProxyClient:
         self._admin_api_key = admin_api_key
         self.session_id: str | None = None
         self._session_api_key: str | None = None
+        # DP attention: deterministic rid for cache affinity routing.
+        self.rid_base = rid_base
+        self.sample_idx = sample_idx
 
     @property
     def session_api_key(self) -> str:
@@ -185,7 +190,11 @@ class OpenAIProxyClient:
         data = await _start_session(
             self._session,
             url=f"{self.base_url}{RL_START_SESSION_PATHNAME}",
-            payload=StartSessionRequest(task_id=self.task_id),
+            payload=StartSessionRequest(
+                task_id=self.task_id,
+                rid_base=self.rid_base,
+                sample_idx=self.sample_idx,
+            ),
             headers=self._admin_auth_headers(),
         )
         self.session_id = data["session_id"]

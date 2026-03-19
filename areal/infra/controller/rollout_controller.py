@@ -37,6 +37,7 @@ from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
+from areal.utils.rollout_id import RolloutIdBuilder
 
 from ..staleness_manager import StalenessManager
 from ..workflow_executor import BatchTaskDispatcher, TaskIdGenerator
@@ -863,6 +864,9 @@ class RolloutController:
         if workflow_kwargs is None:
             workflow_kwargs = {}
 
+        # Assign deterministic rid_base for DP attention cache affinity.
+        RolloutIdBuilder.fill_rid_base(data)
+
         # NOTE: RolloutController does not support `should_accept_fn`
         # If the workflow's result should be aborted,
         # `arun_episode` should return None instead.
@@ -945,6 +949,8 @@ class RolloutController:
         def task_input_generator():
             for data in cycle_dataloader(dataloader):
                 for item in data:
+                    # Assign deterministic rid_base for DP attention cache affinity.
+                    RolloutIdBuilder.fill_rid_base(item)
                     yield _RemoteRolloutTaskInput(
                         data=item,
                         workflow=workflow_str,

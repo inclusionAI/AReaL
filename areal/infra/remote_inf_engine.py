@@ -46,6 +46,7 @@ from areal.utils.data import concat_padded_tensors
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
+from areal.utils.rollout_id import RolloutIdBuilder
 
 from .workflow_executor import WorkflowExecutor
 
@@ -750,17 +751,30 @@ class RemoteInfEngine(InferenceEngine):
         accumulated_versions = []
         accumulated_routed_experts: list[np.ndarray] = []
 
-        # A single "rid" shares the same server to allow KV cache reuse
-        if req.rid in self.rid_to_address:
-            server_addr = self.rid_to_address[req.rid]
+        # Use routing_key (rid_base + sample_idx) for server affinity,
+        # so all rounds of the same episode route to the same server.
+        routing_key = RolloutIdBuilder.parse_routing_key(req.rid)
+        if routing_key in self.rid_to_address:
+            server_addr = self.rid_to_address[routing_key]
+            logger.debug(
+                "Server affinity hit: routing_key=%s → %s (dp_rank=%s)",
+                routing_key,
+                server_addr,
+                req.data_parallel_rank,
+            )
         else:
             server_addr = self.choose_server()
             if len(self.rid_queue) >= RID_CACHE_SIZE:
                 # Remove the oldest entry if cache is full
-                oldest_rid = self.rid_queue.pop(0)
-                self.rid_to_address.pop(oldest_rid, None)
-            self.rid_to_address[req.rid] = server_addr
-            self.rid_queue.append(req.rid)
+                oldest_key = self.rid_queue.pop(0)
+                self.rid_to_address.pop(oldest_key, None)
+            self.rid_to_address[routing_key] = server_addr
+            self.rid_queue.append(routing_key)
+            logger.debug(
+                "Server affinity miss: routing_key=%s → %s (new)",
+                routing_key,
+                server_addr,
+            )
 
         # Get the shared session from workflow context
         session = await workflow_context.get_aiohttp_session()

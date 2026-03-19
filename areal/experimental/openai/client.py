@@ -55,6 +55,7 @@ from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
+from areal.utils.rollout_id import RolloutIdBuilder
 
 if TYPE_CHECKING:
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
@@ -227,6 +228,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         reasoning_parser: str,
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
+        sglang_dp_size: int = 1,
     ):
         super().__init__(client)
         self.engine = engine
@@ -236,6 +238,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self._cache = cache
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
+        self.sglang_dp_size = sglang_dp_size
 
     def _build_chat_completion(
         self,
@@ -510,12 +513,32 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             ),
         )
 
+        # Build deterministic rid for DP attention cache affinity.
+        cache_for_rid = areal_cache if areal_cache is not None else self._cache
+        rid_base = cache_for_rid.rid_base
+        sample_idx = cache_for_rid.sample_idx
+        if rid_base is not None:
+            round_idx = RolloutIdBuilder.infer_round_idx(messages_list)
+            rid = RolloutIdBuilder.build_rid(rid_base, sample_idx, round_idx)
+            dp_rank = RolloutIdBuilder.compute_dp_rank(rid, self.sglang_dp_size)
+            logger.debug(
+                "DP attention routing: rid=%s, dp_rank=%d/%d, round=%d",
+                rid,
+                dp_rank,
+                self.sglang_dp_size,
+                round_idx,
+            )
+        else:
+            rid = str(uuid.uuid4())
+            dp_rank = None
+
         model_request = ModelRequest(
             input_ids=prompt_token_ids,
             gconfig=gconfig,
-            rid=str(uuid.uuid4()),
+            rid=rid,
             metadata=metadata if not is_omitted(metadata) else {},
             tokenizer=self.tokenizer,
+            data_parallel_rank=dp_rank,
         )
 
         # Call inference engine
@@ -703,6 +726,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         reasoning_parser: str,
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
+        sglang_dp_size: int = 1,
     ):
         super().__init__(client)
         self.engine = engine
@@ -712,6 +736,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         self._cache = cache
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
+        self.sglang_dp_size = sglang_dp_size
 
     async def create(
         self,
@@ -911,12 +936,32 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             ),
         )
 
+        # Build deterministic rid for DP attention cache affinity.
+        cache_for_rid = areal_cache if areal_cache is not None else self._cache
+        rid_base = cache_for_rid.rid_base
+        sample_idx = cache_for_rid.sample_idx
+        if rid_base is not None:
+            round_idx = RolloutIdBuilder.infer_round_idx(messages_list)
+            rid = RolloutIdBuilder.build_rid(rid_base, sample_idx, round_idx)
+            dp_rank = RolloutIdBuilder.compute_dp_rank(rid, self.sglang_dp_size)
+            logger.debug(
+                "DP attention routing (responses): rid=%s, dp_rank=%d/%d, round=%d",
+                rid,
+                dp_rank,
+                self.sglang_dp_size,
+                round_idx,
+            )
+        else:
+            rid = str(uuid.uuid4())
+            dp_rank = None
+
         model_request = ModelRequest(
             input_ids=prompt_token_ids,
             gconfig=gconfig,
-            rid=str(uuid.uuid4()),
+            rid=rid,
             metadata=metadata if not is_omitted(metadata) else {},
             tokenizer=self.tokenizer,
+            data_parallel_rank=dp_rank,
         )
 
         # Call inference engine
@@ -1046,6 +1091,7 @@ class ArealOpenAI(AsyncOpenAI):
         reasoning_parser: str = "qwen3",
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
+        sglang_dp_size: int = 1,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -1067,6 +1113,7 @@ class ArealOpenAI(AsyncOpenAI):
             reasoning_parser=self.reasoning_parser,
             engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
+            sglang_dp_size=sglang_dp_size,
         )
 
         # Override chat.completions with our extended implementation
@@ -1079,6 +1126,7 @@ class ArealOpenAI(AsyncOpenAI):
             reasoning_parser=self.reasoning_parser,
             engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
+            sglang_dp_size=sglang_dp_size,
         )
 
     def get_interaction(self, id: str) -> InteractionWithTokenLogpReward | None:

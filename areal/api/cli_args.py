@@ -1581,10 +1581,22 @@ class OpenAIProxyConfig:
             ),
         },
     )
+    sglang_dp_size: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "SGLang internal DP attention size. When > 1, deterministic rid "
+                "construction routes multi-turn requests to the same DP rank "
+                "for prefix cache hits. Should match sglang.dp_size."
+            ),
+        },
+    )
 
     def __post_init__(self):
         if not self.admin_api_key or not self.admin_api_key.strip():
             raise ValueError("admin_api_key must not be empty or whitespace-only")
+        if self.sglang_dp_size < 1:
+            raise ValueError(f"sglang_dp_size must be >= 1, got {self.sglang_dp_size}")
 
 
 @dataclass

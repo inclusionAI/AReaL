@@ -14,6 +14,9 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         self._apply_reward_discount_called = False
         self._total_reward = 0.0
         self._lock = threading.Lock()
+        # DP attention: deterministic rid construction for cache affinity.
+        self.rid_base: str | None = None
+        self.sample_idx: int = 0
 
     @property
     def last_interaction_id(self) -> str:

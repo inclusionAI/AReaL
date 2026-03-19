@@ -13,6 +13,7 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.infra import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.perf_tracer import session_context, trace_session
+from areal.utils.rollout_id import RolloutIdBuilder
 
 from .client_session import OpenAIProxyClient
 from .server import DEFAULT_ADMIN_API_KEY, GRANT_CAPACITY_PATHNAME
@@ -212,11 +213,20 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
 
         # ---- Normal mode (inline / subproc) ----
 
+        # Extract DP attention routing info from data if available.
+        rid_base = (
+            RolloutIdBuilder.get_rid_base(data)
+            if RolloutIdBuilder.EXT_QID_FIELD in data
+            else None
+        )
+
         proxy_client = OpenAIProxyClient(
             session=http_session,
             base_url=self.proxy_addr,
             task_id=str(task_id),
             admin_api_key=self._admin_api_key,
+            rid_base=rid_base,
+            sample_idx=data.get(RolloutIdBuilder.EXT_QID_IDX_FIELD, 0),
         )
         async with proxy_client:
             # Run the user code.

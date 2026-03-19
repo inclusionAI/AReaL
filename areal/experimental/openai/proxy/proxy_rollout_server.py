@@ -270,6 +270,7 @@ def _setup_openai_client():
         reasoning_parser=openai_cfg.reasoning_parser,
         engine_max_tokens=openai_cfg.engine_max_tokens,
         chat_template_type=openai_cfg.chat_template_type,
+        sglang_dp_size=openai_cfg.sglang_dp_size,
     )
     # Set session timeout from config
     _session_timeout_seconds = openai_cfg.session_timeout_seconds
@@ -454,7 +455,11 @@ def start_session(request: StartSessionRequest) -> StartSessionResponse:
                 session_api_key = secrets.token_urlsafe(32)
 
         _capacity -= 1
-        _session_cache[session_id] = SessionData(session_id=session_id)
+        _session_cache[session_id] = SessionData(
+            session_id=session_id,
+            rid_base=request.rid_base,
+            sample_idx=request.sample_idx,
+        )
         _api_key_to_session[session_api_key] = session_id
         _session_to_api_key[session_id] = session_api_key
 
