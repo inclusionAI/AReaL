@@ -234,16 +234,16 @@ class SGLangBackend:
         """Launch SGLang server subprocess."""
         cmd = SGLangConfig.build_cmd_from_args(server_args)
         _env = os.environ.copy()
-        existing = _env.get("NO_PROXY") or _env.get("no_proxy") or ""
-        parts = [p.strip() for p in existing.split(",") if p.strip()]
-        desired = {"localhost", "127.0.0.1", "::1"}
-        host = server_args.get("host")
-        if isinstance(host, str) and host not in {"0.0.0.0", "::"}:
-            desired.add(host)
-        merged = parts + [x for x in sorted(desired) if x not in set(parts)]
-        value = ",".join(merged) if merged else existing
-        _env["NO_PROXY"] = value
-        _env["no_proxy"] = value
+        # existing = _env.get("NO_PROXY") or _env.get("no_proxy") or ""
+        # parts = [p.strip() for p in existing.split(",") if p.strip()]
+        # desired = {"localhost", "127.0.0.1", "::1"}
+        # host = server_args.get("host")
+        # if isinstance(host, str) and host not in {"0.0.0.0", "::"}:
+        #     desired.add(host)
+        # merged = parts + [x for x in sorted(desired) if x not in set(parts)]
+        # value = ",".join(merged) if merged else existing
+        # _env["NO_PROXY"] = value
+        # _env["no_proxy"] = value
         triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
         _env["TRITON_CACHE_PATH"] = os.path.join(triton_cache_path, str(uuid.uuid4()))
 
