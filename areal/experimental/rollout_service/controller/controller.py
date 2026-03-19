@@ -1137,6 +1137,9 @@ class GatewayRolloutController:
 
         Use ``_async_gateway_http_post`` from async contexts to avoid blocking
         the event loop.
+
+        Raises ``RuntimeError`` on HTTP errors or connection failures so that
+        callers (e.g. ``pause()`` / ``resume()``) can detect and handle them.
         """
         import requests
 
@@ -1149,16 +1152,21 @@ class GatewayRolloutController:
                 timeout=self.config.request_timeout,
             )
             if resp.status_code >= 400:
-                logger.warning(
-                    "Gateway %s returned %s: %s", endpoint, resp.status_code, resp.text
+                raise RuntimeError(
+                    f"Gateway {endpoint} returned {resp.status_code}: {resp.text}"
                 )
         except requests.RequestException as exc:
-            logger.error("Failed to POST %s: %s", endpoint, exc)
+            raise RuntimeError(f"Failed to POST {endpoint}: {exc}") from exc
 
     async def _async_gateway_http_post(
         self, endpoint: str, payload: dict[str, Any]
     ) -> None:
-        """Make a non-blocking HTTP POST to the gateway with admin auth."""
+        """Make a non-blocking HTTP POST to the gateway with admin auth.
+
+        Raises ``RuntimeError`` on HTTP errors or connection failures so that
+        callers (e.g. ``pause_generation()`` / ``continue_generation()``) can
+        detect and handle them.
+        """
         import httpx
 
         url = f"{self._gateway_addr}{endpoint}"
@@ -1170,11 +1178,8 @@ class GatewayRolloutController:
                     headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
                 )
                 if resp.status_code >= 400:
-                    logger.warning(
-                        "Gateway %s returned %s: %s",
-                        endpoint,
-                        resp.status_code,
-                        resp.text,
+                    raise RuntimeError(
+                        f"Gateway {endpoint} returned {resp.status_code}: {resp.text}"
                     )
         except httpx.HTTPError as exc:
-            logger.error("Failed to POST %s: %s", endpoint, exc)
+            raise RuntimeError(f"Failed to POST {endpoint}: {exc}") from exc
