@@ -138,6 +138,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         app.state.config = config
         app.state.session_store = SessionStore()
         app.state.session_store.set_admin_key(config.admin_api_key)
+        app.state.version = 0
         yield
         logger.info("Data proxy shutting down")
 
@@ -156,6 +157,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             "backend": config.backend_addr,
             "sessions": store.session_count,
             "paused": await pause_state.is_paused(),
+            "version": app.state.version,
         }
 
     @app.post("/configure")
@@ -177,6 +179,23 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         inf_bridge: InfBridge = app.state.inf_bridge
         await inf_bridge.resume()
         return {"status": "ok", "paused": False}
+
+    # =========================================================================
+    # Version management — internal control plane (no auth at data proxy level)
+    # =========================================================================
+
+    @app.post("/set_version")
+    async def set_version(request: Request):
+        body = await request.json()
+        version = body.get("version")
+        if version is None or not isinstance(version, int):
+            raise HTTPException(status_code=400, detail="'version' (int) is required")
+        app.state.version = version
+        return {"status": "ok", "version": version}
+
+    @app.get("/get_version")
+    async def get_version():
+        return {"version": app.state.version}
 
     # =========================================================================
     # Session management (admin key / session key required)
@@ -351,10 +370,6 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             )
         serialized = serialize_interactions(interactions, node_addr=serving_addr)
         return ExportTrajectoriesResponse(interactions=serialized)
-
-    # NOTE: Weight-update forwarding endpoints (update_weights_from_disk,
-    # update_weights_from_distributed, init_weights_update_group, set_version)
-    # have been removed. Re-add when the gateway natively supports weight sync.
 
     # NOTE: /grant_capacity has been removed from data proxy. Capacity-based
     # staleness control is now managed at the router level — see

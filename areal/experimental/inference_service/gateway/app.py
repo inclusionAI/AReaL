@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -356,10 +357,64 @@ def create_app(config: GatewayConfig) -> FastAPI:
             media_type=resp.headers.get("content-type"),
         )
 
-    # NOTE: Weight-update broadcast endpoints (update_weights_from_disk,
-    # update_weights_from_distributed, init_weights_update_group, set_version)
-    # have been removed. Re-add when the gateway natively supports weight
-    # synchronisation.
+    # =========================================================================
+    # POST /set_version/{worker_id} — admin key ONLY, target single worker
+    # =========================================================================
+
+    @app.post("/set_version/{worker_id}")
+    async def set_version(worker_id: str, request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addr = await resolve_worker_addr(
+                config.router_addr,
+                config.admin_api_key,
+                worker_id,
+                config.router_timeout,
+            )
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        resp = await forward_request(
+            f"{worker_addr}/set_version", body, headers, config.forward_timeout
+        )
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type"),
+        )
+
+    # =========================================================================
+    # GET /get_version/{worker_id} — admin key ONLY, target single worker
+    # =========================================================================
+
+    @app.get("/get_version/{worker_id}")
+    async def get_version(worker_id: str, request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addr = await resolve_worker_addr(
+                config.router_addr,
+                config.admin_api_key,
+                worker_id,
+                config.router_timeout,
+            )
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
+            return _router_error_response(exc)
+
+        try:
+            async with httpx.AsyncClient(timeout=config.forward_timeout) as client:
+                resp = await client.get(
+                    f"{worker_addr}/get_version",
+                    headers=_forwarding_headers(dict(request.headers)),
+                )
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type"),
+            )
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
 
     @app.post("/grant_capacity")
     async def grant_capacity(request: Request):

@@ -478,16 +478,104 @@ class GatewayInferenceController:
 
     # -- Version management ------------------------------------------------
 
-    def set_version(self, version: int) -> None:
+    def set_version(self, version: int, worker_id: str | None = None) -> None:
+        """Set version on data proxy workers via the gateway.
+
+        Parameters
+        ----------
+        version : int
+            The new version number to set.
+        worker_id : str | None
+            If provided, set version on a single worker.
+            If None, broadcast to all workers.
+        """
+        from areal.infra.utils.concurrent import run_async_task
+
         with self._version_lock:
             self._version = version
-        # TODO: Weight-update forwarding (set_version broadcast to workers via
-        # gateway HTTP) has been removed. Re-implement when the gateway
-        # natively supports weight synchronisation.
 
-    def get_version(self) -> int:
+        if not self._gateway_addr:
+            return
+
+        run_async_task(self._async_set_version, version, worker_id)
+
+    async def _async_set_version(
+        self, version: int, worker_id: str | None = None
+    ) -> None:
+        payload = {"version": version}
+        if worker_id is not None:
+            await self._async_gateway_http_post(f"/set_version/{worker_id}", payload)
+        else:
+            for wid in self._worker_ids.values():
+                await self._async_gateway_http_post(f"/set_version/{wid}", payload)
+
+    def get_version(self) -> int:  # type: ignore[override]
+        """Return the local version (compatible with VersionProvider protocol).
+
+        To query individual workers, use :meth:`get_worker_versions`.
+        """
         with self._version_lock:
             return self._version
+
+    def get_worker_versions(self, worker_id: str | None = None) -> int | dict[str, int]:
+        """Get version from data proxy workers via the gateway.
+
+        Parameters
+        ----------
+        worker_id : str | None
+            If provided, get version from a single worker (returns int).
+            If None, query all workers. Returns a single int if all
+            versions match, or a dict of ``{worker_id: version}`` if
+            they differ.
+        """
+        from areal.infra.utils.concurrent import run_async_task
+
+        if not self._gateway_addr or not self._worker_ids:
+            with self._version_lock:
+                return self._version
+
+        return run_async_task(self._async_get_worker_versions, worker_id)
+
+    async def _async_get_worker_versions(
+        self, worker_id: str | None = None
+    ) -> int | dict[str, int]:
+        import httpx
+
+        if worker_id is not None:
+            url = f"{self._gateway_addr}/get_version/{worker_id}"
+            async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
+                resp = await client.get(
+                    url,
+                    headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+                )
+                if resp.status_code >= 400:
+                    raise RuntimeError(
+                        f"Gateway /get_version/{worker_id} returned "
+                        f"{resp.status_code}: {resp.text}"
+                    )
+                return resp.json()["version"]
+
+        # Query all workers
+        versions: dict[str, int] = {}
+        for wid in self._worker_ids.values():
+            url = f"{self._gateway_addr}/get_version/{wid}"
+            async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
+                resp = await client.get(
+                    url,
+                    headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+                )
+                if resp.status_code >= 400:
+                    raise RuntimeError(
+                        f"Gateway /get_version/{wid} returned "
+                        f"{resp.status_code}: {resp.text}"
+                    )
+                versions[wid] = resp.json()["version"]
+
+        # If all versions are the same, return a single int
+        unique = set(versions.values())
+        if len(unique) == 1:
+            return unique.pop()
+        return versions
 
     # -- Capacity ----------------------------------------------------------
 
