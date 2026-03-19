@@ -15,7 +15,6 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from werkzeug.serving import make_server
 
 from areal.api import (
-    AllocationMode,
     InferenceEngine,
     Job,
     LocalInfServerInfo,
@@ -28,6 +27,7 @@ from areal.api import (
     Worker,
     WorkflowLike,
 )
+from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
     InferenceEngineConfig,
     PerfTracerConfig,
@@ -77,6 +77,9 @@ class RolloutController:
         self.inf_engine = inf_engine
         self.config = config
         self.scheduler = scheduler
+
+        # Parse allocation from config.backend
+        self.rollout_alloc = ModelAllocation.from_str(config.backend)
 
         # Worker management
         self.workers: list[Worker] = []  # List of Worker objects from scheduler
@@ -153,7 +156,6 @@ class RolloutController:
     def initialize(
         self,
         role: str,
-        alloc_mode: AllocationMode,
         server_args: dict[str, Any] | None = None,
         server_infos: list[LocalInfServerInfo] | None = None,
         *args,
@@ -164,16 +166,21 @@ class RolloutController:
         # usually TP x PP.
         self._worker_role = role
 
+        instance_size = (
+            self.rollout_alloc.parallel.tp_size * self.rollout_alloc.parallel.pp_size
+        )
+        dp_size = self.rollout_alloc.parallel.dp_size
+
         # The first element of `self.config.scheduling_spec` is the resource spec
         # of workers, aka the RPC server process. Since a worker exactly matches
         # to a single engine instance in the local environment, we can dirrectly
         # use the spec of engines  as the spec of workers here. Engine scheduling
         # specs are ignored.
         sch_spec = SchedulingSpec(**asdict(self.config.scheduling_spec[0]))
-        sch_spec.cpu *= alloc_mode.gen_instance_size
-        sch_spec.mem *= alloc_mode.gen_instance_size
+        sch_spec.cpu *= instance_size
+        sch_spec.mem *= instance_size
         if sch_spec.gpu > 0:
-            sch_spec.gpu = alloc_mode.gen_instance_size
+            sch_spec.gpu = instance_size
 
         if sch_spec.ray_placement_strategy == "shared":
             # do not support shared placement for rollout
@@ -183,8 +190,8 @@ class RolloutController:
             sch_spec.ray_placement_strategy = "separate"
 
         job = Job(
-            replicas=alloc_mode.gen.dp_size,
-            tasks=[sch_spec for _ in range(alloc_mode.gen.dp_size)],
+            replicas=dp_size,
+            tasks=[sch_spec for _ in range(dp_size)],
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
         )

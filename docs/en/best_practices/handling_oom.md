@@ -9,9 +9,9 @@ Before applying fixes, understand which parameters affect memory usage:
 
 ### Core Parameters
 
-- **`allocation_mode`**: How inference and training are distributed across GPUs. For
-  large models, tensor parallelism typically uses less memory per GPU than data
-  parallelism.
+- **Per-engine `backend` fields (`actor.backend`, `rollout.backend`)**: How inference
+  and training are distributed across GPUs. For large models, tensor parallelism
+  typically uses less memory per GPU than data parallelism.
 
 - **`train_dataset.max_length`**: Maximum prompt length. Longer prompts require more
   memory.
@@ -58,9 +58,12 @@ effective solution.
 Increase tensor parallelism to distribute model weights across more GPUs:
 
 ```yaml
-# Before: sglang:d4+fsdp:d4 (4 data parallel processes)
-# After: sglang:d2t2+fsdp:d4 (2 data parallel, 2 tensor parallel)
-allocation_mode: sglang:d2t2+fsdp:d4
+# Before: 4 data parallel processes for rollout
+# After: 2 data parallel, 2 tensor parallel for rollout
+rollout:
+  backend: "sglang:d2t2"
+actor:
+  backend: "fsdp:d4"
 ```
 
 Note that higher tensor parallelism reduces generation throughput.
@@ -112,9 +115,12 @@ For long contexts where `max_tokens_per_mb` cannot be reduced further, use Ulyss
 sequence parallelism to distribute sequences across multiple GPUs:
 
 ```yaml
-# Before: sglang:d4+fsdp:d4 (4 data parallel processes)
-# After: sglang:d4+fsdp:d2c2 (2 data parallel, 2 ulysses context parallel)
-allocation_mode: sglang:d4+fsdp:d2c2
+# Before: 4 data parallel processes for training
+# After: 2 data parallel, 2 ulysses context parallel for training
+rollout:
+  backend: "sglang:d4"
+actor:
+  backend: "fsdp:d2c2"
 ```
 
 > The Ulysses context parallel size must evenly divide the model's attention head count.
@@ -127,18 +133,24 @@ allocation_mode: sglang:d4+fsdp:d2c2
 You can also enable tensor parallelism with FSDP:
 
 ```yaml
-# Before: sglang:d4+fsdp:d4 (4 data parallel processes)
-# After: sglang:d4+fsdp:d2t2 (2 data parallel, 2 tensor parallel)
-allocation_mode: sglang:d4+fsdp:d2t2
+# Before: 4 data parallel processes for training
+# After: 2 data parallel, 2 tensor parallel for training
+rollout:
+  backend: "sglang:d4"
+actor:
+  backend: "fsdp:d2t2"
 ```
 
 For the Megatron and Archon backends, you can also enable pipeline and expert
 parallelism:
 
 ```yaml
-# Before: sglang:d4+fsdp:d4 (4 data parallel processes)
-# After: sglang:d4+archon:d2p2e2 (2 data parallel with 2 overlaid expert parallel, 2 pipeline parallel, still 4 GPUs)
-allocation_mode: sglang:d4+archon:d2p2e2
+# Before: 4 data parallel processes for training
+# After: 2 data parallel with 2 overlaid expert parallel, 2 pipeline parallel, still 4 GPUs
+rollout:
+  backend: "sglang:d4"
+actor:
+  backend: "archon:d2p2e2"
 ```
 
 We recommend pipeline and expert parallelism over tensor/context parallelism. Check

@@ -5,7 +5,7 @@ import torch.distributed as dist
 
 from tests.utils import get_model_path
 
-from areal.api import AllocationMode, FinetuneSpec, WeightUpdateMeta
+from areal.api import FinetuneSpec, ModelAllocation, WeightUpdateMeta
 from areal.api.cli_args import (
     InferenceEngineConfig,
     OptimizerConfig,
@@ -42,6 +42,7 @@ def sglang_server():
 
     # Create engine instance for server management
     temp_config = InferenceEngineConfig(
+        backend="sglang:d1",
         experiment_name=EXPR_NAME,
         trial_name=TRIAL_NAME,
     )
@@ -70,6 +71,7 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
 
     # Initialize FSDPEngine
     engine_config = TrainEngineConfig(
+        backend="fsdp:d1",
         experiment_name=EXPR_NAME,
         trial_name=TRIAL_NAME,
         path=MODEL_PATH,
@@ -85,15 +87,17 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
         engine.initialize(None, ft_spec)
 
         # Initialize RemoteSGLangEngine
-        config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
+        config = InferenceEngineConfig(
+            backend="sglang:d1", experiment_name=EXPR_NAME, trial_name=TRIAL_NAME
+        )
         remote_engine = RemoteSGLangEngine(config)
         remote_engine.initialize(addr=f"{sglang_server.host}:{sglang_server.port}")
 
         # Get WeightUpdateMeta
         meta = WeightUpdateMeta.from_fsdp_xccl(
-            AllocationMode.from_str("sglang:d1p1t1+d1p1t1"),
-            nccl_group_name=GROUP_NAME,
+            gen_allocation=ModelAllocation.from_str("sglang:d1"),
         )
+        meta.nccl_group_name = GROUP_NAME
 
         engine.connect_engine(remote_engine, meta)
 

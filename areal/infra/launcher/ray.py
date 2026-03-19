@@ -3,6 +3,7 @@ import pathlib
 import re
 import sys
 import time
+import warnings
 from collections.abc import Callable
 from functools import partial
 
@@ -13,7 +14,7 @@ from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 import areal.utils.logging as logging
-from areal.api import AllocationMode, AllocationType
+from areal.api.alloc_mode import AllocationType, _AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
     InferenceEngineConfig,
@@ -346,6 +347,13 @@ def ray_main(config, run_id: int = 0):
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     is_recover_run = check_if_recover(config.recover, run_id)
+    warnings.warn(
+        "SPMD launchers use the deprecated _AllocationMode parser which will be removed. "
+        "Migrate to single-controller mode (scheduler.type=local) with per-engine 'backend' "
+        "fields (e.g., actor.backend='fsdp:d4'). See docs/en/reference/alloc_mode.md.",
+        FutureWarning,
+        stacklevel=2,
+    )
     validate_config_for_distributed_launcher(config)
 
     name_resolve.reconfigure(config.cluster.name_resolve)
@@ -372,7 +380,7 @@ def ray_main(config, run_id: int = 0):
         launcher = RAY_LAUNCHER
 
     allocation_mode = config.allocation_mode
-    allocation_mode = AllocationMode.from_str(allocation_mode)
+    allocation_mode = _AllocationMode.from_str(allocation_mode)
 
     actor_spec = get_scheduling_spec(config.actor)
 

@@ -134,8 +134,8 @@ that runs on the controller node.
 **Key Configuration**:
 
 - `scheduler.type`: Determines which backend to use (`local`, `ray`, or `slurm`)
-- `allocation_mode`: Determines number of GPUs for training/inference and parallel
-  strategies
+- Per-engine `backend` fields (e.g., `rollout.backend`, `actor.backend`): Determine GPU
+  allocation and parallel strategies for each engine
 - Schedulers automatically handle worker placement, resource allocation, and lifecycle
   management
 
@@ -439,10 +439,10 @@ implements the GRPO/PPO algorithm:
   - Computes PPO loss (clipped surrogate objective + optional KL penalty)
   - Performs backward pass and optimizer step
 
-**Parallelism**: The `allocation_mode` config determines GPU allocation:
+**Parallelism**: Each engine's `backend` field determines its GPU allocation:
 
 ```
-allocation_mode=sglang:d4+d4, n_gpus=8
+rollout.backend=sglang:d4 actor.backend=d4, n_gpus=8
 
 Rollout Workers:     Training Workers:
 GPU 0: SGLang        GPU 4: FSDP rank 0  ─┐

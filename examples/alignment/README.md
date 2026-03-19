@@ -18,13 +18,14 @@ The Bradley-Terry reward modeling loss can be expressed as
 Launch the reward model training process using the provided configuration.
 
 ```bash
-python3 -m areal.infra.launcher.local hhrlhf_rw.py \
-    --config hhrlhf_rw.yaml \
+python3 examples/alignment/hhrlhf_rw.py \
+    --config examples/alignment/hhrlhf_rw.yaml \
     experiment_name=hhrlhf-rw \
     trial_name=trial1 \
-    model.path=Qwen/Qwen2.5-7B \
+    actor.path=Qwen/Qwen2.5-7B \
     train_dataset.path=Anthropic/hh-rlhf \
     valid_dataset.path=Anthropic/hh-rlhf \
+    scheduler.type=local \
     stats_logger.wandb.mode=online # Set to 'disabled' if you don't use Weights & Biases
 ```
 

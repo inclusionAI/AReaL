@@ -40,7 +40,7 @@ class GatewayInferenceController:
     as worker sub-processes via the scheduler.  The controller talks to them
     directly over HTTP — no engine creation or RPC calls on workers.
 
-    The inference backend is determined from ``alloc_mode.gen_backend``
+    The inference backend is determined from ``config.backend``
     (currently ``"sglang"`` is supported; ``"vllm"`` is planned).
     """
 
@@ -52,8 +52,13 @@ class GatewayInferenceController:
         config: GatewayControllerConfig,
         scheduler: Scheduler,
     ) -> None:
+        from areal.api.alloc_mode import ModelAllocation
+
         self.config = config
         self.scheduler = scheduler
+
+        # Parse allocation from config.backend
+        self.rollout_alloc = ModelAllocation.from_str(config.backend)
 
         # Worker management
         self.workers: list[Worker] = []
@@ -96,7 +101,6 @@ class GatewayInferenceController:
     def initialize(
         self,
         role: str,
-        alloc_mode: Any = None,
         server_args: dict[str, Any] | None = None,
         server_infos: list[LocalInfServerInfo] | None = None,
         *args: Any,
@@ -107,7 +111,6 @@ class GatewayInferenceController:
         self._worker_role = role
         run_async_task(
             self._async_initialize,
-            alloc_mode,
             server_args,
             server_infos,
             *args,
@@ -143,7 +146,6 @@ class GatewayInferenceController:
 
     async def _async_initialize(
         self,
-        alloc_mode: Any,
         server_args: dict[str, Any] | None,
         server_infos: list[LocalInfServerInfo] | None = None,
         *args: Any,
@@ -167,25 +169,26 @@ class GatewayInferenceController:
         from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
         from areal.api.scheduler_api import Job
 
-        dp_size = alloc_mode.gen.dp_size if alloc_mode is not None else 1
+        alloc = self.rollout_alloc
+        dp_size = alloc.parallel.dp_size
         cfg = self.config
 
-        # Determine inference backend from allocation mode
-        inf_backend = alloc_mode.gen_backend if alloc_mode is not None else "sglang"
+        inf_backend = alloc.backend
 
         # ==================================================================
         # Step 0: Always create dp_size RPCGuard workers
         # ==================================================================
         inf_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
+        instance_size = alloc.parallel.tp_size * alloc.parallel.pp_size
         if server_infos is not None:
             # Pre-existing inference servers — RPCGuard workers only host
             # CPU services (data proxy, router, gateway), no GPUs needed.
             inf_spec.gpu = 0
-        elif alloc_mode is not None:
-            inf_spec.cpu *= alloc_mode.gen_instance_size
-            inf_spec.mem *= alloc_mode.gen_instance_size
+        else:
+            inf_spec.cpu *= instance_size
+            inf_spec.mem *= instance_size
             if inf_spec.gpu > 0:
-                inf_spec.gpu = alloc_mode.gen_instance_size
+                inf_spec.gpu = instance_size
 
         # Override cmd to launch RPCGuard instead of RPC server
         inf_spec.cmd = "python -m areal.experimental.inference_service.guard"
@@ -218,7 +221,7 @@ class GatewayInferenceController:
                 len(server_infos),
             )
         else:
-            tp_size = alloc_mode.gen.tp_size if alloc_mode is not None else 1
+            tp_size = alloc.parallel.tp_size
 
             # Build backend-specific launch command builder
             if inf_backend in ("sglang", None):

@@ -1,11 +1,11 @@
 import json
 import os
+import subprocess
 import sys
 from dataclasses import asdict
 
 import pytest
 import yaml
-from sh import Command
 
 from tests.utils import get_dataset_path, get_model_path
 
@@ -48,19 +48,17 @@ def test_sft(tmp_path: str, backend: str) -> None:
             sort_keys=False,
         )
 
-    cmd = (
-        Command("python")
-        .bake(m="areal.infra.launcher.local")
-        .bake(os.path.join(base_dir, "entrypoint.py"))
-    )
-
-    cmd(
+    cmd = [
+        sys.executable,
+        os.path.join(base_dir, "entrypoint.py"),
+        "--config",
+        os.path.join(tmp_path, "config", "config.yaml"),
         f"cluster.fileroot={tmp_path}",
-        config=os.path.join(tmp_path, "config", "config.yaml"),
-        _err=sys.stderr,
-        _out=sys.stdout,
-        _env=os.environ,
-        _ok_code=1,  # AReaL exits with code 1 even when successful.
+    ]
+
+    result = subprocess.run(cmd, stdout=sys.stdout, stderr=sys.stderr, env=os.environ)
+    assert result.returncode == 0, (
+        f"SFT subprocess failed with exit code {result.returncode}"
     )
 
     with open(os.path.join(tmp_path, "losses.json")) as f:

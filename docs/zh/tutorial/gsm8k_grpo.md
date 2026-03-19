@@ -125,7 +125,7 @@ python examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml schedule
 **关键配置**：
 
 - `scheduler.type`：确定使用哪个后端（`local`、`ray` 或 `slurm`）
-- `allocation_mode`：确定训练/推理的 GPU 数量和并行策略
+- 各引擎的 `backend` 字段（如 `rollout.backend`、`actor.backend`）：确定各引擎的 GPU 分配和并行策略
 - 调度器自动处理工作进程放置、资源分配和生命周期管理
 
 ### 配置文件
@@ -412,10 +412,10 @@ return concat_padded_tensors(results)  # 形状：[batch_size, seq_len]
   - 计算 PPO 损失（裁剪的替代目标 + 可选的 KL 惩罚）
   - 执行反向传播和优化器步骤
 
-**并行性**：`allocation_mode` 配置决定 GPU 分配：
+**并行性**：各引擎的 `backend` 字段决定 GPU 分配：
 
 ```
-allocation_mode=sglang:d4+d4, n_gpus=8
+rollout.backend=sglang:d4 actor.backend=d4, n_gpus=8
 
 Rollout 工作进程：      训练工作进程：
 GPU 0: SGLang         GPU 4: FSDP rank 0  ─┐

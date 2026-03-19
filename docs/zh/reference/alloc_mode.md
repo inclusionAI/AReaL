@@ -4,29 +4,50 @@
 
 ## 概述
 
-`allocation_mode` 配置选项是一个基于模式的字符串，用于指定：
+每个引擎组件（actor、critic、rollout、ref、teacher）都有独立的 `backend` 配置字段，用于指定：
 
-- 使用哪些后端进行推理（SGLang、vLLM）和训练（FSDP、Megatron、Archon）
-- 每个后端的并行化策略
-- 所需的 GPU 总数
+- 使用哪个后端（SGLang、vLLM 用于推理；FSDP、Megatron、Archon 用于训练）
+- 并行化策略
+- 所需的 GPU 数量
 
-AReaL 将此字符串解析为 `AllocationMode` 对象，在整个集群中协调资源分配。
+AReaL 将每个 `backend` 字符串解析为 `ModelAllocation` 对象，驱动该特定引擎的资源分配。
 
-## 语法
+## 配置
 
-### 基本格式
+### 每引擎 Backend 字段
+
+YAML 配置中每个引擎都有独立的 `backend` 字段：
+
+```yaml
+# Rollout（推理）引擎
+rollout:
+  backend: "sglang:d4t2"
+
+# Actor（训练）引擎
+actor:
+  backend: "fsdp:d8"
+
+# Critic 引擎（为空时回退到 actor.backend）
+critic:
+  backend: ""
+
+# Ref 引擎（为空时回退到 actor.backend）
+ref:
+  backend: ""
+```
+
+当 `critic.backend` 或 `ref.backend` 为空时，会自动继承 `actor.backend` 的值。
+
+> **注意：** 顶层的 `allocation_mode` 配置字段已弃用，仅为旧版 SPMD
+> 启动器（local/ray/slurm）保留向后兼容性。此字段被单控制器调度器忽略。请使用上述各引擎的 `backend` 字段。
+
+### Backend 字符串语法
 
 ```
 <backend>:<parallelism_dims>
 ```
 
-### 双组件格式（推理 + 训练）
-
-```
-<inference_backend>:<dims> + <training_backend>:<dims>
-```
-
-`+` 运算符分隔在**独立 GPU 池**上运行的组件。
+例如，`fsdp:d4t2` 表示：使用 FSDP 后端，数据并行大小为 4，tensor 并行大小为 2。
 
 ### 并行维度
 
@@ -52,12 +73,22 @@ world_size = dp × tp × pp × cp
 
 ### 示例
 
-| 分配模式                          | 推理 GPU | 训练 GPU | 总计 |
-| --------------------------------- | -------- | -------- | ---- |
-| `d8`                              | -        | 8        | 8    |
-| `sglang:d2t4`                     | 8        | -        | 8    |
-| `sglang:d2t4 + fsdp:d4t2`         | 8        | 8        | 16   |
-| `sglang:d4t4 + megatron:d2p2t4e4` | 16       | 16       | 32   |
+| Backend 字符串      | 每引擎 GPU 数 | 说明                   |
+| ------------------- | ------------- | ---------------------- |
+| `fsdp:d8`           | 8             | 8 个数据并行副本       |
+| `sglang:d2t4`       | 8             | 2 个实例 × 4 TP GPU    |
+| `megatron:d2p2t4`   | 16            | 2 DP × 2 PP × 4 TP     |
+| `megatron:d2p2t4e4` | 16            | 同一网格，4 路专家并行 |
+
+### 完整配置示例
+
+```yaml
+# 16 GPU 配置：8 推理 + 8 训练
+rollout:
+  backend: "sglang:d2t4"    # 2 × 4 = 8 GPU
+actor:
+  backend: "fsdp:d4t2"      # 4 × 2 = 8 GPU
+```
 
 ## 后端选择
 
@@ -70,7 +101,7 @@ world_size = dp × tp × pp × cp
 
 对于推理，`d` 表示独立服务器实例的数量，每个实例使用 `t × p` 个 GPU。
 
-请注意，内部后端配置不影响 AReaL 如何分配 GPU。给定分配模式 `sglang:d4t4`，你还可以配置
+请注意，内部后端配置不影响 AReaL 如何分配 GPU。给定 `rollout.backend: "sglang:d4t4"`，你还可以配置
 `sglang.dp_size=4`、`sglang.ep_size=4` 和 `sglang.enable_dp_attention=True`。在这种情况下，我们启动 4
 个模型副本，每个副本 4 个 GPU。在每个实例内，SGLang 仍然使用 DP attention 和专家并行来分配注意力层和专家层中的计算。
 
@@ -84,12 +115,13 @@ world_size = dp × tp × pp × cp
 
 省略后端时，AReaL 根据并行配置自动选择：
 
-- **FSDP**：当仅指定 `d`、`t`、`c` 时使用
+- **FSDP**：当仅指定 `d`、`t`、`c` 时使用（训练引擎默认）
 - **Megatron**：当 `p > 1` 或 `e > 1` 时使用
+- **SGLang**：推理引擎默认
 
 ```
 # 等效形式
-d4t2           # 自动选择 FSDP
+d4t2           # 自动选择 FSDP（用于 actor.backend）
 fsdp:d4t2      # 显式 FSDP
 
 d2p2t4         # 自动选择 Megatron（pp > 1）
@@ -116,8 +148,9 @@ GPU 要求。
 
 ### 示例
 
-```
-megatron:(attn:d4p2t2c2|ffn:d2p2t4e2)
+```yaml
+actor:
+  backend: "megatron:(attn:d4p2t2c2|ffn:d2p2t4e2)"
 ```
 
 | 模块 | dp  | pp  | tp  | cp  | ep  | World Size |

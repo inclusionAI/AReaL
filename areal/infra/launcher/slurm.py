@@ -5,9 +5,10 @@ import re
 import subprocess
 import sys
 import time
+import warnings
 
 import areal.utils.logging as logging
-from areal.api import AllocationMode, AllocationType
+from areal.api.alloc_mode import AllocationType, _AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
     InferenceEngineConfig,
@@ -408,6 +409,13 @@ def slurm_main(config, run_id: int = 0):
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     is_recover_run = check_if_recover(config.recover, run_id)
+    warnings.warn(
+        "SPMD launchers use the deprecated _AllocationMode parser which will be removed. "
+        "Migrate to single-controller mode (scheduler.type=local) with per-engine 'backend' "
+        "fields (e.g., actor.backend='fsdp:d4'). See docs/en/reference/alloc_mode.md.",
+        FutureWarning,
+        stacklevel=2,
+    )
     validate_config_for_distributed_launcher(config)
     logger.info(
         f"SlurmLauncher: experiment_name={config.experiment_name}, "
@@ -435,7 +443,7 @@ def slurm_main(config, run_id: int = 0):
     n_nodes = config.cluster.n_nodes
     n_gpus_per_node = config.cluster.n_gpus_per_node
     allocation_mode = config.allocation_mode
-    allocation_mode = AllocationMode.from_str(allocation_mode)
+    allocation_mode = _AllocationMode.from_str(allocation_mode)
 
     if not is_recover_run:
         metadata_file = save_experiment_metadata(

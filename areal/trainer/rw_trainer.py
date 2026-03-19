@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+import torch
 import torch.distributed as dist
 from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -10,7 +11,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api import FinetuneSpec, Scheduler, StepInfo
 from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
-    SFTConfig,
+    RWConfig,
     TrainDatasetConfig,
     TrainEngineConfig,
     ValidDatasetConfig,
@@ -24,7 +25,6 @@ from areal.infra import (
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
-    collate_samples_to_list,
     cycle_dataloader,
     tensor_container_to,
 )
@@ -38,17 +38,39 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 if TYPE_CHECKING:
-    from areal.engine import FSDPLMEngine, MegatronLMEngine
-    from areal.experimental.engine.archon_engine import ArchonLMEngine
-    from areal.trainer.sft.lm_engine import LMController
+    from areal.engine import FSDPRWEngine, MegatronRWEngine
+    from areal.experimental.engine.archon_engine import ArchonRWEngine
+    from areal.trainer.rw.rw_engine import RWController
 
-logger = logging.getLogger("SFTTrainer")
+logger = logging.getLogger("RWTrainer")
 
 
-class SFTTrainer:
+def rw_modeling_collate_fn(items):
+    """Collate reward-model items into per-sequence tensor dicts.
+
+    Each dataset item has ``chosen_ids`` and ``rejected_ids``.  This produces
+    two dicts per item (chosen first, then rejected), each with ``[1, seqlen]``
+    tensors and ``attention_mask``.
+    """
+    result = []
+    for item in items:
+        for ids in (item["chosen_ids"], item["rejected_ids"]):
+            if not torch.is_tensor(ids):
+                ids = torch.tensor(ids)
+            seqlen = ids.shape[0]
+            result.append(
+                {
+                    "input_ids": ids.unsqueeze(0),
+                    "attention_mask": torch.ones(1, seqlen, dtype=torch.bool),
+                }
+            )
+    return result
+
+
+class RWTrainer:
     def __init__(
         self,
-        config: SFTConfig,
+        config: RWConfig,
         train_dataset: Dataset,
         valid_dataset: Dataset | None = None,
     ):
@@ -108,7 +130,7 @@ class SFTTrainer:
         self.saver = Saver(config.saver, ft_spec)
         self.recover_handler = RecoverHandler(config.recover, ft_spec)
 
-        # Set up statistics logging (wandb, tensoboard, etc.)
+        # Set up statistics logging (wandb, tensorboard, etc.)
         self.stats_logger = StatsLogger(config, ft_spec)
 
         # Set up checkpointing for recover
@@ -161,12 +183,12 @@ class SFTTrainer:
             with (
                 stats_tracker.record_timing("train_step"),
                 perf_tracer.trace_scope(
-                    "train.sft_step",
+                    "train.rw_step",
                     category=Category.COMPUTE,
                     args={"global_step": global_step},
                 ),
             ):
-                self.actor.train_lm(batch)
+                self.actor.train_rw(batch)
                 self.actor.step_lr_scheduler()
                 self.actor.get_device_stats().log("after train step")
 
@@ -272,24 +294,24 @@ class SFTTrainer:
             rank=rank,
             world_size=world_size,
             dataset_config=dataset_config,
-            collate_fn=collate_samples_to_list,
+            collate_fn=rw_modeling_collate_fn,
         )
 
     def _create_actor(
         self, actor_config: TrainEngineConfig
-    ) -> FSDPLMEngine | MegatronLMEngine | ArchonLMEngine | LMController:
+    ) -> FSDPRWEngine | MegatronRWEngine | ArchonRWEngine | RWController:
         if self.actor_alloc.backend == "fsdp":
-            from areal.engine import FSDPLMEngine
+            from areal.engine import FSDPRWEngine
 
-            actor_cls = FSDPLMEngine
+            actor_cls = FSDPRWEngine
         elif self.actor_alloc.backend == "megatron":
-            from areal.engine import MegatronLMEngine
+            from areal.engine import MegatronRWEngine
 
-            actor_cls = MegatronLMEngine
+            actor_cls = MegatronRWEngine
         elif self.actor_alloc.backend == "archon":
-            from areal.experimental.engine.archon_engine import ArchonLMEngine
+            from areal.experimental.engine.archon_engine import ArchonRWEngine
 
-            actor_cls = ArchonLMEngine
+            actor_cls = ArchonRWEngine
         else:
             raise ValueError(
                 f"Invalid backend: {self.actor_alloc.backend}, "
@@ -360,7 +382,7 @@ class SFTTrainer:
         data_generator = cycle_dataloader(self.valid_dataloader, num_cycles=1)
         for _ in range(len(self.valid_dataloader)):
             data = self._load_bcast_from(data_generator)
-            self.actor.evaluate_lm(data)
+            self.actor.evaluate_rw(data)
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()

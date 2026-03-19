@@ -8,6 +8,7 @@ __all__ = [
     "MegatronPPOActor",
     "MegatronPPOCritic",
     "MegatronLMEngine",
+    "MegatronRWEngine",
     "RemoteSGLangEngine",
     "RemotevLLMEngine",
 ]
@@ -22,6 +23,7 @@ _LAZY_IMPORTS = {
     "MegatronPPOActor": "areal.engine.megatron_engine",
     "MegatronPPOCritic": "areal.engine.megatron_engine",
     "MegatronLMEngine": "areal.engine.megatron_engine",
+    "MegatronRWEngine": "areal.engine.megatron_engine",
     "RemoteSGLangEngine": "areal.engine.sglang_remote",
     "RemotevLLMEngine": "areal.engine.vllm_remote",
 }

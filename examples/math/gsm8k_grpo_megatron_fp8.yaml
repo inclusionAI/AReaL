@@ -14,9 +14,9 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang:d4p1t1+megatron:d4p1t1
 
 rollout:
+  backend: "sglang:d4p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 256
@@ -36,6 +36,7 @@ gconfig:
   temperature: 1.0
 
 actor:
+  backend: "megatron:d4p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen3-1.7B-FP8
@@ -81,6 +82,7 @@ actor:
       fp8_param_gather: true
 
 ref:
+  backend: ${actor.backend}
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}

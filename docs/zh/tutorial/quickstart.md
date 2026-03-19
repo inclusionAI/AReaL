@@ -40,7 +40,7 @@ python3 examples/math/gsm8k_rl.py \
     scheduler.type=local \
     experiment_name=<您的实验名称> \
     trial_name=<您的试验名称> \
-    allocation_mode=sglang:d2p1t1+d2p1t1 \
+    rollout.backend=sglang:d2p1t1 actor.backend=d2p1t1 \
     cluster.n_nodes=1 \
     cluster.n_gpus_per_node=4 \
     gconfig.max_new_tokens=2048 \
@@ -75,7 +75,7 @@ python3 examples/math/gsm8k_rl.py \
     scheduler.type=ray \
     experiment_name=<您的实验名称> \
     trial_name=<您的试验名称> \
-    allocation_mode=sglang:d12p1t1+d4p1t1 \
+    rollout.backend=sglang:d12p1t1 actor.backend=d4p1t1 \
     cluster.n_nodes=4 \
     cluster.n_gpus_per_node=4
 
@@ -85,7 +85,7 @@ python3 examples/math/gsm8k_rl.py \
     scheduler.type=slurm \
     experiment_name=<您的实验名称> \
     trial_name=<您的试验名称> \
-    allocation_mode=sglang:d96p1t1+d32p1t1 \
+    rollout.backend=sglang:d96p1t1 actor.backend=d32p1t1 \
     cluster.n_nodes=16 \
     cluster.n_gpus_per_node=8
 ```
@@ -97,11 +97,11 @@ python3 examples/math/gsm8k_rl.py \
   `SchedulerConfig`。
 - 有关如何设置 Ray 集群的指南，请参阅安装文档中的分布式设置部分。
 
-> **重要提示**：确保 `allocation_mode` 与您的集群配置匹配
+> **重要提示**：确保 `rollout.backend` 和 `actor.backend` 的 GPU 总数与您的集群配置匹配
 > （`#GPU == cluster.n_nodes * cluster.n_gpus_per_node`）
 
 <!--
-> **Notes**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`.
+> **Notes**: Before launching distributed experiments, please check if your per-engine `backend` fields match your cluster configuration. Make sure the total GPUs allocated by `rollout.backend` and `actor.backend` equals `cluster.n_nodes * cluster.n_gpus_per_node`.
 > **Note**: Ray and Slurm launchers only work for distributed experiments with more than 1 node (`cluster.n_nodes > 1`). They allocate GPUs for training and generation at the granularity of **nodes**, which means the number of GPUs allocated for generation and training must be integer multiples of `cluster.n_gpus_per_node`.
 -->
 

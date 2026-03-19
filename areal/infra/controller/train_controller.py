@@ -6,7 +6,6 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
-    AllocationMode,
     FinetuneSpec,
     Job,
     ParallelStrategy,
@@ -17,6 +16,7 @@ from areal.api import (
     Worker,
     WorkflowLike,
 )
+from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
 from areal.infra.rpc.rtensor import RTensor
 from areal.infra.utils.concurrent import run_async_task
@@ -128,12 +128,13 @@ class TrainController:
         self.config = config
         self.scheduler = scheduler
 
-        self.alloc_mode: AllocationMode
+        # Parse allocation from config.backend
+        self.train_alloc = ModelAllocation.from_str(config.backend)
+
         self.workers: list[Worker] = []
         # Boolean list indicating which workers are data-parallel heads
         # Only DP head workers receive data slices; others get data via broadcast
         self.workers_is_dp_head: list[bool] = []
-        self.parallel_strategy: ParallelStrategy | None = None
 
         self._worker_role: str = "default"
         self._own_process_group = False
@@ -163,6 +164,11 @@ class TrainController:
             self._own_process_group = True
 
     @property
+    def parallel_strategy(self) -> ParallelStrategy:
+        """Parallel strategy derived from the parsed backend allocation."""
+        return self.train_alloc.parallel
+
+    @property
     def data_parallel_rank(self) -> int:
         return 0
 
@@ -180,8 +186,7 @@ class TrainController:
     def initialize(
         self,
         role: str,
-        alloc_mode: AllocationMode,
-        ft_spec: FinetuneSpec,
+        ft_spec: FinetuneSpec | None = None,
         **kwargs,
     ):
         """Initialize environments for distributed training and load models.
@@ -190,24 +195,21 @@ class TrainController:
         ----------
         role : str
             Role identifier for the workers
-        alloc_mode : AllocationMode
-            Allocation mode configuration for distributed setup
-        ft_spec : FinetuneSpec
+        ft_spec : FinetuneSpec | None
             Finetune specification for model initialization
         **kwargs
             Additional keyword arguments passed to engine initialization
         """
         # Store configuration
         self._worker_role = role
-        self.alloc_mode = alloc_mode
 
-        self.parallel_strategy = alloc_mode.train
+        world_size = self.train_alloc.parallel.world_size
 
         # Create job specification for scheduler
         # Convert scheduling_spec tuple to list for scheduler compatibility
         # The scheduler will handle task replication across workers if needed
         job = Job(
-            replicas=alloc_mode.train.world_size,
+            replicas=world_size,
             tasks=list(self.config.scheduling_spec),
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,

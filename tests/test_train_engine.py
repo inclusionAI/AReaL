@@ -79,6 +79,7 @@ def get_engine(engine_type: str, model_path: str):
     engine_cls = {"fsdp": FSDPEngine}[engine_type]
 
     engine_config = TrainEngineConfig(
+        backend="fsdp:d1",
         experiment_name=f"test-{engine_type}-engine",
         trial_name="test0",
         path=model_path,
@@ -230,6 +231,7 @@ def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
 )
 def test_train_engine_config_accepts_builtin_and_kernel_attn_impls(attn_impl):
     config = TrainEngineConfig(
+        backend="fsdp:d1",
         experiment_name="test-experiment",
         trial_name="trial0",
         path="test-model",
@@ -250,6 +252,7 @@ def test_train_engine_config_accepts_builtin_and_kernel_attn_impls(attn_impl):
 def test_train_engine_config_rejects_invalid_kernel_attn_impl(attn_impl):
     with pytest.raises(ValueError, match="attn_impl must be one of"):
         TrainEngineConfig(
+            backend="fsdp:d1",
             experiment_name="test-experiment",
             trial_name="trial0",
             path="test-model",
@@ -288,6 +291,7 @@ def test_create_llm_actor_or_critic_forwards_attn_impl(
     monkeypatch.setattr(fsdp_module, "AutoModelForCausalLM", FakeModelFactory)
 
     config = TrainEngineConfig(
+        backend="fsdp:d1",
         experiment_name="test-experiment",
         trial_name="trial0",
         path="test-model",
@@ -327,6 +331,7 @@ def test_create_device_model_applies_use_kernels(monkeypatch, memory_efficient_l
     )
 
     config = TrainEngineConfig(
+        backend="fsdp:d1",
         experiment_name="test-experiment",
         trial_name="trial0",
         path="test-model",

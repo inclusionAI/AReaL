@@ -1,5 +1,5 @@
 # Unified GRPO test config.
-# Backend-specific values (allocation_mode, optimizer) are overridden via CLI.
+# Backend-specific values (rollout.backend, actor.backend, optimizer) are overridden via CLI.
 experiment_name: tests-grpo
 trial_name: trial
 scheduler:
@@ -8,7 +8,6 @@ cluster:
   n_nodes: 1
   n_gpus_per_node: 2
   fileroot: /tmp/areal/experiments
-allocation_mode: sglang:d1+fsdp:d1
 seed: 1
 total_train_epochs: 1
 total_train_steps: 16
@@ -46,6 +45,7 @@ gconfig:
   max_new_tokens: 1024
 
 rollout:
+  backend: "sglang:d1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   consumer_batch_size: ${train_dataset.batch_size}
@@ -53,6 +53,7 @@ rollout:
   max_head_offpolicyness: 2
 
 actor:
+  backend: "fsdp:d1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen3-0.6B
@@ -84,6 +85,7 @@ actor:
       env_vars: {}
 
 ref:
+  backend: ${actor.backend}
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}
