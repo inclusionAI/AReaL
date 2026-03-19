@@ -28,6 +28,14 @@ class SweDataConfig:
         default=4,
         metadata={"help": "Number of parallel workers for tokenization."},
     )
+    strip_all_thinking: bool = field(
+        default=False,
+        metadata={
+            "help": "Strip <think>...</think> from ALL assistant turns "
+            "including the training target. By default only context "
+            "turns are stripped."
+        },
+    )
 
 
 @dataclass

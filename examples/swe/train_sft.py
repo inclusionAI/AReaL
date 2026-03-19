@@ -19,6 +19,7 @@ def main(args):
         "num_proc": config.swe.num_proc,
         "pre_split": config.swe.pre_split,
         "filter_errors": config.swe.filter_errors,
+        "strip_all_thinking": config.swe.strip_all_thinking,
     }
 
     train_dataset = get_custom_dataset(

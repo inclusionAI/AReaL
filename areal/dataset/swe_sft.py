@@ -134,18 +134,21 @@ def _clean_message(msg, strip_thinking=True):
     return cleaned
 
 
-def _split_and_filter(messages, filter_errors=True):
+def _split_and_filter(messages, filter_errors=True, strip_all_thinking=False):
     """Split trajectory into progressive pairs and optionally filter by ``is_error``.
 
-    For each pair, thinking (``<think>...</think>``) is stripped from all
-    context assistant turns.  Only the last assistant turn (the training
-    target) keeps its content unchanged.
+    By default, thinking (``<think>...</think>``) is stripped from context
+    assistant turns only; the last assistant turn (training target) keeps
+    its content unchanged.  Set *strip_all_thinking* to strip from every
+    assistant turn including the target.
 
     Args:
         messages: Raw trajectory messages.
         filter_errors: If True (default), discard pairs whose current segment
             contains a tool result with ``is_error=True``.  Set to False to
             keep all pairs regardless of tool errors.
+        strip_all_thinking: If True, strip ``<think>`` blocks from every
+            assistant turn including the training target.
 
     Returns:
         List of cleaned message sequences (one per valid pair).
@@ -162,10 +165,9 @@ def _split_and_filter(messages, filter_errors=True):
 
         pair = []
         for idx, m in enumerate(messages[:seg_end]):
-            # Only the last assistant (at asst_start) keeps thinking;
-            # all earlier assistant turns get thinking stripped.
             is_target = m.get("role") == "assistant" and idx == asst_start
-            pair.append(_clean_message(m, strip_thinking=not is_target))
+            strip = strip_all_thinking or not is_target
+            pair.append(_clean_message(m, strip_thinking=strip))
         pairs.append(pair)
 
     return pairs, n_filtered
@@ -299,7 +301,9 @@ def _detect_template_pattern(tokenizer):
     )
 
 
-def _load_trajectory_pairs(path: str, filter_errors: bool = True):
+def _load_trajectory_pairs(
+    path: str, filter_errors: bool = True, strip_all_thinking: bool = False
+):
     """Load trajectory JSONL and split into progressive pairs.
 
     Each line has ``{"conversations": [{"messages": [...]}]}``.
@@ -308,6 +312,7 @@ def _load_trajectory_pairs(path: str, filter_errors: bool = True):
         path: Path to the JSONL file.
         filter_errors: If True, discard pairs whose current segment contains
             a tool result with ``is_error=True``.
+        strip_all_thinking: If True, strip thinking from all assistant turns.
     """
     all_pairs = []
     records_in = 0
@@ -336,7 +341,11 @@ def _load_trajectory_pairs(path: str, filter_errors: bool = True):
             if not messages:
                 continue
 
-            pairs, n_filtered = _split_and_filter(messages, filter_errors=filter_errors)
+            pairs, n_filtered = _split_and_filter(
+                messages,
+                filter_errors=filter_errors,
+                strip_all_thinking=strip_all_thinking,
+            )
             total_filtered += n_filtered
             all_pairs.extend(pairs)
 
@@ -348,10 +357,13 @@ def _load_trajectory_pairs(path: str, filter_errors: bool = True):
     return all_pairs
 
 
-def _load_presplit_pairs(path: str):
+def _load_presplit_pairs(path: str, strip_all_thinking: bool = False):
     """Load pre-split pair JSONL where each line is ``{"messages": [...]}``.
 
     Messages are cleaned but no splitting or error-filtering is performed.
+    By default, thinking is stripped from context assistant turns but
+    preserved for the last assistant turn (the training target).  Set
+    *strip_all_thinking* to strip from every assistant turn.
     """
     all_pairs = []
 
@@ -364,7 +376,19 @@ def _load_presplit_pairs(path: str):
             messages = record.get("messages", [])
             if not messages:
                 continue
-            all_pairs.append([_clean_message(m) for m in messages])
+
+            # Find the last assistant index so we can preserve its thinking.
+            last_asst = None
+            for i, m in enumerate(messages):
+                if m.get("role") == "assistant":
+                    last_asst = i
+
+            pair = []
+            for idx, m in enumerate(messages):
+                is_target = m.get("role") == "assistant" and idx == last_asst
+                strip = strip_all_thinking or not is_target
+                pair.append(_clean_message(m, strip_thinking=strip))
+            all_pairs.append(pair)
 
     logger.info(f"Loaded {len(all_pairs)} pre-split pairs from {path}")
     return all_pairs
@@ -378,13 +402,17 @@ def get_swe_sft_dataset(
     num_proc: int | None = None,
     pre_split: bool = False,
     filter_errors: bool = True,
+    strip_all_thinking: bool = False,
 ):
     """Load SWE trajectory data and convert to SFT training pairs.
 
     Args:
-        path: Path to the JSONL file containing SWE trajectories.
+        path: Path to the JSONL file containing SWE trajectories, or a
+            directory containing a pre-tokenized Arrow dataset (saved by
+            ``python -m areal.dataset.swe_sft --save-tokenized``).
         split: Unused, kept for API compatibility.
         tokenizer: Tokenizer with ``apply_chat_template`` support.
+            Not required when loading a pre-tokenized dataset.
         max_length: Max token length.  Longer sequences are filtered out.
         num_proc: Number of parallel workers for tokenization.
             Defaults to ``min(os.cpu_count(), DATASET_NUM_PROC)``.
@@ -393,17 +421,41 @@ def get_swe_sft_dataset(
         filter_errors: If True (default), discard pairs whose current segment
             contains a tool result with ``is_error=True``.  Set to False to
             keep all pairs regardless of tool errors.
+        strip_all_thinking: If True, strip ``<think>...</think>`` from every
+            assistant turn including the training target.
 
     Returns:
         A HuggingFace ``Dataset`` with ``input_ids`` and ``loss_mask`` columns.
     """
+    # Pre-tokenized Arrow dataset: load directly, skip all processing.
+    if os.path.isdir(path):
+        from datasets import load_from_disk
+
+        logger.info(f"Loading pre-tokenized dataset from {path}")
+        dataset = load_from_disk(path)
+
+        if max_length is not None:
+            before_filter = len(dataset)
+            dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
+            logger.info(
+                f"Filtered {before_filter - len(dataset)} samples "
+                f"exceeding max_length={max_length}"
+            )
+
+        logger.info(f"Final dataset: {len(dataset)} samples")
+        return dataset
+
     if num_proc is None:
         num_proc = max(1, min(os.cpu_count() or 1, DATASET_NUM_PROC))
 
     if pre_split:
-        all_pairs = _load_presplit_pairs(path)
+        all_pairs = _load_presplit_pairs(path, strip_all_thinking=strip_all_thinking)
     else:
-        all_pairs = _load_trajectory_pairs(path, filter_errors=filter_errors)
+        all_pairs = _load_trajectory_pairs(
+            path,
+            filter_errors=filter_errors,
+            strip_all_thinking=strip_all_thinking,
+        )
 
     if not all_pairs:
         raise ValueError(f"No valid SFT pairs generated from {path}")
@@ -501,14 +553,52 @@ if __name__ == "__main__":
         help="Keep pairs whose current segment contains tool results with "
         "is_error=True (by default these are discarded).",
     )
+    parser.add_argument(
+        "--save-tokenized",
+        default=None,
+        metavar="DIR",
+        help="Save the tokenized dataset to DIR (Arrow format). "
+        "The saved directory can be used directly as the dataset path "
+        "during training, skipping all processing.",
+    )
+    parser.add_argument(
+        "--strip-all-thinking",
+        action="store_true",
+        help="Strip <think>...</think> from ALL assistant turns including "
+        "the training target. By default only context turns are stripped.",
+    )
     args = parser.parse_args()
 
-    # --- Load pairs (always full load, then truncate) ---
     filter_errors = not args.no_filter_errors
+    strip_all_thinking = args.strip_all_thinking
+
+    # --- Fast path: preprocess and save tokenized dataset ---
+    if args.save_tokenized:
+        tok = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
+        ds = get_swe_sft_dataset(
+            path=args.path,
+            tokenizer=tok,
+            max_length=args.max_length,
+            num_proc=args.num_proc,
+            pre_split=args.pre_split,
+            filter_errors=filter_errors,
+            strip_all_thinking=strip_all_thinking,
+        )
+        ds.save_to_disk(args.save_tokenized)
+        print(f"Saved tokenized dataset ({len(ds)} samples) to {args.save_tokenized}")
+        sys.exit(0)
+
+    # --- Load pairs (always full load, then truncate) ---
     if args.pre_split:
-        all_pairs = _load_presplit_pairs(args.path)
+        all_pairs = _load_presplit_pairs(
+            args.path, strip_all_thinking=strip_all_thinking
+        )
     else:
-        all_pairs = _load_trajectory_pairs(args.path, filter_errors=filter_errors)
+        all_pairs = _load_trajectory_pairs(
+            args.path,
+            filter_errors=filter_errors,
+            strip_all_thinking=strip_all_thinking,
+        )
 
     total_pairs = len(all_pairs)
     if args.num_samples is not None:
