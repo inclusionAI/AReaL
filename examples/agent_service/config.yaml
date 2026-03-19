@@ -1,5 +1,9 @@
 # Agent Service Demo Configuration
 
+# Admin key for inter-service authentication (Router, Gateway, Worker).
+# Change from default for non-local deployments.
+admin_key: areal-agent-admin
+
 # tau2 environment settings
 tau2:
   domain: airline          # airline | retail | telecom

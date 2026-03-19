@@ -5,18 +5,19 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 
 from areal.utils import logging
 
+from ..auth import DEFAULT_ADMIN_KEY, make_admin_dependency
+
 logger = logging.getLogger("AgentRouter")
 
 
-def create_router_app() -> FastAPI:
-    # TODO(agent-service): add admin key auth for /register, /unregister
-    # and session key auth for /route. See #1043 for reference.
+def create_router_app(admin_key: str = DEFAULT_ADMIN_KEY) -> FastAPI:
     app = FastAPI(title="AReaL Agent Router")
+    auth = make_admin_dependency(admin_key)
 
     registered_proxies: list[str] = []
     session_map: dict[str, str] = {}
@@ -31,7 +32,7 @@ def create_router_app() -> FastAPI:
             "active_sessions": len(session_map),
         }
 
-    @app.post("/register")
+    @app.post("/register", dependencies=[Depends(auth)])
     async def register(body: dict[str, Any]):
         addr = body["addr"]
         async with lock:
@@ -42,7 +43,7 @@ def create_router_app() -> FastAPI:
                 )
         return {"status": "ok"}
 
-    @app.post("/unregister")
+    @app.post("/unregister", dependencies=[Depends(auth)])
     async def unregister(body: dict[str, Any]):
         addr = body["addr"]
         async with lock:
@@ -56,7 +57,7 @@ def create_router_app() -> FastAPI:
                 )
         return {"status": "ok"}
 
-    @app.post("/route")
+    @app.post("/route", dependencies=[Depends(auth)])
     async def route(body: dict[str, Any]):
         nonlocal rr_idx
         session_key = body["session_key"]
@@ -77,7 +78,7 @@ def create_router_app() -> FastAPI:
 
         return {"data_proxy_addr": addr}
 
-    @app.post("/remove_session")
+    @app.post("/remove_session", dependencies=[Depends(auth)])
     async def remove_session(body: dict[str, Any]):
         session_key = body["session_key"]
         async with lock:

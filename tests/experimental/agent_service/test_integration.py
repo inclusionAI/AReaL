@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from areal.experimental.agent_service.auth import DEFAULT_ADMIN_KEY, admin_headers
 from areal.experimental.agent_service.data_proxy.app import create_data_proxy_app
 from areal.experimental.agent_service.gateway.app import create_gateway_app
 from areal.experimental.agent_service.gateway.bridge import OpenResponsesBridge
@@ -22,6 +23,8 @@ from areal.experimental.agent_service.types import (
 from areal.experimental.agent_service.worker.app import create_worker_app
 
 httpx = pytest.importorskip("httpx")
+
+_AUTH = admin_headers(DEFAULT_ADMIN_KEY)
 
 
 class _EchoAgent:
@@ -160,18 +163,25 @@ class TestWorkerDataProxyIntegration:
 class TestRouterIntegration:
     @pytest.mark.asyncio
     async def test_register_and_route(self):
-        router_app = create_router_app()
+        router_app = create_router_app(admin_key=DEFAULT_ADMIN_KEY)
         transport = httpx.ASGITransport(app=router_app)
 
         async with httpx.AsyncClient(
             transport=transport, base_url="http://router"
         ) as client:
-            await client.post("/register", json={"addr": "http://proxy1:9100"})
-            resp = await client.post("/route", json={"session_key": "s1"})
+            await client.post(
+                "/register",
+                json={"addr": "http://proxy1:9100"},
+                headers=_AUTH,
+            )
+            resp = await client.post(
+                "/route", json={"session_key": "s1"}, headers=_AUTH
+            )
             assert resp.json()["data_proxy_addr"] == "http://proxy1:9100"
 
-            # Same session → same proxy
-            resp2 = await client.post("/route", json={"session_key": "s1"})
+            resp2 = await client.post(
+                "/route", json={"session_key": "s1"}, headers=_AUTH
+            )
             assert resp2.json()["data_proxy_addr"] == "http://proxy1:9100"
 
 

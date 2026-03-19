@@ -10,6 +10,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from areal.utils import logging
 
+from ..auth import DEFAULT_ADMIN_KEY, admin_headers
 from ..protocol import (
     FrameType,
     RequestFrame,
@@ -38,13 +39,16 @@ def _make_accepted_json(request_id: str, run_id: str) -> str:
     )
 
 
-def create_gateway_app(router_addr: str) -> FastAPI:
+def create_gateway_app(router_addr: str, admin_key: str = DEFAULT_ADMIN_KEY) -> FastAPI:
     app = FastAPI(title="AReaL Agent Gateway")
     http_client = httpx.AsyncClient(timeout=600.0)
+    _auth_headers = admin_headers(admin_key)
 
     async def _route(session_key: str) -> str:
         resp = await http_client.post(
-            f"{router_addr}/route", json={"session_key": session_key}
+            f"{router_addr}/route",
+            json={"session_key": session_key},
+            headers=_auth_headers,
         )
         resp.raise_for_status()
         return resp.json()["data_proxy_addr"]

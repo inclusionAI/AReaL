@@ -11,9 +11,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Agent Router")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8081)
+    parser.add_argument("--admin-key", default="areal-agent-admin")
     args = parser.parse_args()
 
-    uvicorn.run(create_router_app(), host=args.host, port=args.port)
+    uvicorn.run(
+        create_router_app(admin_key=args.admin_key), host=args.host, port=args.port
+    )
 
 
 if __name__ == "__main__":

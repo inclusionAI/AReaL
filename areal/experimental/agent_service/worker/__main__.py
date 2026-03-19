@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--worker-port", type=int, default=9000)
     parser.add_argument("--proxy-port", type=int, default=9100)
     parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--admin-key", default="areal-agent-admin")
     args = parser.parse_args()
 
     worker_addr = f"http://{args.host}:{args.worker_port}"
@@ -32,9 +33,15 @@ def main() -> None:
 
     threading.Thread(target=run_worker, daemon=True).start()
 
+    from ..auth import admin_headers
+
     async def register():
         async with httpx.AsyncClient() as client:
-            await client.post(f"{args.router_addr}/register", json={"addr": proxy_addr})
+            await client.post(
+                f"{args.router_addr}/register",
+                json={"addr": proxy_addr},
+                headers=admin_headers(args.admin_key),
+            )
 
     asyncio.run(register())
     uvicorn.run(proxy_app, host=args.host, port=args.proxy_port, log_level="info")

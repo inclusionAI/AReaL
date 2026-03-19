@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from areal.utils import logging
 
+from ..auth import DEFAULT_ADMIN_KEY, admin_headers
 from ..protocol import generate_run_id
 
 logger = logging.getLogger("AgentBridge")
@@ -23,8 +24,9 @@ class AgentBridge(ABC):
 
 
 class OpenResponsesBridge(AgentBridge):
-    def __init__(self, router_addr: str) -> None:
+    def __init__(self, router_addr: str, admin_key: str = DEFAULT_ADMIN_KEY) -> None:
         self._router_addr = router_addr
+        self._auth_headers = admin_headers(admin_key)
         self._http = httpx.AsyncClient(timeout=600.0)
 
     async def close(self) -> None:
@@ -67,6 +69,7 @@ class OpenResponsesBridge(AgentBridge):
             route_resp = await self._http.post(
                 f"{self._router_addr}/route",
                 json={"session_key": session_key},
+                headers=self._auth_headers,
             )
             route_resp.raise_for_status()
             data_proxy_addr = route_resp.json()["data_proxy_addr"]

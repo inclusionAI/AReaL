@@ -228,13 +228,15 @@ def main() -> None:
     if data_dir:
         os.environ["TAU2_DATA_DIR"] = data_dir
 
+    admin_key = config.get("admin_key", "areal-agent-admin")
+
     router_addr = f"http://127.0.0.1:{ROUTER_PORT}"
     worker_addr = f"http://127.0.0.1:{WORKER_PORT}"
     proxy_addr = f"http://127.0.0.1:{PROXY_PORT}"
     gateway_addr = f"http://127.0.0.1:{GATEWAY_PORT}"
 
     # 1. Router
-    _start_in_thread(create_router_app(), ROUTER_PORT, "router")
+    _start_in_thread(create_router_app(admin_key=admin_key), ROUTER_PORT, "router")
 
     # 2. Worker (Tau2Agent with PydanticAI + tau2 tools)
     def _make_agent_cls():
@@ -259,8 +261,11 @@ def main() -> None:
     )
 
     # 4. Gateway + Bridge
-    gw_app = create_gateway_app(router_addr=router_addr)
-    mount_bridge(gw_app, OpenResponsesBridge(router_addr=router_addr))
+    gw_app = create_gateway_app(router_addr=router_addr, admin_key=admin_key)
+    mount_bridge(
+        gw_app,
+        OpenResponsesBridge(router_addr=router_addr, admin_key=admin_key),
+    )
     _start_in_thread(gw_app, GATEWAY_PORT, "gateway")
 
     # 5. Wait + register
@@ -269,8 +274,14 @@ def main() -> None:
         await _wait_healthy(f"{worker_addr}/health")
         await _wait_healthy(f"{proxy_addr}/health")
         await _wait_healthy(f"{gateway_addr}/health")
+        from areal.experimental.agent_service.auth import admin_headers
+
         async with httpx.AsyncClient() as client:
-            await client.post(f"{router_addr}/register", json={"addr": proxy_addr})
+            await client.post(
+                f"{router_addr}/register",
+                json={"addr": proxy_addr},
+                headers=admin_headers(admin_key),
+            )
 
     asyncio.run(setup())
     print("All services started.")
