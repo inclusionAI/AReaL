@@ -235,6 +235,7 @@ class TrainEngine(abc.ABC):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        global_step: int | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare a batch of data for training from a dataloader.
 
@@ -255,6 +256,9 @@ class TrainEngine(abc.ABC):
             If True, enables dynamic batch sizing. The method will stop collecting
             when (accepted + rejected) >= batch_size, returning only accepted results.
             This results in variable-sized batches of valid data. Default is False.
+        global_step : int | None, optional
+            The current training step, used for step-dependent behavior in rollouts
+            (e.g., curriculum learning, scheduled parameters). Default is None.
 
         Returns
         -------
@@ -709,6 +713,7 @@ class InferenceEngine(abc.ABC):
         group_size: int = 1,
         task_id: int | None = None,
         is_eval: bool = False,
+        global_step: int | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -741,6 +746,9 @@ class InferenceEngine(abc.ABC):
         is_eval : bool, optional
             Whether this is an evaluation workflow. Affects variables like trajectory dump path
             and statistics keys. By default False.
+        global_step : int | None, optional
+            The current training step, used for step-dependent behavior in rollouts
+            (e.g., curriculum learning, scheduled parameters). Default is None.
 
         Returns
         -------
@@ -857,6 +865,7 @@ class InferenceEngine(abc.ABC):
         should_accept_fn: Callable | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        global_step: int | None = None,
     ) -> list[dict[str, Any]]:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.
 
@@ -900,6 +909,9 @@ class InferenceEngine(abc.ABC):
             If True, enables dynamic batch sizing. The method will stop collecting
             when (accepted + rejected) >= batch_size, returning only accepted results.
             This results in variable-sized batches of valid data. Default is False.
+        global_step : int | None, optional
+            The current training step, used for step-dependent behavior in rollouts
+            (e.g., curriculum learning, scheduled parameters). Default is None.
 
         Returns
         -------

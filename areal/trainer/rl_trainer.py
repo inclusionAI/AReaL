@@ -355,6 +355,7 @@ class PPOTrainer:
                     should_accept_fn=dynamic_filter_fn,
                     group_size=config.gconfig.n_samples,
                     dynamic_bs=self.config.dynamic_bs,
+                    global_step=global_step,
                 )
 
             if self.critic is not None:
@@ -869,6 +870,7 @@ class PPOTrainer:
         self,
         eval_workflow: WorkflowLike,
         eval_workflow_kwargs,
+        global_step: int | None = None,
     ):
         if self.actor.is_data_parallel_head():
             cnt = 0
@@ -880,6 +882,7 @@ class PPOTrainer:
                         eval_workflow_kwargs,
                         group_size=self.config.eval_gconfig.n_samples,
                         is_eval=True,
+                        global_step=global_step,
                     )
                     cnt += 1
             self.eval_rollout.wait(cnt, timeout=None)
@@ -906,6 +909,7 @@ class PPOTrainer:
                 self._evaluate_fn,
                 eval_workflow=eval_workflow,
                 eval_workflow_kwargs=eval_workflow_kwargs,
+                global_step=global_step,
             ),
             epoch,
             epoch_step,

@@ -462,6 +462,7 @@ class FSDPEngine(TrainEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        global_step: int | None = None,
     ) -> list[dict[str, Any]]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
@@ -471,6 +472,7 @@ class FSDPEngine(TrainEngine):
             should_accept_fn=should_accept_fn,
             group_size=group_size,
             dynamic_bs=dynamic_bs,
+            global_step=global_step,
         )
 
     def update_weights(self, meta: WeightUpdateMeta):

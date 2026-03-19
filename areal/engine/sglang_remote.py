@@ -327,6 +327,7 @@ class RemoteSGLangEngine(InferenceEngine):
         callback_addr: str | None = None,
         is_eval: bool = False,
         proxy_addr: str | None = None,
+        global_step: int | None = None,
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
@@ -339,6 +340,7 @@ class RemoteSGLangEngine(InferenceEngine):
             callback_addr=callback_addr,
             is_eval=is_eval,
             proxy_addr=proxy_addr,
+            global_step=global_step,
         )
 
     def wait(
@@ -380,6 +382,7 @@ class RemoteSGLangEngine(InferenceEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        global_step: int | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
         return self._engine.prepare_batch(
@@ -389,6 +392,7 @@ class RemoteSGLangEngine(InferenceEngine):
             should_accept_fn=should_accept_fn,
             group_size=group_size,
             dynamic_bs=dynamic_bs,
+            global_step=global_step,
         )
 
     def pause(self):

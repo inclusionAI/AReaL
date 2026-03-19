@@ -59,6 +59,7 @@ class _RemoteRolloutTaskInput:
     is_eval: bool = False
     group_size: int = 1
     proxy_addr: str | None = None
+    global_step: int | None = None
 
 
 @dataclass
@@ -798,6 +799,7 @@ class RolloutController:
                     task_id=task_id,
                     callback_addr=f"http://{self.callback_addr}/callback/rollout_complete",
                     proxy_addr=proxy_addr,
+                    global_step=pending_task.global_step,
                 )
 
                 assert task_id == engine_task_id, (task_id, engine_task_id)
@@ -860,6 +862,7 @@ class RolloutController:
         is_eval: bool = False,
         group_size: int = 1,
         proxy_addr: str | None = None,
+        global_step: int | None = None,
     ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -880,6 +883,7 @@ class RolloutController:
             is_eval=is_eval,
             group_size=group_size,
             proxy_addr=proxy_addr,
+            global_step=global_step,
         )
 
         # Delegate to dispatcher
@@ -932,6 +936,7 @@ class RolloutController:
         should_accept_fn: str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        global_step: int | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare a batch with controlled staleness.
 
@@ -955,6 +960,7 @@ class RolloutController:
                         should_accept_fn=should_accept_fn,
                         task_id=self._task_id_generator.next(),
                         group_size=group_size,
+                        global_step=global_step,
                     )
 
         if not hasattr(self, "data_generator"):

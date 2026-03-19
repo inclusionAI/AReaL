@@ -201,6 +201,7 @@ class DistRolloutCoordinator:
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        global_step: int | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare async rollout batch with distributed coordination.
 
@@ -224,6 +225,9 @@ class DistRolloutCoordinator:
             Default is 1 (no grouping).
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. Default is False.
+        global_step : int | None, optional
+            The current training step, used for step-dependent behavior in rollouts
+            (e.g., curriculum learning, scheduled parameters). Default is None.
 
         Returns
         -------
@@ -245,6 +249,7 @@ class DistRolloutCoordinator:
                 should_accept_fn=should_accept_fn,
                 group_size=group_size,
                 dynamic_bs=dynamic_bs,
+                global_step=global_step,
             )
             trajectories = tensor_container_to(
                 trajectories, current_platform.current_device()

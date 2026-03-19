@@ -1002,6 +1002,7 @@ class RemoteInfEngine(InferenceEngine):
         callback_addr: str | None = None,
         is_eval: bool = False,
         proxy_addr: str | None = None,
+        global_step: int | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -1026,6 +1027,9 @@ class RemoteInfEngine(InferenceEngine):
         proxy_addr : str, optional
             HTTP address of the proxy server for AgentWorkflow. If provided,
             AgentWorkflow will use this proxy instead of a local one.
+        global_step : int | None, optional
+            The current training step, used for step-dependent behavior in rollouts
+            (e.g., curriculum learning, scheduled parameters). Default is None.
         """
         if workflow is None and (
             self.config.openai is None or self.config.openai.mode != "online"
@@ -1048,6 +1052,7 @@ class RemoteInfEngine(InferenceEngine):
             should_accept_fn=resolved_should_accept_fn,
             task_id=task_id,
             is_eval=is_eval,
+            global_step=global_step,
         )
 
     def wait(
@@ -1131,6 +1136,7 @@ class RemoteInfEngine(InferenceEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        global_step: int | None = None,
     ) -> list[dict[str, Any]]:
         """Asynchronously submit and wait until a full batch is ready.
 
@@ -1149,6 +1155,9 @@ class RemoteInfEngine(InferenceEngine):
             Default is 1 (no grouping).
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. Default is False.
+        global_step : int | None, optional
+            The current training step, used for step-dependent behavior in rollouts
+            (e.g., curriculum learning, scheduled parameters). Default is None.
 
         Returns
         -------
@@ -1170,6 +1179,7 @@ class RemoteInfEngine(InferenceEngine):
             workflow=resolved_workflow,
             should_accept_fn=resolved_should_accept_fn,
             dynamic_bs=dynamic_bs,
+            global_step=global_step,
         )
 
     @trace_perf("remote_inf_engine.pause_generation", category="misc")

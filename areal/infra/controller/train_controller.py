@@ -615,6 +615,7 @@ class TrainController:
         should_accept_fn: str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        global_step: int | None = None,
     ) -> list[dict[str, Any]]:
         return self.rollout.prepare_batch(
             dataloader=dataloader,
@@ -623,6 +624,7 @@ class TrainController:
             should_accept_fn=should_accept_fn,
             group_size=group_size,
             dynamic_bs=dynamic_bs,
+            global_step=global_step,
         )
 
     def rollout_batch(

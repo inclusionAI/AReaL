@@ -230,6 +230,7 @@ class _RolloutTaskInput:
     workflow: RolloutWorkflow
     should_accept_fn: Callable[[dict[str, Any]], bool] | None = None
     is_eval: bool = False
+    global_step: int | None = None
 
 
 @dataclass
@@ -779,6 +780,9 @@ class WorkflowExecutor:
         self._tokenizer = None
         self._tokenizer_lock = threading.Lock()
 
+        # Current global step for step-dependent behavior in rollouts
+        self._current_global_step: int | None = None
+
     def _resolve_dp_world_size(self):
         if not dist.is_initialized():
             return 1
@@ -1045,8 +1049,13 @@ class WorkflowExecutor:
             reason: str | None = None
 
             try:
+                # Inject global_step into data for step-dependent behavior
+                data = pending_task.data
+                if pending_task.global_step is not None:
+                    data = {**data, "global_step": pending_task.global_step}
+
                 traj = await pending_task.workflow.arun_episode(
-                    self.inference_engine, pending_task.data
+                    self.inference_engine, data
                 )
 
                 # Trajectory format checking
@@ -1150,6 +1159,7 @@ class WorkflowExecutor:
         should_accept_fn: Callable[[dict[str, Any]], bool] = None,
         task_id: int | None = None,
         is_eval: bool = False,
+        global_step: int | None = None,
     ) -> int:
         """Submit a rollout request to the workflow executor.
 
@@ -1167,6 +1177,7 @@ class WorkflowExecutor:
             should_accept_fn=should_accept_fn,
             task_id=task_id,
             is_eval=is_eval,
+            global_step=global_step,
         )
 
         # Delegate to dispatcher
@@ -1265,6 +1276,7 @@ class WorkflowExecutor:
         workflow: RolloutWorkflow,
         should_accept_fn: Callable[[dict[str, Any]], bool] = None,
         dynamic_bs: bool = False,
+        global_step: int | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare a batch with controlled staleness.
 
@@ -1283,7 +1295,14 @@ class WorkflowExecutor:
             - Using a separate :class:`WorkflowExecutor` (or engine) instance
             - Using the :meth:`submit` / :meth:`wait` pattern for finer control
 
-        See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for parameters.
+        Parameters
+        ----------
+        global_step : int | None, optional
+            The current training step, used for step-dependent behavior in rollouts
+            (e.g., curriculum learning, scheduled parameters). Default is None.
+            Note: This parameter is NOT cached and can vary across calls.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for other parameters.
 
         Returns
         -------
@@ -1292,6 +1311,8 @@ class WorkflowExecutor:
             Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
             where batch_size can vary per trajectory depending on the workflow output.
         """
+        # Store global_step for use in the task input generator
+        self._current_global_step = global_step
 
         def task_input_generator():
             for data in cycle_dataloader(dataloader):
@@ -1304,6 +1325,7 @@ class WorkflowExecutor:
                         workflow=workflow,
                         should_accept_fn=should_accept_fn,
                         task_id=task_id,
+                        global_step=self._current_global_step,
                     )
 
         if not hasattr(self, "data_generator"):
