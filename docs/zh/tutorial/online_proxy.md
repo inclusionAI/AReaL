@@ -1,7 +1,9 @@
-# 在线 RL 训练与代理模式
+# 在线 RL 训练
 
-本指南介绍如何使用\*\*在线代理模式（online proxy mode）\*\*训练语言模型。在该模式下，外部应用程序（智能体运行时、人类评估者或任何 OpenAI
-兼容客户端）通过代理网关与模型交互，所有交互数据会自动收集为 RL 训练数据。
+本指南介绍如何使用在线模式训练语言模型。在该模式下，用户首先启动一个 AReaL RL 服务并暴露代理网关，外部应用程序（智能体运行时、人类评估者或任何 OpenAI
+兼容客户端）通过此网关与模型交互。每次交互都会自动收集为 RL 训练数据。
+
+**免责声明：** 此 API 为实验性质，可能会发生变更。
 
 ## 概述
 
@@ -15,6 +17,8 @@ AReaL 支持三种智能体工作流执行模式：
 
 本指南重点介绍 **online 模式**。该模式的独特之处在于，智能体代码运行在 AReaL _外部_。AReaL 暴露一个 OpenAI 兼容的 HTTP
 API，任何支持聊天补全协议的应用程序都可以连接。
+
+离线训练指南请参阅[智能体 RL 指南](./agentic_rl.md)。
 
 ## 架构
 
@@ -98,20 +102,17 @@ python3 examples/openclaw/train.py --config examples/openclaw/config.yaml \
 使用提供的辅助脚本或任何 HTTP 客户端：
 
 ```bash
-python examples/openclaw/start_session.py http://<gateway> \
-    --admin-key my-secret-admin-key
+curl -X POST http://<gateway>/rl/start_session \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer my-secret-admin-key" \
+  -d '{"task_id": "demo-task-0"}'
 ```
 
-输出：
+输出中应包含当前会话 ID 和该智能体会话的 API 密钥。
 
-```
-Session started!
-  -> Session ID : demo-task-0
-  -> API Key    : sk-sess-xxxxxxxxxxxx
-
-  export OPENAI_API_KEY=sk-sess-xxxxxxxxxxxx
-  export OPENAI_BASE_URL=http://<gateway>
-```
+**为什么每个智能体会话都需要唯一的 API 密钥？** 由于可能有许多并发的智能体应用在运行，且它们调用相同的端点（例如
+"/chat/completions"），我们需要一种机制来区分不同智能体的轨迹。因此，我们为每个智能体会话或轨迹分配唯一的 API
+密钥，它们之间具有一一对应的关系。这样，我们就能追踪同一轨迹内的交互并设置奖励。
 
 ### 步骤 4：与模型交互
 
@@ -145,17 +146,9 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-### 步骤 5：分配奖励
+### 步骤 5：分配奖励并结束会话
 
 交互完成后，分配奖励以提供 RL 训练信号：
-
-```bash
-python examples/openclaw/set_reward.py http://<gateway> \
-    --api-key sk-sess-xxxxxxxxxxxx \
-    --reward 1.0
-```
-
-或使用 `curl`：
 
 ```bash
 curl http://<gateway>/rl/set_reward \
@@ -164,59 +157,46 @@ curl http://<gateway>/rl/set_reward \
   -d '{"reward": 1.0}'
 ```
 
-### 步骤 6：开始下一轮
+您也可以在智能体 rollout 期间使用 completion ID 为中间步骤设置奖励。
 
-根据使用场景，有两种方式。
-
-**会话刷新**（适用于个性化 agent，如 OpenClaw）：
-
-使用相同的 API 密钥调用 `start_session` 来刷新会话。旧会话会自动结束，其轨迹导出用于训练， 然后使用相同的 API 密钥启动新会话：
+然后，结束会话：
 
 ```bash
-python examples/openclaw/start_session.py http://<gateway> \
-    --admin-key my-secret-admin-key \
-    --api-key sk-sess-xxxxxxxxxxxx
+curl http://<gateway>/rl/end_session \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-sess-xxxxxxxxxxxx" \
+  -d '{}'
 ```
 
-两轮之间无需重新配置您的应用程序。此方式专为聊天过程中无法切换 API 密钥的个性化 agent 设计。
+### 步骤 6：批量采样
 
-**批量采样**（适用于评测流水线）：
+将步骤 3 到步骤 5 整合到单个 bash 脚本中，然后使用 `sbatch` 等工具并发运行。**每个智能体会话必须重新调用 `/rl/start_session`
+以获取新的 API 密钥。**
 
-对每条 agent 轨迹，执行 `start_session` → agent 评测代码 → `set_reward` →
-`end_session`。批次中的每个样本获得独立的 API 密钥，网关通过不同密钥区分各 session
-的补全结果。此方式更适合已有的批量评测代码，每个样本可独立并行处理。
+当 AReaL 缓冲区中积累了足够的数据后，AReaL 将自动进入训练阶段。
 
-## 会话生命周期
+## FAQ
 
-每个训练轮次遵循以下生命周期：
+> Q: 更新后的模型何时会被加载用于推理？
 
-```
-start_session（管理员认证）
-      |
-      v
-  [交互：chat/completions、set_reward]（会话认证）
-      |
-      v
-  使用相同 api_key 调用 start_session（刷新）
-      |
-      +---> 旧会话结束
-      +---> 轨迹导出到 RL 训练器
-      +---> 新会话启动（相同 API 密钥）
-      |
-      v
-  [下一轮...]
-```
+模型会在每个训练步骤后加载。换言之，用于推理的模型始终是最新的。 有关模型保存和检查点，请参阅 [CLI 参考](../cli_reference.md)。
 
-### 会话刷新
+> Q: 如何控制智能体脚本的提交速率？RL 服务会过载吗？
 
-当您使用已有活跃会话的 API 密钥调用 `start_session` 时，网关会执行**会话刷新**：
+AReaL 内置了速率限制，称为**新鲜度控制（staleness control）**。 如果提交的并发请求过多，网关将向客户端返回 429。
+有关新鲜度控制的详细信息，请参阅[异步 RL 指南](../algorithms/async.md)。
 
-1. 现有会话被结束
-1. 如果未设置奖励，将分配默认奖励 0
-1. 轨迹被导出到 RL 训练流水线
-1. 使用相同 API 密钥启动新会话
+> Q: 我能用这种方式训练 OpenClaw 吗？
 
-这允许在不重启外部应用程序的情况下持续收集数据。
+本文档中的方式与训练个性化智能体不同，因为：
+
+- OpenClaw 假设与用户的单线程交互，即用户不能打开多个可能相互干扰的并发会话
+- OpenClaw 需要使用固定 URL 和 API 密钥进行一次性设置
+
+核心使用差异在于，OpenClaw 示例在整个交互过程中使用**固定的** API 密钥。 通过多次调用
+`start_session`，旧会话会自动结束，其轨迹导出用于训练，然后使用相同的 API 密钥启动新会话。两轮之间无需重新配置您的应用程序。
+
+有关训练 OpenClaw 智能体的详细信息，请参阅 [OpenClaw 示例](../../../examples/openclaw/README.md)。
 
 ## 认证机制
 
