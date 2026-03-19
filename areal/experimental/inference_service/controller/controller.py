@@ -67,7 +67,7 @@ class GatewayInferenceController:
         self._gateway_addr: str = ""
 
         # Worker ID mapping (data proxy addr → router-assigned worker_id)
-        self._worker_ids: dict[str, str] = {}  # dp_addr -> worker_id
+        self._worker_ids: dict[str, str] = {}  # data_proxy_addr -> worker_id
 
         # Version management
         self._version_lock = Lock()
@@ -231,6 +231,13 @@ class GatewayInferenceController:
                     for k, v in server_args.items():
                         if hasattr(sglang_config, k):
                             object.__setattr__(sglang_config, k, v)
+                        else:
+                            logger.warning(
+                                "SGLangConfig has no attribute %r, ignoring "
+                                "server_args entry (value=%r)",
+                                k,
+                                v,
+                            )
 
                 def _build_launch_cmd(host: str, port: int) -> list[str]:
                     return SGLangConfig.build_cmd(
@@ -323,7 +330,7 @@ class GatewayInferenceController:
         # ==================================================================
         # Step 3: Fork Data Proxies on all workers (raw_cmd mode)
         # ==================================================================
-        dp_base_cmd = [
+        data_proxy_base_cmd = [
             sys.executable,
             "-m",
             "areal.experimental.inference_service.data_proxy",
@@ -340,14 +347,17 @@ class GatewayInferenceController:
         for rank, worker in enumerate(inf_workers):
             guard_addr = f"http://{worker.ip}:{worker.worker_ports[0]}"
             # Each data proxy connects to its corresponding inference server
-            dp_cmd = dp_base_cmd + ["--backend-addr", self._inf_addrs[rank]]
-            dp_host, dp_port = self._fork_on_guard(
+            data_proxy_cmd = data_proxy_base_cmd + [
+                "--backend-addr",
+                self._inf_addrs[rank],
+            ]
+            data_proxy_host, data_proxy_port = self._fork_on_guard(
                 guard_addr=guard_addr,
                 role="data-proxy",
                 worker_index=rank,
-                raw_cmd=dp_cmd,
+                raw_cmd=data_proxy_cmd,
             )
-            self._data_proxy_addrs.append(f"http://{dp_host}:{dp_port}")
+            self._data_proxy_addrs.append(f"http://{data_proxy_host}:{data_proxy_port}")
 
         logger.info("Data proxies: %s", self._data_proxy_addrs)
 
@@ -402,19 +412,21 @@ class GatewayInferenceController:
         """Register all data proxy workers in the router and store their worker IDs."""
         import requests
 
-        for dp_addr in self._data_proxy_addrs:
+        for data_proxy_addr in self._data_proxy_addrs:
             resp = requests.post(
                 f"{self._router_addr}/register_worker",
-                json={"worker_addr": dp_addr},
+                json={"worker_addr": data_proxy_addr},
                 headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
                 timeout=5,
             )
             resp.raise_for_status()
             worker_id = resp.json().get("worker_id")
             if worker_id:
-                self._worker_ids[dp_addr] = worker_id
+                self._worker_ids[data_proxy_addr] = worker_id
             logger.info(
-                "Registered data proxy %s in router (worker_id=%s)", dp_addr, worker_id
+                "Registered data proxy %s in router (worker_id=%s)",
+                data_proxy_addr,
+                worker_id,
             )
 
     # -- Destroy -----------------------------------------------------------
