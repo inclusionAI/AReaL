@@ -357,6 +357,7 @@ class TestRouterEndpoints:
                 "session_id": "task-0-0",
                 "worker_addr": WORKER_1,
             },
+            headers=admin_headers(),
         )
 
         # Delete the worker
@@ -373,6 +374,7 @@ class TestRouterEndpoints:
         resp = await client.post(
             "/route",
             json={"api_key": "sess-key-1", "path": "/chat/completions"},
+            headers=admin_headers(),
         )
         assert resp.status_code == 404
 
@@ -394,13 +396,17 @@ class TestRouterEndpoints:
 
         # Route with admin key — should round-robin
         resp1 = await client.post(
-            "/route", json={"api_key": ADMIN_KEY, "path": "/generate"}
+            "/route",
+            json={"api_key": ADMIN_KEY, "path": "/generate"},
+            headers=admin_headers(),
         )
         assert resp1.status_code == 200
         addr1 = resp1.json()["worker_addr"]
 
         resp2 = await client.post(
-            "/route", json={"api_key": ADMIN_KEY, "path": "/generate"}
+            "/route",
+            json={"api_key": ADMIN_KEY, "path": "/generate"},
+            headers=admin_headers(),
         )
         assert resp2.status_code == 200
         addr2 = resp2.json()["worker_addr"]
@@ -425,12 +431,14 @@ class TestRouterEndpoints:
                 "session_id": "task-0-0",
                 "worker_addr": WORKER_1,
             },
+            headers=admin_headers(),
         )
 
         # Route with session key → pinned to WORKER_1
         resp = await client.post(
             "/route",
             json={"api_key": "sess-key-1", "path": "/chat/completions"},
+            headers=admin_headers(),
         )
         assert resp.status_code == 200
         assert resp.json()["worker_addr"] == WORKER_1
@@ -440,7 +448,9 @@ class TestRouterEndpoints:
     @pytest.mark.asyncio
     async def test_route_unknown_key_404(self, client):
         resp = await client.post(
-            "/route", json={"api_key": "unknown-key", "path": "/generate"}
+            "/route",
+            json={"api_key": "unknown-key", "path": "/generate"},
+            headers=admin_headers(),
         )
         assert resp.status_code == 404
         assert "Unknown API key" in resp.json()["detail"]
@@ -451,7 +461,9 @@ class TestRouterEndpoints:
     async def test_route_no_healthy_workers_503(self, client):
         """Admin key but no workers registered → 503."""
         resp = await client.post(
-            "/route", json={"api_key": ADMIN_KEY, "path": "/generate"}
+            "/route",
+            json={"api_key": ADMIN_KEY, "path": "/generate"},
+            headers=admin_headers(),
         )
         assert resp.status_code == 503
         assert "No healthy workers" in resp.json()["detail"]
@@ -473,6 +485,7 @@ class TestRouterEndpoints:
                 "session_id": "task-0-0",
                 "worker_addr": WORKER_1,
             },
+            headers=admin_headers(),
         )
 
         # Mark worker unhealthy
@@ -482,6 +495,7 @@ class TestRouterEndpoints:
         resp = await client.post(
             "/route",
             json={"api_key": "sess-key-1", "path": "/chat/completions"},
+            headers=admin_headers(),
         )
         assert resp.status_code == 503
         assert "Pinned worker unhealthy" in resp.json()["detail"]
@@ -497,22 +511,61 @@ class TestRouterEndpoints:
                 "session_id": "task-0-0",
                 "worker_addr": WORKER_1,
             },
+            headers=admin_headers(),
         )
-        resp = await client.post("/route", json={"session_id": "task-0-0"})
+        resp = await client.post(
+            "/route",
+            json={"session_id": "task-0-0"},
+            headers=admin_headers(),
+        )
         assert resp.status_code == 200
         assert resp.json()["worker_addr"] == WORKER_1
 
     @pytest.mark.asyncio
     async def test_route_by_session_id_unknown_404(self, client):
-        resp = await client.post("/route", json={"session_id": "nonexistent"})
+        resp = await client.post(
+            "/route",
+            json={"session_id": "nonexistent"},
+            headers=admin_headers(),
+        )
         assert resp.status_code == 404
 
     # ----- /route — missing both api_key and session_id -----
 
     @pytest.mark.asyncio
     async def test_route_missing_both_keys_422(self, client):
-        resp = await client.post("/route", json={})
+        resp = await client.post(
+            "/route",
+            json={},
+            headers=admin_headers(),
+        )
         assert resp.status_code == 422
+
+    # ----- /route — no auth -----
+
+    @pytest.mark.asyncio
+    async def test_route_no_auth_401(self, client):
+        """Route without auth → 401."""
+        resp = await client.post(
+            "/route",
+            json={"api_key": ADMIN_KEY, "path": "/generate"},
+        )
+        assert resp.status_code == 401
+
+    # ----- /register_session — no auth -----
+
+    @pytest.mark.asyncio
+    async def test_register_session_no_auth_401(self, client):
+        """Register session without auth → 401."""
+        resp = await client.post(
+            "/register_session",
+            json={
+                "session_api_key": "sess-key-1",
+                "session_id": "task-0-0",
+                "worker_addr": WORKER_1,
+            },
+        )
+        assert resp.status_code == 401
 
     # ----- /register_session -----
 
@@ -532,6 +585,7 @@ class TestRouterEndpoints:
                 "session_id": "task-0-0",
                 "worker_addr": WORKER_1,
             },
+            headers=admin_headers(),
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
@@ -540,6 +594,7 @@ class TestRouterEndpoints:
         route_resp = await client.post(
             "/route",
             json={"api_key": "sess-key-1", "path": "/chat/completions"},
+            headers=admin_headers(),
         )
         assert route_resp.status_code == 200
         assert route_resp.json()["worker_addr"] == WORKER_1

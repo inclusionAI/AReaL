@@ -34,12 +34,19 @@ async def query_router(
     timeout: float = 2.0,
     *,
     session_id: str | None = None,
+    admin_api_key: str | None = None,
 ) -> str:
     """Ask the Router for a worker address.
 
     POST ``{router_addr}/route`` with ``{"api_key": ..., "path": ...}``
     or ``{"session_id": ...}``.
     Returns the ``worker_addr`` string.
+
+    Parameters
+    ----------
+    admin_api_key : str | None
+        Admin API key for authenticating with the router.  Required since
+        the ``/route`` endpoint requires admin auth.
 
     Raises
     ------
@@ -57,10 +64,14 @@ async def query_router(
         if path is not None:
             payload["path"] = path
     try:
+        headers = {}
+        if admin_api_key is not None:
+            headers["Authorization"] = f"Bearer {admin_api_key}"
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 f"{router_addr}/route",
                 json=payload,
+                headers=headers,
             )
         if resp.status_code == 404:
             data = resp.json()
@@ -84,6 +95,7 @@ async def register_session_in_router(
     session_id: str,
     worker_addr: str,
     timeout: float,
+    admin_api_key: str | None = None,
 ) -> None:
     """Register a session→worker mapping in the Router.
 
@@ -91,6 +103,9 @@ async def register_session_in_router(
     Called by the gateway after intercepting ``/rl/start_session`` response.
     """
     try:
+        headers = {}
+        if admin_api_key is not None:
+            headers["Authorization"] = f"Bearer {admin_api_key}"
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 f"{router_addr}/register_session",
@@ -99,6 +114,7 @@ async def register_session_in_router(
                     "session_id": session_id,
                     "worker_addr": worker_addr,
                 },
+                headers=headers,
             )
         resp.raise_for_status()
     except Exception as exc:

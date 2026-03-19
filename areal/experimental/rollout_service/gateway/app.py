@@ -71,7 +71,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
         token = extract_bearer_token(request)
         try:
             worker_addr = await query_router(
-                config.router_addr, token, "/chat/completions", config.router_timeout
+                config.router_addr,
+                token,
+                "/chat/completions",
+                config.router_timeout,
+                admin_api_key=config.admin_api_key,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -135,6 +139,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                     token,
                     "/rl/start_session",
                     config.router_timeout,
+                    admin_api_key=config.admin_api_key,
                 )
             except (RouterUnreachableError, RouterKeyRejectedError) as exc:
                 return _router_error_response(exc)
@@ -163,6 +168,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                             session_id,
                             worker_addr,
                             config.router_timeout,
+                            admin_api_key=config.admin_api_key,
                         )
                 except Exception as exc:
                     logger.error("Failed to register session in router: %s", exc)
@@ -195,7 +201,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
         token = extract_bearer_token(request)
         try:
             worker_addr = await query_router(
-                config.router_addr, token, "/rl/end_session", config.router_timeout
+                config.router_addr,
+                token,
+                "/rl/end_session",
+                config.router_timeout,
+                admin_api_key=config.admin_api_key,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -220,7 +230,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
         token = extract_bearer_token(request)
         try:
             worker_addr = await query_router(
-                config.router_addr, token, "/rl/set_reward", config.router_timeout
+                config.router_addr,
+                token,
+                "/rl/set_reward",
+                config.router_timeout,
+                admin_api_key=config.admin_api_key,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -312,6 +326,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.router_addr,
                 timeout=config.router_timeout,
                 session_id=session_id,
+                admin_api_key=config.admin_api_key,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)

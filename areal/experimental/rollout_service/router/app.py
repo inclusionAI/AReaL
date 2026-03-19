@@ -198,11 +198,12 @@ def create_app(config: RouterConfig) -> FastAPI:
             )
 
     # =========================================================================
-    # Routing (internal — no auth)
+    # Routing (admin key required)
     # =========================================================================
 
     @app.post("/route")
-    async def route(body: RouteRequest):
+    async def route(body: RouteRequest, request: Request):
+        _require_admin_key(request, config.admin_api_key)
         # 0. session_id lookup takes precedence
         if body.session_id is not None:
             worker = await session_registry.lookup_by_id(body.session_id)
@@ -241,11 +242,12 @@ def create_app(config: RouterConfig) -> FastAPI:
         raise HTTPException(status_code=404, detail="Unknown API key")
 
     # =========================================================================
-    # Session registration (internal — no auth)
+    # Session registration (admin key required)
     # =========================================================================
 
     @app.post("/register_session")
-    async def register_session(body: RegisterSessionRequest):
+    async def register_session(body: RegisterSessionRequest, request: Request):
+        _require_admin_key(request, config.admin_api_key)
         await session_registry.register_session(
             body.session_api_key, body.session_id, body.worker_addr
         )
