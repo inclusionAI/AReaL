@@ -257,8 +257,8 @@ class TrainEngine(abc.ABC):
             when (accepted + rejected) >= batch_size, returning only accepted results.
             This results in variable-sized batches of valid data. Default is False.
         global_step : int | None, optional
-            The current training step, used for step-dependent behavior in rollouts
-            (e.g., curriculum learning, scheduled parameters). Default is None.
+            The current training step, used for step-dependent behavior in rollouts.
+            Default is None.
 
         Returns
         -------
@@ -747,8 +747,8 @@ class InferenceEngine(abc.ABC):
             Whether this is an evaluation workflow. Affects variables like trajectory dump path
             and statistics keys. By default False.
         global_step : int | None, optional
-            The current training step, used for step-dependent behavior in rollouts
-            (e.g., curriculum learning, scheduled parameters). Default is None.
+            The current training step, used for step-dependent behavior in rollouts.
+            Default is None.
 
         Returns
         -------
@@ -910,8 +910,8 @@ class InferenceEngine(abc.ABC):
             when (accepted + rejected) >= batch_size, returning only accepted results.
             This results in variable-sized batches of valid data. Default is False.
         global_step : int | None, optional
-            The current training step, used for step-dependent behavior in rollouts
-            (e.g., curriculum learning, scheduled parameters). Default is None.
+            The current training step, used for step-dependent behavior in rollouts.
+            Default is None.
 
         Returns
         -------

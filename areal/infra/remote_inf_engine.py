@@ -1028,8 +1028,8 @@ class RemoteInfEngine(InferenceEngine):
             HTTP address of the proxy server for AgentWorkflow. If provided,
             AgentWorkflow will use this proxy instead of a local one.
         global_step : int | None, optional
-            The current training step, used for step-dependent behavior in rollouts
-            (e.g., curriculum learning, scheduled parameters). Default is None.
+            The current training step, used for step-dependent behavior in rollouts.
+            Default is None.
         """
         if workflow is None and (
             self.config.openai is None or self.config.openai.mode != "online"
@@ -1156,8 +1156,8 @@ class RemoteInfEngine(InferenceEngine):
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. Default is False.
         global_step : int | None, optional
-            The current training step, used for step-dependent behavior in rollouts
-            (e.g., curriculum learning, scheduled parameters). Default is None.
+            The current training step, used for step-dependent behavior in rollouts.
+            Default is None.
 
         Returns
         -------

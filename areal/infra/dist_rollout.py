@@ -226,8 +226,8 @@ class DistRolloutCoordinator:
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. Default is False.
         global_step : int | None, optional
-            The current training step, used for step-dependent behavior in rollouts
-            (e.g., curriculum learning, scheduled parameters). Default is None.
+            The current training step, used for step-dependent behavior in rollouts.
+            Default is None.
 
         Returns
         -------

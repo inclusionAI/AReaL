@@ -1298,8 +1298,8 @@ class WorkflowExecutor:
         Parameters
         ----------
         global_step : int | None, optional
-            The current training step, used for step-dependent behavior in rollouts
-            (e.g., curriculum learning, scheduled parameters). Default is None.
+            The current training step, used for step-dependent behavior in rollouts.
+            Default is None.
             Note: This parameter is NOT cached and can vary across calls.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for other parameters.
