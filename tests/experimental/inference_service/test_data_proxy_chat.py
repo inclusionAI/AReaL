@@ -115,7 +115,9 @@ def mock_areal_client():
 @pytest_asyncio.fixture
 async def client(config, mock_tokenizer, mock_areal_client):
     """Create app with mocked deps and yield an httpx async client."""
-    from areal.experimental.inference_service.data_proxy.backend import SGLangBridgeBackend
+    from areal.experimental.inference_service.data_proxy.backend import (
+        SGLangBridgeBackend,
+    )
     from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
     from areal.experimental.inference_service.data_proxy.pause import PauseState
 
@@ -137,6 +139,7 @@ async def client(config, mock_tokenizer, mock_areal_client):
     app.state.config = config
     store = SessionStore()
     app.state.session_store = store
+    app.state.version = 0
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

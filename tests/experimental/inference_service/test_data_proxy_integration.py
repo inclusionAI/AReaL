@@ -150,6 +150,7 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     app.state.pause_state = pause_state
     app.state.config = config
     app.state.session_store = store
+    app.state.version = 0
 
     return app, store
 
