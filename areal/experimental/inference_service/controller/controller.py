@@ -44,11 +44,8 @@ class GatewayInferenceController:
     (currently ``"sglang"`` is supported; ``"vllm"`` is planned).
     """
 
-    # Worker role suffixes for each service type
+    # Worker role suffix for RPCGuard workers
     _INF_SUFFIX = "-inf"
-    _ROUTER_SUFFIX = "-router"
-    _DATA_PROXY_SUFFIX = "-data-proxy"
-    _GATEWAY_SUFFIX = "-gateway"
 
     def __init__(
         self,
@@ -154,16 +151,21 @@ class GatewayInferenceController:
     ) -> None:
         """Launch all servers as worker processes via the scheduler.
 
-        Creates four groups of workers:
-        1. Inference servers (dp_size replicas, GPU)
-        2. Router (1 replica, CPU)
-        3. Data Proxies (dp_size replicas, CPU)
-        4. Gateway (1 replica, CPU)
+        In both cases we create ``dp_size`` RPCGuard workers and fork
+        services onto them:
+
+        * **server_infos is None** — fork SGLang server + data proxy on
+          every worker; fork router + gateway on worker 0.
+        * **server_infos is not None** — SGLang servers already exist so
+          we only fork data proxy on every worker; fork router + gateway
+          on worker 0.
         """
         from dataclasses import asdict
 
         from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
         from areal.api.scheduler_api import Job
+
+        import requests
 
         dp_size = alloc_mode.gen.dp_size if alloc_mode is not None else 1
         cfg = self.config
@@ -171,59 +173,54 @@ class GatewayInferenceController:
         # Determine inference backend from allocation mode
         inf_backend = alloc_mode.gen_backend if alloc_mode is not None else "sglang"
 
-        # -- 1. Launch inference servers --------------------------------------
+        # ==================================================================
+        # Step 0: Always create dp_size RPCGuard workers
+        # ==================================================================
+        inf_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
         if server_infos is not None:
-            # Pre-existing servers — skip inference worker creation
+            # Pre-existing inference servers — RPCGuard workers only host
+            # CPU services (data proxy, router, gateway), no GPUs needed.
+            inf_spec.gpu = 0
+        elif alloc_mode is not None:
+            inf_spec.cpu *= alloc_mode.gen_instance_size
+            inf_spec.mem *= alloc_mode.gen_instance_size
+            if inf_spec.gpu > 0:
+                inf_spec.gpu = alloc_mode.gen_instance_size
+
+        # Override cmd to launch RPCGuard instead of RPC server
+        inf_spec.cmd = "python -m areal.experimental.inference_service.guard"
+
+        inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
+        inf_job = Job(
+            replicas=dp_size,
+            tasks=[inf_spec for _ in range(dp_size)],
+            scheduling_strategy=SchedulingStrategy(),
+            role=inf_role,
+        )
+
+        self.scheduler.create_workers(job=inf_job)
+        self._service_roles.append(inf_role)
+        inf_workers = self.scheduler.get_workers(role=inf_role)
+        self.workers = inf_workers
+        logger.info("RPCGuard workers ready: %s", [w.id for w in inf_workers])
+
+        # ==================================================================
+        # Step 1: Launch inference servers (skip when pre-existing)
+        # ==================================================================
+        if server_infos is not None:
+            # Pre-existing servers — just record their addresses
             self.server_infos = server_infos
             self._inf_addrs = [
                 f"http://{info.host}:{info.port}" for info in server_infos
             ]
             logger.info(
-                "Using %d pre-existing server_infos, skipping inference worker creation",
+                "Using %d pre-existing server_infos, skipping inference server fork",
                 len(server_infos),
             )
         else:
-            # -- RPCGuard workers for inference server launch ---
-            # Workers run areal.experimental.inference_service.guard (the RPCGuard
-            # Flask app).  We then POST to each guard to allocate a port,
-            # build the backend-specific launch command, and POST /fork
-            # with raw_cmd to start the inference server as a subprocess.
-            import requests
-
-            inf_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
-            if alloc_mode is not None:
-                inf_spec.cpu *= alloc_mode.gen_instance_size
-                inf_spec.mem *= alloc_mode.gen_instance_size
-                if inf_spec.gpu > 0:
-                    inf_spec.gpu = alloc_mode.gen_instance_size
-
-            # Env vars inherited by forked data-proxy children
-            inf_spec.env_vars["AREAL_DP_TOKENIZER_PATH"] = cfg.tokenizer_path
-            inf_spec.env_vars["AREAL_DP_ADMIN_API_KEY"] = cfg.admin_api_key
-            inf_spec.env_vars["AREAL_DP_LOG_LEVEL"] = cfg.log_level
-            inf_spec.env_vars["AREAL_DP_REQUEST_TIMEOUT"] = str(cfg.request_timeout)
-
-            # Override cmd to launch RPCGuard instead of RPC server
-            inf_spec.cmd = "python -m areal.experimental.inference_service.guard"
-
-            inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
-            inf_job = Job(
-                replicas=dp_size,
-                tasks=[inf_spec for _ in range(dp_size)],
-                scheduling_strategy=SchedulingStrategy(),
-                role=inf_role,
-            )
-
-            # 1a. Create RPCGuard workers
-            self.scheduler.create_workers(job=inf_job)
-            self._service_roles.append(inf_role)
-            inf_workers = self.scheduler.get_workers(role=inf_role)
-            self.workers = inf_workers
-            logger.info("RPCGuard workers ready: %s", [w.id for w in inf_workers])
-
             tp_size = alloc_mode.gen.tp_size if alloc_mode is not None else 1
 
-            # 1b. Build backend-specific config and launch command builder
+            # Build backend-specific launch command builder
             if inf_backend in ("sglang", None):
                 from areal.api.cli_args import SGLangConfig
 
@@ -245,8 +242,6 @@ class GatewayInferenceController:
                     )
 
             elif inf_backend == "vllm":
-                # Placeholder — raise early so we never reach here, but
-                # the structure is ready for a future vLLM implementation.
                 raise NotImplementedError(
                     "vLLM backend is not yet supported by the gateway "
                     "rollout controller."
@@ -254,11 +249,10 @@ class GatewayInferenceController:
             else:
                 raise ValueError(f"Unsupported inference backend: {inf_backend!r}")
 
-            # 1c. For each RPCGuard worker: alloc port, build cmd, fork server
+            # For each RPCGuard worker: alloc port, build cmd, fork server
             for rank, worker in enumerate(inf_workers):
                 guard_addr = f"http://{worker.ip}:{worker.worker_ports[0]}"
 
-                # Allocate a free port on the guard node for inference server
                 resp = requests.post(
                     f"{guard_addr}/alloc_ports",
                     json={"count": 1},
@@ -271,7 +265,6 @@ class GatewayInferenceController:
 
                 cmd = _build_launch_cmd(inf_host, inf_port)
 
-                # Fork inference server via RPCGuard raw_cmd mode
                 resp = requests.post(
                     f"{guard_addr}/fork",
                     json={
@@ -300,10 +293,9 @@ class GatewayInferenceController:
                 )
         logger.info("Inference servers: %s", self._inf_addrs)
 
-        inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
-        has_inf_workers = inf_role in self._service_roles
-
-        # -- 2. Launch Router -----------------------------------------------
+        # ==================================================================
+        # Step 2: Fork Router on worker 0
+        # ==================================================================
         router_cmd = [
             sys.executable,
             "-m",
@@ -318,103 +310,50 @@ class GatewayInferenceController:
             cfg.log_level,
         ]
 
-        if has_inf_workers:
-            guard_addr = (
-                f"http://{self.workers[0].ip}:{self.workers[0].worker_ports[0]}"
-            )
-            router_host, router_port = self._fork_on_guard(
-                guard_addr=guard_addr,
-                role="router",
-                worker_index=0,
-                raw_cmd=router_cmd,
-            )
-            self._router_addr = f"http://{router_host}:{router_port}"
-        else:
-            router_spec = SchedulingSpec(
-                gpu=0,
-                cpu=1,
-                mem=4,
-                cmd=" ".join(router_cmd),
-            )
-            router_role = f"{self._worker_role}{self._ROUTER_SUFFIX}"
-            router_job = Job(
-                replicas=1,
-                tasks=[router_spec],
-                scheduling_strategy=SchedulingStrategy(),
-                role=router_role,
-            )
-            self.scheduler.create_workers(job=router_job)
-            self._service_roles.append(router_role)
-
-            router_workers = self.scheduler.get_workers(role=router_role)
-            self._router_addr = (
-                f"http://{router_workers[0].ip}:{router_workers[0].worker_ports[0]}"
-            )
-            self._wait_for_service(f"{self._router_addr}/health", "Router")
+        guard_addr_0 = f"http://{self.workers[0].ip}:{self.workers[0].worker_ports[0]}"
+        router_host, router_port = self._fork_on_guard(
+            guard_addr=guard_addr_0,
+            role="router",
+            worker_index=0,
+            raw_cmd=router_cmd,
+        )
+        self._router_addr = f"http://{router_host}:{router_port}"
         logger.info("Router: %s", self._router_addr)
 
-        # -- 3. Launch Data Proxies -----------------------------------------
-        #   When inference workers were created by the controller, data proxies
-        #   are **forked** from them (similar to RolloutController.start_proxy),
-        #   ensuring colocation on the same node/GPUs.
-        #   When pre-existing server_infos were provided (e.g. tests), data
-        #   proxies are created as standalone workers instead.
-        dp_role = f"{self._worker_role}{self._DATA_PROXY_SUFFIX}"
+        # ==================================================================
+        # Step 3: Fork Data Proxies on all workers (raw_cmd mode)
+        # ==================================================================
+        dp_base_cmd = [
+            sys.executable,
+            "-m",
+            "areal.experimental.inference_service.data_proxy",
+            "--tokenizer-path",
+            cfg.tokenizer_path,
+            "--admin-api-key",
+            cfg.admin_api_key,
+            "--log-level",
+            cfg.log_level,
+            "--request-timeout",
+            str(cfg.request_timeout),
+        ]
 
-        if has_inf_workers:
-            # Fork data proxies from inference workers (colocated deployment)
-            dp_command = "areal.experimental.inference_service.data_proxy"
-            worker_ids = self.scheduler.fork_workers(
-                role=dp_role,
-                target_role=inf_role,
-                command=dp_command,
+        for rank, worker in enumerate(inf_workers):
+            guard_addr = f"http://{worker.ip}:{worker.worker_ports[0]}"
+            # Each data proxy connects to its corresponding inference server
+            dp_cmd = dp_base_cmd + ["--backend-addr", self._inf_addrs[rank]]
+            dp_host, dp_port = self._fork_on_guard(
+                guard_addr=guard_addr,
+                role="data-proxy",
+                worker_index=rank,
+                raw_cmd=dp_cmd,
             )
-            self._service_roles.append(dp_role)
-            logger.info("Data proxy workers forked: %s", worker_ids)
+            self._data_proxy_addrs.append(f"http://{dp_host}:{dp_port}")
 
-            dp_workers = self.scheduler.get_workers(role=dp_role)
-            self._data_proxy_addrs = [
-                f"http://{w.ip}:{w.worker_ports[0]}" for w in dp_workers
-            ]
+        logger.info("Data proxies: %s", self._data_proxy_addrs)
 
-            # Configure each data proxy with its corresponding inference backend.
-            for dp_addr, inf_addr in zip(self._data_proxy_addrs, self._inf_addrs):
-                self._configure_data_proxy_backend(dp_addr, inf_addr)
-        else:
-            # Standalone data proxies (pre-existing server_infos)
-            for i, inf_addr in enumerate(self._inf_addrs):
-                dp_spec = SchedulingSpec(
-                    gpu=0,
-                    cpu=1,
-                    mem=4,
-                    cmd=(
-                        f"python -m areal.experimental.inference_service.data_proxy"
-                        f" --backend-addr {inf_addr}"
-                        f" --tokenizer-path {cfg.tokenizer_path}"
-                        f" --admin-api-key {cfg.admin_api_key}"
-                        f" --log-level {cfg.log_level}"
-                        f" --request-timeout {cfg.request_timeout}"
-                    ),
-                )
-                dp_i_role = f"{dp_role}-{i}"
-                dp_job = Job(
-                    replicas=1,
-                    tasks=[dp_spec],
-                    scheduling_strategy=SchedulingStrategy(),
-                    role=dp_i_role,
-                )
-                self.scheduler.create_workers(job=dp_job)
-                self._service_roles.append(dp_i_role)
-
-                dp_workers = self.scheduler.get_workers(role=dp_i_role)
-                dp_addr = f"http://{dp_workers[0].ip}:{dp_workers[0].worker_ports[0]}"
-                self._data_proxy_addrs.append(dp_addr)
-
-        # Wait for all data proxies to be healthy
-        for i, dp_addr in enumerate(self._data_proxy_addrs):
-            self._wait_for_service(f"{dp_addr}/health", f"DataProxy-{i}")
-
-        # -- 4. Launch Gateway ----------------------------------------------
+        # ==================================================================
+        # Step 4: Fork Gateway on worker 0
+        # ==================================================================
         gw_cmd = [
             sys.executable,
             "-m",
@@ -429,39 +368,13 @@ class GatewayInferenceController:
             cfg.log_level,
         ]
 
-        if has_inf_workers:
-            guard_addr = (
-                f"http://{self.workers[0].ip}:{self.workers[0].worker_ports[0]}"
-            )
-            gw_host, gw_port = self._fork_on_guard(
-                guard_addr=guard_addr,
-                role="gateway",
-                worker_index=0,
-                raw_cmd=gw_cmd,
-            )
-            self._gateway_addr = f"http://{gw_host}:{gw_port}"
-        else:
-            gw_spec = SchedulingSpec(
-                gpu=0,
-                cpu=1,
-                mem=4,
-                cmd=" ".join(gw_cmd),
-            )
-            gw_role = f"{self._worker_role}{self._GATEWAY_SUFFIX}"
-            gw_job = Job(
-                replicas=1,
-                tasks=[gw_spec],
-                scheduling_strategy=SchedulingStrategy(),
-                role=gw_role,
-            )
-            self.scheduler.create_workers(job=gw_job)
-            self._service_roles.append(gw_role)
-
-            gw_workers = self.scheduler.get_workers(role=gw_role)
-            self._gateway_addr = (
-                f"http://{gw_workers[0].ip}:{gw_workers[0].worker_ports[0]}"
-            )
-            self._wait_for_service(f"{self._gateway_addr}/health", "Gateway")
+        gw_host, gw_port = self._fork_on_guard(
+            guard_addr=guard_addr_0,
+            role="gateway",
+            worker_index=0,
+            raw_cmd=gw_cmd,
+        )
+        self._gateway_addr = f"http://{gw_host}:{gw_port}"
         logger.info("Gateway: %s", self._gateway_addr)
 
     # -- Service health checks & registration ------------------------------
@@ -484,24 +397,6 @@ class GatewayInferenceController:
                 pass
             time.sleep(0.1)
         raise TimeoutError(f"{name} did not become healthy at {url} within {timeout}s")
-
-    def _configure_data_proxy_backend(self, dp_addr: str, backend_addr: str) -> None:
-        """Configure a data proxy's inference backend address after fork.
-
-        Called after ``fork_workers`` to tell each data proxy which inference
-        server to connect to.  The data proxy exposes a ``/configure_backend``
-        endpoint that re-initialises its backend connection.
-        """
-        import requests
-
-        resp = requests.post(
-            f"{dp_addr}/configure_backend",
-            json={"backend_addr": backend_addr},
-            headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        logger.info("Configured data proxy %s -> backend %s", dp_addr, backend_addr)
 
     def _register_data_proxies_in_router(self) -> None:
         """Register all data proxy workers in the router and store their worker IDs."""
@@ -531,7 +426,8 @@ class GatewayInferenceController:
             self._workflow_executor.destroy()
             self._workflow_executor = None
 
-        # Kill services forked directly via RPCGuard /fork (router, gateway)
+        # Kill services forked directly via RPCGuard /fork
+        # (router, data proxies, gateway, and inference servers when applicable)
         for guard_addr, role, worker_index in reversed(self._forked_services):
             try:
                 self._kill_forked_service(guard_addr, role, worker_index)
@@ -545,8 +441,8 @@ class GatewayInferenceController:
         self._forked_services.clear()
 
         # RPCGuard's shutdown `finally` block automatically kills all
-        # forked children (inference servers, data proxies), so no explicit teardown needed.
-        # Delete all service workers via scheduler
+        # forked children, so explicit teardown above is best-effort.
+        # Delete all RPCGuard workers via scheduler
         for role in reversed(self._service_roles):
             try:
                 self.scheduler.delete_workers(role=role)

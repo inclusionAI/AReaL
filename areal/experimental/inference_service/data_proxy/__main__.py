@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 
 import uvicorn
 
@@ -17,25 +16,24 @@ def main():
     parser.add_argument("--port", type=int, default=8082)
     parser.add_argument(
         "--backend-addr",
-        default=os.environ.get("AREAL_DP_BACKEND_ADDR", "http://localhost:30000"),
+        default="http://localhost:30000",
     )
     parser.add_argument(
         "--tokenizer-path",
-        default=os.environ.get("AREAL_DP_TOKENIZER_PATH"),
-        required="AREAL_DP_TOKENIZER_PATH" not in os.environ,
+        required=True,
     )
     parser.add_argument(
         "--log-level",
-        default=os.environ.get("AREAL_DP_LOG_LEVEL", "info"),
+        default="info",
     )
     parser.add_argument(
         "--request-timeout",
         type=float,
-        default=float(os.environ.get("AREAL_DP_REQUEST_TIMEOUT", "120.0")),
+        default=120.0,
     )
     parser.add_argument(
         "--admin-api-key",
-        default=os.environ.get("AREAL_DP_ADMIN_API_KEY", "areal-admin-key"),
+        default="areal-admin-key",
     )
     args, _ = parser.parse_known_args()
 

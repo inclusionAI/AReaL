@@ -26,7 +26,9 @@ from areal.experimental.inference_service.data_proxy.session import (
     StartSessionResponse,
 )
 from areal.experimental.openai.proxy.server import serialize_interactions
-from areal.experimental.inference_service.data_proxy.tokenizer_proxy import TokenizerProxy
+from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
+    TokenizerProxy,
+)
 from areal.experimental.openai.client import ArealOpenAI
 from areal.infra.rpc import rtensor as rtensor_storage
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
@@ -414,8 +416,8 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     async def configure_backend(request: Request):
         """Reconfigure the inference backend address after process start.
 
-        Called by the controller after ``fork_workers`` to tell this data
-        proxy which SGLang server to connect to.
+        Administrative endpoint to dynamically change which SGLang server
+        this data proxy connects to.
         """
         store: SessionStore = app.state.session_store
         _require_admin_key(request, store)

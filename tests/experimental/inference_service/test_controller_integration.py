@@ -131,7 +131,14 @@ def gateway_controller(sglang_server, local_scheduler, model_path, tmp_path):
     config = GatewayControllerConfig(
         tokenizer_path=model_path,
         model_path=model_path,
-        scheduling_spec=(SchedulingSpec(),),
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=0,
+                cpu=1,
+                mem=4,
+                cmd="python -m areal.experimental.inference_service.guard",
+            ),
+        ),
         admin_api_key="test-admin",
         consumer_batch_size=2,
         setup_timeout=180.0,
@@ -641,13 +648,18 @@ class TestControllerFullInitialization:
             assert resp.status_code == 200
 
     def test_data_proxy_forked_from_inf_workers(self, gateway_controller_full_init):
-        """Data proxies should have been forked (not standalone) in full init path."""
+        """Data proxies should have been forked via RPCGuard in full init path."""
         ctrl = gateway_controller_full_init
         inf_role = f"rollout-full{ctrl._INF_SUFFIX}"
-        dp_role = f"rollout-full{ctrl._DATA_PROXY_SUFFIX}"
-        # Both roles should be in service_roles
+        # RPCGuard worker role should be in service_roles
         assert inf_role in ctrl._service_roles
-        assert dp_role in ctrl._service_roles
+        # Data proxies are forked via RPCGuard /fork, tracked in _forked_services
+        dp_entries = [
+            (addr, role, idx)
+            for addr, role, idx in ctrl._forked_services
+            if role == "data-proxy"
+        ]
+        assert len(dp_entries) > 0, "No data-proxy entries in _forked_services"
 
     def test_chat_completion_via_gateway(self, gateway_controller_full_init):
         """Full e2e: start_session → /chat/completions → validate → end_session."""
