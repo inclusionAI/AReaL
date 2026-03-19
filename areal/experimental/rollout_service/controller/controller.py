@@ -24,7 +24,7 @@ from areal.api.io_struct import LocalInfServerInfo
 from areal.experimental.rollout_service.controller.config import GatewayControllerConfig
 from areal.utils import logging
 
-logger = logging.getLogger("RolloutController")
+logger = logging.getLogger("GatewayRolloutController")
 
 
 class GatewayRolloutController:
