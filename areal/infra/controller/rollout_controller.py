@@ -102,6 +102,9 @@ class RolloutController:
             BatchTaskDispatcher[_RemoteRolloutTaskInput, _RemoteRolloutResult] | None
         ) = None
 
+        # Current global step for step-dependent behavior in rollouts
+        self._current_global_step: int | None = None
+
         # HTTP callback server
         self._callback_app: Flask | None = None
         self._callback_server = None
@@ -945,6 +948,8 @@ class RolloutController:
 
         See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for parameters.
         """
+        # Store global_step for use in the task input generator
+        self._current_global_step = global_step
 
         workflow_str = self._resolve_workflow_str(workflow)
         if workflow_kwargs is None:
@@ -960,7 +965,7 @@ class RolloutController:
                         should_accept_fn=should_accept_fn,
                         task_id=self._task_id_generator.next(),
                         group_size=group_size,
-                        global_step=global_step,
+                        global_step=self._current_global_step,
                     )
 
         if not hasattr(self, "data_generator"):

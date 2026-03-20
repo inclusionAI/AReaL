@@ -1295,14 +1295,6 @@ class WorkflowExecutor:
             - Using a separate :class:`WorkflowExecutor` (or engine) instance
             - Using the :meth:`submit` / :meth:`wait` pattern for finer control
 
-        Parameters
-        ----------
-        global_step : int | None, optional
-            The current training step, used for step-dependent behavior in rollouts.
-            Default is None.
-            Note: This parameter is NOT cached and can vary across calls.
-
-        See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for other parameters.
 
         Returns
         -------
