@@ -1,7 +1,6 @@
 """Integration tests for data proxy with a real SGLang server.
 
-Requires GPU and a model. Marked @pytest.mark.slow to exclude from default CI.
-Run manually:
+Requires GPU and a model. Run with:
     uv run pytest tests/experimental/inference_service/test_data_proxy_integration.py -v -s
 
 The test launches an SGLang server subprocess, starts the data proxy FastAPI app,
@@ -158,7 +157,6 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
 ADMIN_KEY = "areal-admin-key"
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestChatCompletionsIntegration:
     """Test the full /chat/completions endpoint with a real SGLang backend."""
@@ -495,7 +493,6 @@ class TestChatCompletionsIntegration:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestPauseResumeIntegration:
     """Test /pause_generation and /continue_generation with real SGLang backend.
@@ -720,7 +717,6 @@ class TestPauseResumeIntegration:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestConcurrentPauseDuringGeneration:
     """Test the real abort/resubmit cycle by pausing SGLang mid-generation.

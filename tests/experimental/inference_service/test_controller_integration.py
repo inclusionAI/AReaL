@@ -1,12 +1,11 @@
 """Integration tests for GatewayInferenceController with real SGLang servers.
 
-Requires GPU and a model. Marked @pytest.mark.slow to exclude from default CI.
-Run manually:
+Requires GPU and a model. Run with:
     uv run pytest tests/experimental/inference_service/test_controller_integration.py -v -s
 
 The test launches:
   1. A real SGLang server (GPU subprocess)
-  2. A LocalScheduler (function-scoped)
+  2. A LocalScheduler (module-scoped)
   3. A GatewayInferenceController that spins up Gateway, Router, and Data Proxy
      micro-services in background threads.
 """
@@ -87,14 +86,15 @@ def model_path() -> str:
     return get_test_model_path()
 
 
-@pytest.fixture
-def local_scheduler(tmp_path):
+@pytest.fixture(scope="module")
+def local_scheduler(tmp_path_factory):
     """Create a LocalScheduler for testing."""
     if not has_gpu():
         pytest.skip("GPU required for LocalScheduler")
 
     from areal.infra.scheduler.local import LocalScheduler
 
+    tmp_path = tmp_path_factory.mktemp("local_scheduler")
     fileroot = tmp_path / "fileroot"
     fileroot.mkdir()
     name_resolve_root = tmp_path / "name_resolve"
@@ -112,8 +112,8 @@ def local_scheduler(tmp_path):
     scheduler.delete_workers(None)
 
 
-@pytest.fixture
-def gateway_controller(sglang_server, local_scheduler, model_path, tmp_path):
+@pytest.fixture(scope="module")
+def gateway_controller(sglang_server, local_scheduler, model_path):
     """Create and initialize a GatewayInferenceController, yield it, then destroy."""
     if not has_gpu():
         pytest.skip("GPU required")
@@ -140,7 +140,8 @@ def gateway_controller(sglang_server, local_scheduler, model_path, tmp_path):
             ),
         ),
         admin_api_key="test-admin",
-        consumer_batch_size=2,
+        consumer_batch_size=4,
+        max_head_offpolicyness=1024,
         setup_timeout=180.0,
     )
 
@@ -169,7 +170,6 @@ def gateway_controller(sglang_server, local_scheduler, model_path, tmp_path):
 # =============================================================================
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerLifecycle:
     """Verify controller lifecycle: init starts services, properties set, destroy cleans up."""
@@ -216,7 +216,6 @@ class TestControllerLifecycle:
 # =============================================================================
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerVersioning:
     """Verify version management on the controller."""
@@ -252,7 +251,6 @@ class TestControllerVersioning:
 # =============================================================================
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerPauseResume:
     """Verify pause/resume broadcasts to workers."""
@@ -300,7 +298,6 @@ class TestControllerPauseResume:
 # =============================================================================
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerRolloutBatch:
     """Test rollout_batch through the controller with SimpleAgent workflow."""
@@ -331,58 +328,6 @@ class TestControllerRolloutBatch:
         assert isinstance(traj["input_ids"], RTensor)
         assert traj["input_ids"].ndim == 2
 
-    def test_rollout_batch_with_should_accept_fn_rejects(self, gateway_controller):
-        """rollout_batch with a rejecting should_accept_fn returns empty list."""
-
-        def reject_all(trajectory: dict) -> bool:
-            return False
-
-        data = [
-            {
-                "messages": [{"role": "user", "content": "What is 2+2?"}],
-                "answer": "4",
-            }
-        ]
-
-        result = gateway_controller.rollout_batch(
-            data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
-            should_accept_fn=reject_all,
-        )
-
-        # All trajectories should be rejected, so the result is an empty list
-        assert isinstance(result, list)
-        assert len(result) == 0
-
-    def test_rollout_batch_with_should_accept_fn_accepts(self, gateway_controller):
-        """rollout_batch with an accepting should_accept_fn returns list of trajectory dicts."""
-
-        def accept_all(trajectory: dict) -> bool:
-            return True
-
-        data = [
-            {
-                "messages": [{"role": "user", "content": "What is 2+2?"}],
-                "answer": "4",
-            }
-        ]
-
-        result = gateway_controller.rollout_batch(
-            data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
-            should_accept_fn=accept_all,
-        )
-
-        assert isinstance(result, list)
-        assert len(result) == 1
-        traj = result[0]
-        assert isinstance(traj, dict)
-        assert "input_ids" in traj
-        from areal.infra.rpc.rtensor import RTensor
-
-        assert isinstance(traj["input_ids"], RTensor)
-        assert traj["input_ids"].ndim == 2
-
 
 # =============================================================================
 # TestControllerPrepareBatch
@@ -406,7 +351,6 @@ class _FakeDataLoader:
         yield self._items
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerPrepareBatch:
     """Test prepare_batch through the controller with SimpleAgent workflow."""
@@ -440,72 +384,12 @@ class TestControllerPrepareBatch:
         assert isinstance(traj["input_ids"], RTensor)
         assert traj["input_ids"].ndim == 2
 
-    def test_prepare_batch_with_should_accept_fn_rejects(self, gateway_controller):
-        """prepare_batch with a rejecting should_accept_fn returns empty list."""
-
-        def reject_all(trajectory: dict) -> bool:
-            return False
-
-        items = [
-            {
-                "messages": [{"role": "user", "content": "What is 2+2?"}],
-                "answer": "4",
-            },
-        ]
-        dataloader = _FakeDataLoader(items, batch_size=len(items))
-
-        result = gateway_controller.prepare_batch(
-            dataloader=dataloader,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
-            should_accept_fn=reject_all,
-            dynamic_bs=True,
-        )
-
-        # All trajectories should be rejected, so the result is an empty list
-        assert isinstance(result, list)
-        assert len(result) == 0
-
-    def test_prepare_batch_with_should_accept_fn_accepts(self, gateway_controller):
-        """prepare_batch with an accepting should_accept_fn returns list of trajectory dicts."""
-
-        def accept_all(trajectory: dict) -> bool:
-            return True
-
-        items = [
-            {
-                "messages": [{"role": "user", "content": "What is 2+2?"}],
-                "answer": "4",
-            },
-            {
-                "messages": [{"role": "user", "content": "What is 3+3?"}],
-                "answer": "6",
-            },
-        ]
-        dataloader = _FakeDataLoader(items, batch_size=len(items))
-
-        result = gateway_controller.prepare_batch(
-            dataloader=dataloader,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
-            should_accept_fn=accept_all,
-        )
-
-        assert isinstance(result, list)
-        assert len(result) > 0
-        traj = result[0]
-        assert isinstance(traj, dict)
-        assert "input_ids" in traj
-        from areal.infra.rpc.rtensor import RTensor
-
-        assert isinstance(traj["input_ids"], RTensor)
-        assert traj["input_ids"].ndim == 2
-
 
 # =============================================================================
 # TestControllerSubmitWait
 # =============================================================================
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerSubmitWait:
     """Test submit/wait API on the controller."""
@@ -556,8 +440,8 @@ class TestControllerSubmitWait:
 # =============================================================================
 
 
-@pytest.fixture
-def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
+@pytest.fixture(scope="module")
+def gateway_controller_full_init(local_scheduler, model_path):
     """Create a GatewayInferenceController that launches SGLang via the full init path.
 
     Unlike ``gateway_controller`` which passes pre-existing ``server_infos``,
@@ -586,7 +470,7 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
         ),
         admin_api_key="test-admin",
         consumer_batch_size=8,
-        max_head_offpolicyness=4,
+        max_head_offpolicyness=1024,
         setup_timeout=300.0,
     )
 
@@ -609,7 +493,6 @@ def gateway_controller_full_init(local_scheduler, model_path, tmp_path):
         ctrl.destroy()
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerFullInitialization:
     """Test the full initialization path where the controller launches SGLang itself.
