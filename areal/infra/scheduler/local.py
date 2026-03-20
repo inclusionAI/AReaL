@@ -660,8 +660,8 @@ class LocalScheduler(Scheduler):
                         "The scheduler automatically allocates and provides the port.",
                     )
                 cmd = shlex.split(scheduling.cmd)
-                if "--host" not in cmd:
-                    cmd.extend(["--host", get_loopback_ip()])
+                # if "--host" not in cmd:
+                #     cmd.extend(["--host", get_loopback_ip()])
                 cmd.extend(["--port", str(ports[0])])
                 # Add name_resolve and worker identity args
                 cmd.extend(["--experiment-name", str(self.experiment_name)])
@@ -707,7 +707,7 @@ class LocalScheduler(Scheduler):
 
                 worker = Worker(
                     id=worker_id,
-                    ip=get_loopback_ip(),
+                    ip=gethostip(),
                     worker_ports=[str(p) for p in ports],
                     engine_ports=[],
                 )

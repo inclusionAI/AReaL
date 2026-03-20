@@ -1257,8 +1257,6 @@ class RemoteInfEngine(InferenceEngine):
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
         """Launch a local inference server."""
         server_args["host"] = gethostip()
-        if "host" not in server_args:
-            server_args["host"] = get_loopback_ip()
         server_args["port"] = find_free_ports(1)[0]
         process = self.backend.launch_server(server_args)
         address = format_hostport(server_args["host"], server_args["port"])
