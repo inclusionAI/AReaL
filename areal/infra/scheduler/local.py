@@ -705,7 +705,7 @@ class LocalScheduler(Scheduler):
 
                 worker = Worker(
                     id=worker_id,
-                    ip=get_loopback_ip(),
+                    ip=gethostip(),
                     worker_ports=[str(p) for p in ports],
                     engine_ports=[],
                 )
