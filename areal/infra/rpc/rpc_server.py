@@ -997,9 +997,16 @@ def main():
         _nfs_record_root, \
         _etcd3_addr, \
         _fileroot
-    _server_host = args.host
-    if _server_host == "0.0.0.0":
+    bind_host = args.host
+    if bind_host == "0.0.0.0":
+        host_ip = gethostip()
+        if ":" in host_ip:
+            bind_host = "::"
+        _server_host = host_ip
+    elif bind_host == "::":
         _server_host = gethostip()
+    else:
+        _server_host = bind_host
     _role = args.role
 
     # Set global config for fork endpoint
@@ -1021,7 +1028,7 @@ def main():
     worker_id = f"{worker_role}/{worker_index}"
 
     # Make a flask server
-    server = make_server(args.host, args.port, app, threaded=True)
+    server = make_server(bind_host, args.port, app, threaded=True)
     _server_port = server.socket.getsockname()[1]
 
     name_resolve.reconfigure(
