@@ -28,6 +28,7 @@ from torch import nn
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
+import areal.models.mcore.bailing_moe_bridge  # noqa: F401  # register bridge
 from areal.api import (
     AllocationMode,
     FinetuneSpec,
@@ -239,7 +240,9 @@ class MegatronEngine(TrainEngine):
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
         with patch_bridge_for_tree_training(self.enable_tree_training):
-            self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
+            self.bridge = mbridge.AutoBridge.from_pretrained(
+                self.config.path, trust_remote_code=True
+            )
             self.bridge.dtype = self.dtype
             # Set gradient checkpointing options
             if self.config.gradient_checkpointing:
