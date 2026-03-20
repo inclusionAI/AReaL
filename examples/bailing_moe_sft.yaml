@@ -1,0 +1,97 @@
+experiment_name: bailing-moe-sft
+trial_name: flash-8node
+
+seed: 1
+enable_offload: false
+total_train_epochs: 1
+tokenizer_path: ${actor.path}
+
+cluster:
+  n_nodes: 8
+  n_gpus_per_node: 8
+  fileroot: /storage/openpsi/codes/chucai.dzq/tmp/bailing-moe-sft-flash-8node
+  name_resolve:
+    type: nfs
+    nfs_record_root: /storage/openpsi/codes/chucai.dzq/tmp/bailing-moe-sft-flash-8node/name_resolve
+
+# 8 nodes x 8 GPUs = 64 GPUs, DP=8, PP=4, TP=2, EP=8
+# Flash model (32 layers, H=4096, 256 experts)
+allocation_mode: megatron:d8p4t2e8
+
+scheduler:
+  type: ray
+
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: /storage/openpsi/models/swe_ring25_flash_tokenizer
+  init_from_scratch: false
+  gradient_checkpointing: true
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 4096
+  optimizer:
+    type: adam
+    lr: 2e-5
+    weight_decay: 0.05
+    beta1: 0.9
+    beta2: 0.95
+    eps: 1e-5
+    lr_scheduler_type: cosine
+    gradient_clipping: 1.0
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      mem: 20
+      cmd: python3 -m areal.infra.rpc.rpc_server
+      env_vars:
+        PYTHONPATH: "/AReaL/.venv/lib/python3.12/site-packages"
+
+train_dataset:
+  batch_size: 64
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: openai/gsm8k
+  type: sft
+
+valid_dataset:
+  batch_size: 64
+  pin_memory: true
+  num_workers: 4
+  path: openai/gsm8k
+  type: sft
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
