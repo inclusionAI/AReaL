@@ -28,6 +28,7 @@ from tests.experimental.inference_service.integration_utils import (
     has_gpu,
 )
 
+pytestmark = pytest.mark.sglang
 SERVER_STARTUP_TIMEOUT = 180  # seconds
 
 

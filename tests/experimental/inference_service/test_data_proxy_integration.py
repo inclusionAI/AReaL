@@ -28,6 +28,7 @@ from areal.utils import network
 # Configuration
 # ---------------------------------------------------------------------------
 
+pytestmark = pytest.mark.sglang
 LOCAL_MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 HF_MODEL_ID = "Qwen/Qwen3-0.6B"
 SERVER_STARTUP_TIMEOUT = 180  # seconds
