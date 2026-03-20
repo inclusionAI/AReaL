@@ -1,7 +1,6 @@
 """Full-stack integration test: client → Gateway → Router → Data Proxy → SGLang.
 
-Requires GPU and a model. Marked @pytest.mark.slow to exclude from default CI.
-Run manually:
+Requires GPU and a model. Run with:
     uv run pytest tests/experimental/inference_service/test_gateway_integration.py -v -s
 
 The test launches:
@@ -36,6 +35,7 @@ from areal.utils import network
 # Configuration
 # ---------------------------------------------------------------------------
 
+pytestmark = pytest.mark.sglang
 LOCAL_MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 HF_MODEL_ID = "Qwen/Qwen3-0.6B"
 SERVER_STARTUP_TIMEOUT = 180  # seconds
@@ -259,7 +259,6 @@ def gateway_stack(sglang_server, model_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewayStackHealth:
     """Verify all services are healthy after stack launch."""
@@ -286,7 +285,6 @@ class TestGatewayStackHealth:
             assert resp.json()["status"] == "ok"
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewayChatCompletions:
     """Test /chat/completions endpoint through the full stack."""
@@ -484,7 +482,6 @@ class TestGatewayChatCompletions:
             assert resp.json()["interaction_count"] == 2
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewaySessionLifecycle:
     """Test full RL session lifecycle through the gateway stack."""
@@ -597,7 +594,6 @@ class TestGatewaySessionLifecycle:
             assert resp.status_code == 200
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewayAuth:
     """Test authentication enforcement through the gateway."""
@@ -639,7 +635,6 @@ class TestGatewayAuth:
             assert resp.status_code == 403
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewayPauseContinue:
     """Test pause/continue generation through the gateway (targets worker by ID)."""
