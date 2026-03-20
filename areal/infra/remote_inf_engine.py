@@ -51,6 +51,7 @@ from areal.utils.network import (
     find_free_ports,
     format_hostport,
     get_loopback_ip,
+    gethostip,
     split_hostport,
 )
 from areal.utils.perf_tracer import trace_perf
@@ -1255,8 +1256,7 @@ class RemoteInfEngine(InferenceEngine):
 
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
         """Launch a local inference server."""
-        if "host" not in server_args:
-            server_args["host"] = get_loopback_ip()
+        server_args["host"] = gethostip()
         server_args["port"] = find_free_ports(1)[0]
         process = self.backend.launch_server(server_args)
         address = format_hostport(server_args["host"], server_args["port"])
