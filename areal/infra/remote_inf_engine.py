@@ -52,6 +52,7 @@ from areal.utils.network import (
     format_hostport,
     get_loopback_ip,
     split_hostport,
+    gethostip
 )
 from areal.utils.perf_tracer import trace_perf
 
