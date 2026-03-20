@@ -623,13 +623,8 @@ async def chat_completions(
             detail='Proxy server not initialized. Send requests to /create_engine then /call "initialize" first.',
         )
 
-    # CompletionCreateParams is a TypedDict (dict subclass), not a Pydantic model,
-    # so use dict-style access for the stream field.
-    is_streaming = (
-        request.get("stream") is True
-        if isinstance(request, dict)
-        else getattr(request, "stream", None) is True
-    )
+    # CompletionCreateParams is a TypedDict (dict subclass), so use dict access.
+    is_streaming = request.get("stream") is True
 
     if is_streaming:
         openai_stream = None
