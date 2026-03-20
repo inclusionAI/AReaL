@@ -13,10 +13,12 @@ def _run_gsm8k_grpo_smoke(
     tmp_path_factory,
     *,
     allocation_mode: str,
+    scheduler_type: str,
     timeout: int,
+    fileroot: str,
+    nfs_record_root: str,
+    n_gpus_per_node: int,
 ):
-    experiments_path = tmp_path_factory.mktemp("experiments")
-    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = get_model_path("/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B")
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
 
@@ -26,7 +28,7 @@ def _run_gsm8k_grpo_smoke(
     run_id = uuid.uuid4().hex[:8]
     now = int(time.time())
     additional_args = [
-        "scheduler.type=local",
+        f"scheduler.type={scheduler_type}",
         f"experiment_name=smoke_ipv6_{run_id}",
         f"trial_name=t{now}_{run_id}",
         f"allocation_mode={allocation_mode}",
@@ -37,9 +39,9 @@ def _run_gsm8k_grpo_smoke(
         "valid_dataset.batch_size=8",
         f"train_dataset.path={dataset_path}",
         f"valid_dataset.path={dataset_path}",
-        "cluster.n_gpus_per_node=2",
-        f"cluster.fileroot={str(experiments_path)}",
-        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"cluster.n_gpus_per_node={n_gpus_per_node}",
+        f"cluster.fileroot={fileroot}",
+        f"cluster.name_resolve.nfs_record_root={nfs_record_root}",
         f"actor.path={model_path}",
     ]
     return run_async_task(
@@ -52,6 +54,34 @@ def _run_gsm8k_grpo_smoke(
     )
 
 
+def _run_matrix_smoke(
+    tmp_path_factory,
+    *,
+    train_backend: str,
+    inf_backend: str,
+    scheduler_type: str,
+    timeout: int,
+):
+    if inf_backend not in {"sglang", "vllm"}:
+        raise ValueError(f"Unsupported inf_backend: {inf_backend}")
+    alloc_mode = f"{inf_backend}:d1p1t1+{train_backend}:d1p1t1"
+
+    if scheduler_type == "ray":
+        pytest.importorskip("ray")
+
+    fileroot = str(tmp_path_factory.mktemp("experiments"))
+    nfs_root = str(tmp_path_factory.mktemp("name_resolve"))
+    return _run_gsm8k_grpo_smoke(
+        tmp_path_factory,
+        allocation_mode=alloc_mode,
+        scheduler_type=scheduler_type,
+        timeout=timeout,
+        fileroot=fileroot,
+        nfs_record_root=nfs_root,
+        n_gpus_per_node=2,
+    )
+
+
 @pytest.mark.slow
 @pytest.mark.sglang
 @pytest.mark.multi_gpu
@@ -60,13 +90,14 @@ def _run_gsm8k_grpo_smoke(
     ["fsdp", "megatron", "archon"],
 )
 def test_gsm8k_grpo_smoke_sglang_matrix(tmp_path_factory, train_backend):
-    alloc_mode = f"sglang:d1p1t1+{train_backend}:d1p1t1"
-    success = _run_gsm8k_grpo_smoke(
+    success = _run_matrix_smoke(
         tmp_path_factory,
-        allocation_mode=alloc_mode,
+        train_backend=train_backend,
+        inf_backend="sglang",
+        scheduler_type="local",
         timeout=1800,
     )
-    assert success, f"GSM8K GRPO smoke failed: {alloc_mode}"
+    assert success, f"GSM8K GRPO smoke failed: sglang+d1 + {train_backend}+d1 (local)"
 
 
 @pytest.mark.slow
@@ -77,10 +108,41 @@ def test_gsm8k_grpo_smoke_sglang_matrix(tmp_path_factory, train_backend):
     ["fsdp", "megatron", "archon"],
 )
 def test_gsm8k_grpo_smoke_vllm_matrix(tmp_path_factory, train_backend):
-    alloc_mode = f"vllm:d1p1t1+{train_backend}:d1p1t1"
-    success = _run_gsm8k_grpo_smoke(
+    success = _run_matrix_smoke(
         tmp_path_factory,
-        allocation_mode=alloc_mode,
+        train_backend=train_backend,
+        inf_backend="vllm",
+        scheduler_type="local",
         timeout=1800,
     )
-    assert success, f"GSM8K GRPO smoke failed: {alloc_mode}"
+    assert success, f"GSM8K GRPO smoke failed: vllm+d1 + {train_backend}+d1 (local)"
+
+
+@pytest.mark.slow
+@pytest.mark.sglang
+@pytest.mark.multi_gpu
+@pytest.mark.parametrize("train_backend", ["fsdp", "megatron", "archon"])
+def test_gsm8k_grpo_smoke_sglang_matrix_ray(tmp_path_factory, train_backend):
+    success = _run_matrix_smoke(
+        tmp_path_factory,
+        train_backend=train_backend,
+        inf_backend="sglang",
+        scheduler_type="ray",
+        timeout=1800,
+    )
+    assert success, f"GSM8K GRPO smoke failed: sglang+d1 + {train_backend}+d1 (ray)"
+
+
+@pytest.mark.slow
+@pytest.mark.vllm
+@pytest.mark.multi_gpu
+@pytest.mark.parametrize("train_backend", ["fsdp", "megatron", "archon"])
+def test_gsm8k_grpo_smoke_vllm_matrix_ray(tmp_path_factory, train_backend):
+    success = _run_matrix_smoke(
+        tmp_path_factory,
+        train_backend=train_backend,
+        inf_backend="vllm",
+        scheduler_type="ray",
+        timeout=1800,
+    )
+    assert success, f"GSM8K GRPO smoke failed: vllm+d1 + {train_backend}+d1 (ray)"
