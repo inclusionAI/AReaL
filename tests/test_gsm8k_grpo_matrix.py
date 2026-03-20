@@ -35,6 +35,8 @@ def _run_gsm8k_grpo_smoke(
         "gconfig.n_samples=1",
         "gconfig.max_new_tokens=64",
         "actor.mb_spec.max_tokens_per_mb=1024",
+        "stats_logger.wandb.mode=disabled",
+        "stats_logger.swanlab.mode=disabled",
         "train_dataset.batch_size=8",
         "valid_dataset.batch_size=8",
         f"train_dataset.path={dataset_path}",
