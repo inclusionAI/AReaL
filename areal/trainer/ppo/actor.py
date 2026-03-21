@@ -21,6 +21,7 @@ from areal.utils.constants import (
 from areal.utils.data import (
     KLEstimator,
     Normalization,
+    batched_call,
     split_padded_tensor_dict_into_mb_list,
 )
 from areal.utils.functional import (
@@ -118,7 +119,10 @@ class PPOActor:
 
     @trace_perf("ppo_actor.compute_logp", category="compute")
     @torch.no_grad()
-    def compute_logp(self, data: dict[str, Any]) -> torch.Tensor:
+    def compute_logp(self, data: list[dict[str, Any]]) -> list[torch.Tensor] | None:
+        return batched_call(self._compute_logp, data)
+
+    def _compute_logp(self, data: dict[str, Any]) -> torch.Tensor | None:
         self.engine.eval()
         return self.engine.forward(
             input_=data,
@@ -126,7 +130,10 @@ class PPOActor:
         )
 
     @trace_perf("ppo_actor.compute_advantages", category="compute")
-    def compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
+    def compute_advantages(self, data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return batched_call(self._compute_advantages, data)
+
+    def _compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
@@ -234,7 +241,10 @@ class PPOActor:
 
     @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
-    def ppo_update(self, data: dict[str, Any]) -> None:
+    def ppo_update(self, data: list[dict[str, Any]]) -> None:
+        batched_call(self._ppo_update, data, unpack=False)
+
+    def _ppo_update(self, data: dict[str, Any]) -> None:
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
@@ -991,6 +1001,25 @@ def _log_proximal_approximation_stats(
                     logprobs=logprobs,
                     prox_logp_gt=prox_logp_gt,
                 )
+
+        if logprobs is not None:
+            # Log KL divergence estimators to check for policy drift between the
+            # training-time policy (logprobs) and the inference-time policy (old_logp).
+            log_ratio = (logprobs.float() - old_logp.float()).detach()
+
+            # Implementation of different estimators for KL divergence.
+            # See: https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/#true-on-policy-rl
+            kl_div_estimator_direct = -log_ratio
+            kl_div_estimator_taylor = log_ratio**2 / 2.0
+            kl_div_estimator_dual = log_ratio.exp() - 1 - log_ratio
+
+            # Register these to TensorBoard
+            stats_tracker.stat(
+                kl_div_direct=kl_div_estimator_direct,
+                kl_div_taylor=kl_div_estimator_taylor,
+                kl_div_dual=kl_div_estimator_dual,
+                denominator="n_valid_tokens",
+            )
 
 
 def _log_version_staleness_stats(

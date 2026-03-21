@@ -48,6 +48,20 @@ python3 examples/math/gsm8k_rl.py \
     +sglang.attention_backend=triton
 ```
 
+如果您想在训练中启用 [Hugging Face Kernels](https://github.com/huggingface/kernels)，请显式添加训练引擎覆盖项：
+
+```bash
+python3 examples/math/gsm8k_rl.py \
+    --config examples/math/gsm8k_grpo.yaml \
+    scheduler.type=local \
+    experiment_name=<您的实验名称> \
+    trial_name=<您的试验名称> \
+    +actor.attn_impl=kernels-community/flash-attn \
+    +actor.use_kernels=true
+```
+
+如果 `critic` 或 `teacher` 也需要使用 kernels，请为这些引擎添加相同的覆盖项。
+
 (distributed-experiments-with-ray-or-slurm)=
 
 ## 使用 Ray 或 Slurm 的分布式实验

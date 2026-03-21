@@ -7,7 +7,6 @@ import torch
 from torch.testing import assert_close
 
 from areal.infra.platforms import current_platform
-from areal.utils.data import concat_padded_tensors
 from areal.utils.environ import is_in_ci
 from areal.utils.network import find_free_ports
 
@@ -70,5 +69,5 @@ def test_redistribute(world_size, tmp_path):
     all_data = redistributed_data[0].all_data
     group_indices = redistributed_data[0].group_indices
     for x, indices in zip(redistributed_data, group_indices):
-        data = concat_padded_tensors([all_data[i] for i in indices])
-        assert_tensor_container_close(x.data, data)
+        expected_data = [all_data[i] for i in indices]
+        assert_tensor_container_close(x.data, expected_data)

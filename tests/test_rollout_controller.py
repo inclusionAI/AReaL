@@ -498,11 +498,11 @@ class TestRolloutControllerSubmitAndWait:
 
 
 class TestRolloutControllerBatchOperations:
-    def test_rollout_batch_returns_dict_not_rtensor(self):
-        """Verify RolloutController returns regular dicts, NOT RTensors.
+    def test_rollout_batch_returns_list_of_dicts(self):
+        """Verify RolloutController returns list of regular dicts, NOT RTensors.
 
         Unlike TrainController which uses RTensors for distributed batch storage,
-        RolloutController uses task-based round-robin and returns regular Python dicts.
+        RolloutController uses task-based round-robin and returns list of regular Python dicts.
         """
         from areal.infra.rpc.rtensor import RTensor
 
@@ -525,15 +525,17 @@ class TestRolloutControllerBatchOperations:
         )
 
         # Verify batch is a dict, not RTensor
-        assert isinstance(batch, dict), "RolloutController should return dict"
+        assert isinstance(batch, list), "RolloutController should return list of dicts"
 
         # Verify no RTensors in the result
-        for key, value in batch.items():
-            if isinstance(value, torch.Tensor):
-                assert not isinstance(value, RTensor), f"Found RTensor at key {key}"
-            elif isinstance(value, dict):
-                for k, v in value.items():
-                    assert not isinstance(v, RTensor), f"Found RTensor at {key}.{k}"
+        for item in batch:
+            assert isinstance(item, dict), "Each item should be a dict"
+            for key, value in item.items():
+                if isinstance(value, torch.Tensor):
+                    assert not isinstance(value, RTensor), f"Found RTensor at key {key}"
+                elif isinstance(value, dict):
+                    for k, v in value.items():
+                        assert not isinstance(v, RTensor), f"Found RTensor at {key}.{k}"
 
         controller.destroy()
 
@@ -556,8 +558,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        # Check batch size (first dimension of input_ids tensor)
-        assert batch["input_ids"].shape[0] == 4
+        # Check that all trajectories are returned (each as a separate dict)
+        assert len(batch) == 4
 
         controller.destroy()
 
@@ -580,8 +582,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        # Check batch size (first dimension of input_ids tensor)
-        assert batch["input_ids"].shape[0] == 10
+        # Check that all trajectories are returned (each as a separate dict)
+        assert len(batch) == 10
 
         controller.destroy()
 
@@ -1061,8 +1063,10 @@ def test_rollout_controller_integration(tmp_path, model_path):
                 tokenizer=tokenizer,
             ),
         )
-        assert isinstance(result, dict)
-        assert len(result["attention_mask"].shards) == bs
+        assert isinstance(result, list)
+        assert len(result) == bs
+        assert isinstance(result[0], dict)
+        assert "attention_mask" in result[0]
     finally:
         rollout.destroy()
 

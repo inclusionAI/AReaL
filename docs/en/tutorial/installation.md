@@ -24,7 +24,7 @@ The following hardware configuration has been extensively tested:
 | Git LFS                  | Required for downloading models, datasets, and AReaL code. See [installation guide](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
 | Docker                   |                                                                                                 27.5.1                                                                                                 |
 | NVIDIA Container Toolkit |                                         See [installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)                                          |
-| AReaL Image              |                                                     `ghcr.io/inclusionai/areal-runtime:v1.0.1` (includes runtime dependencies and Ray components)                                                      |
+| AReaL Image              |                                    `ghcr.io/inclusionai/areal-runtime:v1.0.2-sglang` (default) or `v1.0.2-vllm`. Includes runtime dependencies and Ray components.                                     |
 
 **Note**: This tutorial does not cover the installation of NVIDIA Drivers, CUDA, or
 shared storage mounting, as these depend on your specific node configuration and system
@@ -42,16 +42,20 @@ We recommend using Docker with our provided image. The Dockerfile is available i
 top-level directory of the AReaL repository.
 
 ```bash
-docker pull ghcr.io/inclusionai/areal-runtime:v1.0.1
+docker pull ghcr.io/inclusionai/areal-runtime:v1.0.2-sglang
 docker run -it --name areal-node1 \
    --privileged --gpus all --network host \
    --shm-size 700g -v /path/to/mount:/path/to/mount \
-   ghcr.io/inclusionai/areal-runtime:v1.0.1 \
+   ghcr.io/inclusionai/areal-runtime:v1.0.2-sglang \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL /path/to/mount/AReaL
 cd /path/to/mount/AReaL
 uv pip install -e . --no-deps
 ```
+
+A vLLM variant of the Docker image is also available at
+`ghcr.io/inclusionai/areal-runtime:v1.0.2-vllm`. Replace the image tag in the commands
+above if you prefer vLLM as the inference backend.
 
 ### Option 2: Custom Environment Installation
 
@@ -97,20 +101,49 @@ Activation is required before running `pre-commit` or `git commit`. If you use
 `uv run <command>` instead, activation is not needed as `uv run` automatically uses the
 virtual environment.
 
-This installs CUDA-dependent training packages (Megatron, Flash Attention, Torch Memory
-Saver) plus **SGLang** as the default inference backend. These packages require Linux
-x86_64 with CUDA 12.x and compatible NVIDIA drivers.
+This installs CUDA-dependent training packages (Megatron, Torch Memory Saver) plus
+**SGLang** as the default inference backend. These packages require Linux x86_64 with
+CUDA 12.x and compatible NVIDIA drivers.
 
-If you prefer **vLLM** as the inference backend instead of SGLang:
+#### Flash Attention Pre-built Wheels
+
+Flash Attention v2 is included in `--extra cuda` and `--extra cuda-vllm`, but PyPI only
+ships source distributions that require CUDA compilation (~30 min). To skip compilation,
+install a **pre-built wheel** before running `uv sync`.
+
+Flash Attention wheels are linked against a specific PyTorch version at compile time.
+SGLang uses **torch 2.9** and vLLM uses **torch 2.10**, so you must pick the matching
+wheel. Replace `cpXYZ` with your Python version (`cp311` for 3.11, `cp312` for 3.12).
+
+**SGLang** (default, torch 2.9):
 
 ```bash
-uv sync --extra cuda-train --extra vllm
+# Python 3.12
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
+# Python 3.11
+# uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp311-cp311-linux_x86_64.whl"
+
+uv sync --extra cuda
 ```
 
-The same command also works on macOS and Linux without CUDA support. CUDA packages are
-automatically skipped via platform markers. However, training and inference features
-requiring CUDA will not be available. This configuration is suitable only for
-development, testing, and non-GPU workflows.
+**vLLM** (torch 2.10):
+
+```bash
+# Python 3.12
+uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp312-cp312-linux_x86_64.whl"
+# Python 3.11
+# uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp311-cp311-linux_x86_64.whl"
+
+uv sync --extra cuda-vllm
+```
+
+Browse all available wheels at
+<https://github.com/mjun0812/flash-attention-prebuild-wheels/releases>.
+
+The same `uv sync` command also works on macOS and Linux without CUDA support. CUDA
+packages (including flash-attn) are automatically skipped via platform markers. However,
+training and inference features requiring CUDA will not be available. This configuration
+is suitable only for development, testing, and non-GPU workflows.
 
 You can also install individual extras instead of the full `cuda` bundle:
 
@@ -119,18 +152,46 @@ You can also install individual extras instead of the full `cuda` bundle:
 - `megatron`: Megatron training backend
 - `tms`: Torch Memory Saver
 - `flash-attn`: Flash Attention v2
-- `cuda-train`: Training packages only (megatron + tms + flash-attn, no inference
-  backend)
-- `cuda`: cuda-train + sglang (default, backward-compatible)
+- `kernels`: Hugging Face Kernels runtime
+- `cuda-train`: Training packages only (megatron + tms, no inference backend)
+- `cuda-sglang`: cuda-train + sglang + flash-attn
+- `cuda-vllm`: cuda-train + vllm + flash-attn
+- `cuda`: alias for cuda-sglang (default, backward-compatible)
 
 **Note**: You can mix and match individual extras:
 
 ```bash
-# vLLM with just flash-attn (no megatron, no tms)
-uv sync --extra vllm --extra flash-attn
+# vLLM with Hugging Face Kernels and flash-attn (no megatron, no tms)
+uv sync --extra vllm --extra flash-attn --extra kernels
 # vLLM with all training packages
 uv sync --extra cuda-train --extra vllm
 ```
+
+### Using Hugging Face Kernels in Training
+
+Installing the `kernels` extra only makes the
+[Hugging Face Kernels](https://github.com/huggingface/kernels) runtime available.
+Training keeps the existing defaults unless you opt in through configuration.
+
+Use the following fields on your train engine config (for example `actor`, `critic`, or
+`teacher`):
+
+- `attn_impl`: Select the attention backend. In addition to built-in backends such as
+  `sdpa` and `flash_attention_2`, this can point to a Hugging Face kernels repo ID such
+  as `kernels-community/flash-attn` or
+  `kernels-community/flash-attn@main:flash_attn_varlen_func`.
+- `use_kernels`: Set to `true` to kernelize the model after creation.
+
+Example:
+
+```yaml
+actor:
+  attn_impl: kernels-community/flash-attn
+  use_kernels: true
+```
+
+For predictable behavior, prefer an explicit kernels repo ID instead of relying on
+automatic fallback from `flash_attention_*`.
 
 ### Additional CUDA Packages (Optional, Manual Installation)
 

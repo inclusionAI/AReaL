@@ -208,6 +208,15 @@ jobs:
           docker push $IMAGE_NAME:dev-${{ matrix.variant }}
           echo "✅ ${{ matrix.variant }} image promoted from :test-${{ matrix.variant }} to :dev-${{ matrix.variant }}"
 
+  bake-gcp-image:
+    name: Bake GCP CI image with promoted Docker images
+    needs:
+      - promote-images
+    uses: ./.github/workflows/bake-gcp-image.yml
+    with:
+      image_tag: dev
+    secrets: inherit
+
   cleanup-test-images:
     name: Delete ${{ matrix.variant }} test image from registry
     needs:
@@ -249,6 +258,7 @@ jobs:
       - run-tests-sglang
       - run-tests-vllm
       - promote-images
+      - bake-gcp-image
       - cleanup-test-images
     if: always() && needs.start-builder.outputs.was_running != 'true'
     runs-on: ubuntu-latest

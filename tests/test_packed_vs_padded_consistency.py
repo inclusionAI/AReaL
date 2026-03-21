@@ -116,9 +116,15 @@ QWEN25_VL_PATH = get_model_path(
 QWEN3_VL_PATH = get_model_path(
     "/storage/openpsi/models/Qwen3-VL-2B-Instruct", "Qwen/Qwen3-VL-2B-Instruct"
 )
-GEMMA3_PATH = get_model_path(
-    "/storage/openpsi/models/google__gemma-3-4b-it/", "google/gemma-3-4b-it"
-)
+# GEMMA3 requires special authentication to download
+# Use it if it's available, but do not make it a hard dependency for the test
+GEMMA3_PATH = None
+if os.path.exists(
+    os.getenv("AREAL_CI_GEMMA3_PATH", "/storage/openpsi/models/google__gemma-3-4b-it/")
+):
+    GEMMA3_PATH = get_model_path(
+        "/storage/openpsi/models/google__gemma-3-4b-it/", "google/gemma-3-4b-it"
+    )
 
 
 def mock_padded_vlm_data(model_path):
@@ -212,14 +218,13 @@ def mock_padded_vlm_data(model_path):
     return padded_data
 
 
-@pytest.mark.parametrize(
-    "model_path",
-    [
-        pytest.param(QWEN25_VL_PATH),
-        pytest.param(QWEN3_VL_PATH),
-        pytest.param(GEMMA3_PATH, marks=pytest.mark.slow),
-    ],
-)
+vlm_model_paths = [pytest.param(QWEN25_VL_PATH), pytest.param(QWEN3_VL_PATH)]
+if GEMMA3_PATH is not None:
+    vlm_model_paths.append(pytest.param(GEMMA3_PATH, marks=pytest.mark.slow))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("model_path", vlm_model_paths)
 def test_vlm_consistency(model_path):
     # Set random seed for reproducibility.
     # This test might fail on other seed on A100, so do not change this line.

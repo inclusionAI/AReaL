@@ -1,7 +1,9 @@
 """Test script for Engine implementation."""
 
 import os
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -11,13 +13,33 @@ from transformers import AutoTokenizer
 from tests.utils import get_model_path
 
 from areal.api import FinetuneSpec, SaveLoadMeta
-from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
+from areal.api.cli_args import (
+    FSDPEngineConfig,
+    MicroBatchSpec,
+    OptimizerConfig,
+    TrainEngineConfig,
+)
+from areal.engine.fsdp_utils.attn_impl import BUILTIN_ATTN_IMPLS
 from areal.infra.platforms import current_platform
 
 VOCAB_SIZE = 100
 MODEL_PATH = get_model_path(
     "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
 )
+
+
+class DummyDeviceStats:
+    def log(self, *_args, **_kwargs) -> None:
+        pass
+
+
+class DummyModel:
+    def __init__(self):
+        self.use_kernels = False
+        self.gradient_checkpointing_calls = []
+
+    def gradient_checkpointing_enable(self, **kwargs):
+        self.gradient_checkpointing_calls.append(kwargs)
 
 
 @pytest.fixture(scope="module")
@@ -195,3 +217,137 @@ def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
     engine.load(save_load_meta)
     new = engine.forward(input_=mock_input)
     assert torch.allclose(old, new)
+
+
+@pytest.mark.parametrize(
+    "attn_impl",
+    [
+        *BUILTIN_ATTN_IMPLS,
+        "kernels-community/flash-attn",
+        "kernels-community/flash-attn@main:flash_attn_varlen_func",
+        "flash_attention_2|kernels-community/flash-attn@main:flash_attn_varlen_func",
+    ],
+)
+def test_train_engine_config_accepts_builtin_and_kernel_attn_impls(attn_impl):
+    config = TrainEngineConfig(
+        experiment_name="test-experiment",
+        trial_name="trial0",
+        path="test-model",
+        attn_impl=attn_impl,
+    )
+
+    assert config.attn_impl == attn_impl
+
+
+@pytest.mark.parametrize(
+    "attn_impl",
+    [
+        "kernels-community",
+        "kernels-community/flash-attn/extra",
+        "kernels-community/flash-attn:entry:extra",
+    ],
+)
+def test_train_engine_config_rejects_invalid_kernel_attn_impl(attn_impl):
+    with pytest.raises(ValueError, match="attn_impl must be one of"):
+        TrainEngineConfig(
+            experiment_name="test-experiment",
+            trial_name="trial0",
+            path="test-model",
+            attn_impl=attn_impl,
+        )
+
+
+@pytest.mark.parametrize(
+    ("memory_efficient_load", "expected_loader"),
+    [(False, "from_pretrained"), (True, "from_config")],
+)
+def test_create_llm_actor_or_critic_forwards_attn_impl(
+    monkeypatch, memory_efficient_load, expected_loader
+):
+    import areal.engine.fsdp_engine as fsdp_module
+
+    calls = []
+
+    class FakeModelFactory:
+        @staticmethod
+        def from_config(config, **kwargs):
+            calls.append(("from_config", config, kwargs))
+            return DummyModel()
+
+        @staticmethod
+        def from_pretrained(pretrained_model_name_or_path, **kwargs):
+            calls.append(("from_pretrained", pretrained_model_name_or_path, kwargs))
+            return DummyModel()
+
+    monkeypatch.setattr(
+        fsdp_module.AutoConfig,
+        "from_pretrained",
+        lambda *args, **kwargs: SimpleNamespace(model_type="qwen2"),
+    )
+    monkeypatch.setattr(fsdp_module, "is_valid_vision_model", lambda *_args: False)
+    monkeypatch.setattr(fsdp_module, "AutoModelForCausalLM", FakeModelFactory)
+
+    config = TrainEngineConfig(
+        experiment_name="test-experiment",
+        trial_name="trial0",
+        path="test-model",
+        attn_impl="kernels-community/flash-attn",
+        fsdp=FSDPEngineConfig(memory_efficient_load=memory_efficient_load),
+    )
+    engine = fsdp_module.FSDPEngine(config)
+    engine.model_config = SimpleNamespace()
+
+    model = engine._create_llm_actor_or_critic()
+
+    assert isinstance(model, DummyModel)
+    assert calls[0][0] == expected_loader
+    assert calls[0][2]["attn_implementation"] == "kernels-community/flash-attn"
+    assert calls[0][2]["dtype"] == torch.bfloat16
+
+
+@pytest.mark.parametrize("memory_efficient_load", [False, True])
+def test_create_device_model_applies_use_kernels(monkeypatch, memory_efficient_load):
+    import areal.engine.fsdp_engine as fsdp_module
+
+    monkeypatch.setattr(
+        fsdp_module.AutoConfig,
+        "from_pretrained",
+        lambda *args, **kwargs: SimpleNamespace(model_type="qwen2"),
+    )
+    monkeypatch.setattr(fsdp_module, "is_valid_vision_model", lambda *_args: False)
+    monkeypatch.setattr(fsdp_module, "load_hf_tokenizer", lambda *_args: object())
+    monkeypatch.setattr(
+        fsdp_module.current_platform, "set_device", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(fsdp_module.current_platform, "device_type", "cpu")
+    monkeypatch.setattr(
+        fsdp_module.FSDPEngine,
+        "get_device_stats",
+        lambda self: DummyDeviceStats(),
+    )
+
+    config = TrainEngineConfig(
+        experiment_name="test-experiment",
+        trial_name="trial0",
+        path="test-model",
+        use_kernels=True,
+        gradient_checkpointing=True,
+        fsdp=FSDPEngineConfig(memory_efficient_load=memory_efficient_load),
+    )
+    engine = fsdp_module.FSDPEngine(config)
+    engine.logger = MagicMock()
+    dummy_model = DummyModel()
+    monkeypatch.setattr(
+        engine,
+        "_create_llm_actor_or_critic",
+        lambda: dummy_model,
+    )
+    monkeypatch.setenv("LOCAL_RANK", "0")
+
+    engine._create_device_model()
+
+    assert engine.model is dummy_model
+    assert engine.model.use_kernels is True
+    assert engine.model.gradient_checkpointing_calls == [
+        {"gradient_checkpointing_kwargs": {"use_reentrant": False}}
+    ]

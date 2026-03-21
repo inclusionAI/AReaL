@@ -235,7 +235,7 @@ class TrainEngine(abc.ABC):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Prepare a batch of data for training from a dataloader.
 
         Parameters

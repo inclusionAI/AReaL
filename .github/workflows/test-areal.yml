@@ -40,7 +40,7 @@ concurrency:
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   RUNNER_VERSION: '2.332.0'
-  GCP_OS_IMAGE: areal-cicd-test-202602030
+  GCP_OS_IMAGE: areal-cicd-test-20260317-3
 
 jobs:
   determine-variants:
@@ -211,6 +211,7 @@ jobs:
               --zone "$zone" \
               --machine-type "a2-highgpu-2g" \
               --image "$GCP_OS_IMAGE" \
+              --boot-disk-size 2000GB \
               --maintenance-policy TERMINATE \
               --restart-on-failure \
               --max-run-duration "2h" \

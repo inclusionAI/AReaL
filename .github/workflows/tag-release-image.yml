@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build (e.g., v1.0.1)'
+        description: 'Release tag to build (e.g., v1.0.2-sglang)'
         required: true
         type: string
 
@@ -134,7 +134,7 @@ jobs:
         id: get-version
         run: |
           # Extract version from pyproject.toml (single source of truth)
-          VERSION=$(sed -n 's/^version *= *"\([^"]*\)"/\1/p' pyproject.toml)
+          VERSION=$(sed -n 's/^version *= *"\([^"]*\)"/\1/p' pyproject.toml | head -1)
           RELEASE_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
 
           echo "Package version: $VERSION"

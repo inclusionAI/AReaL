@@ -21,6 +21,7 @@ from areal.api import (
 )
 from areal.api.cli_args import SchedulingSpec, TrainEngineConfig
 from areal.infra import TrainController
+from areal.infra.controller.train_controller import _merge_tensors
 
 
 class MockTrainEngine(TrainEngine):
@@ -160,13 +161,15 @@ def train_controller(mock_scheduler, train_config):
 
 
 def create_mock_distributed_batch(size=4, seq_len=10):
-    """Create a mock batch for testing."""
-    data = {
-        "input_ids": torch.randint(0, 100, (size, seq_len)),
-        "attention_mask": torch.ones(size, seq_len, dtype=torch.bool),
-        "loss_mask": torch.ones(size, seq_len, dtype=torch.bool),
-    }
-    return data
+    """Create a mock trajectory list for testing (_dispatch_tensors expects list[dict])."""
+    return [
+        {
+            "input_ids": torch.randint(0, 100, (1, seq_len)),
+            "attention_mask": torch.ones(1, seq_len, dtype=torch.bool),
+            "loss_mask": torch.ones(1, seq_len, dtype=torch.bool),
+        }
+        for _ in range(size)
+    ]
 
 
 # ==================== TEST CLASSES ====================
@@ -268,34 +271,27 @@ class TestTrainControllerDestroy:
 
 
 class TestTrainControllerMergeResults:
-    """Tests for result merging from workers."""
+    """Tests for result merging via _merge_tensors."""
 
-    def test_merge_results_with_non_tensor(self, train_controller):
-        """Test _merge_results with non-tensor results."""
-        results = [{"status": "ok"}, {"status": "ok"}]
+    def test_merge_tensors_reorders_results(self):
+        """Test _merge_tensors reorders results to original trajectory order."""
+        results = [{"status": "ok"}, {"status": "done"}]
 
-        merged = train_controller._merge_results(results, group_indices=[[0], [1]])
+        merged = _merge_tensors(results, group_indices=[[0], [1]])
 
-        # Should return first result (already synchronized)
-        assert merged == {"status": "ok"}
+        assert merged is not None
+        assert len(merged) == 2
+        assert merged[0] == {"status": "ok"}
+        assert merged[1] == {"status": "done"}
 
-    def test_merge_results_accepts_method_parameter(self, train_controller):
-        """Test that _merge_results accepts method parameter.
-
-        This is a regression test for the bug at line 279 where the method
-        parameter was missing from the signature.
-        """
-        # Use tensors with proper shape [batch_size, seq_len]
+    def test_merge_tensors_with_tensor_results(self):
+        """Test _merge_tensors correctly reorders tensor results."""
         results = [torch.tensor([[0.5, 0.5]]), torch.tensor([[0.3, 0.3]])]
 
-        # This should work without TypeError
-        try:
-            result = train_controller._merge_results(results, group_indices=[[0], [1]])
-            # Test passes if no exception
-            assert result is not None
-        except TypeError as e:
-            if "missing" in str(e) and "required positional argument" in str(e):
-                pytest.fail(f"_merge_results missing required parameter: {e}")
+        merged = _merge_tensors(results, group_indices=[[0], [1]])
+
+        assert merged is not None
+        assert len(merged) == 2
 
 
 class TestTrainControllerRPCWrappers:
@@ -485,7 +481,7 @@ class TestTrainControllerCustomFunctionCall:
         train_controller._custom_function_call("ppo_update", input_=batch)
 
         # Results should only come from DP head workers
-        # (verified by _merge_results receiving filtered results)
+        # (verified by _collect_results filtering to DP heads)
 
 
 class TestTrainControllerEdgeCases:
@@ -708,10 +704,10 @@ class TestTrainControllerExportStats:
 class TestTrainControllerDispatchInputs:
     """Tests for input dispatching across DP groups."""
 
-    def test_dispatch_inputs_splits_distributed_batch(
+    def test_prepare_dispatch_splits_distributed_batch(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test _dispatch_inputs correctly splits batch."""
+        """Test _prepare_dispatch correctly splits batch."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -719,16 +715,16 @@ class TestTrainControllerDispatchInputs:
         )
 
         batch = create_mock_distributed_batch(size=16)
-        split_args, split_kwargs, _ = train_controller._dispatch_inputs(batch)
+        split_args, split_kwargs, _ = train_controller._prepare_dispatch(batch)
 
         # Should split into dp_size chunks
         assert len(split_args) == 1
         assert len(split_args[0]) == alloc_mode.train.dp_size
 
-    def test_dispatch_inputs_replicates_non_batch_args(
+    def test_prepare_dispatch_replicates_non_batch_args(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test _dispatch_inputs replicates non-batch arguments."""
+        """Test _prepare_dispatch replicates non-batch arguments."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -736,17 +732,17 @@ class TestTrainControllerDispatchInputs:
         )
 
         scalar_arg = 42
-        split_args, split_kwargs, _ = train_controller._dispatch_inputs(scalar_arg)
+        split_args, split_kwargs, _ = train_controller._prepare_dispatch(scalar_arg)
 
         # Should replicate to all DP groups
         assert len(split_args) == 1
         assert all(arg == 42 for arg in split_args[0])
         assert len(split_args[0]) == alloc_mode.train.dp_size
 
-    def test_dispatch_inputs_handles_kwargs(
+    def test_prepare_dispatch_handles_kwargs(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test _dispatch_inputs correctly handles keyword arguments."""
+        """Test _prepare_dispatch correctly handles keyword arguments."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -754,7 +750,7 @@ class TestTrainControllerDispatchInputs:
         )
 
         batch = create_mock_distributed_batch(size=16)
-        split_args, split_kwargs, _ = train_controller._dispatch_inputs(
+        split_args, split_kwargs, _ = train_controller._prepare_dispatch(
             input_=batch, learning_rate=0.001
         )
 

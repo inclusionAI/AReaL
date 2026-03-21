@@ -665,8 +665,7 @@ def call_engine_method():
         # Deserialize data
         raw_args = deserialize_value(raw_args)
         raw_kwargs = deserialize_value(raw_kwargs)
-
-        # Fetch remote tensors if any
+        # Fetch remote tensors
         args = RTensor.localize(raw_args)
         kwargs = RTensor.localize(raw_kwargs)
 
@@ -693,6 +692,7 @@ def call_engine_method():
                         src_rank=engine.current_data_parallel_head(),
                         group=engine.context_and_model_parallel_group,
                     )
+
                     args_bcast = tensor_container_to(
                         args, current_platform.current_device()
                     )
@@ -769,7 +769,6 @@ def call_engine_method():
                 )
                 raise
 
-        # Submit to engine thread
         try:
             result = _submit_to_engine_thread(
                 f"call_{method_name}", execute_in_engine_thread
@@ -789,17 +788,7 @@ def call_engine_method():
             )
 
         # Convert all tensors to RTensors and store the tensor locally
-        layout = RTensor.extract_layout(
-            result,
-            layouts=dict(args=raw_args, kwargs=raw_kwargs),
-            node_addr=f"{_server_host}:{_server_port}",
-        )
-        if layout is not None:
-            result = RTensor.remotize(
-                result,
-                layout,
-                node_addr=f"{_server_host}:{_server_port}",
-            )
+        result = RTensor.remotize(result, node_addr=f"{_server_host}:{_server_port}")
         serialized_result = serialize_value(result)
         return jsonify({"status": "success", "result": serialized_result})
 

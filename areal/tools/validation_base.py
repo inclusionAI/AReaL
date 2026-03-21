@@ -36,6 +36,7 @@ class BaseInstallationValidator:
     # Map package names to their import names (when different)
     PACKAGE_IMPORT_MAP = {
         "hydra-core": "hydra",
+        "python-dotenv": "dotenv",
         "megatron-core": "megatron",
         "PyYAML": "yaml",
         "python-dateutil": "dateutil",
