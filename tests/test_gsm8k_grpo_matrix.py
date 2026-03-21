@@ -89,7 +89,9 @@ def _run_matrix_smoke(
     "train_backend",
     ["fsdp", "megatron", "archon"],
 )
-def test_gsm8k_grpo_smoke_sglang_matrix(tmp_path_factory, train_backend):
+def test_gsm8k_grpo_smoke_sglang_matrix(tmp_path_factory, train_backend, ip_stack):
+    if not (ip_stack["ipv6_route"] and not ip_stack["ipv4_route"]):
+        pytest.skip("Not an IPv6-only host")
     success = _run_matrix_smoke(
         tmp_path_factory,
         train_backend=train_backend,
@@ -107,7 +109,9 @@ def test_gsm8k_grpo_smoke_sglang_matrix(tmp_path_factory, train_backend):
     "train_backend",
     ["fsdp", "megatron", "archon"],
 )
-def test_gsm8k_grpo_smoke_vllm_matrix(tmp_path_factory, train_backend):
+def test_gsm8k_grpo_smoke_vllm_matrix(tmp_path_factory, train_backend, ip_stack):
+    if not (ip_stack["ipv6_route"] and not ip_stack["ipv4_route"]):
+        pytest.skip("Not an IPv6-only host")
     success = _run_matrix_smoke(
         tmp_path_factory,
         train_backend=train_backend,
@@ -122,7 +126,9 @@ def test_gsm8k_grpo_smoke_vllm_matrix(tmp_path_factory, train_backend):
 @pytest.mark.sglang
 @pytest.mark.multi_gpu
 @pytest.mark.parametrize("train_backend", ["fsdp", "megatron", "archon"])
-def test_gsm8k_grpo_smoke_sglang_matrix_ray(tmp_path_factory, train_backend):
+def test_gsm8k_grpo_smoke_sglang_matrix_ray(tmp_path_factory, train_backend, ip_stack):
+    if not (ip_stack["ipv6_route"] and not ip_stack["ipv4_route"]):
+        pytest.skip("Not an IPv6-only host")
     success = _run_matrix_smoke(
         tmp_path_factory,
         train_backend=train_backend,
@@ -137,7 +143,9 @@ def test_gsm8k_grpo_smoke_sglang_matrix_ray(tmp_path_factory, train_backend):
 @pytest.mark.vllm
 @pytest.mark.multi_gpu
 @pytest.mark.parametrize("train_backend", ["fsdp", "megatron", "archon"])
-def test_gsm8k_grpo_smoke_vllm_matrix_ray(tmp_path_factory, train_backend):
+def test_gsm8k_grpo_smoke_vllm_matrix_ray(tmp_path_factory, train_backend, ip_stack):
+    if not (ip_stack["ipv6_route"] and not ip_stack["ipv4_route"]):
+        pytest.skip("Not an IPv6-only host")
     success = _run_matrix_smoke(
         tmp_path_factory,
         train_backend=train_backend,
