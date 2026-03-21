@@ -242,7 +242,9 @@ class vLLMServerWrapper:
         wait_for_server(f"http://{format_hostport(host_ip, server_port)}")
         name = names.gen_servers(self.experiment_name, self.trial_name)
         name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
-        logger.info(f"vllm server launched at: http://{format_hostport(host_ip, server_port)}")
+        logger.info(
+            f"vllm server launched at: http://{format_hostport(host_ip, server_port)}"
+        )
         return server_process
 
 

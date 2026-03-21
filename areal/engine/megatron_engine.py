@@ -1239,9 +1239,7 @@ class MegatronEngine(TrainEngine):
 
             fut = self.rollout_engine.init_weights_update_group(meta)
 
-            init_method = (
-                f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
-            )
+            init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             self.logger.info(
                 f"Initializing weight update group: type={meta.type} "
                 f"init_method={init_method} "

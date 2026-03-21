@@ -19,7 +19,9 @@ def _run_gsm8k_grpo_smoke(
     nfs_record_root: str,
     n_gpus_per_node: int,
 ):
-    model_path = get_model_path("/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B")
+    model_path = get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B"
+    )
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
 
     example_file = "examples/math/gsm8k_rl.py"

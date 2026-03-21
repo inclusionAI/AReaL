@@ -204,7 +204,9 @@ class SGLangServerWrapper:
         if node_rank == 0:
             name = names.gen_servers(self.experiment_name, self.trial_name)
             name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
-        logger.info(f"SGLang server launched at: http://{format_hostport(host_ip, server_port)}")
+        logger.info(
+            f"SGLang server launched at: http://{format_hostport(host_ip, server_port)}"
+        )
         return server_process
 
 

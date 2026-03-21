@@ -38,7 +38,6 @@ from areal.utils.network import (
     find_free_ports,
     format_hostport,
     gethostip,
-    get_loopback_ip,
 )
 
 logger = logging.getLogger("SyncRPCServer")

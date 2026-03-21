@@ -50,7 +50,6 @@ from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import (
     find_free_ports,
     format_hostport,
-    get_loopback_ip,
     gethostip,
     split_hostport,
 )

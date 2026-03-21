@@ -45,7 +45,11 @@ from areal.infra.utils.launcher import (
 from areal.infra.utils.proc import kill_process_tree, run_with_streaming_logs
 from areal.utils import logging, name_resolve, names
 from areal.utils.fs import validate_shared_path
-from areal.utils.network import find_free_ports, format_hostport, get_loopback_ip, gethostip
+from areal.utils.network import (
+    find_free_ports,
+    format_hostport,
+    gethostip,
+)
 
 logger = logging.getLogger("LocalScheduler")
 
