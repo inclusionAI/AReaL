@@ -41,6 +41,10 @@ from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
 
+from ..schedule_policy import (
+    LeastRequestPrioritySchedulePolicy,
+    RoundRobinSchedulePolicy,
+)
 from ..staleness_manager import StalenessManager
 from ..workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 
@@ -83,8 +87,8 @@ class RolloutController:
         self.server_infos: list[LocalInfServerInfo] = []
         self._worker_role: str
 
-        # Round-robin scheduling
-        self._current_worker_idx = 0
+        self.scheduler_policy_context = None
+        self.worker_rank_dict = None
 
         # State
         self._version_lock = Lock()
@@ -163,6 +167,8 @@ class RolloutController:
         # Schedule inference engines in the granularity of instance sizes,
         # usually TP x PP.
         self._worker_role = role
+        gen_backend = kwargs.pop("gen_backend", "vllm")
+        n_samples = kwargs.pop("n_samples", 1)
 
         # The first element of `self.config.scheduling_spec` is the resource spec
         # of workers, aka the RPC server process. Since a worker exactly matches
@@ -221,6 +227,25 @@ class RolloutController:
 
         # Start callback server for weight sync coordination
         self._start_callback_server()
+        logger.info(f"Using scheduler policy {self.config.schedule_policy}")
+        self.worker_rank_dict = {
+            worker.id: index for index, worker in enumerate(self.workers)
+        }
+        max_num_seqs = (
+            server_args.get("max_num_seqs", 256)
+            if gen_backend == "vllm"
+            else server_args.get("max_running_requests", 256)
+        )
+        # Because the requests after choosing a worker will be multiplied by n_samples
+        max_num_seqs_for_schedule = (max_num_seqs + n_samples - 1) // n_samples
+        if self.config.schedule_policy == "least_request":
+            self.scheduler_policy_context = LeastRequestPrioritySchedulePolicy(
+                self.workers, max_num_seqs_for_schedule
+            )
+        else:
+            self.scheduler_policy_context = RoundRobinSchedulePolicy(
+                self.workers, max_num_seqs_for_schedule
+            )
 
     async def _async_initialize(
         self,
@@ -692,21 +717,6 @@ class RolloutController:
         ]
         return await asyncio.gather(*tasks)
 
-    def _choose_worker(self) -> tuple[Worker, int]:
-        """Choose a worker for the next request using round-robin scheduling.
-
-        Returns
-        -------
-        tuple[Worker, int]
-            The chosen worker object and its rank
-        """
-        if not self.workers:
-            raise RuntimeError("No workers available to choose from.")
-        worker = self.workers[self._current_worker_idx]
-        rank = self._current_worker_idx
-        self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
-        return worker, rank
-
     def _resolve_workflow_str(self, workflow: WorkflowLike | None) -> str | None:
         """Resolve workflow to a string import path.
 
@@ -764,86 +774,90 @@ class RolloutController:
 
     def _create_submit_callback(self, pending_task: _RemoteRolloutTaskInput):
         async def _submit_then_wait() -> _RemoteRolloutResult | None:
-            # Choose worker via round-robin
-            worker, rank = self._choose_worker()
-            engine_name = self._engine_name(rank)
+            async with self.scheduler_policy_context as worker:
+                rank = self.worker_rank_dict.get(worker.id)
+                engine_name = self._engine_name(rank)
 
-            # NOTE: No need to call `on_rollout_submitted` here.
-            # This function will be passed to `BatchTaskDispather` where
-            # `on_rollout_submitted` will be called upon dispatching
-            task_id = pending_task.task_id
+                # NOTE: No need to call `on_rollout_submitted` here.
+                # This function will be passed to `BatchTaskDispather` where
+                # `on_rollout_submitted` will be called upon dispatching
+                task_id = pending_task.task_id
 
-            manager = self.staleness_manager
+                manager = self.staleness_manager
 
-            try:
-                # Set future for this task
-                future = asyncio.get_event_loop().create_future()
-                with self._futures_lock:
-                    self._pending_futures[task_id] = future
+                try:
+                    # Set future for this task
+                    future = asyncio.get_event_loop().create_future()
+                    with self._futures_lock:
+                        self._pending_futures[task_id] = future
 
-                proxy_addr = pending_task.proxy_addr
-                if self._proxy_started and proxy_addr is None:
-                    proxy_addr = self.get_proxy_addr(rank)
-                engine_task_id = await self.scheduler.async_call_engine(
-                    worker.id,
-                    "submit",
-                    engine_name=engine_name,
-                    data=pending_task.data,
-                    workflow=pending_task.workflow,
-                    workflow_kwargs=pending_task.workflow_kwargs,
-                    should_accept_fn=pending_task.should_accept_fn,
-                    http_timeout=self.config.request_timeout,
-                    is_eval=pending_task.is_eval,
-                    group_size=pending_task.group_size,
-                    task_id=task_id,
-                    callback_addr=f"http://{self.callback_addr}/callback/rollout_complete",
-                    proxy_addr=proxy_addr,
-                )
+                    proxy_addr = pending_task.proxy_addr
+                    if self._proxy_started and proxy_addr is None:
+                        proxy_addr = self.get_proxy_addr(rank)
+                    engine_task_id = await self.scheduler.async_call_engine(
+                        worker.id,
+                        "submit",
+                        engine_name=engine_name,
+                        data=pending_task.data,
+                        workflow=pending_task.workflow,
+                        workflow_kwargs=pending_task.workflow_kwargs,
+                        should_accept_fn=pending_task.should_accept_fn,
+                        http_timeout=self.config.request_timeout,
+                        is_eval=pending_task.is_eval,
+                        group_size=pending_task.group_size,
+                        task_id=task_id,
+                        callback_addr=f"http://{self.callback_addr}/callback/rollout_complete",
+                        proxy_addr=proxy_addr,
+                    )
 
-                assert task_id == engine_task_id, (task_id, engine_task_id)
+                    assert task_id == engine_task_id, (task_id, engine_task_id)
 
-                # Wait for callback to resolve the future
-                await asyncio.wait_for(future, timeout=self.config.request_timeout)
+                    # Wait for callback to resolve the future
+                    await asyncio.wait_for(future, timeout=self.config.request_timeout)
 
-                # Fetch the result
-                result = await self.scheduler.async_call_engine(
-                    worker.id,
-                    "wait_for_task",
-                    engine_name=engine_name,
-                    task_id=engine_task_id,
-                    timeout=0.1,  # A short time to prevent blocking other requests
-                    raise_timeout=False,
-                    http_timeout=self.config.request_timeout,
-                )
+                    # Fetch the result
+                    result = await self.scheduler.async_call_engine(
+                        worker.id,
+                        "wait_for_task",
+                        engine_name=engine_name,
+                        task_id=engine_task_id,
+                        timeout=0.1,  # A short time to prevent blocking other requests
+                        raise_timeout=False,
+                        http_timeout=self.config.request_timeout,
+                    )
 
-                traj = result
-                if traj is not None:
-                    manager.on_rollout_accepted()
+                    traj = result
+                    if traj is not None:
+                        manager.on_rollout_accepted()
+                        if self.config.enable_rollout_tracing:
+                            logger.info(
+                                f"Finish and accept rollout. {self._rollout_stats()}"
+                            )
+                        return _RemoteRolloutResult(task_id=task_id, trajectory=traj)
+
+                    manager.on_rollout_rejected()
                     if self.config.enable_rollout_tracing:
                         logger.info(
-                            f"Finish and accept rollout. {self._rollout_stats()}"
+                            f"Finish but reject rollout. {self._rollout_stats()}"
                         )
-                    return _RemoteRolloutResult(task_id=task_id, trajectory=traj)
+                    return None
 
-                manager.on_rollout_rejected()
-                if self.config.enable_rollout_tracing:
-                    logger.info(f"Finish but reject rollout. {self._rollout_stats()}")
-                return None
-
-            except TimeoutError:
-                if task_id is not None:
-                    with self._futures_lock:
-                        self._pending_futures.pop(task_id, None)
-                manager.on_rollout_rejected()
-                logger.error(f"Rollout timed out after {self.config.request_timeout}s")
-                return None
-            except Exception as exc:
-                if task_id is not None:
-                    with self._futures_lock:
-                        self._pending_futures.pop(task_id, None)
-                manager.on_rollout_rejected()
-                logger.error("Workflow execution failed: %s", exc, exc_info=True)
-                return None
+                except TimeoutError:
+                    if task_id is not None:
+                        with self._futures_lock:
+                            self._pending_futures.pop(task_id, None)
+                    manager.on_rollout_rejected()
+                    logger.error(
+                        f"Rollout timed out after {self.config.request_timeout}s"
+                    )
+                    return None
+                except Exception as exc:
+                    if task_id is not None:
+                        with self._futures_lock:
+                            self._pending_futures.pop(task_id, None)
+                    manager.on_rollout_rejected()
+                    logger.error("Workflow execution failed: %s", exc, exc_info=True)
+                    return None
 
         return _submit_then_wait
 
@@ -987,15 +1001,14 @@ class RolloutController:
             The generated response from the model
         """
         # Choose worker and delegate
-        worker, rank = self._choose_worker()
-
-        # Call agenerate on engine via scheduler
-        return await self.scheduler.async_call_engine(
-            worker_id=worker.id,
-            method="agenerate",
-            engine_name=self._engine_name(rank),
-            req=req,
-        )
+        async with self.scheduler_policy_context as worker:
+            rank = self.worker_rank_dict.get(worker.id)
+            return await self.scheduler.async_call_engine(
+                worker_id=worker.id,
+                method="agenerate",
+                engine_name=self._engine_name(rank),
+                req=req,
+            )
 
     async def init_weights_update_group(self, meta: WeightUpdateMeta) -> None:
         tasks = [

@@ -1689,7 +1689,10 @@ class InferenceEngineConfig:
     )
     schedule_policy: str = field(
         default="round_robin",
-        metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
+        metadata={
+            "help": "Request scheduling policy",
+            "choices": ["round_robin", "least_request"],
+        },
     )
     tokenizer_path: str = field(
         default="",
