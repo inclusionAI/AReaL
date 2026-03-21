@@ -465,6 +465,9 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
+                # SIMAR: DISABLING VERSIONING AND SHORT CIRCURING THE UPDATE WEIGHTS FIXES THE ISSUE
+                # new_version = global_step
+
                 # Use versioned path for weight updates
                 new_version = global_step + 1
                 versioned_meta = self.weight_update_meta.with_version(new_version)
