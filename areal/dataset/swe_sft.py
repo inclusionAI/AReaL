@@ -491,7 +491,9 @@ def get_swe_sft_dataset(
 
         if max_length is not None:
             before_filter = len(dataset)
-            dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
+            dataset = dataset.filter(
+                lambda x: len(x["input_ids"]) <= max_length, num_proc=num_proc
+            )
             logger.info(
                 f"Filtered {before_filter - len(dataset)} samples "
                 f"exceeding max_length={max_length}"
@@ -532,7 +534,7 @@ def get_swe_sft_dataset(
 
     # Filter out empty samples (e.g. from apply_chat_template failures).
     before_empty = len(dataset)
-    dataset = dataset.filter(lambda x: len(x["input_ids"]) > 0)
+    dataset = dataset.filter(lambda x: len(x["input_ids"]) > 0, num_proc=num_proc)
     if before_empty - len(dataset) > 0:
         logger.info(
             f"Filtered {before_empty - len(dataset)} empty samples "
@@ -541,7 +543,9 @@ def get_swe_sft_dataset(
 
     if max_length is not None:
         before_filter = len(dataset)
-        dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
+        dataset = dataset.filter(
+            lambda x: len(x["input_ids"]) <= max_length, num_proc=num_proc
+        )
         logger.info(
             f"Filtered {before_filter - len(dataset)} samples "
             f"exceeding max_length={max_length}"
