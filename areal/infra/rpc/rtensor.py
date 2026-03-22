@@ -92,7 +92,7 @@ class HttpRTensorBackend:
         )
         return aiohttp.ClientSession(
             timeout=timeout,
-            read_bufsize=1024 * 1024 * 10,  # 10MB buffer
+            read_bufsize=10 * 1024 * 1024,  # 10MB buffer
             connector=get_default_connector(),
         )
 
