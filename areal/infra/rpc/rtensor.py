@@ -13,6 +13,7 @@ import ray
 import torch
 
 from areal.infra.utils.concurrent import run_async_task
+from areal.infra.utils.http import DEFAULT_REQUEST_TIMEOUT, get_default_connector
 
 
 class RTensorBackend(Protocol):
@@ -79,6 +80,19 @@ class TensorShardInfo:
 
 
 class HttpRTensorBackend:
+    def _create_session(self) -> aiohttp.ClientSession:
+        """Create a properly configured aiohttp session for large tensor transfers."""
+        timeout = aiohttp.ClientTimeout(
+            total=DEFAULT_REQUEST_TIMEOUT,
+            sock_connect=DEFAULT_REQUEST_TIMEOUT,
+            connect=DEFAULT_REQUEST_TIMEOUT,
+        )
+        return aiohttp.ClientSession(
+            timeout=timeout,
+            read_bufsize=1024 * 1024 * 10,  # 10MB buffer
+            connector=get_default_connector(),
+        )
+
     async def _fetch_tensor(
         self, session: aiohttp.ClientSession, shard_id: str, node_addr: str
     ) -> torch.Tensor:
@@ -99,7 +113,7 @@ class HttpRTensorBackend:
             return []
 
         async def _fetch():
-            async with aiohttp.ClientSession() as session:
+            async with self._create_session() as session:
                 tasks = [
                     self._fetch_tensor(session, s.shard_id, s.node_addr) for s in shards
                 ]
@@ -115,7 +129,7 @@ class HttpRTensorBackend:
 
     async def delete(self, node_addr: str, shard_ids: list[str]) -> None:
         """Delete shards via HTTP DELETE request."""
-        async with aiohttp.ClientSession() as session:
+        async with self._create_session() as session:
             async with session.delete(
                 f"http://{node_addr}/data/clear", json={"shard_ids": shard_ids}
             ) as resp:
