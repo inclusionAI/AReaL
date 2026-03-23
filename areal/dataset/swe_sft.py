@@ -32,7 +32,7 @@ from areal.utils import logging
 
 logger = logging.getLogger("SWESFTDataset")
 
-DATASET_NUM_PROC = 16
+DATASET_NUM_PROC = 1
 
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
@@ -184,16 +184,20 @@ _TEMPLATE_PATTERNS = [
 class _TokenizeAndMask:
     """Picklable callable for ``Dataset.map(num_proc=N)``."""
 
-    def __init__(self, tokenizer, assistant_pattern):
+    def __init__(self, tokenizer, assistant_pattern, tools=None):
         self.tokenizer = tokenizer
         self.assistant_pattern = assistant_pattern
+        self.tools = tools
 
     def __call__(self, sample):
         messages = sample["messages"]
 
         # 1) Render the full template text.
         try:
-            full_text = self.tokenizer.apply_chat_template(messages, tokenize=False)
+            kwargs = {"tokenize": False}
+            if self.tools is not None:
+                kwargs["tools"] = self.tools
+            full_text = self.tokenizer.apply_chat_template(messages, **kwargs)
         except Exception as e:
             logger.warning(
                 "apply_chat_template failed (likely unsupported tool_calls "
@@ -228,8 +232,12 @@ class _TokenizeAndMask:
         return {"input_ids": input_ids, "loss_mask": loss_mask}
 
 
-def _detect_template_pattern(tokenizer):
+def _detect_template_pattern(tokenizer, tools=None):
     """Detect the assistant role delimiter used by this tokenizer's template.
+
+    When *tools* is provided the probe is rendered with ``tools=`` so that
+    the detected delimiters match the actual training text (some templates
+    alter the system block when tools are present).
 
     Strategy:
         1. Try known ``_TEMPLATE_PATTERNS`` (fast, battle-tested).
@@ -242,11 +250,17 @@ def _detect_template_pattern(tokenizer):
     """
     _PROBE_CONTENT = "PROBE_MARKER"
 
+    extra_kwargs = {}
+    if tools is not None:
+        extra_kwargs["tools"] = tools
+
     probe_msgs = [
         {"role": "user", "content": "x"},
         {"role": "assistant", "content": _PROBE_CONTENT},
     ]
-    probe_text = tokenizer.apply_chat_template(probe_msgs, tokenize=False)
+    probe_text = tokenizer.apply_chat_template(
+        probe_msgs, tokenize=False, **extra_kwargs
+    )
 
     # --- Strategy 1: known patterns ---
     for hdr_re, eot_re in _TEMPLATE_PATTERNS:
@@ -264,7 +278,9 @@ def _detect_template_pattern(tokenizer):
             {"role": "user", "content": "x"},
             {"role": "assistant", "content": ""},
         ]
-        text_empty = tokenizer.apply_chat_template(probe_empty, tokenize=False)
+        text_empty = tokenizer.apply_chat_template(
+            probe_empty, tokenize=False, **extra_kwargs
+        )
 
         marker_idx = probe_text.index(_PROBE_CONTENT)
         header = probe_text[:marker_idx]
@@ -274,7 +290,9 @@ def _detect_template_pattern(tokenizer):
             # Extract the assistant-specific header by removing the shared
             # user-only prefix.
             user_only = tokenizer.apply_chat_template(
-                [{"role": "user", "content": "x"}], tokenize=False
+                [{"role": "user", "content": "x"}],
+                tokenize=False,
+                **extra_kwargs,
             )
             asst_header = header[len(user_only) :]
             # end-of-turn delimiter: strip leading newlines, then take
@@ -306,15 +324,24 @@ def _load_trajectory_pairs(
 ):
     """Load trajectory JSONL and split into progressive pairs.
 
-    Each line has ``{"conversations": [{"messages": [...]}]}``.
+    Each line has ``{"conversations": [{"messages": [...], "tools": [...]}]}``.
+
+    Also extracts the ``tools`` list (OpenAI function-calling schema) from
+    the first conversation that contains one.  All records in a dataset are
+    expected to share the same tool definitions.
 
     Args:
         path: Path to the JSONL file.
         filter_errors: If True, discard pairs whose current segment contains
             a tool result with ``is_error=True``.
         strip_all_thinking: If True, strip thinking from all assistant turns.
+
+    Returns:
+        Tuple of ``(all_pairs, tools)`` where *tools* is ``None`` when no
+        tool definitions are found.
     """
     all_pairs = []
+    tools = None
     records_in = 0
     total_filtered = 0
 
@@ -337,9 +364,18 @@ def _load_trajectory_pairs(
                     len(convs),
                 )
 
-            messages = convs[-1].get("messages", [])
+            conv = convs[-1]
+            messages = conv.get("messages", [])
             if not messages:
                 continue
+
+            # Extract tool definitions (same across all records).
+            if tools is None and conv.get("tools"):
+                tools = conv["tools"]
+                tool_names = [t.get("function", {}).get("name", "?") for t in tools]
+                logger.info(
+                    f"Extracted {len(tools)} tool definitions from data: {tool_names}"
+                )
 
             pairs, n_filtered = _split_and_filter(
                 messages,
@@ -354,7 +390,7 @@ def _load_trajectory_pairs(
         f"generated {len(all_pairs)} pairs "
         f"(filtered {total_filtered} with tool errors)"
     )
-    return all_pairs
+    return all_pairs, tools
 
 
 def _load_presplit_pairs(path: str, strip_all_thinking: bool = False):
@@ -364,8 +400,15 @@ def _load_presplit_pairs(path: str, strip_all_thinking: bool = False):
     By default, thinking is stripped from context assistant turns but
     preserved for the last assistant turn (the training target).  Set
     *strip_all_thinking* to strip from every assistant turn.
+
+    Also extracts ``tools`` from the first record that contains a
+    ``"tools"`` field, same as ``_load_trajectory_pairs``.
+
+    Returns:
+        Tuple of ``(all_pairs, tools)``.
     """
     all_pairs = []
+    tools = None
 
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -376,6 +419,9 @@ def _load_presplit_pairs(path: str, strip_all_thinking: bool = False):
             messages = record.get("messages", [])
             if not messages:
                 continue
+
+            if tools is None and record.get("tools"):
+                tools = record["tools"]
 
             # Find the last assistant index so we can preserve its thinking.
             last_asst = None
@@ -390,8 +436,12 @@ def _load_presplit_pairs(path: str, strip_all_thinking: bool = False):
                 pair.append(_clean_message(m, strip_thinking=strip))
             all_pairs.append(pair)
 
+    if tools is not None:
+        tool_names = [t.get("function", {}).get("name", "?") for t in tools]
+        logger.info(f"Extracted {len(tools)} tool definitions: {tool_names}")
+
     logger.info(f"Loaded {len(all_pairs)} pre-split pairs from {path}")
-    return all_pairs
+    return all_pairs, tools
 
 
 def get_swe_sft_dataset(
@@ -405,6 +455,11 @@ def get_swe_sft_dataset(
     strip_all_thinking: bool = False,
 ):
     """Load SWE trajectory data and convert to SFT training pairs.
+
+    Tool definitions are auto-extracted from the training data's
+    ``conversations[].tools`` field and passed to ``apply_chat_template``
+    so that the tokenizer renders tool definitions in the system prompt
+    (e.g. Qwen3 ``# Tools`` block), matching the eval-time format.
 
     Args:
         path: Path to the JSONL file containing SWE trajectories, or a
@@ -436,7 +491,9 @@ def get_swe_sft_dataset(
 
         if max_length is not None:
             before_filter = len(dataset)
-            dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
+            dataset = dataset.filter(
+                lambda x: len(x["input_ids"]) <= max_length, num_proc=num_proc
+            )
             logger.info(
                 f"Filtered {before_filter - len(dataset)} samples "
                 f"exceeding max_length={max_length}"
@@ -445,31 +502,39 @@ def get_swe_sft_dataset(
         logger.info(f"Final dataset: {len(dataset)} samples")
         return dataset
 
+    tools = None
+
     if num_proc is None:
         num_proc = max(1, min(os.cpu_count() or 1, DATASET_NUM_PROC))
 
     if pre_split:
-        all_pairs = _load_presplit_pairs(path, strip_all_thinking=strip_all_thinking)
+        all_pairs, tools = _load_presplit_pairs(
+            path, strip_all_thinking=strip_all_thinking
+        )
     else:
-        all_pairs = _load_trajectory_pairs(
+        all_pairs, tools = _load_trajectory_pairs(
             path,
             filter_errors=filter_errors,
             strip_all_thinking=strip_all_thinking,
         )
+
+    if tools is not None:
+        tool_names = [t.get("function", {}).get("name", "?") for t in tools]
+        logger.info(f"Using tools for chat template: {tool_names}")
 
     if not all_pairs:
         raise ValueError(f"No valid SFT pairs generated from {path}")
 
     dataset = Dataset.from_dict({"messages": all_pairs})
 
-    assistant_pattern = _detect_template_pattern(tokenizer)
-    process_fn = _TokenizeAndMask(tokenizer, assistant_pattern)
+    assistant_pattern = _detect_template_pattern(tokenizer, tools=tools)
+    process_fn = _TokenizeAndMask(tokenizer, assistant_pattern, tools=tools)
 
     dataset = dataset.map(process_fn, num_proc=num_proc).remove_columns(["messages"])
 
     # Filter out empty samples (e.g. from apply_chat_template failures).
     before_empty = len(dataset)
-    dataset = dataset.filter(lambda x: len(x["input_ids"]) > 0)
+    dataset = dataset.filter(lambda x: len(x["input_ids"]) > 0, num_proc=num_proc)
     if before_empty - len(dataset) > 0:
         logger.info(
             f"Filtered {before_empty - len(dataset)} empty samples "
@@ -478,7 +543,9 @@ def get_swe_sft_dataset(
 
     if max_length is not None:
         before_filter = len(dataset)
-        dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
+        dataset = dataset.filter(
+            lambda x: len(x["input_ids"]) <= max_length, num_proc=num_proc
+        )
         logger.info(
             f"Filtered {before_filter - len(dataset)} samples "
             f"exceeding max_length={max_length}"
@@ -590,11 +657,11 @@ if __name__ == "__main__":
 
     # --- Load pairs (always full load, then truncate) ---
     if args.pre_split:
-        all_pairs = _load_presplit_pairs(
+        all_pairs, tools = _load_presplit_pairs(
             args.path, strip_all_thinking=strip_all_thinking
         )
     else:
-        all_pairs = _load_trajectory_pairs(
+        all_pairs, tools = _load_trajectory_pairs(
             args.path,
             filter_errors=filter_errors,
             strip_all_thinking=strip_all_thinking,
@@ -619,7 +686,10 @@ if __name__ == "__main__":
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fout:
             for pair in all_pairs:
-                fout.write(json.dumps({"messages": pair}, ensure_ascii=False))
+                record = {"messages": pair}
+                if tools is not None:
+                    record["tools"] = tools
+                fout.write(json.dumps(record, ensure_ascii=False))
                 fout.write("\n")
         print(f"Wrote {len(all_pairs)} pairs to {args.output}")
 
@@ -638,7 +708,10 @@ if __name__ == "__main__":
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jsonl")
     with os.fdopen(tmp_fd, "w", encoding="utf-8") as fout:
         for pair in all_pairs:
-            fout.write(json.dumps({"messages": pair}, ensure_ascii=False))
+            record = {"messages": pair}
+            if tools is not None:
+                record["tools"] = tools
+            fout.write(json.dumps(record, ensure_ascii=False))
             fout.write("\n")
 
     try:
