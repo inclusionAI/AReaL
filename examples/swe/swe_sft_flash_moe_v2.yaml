@@ -1,9 +1,9 @@
 experiment_name: swe-sft
-trial_name: flash-moe
+trial_name: flash-moe-v2
 
 seed: 1
 enable_offload: false
-total_train_epochs: 10
+total_train_epochs: 7
 tokenizer_path: ${actor.path}
 
 cluster:
@@ -42,22 +42,24 @@ actor:
     n_mbs_divisor: 1
   optimizer:
     type: adam
-    lr: 1e-5
-    weight_decay: 0.05
+    lr: 5e-6
+    weight_decay: 0.01
     beta1: 0.9
-    beta2: 0.95
+    beta2: 0.999
     eps: 0.00001
-    lr_scheduler_type: cosine
+    lr_scheduler_type: constant
     gradient_clipping: 1.0
-    warmup_steps_proportion: 0.001
+    warmup_steps_proportion: 0.0
     min_loss_scale: 1.0
     loss_scale_window: 5.0
     hysteresis: 2
   megatron:
     wrap_with_ddp: true
     ddp:
-      grad_reduce_in_fp32: false
-      overlap_grad_reduce: false
+      # v2 change: fp32 grad reduce for accurate grad_norm (was false)
+      grad_reduce_in_fp32: true
+      # v2 change: overlap for performance (was false)
+      overlap_grad_reduce: true
       overlap_param_gather: false
       use_distributed_optimizer: true
     use_deterministic_algorithms: true
@@ -78,7 +80,6 @@ actor:
         NCCL_DEBUG: "WARN"
         NCCL_ASYNC_ERROR_HANDLING: "1"
         PYTHONPATH: "/storage/openpsi/users/chucai.dzq/codes/flash-linear-attention"
-
       additional_bash_cmds:
         - export UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ && uv pip install -e .
 
@@ -106,13 +107,16 @@ saver:
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
 
+# v2: recovery enabled, skip optimizer save (flattened_range incompatible with dist optimizer)
 recover:
-  mode: disabled
+  mode: auto
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  freq_epochs: 1
-  freq_secs: 3600
+  freq_steps: 157
+  freq_secs: 1800
+  no_save_optim: true
+  no_load_optim: true
 
 evaluator:
   experiment_name: ${experiment_name}
