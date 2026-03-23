@@ -289,7 +289,7 @@ class RecoverHandler:
             name=name,
         )
         weight_format = "dcp"
-        with_optim = True
+        with_optim = not self.config.no_save_optim
         meta = SaveLoadMeta(
             path=path,
             weight_format=weight_format,
@@ -299,7 +299,9 @@ class RecoverHandler:
             base_model_path=base_model_path,
         )
         engine.save(meta)
-        logger.info(f"Saved recover checkpoint to {path}")
+        logger.info(
+            f"Saved recover checkpoint to {path} (with_optim={with_optim})"
+        )
 
     def _load_checkpoint(
         self,
@@ -317,7 +319,7 @@ class RecoverHandler:
         if not os.path.exists(path):
             raise FileNotFoundError(f"Checkpoint path {path} does not exist.")
         weight_format = "dcp"
-        with_optim = True
+        with_optim = not self.config.no_load_optim
         meta = SaveLoadMeta(
             path=path,
             weight_format=weight_format,
