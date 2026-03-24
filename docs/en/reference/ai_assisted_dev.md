@@ -193,7 +193,7 @@ Claude Code configuration lives in:
 AReaL/
 |-- CLAUDE.md              # Project context and constraints
 +-- .claude/
-    |-- agents/            # Specialized AI assistants (8 agents)
+    |-- agents/            # 5 domain experts + 3 general-purpose (8 total)
     |-- skills/            # Guided workflows (shared with OpenCode)
     |-- commands/          # Automated actions (create-pr, gen-commit-msg, review-pr)
     |-- hooks/             # Pre/post action hooks

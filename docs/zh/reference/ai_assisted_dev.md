@@ -184,10 +184,10 @@ Claude Code 配置位于：
 AReaL/
 |-- CLAUDE.md              # 项目上下文和约束
 +-- .claude/
-    |-- agents/            # 专业 AI 助手（8 个代理）
+    |-- agents/            # 5 个领域专家 + 3 个通用代理（共 8 个）
     |-- skills/           # 引导式工作流（与 OpenCode 共享）
     |-- commands/         # 自动化操作（create-pr、gen-commit-msg、review-pr）
-    |-- hooks/            | 预/后操作钩子
+    |-- hooks/            # 预/后操作钩子
     +-- rules/            # 代码质量标准
 ```
 

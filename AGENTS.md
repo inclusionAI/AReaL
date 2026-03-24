@@ -40,7 +40,8 @@ uv run python docs/generate_cli_docs.py
 - Follow existing code patterns in the same module.
 - Add tests for new functionality.
 - Ask for decisions and clarifications with short, structured options instead of broad
-  open-ended questions.
+  open-ended questions. Use the platform's native question/clarification tool if
+  available.
 
 **Ask first** before:
 
@@ -123,17 +124,23 @@ step-by-step implementation guides.
 | Unit tests                   | --                 | `add-unit-tests`    |
 | Distributed debugging        | --                 | `debug-distributed` |
 
-**Codex harness layout**:
+**How to invoke experts and skills** (platform-specific):
 
-- Root instructions: `AGENTS.md`
-- Codex subagents: `.codex/config.toml` + `.codex/agents/*.toml` + `.codex/agents/*.md`
-- Codex skills: `.agents/skills/<name>/SKILL.md`
-- Directly executable Codex workflows: repo-local skills such as `add-workflow`,
-  `review-pr`, `create-pr`, and `translate-doc-zh`
+| Platform | Fire expert subagent                                                               | Load skill                                         |
+| -------- | ---------------------------------------------------------------------------------- | -------------------------------------------------- |
+| OpenCode | `task(subagent_type="<name>", load_skills=[], run_in_background=true, prompt="…")` | `skill(name="<name>")` or `load_skills=["<name>"]` |
+| Codex    | Invoke registered subagent by canonical name (see `.codex/config.toml`)            | Reference `.agents/skills/<name>/SKILL.md`         |
 
-When using Codex, skills are the main reusable workflow surface. Invoke the registered
-subagent that matches the canonical name above when domain-specific consultation is
-useful.
+**Harness layout**:
+
+| Component         | OpenCode                                | Codex                                                  |
+| ----------------- | --------------------------------------- | ------------------------------------------------------ |
+| Root instructions | `AGENTS.md`                             | `AGENTS.md`                                            |
+| Agent configs     | `.opencode/agents/*.md` (frontmatter)   | `.codex/config.toml` + `.codex/agents/*.toml` + `*.md` |
+| Skills            | `.opencode/skills/` + `.agents/skills/` | `.agents/skills/<name>/SKILL.md`                       |
+
+Directly executable workflows (both platforms): `add-workflow`, `review-pr`,
+`create-pr`, `translate-doc-zh`.
 
 ______________________________________________________________________
 
