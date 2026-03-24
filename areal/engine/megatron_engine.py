@@ -1378,6 +1378,10 @@ class MegatronEngine(TrainEngine):
         os.makedirs(path, exist_ok=True)
 
         if self.bridge_cls == "megatron-bridge":
+            if self.config.is_critic:
+                raise ValueError(
+                    "Saving critic model is not supported with megatron-bridge."
+                )
             self.bridge.save_hf_pretrained(
                 self.model,
                 path,
@@ -1408,6 +1412,10 @@ class MegatronEngine(TrainEngine):
         assert self.model is not None, "Model is not initialized."
 
         if self.bridge_cls == "megatron-bridge":
+            if self.config.is_critic:
+                raise ValueError(
+                    "Loading critic model is not supported with megatron-bridge."
+                )
             self.bridge.load_hf_weights(self.model, hf_path=path)
         else:
             load_weights_from_hf_with_mbridge_fast(
