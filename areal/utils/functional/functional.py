@@ -161,6 +161,8 @@ def compute_behave_imp_weight(
             - 'token_mask': set token ratio to 0 where ratio > cap
             - 'sequence_truncate': clamp sequence ratio to [0, cap]
             - 'sequence_mask': set sequence ratio to 0 where ratio > cap
+            - 'geometric_rs_token_tis': geometric-level rejection + token-level TIS (truncate)
+            - 'geometric_rs_token_mis': geometric-level rejection + token-level MIS (mask)
             - 'disabled': skip importance weight correction
         behave_imp_weight_cap: Cap value for importance weights
 
@@ -176,6 +178,90 @@ def compute_behave_imp_weight(
     is_sequence_level = "sequence" in behave_imp_weight_mode
     behave_approx_kl = proximal_logprobs - old_logprobs
     behave_imp_weight_log_ratio = behave_approx_kl
+
+    # NEW: Handle geometric_rs_token_tis and geometric_rs_token_mis modes
+    if behave_imp_weight_mode in ("geometric_rs_token_tis", "geometric_rs_token_mis"):
+        # This mode combines:
+        # 1. Geometric-level Rejection Sampling (RS): Filter sequences by geometric mean ratio
+        # 2. Token-level Truncated/Masked Importance Sampling (TIS/MIS): Reweight tokens in kept sequences
+        
+        use_truncate = behave_imp_weight_mode == "geometric_rs_token_tis"
+        
+        # Step 1: Compute geometric mean per sequence for rejection sampling
+        if cu_seqlens is None:
+            # 2D case: assume batch dimension is first, shape [batch_size, seq_len]
+            # Compute mean log ratio per sequence (geometric mean in linear space)
+            seq_valid_tokens = loss_mask.sum(dim=-1).clamp(min=1)  # [batch_size]
+            seq_mean_log_ratio = (behave_imp_weight_log_ratio * loss_mask).sum(dim=-1) / seq_valid_tokens
+            
+            # Geometric mean ratio per sequence
+            geometric_ratio = seq_mean_log_ratio.exp()  # Shape: [batch_size]
+            
+            # Step 2: Rejection sampling - keep sequences where geometric_ratio <= cap
+            if behave_imp_weight_cap is not None:
+                seq_keep_mask = geometric_ratio <= behave_imp_weight_cap  # Shape: [batch_size]
+                # Broadcast to all tokens in each sequence
+                seq_keep_mask = seq_keep_mask.unsqueeze(-1).expand_as(loss_mask)  # [batch_size, seq_len]
+            else:
+                seq_keep_mask = torch.ones_like(loss_mask, dtype=torch.bool)
+            
+        else:
+            # 1D packed case: use cu_seqlens to identify sequences
+            num_seqs = len(cu_seqlens) - 1
+            seq_keep_mask = torch.zeros_like(loss_mask, dtype=torch.bool)
+            
+            for i in range(num_seqs):
+                start_idx = cu_seqlens[i]
+                end_idx = cu_seqlens[i + 1]
+                seq_mask = loss_mask[start_idx:end_idx]
+                seq_log_ratios = behave_imp_weight_log_ratio[start_idx:end_idx]
+                
+                # Compute geometric mean for this sequence
+                num_valid_tokens = seq_mask.sum()
+                if num_valid_tokens > 0:
+                    mean_log_ratio = (seq_log_ratios * seq_mask).sum() / num_valid_tokens
+                    geometric_ratio = mean_log_ratio.exp()
+                    
+                    # Rejection: keep sequence if geometric_ratio <= cap
+                    if behave_imp_weight_cap is not None:
+                        keep_seq = geometric_ratio <= behave_imp_weight_cap
+                    else:
+                        keep_seq = True
+                else:
+                    keep_seq = False
+                
+                seq_keep_mask[start_idx:end_idx] = keep_seq
+        
+        # Step 3: Apply token-level TIS or MIS to kept sequences
+        # Compute token-level importance weights (exp of log ratios)
+        token_imp_weight = behave_imp_weight_log_ratio.exp()
+        
+        # Apply TIS (truncate) or MIS (mask) based on mode
+        if behave_imp_weight_cap is not None:
+            if use_truncate:
+                # TIS: Truncate token weights at cap
+                token_imp_weight = token_imp_weight.clamp(min=0.0, max=behave_imp_weight_cap)
+            else:
+                # MIS: Mask tokens that exceed cap
+                token_imp_weight = torch.where(
+                    token_imp_weight <= behave_imp_weight_cap,
+                    token_imp_weight,
+                    0.0
+                )
+        
+        # Combine geometric rejection mask with token weights
+        # Tokens in rejected sequences get weight 0
+        behave_imp_weight = torch.where(
+            seq_keep_mask.logical_and(loss_mask),
+            token_imp_weight,
+            0.0
+        )
+        
+        # Update masks
+        behave_mask = (behave_imp_weight > 0).logical_and(loss_mask)
+        behave_approx_kl = torch.where(behave_mask, behave_approx_kl, 0.0)
+        
+        return behave_imp_weight, behave_approx_kl, behave_mask
 
     if is_sequence_level:
         # Compute sequence-level geometric mean importance weights
