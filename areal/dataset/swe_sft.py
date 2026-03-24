@@ -34,11 +34,35 @@ logger = logging.getLogger("SWESFTDataset")
 
 DATASET_NUM_PROC = 1
 
-_THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+# Match reasoning blocks with any common tag variant:
+#   <think>...</think>      (Qwen standard)
+#   <thinking>...</thinking> (Claude)
+# The opening and closing tag names need not match exactly — mixed pairs
+# like ``<think>...</thinking>`` (seen in distillation data) are handled.
+_THINK_OPEN_RE = re.compile(r"<think(?:ing)?>")
+_THINK_CLOSE_RE = re.compile(r"</think(?:ing)?>")
+_THINK_RE = re.compile(r"<think(?:ing)?>(.*?)</think(?:ing)?>", re.DOTALL)
+
+
+def _normalize_thinking_tags(content):
+    """Normalise all thinking tag variants to ``<think>``/``</think>``.
+
+    Distillation data from different models may use ``<thinking>`` (Claude)
+    vs ``<think>`` (Qwen).  Non-standard variants are multi-token for the
+    Qwen tokenizer which breaks think/tool_call boundaries.
+    """
+    if not content:
+        return content
+    content = _THINK_OPEN_RE.sub("<think>", content)
+    content = _THINK_CLOSE_RE.sub("</think>", content)
+    return content
 
 
 def _extract_thinking(content):
-    """Strip ``<think>...</think>`` blocks from *content*.
+    """Strip thinking blocks from *content*.
+
+    Callers must run ``_normalize_thinking_tags`` first so that all
+    tag variants have been converted to ``<think>``/``</think>``.
 
     Returns:
         Cleaned content with thinking blocks removed, or the original
@@ -97,10 +121,11 @@ def _clean_message(msg, strip_thinking=True):
     # that distinguish None vs "" render correctly.
     content = msg.get("content")
     if content is not None:
-        if msg["role"] == "assistant" and strip_thinking:
-            cleaned["content"] = _extract_thinking(content)
-        else:
-            cleaned["content"] = content
+        if msg["role"] == "assistant":
+            content = _normalize_thinking_tags(content)
+            if strip_thinking:
+                content = _extract_thinking(content)
+        cleaned["content"] = content
     elif msg["role"] == "assistant" and msg.get("tool_calls"):
         # Assistant with tool_calls but content=None: preserve None explicitly
         # so chat templates that distinguish None vs "" render correctly.
@@ -453,13 +478,15 @@ def get_swe_sft_dataset(
     pre_split: bool = False,
     filter_errors: bool = True,
     strip_all_thinking: bool = False,
+    no_tools: bool = False,
 ):
     """Load SWE trajectory data and convert to SFT training pairs.
 
-    Tool definitions are auto-extracted from the training data's
+    By default, tool definitions are auto-extracted from the training data's
     ``conversations[].tools`` field and passed to ``apply_chat_template``
     so that the tokenizer renders tool definitions in the system prompt
     (e.g. Qwen3 ``# Tools`` block), matching the eval-time format.
+    Set *no_tools* to skip this and render without tool definitions.
 
     Args:
         path: Path to the JSONL file containing SWE trajectories, or a
@@ -478,6 +505,8 @@ def get_swe_sft_dataset(
             keep all pairs regardless of tool errors.
         strip_all_thinking: If True, strip ``<think>...</think>`` from every
             assistant turn including the training target.
+        no_tools: If True, do not pass tool definitions to
+            ``apply_chat_template`` even if the data contains them.
 
     Returns:
         A HuggingFace ``Dataset`` with ``input_ids`` and ``loss_mask`` columns.
@@ -518,7 +547,10 @@ def get_swe_sft_dataset(
             strip_all_thinking=strip_all_thinking,
         )
 
-    if tools is not None:
+    if no_tools:
+        tools = None
+        logger.info("Tool definitions disabled (no_tools=True)")
+    elif tools is not None:
         tool_names = [t.get("function", {}).get("name", "?") for t in tools]
         logger.info(f"Using tools for chat template: {tool_names}")
 
@@ -634,6 +666,13 @@ if __name__ == "__main__":
         help="Strip <think>...</think> from ALL assistant turns including "
         "the training target. By default only context turns are stripped.",
     )
+    parser.add_argument(
+        "--no-tools",
+        action="store_true",
+        help="Do not pass tool definitions to apply_chat_template. "
+        "By default, tools are auto-extracted from the data and rendered "
+        "in the system prompt (e.g. Qwen3 '# Tools' block).",
+    )
     args = parser.parse_args()
 
     filter_errors = not args.no_filter_errors
@@ -650,6 +689,7 @@ if __name__ == "__main__":
             pre_split=args.pre_split,
             filter_errors=filter_errors,
             strip_all_thinking=strip_all_thinking,
+            no_tools=args.no_tools,
         )
         ds.save_to_disk(args.save_tokenized)
         print(f"Saved tokenized dataset ({len(ds)} samples) to {args.save_tokenized}")
@@ -722,6 +762,7 @@ if __name__ == "__main__":
             num_proc=args.num_proc,
             pre_split=True,
             filter_errors=filter_errors,
+            no_tools=args.no_tools,
         )
     finally:
         os.unlink(tmp_path)
