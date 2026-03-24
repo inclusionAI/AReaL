@@ -2,10 +2,11 @@ from typing import Any
 
 import torch
 
-from areal.api.engine_api import TrainEngine
+from areal.api import TrainEngine
 from areal.infra import TrainController
 from areal.infra.platforms import current_platform
 from areal.utils import logging, stats_tracker
+from areal.utils.data import batched_call
 from areal.utils.perf_tracer import trace_perf
 
 logger = logging.getLogger("RWEngine")
@@ -17,10 +18,13 @@ class RWEngine:
 
     @trace_perf("rw_engine.train_rw", category="compute")
     @stats_tracker.scope_func_wrapper("rw")
-    def train_rw(self, data: dict[str, Any]):
-        """Train on a batch(reward model)"""
+    def train_rw(self, data: list[dict[str, Any]]) -> None:
+        batched_call(self._train_rw, data, unpack=False)
+
+    def _train_rw(self, data: dict[str, Any]) -> None:
+        """Train on a batch (reward model)."""
         self.engine.train()
-        return self.engine.train_batch(
+        stats = self.engine.train_batch(
             input_=data,
             loss_fn=compute_rw_loss,
             loss_weight_fn=lambda x: torch.tensor(
@@ -29,12 +33,16 @@ class RWEngine:
                 device=current_platform.current_device(),
             ),
         )
+        stats_tracker.scalar(**stats)
 
     @trace_perf("rw_engine.evaluate_rw", category="compute")
     @stats_tracker.scope_func_wrapper("rw-eval")
-    def evaluate_rw(self, data: dict[str, Any]):
+    def evaluate_rw(self, data: list[dict[str, Any]]) -> None:
+        batched_call(self._evaluate_rw, data, unpack=False)
+
+    def _evaluate_rw(self, data: dict[str, Any]) -> None:
         self.engine.eval()
-        return self.engine.eval_batch(
+        self.engine.eval_batch(
             input_=data,
             loss_fn=compute_rw_loss,
             loss_weight_fn=lambda x: torch.tensor(

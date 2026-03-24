@@ -1,3 +1,5 @@
+import os
+
 from agents import (
     Agent,
     ModelSettings,
@@ -11,7 +13,7 @@ from math_verify import parse, verify
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
-from areal.api.reward_api import AsyncRewardWrapper
+from areal.api import AsyncRewardWrapper
 
 
 def math_reward_fn(completions: str, answer: str) -> float:
@@ -24,11 +26,15 @@ class MathAgent:
     def __init__(self, **kwargs):
         self.kwargs = kwargs.copy()
         self.kwargs.pop("max_tokens", None)
+        self.kwargs.pop("max_turns", None)
 
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
-        base_url = extra_kwargs.get("base_url", None)
-        client = AsyncOpenAI(base_url=base_url, http_client=http_client, max_retries=0)
+        base_url = extra_kwargs.get("base_url", None) or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key", None) or os.getenv("OPENAI_API_KEY")
+        client = AsyncOpenAI(
+            base_url=base_url, api_key=api_key, http_client=http_client, max_retries=0
+        )
         comp: ChatCompletion = await client.chat.completions.create(
             messages=data["messages"], model="default", **self.kwargs
         )
@@ -47,10 +53,13 @@ class MultiTurnMathAgent:
 
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
-        base_url = extra_kwargs.get("base_url", None)
+        base_url = extra_kwargs.get("base_url", None) or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key", None) or os.getenv("OPENAI_API_KEY")
         messages = data["messages"].copy()
         rewards = {}
-        client = AsyncOpenAI(base_url=base_url, http_client=http_client, max_retries=0)
+        client = AsyncOpenAI(
+            base_url=base_url, api_key=api_key, http_client=http_client, max_retries=0
+        )
         for _ in range(self.max_turns):
             response: ChatCompletion = await client.chat.completions.create(
                 messages=messages,
@@ -119,11 +128,15 @@ class MathToolAgent:
     def __init__(self, **kwargs):
         self.kwargs = kwargs.copy()
         self.kwargs.pop("max_tokens", None)
+        self.kwargs.pop("max_turns", None)
 
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
-        base_url = extra_kwargs.get("base_url", None)
-        client = AsyncOpenAI(base_url=base_url, http_client=http_client, max_retries=0)
+        base_url = extra_kwargs.get("base_url", None) or os.getenv("OPENAI_BASE_URL")
+        api_key = extra_kwargs.get("api_key", None) or os.getenv("OPENAI_API_KEY")
+        client = AsyncOpenAI(
+            base_url=base_url, api_key=api_key, http_client=http_client, max_retries=0
+        )
         content = data["messages"][-1]["content"]
         run_config = RunConfig(
             model_provider=OpenAIProvider(openai_client=client),

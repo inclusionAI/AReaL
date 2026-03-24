@@ -1,3 +1,7 @@
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+
 repos:
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v19.1.7
@@ -13,6 +17,7 @@ repos:
     hooks:
       - id: check-yaml
         files: \.(yaml|yml)$
+        exclude: \.github/workflows/
       - id: end-of-file-fixer
         files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh|ipynb)$
       - id: trailing-whitespace
@@ -24,6 +29,9 @@ repos:
       - id: check-json
         name: Check JSON files
 
+      - id: detect-private-key
+        name: Detect private keys
+
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.17
     hooks:
@@ -34,7 +42,7 @@ repos:
           - mdformat-gfm
           - mdformat-tables
           - mdformat-frontmatter
-        exclude: ^(docs/algorithms/.*\.md|docs/best_practices/algo_perf.md)$
+        exclude: ^(docs/(en|zh)/algorithms/.*\.md|docs/(en|zh)/best_practices/algo_perf\.md)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
@@ -67,3 +75,22 @@ repos:
         pass_filenames: false
         always_run: false
         require_serial: true
+
+  # Conventional Commits message check
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - feat
+          - fix
+          - docs
+          - style
+          - refactor
+          - perf
+          - test
+          - build
+          - ci
+          - chore
+          - revert

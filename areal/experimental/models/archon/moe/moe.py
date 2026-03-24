@@ -76,6 +76,7 @@ class MoE(nn.Module):
             score_func=moe_args.score_func,
             route_norm=moe_args.route_norm,
             route_scale=moe_args.route_scale,
+            router_dtype=moe_args.router_dtype,
             num_expert_groups=moe_args.num_expert_groups,
             num_limited_groups=moe_args.num_limited_groups,
             _debug_force_load_balance=moe_args._debug_force_load_balance,
@@ -95,11 +96,22 @@ class MoE(nn.Module):
         )
 
         # Optional shared experts (always activated)
-        if moe_args.num_shared_experts > 0:
+        # Priority: shared_expert_intermediate_size (Qwen3.5 MoE) > num_shared_experts * hidden_dim
+        if moe_args.shared_expert_intermediate_size > 0:
+            self.shared_experts = FeedForward(
+                dim=dim, hidden_dim=moe_args.shared_expert_intermediate_size
+            )
+        elif moe_args.num_shared_experts > 0:
             shared_hidden_dim = hidden_dim * moe_args.num_shared_experts
             self.shared_experts = FeedForward(dim=dim, hidden_dim=shared_hidden_dim)
         else:
             self.shared_experts = None
+
+        # Optional sigmoid gate for shared expert output (Qwen3.5 MoE)
+        if moe_args.use_shared_expert_gate and self.shared_experts is not None:
+            self.shared_expert_gate = nn.Linear(dim, 1, bias=False)
+        else:
+            self.shared_expert_gate = None
 
         # Buffers for auxiliary-loss-free load balancing
         # expert_bias is used to adjust routing probabilities
@@ -161,9 +173,12 @@ class MoE(nn.Module):
         routed_output = self.experts(routed_input, num_per_expert)
 
         # Shared expert (executed before unsorting to overlap with token combine)
-        shared_out = (
-            self.shared_experts(x_flat) if self.shared_experts is not None else None
-        )
+        if self.shared_experts is not None:
+            shared_out = self.shared_experts(x_flat)
+            if self.shared_expert_gate is not None:
+                shared_out = F.sigmoid(self.shared_expert_gate(x_flat)) * shared_out
+        else:
+            shared_out = None
 
         # Unsort routed outputs back to original positions
         # When ReordererSequenceParallel is applied, token_indices_experts_sorted
@@ -212,6 +227,11 @@ class MoE(nn.Module):
 
         if self.shared_experts is not None:
             self.shared_experts.init_weights(init_std)
+
+        if self.shared_expert_gate is not None:
+            nn.init.trunc_normal_(
+                self.shared_expert_gate.weight, mean=0.0, std=init_std
+            )
 
     def init_buffers(self, buffer_device: torch.device | str):
         """Initialize MoE buffers (tokens_per_expert, expert_bias).

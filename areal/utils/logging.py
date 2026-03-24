@@ -63,6 +63,7 @@ LOGGER_COLORS_EXACT = {
     "SGLangWrapper": "white",
     "VLLMWrapper": "white",
     "RemoteInfEngine": "white",
+    "vLLMEngine": "white",
     # Dataset - green
     "Dataset": "light_green",
     "CLEVR70KDataset": "light_green",
@@ -76,6 +77,17 @@ LOGGER_COLORS_EXACT = {
     "Geometry3KReward": "purple",
     "RewardUtils": "purple",
     "RewardAPI": "purple",
+    # Tree attention - cyan
+    "TreeAttentionWrapper": "light_cyan",
+    "TreeAttentionFSDP": "light_cyan",
+    "TreeAttentionMegatron": "light_cyan",
+    "TreeAttentionCore": "light_cyan",
+    "TreeAttentionConstants": "light_cyan",
+    "TreeAttentionViz": "light_cyan",
+    # Checkpoint - blue (infrastructure)
+    "Saver": "blue",
+    "AsyncCheckpoint": "blue",
+    "ArchonCheckpoint": "blue",
     # Platforms - cyan
     "Platform": "light_cyan",
     "PlatformInit": "light_cyan",
@@ -89,6 +101,20 @@ LOGGER_COLORS_EXACT = {
     "ToolCallParser": "light_purple",
     "TokenLogpReward": "light_purple",
     "ProxyUtils": "light_purple",
+    # Agent Service - purple
+    "AgentGateway": "light_purple",
+    "AgentBridge": "light_purple",
+    "AgentRouter": "light_purple",
+    "AgentWorker": "light_purple",
+    "AgentDataProxy": "light_purple",
+    "AgentServiceController": "light_purple",
+    # Inference service - white (orchestration)
+    "GatewayInferenceController": "white",
+    "InferenceDataProxy": "white",
+    "InferenceInfBridge": "white",
+    "InferenceRouter": "white",
+    "InferenceGateway": "white",
+    "RPCGuard": "white",
 }
 
 # Prefix patterns checked in order (first match wins)

@@ -164,6 +164,17 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
 
         for key, value in hf_state_dict.items():
             if ".mlp.experts." in key and self.moe_enabled:
+                # Try fused 3D format first (newer HF Qwen3-MoE format
+                # where experts are stored as gate_up_proj / down_proj)
+                fused = self._parse_fused_expert_key(key)
+                if fused is not None:
+                    layer_id, proj_type = fused
+                    self._handle_fused_expert_weight(
+                        layer_id, proj_type, value, state_dict
+                    )
+                    continue
+
+                # Per-expert 2D format (older HF format)
                 parsed = self._parse_expert_key(key)
                 if parsed is None:
                     continue
@@ -289,6 +300,57 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
         archon_abstract_key = proj_map[proj_type]
 
         return layer_id, expert_id, archon_abstract_key
+
+    # -- Fused expert format support (newer HF checkpoints) --
+
+    _FUSED_EXPERT_RE = re.compile(
+        r"model\.layers\.(\d+)\.mlp\.experts\.(gate_up_proj|down_proj)(?:\.weight)?$"
+    )
+
+    def _parse_fused_expert_key(self, hf_key: str) -> tuple[str, str] | None:
+        """Parse fused HF expert key into (layer_id, proj_type).
+
+        Matches keys from newer HuggingFace format where expert weights
+        are stored as 3D tensors (no per-expert index):
+            model.layers.0.mlp.experts.gate_up_proj  (fused gate+up)
+            model.layers.0.mlp.experts.down_proj
+        """
+        match = self._FUSED_EXPERT_RE.match(hf_key)
+        if not match:
+            return None
+        return match.group(1), match.group(2)
+
+    def _handle_fused_expert_weight(
+        self,
+        layer_id: str,
+        proj_type: str,
+        value: torch.Tensor,
+        state_dict: dict[str, Any],
+    ) -> None:
+        """Handle fused 3D expert weights from newer HF format.
+
+        Args:
+            layer_id: Layer index as string.
+            proj_type: 'gate_up_proj' or 'down_proj'.
+            value: 3D tensor.  gate_up_proj has shape
+                (num_experts, 2 * moe_inter_dim, dim); down_proj has shape
+                (num_experts, dim, moe_inter_dim).
+            state_dict: Output state dict to populate.
+        """
+        if isinstance(value, DTensor):
+            value = value.full_tensor()
+
+        if proj_type == "gate_up_proj":
+            # Split fused gate+up into w1 (gate) and w3 (up) along dim 1
+            half = value.shape[1] // 2
+            state_dict[f"layers.{layer_id}.moe.experts.w1"] = value[
+                :, :half, :
+            ].contiguous()
+            state_dict[f"layers.{layer_id}.moe.experts.w3"] = value[
+                :, half:, :
+            ].contiguous()
+        elif proj_type == "down_proj":
+            state_dict[f"layers.{layer_id}.moe.experts.w2"] = value
 
     def _split_moe_experts_distributed(
         self, archon_key: str, weight_3d: DTensor

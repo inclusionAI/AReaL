@@ -2,11 +2,106 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, cast
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+
+class RouterGatingLinearFunction(torch.autograd.Function):
+    """Custom autograd function for MoE router gate GEMM in higher precision.
+
+    Performs the gate linear layer (input @ weight.T) in the specified dtype
+    while saving tensors in the original dtype for memory efficiency.
+
+    This is adapted from Megatron-Core's RouterGatingLinearFunction.
+    """
+
+    @staticmethod
+    @torch.amp.custom_fwd(device_type="cuda")
+    def forward(
+        ctx: torch.autograd.function.FunctionCtx,
+        input: torch.Tensor,
+        weight: torch.Tensor,
+        router_dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Forward pass: compute input @ weight.T in router_dtype.
+
+        Saves input and weight in their original dtype (BF16) for memory efficiency.
+        """
+        ctx.save_for_backward(input, weight)
+        cast(Any, ctx).router_dtype = router_dtype
+        return torch.mm(input.to(router_dtype), weight.to(router_dtype).t())
+
+    @staticmethod
+    @torch.amp.custom_bwd(device_type="cuda")
+    def backward(
+        ctx: torch.autograd.function.FunctionCtx,
+        *grad_outputs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, None]:
+        """Backward pass: compute gradients in router_dtype, return in original dtype."""
+        grad_output = grad_outputs[0]
+        input, weight = cast(Any, ctx).saved_tensors
+        router_dtype = cast(Any, ctx).router_dtype
+        grad_output_fp = grad_output.to(router_dtype)
+        grad_input = grad_output_fp.mm(weight.to(router_dtype)).to(input.dtype)
+        grad_weight = grad_output_fp.t().mm(input.to(router_dtype)).to(weight.dtype)
+        return grad_input, grad_weight, None
+
+
+def router_gating_linear(
+    input: torch.Tensor, weight: torch.Tensor, router_dtype: torch.dtype | None
+) -> torch.Tensor:
+    """Apply router gate linear with optional dtype casting for numerical stability.
+
+    Args:
+        input: Input tensor (num_tokens, dim).
+        weight: Gate weight tensor (num_experts, dim).
+        router_dtype: Dtype to use for GEMM. If None, uses standard F.linear.
+
+    Returns:
+        Output tensor (num_tokens, num_experts).
+    """
+    if router_dtype is not None:
+        return cast(
+            torch.Tensor,
+            RouterGatingLinearFunction.apply(input, weight, router_dtype),
+        )
+    return F.linear(input, weight)
+
+
+class RouterGateLinear(nn.Linear):
+    """Router gate linear that performs GEMM in higher precision.
+
+    Wraps :func:`router_gating_linear` inside an :class:`~torch.nn.Linear`
+    subclass so that DTensor hooks registered by :class:`ReplicateParallel`
+    fire correctly when the module is called via ``self.gate(x)``.
+
+    When ``router_dtype`` is set, both the forward and backward passes run
+    the GEMM in ``router_dtype`` while saving activations in the original
+    dtype for memory efficiency (via :class:`RouterGatingLinearFunction`).
+    When ``router_dtype`` is ``None``, falls back to standard
+    :func:`~torch.nn.functional.linear`.
+
+    Args:
+        in_features: Size of each input sample.
+        out_features: Size of each output sample.
+        router_dtype: Dtype to use for the gate GEMM. ``None`` means use the
+            model dtype unchanged.
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        router_dtype: torch.dtype | None = None,
+    ):
+        super().__init__(in_features, out_features, bias=False)
+        self.router_dtype = router_dtype
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return router_gating_linear(input, self.weight, self.router_dtype)
 
 
 class TokenChoiceTopKRouter(nn.Module):
@@ -23,6 +118,7 @@ class TokenChoiceTopKRouter(nn.Module):
         score_func: Scoring function, either "softmax" or "sigmoid".
         route_norm: Whether to normalize routing scores after top-k selection.
         route_scale: Scale factor applied to routing scores.
+        router_dtype: Data type for gate GEMM. If None, uses model dtype (no override).
         num_expert_groups: Number of expert groups for node-limited routing.
             If None, standard top-k routing is used.
         num_limited_groups: Number of groups to select in node-limited routing.
@@ -41,17 +137,19 @@ class TokenChoiceTopKRouter(nn.Module):
         score_func: Literal["softmax", "sigmoid"] = "sigmoid",
         route_norm: bool = False,
         route_scale: float = 1.0,
+        router_dtype: torch.dtype | None = None,
         num_expert_groups: int | None = None,
         num_limited_groups: int | None = None,
         _debug_force_load_balance: bool = False,
     ):
         super().__init__()
-        self.gate = nn.Linear(dim, num_experts, bias=False)
+        self.gate = RouterGateLinear(dim, num_experts, router_dtype=router_dtype)
         self.num_experts = num_experts
         self.top_k = top_k
         self.score_func = score_func
         self.route_norm = route_norm
         self.route_scale = route_scale
+        self.router_dtype = router_dtype
         self.num_expert_groups = num_expert_groups
         self.num_limited_groups = num_limited_groups
         self._debug_force_load_balance = _debug_force_load_balance

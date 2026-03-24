@@ -5,17 +5,23 @@
 AReaL is a distributed RL training framework for LLM alignment via reinforcement
 learning.
 
-**Tech Stack**: Python 3.12+ · PyTorch · FSDP2/Megatron · SGLang/vLLM
+**Tech Stack**: Python 3.12+ | PyTorch | FSDP2/Megatron | SGLang/vLLM
 
 **Core Directories**:
 
 - `areal/` - Core package
   - `api/` - Config dataclasses, workflow/engine contracts
   - `engine/` - FSDP2, Megatron, SGLang/vLLM adapters
+    - `fsdp_utils/` - FSDP2-specific utilities (checkpoint, grad, optimizer, parallel)
+    - `megatron_utils/` - Megatron/FP8 utilities (checkpoint, pipeline, quantization)
+    - `core/` - Engine-shared utilities (distributed, lock, model, offload)
+  - `infra/` - Infrastructure (launcher, scheduler, RPC)
+    - `utils/` - Infrastructure utilities (launcher, proc, http, concurrent, slurm, ray)
   - `workflow/` - RolloutWorkflow implementations
   - `reward/` - Reward functions
   - `dataset/` - Dataset loaders
-  - `utils/` - Logging, tensor ops, checkpoints
+  - `utils/` - Cross-cutting utilities (logging, data, checkpoints, network, RL
+    functional)
 - `examples/` - Training scripts and configs
 - `docs/` - Jupyter Book source
 
@@ -33,21 +39,26 @@ python --version              # Requires 3.12+
 uv --version                  # Install: https://docs.astral.sh/uv/
 
 # Sync dependencies
-uv sync --extra cuda          # With CUDA support (or `uv sync` without CUDA)
+uv sync --extra cuda          # CUDA + SGLang inference (default)
 uv sync --group dev           # Include dev/test packages
 uv run python3 areal/tools/validate_installation.py  # Validate installation
 
 # Pre-commit hooks
-pre-commit install            # Set up hooks (run once)
+pre-commit install --install-hooks  # Set up hooks (run once)
 pre-commit run --all-files    # Format and lint
 
 # Run tests
 # First check GPU availability (many tests require GPU)
 python -c "import torch; print('GPU available:', torch.cuda.is_available())"
-uv run pytest areal/tests/test_<topic>.py
+uv run pytest tests/test_<topic>.py
 
 # Generate CLI docs
 uv run python docs/generate_cli_docs.py
+
+# Build docs (canonical, release-aligned)
+./docs/build_all.sh
+# Do NOT use `jupyter-book build docs/en|docs/zh` directly for final preview/release,
+# because it skips AReaL-specific static setup and output packaging.
 ```
 
 ## Boundaries
@@ -145,7 +156,8 @@ Commands perform specific actions when invoked:
 
 - `/create-pr` - Rebase, squash commits, and create/update PR with intelligent messages
 - `/gen-commit-msg` - Generate commit messages from staged changes
-- `/pr-review` - Intelligent PR code review with dynamic agent allocation
+- `/review-pr` - Intelligent PR code review with dynamic agent allocation
+- `/translate-doc-zh` - Translate English documentation to Chinese
 
 ### Rules (Code Quality Standards)
 

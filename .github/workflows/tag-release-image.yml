@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build (e.g., v0.5.3)'
+        description: 'Release tag to build (e.g., v1.0.2-sglang)'
         required: true
         type: string
 
@@ -26,19 +26,22 @@ jobs:
   start-builder:
     name: Start areal-docker-builder instance
     runs-on: ubuntu-latest
+    outputs:
+      was_running: ${{ steps.start-instance.outputs.was_running }}
     env:
       INSTANCE_NAME: areal-docker-builder
       INSTANCE_ZONE: us-central1-f
     steps:
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
       - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Start builder instance if stopped
+        id: start-instance
         run: |
           set -euo pipefail
 
@@ -55,19 +58,21 @@ jobs:
 
           if [ "$status" = "RUNNING" ]; then
             echo "Instance $INSTANCE_NAME is already running."
+            echo "was_running=true" >> $GITHUB_OUTPUT
           elif [ "$status" = "TERMINATED" ] || [ "$status" = "SUSPENDED" ]; then
             echo "Instance $INSTANCE_NAME is $status. Starting it..."
             gcloud compute instances start "$INSTANCE_NAME" \
               --project "$GCP_PROJECT_ID" \
               --zone "$INSTANCE_ZONE"
             echo "Instance started successfully."
+            echo "was_running=false" >> $GITHUB_OUTPUT
           else
             echo "Instance $INSTANCE_NAME has unexpected status: $status" >&2
             exit 1
           fi
 
       - name: Wait for builder runner to be online
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           INSTANCE_NAME: areal-docker-builder
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -113,15 +118,15 @@ jobs:
   build-and-push-release:
     needs:
       - start-builder
-    name: Build and push release Docker image
+    name: Build and push release Docker images
     runs-on: [self-hosted, areal-docker-builder]
-    timeout-minutes: 180
+    timeout-minutes: 300
     outputs:
       package_version: ${{ steps.get-version.outputs.version }}
       release_tag: ${{ steps.get-version.outputs.release_tag }}
     steps:
       - name: Checkout code at release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
 
@@ -129,7 +134,7 @@ jobs:
         id: get-version
         run: |
           # Extract version from pyproject.toml (single source of truth)
-          VERSION=$(sed -n 's/^version *= *"\([^"]*\)"/\1/p' pyproject.toml)
+          VERSION=$(sed -n 's/^version *= *"\([^"]*\)"/\1/p' pyproject.toml | head -1)
           RELEASE_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
 
           echo "Package version: $VERSION"
@@ -139,36 +144,52 @@ jobs:
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver: docker
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: inclusionai
           password: ${{ secrets.GHCR_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+      - name: Build and push sglang image
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.get-version.outputs.release_tag }}
+            ${{ env.IMAGE_NAME }}:${{ steps.get-version.outputs.release_tag }}-sglang
             ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:dev
+            ${{ env.IMAGE_NAME }}:dev-sglang
+          build-args: |
+            VARIANT=sglang
+
+      - name: Build and push vllm image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.get-version.outputs.release_tag }}-vllm
+            ${{ env.IMAGE_NAME }}:dev-vllm
+          build-args: |
+            VARIANT=vllm
 
       - name: Image details
         run: |
-          echo "Docker image built and pushed successfully!"
+          echo "Docker images built and pushed successfully!"
           echo "Image: ${{ env.IMAGE_NAME }}"
           echo "Tags:"
-          echo "  - ${{ steps.get-version.outputs.release_tag }}"
-          echo "  - latest"
-          echo "  - dev"
+          echo "  - ${{ steps.get-version.outputs.release_tag }}-sglang"
+          echo "  - ${{ steps.get-version.outputs.release_tag }}-vllm"
+          echo "  - latest (sglang)"
+          echo "  - dev-sglang"
+          echo "  - dev-vllm"
           echo "Release: ${{ github.event.release.name || github.event.inputs.tag }}"
           echo "Commit: ${{ github.sha }}"
 
@@ -177,19 +198,19 @@ jobs:
     needs:
       - build-and-push-release
       - start-builder
-    if: always()
+    if: always() && needs.start-builder.outputs.was_running != 'true'
     runs-on: ubuntu-latest
     env:
       INSTANCE_NAME: areal-docker-builder
       INSTANCE_ZONE: us-central1-f
     steps:
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
       - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Stop builder instance
         run: |

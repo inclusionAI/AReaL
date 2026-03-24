@@ -1,8 +1,9 @@
-from math_verify import parse, verify
+import os
 
 import anthropic
+from math_verify import parse, verify
 
-from areal.api.reward_api import AsyncRewardWrapper
+from areal.api import AsyncRewardWrapper
 
 
 def math_reward_fn(completions: str, answer: str) -> float:
@@ -18,22 +19,24 @@ class MathAgent:
         # Store kwargs for client.messages.create call
         self.kwargs = kwargs.copy()
         self.kwargs.pop("max_completion_tokens", None)
+        self.kwargs.pop("max_turns", None)
 
     async def run(self, data: dict, **extra_kwargs) -> float:
         """Run the agent on a single problem.
 
         Args:
             data: Input data containing "messages" and "answer"
-            **extra_kwargs: Contains base_url and http_client from proxy
+            **extra_kwargs: Contains base_url, api_key, and http_client from proxy
 
         Returns:
             Reward value for this trajectory
         """
         http_client = extra_kwargs.get("http_client", None)
-        base_url = extra_kwargs.get("base_url", None)
+        base_url = extra_kwargs.get("base_url", None) or os.getenv("ANTHROPIC_BASE_URL")
+        api_key = extra_kwargs.get("api_key", None) or os.getenv("ANTHROPIC_API_KEY")
 
         client = anthropic.AsyncAnthropic(
-            api_key="placeholder",
+            api_key=api_key,
             base_url=base_url,
             http_client=http_client,
             max_retries=0,

@@ -4,10 +4,10 @@ from typing import Any
 
 import requests
 
-from areal.api.io_struct import ParamSpec, WeightUpdateMeta
-from areal.scheduler.rpc.serialization import serialize_value
+from areal.api import ParamSpec, WeightUpdateMeta
+from areal.infra.rpc.serialization import serialize_value
+from areal.infra.utils.concurrent import get_executor
 from areal.utils import logging
-from areal.utils.concurrent import get_executor
 
 logger = logging.getLogger(__name__)
 

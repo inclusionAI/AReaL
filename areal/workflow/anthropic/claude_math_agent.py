@@ -12,7 +12,7 @@ from claude_agent_sdk import (
 )
 from math_verify import parse, verify
 
-from areal.api.reward_api import AsyncRewardWrapper
+from areal.api import AsyncRewardWrapper
 
 
 def math_reward_fn(completions: str, answer: str) -> float:
@@ -101,7 +101,7 @@ class MathToolAgent:
 
         Args:
             data: Input data containing "messages" and "answer"
-            **extra_kwargs: Contains base_url and http_client from proxy (inline mode)
+            **extra_kwargs: Contains base_url, api_key, and http_client from proxy (inline mode)
 
         Returns:
             Reward value for this trajectory
@@ -109,7 +109,10 @@ class MathToolAgent:
 
         content = data["messages"][-1]["content"]
 
-        base_url = extra_kwargs.get("base_url", None)
+        base_url = extra_kwargs.get("base_url", None) or os.getenv("ANTHROPIC_BASE_URL")
+        api_key = extra_kwargs.get("api_key", None) or os.environ.get(
+            "ANTHROPIC_API_KEY"
+        )
 
         # Set SDK timeout in current process BEFORE creating ClaudeSDKClient
         # The SDK reads CLAUDE_CODE_STREAM_CLOSE_TIMEOUT from os.environ during __init__,
@@ -121,9 +124,7 @@ class MathToolAgent:
             env.update(
                 {
                     "ANTHROPIC_BASE_URL": base_url,
-                    "ANTHROPIC_API_KEY": os.environ.get(
-                        "OPENAI_API_KEY", "placeholder"
-                    ),
+                    "ANTHROPIC_API_KEY": api_key,
                     "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(
                         extra_kwargs.get("max_completion_tokens", 1024)
                     ),

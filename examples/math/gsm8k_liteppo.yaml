@@ -67,7 +67,7 @@ actor:
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true
-  behav_imp_weight_cap: 5.0
+  behave_imp_weight_cap: 5.0
   reward_norm:
     mean_level: group
     std_level: batch
@@ -80,7 +80,7 @@ actor:
       port_count: 2
       gpu: 1
       mem: 32
-      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars: {}
 
 ref:

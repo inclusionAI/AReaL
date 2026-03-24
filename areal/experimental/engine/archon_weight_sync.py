@@ -10,18 +10,18 @@ import torch.distributed as dist
 from torch import nn
 from torch.distributed.tensor import DTensor
 
-from areal.api.io_struct import ParamSpec, WeightUpdateMeta
+from areal.api import ParamSpec, WeightUpdateMeta
+from areal.engine.core.distributed import init_custom_process_group
 from areal.experimental.engine.archon_checkpoint import save_model_to_hf
 from areal.infra.platforms import current_platform
 from areal.utils import name_resolve, names
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
-from areal.utils.distributed import init_custom_process_group
 from areal.utils.lock import DistributedLock
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
 
 if TYPE_CHECKING:
-    from areal.api.engine_api import InferenceEngine
+    from areal.api import InferenceEngine
     from areal.experimental.engine.archon_engine import ArchonEngine
 
 
@@ -66,27 +66,24 @@ def init_weight_update_group(
     if engine.is_pipeline_parallel_head():
         assert meta.alloc_mode is not None
 
-        engine.engine_lock.acquire()
+        with engine.engine_lock:
+            fut = engine.rollout_engine.init_weights_update_group(meta)
 
-        fut = engine.rollout_engine.init_weights_update_group(meta)
+            engine.logger.info(
+                f"Initializing weight update group: type={meta.type}, "
+                f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port}, "
+                f"group={meta.nccl_group_name}"
+            )
+            state.group = init_custom_process_group(
+                backend=current_platform.communication_backend,
+                world_size=meta.alloc_mode.gen.world_size + 1,
+                init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
+                rank=0,
+                group_name=meta.nccl_group_name,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
+            )
 
-        engine.logger.info(
-            f"Initializing weight update group: type={meta.type}, "
-            f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port}, "
-            f"group={meta.nccl_group_name}"
-        )
-        state.group = init_custom_process_group(
-            backend=current_platform.communication_backend,
-            world_size=meta.alloc_mode.gen.world_size + 1,
-            init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
-            rank=0,
-            group_name=meta.nccl_group_name,
-            timeout=DIST_GROUP_DEFAULT_TIMEOUT,
-        )
-
-        fut.result()
-
-        engine.engine_lock.release()
+            fut.result()
 
     state.group_initialized = True
 
@@ -98,12 +95,11 @@ def _get_full_tensor(param: nn.Parameter) -> torch.Tensor:
         if tensor.device.type != "cpu":
             return tensor.full_tensor()
 
-        temp_dtensor = DTensor.from_local(
+        return DTensor.from_local(
             tensor.to_local(),
             device_mesh=tensor.device_mesh,
             placements=tensor.placements,
-        )
-        return temp_dtensor.full_tensor()
+        ).full_tensor()
     else:
         if tensor.device.type == "cpu":
             tensor = tensor.to(current_platform.device_type)
@@ -186,31 +182,30 @@ def _update_bucket_weights(
     if not named_tensors:
         return
 
-    engine_lock.acquire()
+    with engine_lock:
+        param_specs = [
+            ParamSpec(
+                name=name,
+                shape=tuple(tensor.shape),
+                dtype=str(tensor.dtype).split("torch.")[1],
+            )
+            for name, tensor in named_tensors
+        ]
 
-    param_specs = [
-        ParamSpec(
-            name=name,
-            shape=tuple(tensor.shape),
-            dtype=str(tensor.dtype).split("torch.")[1],
-        )
-        for name, tensor in named_tensors
-    ]
+        fut = rollout_engine.update_weights_from_distributed(meta, param_specs)
 
-    fut = rollout_engine.update_weights_from_distributed(meta, param_specs)
+        handles = []
+        assert state.group is not None
+        for _, tensor in named_tensors:
+            handles.append(
+                dist.broadcast(tensor, src=0, group=state.group, async_op=True)
+            )
+        for handle in handles:
+            handle.wait()
 
-    handles = []
-    assert state.group is not None
-    for _, tensor in named_tensors:
-        handles.append(dist.broadcast(tensor, src=0, group=state.group, async_op=True))
-    for handle in handles:
-        handle.wait()
+        fut.result()
 
-    fut.result()
-
-    named_tensors.clear()
-
-    engine_lock.release()
+        named_tensors.clear()
 
 
 @trace_perf("archon_engine.update_weights_from_disk", category="io")

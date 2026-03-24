@@ -36,7 +36,7 @@ Parallelism (EP), Expert Tensor Parallelism (ETP), and pipeline parallelism.
 
 - MoE-first design for efficient sparse model training
 - Unified TP/CP/PP/EP/ETP parallel strategies
-- Flexible checkpointing (HF or DCP formats)
+- Flexible checkpointing (HF or DCP formats) with async save support
 - Seamless weight sync with rollout engines
 
 **Engine Comparison**:
@@ -80,14 +80,13 @@ and `ParallelStrategy` for model parallelism.
 
 ## Workflow Integration
 
-ArchonEngine integrates with AReaL workflows through the `WorkflowLike` interface,
+ArchonEngine integrates with AReaL workflows through the `WorkflowLike` type alias,
 supporting RLVRWorkflow, MultiTurnWorkflow, and other workflow implementations.
 
 **Integration Pattern**:
 
 - Import `ArchonEngine` from `areal.experimental.engine.archon_engine`
-- Import desired workflow class (e.g., `RLVRWorkflow` from
-  `areal.workflow.rlvr_workflow`)
+- Import desired workflow class (e.g., `RLVRWorkflow` from `areal.workflow.rlvr`)
 - Initialize `ArchonEngine` with configuration
 - Create workflow instance with engine, reward functions, and dataset
 
@@ -154,19 +153,14 @@ in `ParallelStrategy` for hybrid parallel training.
 **Capabilities**: Pipeline stage management with intra-stage expert parallelism for
 ultra-deep MoE models.
 
-### 4. Large-scale Checkpointing
+### 4. Checkpointing
 
-**Configuration Approach**: Use `TrainEngineConfig` with DCP checkpoint format and
-appropriate checkpoint intervals.
+ArchonEngine supports both DCP and HF checkpoint formats. HF saves default to async mode
+(`saver.mode: auto`), which stages state to pinned CPU memory and writes to disk in a
+background process. Override with `saver.mode: sync` if needed.
 
-**Key Settings**:
-
-- TrainEngineConfig: DCP format for distributed checkpoint coordination
-- Checkpoint interval configuration for regular saving
-- ArchonEngineConfig: Standard attention and compilation settings
-
-**Capabilities**: Distributed checkpoint coordination with expert-aware sharding for
-large-scale training.
+**Key files**: `areal/utils/async_checkpoint.py` (async manager), `areal/utils/saver.py`
+(auto-detection), `areal/experimental/engine/archon_checkpoint.py` (HF save path).
 
 ## Troubleshooting
 
@@ -194,8 +188,8 @@ patterns (refer to source code).
 1. **Setup**: Install dependencies with `uv sync --extra experimental`
 1. **Configure**: Set up `ParallelStrategy` for model parallelism and
    `TrainEngineConfig` with `ArchonEngineConfig` for training settings
-1. **Integrate**: Reference test files in `areal/tests/experimental/archon/torchrun/`
-   for working examples
+1. **Integrate**: Reference test files in `tests/experimental/archon/torchrun/` for
+   working examples
 1. **Monitor**: Track expert utilization, parallel dimensions, and use profiling tools
    for optimization
 
@@ -239,15 +233,16 @@ patterns (refer to source code).
   constraints
 - `areal/experimental/models/archon/activation_checkpoint.py` - Activation checkpointing
 - `areal/experimental/models/archon/compile.py` - torch.compile integration
-- `areal/experimental/models/archon/varlen_attention.py` - Variable-length attention
-- `areal/experimental/models/archon/attention.py` - Attention mechanism implementations
+- `areal/experimental/models/archon/attention/` - Attention package
+  - `attention/sdpa.py` - Scaled dot-product attention
+  - `attention/varlen.py` - Variable-length attention (custom op registration)
 
 ## Resources
 
 - Code: `areal/experimental/engine/archon_engine.py`
 - Parallel: `areal/experimental/models/archon/parallel_dims.py`
 - MoE: `areal/experimental/models/archon/moe/`
-- Tests: `areal/tests/experimental/archon/torchrun/` (working examples)
+- Tests: `tests/experimental/archon/torchrun/` (working examples)
 
 ______________________________________________________________________
 

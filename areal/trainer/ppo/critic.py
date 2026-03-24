@@ -3,11 +3,15 @@ from typing import Any
 
 import torch
 
+from areal.api import TrainEngine
 from areal.api.cli_args import MicroBatchSpec, PPOCriticConfig
-from areal.api.engine_api import TrainEngine
 from areal.infra import TrainController
+from areal.trainer.ppo.stats import infer_token_denominator
 from areal.utils import stats_tracker
-from areal.utils.data import split_padded_tensor_dict_into_mb_list
+from areal.utils.data import (
+    batched_call,
+    split_padded_tensor_dict_into_mb_list,
+)
 from areal.utils.functional import ppo_critic_loss_fn
 from areal.utils.perf_tracer import trace_perf
 
@@ -19,7 +23,10 @@ class PPOCritic:
 
     @trace_perf("ppo_critic.compute_values", category="compute")
     @torch.no_grad()
-    def compute_values(self, data: dict[str, Any]) -> torch.Tensor:
+    def compute_values(self, data: list[dict[str, Any]]) -> list[torch.Tensor]:
+        return batched_call(self._compute_values, data)
+
+    def _compute_values(self, data: dict[str, Any]) -> torch.Tensor:
         self.engine.eval()
         return self.engine.forward(
             input_=data,
@@ -28,7 +35,10 @@ class PPOCritic:
 
     @trace_perf("ppo_critic.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_critic")
-    def ppo_update(self, data: dict[str, Any]) -> None:
+    def ppo_update(self, data: list[dict[str, Any]]) -> None:
+        batched_call(self._ppo_update, data, unpack=False)
+
+    def _ppo_update(self, data: dict[str, Any]) -> None:
         ########## Logging code starts ##########
         scalars = dict(
             mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
@@ -88,7 +98,7 @@ def ppo_loss_fn(
 
     # Log training statistics
     stats_tracker.denominator(
-        n_tokens=torch.ones(value.shape[0], dtype=torch.bool, device=value.device),
+        n_tokens=infer_token_denominator(input_data, value),
         n_valid_tokens=loss_mask.bool(),
         clipped_tokens=stat["clip_mask"],
     )

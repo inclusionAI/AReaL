@@ -8,7 +8,14 @@ if TYPE_CHECKING:
     from transformers.processing_utils import ProcessorMixin
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "hh-rlhf", "torl_data"]
+VALID_DATASETS = [
+    "gsm8k",
+    "clevr_count_70k",
+    "geometry3k",
+    "virl39k",
+    "hh-rlhf",
+    "torl_data",
+]
 
 logger = logging.getLogger("Dataset")
 
@@ -82,6 +89,16 @@ def _get_custom_dataset(
             max_length=max_length,
             **kwargs,
         )
+    elif "virl39k" in path.lower() and type == "rl":
+        from .virl39k import get_virl39k_rl_dataset
+
+        return get_virl39k_rl_dataset(
+            path=path,
+            split=split,
+            processor=processor,
+            max_length=max_length,
+            **kwargs,
+        )
     elif "hh-rlhf" in path and type == "rw":
         from .hhrlhf import get_hhrlhf_rw_dataset
 
@@ -134,3 +151,9 @@ def get_custom_dataset(
         processor=processor,
         **kwargs,
     )
+
+
+__all__ = [
+    "VALID_DATASETS",
+    "get_custom_dataset",
+]

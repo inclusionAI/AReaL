@@ -51,11 +51,11 @@ See `areal/workflow/openai/` for concrete examples.
 1. Ensure that your agent workflow uses async functions and `await` to maximize
    concurrency, especially for overlapping file I/O, HTTP requests, or multiple LLM
    generations.
-1. We recommend using the AReaL-provided `base_url` and `http_client` from
+1. We recommend using the AReaL-provided `base_url`, `api_key`, and `http_client` from
    `extra_kwargs` to construct the `AsyncOpenAI` object for sending completion requests.
    Constructing a `httpx.AsyncClient` in each workflow will increase latency by ~50ms,
    resulting in a ~10s overhead for a batch of 256.
-1. It is also valid to ignore the `base_url` and `http_client` argument. You can instead
-   start a subprocess (i.e., setting `rollout.openai.mode=subproc`) to run the agent.
-   While this provides more flexibility for writing the agent, using a subprocess will
-   introduce even larger overhead.
+1. It is also valid to ignore the provided argument. You can instead start a subprocess
+   (i.e., setting `rollout.openai.mode=subproc`) to run the agent. While this provides
+   more flexibility for writing the agent, using a subprocess will introduce even larger
+   overhead.

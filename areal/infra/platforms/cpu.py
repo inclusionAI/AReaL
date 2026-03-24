@@ -36,3 +36,19 @@ class CpuPlatform(Platform):
     def get_visible_devices(cls) -> list:
         # No-devices for CPU platform
         return []
+
+    def memory_allocated(self) -> int:
+        """No device memory; return 0."""
+        return 0
+
+    def memory_reserved(self) -> int:
+        """No device memory; return 0."""
+        return 0
+
+    def mem_get_info(self) -> tuple[int, int]:
+        """No device memory; return (0, 0)."""
+        return (0, 0)
+
+    def empty_cache(self) -> None:
+        """No-op."""
+        pass

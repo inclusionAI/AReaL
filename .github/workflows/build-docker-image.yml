@@ -14,7 +14,7 @@ permissions:
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   VALIDATOR_LABELS: gcp-docker-validator
-  RUNNER_VERSION: '2.317.0'
+  RUNNER_VERSION: '2.332.0'
   IMAGE_NAME: ghcr.io/inclusionai/areal-runtime
   IMAGE_TAG: test
 
@@ -29,12 +29,12 @@ jobs:
       INSTANCE_ZONE: us-central1-f
     steps:
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
       - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Start builder instance if stopped
         id: start-instance
@@ -68,7 +68,7 @@ jobs:
           fi
 
       - name: Wait for builder runner to be online
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           INSTANCE_NAME: areal-docker-builder
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -111,59 +111,89 @@ jobs:
 
             throw new Error(`Timed out waiting for builder runner ${instanceName} to come online.`);
 
-  build-and-push-image:
+  build-and-push-images:
     needs:
       - start-builder
-    name: Build and push Docker image
+    name: Build and push Docker images
     runs-on: [self-hosted, areal-docker-builder]
-    timeout-minutes: 180
+    timeout-minutes: 240  # ~90 min/image x 2 + buffer for cache misses
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver: docker
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: inclusionai
           password: ${{ secrets.GHCR_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+      - name: Build and push sglang image
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-sglang
+          build-args: |
+            VARIANT=sglang
+
+      - name: Build and push vllm image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-vllm
+          build-args: |
+            VARIANT=vllm
 
       - name: Image details
         run: |
-          echo "✅ Docker image built and pushed successfully!"
-          echo "Image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          echo "✅ Docker images built and pushed successfully!"
+          echo "Images:"
+          echo "  - ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-sglang"
+          echo "  - ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-vllm"
           echo "Commit: ${{ github.sha }}"
           echo "Branch: ${{ github.head_ref || github.ref_name }}"
 
-  run-tests:
-    name: Run tests with test image
+  run-tests-sglang:
+    name: Run tests with sglang image
     needs:
-      - build-and-push-image
+      - build-and-push-images
     uses: ./.github/workflows/test-areal.yml
     with:
       image_tag: test
+      variant: sglang
     secrets: inherit
 
-  promote-image:
-    name: Promote test image to dev
+  run-tests-vllm:
+    name: Run tests with vllm image
     needs:
-      - run-tests
+      - build-and-push-images
+    uses: ./.github/workflows/test-areal.yml
+    with:
+      image_tag: test
+      variant: vllm
+    secrets: inherit
+
+  promote-images:
+    name: Promote ${{ matrix.variant }} test image to dev
+    needs:
+      - run-tests-sglang
+      - run-tests-vllm
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [sglang, vllm]
     steps:
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: inclusionai
@@ -173,45 +203,63 @@ jobs:
         env:
           IMAGE_NAME: ghcr.io/inclusionai/areal-runtime
         run: |
-          docker pull $IMAGE_NAME:test
-          docker tag $IMAGE_NAME:test $IMAGE_NAME:dev
-          docker push $IMAGE_NAME:dev
-          echo "✅ Image promoted from :test to :dev"
+          docker pull $IMAGE_NAME:test-${{ matrix.variant }}
+          docker tag $IMAGE_NAME:test-${{ matrix.variant }} $IMAGE_NAME:dev-${{ matrix.variant }}
+          docker push $IMAGE_NAME:dev-${{ matrix.variant }}
+          echo "✅ ${{ matrix.variant }} image promoted from :test-${{ matrix.variant }} to :dev-${{ matrix.variant }}"
 
-  cleanup-test-image:
-    name: Delete test image from registry
+  bake-gcp-image:
+    name: Bake GCP CI image with promoted Docker images
     needs:
-      - build-and-push-image
-      - run-tests
-      - promote-image
-    if: always() && needs.build-and-push-image.result == 'success'
+      - promote-images
+    uses: ./.github/workflows/bake-gcp-image.yml
+    with:
+      image_tag: dev
+    secrets: inherit
+
+  cleanup-test-images:
+    name: Delete ${{ matrix.variant }} test image from registry
+    needs:
+      - build-and-push-images
+      - run-tests-sglang
+      - run-tests-vllm
+      - promote-images
+    if: always() && needs.build-and-push-images.result == 'success'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [sglang, vllm]
     steps:
       - name: Delete test image from GHCR
         env:
           GH_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
+          PACKAGE_NAME="areal-runtime"
+          TAG="test-${{ matrix.variant }}"
           # Get the package version ID for the test tag
           PACKAGE_VERSION_ID=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/orgs/inclusionai/packages/container/areal-runtime/versions" \
-            | jq -r '.[] | select(.metadata.container.tags[] == "test") | .id')
+            "https://api.github.com/orgs/inclusionai/packages/container/$PACKAGE_NAME/versions?per_page=100" \
+            | jq -r ".[] | select(.metadata.container.tags[] == \"$TAG\") | .id")
 
           if [ -n "$PACKAGE_VERSION_ID" ] && [ "$PACKAGE_VERSION_ID" != "null" ]; then
             curl -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/orgs/inclusionai/packages/container/areal-runtime/versions/$PACKAGE_VERSION_ID"
-            echo "✅ Deleted test image from registry"
+              "https://api.github.com/orgs/inclusionai/packages/container/$PACKAGE_NAME/versions/$PACKAGE_VERSION_ID"
+            echo "✅ Deleted ${{ matrix.variant }} test image from registry"
           else
-            echo "⚠️ Test image not found or already deleted"
+            echo "⚠️ ${{ matrix.variant }} test image not found or already deleted"
           fi
 
   stop-builder:
     name: Stop areal-docker-builder instance
     needs:
       - start-builder
-      - build-and-push-image
-      - run-tests
-      - promote-image
-      - cleanup-test-image
+      - build-and-push-images
+      - run-tests-sglang
+      - run-tests-vllm
+      - promote-images
+      - bake-gcp-image
+      - cleanup-test-images
     if: always() && needs.start-builder.outputs.was_running != 'true'
     runs-on: ubuntu-latest
     env:
@@ -219,12 +267,12 @@ jobs:
       INSTANCE_ZONE: us-central1-f
     steps:
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
       - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Stop builder instance
         run: |

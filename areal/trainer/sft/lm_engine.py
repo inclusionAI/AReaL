@@ -2,9 +2,10 @@ from typing import Any
 
 import torch
 
-from areal.api.engine_api import TrainEngine
+from areal.api import TrainEngine
 from areal.infra import TrainController
 from areal.utils import stats_tracker
+from areal.utils.data import batched_call
 from areal.utils.perf_tracer import trace_perf
 
 
@@ -14,7 +15,10 @@ class LMEngine:
 
     @trace_perf("lm_engine.train_lm", category="compute")
     @stats_tracker.scope_func_wrapper("sft")
-    def train_lm(self, data: dict[str, Any]):
+    def train_lm(self, data: list[dict[str, Any]]) -> None:
+        batched_call(self._train_lm, data, unpack=False)
+
+    def _train_lm(self, data: dict[str, Any]) -> None:
         self.engine.train()
         stats = self.engine.train_batch(
             input_=data,
@@ -25,7 +29,10 @@ class LMEngine:
 
     @trace_perf("lm_engine.evaluate_lm", category="compute")
     @stats_tracker.scope_func_wrapper("sft-eval")
-    def evaluate_lm(self, data):
+    def evaluate_lm(self, data: list[dict[str, Any]]) -> None:
+        batched_call(self._evaluate_lm, data, unpack=False)
+
+    def _evaluate_lm(self, data: dict[str, Any]) -> None:
         self.engine.eval()
         self.engine.eval_batch(
             input_=data,

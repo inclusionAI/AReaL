@@ -28,25 +28,41 @@ from torch import nn
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
-from areal.api.alloc_mode import (
+from areal.api import (
     AllocationMode,
+    FinetuneSpec,
+    InferenceEngine,
     MegatronParallelStrategy,
     ParallelStrategy,
-)
-from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
-from areal.api.engine_api import InferenceEngine, TrainEngine
-from areal.api.io_struct import (
-    DeviceRuntimeInfo,
-    FinetuneSpec,
     ParamSpec,
     SaveLoadMeta,
+    TrainEngine,
     WeightUpdateMeta,
+    WorkflowLike,
 )
-from areal.api.workflow_api import WorkflowLike
+from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
+from areal.api.io_struct import DeviceRuntimeInfo
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_total_loss_weight,
     reorder_and_pad_outputs,
+)
+from areal.engine.core.distributed import init_custom_process_group
+from areal.engine.core.model import disable_dropout_in_model
+from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
+from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
+from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
+from areal.engine.megatron_utils.megatron import (
+    all_gather_param,
+    convert_to_hf,
+    get_named_parameters,
+    remove_padding,
+)
+from areal.engine.megatron_utils.packed_context_parallel import (
+    packed_context_parallel_forward,
+)
+from areal.engine.megatron_utils.pipeline_parallel import (
+    configure_pipeline_layer_splits,
 )
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
@@ -60,11 +76,7 @@ from areal.models.tree_attn.functional import (
     merge_packed_tree_results,
 )
 from areal.models.tree_attn.module import (
-    BLOCK_SIZE,
-    TRITON_AVAILABLE,
-    USE_TRITON_TREE_ATTN,
-    build_attention_mask_from_trie,
-    build_triton_attn_data_from_trie,
+    build_tree_attn_kwargs,
     patch_bridge_for_tree_training,
 )
 from areal.models.tree_attn.tree import build_packed_tree_batch
@@ -83,32 +95,17 @@ from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
     unpad_logits,
 )
-from areal.utils.distributed import init_custom_process_group
-from areal.utils.fp8 import FP8BlockwiseTensorHelper
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
-from areal.utils.mcore.determinisitc import set_deterministic_algorithms
-from areal.utils.mcore.packed_context_parallel import (
-    packed_context_parallel_forward,
-)
-from areal.utils.mcore.pipeline_parallel import configure_pipeline_layer_splits
-from areal.utils.megatron import (
-    all_gather_param,
-    convert_to_hf,
-    get_named_parameters,
-    remove_padding,
-)
-from areal.utils.megatron_checkpointer import MegatronCheckpointManager
-from areal.utils.model import disable_dropout_in_model
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
 
 if TYPE_CHECKING:
+    from areal.api import Scheduler
     from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
-    from areal.api.scheduler_api import Scheduler
 
 
 class _MegatronModelList(list):
@@ -219,6 +216,8 @@ class MegatronEngine(TrainEngine):
             self.seed = 42
 
         assert addr is None, "FSDPEngine does not support remote initialization."
+
+        self._normalize_adam_bf16_config()
 
         if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
@@ -457,7 +456,7 @@ class MegatronEngine(TrainEngine):
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
             data,
@@ -474,7 +473,7 @@ class MegatronEngine(TrainEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
             dataloader,
@@ -573,42 +572,33 @@ class MegatronEngine(TrainEngine):
 
             cu_seqlens = mb_input.padded_mb.get("cu_seqlens", None)
 
-            # Lazily create tree attention metadata just before forward
+            # Lazily create tree attention metadata just before forward.
+            # dense_mask=True because Megatron's gradient checkpointing uses
+            # save_for_backward() which can only save torch.Tensor objects;
+            # BlockMask is recreated inside PytorchFlexAttention.forward().
+            tree_attn_keys: list[str] = []
             if self.enable_tree_training:
                 trie_node = mb_input.padded_mb.get("trie_node", None)
                 # Ensure trie_node is also in orig_mb for _compute_logprobs_and_loss
                 if trie_node is not None and "trie_node" not in mb_input.orig_mb:
                     mb_input.orig_mb["trie_node"] = trie_node
                 padded_size = mb_input.padded_to_length
-                if trie_node is not None and padded_size is not None:
-                    if USE_TRITON_TREE_ATTN and TRITON_AVAILABLE:
-                        triton_attn_data = build_triton_attn_data_from_trie(
-                            trie_node, padded_size
-                        )
-                        mb_input.padded_mb["triton_attn_data"] = triton_attn_data
-                    else:
-                        # FIX: Use dense attention mask tensor instead of BlockMask.
-                        # Megatron's gradient checkpointing (tensor_parallel.checkpoint)
-                        # uses save_for_backward() which can only save torch.Tensor objects.
-                        # BlockMask is a custom data structure that cannot be serialized.
-                        # By passing a dense tensor, the checkpoint mechanism can save it,
-                        # and the BlockMask will be created inside PytorchFlexAttention.forward()
-                        # during both forward and recompute (backward) passes.
-                        attention_mask = build_attention_mask_from_trie(
-                            trie_node,
-                            padded_size,
-                            mb_input.padded_mb["input_ids"].device,
-                        )
-                        mb_input.padded_mb["attention_mask"] = attention_mask
+                if trie_node is not None:
+                    assert padded_size is not None
+                    tree_kwargs = build_tree_attn_kwargs(
+                        trie_node,
+                        padded_size,
+                        mb_input.padded_mb["input_ids"].device,
+                        dense_mask=True,
+                    )
+                    mb_input.padded_mb.update(tree_kwargs)
+                    tree_attn_keys = list(tree_kwargs.keys())
 
             output = packed_context_parallel_forward(model, mb_input.padded_mb)
 
             # Release tree attention metadata after forward pass
-            if self.enable_tree_training:
-                if "attention_mask" in mb_input.padded_mb:
-                    del mb_input.padded_mb["attention_mask"]
-                if "triton_attn_data" in mb_input.padded_mb:
-                    del mb_input.padded_mb["triton_attn_data"]
+            for key in tree_attn_keys:
+                del mb_input.padded_mb[key]
 
             def _process_output(input_, output_):
                 loss = process_output_fn(output_, input_)
@@ -813,6 +803,29 @@ class MegatronEngine(TrainEngine):
     def clear_batches(self, *args):
         """Placeholder method of single-controller API."""
 
+    def _normalize_adam_bf16_config(self) -> None:
+        if self.optimizer_config is None or self.optimizer_config.type != "adam_bf16":
+            return
+
+        self.logger.info(
+            "Detected 'adam_bf16' optimizer with Megatron Engine. "
+            "Automatically converting to 'adam' with precision-aware optimizer "
+            "and setting exp_avg_dtype/exp_avg_sq_dtype to 'bfloat16'."
+        )
+
+        self.optimizer_config.type = "adam"
+        self.mcore_config.use_precision_aware_optimizer = True
+        self.mcore_config.exp_avg_dtype = "bfloat16"
+        self.mcore_config.exp_avg_sq_dtype = "bfloat16"
+
+        if self.dtype != torch.bfloat16:
+            self.logger.warning(
+                "Overriding dtype from %s to bfloat16 for adam_bf16 optimizer.",
+                self.config.dtype,
+            )
+            self.dtype = torch.bfloat16
+            self.config.dtype = "bfloat16"
+
     def _check_and_apply_fp8_config(self):
         if not self.enable_fp8:
             return
@@ -964,15 +977,7 @@ class MegatronEngine(TrainEngine):
             torch, self.mcore_config.exp_avg_sq_dtype
         )
 
-        self.optimizer = get_megatron_optimizer(
-            mcore_opt_config,
-            self.model,
-            no_weight_decay_cond=lambda n, p: any(
-                k in n for k in ["bias", "ln.weight", "ln_f.weight"]
-            ),
-            scale_lr_cond=None,
-            lr_mult=1.0,
-        )
+        self.optimizer = get_megatron_optimizer(mcore_opt_config, self.model)
 
         warmup_steps_proportion = self.optimizer_config.warmup_steps_proportion
         warmup_steps = int(warmup_steps_proportion * ft_spec.total_train_steps)
@@ -1383,14 +1388,12 @@ class MegatronEngine(TrainEngine):
             assert cp_size == 1, (
                 "Context parallelism is not supported in tree training."
             )
-            # Build tree inputs
-            assert BLOCK_SIZE % tp_size == 0, (
-                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by tensor parallel size ({tp_size})."
-            )
             mb_list = build_packed_tree_batch(
                 input_,
                 mb_spec=self.config.mb_spec,
                 pad_to_maximum=self.config.pad_to_maximum,
+                dp_group=self.data_parallel_group,
+                parallel_size=tp_size,
             )
             recommended_min_n_mbs = 2 * pp_size if pp_size > 1 else 1
             self.logger.info(
@@ -1577,11 +1580,11 @@ class MegatronPPOActor(MegatronEngine):
         self.actor = PPOActor(config, self)
 
     @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+    def compute_logp(self, *args, **kwargs) -> list[torch.Tensor] | None:
         return self.actor.compute_logp(*args, **kwargs)
 
     @torch.no_grad()
-    def compute_advantages(self, *args, **kwargs) -> dict[str, Any]:
+    def compute_advantages(self, *args, **kwargs) -> list[dict[str, Any]]:
         return self.actor.compute_advantages(*args, **kwargs)
 
     def ppo_update(self, *args, **kwargs) -> None:

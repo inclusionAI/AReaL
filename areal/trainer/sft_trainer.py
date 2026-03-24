@@ -7,22 +7,24 @@ import torch.distributed as dist
 from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import AllocationMode, FinetuneSpec, Scheduler, StepInfo
 from areal.api.cli_args import (
     SFTConfig,
     TrainDatasetConfig,
     TrainEngineConfig,
     ValidDatasetConfig,
 )
-from areal.api.io_struct import FinetuneSpec, StepInfo
-from areal.api.scheduler_api import Scheduler
-from areal.infra.platforms import current_platform
-from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
+from areal.infra import (
+    LocalScheduler,
+    RayScheduler,
+    SlurmScheduler,
+    current_platform,
+)
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
+    collate_samples_to_list,
     cycle_dataloader,
-    pad_sequences_to_tensors,
     tensor_container_to,
 )
 from areal.utils.dataloader import create_dataloader
@@ -35,8 +37,7 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 if TYPE_CHECKING:
-    from areal.engine.fsdp_engine import FSDPLMEngine
-    from areal.engine.megatron_engine import MegatronLMEngine
+    from areal.engine import FSDPLMEngine, MegatronLMEngine
     from areal.experimental.engine.archon_engine import ArchonLMEngine
     from areal.trainer.sft.lm_engine import LMController
 
@@ -160,6 +161,9 @@ class SFTTrainer:
             ):
                 batch = self._load_bcast_from(data_generator)
 
+            # Wait for async checkpoint staging to complete before modifying parameters
+            self.saver.maybe_wait_for_staging()
+
             with (
                 stats_tracker.record_timing("train_step"),
                 perf_tracer.trace_scope(
@@ -232,6 +236,7 @@ class SFTTrainer:
             self._save_perf_tracer(step=global_step)
 
     def close(self):
+        self.saver.finalize()
         self.stats_logger.close()
         self.actor.destroy()
         perf_tracer.save(force=True)
@@ -273,18 +278,18 @@ class SFTTrainer:
             rank=rank,
             world_size=world_size,
             dataset_config=dataset_config,
-            collate_fn=pad_sequences_to_tensors,
+            collate_fn=collate_samples_to_list,
         )
 
     def _create_actor(
         self, actor_config: TrainEngineConfig
     ) -> FSDPLMEngine | MegatronLMEngine | ArchonLMEngine | LMController:
         if self.allocation_mode.train_backend == "fsdp":
-            from areal.engine.fsdp_engine import FSDPLMEngine
+            from areal.engine import FSDPLMEngine
 
             actor_cls = FSDPLMEngine
         elif self.allocation_mode.train_backend == "megatron":
-            from areal.engine.megatron_engine import MegatronLMEngine
+            from areal.engine import MegatronLMEngine
 
             actor_cls = MegatronLMEngine
         elif self.allocation_mode.train_backend == "archon":
@@ -329,8 +334,10 @@ class SFTTrainer:
             processor=self.processor,
         )
 
-        dist.barrier(group=self.actor.cpu_group)
-        current_platform.synchronize()
+        # Async mode: synchronization handled by AsyncCheckpointManager
+        if not self.saver.is_async:
+            dist.barrier(group=self.actor.cpu_group)
+            current_platform.synchronize()
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
         # Save recoverable checkpoints
@@ -393,6 +400,7 @@ class SFTTrainer:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
         if exc_type is not None:
-            raise exc_value
+            logger.error(f"Training failed with exception: {exc_value}", exc_info=True)
+        self.close()
+        return False

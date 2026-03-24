@@ -8,8 +8,8 @@ import torch.distributed as dist
 import wandb
 from tensorboardX import SummaryWriter
 
+from areal.api import FinetuneSpec
 from areal.api.cli_args import BaseExperimentConfig, StatsLoggerConfig
-from areal.api.io_struct import FinetuneSpec
 from areal.utils import logging
 from areal.utils.printing import tabulate_stats
 from areal.version import version_info
@@ -29,7 +29,7 @@ class StatsLogger:
         self.ft_spec = ft_spec
         self.init()
 
-        self._last_commit_step = 0
+        self._last_commit_step = -1
 
     def init(self):
         if dist.is_initialized() and dist.get_rank() != 0:

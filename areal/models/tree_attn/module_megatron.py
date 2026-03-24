@@ -27,7 +27,7 @@ from areal.models.tree_attn.triton_kernel import (
 )
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TreeAttentionMegatron")
 
 
 class PytorchFlexAttention(torch.nn.Module):

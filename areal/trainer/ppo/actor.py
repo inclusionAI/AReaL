@@ -3,9 +3,10 @@ from typing import Any
 
 import torch
 
+from areal.api import TrainEngine
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
-from areal.api.engine_api import TrainEngine
 from areal.infra import TrainController
+from areal.trainer.ppo.stats import infer_token_denominator
 from areal.utils import logging, stats_tracker
 from areal.utils.constants import (
     PROX_APPROX_METHOD_LINEAR,
@@ -20,6 +21,7 @@ from areal.utils.constants import (
 from areal.utils.data import (
     KLEstimator,
     Normalization,
+    batched_call,
     split_padded_tensor_dict_into_mb_list,
 )
 from areal.utils.functional import (
@@ -94,9 +96,9 @@ class PPOActor:
 
             logger.info("  log_p_theta (π_θ): TRAINING FORWARD PASS (current policy)")
 
-            if config.behav_imp_weight_cap:
+            if config.behave_imp_weight_cap:
                 logger.info(
-                    f"  Importance weight cap: {config.behav_imp_weight_cap:.1f} "
+                    f"  Importance weight cap: {config.behave_imp_weight_cap:.1f} "
                     "(filters out tokens with extreme weights)"
                 )
 
@@ -117,7 +119,10 @@ class PPOActor:
 
     @trace_perf("ppo_actor.compute_logp", category="compute")
     @torch.no_grad()
-    def compute_logp(self, data: dict[str, Any]) -> torch.Tensor:
+    def compute_logp(self, data: list[dict[str, Any]]) -> list[torch.Tensor] | None:
+        return batched_call(self._compute_logp, data)
+
+    def _compute_logp(self, data: dict[str, Any]) -> torch.Tensor | None:
         self.engine.eval()
         return self.engine.forward(
             input_=data,
@@ -125,7 +130,10 @@ class PPOActor:
         )
 
     @trace_perf("ppo_actor.compute_advantages", category="compute")
-    def compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
+    def compute_advantages(self, data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return batched_call(self._compute_advantages, data)
+
+    def _compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
@@ -233,7 +241,10 @@ class PPOActor:
 
     @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
-    def ppo_update(self, data: dict[str, Any]) -> None:
+    def ppo_update(self, data: list[dict[str, Any]]) -> None:
+        batched_call(self._ppo_update, data, unpack=False)
+
+    def _ppo_update(self, data: dict[str, Any]) -> None:
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
@@ -257,7 +268,7 @@ class PPOActor:
             result_denominators["agent"] = agent_denominator
         global_denominators = dict(
             n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
-            n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
+            n_tokens=infer_token_denominator(data, loss_mask),
             n_valid_tokens=loss_mask.bool(),
             **result_denominators,
         )
@@ -293,8 +304,8 @@ class PPOActor:
             scalars["use_dual_clip"] = 1
         else:
             scalars["use_dual_clip"] = 0
-        if self.config.behav_imp_weight_cap is not None:
-            scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
+        if self.config.behave_imp_weight_cap is not None:
+            scalars["behave_imp_weight_cap"] = self.config.behave_imp_weight_cap
         stats_tracker.scalar(**scalars)
 
         if self.config.log_agent_stats:
@@ -327,7 +338,7 @@ class PPOActor:
                         eps_clip=self.config.eps_clip,
                         eps_clip_higher=self.config.eps_clip_higher,
                         c_clip=self.config.c_clip,
-                        behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                        behave_imp_weight_cap=self.config.behave_imp_weight_cap,
                         m2_threshold=self.m2_threshold,
                         importance_sampling_level=self.config.importance_sampling_level,
                         current_version=current_version,
@@ -336,6 +347,7 @@ class PPOActor:
                         sapo_tau_pos=self.config.sapo_tau_pos,
                         sapo_tau_neg=self.config.sapo_tau_neg,
                         use_decoupled_loss=self.config.use_decoupled_loss,
+                        behave_imp_weight_mode=self.config.behave_imp_weight_mode,
                     ),
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
@@ -360,7 +372,7 @@ def grpo_loss_fn(
     eps_clip: float,
     eps_clip_higher: float | None,
     c_clip: float | None,
-    behav_imp_weight_cap: float | None,
+    behave_imp_weight_cap: float | None,
     m2_threshold: float | None = None,
     importance_sampling_level: str = "token",
     current_version: int | None = None,
@@ -369,6 +381,7 @@ def grpo_loss_fn(
     sapo_tau_pos: float = 1.0,
     sapo_tau_neg: float = 1.05,
     use_decoupled_loss: bool = False,
+    behave_imp_weight_mode: str = "token_mask",
     vocab_min_logits: torch.Tensor | None = None,
     vocab_max_logits: torch.Tensor | None = None,
 ):
@@ -422,22 +435,57 @@ def grpo_loss_fn(
             loss_mask=loss_mask,
             c_clip=c_clip,
             proximal_logprobs=prox_logp,
-            behav_imp_weight_cap=behav_imp_weight_cap,
+            behave_imp_weight_cap=behave_imp_weight_cap,
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
+            behave_imp_weight_mode=behave_imp_weight_mode,
         )
+
+    # Joint Distillation KL Loss
+    teacher_logp = input_data.get("teacher_logp")
+    rkl_stat = None
+    if teacher_logp is not None:
+        # Coefficients for RL and Knowledge Distillation
+        rl_loss_weight = input_data.get("rl_loss_weight", 1.0)
+        distill_loss_weight = input_data.get("distill_loss_weight", 0.005)
+
+        teacher_logp = (
+            teacher_logp.detach()
+        )  # detach to prevent gradient backprop to teacher
+
+        if rl_loss_weight == 0:
+            # Pure KD using reverse KL (importance-sampling)
+            rkl_reward = teacher_logp - logprobs.detach()
+            importance_weight = torch.exp(logprobs - old_logp)
+
+            rkl_weighted_term = importance_weight * rkl_reward * loss_mask
+
+            kd_coef = -1 * distill_loss_weight
+            loss = kd_coef * rkl_weighted_term.sum() / loss_mask.sum().clamp(min=1)
+
+            rkl_stat = -1 * rkl_weighted_term
+        else:
+            # KDRL: Knowledge Distillation + Reinforcement Learning (joint loss)
+            rkl_penalty_per_token = (logprobs - teacher_logp) * loss_mask
+            rkl_penalty = rkl_penalty_per_token.sum() / loss_mask.sum().clamp(min=1)
+
+            loss = rl_loss_weight * loss + distill_loss_weight * rkl_penalty
+
+            rkl_stat = rkl_penalty_per_token
 
     # Log training statistics
     stats_tracker.denominator(
-        # NOTE: n_tokens must have shape [batch, seq] to match vocab stats.
-        # Using torch.ones_like(loss_mask) ensures correct shape when this function is called
-        # standalone (e.g., by tests), not just from ppo_update() which already
-        # registers n_tokens.
-        n_tokens=torch.ones_like(loss_mask, dtype=torch.bool, device=logprobs.device),
+        n_tokens=infer_token_denominator(input_data, loss_mask),
         n_valid_tokens=loss_mask.bool(),
         clipped_tokens=stat["clip_mask"],
         dual_clipped_tokens=stat["dual_clip_mask"],
     )
+
+    if rkl_stat is not None:
+        stats_tracker.stat(
+            rkl_loss=rkl_stat,
+            denominator="n_valid_tokens",
+        )
 
     stats_tracker.stat(
         importance_weight=stat["importance_weight"],
@@ -953,6 +1001,25 @@ def _log_proximal_approximation_stats(
                     logprobs=logprobs,
                     prox_logp_gt=prox_logp_gt,
                 )
+
+        if logprobs is not None:
+            # Log KL divergence estimators to check for policy drift between the
+            # training-time policy (logprobs) and the inference-time policy (old_logp).
+            log_ratio = (logprobs.float() - old_logp.float()).detach()
+
+            # Implementation of different estimators for KL divergence.
+            # See: https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/#true-on-policy-rl
+            kl_div_estimator_direct = -log_ratio
+            kl_div_estimator_taylor = log_ratio**2 / 2.0
+            kl_div_estimator_dual = log_ratio.exp() - 1 - log_ratio
+
+            # Register these to TensorBoard
+            stats_tracker.stat(
+                kl_div_direct=kl_div_estimator_direct,
+                kl_div_taylor=kl_div_estimator_taylor,
+                kl_div_dual=kl_div_estimator_dual,
+                denominator="n_valid_tokens",
+            )
 
 
 def _log_version_staleness_stats(

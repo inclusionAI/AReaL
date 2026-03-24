@@ -10,7 +10,17 @@ import torch.distributed as dist
 from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.alloc_mode import AllocationMode
+from areal.api import (
+    AllocationMode,
+    FinetuneSpec,
+    InferenceEngine,
+    RolloutWorkflow,
+    SaveLoadMeta,
+    Scheduler,
+    StepInfo,
+    WeightUpdateMeta,
+    WorkflowLike,
+)
 from areal.api.cli_args import (
     InferenceEngineConfig,
     PPOActorConfig,
@@ -23,15 +33,14 @@ from areal.api.cli_args import (
     ValidDatasetConfig,
     vLLMConfig,
 )
-from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
-from areal.api.scheduler_api import Scheduler
-from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
-from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.infra import RolloutController
-from areal.infra.platforms import current_platform
-from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
+from areal.engine import RemoteSGLangEngine, RemotevLLMEngine
+from areal.infra import (
+    LocalScheduler,
+    RayScheduler,
+    RolloutController,
+    SlurmScheduler,
+    current_platform,
+)
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
@@ -43,8 +52,12 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 if TYPE_CHECKING:
-    from areal.engine.fsdp_engine import FSDPPPOActor, FSDPPPOCritic
-    from areal.engine.megatron_engine import MegatronPPOActor, MegatronPPOCritic
+    from areal.engine import (
+        FSDPPPOActor,
+        FSDPPPOCritic,
+        MegatronPPOActor,
+        MegatronPPOCritic,
+    )
     from areal.experimental.engine.archon_engine import ArchonPPOActor, ArchonPPOCritic
     from areal.trainer.ppo.actor import PPOActorController
     from areal.trainer.ppo.critic import PPOCriticController
@@ -52,11 +65,38 @@ if TYPE_CHECKING:
 logger = logging.getLogger("RLTrainer")
 
 
+class _EmptyDataLoader:
+    """Minimal dataloader for online mode that yields empty dicts.
+
+    Compatible with ``cycle_dataloader()`` and ``len()`` expectations.
+    ``steps_per_epoch`` controls how many steps constitute one epoch,
+    derived from ``total_train_steps // total_train_epochs`` to ensure
+    epoch-frequency-gated components (Saver, RecoverHandler) behave correctly.
+    """
+
+    def __init__(self, batch_size: int = 1, steps_per_epoch: int = 1):
+        self.batch_size = batch_size
+        self._steps_per_epoch = steps_per_epoch
+
+    def __len__(self) -> int:
+        return self._steps_per_epoch
+
+    def __iter__(self):
+        while True:
+            yield [{} for _ in range(self.batch_size)]
+
+    def state_dict(self) -> dict:
+        return {}
+
+    def load_state_dict(self, state_dict: dict) -> None:  # noqa: ARG002
+        pass
+
+
 class PPOTrainer:
     def __init__(
         self,
         config: PPOConfig,
-        train_dataset: Dataset,
+        train_dataset: Dataset | None = None,
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
@@ -78,6 +118,9 @@ class PPOTrainer:
         # Parse allocation mode.
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
 
+        # Validate config before proceeding with weight initialization
+        self._validate_cfg()
+
         self._amend_xccl_weight_update_envvar()
 
         # Create models: actor, critic, etc.
@@ -92,12 +135,35 @@ class PPOTrainer:
         # Create dataloaders
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
-        self.train_dataloader = self._create_dataloader(
-            train_dataset,
-            dataset_config=self.config.train_dataset,
-            rank=self.actor.data_parallel_rank,
-            world_size=self.actor.data_parallel_world_size,
-        )
+        if train_dataset is None:
+            # Online mode: require total_train_steps to compute steps_per_epoch.
+            # Without this, __len__()=1 causes every step to be treated as an
+            # epoch boundary, making Saver/RecoverHandler fire every step and
+            # corrupting the LR schedule.
+            if config.total_train_steps is None:
+                raise ValueError(
+                    "total_train_steps must be set for online mode "
+                    "(train_dataset is None). Both total_train_epochs and "
+                    "total_train_steps are needed to compute steps_per_epoch."
+                )
+            steps_per_epoch = config.total_train_steps // config.total_train_epochs
+            if steps_per_epoch < 1:
+                raise ValueError(
+                    f"total_train_steps ({config.total_train_steps}) must be >= "
+                    f"total_train_epochs ({config.total_train_epochs}) so that "
+                    f"steps_per_epoch >= 1."
+                )
+            self.train_dataloader = _EmptyDataLoader(
+                batch_size=config.train_dataset.batch_size,
+                steps_per_epoch=steps_per_epoch,
+            )
+        else:
+            self.train_dataloader = self._create_dataloader(
+                train_dataset,
+                dataset_config=self.config.train_dataset,
+                rank=self.actor.data_parallel_rank,
+                world_size=self.actor.data_parallel_world_size,
+            )
         self.valid_dataloader = None
         if self.config.valid_dataset is not None and valid_dataset is not None:
             self.valid_dataloader = self._create_dataloader(
@@ -107,20 +173,12 @@ class PPOTrainer:
                 world_size=self.actor.data_parallel_world_size,
             )
 
-        # Initialize inference
-        self.rollout = self._init_rollout(config.rollout, is_eval=False)
-        self.eval_rollout = self._init_rollout(config.rollout, is_eval=True)
-
-        # Proxy worker initialization (lazy, for AgentWorkflow support)
-        self._proxy_started = False
-
         ft_spec = FinetuneSpec(
             total_train_epochs=config.total_train_epochs,
             dataset_size=len(self.train_dataloader) * config.train_dataset.batch_size,
             train_batch_size=config.train_dataset.batch_size,
         )
 
-        # Initialize models
         self.parallel_strategy = self.allocation_mode.train
         assert self.parallel_strategy is not None
         engine_init_kwargs = {
@@ -133,6 +191,41 @@ class PPOTrainer:
             self.critic.initialize(**engine_init_kwargs, role="critic")
         if self.ref is not None:
             self.ref.initialize(**engine_init_kwargs, role="ref")
+
+        self.teacher = None
+        if config.teacher is not None:
+            self.teacher = self._create_teacher(config.teacher)
+            teacher_allocation_mode = AllocationMode.from_str(
+                config.teacher.allocation_mode
+            )
+            teacher_init_kwargs = {
+                "addr": None,
+                "ft_spec": ft_spec,
+                "alloc_mode": teacher_allocation_mode,
+            }
+            self.teacher.initialize(**teacher_init_kwargs, role="teacher")
+
+        # Save initial LoRA weights if enabled (for inference server pre-loading)
+        initial_lora_path = self._save_initial_lora_weights()
+
+        # Initialize inference with LoRA path
+        self.rollout = self._init_rollout(
+            config.rollout, is_eval=False, lora_path=initial_lora_path
+        )
+        # Online mode detection: skip eval rollout for efficiency.
+        openai_cfg = config.rollout.openai
+        self._online_mode = train_dataset is None or (
+            openai_cfg is not None and openai_cfg.mode == "online"
+        )
+
+        self.eval_rollout = None
+        if not self._online_mode:
+            self.eval_rollout = self._init_rollout(
+                config.rollout, is_eval=True, lora_path=initial_lora_path
+            )
+
+        # Proxy worker initialization (lazy, for AgentWorkflow support)
+        self._proxy_started = False
 
         # Prepare weight update meta and connect to inference engine
         if self.config.actor.weight_update_mode == "disk":
@@ -175,7 +268,7 @@ class PPOTrainer:
             )
         self.actor.connect_engine(self.rollout, self.weight_update_meta)
 
-        # Set up evaluation
+        # Set up evaluation (skip in online mode)
         self.evaluator = Evaluator(config.evaluator, ft_spec)
 
         # Set up save as HF model
@@ -200,7 +293,7 @@ class PPOTrainer:
 
     def train(
         self,
-        workflow: WorkflowLike,
+        workflow: WorkflowLike | None = None,
         eval_workflow: WorkflowLike | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         eval_workflow_kwargs: dict[str, Any] | None = None,
@@ -222,7 +315,17 @@ class PPOTrainer:
         max_steps = total_epochs * steps_per_epoch
 
         # Initialize proxy workers if not using RolloutWorkflow
-        if self._requires_proxy_workflow(workflow):
+        if workflow is None:
+            openai_cfg = self.config.rollout.openai
+            if openai_cfg is not None and openai_cfg.mode == "online":
+                self._ensure_proxy_started()
+            else:
+                raise ValueError(
+                    "workflow must be specified for train() unless "
+                    "openai.mode='online' is configured. "
+                    "Pass a RolloutWorkflow, AgentWorkflow, or callable."
+                )
+        elif self._requires_proxy_workflow(workflow):
             self._ensure_proxy_started()
 
         for global_step in range(start_step, max_steps):
@@ -263,7 +366,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["values"] = self.critic.compute_values(rollout_batch)
+                    values = self.critic.compute_values(rollout_batch)
+                    for traj, v in zip(rollout_batch, values):
+                        traj["values"] = v
                     self.critic.get_device_stats().log("critic values")
 
             if config.actor.should_compute_prox_logp():
@@ -275,7 +380,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["prox_logp"] = self.actor.compute_logp(rollout_batch)
+                    prox_logps = self.actor.compute_logp(rollout_batch)
+                    for traj, logp in zip(rollout_batch, prox_logps):
+                        traj["prox_logp"] = logp
                     self.actor.get_device_stats().log("recompute logp")
 
             if self.ref is not None:
@@ -287,8 +394,28 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
+                    ref_logps = self.ref.compute_logp(rollout_batch)
+                    for traj, logp in zip(rollout_batch, ref_logps):
+                        traj["ref_logp"] = logp
                     self.ref.get_device_stats().log("ref logp")
+
+            if self.teacher is not None:
+                with (
+                    stats_tracker.record_timing("teacher_logp"),
+                    perf_tracer.trace_scope(
+                        "train.teacher_logp",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    teacher_logps = self.teacher.compute_logp(rollout_batch)
+                    for traj, logp in zip(rollout_batch, teacher_logps):
+                        traj["teacher_logp"] = logp
+                        traj["rl_loss_weight"] = self.config.teacher.rl_loss_weight
+                        traj["distill_loss_weight"] = (
+                            self.config.teacher.distill_loss_weight
+                        )
+                    self.teacher.get_device_stats().log("teacher logp")
 
             with (
                 stats_tracker.record_timing("compute_advantage"),
@@ -300,6 +427,9 @@ class PPOTrainer:
             ):
                 adv_batch = self.actor.compute_advantages(rollout_batch)
                 self.actor.get_device_stats().log("compute advantages")
+
+            # Wait for async checkpoint staging to complete before modifying parameters
+            self.saver.maybe_wait_for_staging()
 
             with (
                 stats_tracker.record_timing("train_step"),
@@ -337,13 +467,17 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                self.actor.update_weights(self.weight_update_meta)
+                # Use versioned path for weight updates
+                new_version = global_step + 1
+                versioned_meta = self.weight_update_meta.with_version(new_version)
+                self.actor.update_weights(versioned_meta)
 
-                self.actor.set_version(global_step + 1)
+                self.actor.set_version(new_version)
                 if self.critic is not None:
-                    self.critic.set_version(global_step + 1)
-                self.rollout.set_version(global_step + 1)
-                self.eval_rollout.set_version(global_step + 1)
+                    self.critic.set_version(new_version)
+                self.rollout.set_version(new_version)
+                if self.eval_rollout is not None:
+                    self.eval_rollout.set_version(new_version)
 
             with (
                 stats_tracker.record_timing("save"),
@@ -410,8 +544,10 @@ class PPOTrainer:
             self._save_perf_tracer(step=global_step)
 
     def close(self):
+        self.saver.finalize()
         self.stats_logger.close()
-        self.eval_rollout.destroy()
+        if self.eval_rollout is not None:
+            self.eval_rollout.destroy()
         self.rollout.destroy()
         if self.ref is not None:
             self.ref.destroy()
@@ -435,9 +571,10 @@ class PPOTrainer:
         if self.ref is not None:
             self.ref.config_perf_tracer(self.config.perf_tracer, role="ref")
         self.rollout.config_perf_tracer(self.config.perf_tracer, role="rollout")
-        self.eval_rollout.config_perf_tracer(
-            self.config.perf_tracer, role="eval-rollout"
-        )
+        if self.eval_rollout is not None:
+            self.eval_rollout.config_perf_tracer(
+                self.config.perf_tracer, role="eval-rollout"
+            )
 
     def _save_perf_tracer(self, step: int):
         self.actor.save_perf_tracer(step=step)
@@ -445,7 +582,8 @@ class PPOTrainer:
             self.ref.save_perf_tracer(step=step)
         if self.critic is not None:
             self.critic.save_perf_tracer(step=step)
-        self.eval_rollout.save_perf_tracer(step=step)
+        if self.eval_rollout is not None:
+            self.eval_rollout.save_perf_tracer(step=step)
         self.rollout.save_perf_tracer(step=step)
         perf_tracer.save(step=step)
 
@@ -489,11 +627,11 @@ class PPOTrainer:
         self, actor_config: PPOActorConfig
     ) -> FSDPPPOActor | MegatronPPOActor | ArchonPPOActor | PPOActorController:
         if self.allocation_mode.train_backend == "fsdp":
-            from areal.engine.fsdp_engine import FSDPPPOActor
+            from areal.engine import FSDPPPOActor
 
             actor_cls = FSDPPPOActor
         elif self.allocation_mode.train_backend == "megatron":
-            from areal.engine.megatron_engine import MegatronPPOActor
+            from areal.engine import MegatronPPOActor
 
             actor_cls = MegatronPPOActor
         elif self.allocation_mode.train_backend == "archon":
@@ -515,11 +653,11 @@ class PPOTrainer:
         self, critic_config: PPOCriticConfig
     ) -> FSDPPPOCritic | MegatronPPOCritic | ArchonPPOCritic | PPOCriticController:
         if self.allocation_mode.train_backend == "fsdp":
-            from areal.engine.fsdp_engine import FSDPPPOCritic
+            from areal.engine import FSDPPPOCritic
 
             critic_cls = FSDPPPOCritic
         elif self.allocation_mode.train_backend == "megatron":
-            from areal.engine.megatron_engine import MegatronPPOCritic
+            from areal.engine import MegatronPPOCritic
 
             critic_cls = MegatronPPOCritic
         elif self.allocation_mode.train_backend == "archon":
@@ -537,9 +675,46 @@ class PPOTrainer:
         critic.create_process_group(parallel_strategy=self.allocation_mode.train)
         return critic
 
+    def _create_teacher(self, teacher_config):
+        allocation_mode = AllocationMode.from_str(teacher_config.allocation_mode)
+
+        if allocation_mode.train_backend == "fsdp":
+            from areal.engine import FSDPPPOActor
+
+            actor_cls = FSDPPPOActor
+        elif allocation_mode.train_backend == "megatron":
+            from areal.engine import MegatronPPOActor
+
+            actor_cls = MegatronPPOActor
+        elif allocation_mode.train_backend == "archon":
+            from areal.experimental.engine.archon_engine import ArchonPPOActor
+
+            actor_cls = ArchonPPOActor
+        else:
+            raise ValueError(
+                f"Invalid backend: {allocation_mode.train_backend}, expected fsdp, megatron, or archon"
+            )
+
+        if is_single_controller():
+            teacher = actor_cls.as_controller(teacher_config, self.scheduler)
+        else:
+            teacher = actor_cls(config=teacher_config)
+
+        teacher.create_process_group(parallel_strategy=allocation_mode.train)
+        return teacher
+
     def _init_rollout(
-        self, rollout_config: InferenceEngineConfig, is_eval: bool = False
+        self,
+        rollout_config: InferenceEngineConfig,
+        is_eval: bool = False,
+        lora_path: str | None = None,
     ) -> InferenceEngine | RolloutController:
+        if lora_path is not None and not is_single_controller():
+            raise ValueError(
+                "LoRA is only supported in single-controller mode. "
+                "Use `python3 train.py scheduler.type=local` instead of "
+                "`python3 -m areal.infra.launcher.local`."
+            )
         # Create a working copy of config
         config = deepcopy(rollout_config)
         if is_eval:
@@ -554,6 +729,12 @@ class PPOTrainer:
 
         # Determine engine class and server args based on backend
         if self.allocation_mode.gen_backend == "sglang":
+            if self.config.rollout.return_routed_experts:
+                self.config.sglang.enable_return_routed_experts = True
+            if lora_path is not None and self.config.actor.use_lora:
+                self.config.sglang.lora_paths = [
+                    f"{self.config.gconfig.lora_name}-v0={lora_path}"
+                ]
             engine_cls = RemoteSGLangEngine
             server_args = SGLangConfig.build_args(
                 sglang_config=self.config.sglang,
@@ -561,12 +742,22 @@ class PPOTrainer:
                 base_gpu_id=0,
             )
         elif self.allocation_mode.gen_backend == "vllm":
+            if self.config.rollout.return_routed_experts:
+                raise ValueError(
+                    "return_routed_experts is not supported with vLLM backend. Please disable return_routed_experts or switch to SGLang backend."
+                )
+            if lora_path is not None and self.config.actor.use_lora:
+                self.config.vllm.lora_modules = [
+                    f"{self.config.gconfig.lora_name}-v0={lora_path}"
+                ]
             engine_cls = RemotevLLMEngine
             server_args = vLLMConfig.build_args(
                 vllm_config=self.config.vllm,
                 tp_size=self.allocation_mode.gen.tp_size,
                 pp_size=self.allocation_mode.gen.pp_size,
             )
+            # vLLM does not require LoRA paths during initialization.
+            # LoRA is attached to generation requests.
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.gen_backend}, expected sglang or vllm"
@@ -593,6 +784,37 @@ class PPOTrainer:
         controller.initialize(**init_kwargs)
         return controller
 
+    def _save_initial_lora_weights(self) -> str | None:
+        """Save initial LoRA weights for inference server pre-loading.
+
+        Returns path to saved LoRA weights, or None if LoRA is disabled.
+        """
+        if not self.config.actor.use_lora:
+            return None
+
+        path = os.path.join(
+            Saver.get_model_save_root(
+                self.config.experiment_name,
+                self.config.trial_name,
+                self.config.cluster.fileroot,
+                name="actor",
+            ),
+            "initial_lora",
+        )
+
+        meta = SaveLoadMeta(
+            path=path,
+            weight_format="hf",
+            with_optim=False,
+            tokenizer=self.tokenizer,
+            processor=self.processor,
+            base_model_path=self.config.actor.path,
+        )
+        # Save LoRA weights using engine's HuggingFace save
+        self.actor.save(meta=meta)
+
+        return path
+
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
         # Save as HF models for evaluation
         self.saver.save(
@@ -613,8 +835,10 @@ class PPOTrainer:
                 processor=self.processor,
                 name="critic",
             )
-        dist.barrier(group=self.actor.cpu_group)
-        current_platform.synchronize()
+        # Async mode: synchronization handled by AsyncCheckpointManager
+        if not self.saver.is_async:
+            dist.barrier(group=self.actor.cpu_group)
+            current_platform.synchronize()
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
         # Save recoverable checkpoints
@@ -671,7 +895,11 @@ class PPOTrainer:
         epoch_step: int,
         global_step: int,
     ):
-        if self.valid_dataloader is None or eval_workflow is None:
+        if (
+            self.eval_rollout is None
+            or self.valid_dataloader is None
+            or eval_workflow is None
+        ):
             return
         self.evaluator.evaluate(
             functools.partial(
@@ -690,13 +918,25 @@ class PPOTrainer:
         # Upload statistics to the logger (e.g., wandb)
         stats = self.actor.export_stats()
         stats.update(self.rollout.export_stats())
-        stats.update(self.eval_rollout.export_stats())
+        if self.eval_rollout is not None:
+            stats.update(self.eval_rollout.export_stats())
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
-    def _requires_proxy_workflow(self, workflow: WorkflowLike) -> bool:
+    def _validate_cfg(self):
+        """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
+        if (
+            self.allocation_mode.gen_backend == "vllm"
+            and self.config.rollout.return_routed_experts
+        ):
+            raise ValueError(
+                "return_routed_experts is only supported with SGLang backend. "
+                "Please disable return_routed_experts or switch to SGLang backend."
+            )
+
+    def _requires_proxy_workflow(self, workflow: WorkflowLike | None) -> bool:
         """Check if workflow requires proxy workers (i.e., not a RolloutWorkflow).
 
         Returns True if:
@@ -707,6 +947,10 @@ class PPOTrainer:
         This enables any callable object with a compatible signature to work
         without requiring inheritance from AgentWorkflow.
         """
+        # None workflow is handled separately in train()
+        if workflow is None:
+            return False
+
         # Direct RolloutWorkflow instances
         if isinstance(workflow, RolloutWorkflow):
             return False
@@ -739,9 +983,11 @@ class PPOTrainer:
     def _ensure_proxy_started(self) -> None:
         """Lazily initialize proxy workers when agent workflows are used.
 
-        This method is called before training when a non-RolloutWorkflow is detected.
-        It creates proxy workers colocated with rollout workers to handle
-        OpenAI-compatible API requests from agent subprocesses.
+        This method is called before training when a non-RolloutWorkflow is detected
+        or when online mode is configured. It creates proxy workers colocated with
+        rollout workers to handle OpenAI-compatible API requests.
+
+        In online mode, also starts the proxy gateway for external access.
         """
         if self._proxy_started:
             return
@@ -759,12 +1005,23 @@ class PPOTrainer:
         self.rollout.start_proxy()
         if self.eval_rollout is not None:
             self.eval_rollout.start_proxy()
+
+        # Start proxy gateway for online mode.
+        openai_cfg = self.config.rollout.openai
+        if openai_cfg is not None and openai_cfg.mode == "online":
+            self.rollout.start_proxy_gateway()
+            logger.info(
+                "Proxy gateway available at %s",
+                self.rollout.proxy_gateway_addr,
+            )
+
         self._proxy_started = True
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
         if exc_type is not None:
-            raise exc_value
+            logger.error(f"Training failed with exception: {exc_value}", exc_info=True)
+        self.close()
+        return False
