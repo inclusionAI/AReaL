@@ -40,7 +40,7 @@ python3 examples/math/gsm8k_rl.py \
     scheduler.type=local \
     experiment_name=<您的实验名称> \
     trial_name=<您的试验名称> \
-    rollout.backend=sglang:d2p1t1 actor.backend=d2p1t1 \
+    rollout.backend=sglang:d2p1t1 actor.backend=fsdp:d2p1t1 \
     cluster.n_nodes=1 \
     cluster.n_gpus_per_node=4 \
     gconfig.max_new_tokens=2048 \
@@ -75,7 +75,7 @@ python3 examples/math/gsm8k_rl.py \
     scheduler.type=ray \
     experiment_name=<您的实验名称> \
     trial_name=<您的试验名称> \
-    rollout.backend=sglang:d12p1t1 actor.backend=d4p1t1 \
+    rollout.backend=sglang:d12p1t1 actor.backend=fsdp:d4p1t1 \
     cluster.n_nodes=4 \
     cluster.n_gpus_per_node=4
 
@@ -85,7 +85,7 @@ python3 examples/math/gsm8k_rl.py \
     scheduler.type=slurm \
     experiment_name=<您的实验名称> \
     trial_name=<您的试验名称> \
-    rollout.backend=sglang:d96p1t1 actor.backend=d32p1t1 \
+    rollout.backend=sglang:d96p1t1 actor.backend=fsdp:d32p1t1 \
     cluster.n_nodes=16 \
     cluster.n_gpus_per_node=8
 ```

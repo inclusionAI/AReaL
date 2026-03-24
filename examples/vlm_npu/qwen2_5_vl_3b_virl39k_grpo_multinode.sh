@@ -7,7 +7,7 @@ python examples/vlm_npu/virl39k_grpo.py \
    scheduler.type=ray \
    experiment_name=virl39k-grpo-multiNode \
    rollout.backend=vllm:d32 \
-   actor.backend=d16 \
+   actor.backend=fsdp:d16 \
    cluster.n_nodes=3 \
    cluster.n_gpus_per_node=16 \
    train_dataset.path=data/ViRL39K \

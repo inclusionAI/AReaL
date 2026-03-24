@@ -415,7 +415,7 @@ return concat_padded_tensors(results)  # 形状：[batch_size, seq_len]
 **并行性**：各引擎的 `backend` 字段决定 GPU 分配：
 
 ```
-rollout.backend=sglang:d4 actor.backend=d4, n_gpus=8
+rollout.backend=sglang:d4 actor.backend=fsdp:d4, n_gpus=8
 
 Rollout 工作进程：      训练工作进程：
 GPU 0: SGLang         GPU 4: FSDP rank 0  ─┐

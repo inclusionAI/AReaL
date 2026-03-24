@@ -442,7 +442,7 @@ implements the GRPO/PPO algorithm:
 **Parallelism**: Each engine's `backend` field determines its GPU allocation:
 
 ```
-rollout.backend=sglang:d4 actor.backend=d4, n_gpus=8
+rollout.backend=sglang:d4 actor.backend=fsdp:d4, n_gpus=8
 
 Rollout Workers:     Training Workers:
 GPU 0: SGLang        GPU 4: FSDP rank 0  ─┐

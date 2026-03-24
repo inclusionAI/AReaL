@@ -45,7 +45,7 @@ run: |
     cluster.n_nodes=1 \
     cluster.n_gpus_per_node=$SKYPILOT_NUM_GPUS_PER_NODE \
     rollout.backend=sglang:d1 \
-    actor.backend=d1 \
+    actor.backend=fsdp:d1 \
     train_dataset.batch_size=4 \
     actor.mb_spec.max_tokens_per_mb=4096
 ```
@@ -140,7 +140,7 @@ run: |
             cluster.n_nodes=$SKYPILOT_NUM_NODES \
             cluster.n_gpus_per_node=$SKYPILOT_NUM_GPUS_PER_NODE \
             rollout.backend=sglang:d8 \
-            actor.backend=d8
+            actor.backend=fsdp:d8
   else
     sleep 10
     echo "Starting Ray worker node..."

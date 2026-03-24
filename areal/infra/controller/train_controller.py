@@ -186,7 +186,7 @@ class TrainController:
     def initialize(
         self,
         role: str,
-        ft_spec: FinetuneSpec | None = None,
+        ft_spec: FinetuneSpec,
         **kwargs,
     ):
         """Initialize environments for distributed training and load models.
@@ -195,7 +195,7 @@ class TrainController:
         ----------
         role : str
             Role identifier for the workers
-        ft_spec : FinetuneSpec | None
+        ft_spec : FinetuneSpec
             Finetune specification for model initialization
         **kwargs
             Additional keyword arguments passed to engine initialization
