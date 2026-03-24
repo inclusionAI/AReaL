@@ -1181,12 +1181,16 @@ class PPOActorConfig(TrainEngineConfig):
             "'token_mask': set token ratio to 0 where ratio > cap. "
             "'sequence_truncate': clamp sequence ratio to [0, cap]. "
             "'sequence_mask': set sequence ratio to 0 where ratio > cap. "
+            "'geometric_rs_token_tis': geometric-level rejection sampling + token-level TIS (truncate). "
+            "'geometric_rs_token_mis': geometric-level rejection sampling + token-level MIS (mask). "
             "'disabled': disable importance weight correction.",
             "choices": [
                 "token_truncate",
                 "token_mask",
                 "sequence_truncate",
                 "sequence_mask",
+                "geometric_rs_token_tis",
+                "geometric_rs_token_mis", 
                 "disabled",
             ],
         },
