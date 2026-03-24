@@ -59,6 +59,7 @@ LOGGER_COLORS_EXACT = {
     "SyncRPCServer": "white",
     "RayRPCServer": "white",
     "RPCSerialization": "white",
+    "HttpRTensor": "white",
     # Inference wrappers - white
     "SGLangWrapper": "white",
     "VLLMWrapper": "white",
