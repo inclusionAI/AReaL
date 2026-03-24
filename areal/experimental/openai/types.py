@@ -52,6 +52,9 @@ class InteractionWithTokenLogpReward:
     response: Response | None = None
     input_data: str | ResponseInputParam = field(default_factory=lambda: "")
 
+    # Interaction ID cache (used for deserialization)
+    _interaction_id: str | None = None
+
     @property
     def is_completion(self) -> bool:
         return self.completion is not None
@@ -101,8 +104,16 @@ class InteractionWithTokenLogpReward:
             return self.completion.id
         elif self.is_response:
             return self.response.id
+        elif self._interaction_id is not None:
+            return self._interaction_id
         else:
             return None
+
+    @interaction_id.setter
+    def interaction_id(self, value):
+        if self.is_completion or self.is_response:
+            raise ValueError("Cannot set ID for completion or responses")
+        self._interaction_id = value
 
     @property
     def created_at(self) -> float | None:

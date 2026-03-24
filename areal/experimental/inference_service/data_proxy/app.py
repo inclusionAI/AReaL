@@ -359,14 +359,16 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         store.remove_session(body.session_id)
 
         # Serialize for HTTP transport, storing tensors locally as RTensor shards
-        # so that RTensor.localize() on the client can fetch them via /data/ endpoints.
-        serving_addr = config.serving_addr
-        if not serving_addr:
-            logger.warning(
-                "serving_addr not configured; tensors will be serialized "
-                "as plain lists (RTensor.localize() will not work remotely)"
-            )
-        serialized = serialize_interactions(interactions, node_addr=serving_addr)
+        from areal.infra.rpc.rtensor import RTensor
+
+        for item in interactions.values():
+            # Set the internal cache
+            item.to_tensor_dict()
+            # Remotize the tensor dict cache
+            item._cache = RTensor.remotize(item._cache, node_addr=config.serving_addr)
+
+        # serialize RTensors
+        serialized = serialize_interactions(interactions)
         return ExportTrajectoriesResponse(interactions=serialized)
 
     # NOTE: /grant_capacity has been removed from data proxy. Capacity-based

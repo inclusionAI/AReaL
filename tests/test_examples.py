@@ -853,6 +853,7 @@ def test_tau2(tmp_path_factory):
         kill_process_tree(user_llm_proc.pid, graceful=False)
 
 
+@pytest.mark.ci
 @pytest.mark.sglang
 @pytest.mark.multi_gpu
 def test_openclaw_online_rl(tmp_path_factory):
