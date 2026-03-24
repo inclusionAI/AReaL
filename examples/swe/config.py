@@ -36,6 +36,14 @@ class SweDataConfig:
             "turns are stripped."
         },
     )
+    no_tools: bool = field(
+        default=False,
+        metadata={
+            "help": "Do not pass tool definitions to apply_chat_template. "
+            "By default, tools are auto-extracted from the data and "
+            "rendered in the system prompt (e.g. Qwen3 '# Tools' block)."
+        },
+    )
 
 
 @dataclass
