@@ -13,7 +13,7 @@ Commit message conventions and scope inference rules for the AReaL repository.
 
 - Direct commits (`git commit`)
 - Commits during PR creation (`/create-pr`)
-- Commits delegated via `task(load_skills=["commit-conventions"], ...)`
+- Commits delegated via Agent tool with `skills: ["commit-conventions"]`
 - Any agent workflow that produces a commit
 
 ## Commit Message Format
@@ -126,7 +126,7 @@ ______________________________________________________________________
                             MAINTAINER GUIDE
 ================================================================================
 
-Location: .opencode/skills/commit-conventions/SKILL.md
+Location: .claude/skills/commit-conventions/SKILL.md
 Invocation: Automatically loaded on every git commit via load_skills
 
 ## Purpose

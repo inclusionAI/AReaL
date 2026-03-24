@@ -92,11 +92,11 @@ git rev-list --count origin/main..HEAD
 # Soft reset to origin/main (keeps changes staged)
 git reset --soft origin/main
 
-# Generate commit message using /gen-commit-msg logic
-# See .claude/commands/gen-commit-msg.md for message generation rules
+# Generate commit message using commit-conventions skill
+# See .claude/skills/commit-conventions/SKILL.md for format rules
 ```
 
-**Generate Commit Message** (following `/gen-commit-msg` format):
+**Generate Commit Message** (following `commit-conventions` skill):
 
 1. Analyze staged changes:
 
@@ -150,7 +150,7 @@ git log --oneline origin/main..HEAD
 
 **Categorize Changes:**
 
-Follow same categorization as `/gen-commit-msg`:
+Follow same categorization as the `commit-conventions` skill:
 
 | Type       | When to Use                     |
 | ---------- | ------------------------------- |
@@ -670,7 +670,7 @@ Invocation: /create-pr
 ## Design Philosophy
 
 - Automates full PR creation workflow: fetch, rebase, **squash to single commit**, push, create/update PR
-- **Always squashes all commits** since `origin/main` into a single commit with message generated via `/gen-commit-msg` logic
+- **Always squashes all commits** since `origin/main` into a single commit with message generated via the `commit-conventions` skill
 - **Handles existing PRs** by detecting them and force-updating after user permission
 - Follows repository's Conventional Commits format
 - Requires user confirmation at critical steps (existing PR detection, rebase, squash, force-push, PR creation/update)

@@ -39,8 +39,8 @@ uv run python docs/generate_cli_docs.py
 - Run `pre-commit run --all-files` before committing.
 - Follow existing code patterns in the same module.
 - Add tests for new functionality.
-- Use the `question` tool (structured options) when asking the user for decisions or
-  clarifications.
+- Ask for decisions and clarifications with short, structured options instead of broad
+  open-ended questions.
 
 **Ask first** before:
 
@@ -123,8 +123,17 @@ step-by-step implementation guides.
 | Unit tests                   | --                 | `add-unit-tests`    |
 | Distributed debugging        | --                 | `debug-distributed` |
 
-**How to fire an expert**:
-`task(subagent_type="fsdp-expert", load_skills=[], run_in_background=true, prompt="...")`
+**Codex harness layout**:
+
+- Root instructions: `AGENTS.md`
+- Codex subagents: `.codex/config.toml` + `.codex/agents/*.toml` + `.codex/agents/*.md`
+- Codex skills: `.agents/skills/<name>/SKILL.md`
+- Directly executable Codex workflows: repo-local skills such as `add-workflow`,
+  `review-pr`, `create-pr`, and `translate-doc-zh`
+
+When using Codex, skills are the main reusable workflow surface. Invoke the registered
+subagent that matches the canonical name above when domain-specific consultation is
+useful.
 
 ______________________________________________________________________
 
@@ -184,7 +193,7 @@ ______________________________________________________________________
 | OOM           | Unsharded tensor on wrong device | Verify DTensor placements |
 
 Debug env vars: `TORCH_DISTRIBUTED_DEBUG=DETAIL`, `NCCL_DEBUG=INFO`,
-`CUDA_LAUNCH_BLOCKING=1`. See `/debug-distributed` skill for comprehensive guide.
+`CUDA_LAUNCH_BLOCKING=1`. See the `debug-distributed` skill for the full workflow.
 
 ______________________________________________________________________
 
@@ -222,12 +231,12 @@ ______________________________________________________________________
 - **PRs**: tie to issue, highlight risk areas, list test commands executed, note skipped
   suites with reasons.
 
-| Command / Skill      | Purpose                                              |
-| -------------------- | ---------------------------------------------------- |
-| `/create-pr`         | Rebase, squash, create PR                            |
-| `commit-conventions` | Commit message conventions (auto-triggers on commit) |
-| `/review-pr`         | Dynamic agent-allocated PR review                    |
-| `/translate-doc-zh`  | Translate English docs to Chinese                    |
+| Skill                | Purpose                                                |
+| -------------------- | ------------------------------------------------------ |
+| `create-pr`          | Rebase, squash, and create or update a PR              |
+| `commit-conventions` | Commit message conventions to load before `git commit` |
+| `review-pr`          | Dynamic PR review with targeted expert consultation    |
+| `translate-doc-zh`   | Translate English docs to Chinese                      |
 
 ______________________________________________________________________
 
