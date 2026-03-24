@@ -43,6 +43,7 @@ classifiers = [
 dependencies = [
     # Core ML/AI libraries
     "torch>=2.9.1,<2.11",
+    "torchao==0.15.0",
     "torchaudio",
     "torchvision",
     "torchdata",
@@ -65,6 +66,9 @@ dependencies = [
     "seaborn",
 
     # Utilities and data processing
+    "pillow>=12.1.1",
+    "pylatexenc",
+    "zstandard",
     "setproctitle",
     "nltk",
     "sentencepiece",
@@ -137,6 +141,7 @@ dependencies = [
 sglang = [
     "sglang[tracing]==0.5.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
@@ -173,6 +178,7 @@ cuda-sglang = [
     "areal[sglang]",
     "areal[flash-attn]",
     "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
@@ -187,6 +193,7 @@ cuda-vllm = [
 cuda = [
     "areal[cuda-sglang]",
     "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
@@ -265,8 +272,12 @@ override-dependencies = [
     # litellm[proxy] conflicts with sglang's exact pins:
     # - litellm requires openai>=2.8.0, sglang pins openai==2.6.1
     # - litellm requires soundfile>=0.12.1,<0.13.0, sglang pins soundfile==0.13.1
+    # torchao conflicts with sglang's pin 0.9.0, but we require 0.15.0 for archon fp8
+    # nvidia-cudnn-cu12 is required for VLM + SGLang
     "openai>=2.8.0",
     "soundfile>=0.12.1,<0.13.0",
+    "torchao==0.15.0",
+    "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 # Static metadata so uv lock resolves flash-attn without downloading or building.
