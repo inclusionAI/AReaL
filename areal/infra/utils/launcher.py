@@ -6,7 +6,7 @@ import pathlib
 import sys
 import time
 
-from areal.api import AllocationMode, AllocationType
+from areal.api.alloc_mode import AllocationType, _AllocationMode
 from areal.utils import logging, name_resolve, names
 from areal.utils.fs import validate_shared_path
 
@@ -226,7 +226,7 @@ def validate_config_for_launcher(config):
     if not hasattr(config, "actor"):
         raise RuntimeError("`actor` field is required by all yaml configs.")
     allocation_mode = config.allocation_mode
-    allocation_mode = AllocationMode.from_str(allocation_mode)
+    allocation_mode = _AllocationMode.from_str(allocation_mode)
     if allocation_mode.gen_backend in ["sglang", "vllm"]:
         if not hasattr(config, "rollout"):
             raise RuntimeError(
@@ -249,7 +249,7 @@ def validate_config_for_distributed_launcher(config):
     n_nodes = config.cluster.n_nodes
     n_gpus_per_node = config.cluster.n_gpus_per_node
     allocation_mode = config.allocation_mode
-    allocation_mode = AllocationMode.from_str(allocation_mode)
+    allocation_mode = _AllocationMode.from_str(allocation_mode)
     if allocation_mode.type_ == AllocationType.DECOUPLED_TRAIN:
         assert (
             allocation_mode.gen.world_size + allocation_mode.train.world_size

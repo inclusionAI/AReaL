@@ -1,8 +1,5 @@
 import torch
 
-from areal.api import AllocationMode, WeightUpdateMeta
-from areal.api.cli_args import BaseExperimentConfig
-
 VALID_VISION_MODELS = [
     "qwen2_vl",
     "qwen2_5_vl",
@@ -54,43 +51,3 @@ def disable_dropout_in_model(model: torch.nn.Module) -> None:
     for module in model.modules():
         if isinstance(module, torch.nn.Dropout):
             module.p = 0
-
-
-def get_model_update_meta(config: BaseExperimentConfig) -> WeightUpdateMeta:
-    """Get weight update metadata based on configuration.
-
-    Args:
-        config: BaseExperimentConfig (e.g., GRPOConfig, PPOConfig, SFTConfig, RWConfig)
-            The function will extract the appropriate engine config (actor/model)
-            to determine the weight update mode.
-
-    Returns:
-        WeightUpdateMeta: Metadata for weight updates
-    """
-    if not isinstance(config, BaseExperimentConfig):
-        raise TypeError(
-            f"config must be BaseExperimentConfig (e.g., GRPOConfig, PPOConfig, SFTConfig), "
-            f"got {type(config).__name__}"
-        )
-
-    # For experiment configs, try to get actor config first (for GRPO/PPO),
-    # otherwise use model config (for SFT/RW)
-    if hasattr(config, "actor"):
-        engine_config = config.actor
-    elif hasattr(config, "model"):
-        engine_config = config.model
-    else:
-        raise ValueError(
-            f"Config {type(config).__name__} must have either 'actor' or 'model' attribute"
-        )
-
-    weight_update_mode = engine_config.weight_update_mode
-
-    if weight_update_mode == "disk":
-        return WeightUpdateMeta.from_disk(
-            config.experiment_name, config.trial_name, config.cluster.fileroot
-        )
-    else:
-        return WeightUpdateMeta.from_fsdp_xccl(
-            AllocationMode.from_str(config.allocation_mode)
-        )

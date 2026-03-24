@@ -4,12 +4,13 @@ import sys
 import time
 import traceback
 import uuid
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 
 import requests
 
-from areal.api import AllocationMode
+from areal.api.alloc_mode import _AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
     InferenceEngineConfig,
@@ -89,7 +90,7 @@ class SGLangServerWrapper:
         experiment_name: str,
         trial_name: str,
         sglang_config: SGLangConfig,
-        allocation_mode: AllocationMode,
+        allocation_mode: _AllocationMode,
         n_gpus_per_node: int,
         cpu_per_gpu: int | None = None,
     ):
@@ -218,8 +219,18 @@ def launch_sglang_server(argv):
     config.rollout = to_structured_cfg(config.rollout, InferenceEngineConfig)
     name_resolve.reconfigure(config.cluster.name_resolve)
 
+    warnings.warn(
+        "SPMD launchers use the deprecated _AllocationMode parser which will be removed. "
+        "Bare dimension strings (e.g., 'd4t2') are NO LONGER ACCEPTED. "
+        "All allocation strings must include an explicit backend prefix "
+        "(e.g., 'fsdp:d4', 'sglang:d4t2'). "
+        "Migrate to single-controller mode (scheduler.type=local) with per-engine 'backend' "
+        "fields (e.g., actor.backend='fsdp:d4'). See docs/en/reference/alloc_mode.md.",
+        FutureWarning,
+        stacklevel=2,
+    )
     allocation_mode = config.allocation_mode
-    allocation_mode = AllocationMode.from_str(allocation_mode)
+    allocation_mode = _AllocationMode.from_str(allocation_mode)
     assert allocation_mode.gen_backend == "sglang"
 
     # Get CPU per GPU from rollout scheduling spec

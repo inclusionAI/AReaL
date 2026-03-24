@@ -29,7 +29,6 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
 from areal.api import (
-    AllocationMode,
     FinetuneSpec,
     InferenceEngine,
     MegatronParallelStrategy,
@@ -234,7 +233,6 @@ class MegatronEngine(TrainEngine):
             f"update_weight_group_{mpu.get_pipeline_model_parallel_rank()}"
         )
         self.engine_lock = DistributedLock("train_engine_lock")
-        self.alloc_mode: AllocationMode | None = kwargs.get("alloc_mode", None)
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
@@ -1225,12 +1223,13 @@ class MegatronEngine(TrainEngine):
         # which blocks creating another TCP store for weight update.
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
         if self.is_pipeline_parallel_head():
-            assert meta.alloc_mode is not None
+            assert meta.gen_allocation is not None
 
             self.engine_lock.acquire()
 
             fut = self.rollout_engine.init_weights_update_group(meta)
 
+            gen_world_size = meta.gen_allocation.parallel.world_size
             self.logger.info(
                 f"Initializing weight update group: type={meta.type} "
                 f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port} "
@@ -1238,7 +1237,7 @@ class MegatronEngine(TrainEngine):
             )
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
-                world_size=meta.alloc_mode.gen.world_size + 1,
+                world_size=gen_world_size + 1,
                 init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
                 group_name=self.weight_update_group_name,
@@ -1653,7 +1652,7 @@ class MegatronRWEngine(MegatronEngine):
         super().__init__(config)
         self.rw_engine = RWEngine(self)
         if self.config.mb_spec.granularity != 2:
-            rw_logger = logging.getLogger("RW engine")
+            rw_logger = logging.getLogger("RWEngine")
             rw_logger.warning("mb_spec.granularity must be 2 for reward modeling")
             self.config = deepcopy(self.config)
             self.config.mb_spec.granularity = 2

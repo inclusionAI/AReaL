@@ -5,11 +5,12 @@ import signal as signal_module
 import subprocess
 import sys
 import time
+import warnings
 from collections import defaultdict
 
 import psutil
 
-from areal.api import AllocationMode, AllocationType
+from areal.api.alloc_mode import AllocationType, _AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
     InferenceEngineConfig,
@@ -268,6 +269,16 @@ def local_main(config, run_id: int = 0):
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     is_recover_run = check_if_recover(config.recover, run_id)
+    warnings.warn(
+        "SPMD launchers use the deprecated _AllocationMode parser which will be removed. "
+        "Bare dimension strings (e.g., 'd4t2') are NO LONGER ACCEPTED. "
+        "All allocation strings must include an explicit backend prefix "
+        "(e.g., 'fsdp:d4', 'sglang:d4t2'). "
+        "Migrate to single-controller mode (scheduler.type=local) with per-engine 'backend' "
+        "fields (e.g., actor.backend='fsdp:d4'). See docs/en/reference/alloc_mode.md.",
+        FutureWarning,
+        stacklevel=2,
+    )
     validate_config_for_launcher(config)
     launcher = LocalLauncher(
         config.experiment_name, config.trial_name, config.cluster.fileroot
@@ -279,7 +290,7 @@ def local_main(config, run_id: int = 0):
             experiment_name=config.experiment_name, trial_name=config.trial_name
         )
     )
-    alloc_mode = AllocationMode.from_str(config.allocation_mode)
+    alloc_mode = _AllocationMode.from_str(config.allocation_mode)
 
     logger.info(
         f"LocalLauncher: experiment_name={config.experiment_name}, "

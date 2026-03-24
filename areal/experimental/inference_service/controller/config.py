@@ -50,6 +50,7 @@ class GatewayControllerConfig:
     dump_to_file: bool = False
 
     # -- Scheduler / allocation (passed through from trainer) --------------
+    backend: str = "sglang:d1"
     scheduling_spec: tuple = field(default_factory=tuple)
     pause_grace_period: float = 0.5
 

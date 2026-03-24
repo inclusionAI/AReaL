@@ -17,8 +17,6 @@ cluster:
     type: nfs
     nfs_record_root: /path/to/name_resolve  # Replace with your name resolve directory
 
-allocation_mode: sglang:d2
-
 scheduler:
   type: local
 
@@ -31,6 +29,7 @@ gconfig:
   temperature: 1.0
 
 rollout:
+  backend: "sglang:d2"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 256

@@ -66,6 +66,7 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
     os.environ["LOCAL_RANK"] = str(0)
 
     config = TrainEngineConfig(
+        backend="fsdp:d1",
         path=model_path,
         dtype="bfloat16",
         attn_impl="flash_attention_2",
@@ -237,6 +238,7 @@ def test_vlm_consistency(model_path):
     os.environ["LOCAL_RANK"] = str(0)
 
     config = TrainEngineConfig(
+        backend="fsdp:d1",
         path=model_path,
         dtype="bfloat16",
         attn_impl="flash_attention_2",
