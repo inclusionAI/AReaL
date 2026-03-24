@@ -327,7 +327,7 @@ def test_vlm_sft(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "actor.backend=d1",
+        "actor.backend=fsdp:d1",
         "actor.mb_spec.max_tokens_per_mb=1024",
         "train_dataset.batch_size=16",
         "valid_dataset.batch_size=16",
