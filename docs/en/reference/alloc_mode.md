@@ -126,20 +126,9 @@ layers.
 | `megatron` | `d`, `t`, `p`, `c`, `e` | Required for pipeline or expert parallel |
 | `archon`   | `d`, `t`, `p`, `c`, `e` | Alternative to Megatron (experimental)   |
 
-When the backend is omitted, AReaL auto-selects based on the parallelism configuration:
-
-- **FSDP**: Used when only `d`, `t`, `c` are specified (default for training engines)
-- **Megatron**: Used when `p > 1` or `e > 1`
-- **SGLang**: Default for inference engines
-
-```
-# Equivalent forms
-d4t2           # Auto-selects FSDP (for actor.backend)
-fsdp:d4t2      # Explicit FSDP
-
-d2p2t4         # Auto-selects Megatron (pp > 1)
-megatron:d2p2t4  # Explicit Megatron
-```
+> **Important**: An explicit backend prefix is **required** in all allocation strings.
+> Bare dimension strings (e.g., `d4t2`) are no longer accepted. Always specify the
+> backend explicitly: `fsdp:d4t2`, `megatron:d2p2t4`, `sglang:d4t2`.
 
 ## MoE Hybrid Parallelism
 

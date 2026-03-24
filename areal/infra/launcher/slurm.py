@@ -411,6 +411,9 @@ def slurm_main(config, run_id: int = 0):
     is_recover_run = check_if_recover(config.recover, run_id)
     warnings.warn(
         "SPMD launchers use the deprecated _AllocationMode parser which will be removed. "
+        "Bare dimension strings (e.g., 'd4t2') are NO LONGER ACCEPTED. "
+        "All allocation strings must include an explicit backend prefix "
+        "(e.g., 'fsdp:d4', 'sglang:d4t2'). "
         "Migrate to single-controller mode (scheduler.type=local) with per-engine 'backend' "
         "fields (e.g., actor.backend='fsdp:d4'). See docs/en/reference/alloc_mode.md.",
         FutureWarning,

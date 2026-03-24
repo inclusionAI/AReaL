@@ -113,20 +113,8 @@ actor:
 | `megatron` | `d`, `t`, `p`, `c`, `e` | 流水线或专家并行必需          |
 | `archon`   | `d`, `t`, `p`, `c`, `e` | Megatron 的替代方案（实验性） |
 
-省略后端时，AReaL 根据并行配置自动选择：
-
-- **FSDP**：当仅指定 `d`、`t`、`c` 时使用（训练引擎默认）
-- **Megatron**：当 `p > 1` 或 `e > 1` 时使用
-- **SGLang**：推理引擎默认
-
-```
-# 等效形式
-d4t2           # 自动选择 FSDP（用于 actor.backend）
-fsdp:d4t2      # 显式 FSDP
-
-d2p2t4         # 自动选择 Megatron（pp > 1）
-megatron:d2p2t4  # 显式 Megatron
-```
+> **重要**：所有分配字符串都必须显式指定后端前缀。 裸维度字符串（如
+> `d4t2`）不再被接受。请始终显式指定后端：`fsdp:d4t2`、`megatron:d2p2t4`、`sglang:d4t2`。
 
 ## MoE 混合并行
 
