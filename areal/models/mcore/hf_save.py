@@ -508,7 +508,7 @@ def save_weights_to_hf_with_mbridge_fast(
         if _max_workers is None:
             _max_workers = min(8, max(1, os.cpu_count() // dist.get_world_size()))
         _max_workers = min(_max_workers, n_shards_per_gpu)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=_max_workers) as executor:
             results = executor.map(
                 _save_one_shard,
                 list(enumerate(shards[local_start : local_start + n_shards_per_gpu])),
