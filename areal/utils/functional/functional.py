@@ -208,29 +208,38 @@ def compute_behave_imp_weight(
         else:
             # 1D packed case: use cu_seqlens to identify sequences
             num_seqs = len(cu_seqlens) - 1
-            seq_keep_mask = torch.zeros_like(loss_mask, dtype=torch.bool)
+            seq_lengths = cu_seqlens[1:] - cu_seqlens[:-1]
+            sequence_idx = torch.arange(
+                num_seqs, device=loss_mask.device
+            ).repeat_interleave(seq_lengths)
+
+            # Use scatter_add for vectorized summation per sequence
+            masked_log_ratio = torch.where(loss_mask, behave_imp_weight_log_ratio, 0.0)
+            log_ratio_sum_per_seq = torch.zeros(
+                num_seqs, device=loss_mask.device, dtype=behave_imp_weight_log_ratio.dtype
+            ).scatter_add_(0, sequence_idx, masked_log_ratio)
+
+            valid_count_per_seq = (
+                torch.zeros(num_seqs, device=loss_mask.device, dtype=torch.int32)
+                .scatter_add_(0, sequence_idx, loss_mask.int())
+            )
             
-            for i in range(num_seqs):
-                start_idx = cu_seqlens[i]
-                end_idx = cu_seqlens[i + 1]
-                seq_mask = loss_mask[start_idx:end_idx]
-                seq_log_ratios = behave_imp_weight_log_ratio[start_idx:end_idx]
-                
-                # Compute geometric mean for this sequence
-                num_valid_tokens = seq_mask.sum()
-                if num_valid_tokens > 0:
-                    mean_log_ratio = (seq_log_ratios * seq_mask).sum() / num_valid_tokens
-                    geometric_ratio = mean_log_ratio.exp()
-                    
-                    # Rejection: keep sequence if geometric_ratio <= cap
-                    if behave_imp_weight_cap is not None:
-                        keep_seq = geometric_ratio <= behave_imp_weight_cap
-                    else:
-                        keep_seq = True
-                else:
-                    keep_seq = False
-                
-                seq_keep_mask[start_idx:end_idx] = keep_seq
+            # Compute geometric mean ratio per sequence, handling empty sequences
+            valid_seq_mask = valid_count_per_seq > 0
+            seq_mean_log_ratio = torch.zeros_like(log_ratio_sum_per_seq)
+            seq_mean_log_ratio[valid_seq_mask] = log_ratio_sum_per_seq[valid_seq_mask] / valid_count_per_seq[valid_seq_mask].to(log_ratio_sum_per_seq.dtype)
+            geometric_ratio = seq_mean_log_ratio.exp()
+
+            # Step 2: Rejection sampling - keep sequences where geometric_ratio <= cap
+            if behave_imp_weight_cap is not None:
+                # Sequences with no valid tokens will have geometric_ratio=exp(0)=1.
+                # We must explicitly reject them using valid_seq_mask.
+                seq_keep_mask_per_seq = (geometric_ratio <= behave_imp_weight_cap) & valid_seq_mask
+            else:
+                seq_keep_mask_per_seq = valid_seq_mask
+            
+            # Broadcast sequence-level mask back to token-level
+            seq_keep_mask = seq_keep_mask_per_seq[sequence_idx]
         
         # Step 3: Apply token-level TIS or MIS to kept sequences
         # Compute token-level importance weights (exp of log ratios)
