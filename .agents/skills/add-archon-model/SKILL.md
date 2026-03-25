@@ -466,13 +466,14 @@ ______________________________________________________________________
                             MAINTAINER GUIDE
 ================================================================================
 
-Location: .claude/skills/add-archon-model/SKILL.md
-Invocation: /add-archon-model <model_name>
+Canonical location: .agents/skills/add-archon-model/SKILL.md
+Mirrors: .opencode/skills/add-archon-model/SKILL.md, .claude/skills/add-archon-model/SKILL.md
+Invocation: $add-archon-model (Codex) / /add-archon-model (OpenCode, Claude Code)
 
 ## Purpose
 
 Semi-automated guide for adding new model architectures to the Archon training engine.
-Unlike simpler skills (add-reward, add-dataset), this skill actively guides Claude to:
+Unlike simpler skills (add-reward, add-dataset), this skill actively guides the agent to:
 1. Analyze HuggingFace source code to extract architecture details
 2. Select the closest reference implementation (qwen2 or qwen3)
 3. Generate code skeletons adapted to the target architecture
