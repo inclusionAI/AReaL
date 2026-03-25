@@ -44,6 +44,28 @@ class SweDataConfig:
             "rendered in the system prompt (e.g. Qwen3 '# Tools' block)."
         },
     )
+    filter_empty_tool_calls: bool = field(
+        default=False,
+        metadata={
+            "help": "Discard pairs whose training-target assistant turn has "
+            "no text content but has tool_calls (silent tool invocations)."
+        },
+    )
+    filter_bare_text_tool_calls: bool = field(
+        default=False,
+        metadata={
+            "help": "Discard pairs whose training-target assistant turn has "
+            "text content without <think> tags and has tool_calls."
+        },
+    )
+    truncate_task_notifications: bool = field(
+        default=False,
+        metadata={
+            "help": "Truncate trajectories at the first <task-notification> "
+            "that follows a pure-text assistant turn. Removes noise from "
+            "background task completions."
+        },
+    )
     cleanup_processed_dataset: bool = field(
         default=True,
         metadata={

@@ -44,6 +44,9 @@ def main(args):
         "pre_split": config.swe.pre_split,
         "filter_errors": config.swe.filter_errors,
         "strip_all_thinking": config.swe.strip_all_thinking,
+        "filter_empty_tool_calls": config.swe.filter_empty_tool_calls,
+        "filter_bare_text_tool_calls": config.swe.filter_bare_text_tool_calls,
+        "truncate_task_notifications": config.swe.truncate_task_notifications,
         "no_tools": config.swe.no_tools,
         "cache_dir": cache_dir,
     }

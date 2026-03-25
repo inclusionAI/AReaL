@@ -38,7 +38,7 @@ DATASET_NUM_PROC = 1
 # Timeout (seconds) for non-rank-0 workers waiting for rank 0 to finish
 # dataset processing.  Large datasets with tokenization can take minutes;
 # 30 min is a generous upper bound.
-_RANK0_CACHE_TIMEOUT = 1800
+_RANK0_CACHE_TIMEOUT = 3600
 _RANK0_CACHE_POLL_INTERVAL = 5
 
 
@@ -123,6 +123,58 @@ def _segment_has_error(messages, start, end):
     return False
 
 
+def _truncate_at_task_notification(messages):
+    """Truncate messages when a ``<task-notification>`` follows a pure-text assistant.
+
+    Claude Code emits ``<task-notification>`` as a user message when a
+    background task (e.g. ``pip install``) completes.  If the model has
+    already produced a text-only summary (no tool_calls), the notification
+    and all subsequent messages are noise — the model just replies
+    "nothing to do".  Truncating here removes that noise.
+
+    Only triggers when the pattern is:
+        assistant (text, no tool_calls) → user (<task-notification>)
+
+    Returns:
+        Truncated message list (or the original list if no truncation needed).
+    """
+    for i, m in enumerate(messages):
+        if m.get("role") != "user":
+            continue
+        if "<task-notification>" not in (m.get("content") or ""):
+            continue
+        # Find preceding assistant
+        prev_asst = None
+        for j in range(i - 1, -1, -1):
+            if messages[j].get("role") == "assistant":
+                prev_asst = messages[j]
+                break
+        if prev_asst is None:
+            continue
+        content = prev_asst.get("content") or ""
+        if content.strip() and not prev_asst.get("tool_calls"):
+            # Truncate: keep everything up to (but not including) this user msg
+            return messages[:i]
+    return messages
+
+
+def _is_empty_tool_call(msg):
+    """True if assistant *msg* has no text content but has tool_calls."""
+    content = msg.get("content") or ""
+    return not content.strip() and bool(msg.get("tool_calls"))
+
+
+def _is_bare_text_tool_call(msg):
+    """True if assistant *msg* has text without ``<think>`` tags and has tool_calls."""
+    content = msg.get("content") or ""
+    if not content.strip() or not msg.get("tool_calls"):
+        return False
+    normalized = _THINK_OPEN_RE.sub("<think>", content)
+    normalized = _THINK_CLOSE_RE.sub("</think>", normalized)
+    match = _THINK_RE.search(normalized)
+    return not (match and match.group(1).strip())
+
+
 def _clean_message(msg, strip_thinking=True):
     """Remove non-standard fields before tokenization.
 
@@ -180,8 +232,14 @@ def _clean_message(msg, strip_thinking=True):
     return cleaned
 
 
-def _split_and_filter(messages, filter_errors=True, strip_all_thinking=False):
-    """Split trajectory into progressive pairs and optionally filter by ``is_error``.
+def _split_and_filter(
+    messages,
+    filter_errors=True,
+    strip_all_thinking=False,
+    filter_empty_tool_calls=False,
+    filter_bare_text_tool_calls=False,
+):
+    """Split trajectory into progressive pairs and optionally filter.
 
     By default, thinking (``<think>...</think>``) is stripped from context
     assistant turns only; the last assistant turn (training target) keeps
@@ -195,16 +253,24 @@ def _split_and_filter(messages, filter_errors=True, strip_all_thinking=False):
             keep all pairs regardless of tool errors.
         strip_all_thinking: If True, strip ``<think>`` blocks from every
             assistant turn including the training target.
+        filter_empty_tool_calls: If True, discard pairs whose training-target
+            assistant turn has no text content but has tool_calls.
+        filter_bare_text_tool_calls: If True, discard pairs whose
+            training-target assistant turn has text content without
+            ``<think>`` tags and has tool_calls.
 
     Returns:
-        List of cleaned message sequences (one per valid pair).
+        Tuple of ``(pairs, n_filtered_errors, n_filtered_empty_tc,
+        n_filtered_bare_tc)``.
     """
     segments = _find_segments(messages)
     if not segments:
-        return [], 0
+        return [], 0, 0, 0
 
     pairs = []
-    n_filtered = 0
+    n_filtered_errors = 0
+    n_filtered_empty_tc = 0
+    n_filtered_bare_tc = 0
 
     # Pre-clean all messages in context mode (thinking stripped).
     # This avoids re-cleaning the same message for every progressive pair
@@ -223,7 +289,16 @@ def _split_and_filter(messages, filter_errors=True, strip_all_thinking=False):
     for asst_start, seg_end in segments:
         # Check if current segment has any tool errors
         if filter_errors and _segment_has_error(messages, asst_start, seg_end):
-            n_filtered += 1
+            n_filtered_errors += 1
+            continue
+
+        # Content-type filters operate on the raw assistant message.
+        asst_msg = messages[asst_start]
+        if filter_empty_tool_calls and _is_empty_tool_call(asst_msg):
+            n_filtered_empty_tc += 1
+            continue
+        if filter_bare_text_tool_calls and _is_bare_text_tool_call(asst_msg):
+            n_filtered_bare_tc += 1
             continue
 
         # Build pair from pre-cleaned messages (shallow copy of the slice).
@@ -232,7 +307,7 @@ def _split_and_filter(messages, filter_errors=True, strip_all_thinking=False):
             pair[asst_start] = target_cleaned[asst_start]
         pairs.append(pair)
 
-    return pairs, n_filtered
+    return pairs, n_filtered_errors, n_filtered_empty_tc, n_filtered_bare_tc
 
 
 _TEMPLATE_PATTERNS = [
@@ -389,7 +464,12 @@ def _detect_template_pattern(tokenizer, tools=None):
 
 
 def _load_trajectory_pairs(
-    path: str, filter_errors: bool = True, strip_all_thinking: bool = False
+    path: str,
+    filter_errors: bool = True,
+    strip_all_thinking: bool = False,
+    filter_empty_tool_calls: bool = False,
+    filter_bare_text_tool_calls: bool = False,
+    truncate_task_notifications: bool = False,
 ):
     """Load trajectory JSONL and split into progressive pairs.
 
@@ -404,6 +484,15 @@ def _load_trajectory_pairs(
         filter_errors: If True, discard pairs whose current segment contains
             a tool result with ``is_error=True``.
         strip_all_thinking: If True, strip thinking from all assistant turns.
+        filter_empty_tool_calls: If True, discard pairs whose training-target
+            assistant turn has no text content but has tool_calls.
+        filter_bare_text_tool_calls: If True, discard pairs whose
+            training-target assistant turn has text without ``<think>`` tags
+            and has tool_calls.
+        truncate_task_notifications: If True, truncate trajectories at the
+            first ``<task-notification>`` that follows a pure-text assistant
+            turn (no tool_calls), removing noise from background task
+            completions.
 
     Returns:
         Tuple of ``(all_pairs, tools)`` where *tools* is ``None`` when no
@@ -412,7 +501,10 @@ def _load_trajectory_pairs(
     all_pairs = []
     tools = None
     records_in = 0
-    total_filtered = 0
+    total_filtered_errors = 0
+    total_filtered_empty_tc = 0
+    total_filtered_bare_tc = 0
+    total_truncated = 0
 
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -438,6 +530,13 @@ def _load_trajectory_pairs(
             if not messages:
                 continue
 
+            # Truncate noise from background task notifications.
+            if truncate_task_notifications:
+                truncated = _truncate_at_task_notification(messages)
+                if len(truncated) < len(messages):
+                    total_truncated += 1
+                    messages = truncated
+
             # Extract tool definitions (same across all records).
             if tools is None and conv.get("tools"):
                 tools = conv["tools"]
@@ -446,18 +545,35 @@ def _load_trajectory_pairs(
                     f"Extracted {len(tools)} tool definitions from data: {tool_names}"
                 )
 
-            pairs, n_filtered = _split_and_filter(
+            pairs, n_err, n_empty_tc, n_bare_tc = _split_and_filter(
                 messages,
                 filter_errors=filter_errors,
                 strip_all_thinking=strip_all_thinking,
+                filter_empty_tool_calls=filter_empty_tool_calls,
+                filter_bare_text_tool_calls=filter_bare_text_tool_calls,
             )
-            total_filtered += n_filtered
+            total_filtered_errors += n_err
+            total_filtered_empty_tc += n_empty_tc
+            total_filtered_bare_tc += n_bare_tc
             all_pairs.extend(pairs)
+
+    filter_parts = []
+    if total_truncated:
+        filter_parts.append(
+            f"{total_truncated} trajectories truncated at task-notification"
+        )
+    if total_filtered_errors:
+        filter_parts.append(f"{total_filtered_errors} with tool errors")
+    if total_filtered_empty_tc:
+        filter_parts.append(f"{total_filtered_empty_tc} empty-content tool calls")
+    if total_filtered_bare_tc:
+        filter_parts.append(f"{total_filtered_bare_tc} bare-text tool calls")
+    filter_msg = ", ".join(filter_parts) if filter_parts else "none"
 
     logger.info(
         f"Loaded {records_in} trajectories, "
         f"generated {len(all_pairs)} pairs "
-        f"(filtered {total_filtered} with tool errors)"
+        f"(filtered: {filter_msg})"
     )
     return all_pairs, tools
 
@@ -522,6 +638,9 @@ def get_swe_sft_dataset(
     pre_split: bool = False,
     filter_errors: bool = True,
     strip_all_thinking: bool = False,
+    filter_empty_tool_calls: bool = False,
+    filter_bare_text_tool_calls: bool = False,
+    truncate_task_notifications: bool = False,
     no_tools: bool = False,
     cache_dir: str | None = None,
 ):
@@ -555,6 +674,14 @@ def get_swe_sft_dataset(
             keep all pairs regardless of tool errors.
         strip_all_thinking: If True, strip ``<think>...</think>`` from every
             assistant turn including the training target.
+        filter_empty_tool_calls: If True, discard pairs whose training-target
+            assistant turn has no text content but has tool_calls.
+        filter_bare_text_tool_calls: If True, discard pairs whose
+            training-target assistant turn has text without ``<think>``
+            tags and has tool_calls.
+        truncate_task_notifications: If True, truncate trajectories at the
+            first ``<task-notification>`` that follows a pure-text assistant
+            turn, removing noise from background task completions.
         no_tools: If True, do not pass tool definitions to
             ``apply_chat_template`` even if the data contains them.
         cache_dir: Directory to save/load the processed Arrow dataset.
@@ -612,6 +739,9 @@ def get_swe_sft_dataset(
                 pre_split=pre_split,
                 filter_errors=filter_errors,
                 strip_all_thinking=strip_all_thinking,
+                filter_empty_tool_calls=filter_empty_tool_calls,
+                filter_bare_text_tool_calls=filter_bare_text_tool_calls,
+                truncate_task_notifications=truncate_task_notifications,
                 no_tools=no_tools,
             )
             os.makedirs(cache_dir, exist_ok=True)
@@ -641,6 +771,9 @@ def get_swe_sft_dataset(
         pre_split=pre_split,
         filter_errors=filter_errors,
         strip_all_thinking=strip_all_thinking,
+        filter_empty_tool_calls=filter_empty_tool_calls,
+        filter_bare_text_tool_calls=filter_bare_text_tool_calls,
+        truncate_task_notifications=truncate_task_notifications,
         no_tools=no_tools,
     )
 
@@ -654,6 +787,9 @@ def _process_swe_sft(
     pre_split: bool = False,
     filter_errors: bool = True,
     strip_all_thinking: bool = False,
+    filter_empty_tool_calls: bool = False,
+    filter_bare_text_tool_calls: bool = False,
+    truncate_task_notifications: bool = False,
     no_tools: bool = False,
 ):
     """Core processing: load JSONL, split into pairs, tokenize, and filter.
@@ -675,6 +811,9 @@ def _process_swe_sft(
             path,
             filter_errors=filter_errors,
             strip_all_thinking=strip_all_thinking,
+            filter_empty_tool_calls=filter_empty_tool_calls,
+            filter_bare_text_tool_calls=filter_bare_text_tool_calls,
+            truncate_task_notifications=truncate_task_notifications,
         )
 
     if no_tools:
@@ -799,10 +938,87 @@ if __name__ == "__main__":
         "By default, tools are auto-extracted from the data and rendered "
         "in the system prompt (e.g. Qwen3 '# Tools' block).",
     )
+    parser.add_argument(
+        "--filter-empty-tool-calls",
+        action="store_true",
+        help="Discard pairs whose training-target assistant turn has no "
+        "text content but has tool_calls (silent tool invocations).",
+    )
+    parser.add_argument(
+        "--filter-bare-text-tool-calls",
+        action="store_true",
+        help="Discard pairs whose training-target assistant turn has text "
+        "content without <think> tags and has tool_calls.",
+    )
+    parser.add_argument(
+        "--truncate-task-notifications",
+        action="store_true",
+        help="Truncate trajectories at the first <task-notification> that "
+        "follows a pure-text assistant turn. Removes noise from background "
+        "task completions (e.g. pip install finishing after the model's summary).",
+    )
+    parser.add_argument(
+        "--save-trajectories",
+        default=None,
+        metavar="FILE",
+        help="Save preprocessed trajectories to FILE (JSONL, original format) "
+        "after applying trajectory-level operations (e.g. "
+        "--truncate-task-notifications) but before pair splitting. "
+        "Each line preserves the original record structure with the "
+        "messages field updated.",
+    )
     args = parser.parse_args()
 
     filter_errors = not args.no_filter_errors
     strip_all_thinking = args.strip_all_thinking
+    filter_empty_tool_calls = args.filter_empty_tool_calls
+    filter_bare_text_tool_calls = args.filter_bare_text_tool_calls
+    truncate_task_notifications = args.truncate_task_notifications
+
+    # --- Fast path: save preprocessed trajectories ---
+    if args.save_trajectories:
+        records_in = 0
+        records_out = 0
+        n_truncated = 0
+        with (
+            open(args.path, encoding="utf-8") as fin,
+            open(args.save_trajectories, "w", encoding="utf-8") as fout,
+        ):
+            for line in fin:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                records_in += 1
+
+                convs = record.get("conversations", [])
+                if not convs:
+                    fout.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    records_out += 1
+                    continue
+
+                conv = convs[-1]
+                messages = conv.get("messages", [])
+
+                if truncate_task_notifications and messages:
+                    truncated = _truncate_at_task_notification(messages)
+                    if len(truncated) < len(messages):
+                        n_truncated += 1
+                        messages = truncated
+                    conv["messages"] = messages
+
+                fout.write(json.dumps(record, ensure_ascii=False) + "\n")
+                records_out += 1
+
+        parts = []
+        if n_truncated:
+            parts.append(f"{n_truncated} truncated at task-notification")
+        op_msg = ", ".join(parts) if parts else "no changes"
+        print(
+            f"Saved {records_out}/{records_in} trajectories "
+            f"to {args.save_trajectories} ({op_msg})"
+        )
+        sys.exit(0)
 
     # --- Fast path: preprocess and save tokenized dataset ---
     if args.save_tokenized:
@@ -815,6 +1031,9 @@ if __name__ == "__main__":
             pre_split=args.pre_split,
             filter_errors=filter_errors,
             strip_all_thinking=strip_all_thinking,
+            filter_empty_tool_calls=filter_empty_tool_calls,
+            filter_bare_text_tool_calls=filter_bare_text_tool_calls,
+            truncate_task_notifications=truncate_task_notifications,
             no_tools=args.no_tools,
         )
         ds.save_to_disk(args.save_tokenized)
@@ -831,6 +1050,9 @@ if __name__ == "__main__":
             args.path,
             filter_errors=filter_errors,
             strip_all_thinking=strip_all_thinking,
+            filter_empty_tool_calls=filter_empty_tool_calls,
+            filter_bare_text_tool_calls=filter_bare_text_tool_calls,
+            truncate_task_notifications=truncate_task_notifications,
         )
 
     total_pairs = len(all_pairs)

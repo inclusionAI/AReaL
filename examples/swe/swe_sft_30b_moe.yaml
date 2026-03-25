@@ -79,6 +79,9 @@ swe:
   strip_all_thinking: false
   pre_split: false
   num_proc: 1
+  filter_empty_tool_calls: false
+  filter_bare_text_tool_calls: false
+  truncate_task_notifications: false
   cleanup_processed_dataset: true
 
 train_dataset:
