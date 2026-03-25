@@ -118,6 +118,7 @@ def make_hf_and_mcore_config(
         elif architecture in (
             "BailingMoeV2_5ForCausalLM",
             "BailingMoeLinearForCausalLM",
+            "BailingHybridForCausalLM",
         ):
             return hf_config, hf_to_mcore_config_bailing_moe(hf_config, dtype)
         else:
@@ -131,7 +132,11 @@ def make_mcore_layer_specs(hf_config: PretrainedConfig, tf_config: TransformerCo
     architecture = hf_config.architectures[0]
     if architecture == "Qwen3ForCausalLM":
         return make_mcore_layer_specs_qwen3_dense(tf_config, use_te=True)
-    elif architecture in ("BailingMoeV2_5ForCausalLM", "BailingMoeLinearForCausalLM"):
+    elif architecture in (
+        "BailingMoeV2_5ForCausalLM",
+        "BailingMoeLinearForCausalLM",
+        "BailingHybridForCausalLM",
+    ):
         return make_mcore_layer_specs_bailing_moe(tf_config, hf_config, use_te=True)
     else:
         raise ValueError(
