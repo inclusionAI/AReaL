@@ -12,8 +12,8 @@ Commit message conventions and scope inference rules for the AReaL repository.
 **ALWAYS load this skill when making any git commit in AReaL.** This includes:
 
 - Direct commits (`git commit`)
-- Commits during PR creation (`/create-pr`)
-- Commits delegated via `task(load_skills=["commit-conventions"], ...)`
+- Commits during PR creation (`$create-pr` / `/create-pr`)
+- Commits delegated to sub-agents with this skill loaded
 - Any agent workflow that produces a commit
 
 ## Commit Message Format
@@ -126,8 +126,9 @@ ______________________________________________________________________
                             MAINTAINER GUIDE
 ================================================================================
 
-Location: .opencode/skills/commit-conventions/SKILL.md
-Invocation: Automatically loaded on every git commit via load_skills
+Canonical location: .agents/skills/commit-conventions/SKILL.md
+Mirrors: .opencode/skills/commit-conventions/SKILL.md, .claude/skills/commit-conventions/SKILL.md
+Invocation: Automatically loaded on every git commit (all platforms)
 
 ## Purpose
 

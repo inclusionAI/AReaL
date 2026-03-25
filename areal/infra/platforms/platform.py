@@ -103,6 +103,11 @@ class Platform:
         raise NotImplementedError()
 
     @classmethod
+    def set_numa_affinity(cls, local_rank: int) -> None:
+        """Bind the current process to CPU cores near the assigned device."""
+        return
+
+    @classmethod
     def get_custom_env_vars(cls) -> dict:
         """
         Return custom environment variables specific to the platform.
