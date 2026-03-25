@@ -44,6 +44,13 @@ class SweDataConfig:
             "rendered in the system prompt (e.g. Qwen3 '# Tools' block)."
         },
     )
+    cleanup_processed_dataset: bool = field(
+        default=True,
+        metadata={
+            "help": "Remove the processed dataset cache directory after training. "
+            "Set to false to keep it for faster restarts."
+        },
+    )
 
 
 @dataclass

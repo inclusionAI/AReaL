@@ -25,6 +25,7 @@ By default, pairs whose current segment contains a tool result with
 import json
 import os
 import re
+import time
 
 from datasets import Dataset
 
@@ -33,6 +34,26 @@ from areal.utils import logging
 logger = logging.getLogger("SWESFTDataset")
 
 DATASET_NUM_PROC = 1
+
+# Timeout (seconds) for non-rank-0 workers waiting for rank 0 to finish
+# dataset processing.  Large datasets with tokenization can take minutes;
+# 30 min is a generous upper bound.
+_RANK0_CACHE_TIMEOUT = 1800
+_RANK0_CACHE_POLL_INTERVAL = 5
+
+
+def _wait_for_marker(marker_path: str):
+    """Block until *marker_path* exists on disk, with timeout."""
+    start = time.monotonic()
+    while not os.path.exists(marker_path):
+        elapsed = time.monotonic() - start
+        if elapsed > _RANK0_CACHE_TIMEOUT:
+            raise TimeoutError(
+                f"Waited {_RANK0_CACHE_TIMEOUT}s for rank 0 to finish dataset "
+                f"processing (marker: {marker_path}). Check rank 0 logs."
+            )
+        time.sleep(_RANK0_CACHE_POLL_INTERVAL)
+
 
 # Match reasoning blocks with any common tag variant:
 #   <think>...</think>      (Qwen standard)
@@ -179,8 +200,25 @@ def _split_and_filter(messages, filter_errors=True, strip_all_thinking=False):
         List of cleaned message sequences (one per valid pair).
     """
     segments = _find_segments(messages)
+    if not segments:
+        return [], 0
+
     pairs = []
     n_filtered = 0
+
+    # Pre-clean all messages in context mode (thinking stripped).
+    # This avoids re-cleaning the same message for every progressive pair
+    # (O(N+K) instead of O(N*K) where K = number of segments).
+    context_cleaned = [_clean_message(m, strip_thinking=True) for m in messages]
+
+    # For target assistant turns, clean with thinking preserved (unless
+    # strip_all_thinking is set, in which case context_cleaned is reusable).
+    target_cleaned = {}
+    if not strip_all_thinking:
+        for asst_start, _ in segments:
+            target_cleaned[asst_start] = _clean_message(
+                messages[asst_start], strip_thinking=False
+            )
 
     for asst_start, seg_end in segments:
         # Check if current segment has any tool errors
@@ -188,11 +226,10 @@ def _split_and_filter(messages, filter_errors=True, strip_all_thinking=False):
             n_filtered += 1
             continue
 
-        pair = []
-        for idx, m in enumerate(messages[:seg_end]):
-            is_target = m.get("role") == "assistant" and idx == asst_start
-            strip = strip_all_thinking or not is_target
-            pair.append(_clean_message(m, strip_thinking=strip))
+        # Build pair from pre-cleaned messages (shallow copy of the slice).
+        pair = list(context_cleaned[:seg_end])
+        if not strip_all_thinking:
+            pair[asst_start] = target_cleaned[asst_start]
         pairs.append(pair)
 
     return pairs, n_filtered
@@ -209,10 +246,11 @@ _TEMPLATE_PATTERNS = [
 class _TokenizeAndMask:
     """Picklable callable for ``Dataset.map(num_proc=N)``."""
 
-    def __init__(self, tokenizer, assistant_pattern, tools=None):
+    def __init__(self, tokenizer, assistant_pattern, tools=None, max_length=None):
         self.tokenizer = tokenizer
         self.assistant_pattern = assistant_pattern
         self.tools = tools
+        self.max_length = max_length
 
     def __call__(self, sample):
         messages = sample["messages"]
@@ -236,6 +274,12 @@ class _TokenizeAndMask:
             full_text, add_special_tokens=False, return_offsets_mapping=True
         )
         input_ids = encoding["input_ids"]
+
+        # Early exit: overlength or empty → return empty so a single
+        # filter pass removes it together with template-failure empties.
+        if self.max_length is not None and len(input_ids) > self.max_length:
+            return {"input_ids": [], "loss_mask": []}
+
         offset_mapping = encoding["offset_mapping"]
 
         loss_mask = [0] * len(input_ids)
@@ -479,6 +523,7 @@ def get_swe_sft_dataset(
     filter_errors: bool = True,
     strip_all_thinking: bool = False,
     no_tools: bool = False,
+    cache_dir: str | None = None,
 ):
     """Load SWE trajectory data and convert to SFT training pairs.
 
@@ -487,6 +532,11 @@ def get_swe_sft_dataset(
     so that the tokenizer renders tool definitions in the system prompt
     (e.g. Qwen3 ``# Tools`` block), matching the eval-time format.
     Set *no_tools* to skip this and render without tool definitions.
+
+    In distributed (SPMD) mode, only rank 0 performs the heavy processing
+    (JSONL loading, pair splitting, tokenization) and saves the result as
+    an Arrow dataset to *cache_dir*.  Other ranks wait for rank 0 to
+    finish and then load the cached dataset directly via memory-mapped I/O.
 
     Args:
         path: Path to the JSONL file containing SWE trajectories, or a
@@ -507,14 +557,19 @@ def get_swe_sft_dataset(
             assistant turn including the training target.
         no_tools: If True, do not pass tool definitions to
             ``apply_chat_template`` even if the data contains them.
+        cache_dir: Directory to save/load the processed Arrow dataset.
+            When set in distributed mode, rank 0 processes the data and
+            saves here; other ranks load from this directory.  If the
+            directory already contains a completed cache (``.done`` marker),
+            all ranks load from it directly without reprocessing.
 
     Returns:
         A HuggingFace ``Dataset`` with ``input_ids`` and ``loss_mask`` columns.
     """
+    from datasets import load_from_disk
+
     # Pre-tokenized Arrow dataset: load directly, skip all processing.
     if os.path.isdir(path):
-        from datasets import load_from_disk
-
         logger.info(f"Loading pre-tokenized dataset from {path}")
         dataset = load_from_disk(path)
 
@@ -531,6 +586,81 @@ def get_swe_sft_dataset(
         logger.info(f"Final dataset: {len(dataset)} samples")
         return dataset
 
+    # --- Distributed rank-0-only processing ---
+    rank = int(os.getenv("RANK", "0"))
+    world_size = int(os.getenv("WORLD_SIZE", "1"))
+
+    if cache_dir is not None and world_size > 1:
+        done_marker = os.path.join(cache_dir, ".done")
+
+        # Fast path: cache from a previous run (or rank 0 already finished).
+        if os.path.exists(done_marker):
+            logger.info(
+                f"Rank {rank}: loading cached processed dataset from {cache_dir}"
+            )
+            dataset = load_from_disk(cache_dir)
+            logger.info(f"Final dataset: {len(dataset)} samples")
+            return dataset
+
+        if rank == 0:
+            # Rank 0: do the heavy processing and save for other ranks.
+            dataset = _process_swe_sft(
+                path,
+                tokenizer,
+                max_length=max_length,
+                num_proc=num_proc,
+                pre_split=pre_split,
+                filter_errors=filter_errors,
+                strip_all_thinking=strip_all_thinking,
+                no_tools=no_tools,
+            )
+            os.makedirs(cache_dir, exist_ok=True)
+            dataset.save_to_disk(cache_dir)
+            # Write marker AFTER save completes so readers see a consistent dir.
+            with open(done_marker, "w") as f:
+                f.write(str(len(dataset)))
+            logger.info(
+                f"Rank 0: saved processed dataset "
+                f"({len(dataset)} samples) to {cache_dir}"
+            )
+            return dataset
+        else:
+            # Other ranks: wait for rank 0, then load.
+            logger.info(f"Rank {rank}: waiting for rank 0 to process dataset...")
+            _wait_for_marker(done_marker)
+            dataset = load_from_disk(cache_dir)
+            logger.info(f"Rank {rank}: loaded cached dataset ({len(dataset)} samples)")
+            return dataset
+
+    # --- Non-distributed or no cache_dir: process in current process ---
+    return _process_swe_sft(
+        path,
+        tokenizer,
+        max_length=max_length,
+        num_proc=num_proc,
+        pre_split=pre_split,
+        filter_errors=filter_errors,
+        strip_all_thinking=strip_all_thinking,
+        no_tools=no_tools,
+    )
+
+
+def _process_swe_sft(
+    path: str,
+    tokenizer,
+    *,
+    max_length: int | None = None,
+    num_proc: int | None = None,
+    pre_split: bool = False,
+    filter_errors: bool = True,
+    strip_all_thinking: bool = False,
+    no_tools: bool = False,
+):
+    """Core processing: load JSONL, split into pairs, tokenize, and filter.
+
+    Extracted from ``get_swe_sft_dataset`` so that the rank-0-only path and
+    the single-process path share the same logic.
+    """
     tools = None
 
     if num_proc is None:
@@ -560,27 +690,23 @@ def get_swe_sft_dataset(
     dataset = Dataset.from_dict({"messages": all_pairs})
 
     assistant_pattern = _detect_template_pattern(tokenizer, tools=tools)
-    process_fn = _TokenizeAndMask(tokenizer, assistant_pattern, tools=tools)
+    # Pass max_length so overlength samples are marked empty during
+    # tokenization, allowing a single filter pass instead of three.
+    process_fn = _TokenizeAndMask(
+        tokenizer, assistant_pattern, tools=tools, max_length=max_length
+    )
 
     dataset = dataset.map(process_fn, num_proc=num_proc).remove_columns(["messages"])
 
-    # Filter out empty samples (e.g. from apply_chat_template failures).
-    before_empty = len(dataset)
+    # Single filter pass: removes both apply_chat_template-failure empties and
+    # overlength samples (which _TokenizeAndMask also marks as empty).
+    before_filter = len(dataset)
     dataset = dataset.filter(lambda x: len(x["input_ids"]) > 0, num_proc=num_proc)
-    if before_empty - len(dataset) > 0:
+    n_filtered = before_filter - len(dataset)
+    if n_filtered > 0:
         logger.info(
-            f"Filtered {before_empty - len(dataset)} empty samples "
-            f"(likely from template rendering failures)"
-        )
-
-    if max_length is not None:
-        before_filter = len(dataset)
-        dataset = dataset.filter(
-            lambda x: len(x["input_ids"]) <= max_length, num_proc=num_proc
-        )
-        logger.info(
-            f"Filtered {before_filter - len(dataset)} samples "
-            f"exceeding max_length={max_length}"
+            f"Filtered {n_filtered} samples "
+            f"(empty from template failures or exceeding max_length={max_length})"
         )
 
     logger.info(f"Final dataset: {len(dataset)} samples")

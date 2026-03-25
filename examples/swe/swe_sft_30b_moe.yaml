@@ -39,7 +39,7 @@ actor:
     beta1: 0.9
     beta2: 0.95
     eps: 0.00001
-    lr_scheduler_type: cosine
+    lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
     min_loss_scale: 1.0
@@ -68,6 +68,7 @@ actor:
       cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars:
         NCCL_DEBUG: "WARN"
+        PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
 
       additional_bash_cmds:
         - export UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ && uv pip install -e .
@@ -78,6 +79,7 @@ swe:
   strip_all_thinking: false
   pre_split: false
   num_proc: 1
+  cleanup_processed_dataset: true
 
 train_dataset:
   batch_size: 16
