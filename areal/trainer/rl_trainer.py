@@ -243,27 +243,30 @@ class PPOTrainer:
             self.weight_update_meta = WeightUpdateMeta.from_disk(**disk_kwargs)
         elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
+            xccl_kwargs: dict[str, Any] = {
+                "gen_allocation": self.rollout_alloc,
+            }
+
+            if config.actor.use_lora:
+                xccl_kwargs.update(
+                    {
+                        "use_lora": config.actor.use_lora,
+                        "lora_name": config.gconfig.lora_name,
+                        "base_model_name": config.actor.path,
+                    }
+                )
+
             if self.actor_alloc.backend == "megatron":
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
-                    gen_allocation=self.rollout_alloc,
+                    **xccl_kwargs
                 )
             else:
-                xccl_kwargs: dict[str, Any] = {
-                    "gen_allocation": self.rollout_alloc,
-                }
-                if config.actor.use_lora:
-                    xccl_kwargs.update(
-                        {
-                            "use_lora": config.actor.use_lora,
-                            "lora_name": config.gconfig.lora_name,
-                            "base_model_name": config.actor.path,
-                        }
-                    )
                 self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(**xccl_kwargs)
         else:
             raise ValueError(
                 f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
             )
+
         self.actor.connect_engine(self.rollout, self.weight_update_meta)
 
         # Set up evaluation (skip in online mode)
@@ -465,9 +468,6 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                # SIMAR: DISABLING VERSIONING AND SHORT CIRCURING THE UPDATE WEIGHTS FIXES THE ISSUE
-                # new_version = global_step
-
                 # Use versioned path for weight updates
                 new_version = global_step + 1
                 versioned_meta = self.weight_update_meta.with_version(new_version)

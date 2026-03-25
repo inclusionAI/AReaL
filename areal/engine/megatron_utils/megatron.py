@@ -15,6 +15,7 @@ from areal.engine.megatron_utils.fp8 import (
     get_block_size_from_config,
     quantize_params,
 )
+from areal.engine.megatron_utils.megatron_lora import convert_qwen3_lora_to_hf
 
 
 def _all_gather_and_concat(
@@ -96,10 +97,12 @@ def all_gather_param(
     if "expert_bias" in name:
         return param
 
-    if not hasattr(param, "tensor_model_parallel"):
-        raise ValueError(f"{name} does not have tensor_model_parallel attribute")
-
     param_is_fp8 = is_float8tensor(param)
+
+    if not hasattr(param, "tensor_model_parallel"):
+        if param_is_fp8 and fp8_direct_convert:
+            return param
+        return param.data
 
     # Check if this param is truly NOT TP-sharded.
     # NOTE: TE unconditionally sets tensor_model_parallel=True on all Linear
@@ -154,121 +157,6 @@ def remove_padding(
     ):
         return param[:vocab_size]
     return param
-
-
-def convert_qwen3_lora_mcore_to_hf(
-    tf_config, name: str, param: torch.Tensor
-) -> list[tuple[str, torch.Tensor]]:
-    """
-    Convert *mcore Megatron* LoRA param names -> *HF/PEFT* LoRA param names for Qwen3.
-
-    mcore input examples:
-      module.module.decoder.layers.0.self_attention.linear_proj.lora_A.default.weight
-      module.module.decoder.layers.0.self_attention.linear_qkv.lora_B.default.weight
-      module.module.decoder.layers.0.mlp.linear_fc1.lora_B.default.weight
-      module.module.decoder.layers.0.mlp.linear_fc2.lora_A.default.weight
-
-    HF output examples:
-      base_model.model.model.layers.0.self_attn.o_proj.lora_A.weight
-      base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight
-      base_model.model.model.layers.0.mlp.gate_proj.lora_B.weight
-      base_model.model.model.layers.0.mlp.down_proj.lora_A.weight
-
-    Returns a list because fused modules (linear_qkv, linear_fc1) map to multiple HF tensors.
-    """
-
-    HF_PREFIX = "base_model.model.model."
-
-    def hf_key(layer_idx: str, module_path: str, which: str) -> str:
-        # which: "A" or "B"
-        return f"{HF_PREFIX}layers.{layer_idx}.{module_path}.lora_{which}.weight"
-
-    # ---- compute head_dim like your full-weight converter ----
-    head_dim = (
-        tf_config.kv_channels
-        if getattr(tf_config, "kv_channels", None) is not None
-        else tf_config.hidden_size // tf_config.num_attention_heads
-    )
-
-    if getattr(tf_config, "num_query_groups", None) is None:
-        raise ValueError("Qwen3 models should have num_query_groups (GQA).")
-
-    value_num_per_group = tf_config.num_attention_heads // tf_config.num_query_groups
-
-    # ---- parse layer idx + rest ----
-    pat = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
-    m = re.match(pat, name)
-    if not m:
-        raise ValueError(f"Not a decoder-layer tensor: {name}")
-
-    layer_idx, rest = m.group(1), m.group(2)
-
-    # ---- parse LoRA side and strip '.default.weight' ----
-    # mcore format: <base_module>.lora_A.default.weight / <base_module>.lora_B.default.weight
-    if rest.endswith(".lora_A.default.weight"):
-        which = "A"
-        base = rest[: -len(".lora_A.default.weight")]
-    elif rest.endswith(".lora_B.default.weight"):
-        which = "B"
-        base = rest[: -len(".lora_B.default.weight")]
-    else:
-        raise ValueError(f"Not an mcore LoRA weight: {name}")
-
-    # ---- map + split as needed ----
-    # out: list[tuple[str, torch.Tensor]] = []
-
-    # Attention output projection
-    if base == "self_attention.linear_proj":
-        return [(hf_key(layer_idx, "self_attn.o_proj", which), param)]
-
-    # Attention fused QKV
-    if base == "self_attention.linear_qkv":
-        if which == "A":
-            # A is (r, in_features) -> reused for q/k/v
-            return [
-                (hf_key(layer_idx, "self_attn.q_proj", "A"), param),
-                (hf_key(layer_idx, "self_attn.k_proj", "A"), param),
-                (hf_key(layer_idx, "self_attn.v_proj", "A"), param),
-            ]
-
-        # B is (out_features, r) -> split rows into q/k/v using GQA layout
-        B = param
-        # reshape to [num_query_groups, ?, head_dim, r]
-        B = B.view(tf_config.num_query_groups, -1, head_dim, B.shape[1])
-
-        qB, kB, vB = torch.split(B, [value_num_per_group, 1, 1], dim=1)
-
-        qB = qB.reshape(-1, qB.shape[-1]).contiguous()
-        kB = kB.reshape(-1, kB.shape[-1]).contiguous()
-        vB = vB.reshape(-1, vB.shape[-1]).contiguous()
-
-        return [
-            (hf_key(layer_idx, "self_attn.q_proj", "B"), qB),
-            (hf_key(layer_idx, "self_attn.k_proj", "B"), kB),
-            (hf_key(layer_idx, "self_attn.v_proj", "B"), vB),
-        ]
-
-    # MLP fused gate+up
-    if base == "mlp.linear_fc1":
-        if which == "A":
-            # A is (r, in_features) -> reused for gate/up
-            return [
-                (hf_key(layer_idx, "mlp.gate_proj", "A"), param),
-                (hf_key(layer_idx, "mlp.up_proj", "A"), param),
-            ]
-
-        # B is (2*intermediate, r) -> split into gate and up
-        gateB, upB = param.chunk(2, dim=0)
-        return [
-            (hf_key(layer_idx, "mlp.gate_proj", "B"), gateB.contiguous()),
-            (hf_key(layer_idx, "mlp.up_proj", "B"), upB.contiguous()),
-        ]
-
-    # MLP down projection
-    if base == "mlp.linear_fc2":
-        return [(hf_key(layer_idx, "mlp.down_proj", which), param)]
-
-    raise ValueError(f"Unknown mcore LoRA parameter name: {name}")
 
 
 # Adapted from slime
@@ -871,6 +759,7 @@ def convert_bailingmoe_to_hf(
 # Adapted from slime
 # A registry for conversion functions is more extensible.
 _CONVERSION_FN_REGISTRY = {
+    "qwen3_lora": convert_qwen3_lora_to_hf,
     "qwen3_moe": convert_qwen3moe_to_hf,
     "qwen2": convert_qwen2_to_hf,
     "qwen3": convert_qwen2_to_hf,

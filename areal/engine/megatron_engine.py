@@ -5,7 +5,6 @@ import functools
 import gc
 import math
 import os
-import re
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import nullcontext
@@ -57,11 +56,11 @@ from areal.engine.megatron_utils.deterministic import set_deterministic_algorith
 from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
 from areal.engine.megatron_utils.megatron import (
     all_gather_param,
-    convert_qwen3_lora_mcore_to_hf,
     convert_to_hf,
     get_named_parameters,
     remove_padding,
 )
+from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
 from areal.engine.megatron_utils.packed_context_parallel import (
     packed_context_parallel_forward,
 )
@@ -110,187 +109,6 @@ from areal.utils.seeding import get_seed
 if TYPE_CHECKING:
     from areal.api import Scheduler
     from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
-
-
-from collections.abc import Iterable
-from pathlib import Path
-
-
-def _infer_target_modules_from_adapter_weights(weight_keys: Iterable[str]) -> list[str]:
-    """
-    Infer PEFT target_modules from adapter weight parameter names.
-
-    Extracts module names from HF LoRA weight keys like:
-    - base_model.model.layers.0.self_attn.q_proj.lora_A.weight -> q_proj
-    - base_model.model.layers.1.mlp.gate_proj.lora_B.weight -> gate_proj
-    """
-    target_modules = set()
-
-    for key in weight_keys:
-        # Remove PEFT prefix
-        key = key.replace("base_model.model.", "")
-
-        # Look for .lora_A.weight or .lora_B.weight pattern
-        if ".lora_A.weight" in key:
-            # Extract module name before .lora_A.weight
-            base_name = key.replace(".lora_A.weight", "")
-            module_name = base_name.split(".")[-1]
-            target_modules.add(module_name)
-        elif ".lora_B.weight" in key:
-            # Extract module name before .lora_B.weight
-            base_name = key.replace(".lora_B.weight", "")
-            module_name = base_name.split(".")[-1]
-            target_modules.add(module_name)
-
-    return sorted(list(target_modules))
-
-
-def _build_adapter_config_dict(
-    peft_config,
-    target_modules: list[str],
-    base_model_name_or_path: str,
-) -> dict:
-    """
-    Build PEFT adapter_config.json dictionary.
-
-    Creates a config compatible with HuggingFace PEFT library.
-    """
-    return {
-        "base_model_name_or_path": base_model_name_or_path,
-        "peft_type": "LORA",
-        "task_type": "CAUSAL_LM",
-        "inference_mode": False,
-        "r": peft_config.dim,
-        "lora_alpha": peft_config.alpha,
-        "lora_dropout": peft_config.dropout,
-        "target_modules": target_modules,
-        "bias": "none",
-        "fan_in_fan_out": False,
-        "modules_to_save": None,
-        "init_lora_weights": True,
-        "layers_to_transform": None,
-        "layers_pattern": None,
-    }
-
-
-def _monkey_patch_save_hf_adapter():
-    """Add save_hf_adapter method to AutoBridge for megatron-bridge 0.3.0."""
-    from megatron.bridge import AutoBridge
-
-    if hasattr(AutoBridge, "save_hf_adapter"):
-        # Already exists, no need to patch
-        return
-
-    def save_hf_adapter(
-        self,
-        model,
-        path: str | Path,
-        peft_config,
-        base_model_name_or_path: str | None = None,
-        show_progress: bool = True,
-    ) -> None:
-        """
-        Save LoRA adapter weights as a HuggingFace PEFT-compatible directory.
-
-        The output directory contains adapter_config.json and adapter_model.safetensors
-        and can be loaded directly with peft.PeftModel.from_pretrained(base_model, path).
-
-        Args:
-            model: Megatron model instance or list of instances.
-            path: Directory path where the adapter files will be saved.
-            peft_config: The LoRA config used during training (provides dim, alpha, dropout, etc.).
-            base_model_name_or_path: HuggingFace model identifier or local path of the base model.
-                If None, inferred from hf_pretrained.model_name_or_path.
-            show_progress: Display progress bar during export.
-
-        Example:
-            >>> bridge.save_hf_adapter(
-            ...     megatron_model,
-            ...     "./my-lora-adapter",
-            ...     peft_config=lora,
-            ...     base_model_name_or_path="Qwen/Qwen3-4B",
-            ... )
-            >>> # Load with HuggingFace PEFT
-            >>> from peft import PeftModel
-            >>> from transformers import AutoModelForCausalLM
-            >>> base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-4B")
-            >>> model = PeftModel.from_pretrained(base, "./my-lora-adapter")
-
-        Note:
-            This method is collective -- all ranks must call it. Only rank 0 writes files.
-        """
-        import json
-
-        from safetensors.torch import save_file
-
-        # Synchronize at start
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
-
-        # Export adapter weights
-        adapter_state: dict[str, torch.Tensor] = {}
-        for name, tensor in self.export_adapter_weights(
-            model, cpu=True, show_progress=show_progress
-        ):
-            adapter_state[f"base_model.model.{name}"] = tensor.clone().float()
-
-        if not adapter_state:
-            raise RuntimeError(
-                "No adapter weights were found on the model. "
-                "Ensure the model has PEFT adapters applied before calling save_hf_adapter()."
-            )
-
-        # Only rank 0 writes files
-        is_rank0 = (
-            not (dist.is_available() and dist.is_initialized()) or dist.get_rank() == 0
-        )
-        if is_rank0:
-            save_dir = Path(path)
-            save_dir.mkdir(parents=True, exist_ok=True)
-
-            # Infer base model path if not provided
-            if base_model_name_or_path is None:
-                base_model_name_or_path = str(
-                    getattr(self.hf_pretrained, "model_name_or_path", "")
-                    or getattr(self.hf_pretrained, "name_or_path", "")
-                )
-
-            # Build adapter config
-            target_modules = _infer_target_modules_from_adapter_weights(
-                adapter_state.keys()
-            )
-            adapter_config = _build_adapter_config_dict(
-                peft_config,
-                target_modules=target_modules,
-                base_model_name_or_path=base_model_name_or_path,
-            )
-
-            # Save adapter config
-            config_path = save_dir / "adapter_config.json"
-            with open(config_path, "w") as f:
-                json.dump(adapter_config, f, indent=2)
-
-            # Save adapter weights
-            weights_path = save_dir / "adapter_model.safetensors"
-            save_file(adapter_state, str(weights_path))
-
-            print(f"✓ Saved LoRA adapter to {save_dir}")
-            print(f"  - Config: {config_path}")
-            print(f"  - Weights: {weights_path} ({len(adapter_state)} parameters)")
-
-        # Synchronize at end
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
-
-    # Attach the method to the class
-    AutoBridge.save_hf_adapter = save_hf_adapter
-
-
-# Apply the monkey-patch when this module is imported
-# This monkey patch is needed as current megatron-bridge 0.3.0 does not have a built-in method
-# to save LoRA adapters in HuggingFace PEFT format, which is required for our use case.
-# It's however present in main so this patch is temporary and can be removed later.
-_monkey_patch_save_hf_adapter()
 
 
 class _MegatronModelList(list):
@@ -507,9 +325,6 @@ class MegatronEngine(TrainEngine):
 
         with self.device:
             self._load_model_from_hf(self.config.path)
-
-        # SIMAR: adding this to debug (dont remove)
-        print(self.model)
 
         # NOTE: Clear high_precision_init_val for FP8 parameters.
         #
@@ -1267,6 +1082,8 @@ class MegatronEngine(TrainEngine):
             wd_incr_style="constant",
         )
         self.lr_scheduler = lr_scheduler
+
+        # MegatronCheckpointManager now only support distributed optimizer which lora does not support
         if not self.config.use_lora:
             self.checkpointer = MegatronCheckpointManager(
                 model=self.model,
@@ -1275,181 +1092,6 @@ class MegatronEngine(TrainEngine):
                 use_distributed_optimizer=use_distributed_optimizer,
                 use_checkpoint_opt_param_scheduler=self.mcore_config.use_checkpoint_opt_param_scheduler,
                 async_save=self.mcore_config.async_save,
-            )
-
-    def _get_vllm_lora_target_modules(self) -> list[str]:
-        bridge_to_vllm_targets = {
-            "linear_qkv": ["q_proj", "k_proj", "v_proj"],
-            "linear_proj": ["o_proj"],
-            "linear_fc1": ["gate_proj", "up_proj"],
-            "linear_fc2": ["down_proj"],
-        }
-        targets: list[str] = []
-        for module_name in self.config.target_modules:
-            mapped = bridge_to_vllm_targets.get(module_name)
-            if mapped is None:
-                raise NotImplementedError(
-                    f"LoRA target module '{module_name}' is not supported in MegatronEngine yet."
-                )
-            targets.extend(mapped)
-        return sorted(set(targets))
-
-    def _convert_bridge_lora_to_hf(
-        self,
-        name: str,
-        tensor: torch.Tensor,
-    ) -> list[tuple[str, torch.Tensor]]:
-        pattern = (
-            r"(?:^|.*\.)decoder\.layers\.(\d+)\."
-            r"(self_attention\.linear_qkv|self_attention\.linear_proj|mlp\.linear_fc1|mlp\.linear_fc2)\."
-            r"adapter\.(linear_in|linear_out)\.weight$"
-        )
-        match = re.match(pattern, name)
-        if match is None:
-            return []
-
-        layer_idx, module_name, adapter_part = match.groups()
-        base_prefix = f"base_model.model.model.layers.{layer_idx}"
-
-        if module_name == "self_attention.linear_proj":
-            hf_base = f"{base_prefix}.self_attn.o_proj"
-            suffix = (
-                "lora_A.default.weight"
-                if adapter_part == "linear_in"
-                else "lora_B.default.weight"
-            )
-            return [(f"{hf_base}.{suffix}", tensor)]
-
-        if module_name == "mlp.linear_fc2":
-            hf_base = f"{base_prefix}.mlp.down_proj"
-            suffix = (
-                "lora_A.default.weight"
-                if adapter_part == "linear_in"
-                else "lora_B.default.weight"
-            )
-            return [(f"{hf_base}.{suffix}", tensor)]
-
-        if module_name == "mlp.linear_fc1":
-            gate_base = f"{base_prefix}.mlp.gate_proj"
-            up_base = f"{base_prefix}.mlp.up_proj"
-            if adapter_part == "linear_in":
-                return [
-                    (f"{gate_base}.lora_A.default.weight", tensor),
-                    (f"{up_base}.lora_A.default.weight", tensor),
-                ]
-            gate_b, up_b = tensor.chunk(2, dim=0)
-            return [
-                (f"{gate_base}.lora_B.default.weight", gate_b.contiguous()),
-                (f"{up_base}.lora_B.default.weight", up_b.contiguous()),
-            ]
-
-        if module_name == "self_attention.linear_qkv":
-            q_base = f"{base_prefix}.self_attn.q_proj"
-            k_base = f"{base_prefix}.self_attn.k_proj"
-            v_base = f"{base_prefix}.self_attn.v_proj"
-            if adapter_part == "linear_in":
-                return [
-                    (f"{q_base}.lora_A.default.weight", tensor),
-                    (f"{k_base}.lora_A.default.weight", tensor),
-                    (f"{v_base}.lora_A.default.weight", tensor),
-                ]
-
-            head_dim = (
-                self.tf_config.kv_channels
-                if getattr(self.tf_config, "kv_channels", None) is not None
-                else self.tf_config.hidden_size // self.tf_config.num_attention_heads
-            )
-            if getattr(self.tf_config, "num_query_groups", None) is None:
-                return []
-            value_num_per_group = (
-                self.tf_config.num_attention_heads // self.tf_config.num_query_groups
-            )
-
-            b = tensor.view(
-                self.tf_config.num_query_groups, -1, head_dim, tensor.shape[1]
-            )
-            q_b, k_b, v_b = torch.split(b, [value_num_per_group, 1, 1], dim=1)
-
-            q_b = q_b.reshape(-1, q_b.shape[-1]).contiguous()
-            k_b = k_b.reshape(-1, k_b.shape[-1]).contiguous()
-            v_b = v_b.reshape(-1, v_b.shape[-1]).contiguous()
-
-            return [
-                (f"{q_base}.lora_B.default.weight", q_b),
-                (f"{k_base}.lora_B.default.weight", k_b),
-                (f"{v_base}.lora_B.default.weight", v_b),
-            ]
-
-        return []
-
-    def _convert_bridge_lora_to_hf_megatron_version(
-        self,
-        name: str,
-        tensor: torch.Tensor,
-    ) -> list[tuple[str, torch.Tensor]]:
-        # Match Megatron Bridge adapter naming to the helper's expected mcore LoRA naming.
-        if ".adapter.linear_in.weight" in name:
-            normalized_name = name.replace(
-                ".adapter.linear_in.weight", ".lora_A.default.weight"
-            )
-        elif ".adapter.linear_out.weight" in name:
-            normalized_name = name.replace(
-                ".adapter.linear_out.weight", ".lora_B.default.weight"
-            )
-        else:
-            return []
-
-        try:
-            converted = convert_qwen3_lora_mcore_to_hf(
-                self.tf_config,
-                normalized_name,
-                tensor,
-            )
-        except ValueError:
-            return []
-
-        # Keep naming aligned with vLLM's current adapter loader path.
-        converted_with_default: list[tuple[str, torch.Tensor]] = []
-        for converted_name, converted_tensor in converted:
-            converted_name = converted_name.replace(
-                ".lora_A.weight", ".lora_A.default.weight"
-            ).replace(".lora_B.weight", ".lora_B.default.weight")
-            converted_with_default.append((converted_name, converted_tensor))
-
-        return converted_with_default
-
-    def _iter_lora_named_tensors(self) -> Iterator[tuple[str, torch.Tensor]]:
-        assert self.model is not None, "Model is not initialized."
-
-        use_megatron_converter = False
-
-        trainable_adapter_names: list[str] = []
-        has_converted = False
-
-        for name, param in self.model.named_parameters():
-            if not param.requires_grad:
-                continue
-            if ".adapter." in name:
-                trainable_adapter_names.append(name)
-            if use_megatron_converter:
-                converted = self._convert_bridge_lora_to_hf_megatron_version(
-                    name, param.data
-                )
-            else:
-                converted = self._convert_bridge_lora_to_hf(name, param.data)
-
-            # assert(len(converted) > 0), f"Expected at least 1 converted tensors for {name}, got {len(converted)}"
-            # assert(len(converted) <= 2), f"Expected at most 2 converted tensors for {name}, got {len(converted)}"
-            for converted_name, converted_tensor in converted:
-                has_converted = True
-                # print(f"Converting adapter param {name} {param.shape} to {converted_name} {converted_tensor.shape} for HF format.")
-                yield converted_name, converted_tensor
-
-        if trainable_adapter_names and not has_converted:
-            self.logger.warning(
-                "Found %s trainable LoRA adapter params but converted 0 tensors. Sample names: %s",
-                len(trainable_adapter_names),
-                trainable_adapter_names[:6],
             )
 
     def _check_rollout_engine_connected(self) -> None:
@@ -1491,8 +1133,9 @@ class MegatronEngine(TrainEngine):
             meta.peft_config = {
                 "r": self.config.lora_rank,
                 "lora_alpha": self.config.lora_alpha,
-                "target_modules": self._get_vllm_lora_target_modules(),
-                # "target_modules": self.config.target_modules,
+                "target_modules": get_vllm_lora_target_modules(
+                    list(self.config.target_modules or [])
+                ),
                 "bias": "none",
             }
 
@@ -1584,10 +1227,14 @@ class MegatronEngine(TrainEngine):
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             buffer_size = 0
 
+        model_name = self.hf_config.model_type
+        if self.config.use_lora:
+            model_name = f"{model_name}_lora"
+
         converted_named_tensors.extend(
             convert_to_hf(
                 self.tf_config,
-                self.hf_config.model_type,
+                model_name,
                 name,
                 param,
                 quantization_config=self.quantization_config,
@@ -1729,15 +1376,6 @@ class MegatronEngine(TrainEngine):
 
     @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:
-        # import torch.distributed as dist
-        # rank = dist.get_rank()
-        # import debugpy
-        # debug_port = 2500 + rank
-        # print(f'Listening DEBUGPY on port {debug_port}')
-        # debugpy.listen(("0.0.0.0", debug_port))
-        # debugpy.wait_for_client()   # <-- blocks here until VS Code attaches
-        # debugpy.breakpoint()        # <-- optional, drop you right on this line
-
         # Reset weight weight meta with local info
         meta.nccl_master_address = self.weight_update_master_addr
         meta.nccl_master_port = self.weight_update_master_port
@@ -1748,98 +1386,59 @@ class MegatronEngine(TrainEngine):
 
         dist.barrier(group=self.cpu_group)
 
-        if self.config.use_lora:
-            if mpu.get_tensor_model_parallel_world_size() > 1:
-                raise NotImplementedError(
-                    "LoRA distributed updates in MegatronEngine currently support TP=1 only."
-                )
+        num_moe_experts = self.tf_config.num_moe_experts
+        weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
-            weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
-            buffer_size = 0
-            converted_named_tensors: list[tuple[str, torch.Tensor]] = []
+        buffer_size = 0
+        converted_named_tensors = []
 
-            if self.is_pipeline_parallel_head():
-                # dict(self._iter_lora_named_tensors()).keys()
-                num_collected_tensors = 0
-                for name, tensor in self._iter_lora_named_tensors():
-                    num_collected_tensors += 1
-                    tensor_size = tensor.numel() * tensor.element_size()
-                    if buffer_size + tensor_size > weight_chunked_mem_size:
-                        self._update_bucket_weights_from_distributed(
-                            meta,
-                            converted_named_tensors,
-                        )
-                        buffer_size = 0
+        for name, param in get_named_parameters(self.model, num_moe_experts):
+            if ".experts." in name:
+                continue
+            if self.config.use_lora and (
+                ".adapter." not in name or not getattr(param, "requires_grad", False)
+            ):
+                continue
+            buffer_size = self._impl_update_weight_from_distributed(
+                meta,
+                name,
+                param,
+                converted_named_tensors,
+                buffer_size,
+                weight_chunked_mem_size,
+            )
 
-                    converted_named_tensors.append((name, tensor))
-                    buffer_size += tensor_size
+        # Only pipeline parallel heads CAN contain named tensors here
+        if converted_named_tensors:
+            self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
+        elif self.is_pipeline_parallel_head():
+            self.logger.warning(
+                "No tensors were collected for distributed update at version %s.",
+                meta.version,
+            )
 
-                if converted_named_tensors:
-                    self._update_bucket_weights_from_distributed(
-                        meta,
-                        converted_named_tensors,
-                    )
-                else:
-                    self.logger.warning(
-                        "No LoRA tensors were collected for distributed update at version %s.",
-                        meta.version,
-                    )
+        dist.barrier(group=self.cpu_group)
 
-                self.logger.info(
-                    "Collected %s LoRA tensors for distributed update at version %s.",
-                    num_collected_tensors,
-                    meta.version,
-                )
+        buffer_size = 0
+        named_tensors = []
 
-            dist.barrier(group=self.cpu_group)
+        for name, param in get_named_parameters(self.model, num_moe_experts):
+            if ".experts." not in name or self.config.use_lora:
+                continue
+            buffer_size = self._impl_update_expert_weight_from_distributed(
+                meta,
+                name,
+                param,
+                named_tensors,
+                buffer_size,
+                weight_chunked_mem_size,
+            )
 
-        else:
-            num_moe_experts = self.tf_config.num_moe_experts
-            weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
+        if named_tensors:
+            # This function will early return if not pipeline parallel head
+            self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
 
-            buffer_size = 0
-            converted_named_tensors = []
-
-            for name, param in get_named_parameters(self.model, num_moe_experts):
-                if ".experts." in name:
-                    continue
-                buffer_size = self._impl_update_weight_from_distributed(
-                    meta,
-                    name,
-                    param,
-                    converted_named_tensors,
-                    buffer_size,
-                    weight_chunked_mem_size,
-                )
-
-            # Only pipeline parallel heads CAN contain named tensors here
-            if converted_named_tensors:
-                self._update_bucket_weights_from_distributed(
-                    meta, converted_named_tensors
-                )
-
-            dist.barrier(group=self.cpu_group)
-
-            buffer_size = 0
-            named_tensors = []
-
-            for name, param in get_named_parameters(self.model, num_moe_experts):
-                if ".experts." not in name:
-                    continue
-                buffer_size = self._impl_update_expert_weight_from_distributed(
-                    meta,
-                    name,
-                    param,
-                    named_tensors,
-                    buffer_size,
-                    weight_chunked_mem_size,
-                )
-
-            if named_tensors:
-                # This function will early return if not pipeline parallel head
-                self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
-
-            dist.barrier(group=self.cpu_group)
+        dist.barrier(group=self.cpu_group)
 
         if dist.get_rank() == 0:
             self.rollout_engine.continue_generation()
@@ -1872,71 +1471,6 @@ class MegatronEngine(TrainEngine):
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
 
-    def _save_lora_adapter_megatron_bridge(
-        self,
-        path: str,
-        base_model_path: str | None = None,
-    ) -> None:
-        """
-        Save LoRA adapter using export_adapter_weights (megatron-bridge 0.3.0).
-
-        This is a workaround for megatron-bridge versions that don't have save_hf_adapter().
-        """
-        import json
-        from pathlib import Path
-
-        from safetensors.torch import save_file
-
-        save_dir = Path(path)
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        # Export adapter weights using the available method
-        self.logger.info(f"Exporting LoRA adapter weights to {save_dir}...")
-
-        adapter_state = {}
-        for name, tensor in self.bridge.export_adapter_weights(
-            self.model, cpu=True, show_progress=True
-        ):
-            # Add PEFT prefix
-            adapter_state[f"base_model.model.{name}"] = tensor.clone().float()
-
-        if not adapter_state:
-            raise RuntimeError(
-                "No adapter weights found. Ensure LoRA is properly applied with set_params_to_save()."
-            )
-
-        self.logger.info(f"Found {len(adapter_state)} adapter parameters")
-
-        # Save adapter weights
-        weights_path = save_dir / "adapter_model.safetensors"
-        save_file(adapter_state, str(weights_path))
-        self.logger.info(f"✓ Saved adapter weights to {weights_path}")
-
-        # Create adapter_config.json
-        adapter_config = {
-            "base_model_name_or_path": base_model_path or self.config.path,
-            "peft_type": "LORA",
-            "task_type": "CAUSAL_LM",
-            "inference_mode": False,
-            "r": self.bridge_lora.dim,
-            "lora_alpha": self.bridge_lora.alpha,
-            "lora_dropout": self.bridge_lora.dropout,
-            "target_modules": list(self.bridge_lora.target_modules),
-            "exclude_modules": list(self.bridge_lora.exclude_modules)
-            if self.bridge_lora.exclude_modules
-            else [],
-            "bias": "none",
-            "modules_to_save": None,
-            "init_lora_weights": True,
-            "layers_to_transform": None,
-            "layers_pattern": None,
-        }
-
-        config_path = save_dir / "adapter_config.json"
-        with open(config_path, "w") as f:
-            json.dump(adapter_config, f, indent=2)
-        self.logger.info(f"✓ Saved adapter config to {config_path}")
-
     def _save_model_to_hf(
         self,
         path: str,
@@ -1946,7 +1480,6 @@ class MegatronEngine(TrainEngine):
     ) -> None:
         assert self.model is not None, "Model is not initialized."
         os.makedirs(path, exist_ok=True)
-        saved_as_full_hf = False
 
         if self.bridge_cls == "megatron-bridge":
             if self.config.is_critic:
@@ -1979,9 +1512,9 @@ class MegatronEngine(TrainEngine):
             )
 
         if dist.get_rank() == 0:
-            if tokenizer is not None and (not self.config.use_lora or saved_as_full_hf):
+            if tokenizer is not None and not self.config.use_lora:
                 tokenizer.save_pretrained(path)
-            if processor is not None and (not self.config.use_lora or saved_as_full_hf):
+            if processor is not None and not self.config.use_lora:
                 processor.save_pretrained(path)
 
         current_platform.synchronize()
