@@ -1,5 +1,6 @@
 """Integration tests for RTensor with RPC server."""
 
+import asyncio
 import subprocess
 import sys
 import time
@@ -11,10 +12,11 @@ import requests
 import torch
 
 from areal.infra.rpc.rtensor import (
+    HttpRTensorBackend,
     RTensor,
     TensorShardInfo,
 )
-from areal.infra.rpc.serialization import serialize_value
+from areal.infra.rpc.serialization import deserialize_value, serialize_value
 from areal.infra.utils.proc import kill_process_tree
 from areal.utils.network import find_free_ports
 
@@ -211,6 +213,128 @@ class TestRTensorIntegration:
         for shard_id in shard_ids:
             resp = requests.get(f"http://{rpc_server}/data/{shard_id}")
             assert resp.status_code == 404
+
+    def test_batch_shard_retrieval(self, rpc_server):
+        """Retrieve multiple shards with one HTTP request."""
+        tensors = [torch.randn(2, 3).cpu(), torch.randn(4, 5).cpu()]
+        shard_ids = [str(uuid.uuid4()) for _ in tensors]
+
+        for shard_id, tensor in zip(shard_ids, tensors):
+            serialized = serialize_value(tensor)
+            resp = requests.put(
+                f"http://{rpc_server}/data/{shard_id}",
+                data=orjson.dumps(serialized),
+            )
+            assert resp.status_code == 200
+
+        resp = requests.post(
+            f"http://{rpc_server}/data/batch",
+            json={"shard_ids": shard_ids},
+        )
+        assert resp.status_code == 200
+        serialized_batch = orjson.loads(resp.content)
+        localized = deserialize_value(serialized_batch)
+        assert len(localized) == len(tensors)
+        for actual, expected in zip(localized, tensors):
+            assert torch.allclose(actual, expected)
+
+    def test_batch_shard_retrieval_reports_missing_shards(self, rpc_server):
+        """Missing shards return a structured client error instead of a compatibility 404."""
+        tensor = torch.randn(2, 3).cpu()
+        present_shard_id = str(uuid.uuid4())
+        missing_shard_id = str(uuid.uuid4())
+
+        resp = requests.put(
+            f"http://{rpc_server}/data/{present_shard_id}",
+            data=orjson.dumps(serialize_value(tensor)),
+        )
+        assert resp.status_code == 200
+
+        resp = requests.post(
+            f"http://{rpc_server}/data/batch",
+            json={"shard_ids": [present_shard_id, missing_shard_id]},
+        )
+        assert resp.status_code == 400
+        payload = resp.json()
+        assert payload["status"] == "error"
+        assert payload["missing_shard_ids"] == [missing_shard_id]
+
+
+class TestHttpRTensorBackendBatching:
+    """Unit tests for HTTP batch fetching behavior."""
+
+    def test_fetch_chunks_large_requests(self, monkeypatch):
+        """Large same-node fetches are split into bounded batch requests."""
+        backend = HttpRTensorBackend(max_shards_per_request=2)
+        shards = [
+            TensorShardInfo(shard_id=f"s{i}", node_addr="node-a") for i in range(5)
+        ]
+        requested_chunks = []
+
+        class _FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def fake_fetch_shard_group(self, session, node_addr, grouped):
+            requested_chunks.append(
+                (node_addr, [shard.shard_id for _, shard in grouped])
+            )
+            return [torch.tensor([int(shard.shard_id[1:])]) for _, shard in grouped]
+
+        monkeypatch.setattr(
+            backend,
+            "_create_session",
+            lambda: _FakeSession(),
+        )
+        monkeypatch.setattr(
+            backend,
+            "_fetch_shard_group",
+            fake_fetch_shard_group.__get__(backend, HttpRTensorBackend),
+        )
+
+        results = backend.fetch(shards)
+
+        assert requested_chunks == [
+            ("node-a", ["s0", "s1"]),
+            ("node-a", ["s2", "s3"]),
+            ("node-a", ["s4"]),
+        ]
+        assert [int(tensor.item()) for tensor in results] == [0, 1, 2, 3, 4]
+
+    def test_fetch_shard_group_raises_on_missing_batch_endpoint(self):
+        """404 on /data/batch surfaces as an error."""
+        backend = HttpRTensorBackend()
+        grouped = [
+            (0, TensorShardInfo(shard_id="s0", node_addr="node-a")),
+            (1, TensorShardInfo(shard_id="s1", node_addr="node-a")),
+        ]
+
+        class _FakeResponse:
+            status = 404
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def text(self):
+                return "missing endpoint"
+
+        class _FakeSession:
+            def post(self, url, json):
+                assert url == "http://node-a/data/batch"
+                assert json == {"shard_ids": ["s0", "s1"]}
+                return _FakeResponse()
+
+        with pytest.raises(
+            RuntimeError,
+            match="Failed to fetch shard batch from http://node-a/data/batch: 404 body=missing endpoint",
+        ):
+            asyncio.run(backend._fetch_shard_group(_FakeSession(), "node-a", grouped))
 
 
 class TestRTensorErrorHandling:
