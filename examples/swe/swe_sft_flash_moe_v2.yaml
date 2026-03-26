@@ -2,7 +2,7 @@ experiment_name: swe-sft
 trial_name: flash-moe-v2
 
 seed: 1
-enable_offload: true
+enable_offload: false
 total_train_epochs: 7
 tokenizer_path: ${actor.path}
 
@@ -23,7 +23,7 @@ cluster:
 # layers/PP = 32/4 = 8 ✓
 # 256 experts % EP(8) = 0 ✓
 # TP=4 to further reduce model+activation memory (TP=2 OOM by 0.08GB on all_gather)
-allocation_mode: "megatron:(attn:d4p4t4c2|ffn:d4p4e8)"
+allocation_mode: "megatron:(attn:d2p4t4c2|ffn:d2p4e8)"
 
 scheduler:
   type: slurm
