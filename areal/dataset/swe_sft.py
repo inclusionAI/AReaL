@@ -20,6 +20,16 @@ earlier assistant turns are treated as context (loss=0).
 
 By default, pairs whose current segment contains a tool result with
 ``is_error=True`` are discarded.  Set ``filter_errors=False`` to keep them.
+
+The file is organized into the following sections:
+
+1. **Constants & Infrastructure** — shared constants, distributed sync
+2. **Cleaning** — message content transforms (thinking tags, field cleanup)
+3. **Filters** — keep/discard predicates (error, empty, bare-text, truncation)
+4. **Splitting** — trajectory → progressive pairs (segment detection + split)
+5. **Tokenization** — template detection, render→tokenize→loss_mask, dump
+6. **Pipeline** — loading, processing, distributed cache, public API
+7. **CLI** — ``python -m areal.dataset.swe_sft`` entry point
 """
 
 import json
@@ -32,6 +42,11 @@ from datasets import Dataset
 from areal.utils import logging
 
 logger = logging.getLogger("SWESFTDataset")
+
+
+# ============================================================
+# 1. Constants & Infrastructure
+# ============================================================
 
 DATASET_NUM_PROC = 1
 
@@ -54,6 +69,10 @@ def _wait_for_marker(marker_path: str):
             )
         time.sleep(_RANK0_CACHE_POLL_INTERVAL)
 
+
+# ============================================================
+# 2. Cleaning — message content transforms
+# ============================================================
 
 # Match reasoning blocks with any common tag variant:
 #   <think>...</think>      (Qwen standard)
@@ -93,86 +112,6 @@ def _extract_thinking(content):
         return content
     cleaned = _THINK_RE.sub("", content).strip()
     return cleaned if cleaned != content.strip() else content
-
-
-def _find_segments(messages):
-    """Find assistant+tools segment boundaries.
-
-    Returns:
-        List of ``(assistant_start_idx, segment_end_idx)`` tuples.
-    """
-    segments = []
-    i = 0
-    while i < len(messages):
-        if messages[i].get("role") == "assistant":
-            j = i + 1
-            while j < len(messages) and messages[j].get("role") == "tool":
-                j += 1
-            segments.append((i, j))
-            i = j
-        else:
-            i += 1
-    return segments
-
-
-def _segment_has_error(messages, start, end):
-    """Check if any tool message in ``messages[start:end]`` has ``is_error=True``."""
-    for m in messages[start:end]:
-        if m.get("role") == "tool" and m.get("is_error") is True:
-            return True
-    return False
-
-
-def _truncate_at_task_notification(messages):
-    """Truncate messages when a ``<task-notification>`` follows a pure-text assistant.
-
-    Claude Code emits ``<task-notification>`` as a user message when a
-    background task (e.g. ``pip install``) completes.  If the model has
-    already produced a text-only summary (no tool_calls), the notification
-    and all subsequent messages are noise — the model just replies
-    "nothing to do".  Truncating here removes that noise.
-
-    Only triggers when the pattern is:
-        assistant (text, no tool_calls) → user (<task-notification>)
-
-    Returns:
-        Truncated message list (or the original list if no truncation needed).
-    """
-    for i, m in enumerate(messages):
-        if m.get("role") != "user":
-            continue
-        if "<task-notification>" not in (m.get("content") or ""):
-            continue
-        # Find preceding assistant
-        prev_asst = None
-        for j in range(i - 1, -1, -1):
-            if messages[j].get("role") == "assistant":
-                prev_asst = messages[j]
-                break
-        if prev_asst is None:
-            continue
-        content = prev_asst.get("content") or ""
-        if content.strip() and not prev_asst.get("tool_calls"):
-            # Truncate: keep everything up to (but not including) this user msg
-            return messages[:i]
-    return messages
-
-
-def _is_empty_tool_call(msg):
-    """True if assistant *msg* has no text content but has tool_calls."""
-    content = msg.get("content") or ""
-    return not content.strip() and bool(msg.get("tool_calls"))
-
-
-def _is_bare_text_tool_call(msg):
-    """True if assistant *msg* has text without ``<think>`` tags and has tool_calls."""
-    content = msg.get("content") or ""
-    if not content.strip() or not msg.get("tool_calls"):
-        return False
-    normalized = _THINK_OPEN_RE.sub("<think>", content)
-    normalized = _THINK_CLOSE_RE.sub("</think>", normalized)
-    match = _THINK_RE.search(normalized)
-    return not (match and match.group(1).strip())
 
 
 def _clean_message(msg, strip_thinking=True, ensure_thinking=False):
@@ -249,6 +188,96 @@ def _clean_message(msg, strip_thinking=True, ensure_thinking=False):
         cleaned["tool_call_id"] = msg["tool_call_id"]
 
     return cleaned
+
+
+# ============================================================
+# 3. Filters — keep/discard predicates
+# ============================================================
+
+
+def _segment_has_error(messages, start, end):
+    """Check if any tool message in ``messages[start:end]`` has ``is_error=True``."""
+    for m in messages[start:end]:
+        if m.get("role") == "tool" and m.get("is_error") is True:
+            return True
+    return False
+
+
+def _is_empty_tool_call(msg):
+    """True if assistant *msg* has no text content but has tool_calls."""
+    content = msg.get("content") or ""
+    return not content.strip() and bool(msg.get("tool_calls"))
+
+
+def _is_bare_text_tool_call(msg):
+    """True if assistant *msg* has text without ``<think>`` tags and has tool_calls."""
+    content = msg.get("content") or ""
+    if not content.strip() or not msg.get("tool_calls"):
+        return False
+    normalized = _THINK_OPEN_RE.sub("<think>", content)
+    normalized = _THINK_CLOSE_RE.sub("</think>", normalized)
+    match = _THINK_RE.search(normalized)
+    return not (match and match.group(1).strip())
+
+
+def _truncate_at_task_notification(messages):
+    """Truncate messages when a ``<task-notification>`` follows a pure-text assistant.
+
+    Claude Code emits ``<task-notification>`` as a user message when a
+    background task (e.g. ``pip install``) completes.  If the model has
+    already produced a text-only summary (no tool_calls), the notification
+    and all subsequent messages are noise — the model just replies
+    "nothing to do".  Truncating here removes that noise.
+
+    Only triggers when the pattern is:
+        assistant (text, no tool_calls) → user (<task-notification>)
+
+    Returns:
+        Truncated message list (or the original list if no truncation needed).
+    """
+    for i, m in enumerate(messages):
+        if m.get("role") != "user":
+            continue
+        if "<task-notification>" not in (m.get("content") or ""):
+            continue
+        # Find preceding assistant
+        prev_asst = None
+        for j in range(i - 1, -1, -1):
+            if messages[j].get("role") == "assistant":
+                prev_asst = messages[j]
+                break
+        if prev_asst is None:
+            continue
+        content = prev_asst.get("content") or ""
+        if content.strip() and not prev_asst.get("tool_calls"):
+            # Truncate: keep everything up to (but not including) this user msg
+            return messages[:i]
+    return messages
+
+
+# ============================================================
+# 4. Splitting — trajectory → progressive pairs
+# ============================================================
+
+
+def _find_segments(messages):
+    """Find assistant+tools segment boundaries.
+
+    Returns:
+        List of ``(assistant_start_idx, segment_end_idx)`` tuples.
+    """
+    segments = []
+    i = 0
+    while i < len(messages):
+        if messages[i].get("role") == "assistant":
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") == "tool":
+                j += 1
+            segments.append((i, j))
+            i = j
+        else:
+            i += 1
+    return segments
 
 
 def _split_and_filter(
@@ -335,6 +364,10 @@ def _split_and_filter(
 
     return pairs, n_filtered_errors, n_filtered_empty_tc, n_filtered_bare_tc
 
+
+# ============================================================
+# 5. Tokenization — template detection, render, loss mask, dump
+# ============================================================
 
 _TEMPLATE_PATTERNS = [
     # ChatML (Qwen, etc.):  <|im_start|>assistant\n ... <|im_end|>
@@ -503,6 +536,94 @@ def _detect_template_pattern(tokenizer, tools=None):
     )
 
 
+def _dump_samples(pairs, tokenizer, assistant_pattern, tools, dump_dir, n_samples):
+    """Dump sampled pairs as ``.txt`` + ``.json`` files for inspection.
+
+    Args:
+        pairs: List of message-list pairs (cleaned, ready for template).
+        tokenizer: Tokenizer with ``apply_chat_template`` support.
+        assistant_pattern: Compiled regex from ``_detect_template_pattern``.
+        tools: Tool definitions list (or None).
+        dump_dir: Directory to write files into (created if needed).
+        n_samples: Number of random samples to dump.  ``-1`` dumps all.
+    """
+    import random as _random
+
+    os.makedirs(dump_dir, exist_ok=True)
+
+    if n_samples == -1 or n_samples >= len(pairs):
+        indices = list(range(len(pairs)))
+    else:
+        indices = sorted(_random.sample(range(len(pairs)), n_samples))
+
+    n_written = 0
+    for i in indices:
+        pair = pairs[i]
+
+        result = _render_tokenize_mask(pair, tokenizer, assistant_pattern, tools)
+        if result is None:
+            continue
+
+        full_text, input_ids, loss_mask, offset_mapping = result
+        n_loss = sum(loss_mask)
+        base = os.path.join(dump_dir, f"pair_{i}")
+
+        # --- .txt ---
+        with open(base + ".txt", "w", encoding="utf-8") as fout:
+            fout.write(
+                f"Pair {i}: {len(pair)} messages, "
+                f"{len(input_ids)} tokens, loss=1: {n_loss}\n"
+            )
+            fout.write(f"Last msg role: {pair[-1]['role']}\n")
+            fout.write(f"{'=' * 72}\n\n")
+
+            fout.write("--- Rendered Text ---\n")
+            fout.write(full_text)
+            fout.write("\n\n")
+
+            fout.write("--- Token / Loss Mask ---\n")
+            fout.write(f"{'Idx':>6} | {'TokenID':>8} | Loss | Token Text\n")
+            fout.write(f"{'-' * 6}-+-{'-' * 8}-+------+{'-' * 40}\n")
+            for t in range(len(input_ids)):
+                cs, ce = offset_mapping[t]
+                tok_text = repr(full_text[cs:ce])
+                fout.write(
+                    f"{t:>6} | {input_ids[t]:>8} | {loss_mask[t]:>4} | {tok_text}\n"
+                )
+
+        # --- .json ---
+        tokens_list = []
+        for t in range(len(input_ids)):
+            cs, ce = offset_mapping[t]
+            tokens_list.append(
+                {
+                    "idx": t,
+                    "token_id": input_ids[t],
+                    "text": full_text[cs:ce],
+                    "loss": loss_mask[t],
+                }
+            )
+        record = {
+            "pair_index": i,
+            "n_messages": len(pair),
+            "n_tokens": len(input_ids),
+            "n_loss_tokens": n_loss,
+            "rendered_text": full_text,
+            "tokens": tokens_list,
+        }
+        with open(base + ".json", "w", encoding="utf-8") as fout:
+            json.dump(record, fout, ensure_ascii=False)
+
+        n_written += 1
+
+    logger.info(f"Dumped {n_written} sample pairs to {dump_dir}/")
+
+
+# ============================================================
+# 6. Pipeline — loading, processing, distributed cache, public API
+# ============================================================
+
+
 def _load_trajectory_pairs(
     path: str,
     filter_errors: bool = True,
@@ -669,6 +790,93 @@ def _load_presplit_pairs(path: str, strip_all_thinking: bool = False):
     return all_pairs, tools
 
 
+def _process_swe_sft(
+    path: str,
+    tokenizer,
+    *,
+    max_length: int | None = None,
+    num_proc: int | None = None,
+    pre_split: bool = False,
+    filter_errors: bool = True,
+    strip_all_thinking: bool = False,
+    filter_empty_tool_calls: bool = False,
+    filter_bare_text_tool_calls: bool = False,
+    truncate_task_notifications: bool = False,
+    no_tools: bool = False,
+    dump_dir: str | None = None,
+    dump_n_samples: int = 0,
+):
+    """Core processing: load JSONL, split into pairs, tokenize, and filter.
+
+    Extracted from ``get_swe_sft_dataset`` so that the rank-0-only path and
+    the single-process path share the same logic.
+    """
+    tools = None
+
+    if num_proc is None:
+        num_proc = max(1, min(os.cpu_count() or 1, DATASET_NUM_PROC))
+
+    if pre_split:
+        all_pairs, tools = _load_presplit_pairs(
+            path, strip_all_thinking=strip_all_thinking
+        )
+    else:
+        all_pairs, tools = _load_trajectory_pairs(
+            path,
+            filter_errors=filter_errors,
+            strip_all_thinking=strip_all_thinking,
+            filter_empty_tool_calls=filter_empty_tool_calls,
+            filter_bare_text_tool_calls=filter_bare_text_tool_calls,
+            truncate_task_notifications=truncate_task_notifications,
+        )
+
+    if no_tools:
+        tools = None
+        logger.info("Tool definitions disabled (no_tools=True)")
+    elif tools is not None:
+        tool_names = [t.get("function", {}).get("name", "?") for t in tools]
+        logger.info(f"Using tools for chat template: {tool_names}")
+
+    if not all_pairs:
+        raise ValueError(f"No valid SFT pairs generated from {path}")
+
+    dataset = Dataset.from_dict({"messages": all_pairs})
+
+    assistant_pattern = _detect_template_pattern(tokenizer, tools=tools)
+
+    # Dump sample pairs for inspection before the heavy map() pass.
+    if dump_dir and dump_n_samples != 0:
+        _dump_samples(
+            all_pairs,
+            tokenizer,
+            assistant_pattern,
+            tools,
+            dump_dir,
+            dump_n_samples,
+        )
+    # Pass max_length so overlength samples are marked empty during
+    # tokenization, allowing a single filter pass instead of three.
+    process_fn = _TokenizeAndMask(
+        tokenizer, assistant_pattern, tools=tools, max_length=max_length
+    )
+
+    dataset = dataset.map(process_fn, num_proc=num_proc).remove_columns(["messages"])
+
+    # Single filter pass: removes both apply_chat_template-failure empties and
+    # overlength samples (which _TokenizeAndMask also marks as empty).
+    before_filter = len(dataset)
+    dataset = dataset.filter(lambda x: len(x["input_ids"]) > 0, num_proc=num_proc)
+    n_filtered = before_filter - len(dataset)
+    if n_filtered > 0:
+        logger.info(
+            f"Filtered {n_filtered} samples "
+            f"(empty from template failures or exceeding max_length={max_length})"
+        )
+
+    logger.info(f"Final dataset: {len(dataset)} samples")
+    return dataset
+
+
 def get_swe_sft_dataset(
     path: str,
     split: str | None = None,
@@ -815,175 +1023,9 @@ def get_swe_sft_dataset(
     return _process_swe_sft(path, tokenizer, **process_kwargs)
 
 
-def _dump_samples(pairs, tokenizer, assistant_pattern, tools, dump_dir, n_samples):
-    """Dump sampled pairs as ``.txt`` + ``.json`` files for inspection.
-
-    Args:
-        pairs: List of message-list pairs (cleaned, ready for template).
-        tokenizer: Tokenizer with ``apply_chat_template`` support.
-        assistant_pattern: Compiled regex from ``_detect_template_pattern``.
-        tools: Tool definitions list (or None).
-        dump_dir: Directory to write files into (created if needed).
-        n_samples: Number of random samples to dump.  ``-1`` dumps all.
-    """
-    import random as _random
-
-    os.makedirs(dump_dir, exist_ok=True)
-
-    if n_samples == -1 or n_samples >= len(pairs):
-        indices = list(range(len(pairs)))
-    else:
-        indices = sorted(_random.sample(range(len(pairs)), n_samples))
-
-    n_written = 0
-    for i in indices:
-        pair = pairs[i]
-
-        result = _render_tokenize_mask(pair, tokenizer, assistant_pattern, tools)
-        if result is None:
-            continue
-
-        full_text, input_ids, loss_mask, offset_mapping = result
-        n_loss = sum(loss_mask)
-        base = os.path.join(dump_dir, f"pair_{i}")
-
-        # --- .txt ---
-        with open(base + ".txt", "w", encoding="utf-8") as fout:
-            fout.write(
-                f"Pair {i}: {len(pair)} messages, "
-                f"{len(input_ids)} tokens, loss=1: {n_loss}\n"
-            )
-            fout.write(f"Last msg role: {pair[-1]['role']}\n")
-            fout.write(f"{'=' * 72}\n\n")
-
-            fout.write("--- Rendered Text ---\n")
-            fout.write(full_text)
-            fout.write("\n\n")
-
-            fout.write("--- Token / Loss Mask ---\n")
-            fout.write(f"{'Idx':>6} | {'TokenID':>8} | Loss | Token Text\n")
-            fout.write(f"{'-' * 6}-+-{'-' * 8}-+------+{'-' * 40}\n")
-            for t in range(len(input_ids)):
-                cs, ce = offset_mapping[t]
-                tok_text = repr(full_text[cs:ce])
-                fout.write(
-                    f"{t:>6} | {input_ids[t]:>8} | {loss_mask[t]:>4} | {tok_text}\n"
-                )
-
-        # --- .json ---
-        tokens_list = []
-        for t in range(len(input_ids)):
-            cs, ce = offset_mapping[t]
-            tokens_list.append(
-                {
-                    "idx": t,
-                    "token_id": input_ids[t],
-                    "text": full_text[cs:ce],
-                    "loss": loss_mask[t],
-                }
-            )
-        record = {
-            "pair_index": i,
-            "n_messages": len(pair),
-            "n_tokens": len(input_ids),
-            "n_loss_tokens": n_loss,
-            "rendered_text": full_text,
-            "tokens": tokens_list,
-        }
-        with open(base + ".json", "w", encoding="utf-8") as fout:
-            json.dump(record, fout, ensure_ascii=False)
-
-        n_written += 1
-
-    logger.info(f"Dumped {n_written} sample pairs to {dump_dir}/")
-
-
-def _process_swe_sft(
-    path: str,
-    tokenizer,
-    *,
-    max_length: int | None = None,
-    num_proc: int | None = None,
-    pre_split: bool = False,
-    filter_errors: bool = True,
-    strip_all_thinking: bool = False,
-    filter_empty_tool_calls: bool = False,
-    filter_bare_text_tool_calls: bool = False,
-    truncate_task_notifications: bool = False,
-    no_tools: bool = False,
-    dump_dir: str | None = None,
-    dump_n_samples: int = 0,
-):
-    """Core processing: load JSONL, split into pairs, tokenize, and filter.
-
-    Extracted from ``get_swe_sft_dataset`` so that the rank-0-only path and
-    the single-process path share the same logic.
-    """
-    tools = None
-
-    if num_proc is None:
-        num_proc = max(1, min(os.cpu_count() or 1, DATASET_NUM_PROC))
-
-    if pre_split:
-        all_pairs, tools = _load_presplit_pairs(
-            path, strip_all_thinking=strip_all_thinking
-        )
-    else:
-        all_pairs, tools = _load_trajectory_pairs(
-            path,
-            filter_errors=filter_errors,
-            strip_all_thinking=strip_all_thinking,
-            filter_empty_tool_calls=filter_empty_tool_calls,
-            filter_bare_text_tool_calls=filter_bare_text_tool_calls,
-            truncate_task_notifications=truncate_task_notifications,
-        )
-
-    if no_tools:
-        tools = None
-        logger.info("Tool definitions disabled (no_tools=True)")
-    elif tools is not None:
-        tool_names = [t.get("function", {}).get("name", "?") for t in tools]
-        logger.info(f"Using tools for chat template: {tool_names}")
-
-    if not all_pairs:
-        raise ValueError(f"No valid SFT pairs generated from {path}")
-
-    dataset = Dataset.from_dict({"messages": all_pairs})
-
-    assistant_pattern = _detect_template_pattern(tokenizer, tools=tools)
-
-    # Dump sample pairs for inspection before the heavy map() pass.
-    if dump_dir and dump_n_samples != 0:
-        _dump_samples(
-            all_pairs,
-            tokenizer,
-            assistant_pattern,
-            tools,
-            dump_dir,
-            dump_n_samples,
-        )
-    # Pass max_length so overlength samples are marked empty during
-    # tokenization, allowing a single filter pass instead of three.
-    process_fn = _TokenizeAndMask(
-        tokenizer, assistant_pattern, tools=tools, max_length=max_length
-    )
-
-    dataset = dataset.map(process_fn, num_proc=num_proc).remove_columns(["messages"])
-
-    # Single filter pass: removes both apply_chat_template-failure empties and
-    # overlength samples (which _TokenizeAndMask also marks as empty).
-    before_filter = len(dataset)
-    dataset = dataset.filter(lambda x: len(x["input_ids"]) > 0, num_proc=num_proc)
-    n_filtered = before_filter - len(dataset)
-    if n_filtered > 0:
-        logger.info(
-            f"Filtered {n_filtered} samples "
-            f"(empty from template failures or exceeding max_length={max_length})"
-        )
-
-    logger.info(f"Final dataset: {len(dataset)} samples")
-    return dataset
-
+# ============================================================
+# 7. CLI — ``python -m areal.dataset.swe_sft``
+# ============================================================
 
 if __name__ == "__main__":
     import argparse
@@ -1014,11 +1056,6 @@ if __name__ == "__main__":
         default=None,
         help="Number of pairs to process.  Controls loading, tokenization,"
         " display, and export.  Default: all pairs.",
-    )
-    parser.add_argument(
-        "--show-transitions",
-        action="store_true",
-        help="Show loss mask transition boundaries with decoded tokens",
     )
     parser.add_argument(
         "--num-proc",
@@ -1162,33 +1199,7 @@ if __name__ == "__main__":
         )
         sys.exit(0)
 
-    # --- Fast path: preprocess and save tokenized dataset ---
-    if args.save_tokenized:
-        tok = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
-        dump_dir = args.dump_samples if args.dump_samples else None
-        dump_n = (
-            -1 if dump_dir and args.num_samples is None else (args.num_samples or -1)
-        )
-        ds = get_swe_sft_dataset(
-            path=args.path,
-            tokenizer=tok,
-            max_length=args.max_length,
-            num_proc=args.num_proc,
-            pre_split=args.pre_split,
-            filter_errors=filter_errors,
-            strip_all_thinking=strip_all_thinking,
-            filter_empty_tool_calls=filter_empty_tool_calls,
-            filter_bare_text_tool_calls=filter_bare_text_tool_calls,
-            truncate_task_notifications=truncate_task_notifications,
-            no_tools=args.no_tools,
-            dump_dir=dump_dir,
-            dump_samples=dump_n if dump_dir else 0,
-        )
-        ds.save_to_disk(args.save_tokenized)
-        print(f"Saved tokenized dataset ({len(ds)} samples) to {args.save_tokenized}")
-        sys.exit(0)
-
-    # --- Load pairs (always full load, then truncate) ---
+    # --- Load pairs ---
     if args.pre_split:
         all_pairs, tools = _load_presplit_pairs(
             args.path, strip_all_thinking=strip_all_thinking
@@ -1218,7 +1229,7 @@ if __name__ == "__main__":
             f"max={max(lengths)}, avg={sum(lengths) / len(lengths):.1f}"
         )
 
-    # --- Export pairs ---
+    # --- Save pairs (granularity 2: cleaned pairs as JSONL) ---
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fout:
             for pair in all_pairs:
@@ -1230,17 +1241,16 @@ if __name__ == "__main__":
         print(f"Wrote {len(all_pairs)} pairs to {args.output}")
 
     if args.pairs_only:
-        # Show pair structure and exit.
         for i, pair in enumerate(all_pairs):
             roles = [m["role"] for m in pair]
             print(f"  Pair {i}: {len(pair)} msgs  roles={roles}")
         sys.exit(0)
 
-    # --- Tokenize (only the selected pairs) ---
+    # --- Tokenize (granularity 3: full pipeline) ---
     tok = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
 
-    # Write selected pairs to a temp file so get_swe_sft_dataset can load
-    # them without re-processing the entire original file.
+    # Write pairs to temp file so _process_swe_sft can load them as
+    # pre-split input, reusing the same code path as training.
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jsonl")
     with os.fdopen(tmp_fd, "w", encoding="utf-8") as fout:
         for pair in all_pairs:
@@ -1249,6 +1259,9 @@ if __name__ == "__main__":
                 record["tools"] = tools
             fout.write(json.dumps(record, ensure_ascii=False))
             fout.write("\n")
+
+    dump_dir = args.dump_samples if args.dump_samples else None
+    dump_n = args.num_samples if (dump_dir and args.num_samples) else -1
 
     try:
         ds = get_swe_sft_dataset(
@@ -1259,51 +1272,15 @@ if __name__ == "__main__":
             pre_split=True,
             filter_errors=filter_errors,
             no_tools=args.no_tools,
+            dump_dir=dump_dir,
+            dump_samples=dump_n if dump_dir else 0,
         )
     finally:
         os.unlink(tmp_path)
 
     print(f"\nTokenized: {len(ds)} samples")
 
-    # --- Per-sample stats ---
-    total_tokens = 0
-    total_loss = 0
-    for i in range(len(ds)):
-        ids = ds[i]["input_ids"]
-        mask = ds[i]["loss_mask"]
-        n_loss = sum(mask)
-        total_tokens += len(ids)
-        total_loss += n_loss
-        pct = 100.0 * n_loss / len(ids) if ids else 0
-        print(f"  Sample {i}: {len(ids)} tokens, loss={n_loss} ({pct:.1f}%)")
-
-    avg_pct = 100.0 * total_loss / total_tokens if total_tokens else 0
-    print(
-        f"\nAggregate: {total_tokens} tokens, {total_loss} loss tokens ({avg_pct:.1f}%)"
-    )
-
-    # --- Show transitions ---
-    if args.show_transitions:
-        for i in range(len(ds)):
-            ids = ds[i]["input_ids"]
-            mask = ds[i]["loss_mask"]
-            print(f"\nSample {i} transitions (loss 0->1 or 1->0):")
-            for j in range(1, len(mask)):
-                if mask[j] != mask[j - 1]:
-                    ctx_start = max(0, j - 2)
-                    ctx_end = min(len(ids), j + 3)
-                    ctx = tok.decode(ids[ctx_start:ctx_end])
-                    print(f"  Token {j}: {mask[j - 1]}->{mask[j]}  context: {ctx!r}")
-
-    # --- Dump samples ---
-    if args.dump_samples:
-        dump_tools = None if args.no_tools else tools
-        assistant_pattern = _detect_template_pattern(tok, tools=dump_tools)
-        _dump_samples(
-            all_pairs,
-            tok,
-            assistant_pattern,
-            dump_tools,
-            args.dump_samples,
-            n_samples=-1,
-        )
+    # --- Save tokenized dataset (Arrow format) ---
+    if args.save_tokenized:
+        ds.save_to_disk(args.save_tokenized)
+        print(f"Saved tokenized dataset ({len(ds)} samples) to {args.save_tokenized}")
