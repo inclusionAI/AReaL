@@ -12,11 +12,11 @@ def gethostip(probe_host: str = "8.8.8.8", probe_port: int = 80) -> str:
     Find the local IP address for outbound route to `probe_host:probe_port`.
 
     Args:
-        probe_host: Remote IPv4 address used to trigger route selection.
+        probe_host: Remote address used to trigger route selection.
         probe_port: Remote port used for the UDP probe.
 
     Returns:
-        The selected local IP address as a string
+        The selected local IP address as a string. Supports both IPv4 and IPv6.
 
     Raises:
         RuntimeError: If no suitable address can be determined
@@ -89,6 +89,11 @@ def split_hostport(addr: str) -> tuple[str, int]:
         rest = addr[end + 1 :]
         if not rest.startswith(":"):
             raise ValueError(f"Invalid bracketed address: {addr}")
+        host_for_validate = host.split("%", 1)[0]
+        try:
+            ip_address(host_for_validate)
+        except ValueError as e:
+            raise ValueError(f"Invalid bracketed address: {addr}") from e
         return host, int(rest[1:])
 
     if addr.count(":") == 1:
@@ -96,8 +101,9 @@ def split_hostport(addr: str) -> tuple[str, int]:
         return host, int(port_s)
 
     host, port_s = addr.rsplit(":", 1)
+    host_for_validate = host.split("%", 1)[0]
     try:
-        ip_address(host)
+        ip_address(host_for_validate)
     except ValueError as e:
         raise ValueError(f"Invalid host:port address: {addr}") from e
     return host, int(port_s)

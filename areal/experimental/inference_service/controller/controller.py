@@ -25,6 +25,7 @@ from areal.experimental.inference_service.controller.config import (
     GatewayControllerConfig,
 )
 from areal.utils import logging
+from areal.utils.network import format_hostport
 
 logger = logging.getLogger("GatewayInferenceController")
 
@@ -214,7 +215,8 @@ class GatewayInferenceController:
             # Pre-existing servers — just record their addresses
             self.server_infos = server_infos
             self._inf_addrs = [
-                f"http://{info.host}:{info.port}" for info in server_infos
+                f"http://{format_hostport(info.host, info.port)}"
+                for info in server_infos
             ]
             logger.info(
                 "Using %d pre-existing server_infos, skipping inference server fork",
@@ -261,7 +263,7 @@ class GatewayInferenceController:
 
             # For each RPCGuard worker: alloc port, build cmd, fork server
             for rank, worker in enumerate(inf_workers):
-                guard_addr = f"http://{worker.ip}:{worker.worker_ports[0]}"
+                guard_addr = f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
 
                 resp = requests.post(
                     f"{guard_addr}/alloc_ports",
@@ -286,7 +288,7 @@ class GatewayInferenceController:
                 )
                 resp.raise_for_status()
 
-                addr = f"http://{inf_host}:{inf_port}"
+                addr = f"http://{format_hostport(inf_host, inf_port)}"
                 self._inf_addrs.append(addr)
                 self.server_infos.append(
                     LocalInfServerInfo(
@@ -320,14 +322,14 @@ class GatewayInferenceController:
             cfg.log_level,
         ]
 
-        guard_addr_0 = f"http://{self.workers[0].ip}:{self.workers[0].worker_ports[0]}"
+        guard_addr_0 = f"http://{format_hostport(self.workers[0].ip, int(self.workers[0].worker_ports[0]))}"
         router_host, router_port = self._fork_on_guard(
             guard_addr=guard_addr_0,
             role="router",
             worker_index=0,
             raw_cmd=router_cmd,
         )
-        self._router_addr = f"http://{router_host}:{router_port}"
+        self._router_addr = f"http://{format_hostport(router_host, router_port)}"
         logger.info("Router: %s", self._router_addr)
 
         # ==================================================================
@@ -348,7 +350,7 @@ class GatewayInferenceController:
         ]
 
         for rank, worker in enumerate(inf_workers):
-            guard_addr = f"http://{worker.ip}:{worker.worker_ports[0]}"
+            guard_addr = f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
             # Each data proxy connects to its corresponding inference server
             data_proxy_cmd = data_proxy_base_cmd + [
                 "--backend-addr",
@@ -360,7 +362,9 @@ class GatewayInferenceController:
                 worker_index=rank,
                 raw_cmd=data_proxy_cmd,
             )
-            self._data_proxy_addrs.append(f"http://{data_proxy_host}:{data_proxy_port}")
+            self._data_proxy_addrs.append(
+                f"http://{format_hostport(data_proxy_host, data_proxy_port)}"
+            )
 
         logger.info("Data proxies: %s", self._data_proxy_addrs)
 
@@ -387,7 +391,7 @@ class GatewayInferenceController:
             worker_index=0,
             raw_cmd=gw_cmd,
         )
-        self._gateway_addr = f"http://{gw_host}:{gw_port}"
+        self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
         logger.info("Gateway: %s", self._gateway_addr)
 
     # -- Service health checks & registration ------------------------------
@@ -992,7 +996,7 @@ class GatewayInferenceController:
 
         self._forked_services.append((guard_addr, role, worker_index))
 
-        addr = f"http://{host}:{port}"
+        addr = f"http://{format_hostport(host, port)}"
         self._wait_for_service(f"{addr}{health_path}", role)
 
         return host, port

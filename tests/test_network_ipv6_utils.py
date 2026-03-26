@@ -57,6 +57,20 @@ def test_split_hostport_accepts_bracketed_ipv6():
     assert port == 8000
 
 
+def test_split_hostport_accepts_ipv6_with_zone_id_unbracketed():
+    network = _load_network_module()
+    host, port = network.split_hostport("fe80::1%eth0:8000")
+    assert host == "fe80::1%eth0"
+    assert port == 8000
+
+
+def test_split_hostport_accepts_ipv6_with_zone_id_bracketed():
+    network = _load_network_module()
+    host, port = network.split_hostport("[fe80::1%eth0]:8000")
+    assert host == "fe80::1%eth0"
+    assert port == 8000
+
+
 def test_format_hostport_brackets_ipv6():
     network = _load_network_module()
     assert network.format_hostport("2001:db8::1", 8000) == "[2001:db8::1]:8000"

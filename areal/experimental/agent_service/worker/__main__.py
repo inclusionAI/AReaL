@@ -7,6 +7,8 @@ import threading
 import httpx
 import uvicorn
 
+from areal.utils.network import format_hostport
+
 from .app import create_worker_app
 
 
@@ -22,8 +24,8 @@ def main() -> None:
     parser.add_argument("--admin-key", default="areal-agent-admin")
     args = parser.parse_args()
 
-    worker_addr = f"http://{args.host}:{args.worker_port}"
-    proxy_addr = f"http://{args.host}:{args.proxy_port}"
+    worker_addr = f"http://{format_hostport(args.host, args.worker_port)}"
+    proxy_addr = f"http://{format_hostport(args.host, args.proxy_port)}"
 
     worker_app = create_worker_app(args.agent)
     proxy_app = create_data_proxy_app(worker_addr=worker_addr)
