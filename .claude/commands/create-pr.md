@@ -62,16 +62,23 @@ gh repo view --json owner,name,viewerPermission
 
 **Logic for Determining Push Remote:**
 
-1. **If `origin` is writable**: Use `origin` directly (maintainer workflow)
-2. **If `origin` is NOT writable**: Look for a fork remote
-   - Common fork remote names: `fork`, `user`, `<username>`, or any remote pointing to user's fork
-   - Verify the fork remote points to user's own fork via `gh repo view <remote-url> --json owner`
-3. **If no fork remote found**: Ask user to add their fork as a remote:
-   ```bash
-   git remote add fork https://github.com/<username>/AReaL.git
-   ```
+**If `origin` is writable**: Use `origin` directly (maintainer workflow)
+
+**If `origin` is NOT writable**: Look for a fork remote
+
+- Common fork remote names: `fork`, `user`, `<username>`, or any remote pointing to
+  user's fork
+- Verify the fork remote points to user's own fork via
+  `gh repo view <remote-url> --json owner`
+
+**If no fork remote found**: Ask user to add their fork as a remote:
+
+```bash
+git remote add fork https://github.com/<username>/AReaL.git
+```
 
 **Store for later use:**
+
 - `PUSH_REMOTE`: The remote to push to (e.g., `origin` or `fork`)
 - `UPSTREAM_REPO`: The upstream repo for PR target (e.g., `inclusionAI/AReaL`)
 - `FORK_OWNER`: Fork owner username (for `--head` parameter if needed)
