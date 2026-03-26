@@ -790,45 +790,25 @@ def _load_presplit_pairs(path: str, strip_all_thinking: bool = False):
     return all_pairs, tools
 
 
-def _process_swe_sft(
-    path: str,
+def _tokenize_pairs(
+    all_pairs,
+    tools,
     tokenizer,
     *,
     max_length: int | None = None,
     num_proc: int | None = None,
-    pre_split: bool = False,
-    filter_errors: bool = True,
-    strip_all_thinking: bool = False,
-    filter_empty_tool_calls: bool = False,
-    filter_bare_text_tool_calls: bool = False,
-    truncate_task_notifications: bool = False,
     no_tools: bool = False,
     dump_dir: str | None = None,
     dump_n_samples: int = 0,
 ):
-    """Core processing: load JSONL, split into pairs, tokenize, and filter.
+    """Tokenize pre-loaded pairs into a training-ready Dataset.
 
-    Extracted from ``get_swe_sft_dataset`` so that the rank-0-only path and
-    the single-process path share the same logic.
+    Takes already-loaded and cleaned pairs (no file I/O).  This is the
+    shared tokenization stage used by both ``_process_swe_sft`` (file-based
+    pipeline) and the CLI (which already has pairs in memory).
     """
-    tools = None
-
     if num_proc is None:
         num_proc = max(1, min(os.cpu_count() or 1, DATASET_NUM_PROC))
-
-    if pre_split:
-        all_pairs, tools = _load_presplit_pairs(
-            path, strip_all_thinking=strip_all_thinking
-        )
-    else:
-        all_pairs, tools = _load_trajectory_pairs(
-            path,
-            filter_errors=filter_errors,
-            strip_all_thinking=strip_all_thinking,
-            filter_empty_tool_calls=filter_empty_tool_calls,
-            filter_bare_text_tool_calls=filter_bare_text_tool_calls,
-            truncate_task_notifications=truncate_task_notifications,
-        )
 
     if no_tools:
         tools = None
@@ -838,7 +818,7 @@ def _process_swe_sft(
         logger.info(f"Using tools for chat template: {tool_names}")
 
     if not all_pairs:
-        raise ValueError(f"No valid SFT pairs generated from {path}")
+        raise ValueError("No valid SFT pairs to tokenize")
 
     dataset = Dataset.from_dict({"messages": all_pairs})
 
@@ -875,6 +855,53 @@ def _process_swe_sft(
 
     logger.info(f"Final dataset: {len(dataset)} samples")
     return dataset
+
+
+def _process_swe_sft(
+    path: str,
+    tokenizer,
+    *,
+    max_length: int | None = None,
+    num_proc: int | None = None,
+    pre_split: bool = False,
+    filter_errors: bool = True,
+    strip_all_thinking: bool = False,
+    filter_empty_tool_calls: bool = False,
+    filter_bare_text_tool_calls: bool = False,
+    truncate_task_notifications: bool = False,
+    no_tools: bool = False,
+    dump_dir: str | None = None,
+    dump_n_samples: int = 0,
+):
+    """Load JSONL, split into pairs, tokenize, and filter.
+
+    Combines file loading with ``_tokenize_pairs`` so that the rank-0-only
+    path and the single-process path share the same logic.
+    """
+    if pre_split:
+        all_pairs, tools = _load_presplit_pairs(
+            path, strip_all_thinking=strip_all_thinking
+        )
+    else:
+        all_pairs, tools = _load_trajectory_pairs(
+            path,
+            filter_errors=filter_errors,
+            strip_all_thinking=strip_all_thinking,
+            filter_empty_tool_calls=filter_empty_tool_calls,
+            filter_bare_text_tool_calls=filter_bare_text_tool_calls,
+            truncate_task_notifications=truncate_task_notifications,
+        )
+
+    return _tokenize_pairs(
+        all_pairs,
+        tools,
+        tokenizer,
+        max_length=max_length,
+        num_proc=num_proc,
+        no_tools=no_tools,
+        dump_dir=dump_dir,
+        dump_n_samples=dump_n_samples,
+    )
 
 
 def get_swe_sft_dataset(
@@ -1030,7 +1057,6 @@ def get_swe_sft_dataset(
 if __name__ == "__main__":
     import argparse
     import sys
-    import tempfile
 
     from transformers import AutoTokenizer
 
@@ -1064,22 +1090,17 @@ if __name__ == "__main__":
         help=f"Number of parallel workers (default: min(cpu_count, {DATASET_NUM_PROC}))",
     )
     parser.add_argument(
-        "--output",
+        "--save-pairs",
         "-o",
         default=None,
-        help='Write pairs to a JSONL file (each line: {"messages": [...]})',
+        metavar="FILE",
+        help='Save cleaned pairs to FILE (JSONL, each line: {"messages": [...]}).',
     )
     parser.add_argument(
         "--pre-split",
         action="store_true",
         help='Input is already in pair format (each line: {"messages": [...]}).'
         " Skip trajectory splitting and error filtering.",
-    )
-    parser.add_argument(
-        "--pairs-only",
-        action="store_true",
-        help="Only verify pair generation (no tokenization). "
-        "Combine with --output to export pairs.",
     )
     parser.add_argument(
         "--no-filter-errors",
@@ -1230,53 +1251,36 @@ if __name__ == "__main__":
         )
 
     # --- Save pairs (granularity 2: cleaned pairs as JSONL) ---
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as fout:
+    if args.save_pairs:
+        with open(args.save_pairs, "w", encoding="utf-8") as fout:
             for pair in all_pairs:
                 record = {"messages": pair}
                 if tools is not None:
                     record["tools"] = tools
                 fout.write(json.dumps(record, ensure_ascii=False))
                 fout.write("\n")
-        print(f"Wrote {len(all_pairs)} pairs to {args.output}")
-
-    if args.pairs_only:
-        for i, pair in enumerate(all_pairs):
-            roles = [m["role"] for m in pair]
-            print(f"  Pair {i}: {len(pair)} msgs  roles={roles}")
-        sys.exit(0)
+        print(f"Wrote {len(all_pairs)} pairs to {args.save_pairs}")
 
     # --- Tokenize (granularity 3: full pipeline) ---
-    tok = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
-
-    # Write pairs to temp file so _process_swe_sft can load them as
-    # pre-split input, reusing the same code path as training.
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jsonl")
-    with os.fdopen(tmp_fd, "w", encoding="utf-8") as fout:
-        for pair in all_pairs:
-            record = {"messages": pair}
-            if tools is not None:
-                record["tools"] = tools
-            fout.write(json.dumps(record, ensure_ascii=False))
-            fout.write("\n")
-
+    # Skip tokenization if no tokenization-dependent flags are given.
     dump_dir = args.dump_samples if args.dump_samples else None
+    need_tokenize = args.save_tokenized or dump_dir
+    if not need_tokenize:
+        sys.exit(0)
+
+    tok = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
     dump_n = args.num_samples if (dump_dir and args.num_samples) else -1
 
-    try:
-        ds = get_swe_sft_dataset(
-            path=tmp_path,
-            tokenizer=tok,
-            max_length=args.max_length,
-            num_proc=args.num_proc,
-            pre_split=True,
-            filter_errors=filter_errors,
-            no_tools=args.no_tools,
-            dump_dir=dump_dir,
-            dump_samples=dump_n if dump_dir else 0,
-        )
-    finally:
-        os.unlink(tmp_path)
+    ds = _tokenize_pairs(
+        all_pairs,
+        tools,
+        tok,
+        max_length=args.max_length,
+        num_proc=args.num_proc,
+        no_tools=args.no_tools,
+        dump_dir=dump_dir,
+        dump_n_samples=dump_n if dump_dir else 0,
+    )
 
     print(f"\nTokenized: {len(ds)} samples")
 
