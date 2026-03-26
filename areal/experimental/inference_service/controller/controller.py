@@ -263,7 +263,9 @@ class GatewayInferenceController:
 
             # For each RPCGuard worker: alloc port, build cmd, fork server
             for rank, worker in enumerate(inf_workers):
-                guard_addr = f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+                guard_addr = (
+                    f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+                )
 
                 resp = requests.post(
                     f"{guard_addr}/alloc_ports",
@@ -350,7 +352,9 @@ class GatewayInferenceController:
         ]
 
         for rank, worker in enumerate(inf_workers):
-            guard_addr = f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+            guard_addr = (
+                f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+            )
             # Each data proxy connects to its corresponding inference server
             data_proxy_cmd = data_proxy_base_cmd + [
                 "--backend-addr",
