@@ -341,6 +341,7 @@ class TestComputeLogpOptimization:
 
         # Create config with any method - compute_logp should always return tensor
         config = PPOActorConfig(
+            backend="fsdp:d1",
             use_decoupled_loss=True,
             prox_logp_method="recompute",
         )
@@ -401,6 +402,7 @@ class TestComputeLogpOptimization:
 
         for use_decoupled, method_str, recompute_logprob, expected in test_cases:
             config = PPOActorConfig(
+                backend="fsdp:d1",
                 use_decoupled_loss=use_decoupled,
                 prox_logp_method=method_str,
                 recompute_logprob=recompute_logprob,
@@ -606,6 +608,7 @@ class TestEndToEndOptimization:
 
         # Setup: user configuration with optimization enabled (loglinear skips forward)
         config = PPOActorConfig(
+            backend="fsdp:d1",
             use_decoupled_loss=True,
             prox_logp_method="loglinear",
             recompute_logprob=False,
@@ -651,6 +654,7 @@ class TestEndToEndOptimization:
 
         for method_str, should_call, desc in test_cases:
             config = PPOActorConfig(
+                backend="fsdp:d1",
                 use_decoupled_loss=True,
                 prox_logp_method=method_str,
             )
@@ -702,6 +706,7 @@ class TestConfigValidation:
         valid_methods = PROX_LOGP_METHODS_ALL
         for method in valid_methods:
             config = PPOActorConfig(
+                backend="fsdp:d1",
                 use_decoupled_loss=True,
                 prox_logp_method=method,
             )
@@ -736,7 +741,7 @@ class TestConfigValidation:
         """Test that prox_logp_method has correct default value."""
         from areal.api.cli_args import PPOActorConfig
 
-        config = PPOActorConfig()
+        config = PPOActorConfig(backend="fsdp:d1")
         expected_default = PROX_LOGP_METHOD_RECOMPUTE
         if config.prox_logp_method != expected_default:
             assert False, f"Default should be '{expected_default}'"

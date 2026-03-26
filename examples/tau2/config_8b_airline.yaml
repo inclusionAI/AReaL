@@ -15,7 +15,6 @@ cluster:
     type: nfs
     nfs_record_root: /path/to/name_resolve  # Replace with your name resolve directory
 
-allocation_mode: sglang:d16+archon:d8
 
 scheduler:
   type: slurm
@@ -29,6 +28,7 @@ gconfig:
   temperature: 1.0
 
 rollout:
+  backend: "sglang:d16"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 256
@@ -49,6 +49,7 @@ rollout:
     turn_discount: 1.0
 
 actor:
+  backend: "archon:d8"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen3-8B  # HuggingFace model path
@@ -104,6 +105,7 @@ actor:
         - uv pip install git+https://github.com/dhh1995/tau2-bench.git@dhh/async-and-custom-completion
 
 ref:
+  backend: ${actor.backend}
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}

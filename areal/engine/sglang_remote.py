@@ -187,17 +187,18 @@ class SGLangBackend:
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
         """Build SGLang init weights group request."""
-        assert meta.alloc_mode is not None
-        if meta.alloc_mode.gen.pp_size != 1:
+        assert meta.gen_allocation is not None
+        gen_parallel = meta.gen_allocation.parallel
+        if gen_parallel.pp_size != 1:
             raise NotImplementedError(
                 "NCCL weight update with PP size > 1 is not implemented yet."
             )
-        rank_offset = 1 + server_idx * meta.alloc_mode.gen.tp_size
+        rank_offset = 1 + server_idx * gen_parallel.tp_size
         payload = {
             "master_address": format_host_for_url(meta.nccl_master_address),
             "master_port": str(meta.nccl_master_port),
             "rank_offset": rank_offset,
-            "world_size": meta.alloc_mode.gen.world_size + 1,
+            "world_size": gen_parallel.world_size + 1,
             "backend": current_platform.communication_backend,
             "group_name": meta.nccl_group_name,
         }

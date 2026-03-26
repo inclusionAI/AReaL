@@ -18,7 +18,6 @@ from typing import Any
 
 from datasets import Dataset
 
-from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     BaseExperimentConfig,
     GenerationHyperparameters,
@@ -192,6 +191,7 @@ def main(argv: list[str]) -> None:
         experiment_name=rollout_cfg.experiment_name,
         trial_name=rollout_cfg.trial_name,
         dump_to_file=rollout_cfg.dump_to_file,
+        backend=rollout_cfg.backend,
         scheduling_spec=rollout_cfg.scheduling_spec,
         setup_timeout=rollout_cfg.setup_timeout,
         request_timeout=rollout_cfg.request_timeout,
@@ -211,13 +211,11 @@ def main(argv: list[str]) -> None:
         raise NotImplementedError(f"Unknown scheduler type: {sched_type}")
 
     # --- Controller ---
-    alloc_mode = AllocationMode.from_str(config.allocation_mode)
     sglang_args = asdict(config.sglang)
 
     ctrl = GatewayInferenceController(config=ctrl_config, scheduler=scheduler)
     ctrl.initialize(
         role="rollout",
-        alloc_mode=alloc_mode,
         server_args=sglang_args,
     )
 

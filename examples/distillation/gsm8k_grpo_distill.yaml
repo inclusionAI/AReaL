@@ -14,12 +14,11 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: vllm:d1p1t1+d1p1t1
-
 scheduler:
   type: null
 
 rollout:
+  backend: "vllm:d1p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 256
@@ -40,6 +39,7 @@ gconfig:
   temperature: 1.0
 
 actor:
+  backend: "fsdp:d1p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen3-0.6B
@@ -86,7 +86,7 @@ actor:
       env_vars: {}
 
 teacher:
-  allocation_mode: d1p1t4
+  backend: "fsdp:d1p1t4"
   rl_loss_weight: 1.0
   distill_loss_weight: 0.005
   experiment_name: ${experiment_name}
@@ -101,6 +101,7 @@ teacher:
   scheduling_spec: ${actor.scheduling_spec}
 
 ref:
+  backend: ${actor.backend}
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}

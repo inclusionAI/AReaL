@@ -47,22 +47,22 @@ Refs: #123, #456
 
 Infer scope from the **primary** changed file paths:
 
-| File Path Pattern        | Scope                          |
-| ------------------------ | ------------------------------ |
-| `areal/workflow/`        | `workflow`                     |
-| `areal/engine/`          | `engine`                       |
-| `areal/reward/`          | `reward`                       |
-| `areal/dataset/`         | `dataset`                      |
-| `areal/api/`             | `api`                          |
-| `areal/utils/`           | `utils`                        |
-| `areal/infra/`           | `infra`                        |
-| `areal/trainer/`         | `trainer`                      |
-| `areal/models/`          | `models`                       |
-| `areal/experimental/`    | `archon`                       |
-| `docs/`                  | `docs`                         |
-| `examples/`              | `examples`                     |
-| `.claude/`, `.opencode/` | `agents`                       |
-| Multiple areas           | Omit scope or use broader term |
+| File Path Pattern                                            | Scope                          |
+| ------------------------------------------------------------ | ------------------------------ |
+| `areal/workflow/`                                            | `workflow`                     |
+| `areal/engine/`                                              | `engine`                       |
+| `areal/reward/`                                              | `reward`                       |
+| `areal/dataset/`                                             | `dataset`                      |
+| `areal/api/`                                                 | `api`                          |
+| `areal/utils/`                                               | `utils`                        |
+| `areal/infra/`                                               | `infra`                        |
+| `areal/trainer/`                                             | `trainer`                      |
+| `areal/models/`                                              | `models`                       |
+| `areal/experimental/`                                        | `archon`                       |
+| `docs/`                                                      | `docs`                         |
+| `examples/`                                                  | `examples`                     |
+| `AGENTS.md`, `.agents/`, `.claude/`, `.codex/`, `.opencode/` | `agents`                       |
+| Multiple areas                                               | Omit scope or use broader term |
 
 ## Rules
 

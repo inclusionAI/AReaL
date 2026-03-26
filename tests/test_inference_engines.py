@@ -103,6 +103,7 @@ def inference_engine(request):
 
     # Create engine instance for server management
     temp_config = InferenceEngineConfig(
+        backend="sglang:d1",
         experiment_name=expr_name,
         trial_name=trial_name,
         setup_timeout=360,
@@ -141,6 +142,7 @@ def test_rollout(inference_engine, n_samples):
     from areal.workflow import RLVRWorkflow
 
     config = InferenceEngineConfig(
+        backend="sglang:d1",
         experiment_name=inference_engine["expr_name"],
         trial_name=inference_engine["trial_name"],
         max_concurrent_rollouts=2,
@@ -197,6 +199,7 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
     from areal.workflow import RLVRWorkflow
 
     config = InferenceEngineConfig(
+        backend="sglang:d1",
         experiment_name=inference_engine["expr_name"],
         trial_name=inference_engine["trial_name"],
         consumer_batch_size=bs,
@@ -261,6 +264,7 @@ def test_wait_for_task(inference_engine):
     from areal.workflow import RLVRWorkflow
 
     config = InferenceEngineConfig(
+        backend="sglang:d1",
         experiment_name=inference_engine["expr_name"],
         trial_name=inference_engine["trial_name"],
         max_concurrent_rollouts=8,
@@ -347,6 +351,7 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine
     os.environ["MASTER_PORT"] = "7777"
 
     engine_config = TrainEngineConfig(
+        backend="fsdp:d1",
         experiment_name=inference_engine["expr_name"],
         trial_name=inference_engine["trial_name"],
         path=MODEL_PATH,
@@ -373,6 +378,7 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine
         name_resolve.reconfigure(name_resolve_config)
 
         config = InferenceEngineConfig(
+            backend="sglang:d1",
             experiment_name=inference_engine["expr_name"],
             trial_name=inference_engine["trial_name"],
         )

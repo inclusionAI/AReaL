@@ -14,9 +14,9 @@ cluster:
     type: ray
     ray_actor_name: ray_kv_store
 
-allocation_mode: sglang:d8+d8
 
 rollout:
+  backend: "sglang:d8"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 256
@@ -37,6 +37,7 @@ gconfig:
   temperature: 1.0
 
 actor:
+  backend: "fsdp:d8"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen2.5-1.5B-Instruct
@@ -82,6 +83,7 @@ actor:
       env_vars: {}
 
 ref:
+  backend: ${actor.backend}
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}

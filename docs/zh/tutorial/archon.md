@@ -37,10 +37,10 @@ Archon 的设计和核心实现灵感来自 [torchtitan](https://github.com/pyto
 
 ## 启用 Archon
 
-要使用 Archon 作为训练后端，请在 `allocation_mode` 中指定：
+要使用 Archon 作为训练后端，请在 `actor.backend` 字段中指定：
 
 ```bash
-allocation_mode=sglang:d4+archon:d4
+rollout.backend=sglang:d4 actor.backend=archon:d4
 ```
 
 ### 支持的模型
@@ -95,7 +95,7 @@ Archon 使用与 Megatron 相同的并行语法。请参阅[分配模式参考](
 
 ```bash
 # 密集模型：4 DP × 2 PP × 2 TP = 16 GPU
-allocation_mode=sglang:d4t2+archon:d4p2t2
+rollout.backend=sglang:d4t2 actor.backend=archon:d4p2t2
 ```
 
 ### MoE 支持
@@ -105,7 +105,7 @@ FFN（专家）模块使用单独的配置：
 
 ```bash
 # 带混合并行的 MoE 模型
-allocation_mode=sglang:d4t4+archon:(attn:d1p4t2c2|ffn:d1p4t1e4)
+rollout.backend=sglang:d4t4 actor.backend=archon:(attn:d1p4t2c2|ffn:d1p4t1e4)
 ```
 
 这启用了[MoE 并行折叠](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core/transformer/moe#moe-parallel-folding)，降低了组合上下文和专家并行性的
@@ -219,14 +219,14 @@ Initialized Archon engine with parallel dims: pp=2, dp_shard=4, tp=2, cp=1, ep=1
 
 从 FSDPEngine 迁移到 Archon：
 
-### 1. 更新 allocation_mode
+### 1. 更新 actor.backend
 
 ```bash
 # 之前（FSDPEngine）
-allocation_mode=sglang:d4t2+fsdp:d8t2
+rollout.backend=sglang:d4t2 actor.backend=fsdp:d8t2
 
 # 之后（Archon）
-allocation_mode=sglang:d4t2+archon:d8t2
+rollout.backend=sglang:d4t2 actor.backend=archon:d8t2
 ```
 
 ### 2. 配置映射
@@ -269,7 +269,10 @@ cluster:
   n_nodes: 3
   n_gpus_per_node: 8
 
-allocation_mode: sglang:d4t2+archon:d4p2t2
+rollout:
+  backend: "sglang:d4t2"
+actor:
+  backend: "archon:d4p2t2"
 
 scheduler:
   type: ray
@@ -305,7 +308,10 @@ cluster:
   n_nodes: 4
   n_gpus_per_node: 8
 
-allocation_mode: "sglang:d4t4+archon:(attn:d1p4t2c2|ffn:d1p4t1e4)"
+rollout:
+  backend: "sglang:d4t4"
+actor:
+  backend: "archon:(attn:d1p4t2c2|ffn:d1p4t1e4)"
 
 scheduler:
   type: ray

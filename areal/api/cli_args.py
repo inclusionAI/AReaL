@@ -1027,6 +1027,14 @@ class TrainEngineConfig:
             "Currently only used by the TrainController."
         },
     )
+    # Backend and parallelism (new per-engine config)
+    backend: str = field(
+        default=MISSING,
+        metadata={
+            "help": "Backend and parallelism strategy. Must include an explicit backend prefix, "
+            "e.g. 'fsdp:d4', 'megatron:d4t2p2', 'archon:d2'. Required."
+        },
+    )
     scheduling_strategy: SchedulingStrategy = field(
         default_factory=SchedulingStrategy,
         metadata={
@@ -1728,10 +1736,18 @@ class InferenceEngineConfig:
             "Currently only used by the RolloutController."
         },
     )
+    # Backend and parallelism (new per-engine config)
+    backend: str = field(
+        default=MISSING,
+        metadata={
+            "help": "Backend and parallelism strategy. Must include an explicit backend prefix, "
+            "e.g. 'sglang:d4', 'vllm:d2t4'. Required."
+        },
+    )
     scheduling_strategy: SchedulingStrategy = field(
         default_factory=SchedulingStrategy,
         metadata={
-            "help": "The scheduling strategy of this TrainEngine, either separation or colocation. "
+            "help": "The scheduling strategy of this InferenceEngine, either separation or colocation. "
             "Currently only used by the RolloutController."
         },
     )
@@ -2121,7 +2137,11 @@ class BaseExperimentConfig:
     )
     allocation_mode: str = field(
         default="",
-        metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
+        metadata={
+            "help": "DEPRECATED: Use per-engine 'backend' fields instead (e.g., actor.backend, rollout.backend). "
+            "Legacy pattern-based GPU parallel strategy allocation mode. "
+            "Only used by SPMD launchers (local/ray/slurm). Manual migration to per-engine 'backend' fields is required.",
+        },
     )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
     enable_offload: bool = field(
@@ -2191,13 +2211,17 @@ class RWConfig(BaseExperimentConfig):
 
     actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
+    def __post_init__(self):
+        super().__post_init__()
+        if not getattr(self.actor, "is_critic", False):
+            raise ValueError(
+                "RWConfig requires actor.is_critic=True for reward modeling. "
+                "Set 'actor.is_critic: true' in your YAML config."
+            )
+
 
 @dataclass
 class TeacherConfig(PPOActorConfig):
-    allocation_mode: str = field(
-        default="",
-        metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
-    )
     rl_loss_weight: float = field(
         default=1.0,
         metadata={"help": "RL loss weight"},

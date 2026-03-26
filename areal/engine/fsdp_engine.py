@@ -804,6 +804,7 @@ class FSDPEngine(TrainEngine):
 
     def _create_device_model(self):
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
+        current_platform.set_numa_affinity(int(os.environ["LOCAL_RANK"]))
         if current_platform.device_type == "cpu":
             self.device = torch.device("cpu")
         else:
@@ -1091,10 +1092,11 @@ class FSDPEngine(TrainEngine):
         # which blocks creating another TCP store for weight update.
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
         if dist.get_rank() == 0:
-            assert meta.alloc_mode is not None
+            assert meta.gen_allocation is not None
 
             fut = self.rollout_engine.init_weights_update_group(meta)
 
+            gen_world_size = meta.gen_allocation.parallel.world_size
             init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             self.logger.info(
                 f"Initializing weight update group: type={meta.type} "
@@ -1103,7 +1105,7 @@ class FSDPEngine(TrainEngine):
             )
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
-                world_size=meta.alloc_mode.gen.world_size + 1,
+                world_size=gen_world_size + 1,
                 init_method=init_method,
                 rank=0,
                 group_name=meta.nccl_group_name,
@@ -1218,9 +1220,9 @@ class FSDPEngine(TrainEngine):
             os.makedirs(path, exist_ok=True)
             self.model.save_pretrained(path, state_dict=state_dict)
             self.model_config.save_pretrained(path)
-            if tokenizer is not None:
+            if tokenizer is not None and not self.config.use_lora:
                 tokenizer.save_pretrained(path)
-            if processor is not None:
+            if processor is not None and not self.config.use_lora:
                 processor.save_pretrained(path)
         dist.barrier(group=self.cpu_group)
 
@@ -1742,7 +1744,7 @@ class FSDPRWEngine(FSDPEngine):
         super().__init__(config)
         self.rw_engine = RWEngine(self)
         if self.config.mb_spec.granularity != 2:
-            logger = logging.getLogger("RW engine")
+            logger = logging.getLogger("RWEngine")
             logger.warning("mb_spec.granularity must be 2 for reward modeling")
             self.config = deepcopy(self.config)
             self.config.mb_spec.granularity = 2

@@ -4,7 +4,6 @@ import re
 import shutil
 import signal
 import subprocess
-import sys
 import time
 import uuid
 
@@ -30,10 +29,9 @@ async def run_example(
     *additional_args,
     timeout: int = 480,
     success_pattern=SUCCESS_PATTERN,
-    single_controller: bool = False,
 ) -> bool:
     """
-    Run a single example and return the result.
+    Run a single example in single-controller mode and return the result.
 
     Args:
         example_file: Path to the example file
@@ -41,30 +39,17 @@ async def run_example(
         additional_args: Additional command line arguments
         timeout: Timeout in seconds
         success_pattern: Regex pattern to identify successful completion
-        single_controller: If True, run directly without launcher (single-controller mode)
 
     Returns:
-        Tuple of (success, stdout, stderr)
+        True if the success pattern was found in stdout, False otherwise.
     """
-    # Construct the command
-    if single_controller:
-        # Single-controller mode: run script directly
-        cmd = [
-            "python3",
-            example_file,
-            "--config",
-            config_name,
-        ]
-    else:
-        # SPMD mode: use launcher
-        cmd = [
-            "python3",
-            "-m",
-            "areal.infra.launcher.local",
-            example_file,
-            "--config",
-            config_name,
-        ]
+    # Construct the command (single-controller mode: run script directly)
+    cmd = [
+        "python3",
+        example_file,
+        "--config",
+        config_name,
+    ]
     cmd += list(additional_args)
 
     logger.info(f"Running: {' '.join(cmd)}")
@@ -154,7 +139,8 @@ def test_countdown_example(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=fsdp:d1",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=128",
         "actor.mb_spec.max_tokens_per_mb=1024",
@@ -166,6 +152,7 @@ def test_countdown_example(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "scheduler.type=local",
     )
     assert success, "Countdown example failed"
 
@@ -173,17 +160,10 @@ def test_countdown_example(tmp_path_factory):
 # vLLM is too slow to launch up in CI environments
 # We have tests for vLLM in test_inference_engines.py,
 # so we can skip the integration test of vLLM here.
-@pytest.mark.parametrize(
-    "alloc_mode,single_controller",
-    [
-        ("sglang:d1+megatron:d1", False),
-        ("sglang:d1+megatron:d1", True),
-    ],
-)
 @pytest.mark.sglang
 @pytest.mark.multi_gpu
 @pytest.mark.ci
-def test_gsm8k_grpo(tmp_path_factory, alloc_mode, single_controller):
+def test_gsm8k_grpo(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = get_model_path(
@@ -194,8 +174,12 @@ def test_gsm8k_grpo(tmp_path_factory, alloc_mode, single_controller):
     example_file = "examples/math/gsm8k_rl.py"
     config_name = "examples/math/gsm8k_grpo.yaml"
 
-    additional_args = [
-        f"allocation_mode={alloc_mode}",
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "rollout.backend=sglang:d1",
+        "actor.backend=megatron:d1",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=1024",
@@ -207,32 +191,22 @@ def test_gsm8k_grpo(tmp_path_factory, alloc_mode, single_controller):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
-    ]
-    if single_controller:
-        additional_args.append("scheduler.type=local")
-
-    success = run_async_task(
-        run_example,
-        example_file,
-        config_name,
-        *additional_args,
+        "scheduler.type=local",
         timeout=900,
-        single_controller=single_controller,
     )
-    assert success, f"GSM8K GRPO example failed (single_controller={single_controller})"
+    assert success, "GSM8K GRPO example failed"
 
 
 @pytest.mark.parametrize(
-    "alloc_mode,single_controller",
+    "actor_backend",
     [
-        ("fsdp:d1", False),
-        ("megatron:d1", False),
-        ("fsdp:d1", True),
+        "fsdp:d1",
+        "megatron:d1",
     ],
 )
 @pytest.mark.gpu
 @pytest.mark.ci
-def test_gsm8k_sft(tmp_path_factory, alloc_mode, single_controller):
+def test_gsm8k_sft(tmp_path_factory, actor_backend):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = get_model_path(
@@ -243,8 +217,11 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode, single_controller):
     example_file = "examples/math/gsm8k_sft.py"
     config_name = "examples/math/gsm8k_sft.yaml"
 
-    additional_args = [
-        f"allocation_mode={alloc_mode}",
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        f"actor.backend={actor_backend}",
         "actor.mb_spec.max_tokens_per_mb=1024",
         "train_dataset.batch_size=1",
         "valid_dataset.batch_size=1",
@@ -254,18 +231,9 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode, single_controller):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
-    ]
-    if single_controller:
-        additional_args.append("scheduler.type=local")
-
-    success = run_async_task(
-        run_example,
-        example_file,
-        config_name,
-        *additional_args,
-        single_controller=single_controller,
+        "scheduler.type=local",
     )
-    assert success, f"GSM8K SFT example failed (single_controller={single_controller})"
+    assert success, f"GSM8K SFT example failed (actor_backend={actor_backend})"
 
 
 @pytest.mark.sglang
@@ -284,7 +252,7 @@ def test_gsm8k_eval(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1",
+        "rollout.backend=sglang:d1",
         "gconfig.n_samples=1",
         "gconfig.max_new_tokens=16",
         "valid_dataset.batch_size=16",
@@ -295,7 +263,6 @@ def test_gsm8k_eval(tmp_path_factory):
         f"actor.path={model_path}",
         "scheduler.type=local",
         success_pattern=re.compile(r"Evaluation Results:"),
-        single_controller=True,
     )
     assert success, "GSM8K Eval example failed"
 
@@ -321,7 +288,8 @@ def test_vlm_grpo(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=fsdp:d1",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=1024",
@@ -333,6 +301,7 @@ def test_vlm_grpo(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "scheduler.type=local",
         timeout=1800,
     )
     assert success, "CLEVR Count 70k GRPO example failed"
@@ -358,7 +327,7 @@ def test_vlm_sft(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=d1",
+        "actor.backend=fsdp:d1",
         "actor.mb_spec.max_tokens_per_mb=1024",
         "train_dataset.batch_size=16",
         "valid_dataset.batch_size=16",
@@ -368,6 +337,7 @@ def test_vlm_sft(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "scheduler.type=local",
         timeout=600,  # tokenizing the VLM dataset for SFT takes a long time
     )
     assert success, "CLEVR Count 70k SFT example failed"
@@ -389,7 +359,8 @@ def test_gsm8k_ppo(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=fsdp:d1",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=1024",
@@ -403,19 +374,21 @@ def test_gsm8k_ppo(tmp_path_factory):
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
         f"critic.path={model_path}",
+        "scheduler.type=local",
     )
     assert success, "GSM8K PPO example failed"
 
 
+@pytest.mark.ci
 @pytest.mark.parametrize(
-    "alloc_mode",
+    "rollout_backend,actor_backend",
     [
-        pytest.param("sglang:d1+fsdp:d1", marks=pytest.mark.sglang),
-        pytest.param("vllm:d1+fsdp:d1", marks=pytest.mark.vllm),
+        pytest.param("sglang:d1", "fsdp:d1", marks=pytest.mark.sglang),
+        pytest.param("vllm:d1", "fsdp:d1", marks=pytest.mark.vllm),
     ],
 )
 @pytest.mark.multi_gpu
-def test_gsm8k_grpo_lora(tmp_path_factory, alloc_mode):
+def test_gsm8k_grpo_lora(tmp_path_factory, rollout_backend, actor_backend):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = get_model_path(
@@ -429,7 +402,8 @@ def test_gsm8k_grpo_lora(tmp_path_factory, alloc_mode):
         run_example,
         example_file,
         config_name,
-        f"allocation_mode={alloc_mode}",
+        f"rollout.backend={rollout_backend}",
+        f"actor.backend={actor_backend}",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=1024",
@@ -443,7 +417,6 @@ def test_gsm8k_grpo_lora(tmp_path_factory, alloc_mode):
         f"actor.path={model_path}",
         "scheduler.type=local",
         "actor.weight_update_mode=disk",
-        single_controller=True,
     )
     assert success, "GSM8K GRPO LoRA example failed"
 
@@ -464,7 +437,8 @@ def test_multi_turn_math(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=fsdp:d1",
         "gconfig.n_samples=1",
         "gconfig.max_new_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=1024",
@@ -475,6 +449,7 @@ def test_multi_turn_math(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "scheduler.type=local",
     )
     assert success, "Multi-turn Math example failed"
 
@@ -496,7 +471,7 @@ def test_hhrlhf_rw(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=d1",
+        "actor.backend=fsdp:d1",
         "actor.mb_spec.max_tokens_per_mb=1024",
         "train_dataset.batch_size=16",
         "valid_dataset.batch_size=16",
@@ -506,6 +481,7 @@ def test_hhrlhf_rw(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "scheduler.type=local",
         timeout=1800,
     )
     assert success, "HH-RLHF Reward Modeling example failed"
@@ -527,7 +503,8 @@ def test_tir_grpo(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=fsdp:d1",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=64",
         "actor.mb_spec.max_tokens_per_mb=1024",
@@ -540,6 +517,7 @@ def test_tir_grpo(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "scheduler.type=local",
     )
     assert success, "TIR GRPO example failed"
 
@@ -572,56 +550,30 @@ def test_search_agent_deepresearch(tmp_path_factory):
 
     llm_judge_exp_name = uuid.uuid4().hex
     llm_judge_trial_name = uuid.uuid4().hex
-    _env = os.environ.copy()
-    _env[current_platform.device_control_env_var] = visible_devices[-1]
-    llm_judge_proc = subprocess.Popen(
-        " ".join(
-            [
-                "python3",
-                "-m",
-                "areal.infra.launcher.local",
-                example_file,
-                "--config",
-                config_name,
-                "allocation_mode=sglang:d1",
-                f"cluster.fileroot={str(experiments_path)}",
-                f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-                f"experiment_name={llm_judge_exp_name}",
-                f"trial_name={llm_judge_trial_name}",
-                f"actor.path={model_path}",
-            ]
-        ),
-        shell=True,
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-        env=_env,
+
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "judge_engine.backend=sglang:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=megatron:d1",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=128",
+        "actor.mb_spec.max_tokens_per_mb=2048",
+        "train_dataset.batch_size=4",
+        f"train_dataset.path={dataset_path}",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        "max_tokens_per_trajectory=1024",
+        "max_llm_calls_per_run=2",
+        f"judge_engine.experiment_name={llm_judge_exp_name}",
+        f"judge_engine.trial_name={llm_judge_trial_name}",
+        "scheduler.type=local",
     )
-
-    try:
-        time.sleep(20)
-
-        success = run_async_task(
-            run_example,
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+megatron:d1",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=128",
-            "actor.mb_spec.max_tokens_per_mb=2048",
-            "train_dataset.batch_size=4",
-            f"train_dataset.path={dataset_path}",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-            "max_tokens_per_trajectory=1024",
-            "max_llm_calls_per_run=2",
-            f"judge_engine.experiment_name={llm_judge_exp_name}",
-            f"judge_engine.trial_name={llm_judge_trial_name}",
-        )
-        if not success:
-            raise RuntimeError("Search Agent DeepResearch example failed")
-    finally:
-        kill_process_tree(llm_judge_proc.pid, graceful=False)
+    if not success:
+        raise RuntimeError("Search Agent DeepResearch example failed")
 
 
 @pytest.mark.sglang
@@ -639,7 +591,8 @@ def test_openai_agents(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=fsdp:d1",
         "gconfig.n_samples=1",
         "gconfig.max_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=4096",
@@ -651,6 +604,7 @@ def test_openai_agents(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "scheduler.type=local",
     )
     if not success:
         raise RuntimeError("OpenAI Agents example failed")
@@ -675,7 +629,8 @@ def test_camel(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=fsdp:d1",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=4096",
@@ -685,6 +640,7 @@ def test_camel(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "scheduler.type=local",
     )
     if not success:
         raise RuntimeError("Camel Math example failed")
@@ -706,7 +662,8 @@ def test_openai_proxy(tmp_path_factory):
         run_example,
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=fsdp:d1",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=16",
         "gconfig.max_tokens=512",
@@ -721,7 +678,6 @@ def test_openai_proxy(tmp_path_factory):
         f"actor.path={model_path}",
         "scheduler.type=local",
         "actor.weight_update_mode=xccl",
-        single_controller=True,
     )
     if not success:
         raise RuntimeError("OpenAI Proxy example failed")
@@ -825,7 +781,8 @@ def test_tau2(tmp_path_factory):
             run_example,
             example_file,
             config_name,
-            "allocation_mode=sglang:d1+megatron:d1",
+            "rollout.backend=sglang:d1",
+            "actor.backend=megatron:d1",
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=1024",
             "gconfig.max_tokens=8192",
@@ -845,7 +802,6 @@ def test_tau2(tmp_path_factory):
             "scheduler.type=local",
             "stats_logger.wandb.mode=disabled",
             timeout=600,
-            single_controller=True,
         )
         assert success, "Tau2 airline example failed"
     finally:
@@ -916,7 +872,8 @@ def test_openclaw_online_rl(tmp_path_factory):
         "examples/openclaw/train.py",
         "--config",
         "examples/openclaw/config.yaml",
-        "allocation_mode=sglang:d1+fsdp:d1",
+        "rollout.backend=sglang:d1",
+        "actor.backend=fsdp:d1",
         "gconfig.n_samples=1",
         "gconfig.max_new_tokens=128",
         "actor.mb_spec.max_tokens_per_mb=2048",

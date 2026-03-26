@@ -42,7 +42,8 @@ uv sync --all-extras
 ```bash
 uv run python3 examples/openclaw/train.py --config examples/openclaw/config.yaml \
     experiment_name=my-exp trial_name=trial-0 \
-    allocation_mode=sglang:d1+fsdp:d1 \
+    rollout.backend=sglang:d1 \
+    actor.backend=fsdp:d1 \
     actor.path=Qwen/Qwen3-0.6B \
     scheduler.type=local \
     rollout.openai.admin_api_key=<admin-api-key>

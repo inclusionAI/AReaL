@@ -11,7 +11,8 @@ from transformers import AutoTokenizer
 
 from tests.utils import get_model_path
 
-from areal.api import AllocationMode, FinetuneSpec, SaveLoadMeta
+from areal.api import FinetuneSpec, SaveLoadMeta
+from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
     MegatronEngineConfig,
     MicroBatchSpec,
@@ -71,8 +72,9 @@ def mock_input(
     )
 
 
-def make_engine(model_type, allocation_mode, mb_spec, vpp_size=1, init_optimizer=False):
+def make_engine(model_type, backend, mb_spec, vpp_size=1, init_optimizer=False):
     config = TrainEngineConfig(
+        backend=backend,
         experiment_name="test",
         trial_name="test",
         path=MODEL_PATHS[model_type],
@@ -80,31 +82,32 @@ def make_engine(model_type, allocation_mode, mb_spec, vpp_size=1, init_optimizer
         optimizer=OptimizerConfig() if init_optimizer else None,
         megatron=MegatronEngineConfig(virtual_pipeline_parallel_size=vpp_size),
     )
-    alloc_mode = AllocationMode.from_str(allocation_mode)
+    alloc_mode = ModelAllocation.from_str(backend)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine = MegatronEngine(config)
-    engine.create_process_group(parallel_strategy=alloc_mode.train)
+    engine.create_process_group(parallel_strategy=alloc_mode.parallel)
     engine.initialize(addr=None, ft_spec=ft_spec)
     return engine
 
 
-def make_fsdp_engine(model_type, allocation_mode, mb_spec, init_optimizer=False):
+def make_fsdp_engine(model_type, backend, mb_spec, init_optimizer=False):
     engine_config = TrainEngineConfig(
+        backend="fsdp:d1",
         experiment_name="test",
         trial_name="test",
         mb_spec=mb_spec,
         path=MODEL_PATHS[model_type],
         optimizer=OptimizerConfig() if init_optimizer else None,
     )
-    alloc_mode = AllocationMode.from_str(allocation_mode)
+    alloc_mode = ModelAllocation.from_str(backend)
     # ignore parallel strategy for a stable forward output
-    alloc_mode.train.data_parallel_size *= alloc_mode.train.world_size
-    alloc_mode.train.pipeline_parallel_size = 1
-    alloc_mode.train.tensor_parallel_size = 1
-    alloc_mode.train.context_parallel_size = 1
+    alloc_mode.parallel.data_parallel_size *= alloc_mode.parallel.world_size
+    alloc_mode.parallel.pipeline_parallel_size = 1
+    alloc_mode.parallel.tensor_parallel_size = 1
+    alloc_mode.parallel.context_parallel_size = 1
     engine = FSDPEngine(engine_config)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
-    engine.create_process_group(parallel_strategy=alloc_mode.train)
+    engine.create_process_group(parallel_strategy=alloc_mode.parallel)
     engine.initialize(None, ft_spec)
     return engine
 
@@ -408,10 +411,10 @@ def main():
         help="Type of model to test",
     )
     parser.add_argument(
-        "--allocation_mode",
+        "--backend",
         type=str,
-        default="d1p2t2c2",
-        help="Allocation mode for the model",
+        default="megatron:d1p2t2c2",
+        help="Backend allocation string for the model (e.g., 'megatron:d1p2t2c2')",
     )
     parser.add_argument(
         "--vpp_size",
@@ -438,28 +441,28 @@ def main():
     if args.test_type == "train":
         test_train(
             args.model_type,
-            args.allocation_mode,
+            args.backend,
             output=args.output,
             vpp_size=args.vpp_size,
         )
     elif args.test_type == "forward":
         test_forward(
             args.model_type,
-            args.allocation_mode,
+            args.backend,
             output=args.output,
             vpp_size=args.vpp_size,
         )
     elif args.test_type == "simple_dcp_save_load":
         test_simple_dcp_save_load(
             args.model_type,
-            args.allocation_mode,
+            args.backend,
             output=args.output,
             vpp_size=args.vpp_size,
         )
     elif args.test_type == "train_dcp_save_load":
         test_train_dcp_save_load(
             args.model_type,
-            args.allocation_mode,
+            args.backend,
             output=args.output,
             vpp_size=args.vpp_size,
         )

@@ -64,11 +64,12 @@ def init_weight_update_group(
     os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
 
     if engine.is_pipeline_parallel_head():
-        assert meta.alloc_mode is not None
+        assert meta.gen_allocation is not None
 
         with engine.engine_lock:
             fut = engine.rollout_engine.init_weights_update_group(meta)
 
+            gen_world_size = meta.gen_allocation.parallel.world_size
             init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             engine.logger.info(
                 f"Initializing weight update group: type={meta.type}, "
@@ -77,7 +78,7 @@ def init_weight_update_group(
             )
             state.group = init_custom_process_group(
                 backend=current_platform.communication_backend,
-                world_size=meta.alloc_mode.gen.world_size + 1,
+                world_size=gen_world_size + 1,
                 init_method=init_method,
                 rank=0,
                 group_name=meta.nccl_group_name,

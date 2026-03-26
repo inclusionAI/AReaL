@@ -14,12 +14,12 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: vllm:d4+d4
 
 scheduler:
   type: null
 
 rollout:
+  backend: "vllm:d4"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 64
@@ -40,6 +40,7 @@ gconfig:
   temperature: 1.0
 
 actor:
+  backend: "fsdp:d4"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
@@ -96,6 +97,7 @@ actor:
         PYTORCH_NPU_ALLOC_CONF: "expandable_segments:True"
 
 ref:
+  backend: ${actor.backend}
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}

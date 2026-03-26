@@ -11,7 +11,6 @@ from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
-    AllocationMode,
     FinetuneSpec,
     InferenceEngine,
     RolloutWorkflow,
@@ -21,6 +20,7 @@ from areal.api import (
     WeightUpdateMeta,
     WorkflowLike,
 )
+from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
     InferenceEngineConfig,
     PPOActorConfig,
@@ -115,22 +115,29 @@ class PPOTrainer:
         # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 
-        # Parse allocation mode.
-        self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
+        # Parse per-engine allocations from config.
+        self.actor_alloc = ModelAllocation.from_str(config.actor.backend, name="actor")
+        self.rollout_alloc = ModelAllocation.from_str(
+            config.rollout.backend, name="rollout"
+        )
 
         # Validate config before proceeding with weight initialization
         self._validate_cfg()
 
         self._amend_xccl_weight_update_envvar()
 
-        # Create models: actor, critic, etc.
-        self.actor = self._create_actor(config.actor)
+        # Create models: actor, critic, ref — each with its own allocation.
+        self.actor = self._create_train_engine(config.actor, self.actor_alloc)
         self.critic = None
         if config.critic is not None:
-            self.critic = self._create_critic(config.critic)
+            critic_alloc = ModelAllocation.from_str(
+                config.critic.backend, name="critic"
+            )
+            self.critic = self._create_critic(config.critic, critic_alloc)
         self.ref = None
         if config.actor.kl_ctl > 0 and config.ref is not None:
-            self.ref = self._create_actor(config.ref)
+            ref_alloc = ModelAllocation.from_str(config.ref.backend, name="ref")
+            self.ref = self._create_train_engine(config.ref, ref_alloc)
 
         # Create dataloaders
         self.train_dataset = train_dataset
@@ -179,13 +186,7 @@ class PPOTrainer:
             train_batch_size=config.train_dataset.batch_size,
         )
 
-        self.parallel_strategy = self.allocation_mode.train
-        assert self.parallel_strategy is not None
-        engine_init_kwargs = {
-            "addr": None,
-            "ft_spec": ft_spec,
-            "alloc_mode": self.allocation_mode,
-        }
+        engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
         self.actor.initialize(**engine_init_kwargs, role="actor")
         if self.critic is not None:
             self.critic.initialize(**engine_init_kwargs, role="critic")
@@ -194,16 +195,11 @@ class PPOTrainer:
 
         self.teacher = None
         if config.teacher is not None:
-            self.teacher = self._create_teacher(config.teacher)
-            teacher_allocation_mode = AllocationMode.from_str(
-                config.teacher.allocation_mode
+            teacher_alloc = ModelAllocation.from_str(
+                config.teacher.backend, name="teacher"
             )
-            teacher_init_kwargs = {
-                "addr": None,
-                "ft_spec": ft_spec,
-                "alloc_mode": teacher_allocation_mode,
-            }
-            self.teacher.initialize(**teacher_init_kwargs, role="teacher")
+            self.teacher = self._create_train_engine(config.teacher, teacher_alloc)
+            self.teacher.initialize(**engine_init_kwargs, role="teacher")
 
         # Save initial LoRA weights if enabled (for inference server pre-loading)
         initial_lora_path = self._save_initial_lora_weights()
@@ -247,12 +243,14 @@ class PPOTrainer:
             self.weight_update_meta = WeightUpdateMeta.from_disk(**disk_kwargs)
         elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
-            if self.allocation_mode.train_backend == "megatron":
+            if self.actor_alloc.backend == "megatron":
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
-                    self.allocation_mode
+                    gen_allocation=self.rollout_alloc,
                 )
             else:
-                xccl_kwargs = {"allocation_mode": self.allocation_mode}
+                xccl_kwargs: dict[str, Any] = {
+                    "gen_allocation": self.rollout_alloc,
+                }
                 if config.actor.use_lora:
                     xccl_kwargs.update(
                         {
@@ -615,7 +613,7 @@ class PPOTrainer:
         if not is_single_controller():
             # These environs are set by the launcher in the SPMD mode.
             return
-        if self.allocation_mode.gen_backend != "sglang":
+        if self.rollout_alloc.backend != "sglang":
             return
 
         # Disable some environ for NCCL weight update.
@@ -623,85 +621,59 @@ class PPOTrainer:
             spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
             spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
 
-    def _create_actor(
-        self, actor_config: PPOActorConfig
+    def _create_train_engine(
+        self, actor_config: PPOActorConfig, alloc: ModelAllocation
     ) -> FSDPPPOActor | MegatronPPOActor | ArchonPPOActor | PPOActorController:
-        if self.allocation_mode.train_backend == "fsdp":
+        """Create a training engine (actor or ref) based on the allocation backend."""
+        if alloc.backend == "fsdp":
             from areal.engine import FSDPPPOActor
 
             actor_cls = FSDPPPOActor
-        elif self.allocation_mode.train_backend == "megatron":
+        elif alloc.backend == "megatron":
             from areal.engine import MegatronPPOActor
 
             actor_cls = MegatronPPOActor
-        elif self.allocation_mode.train_backend == "archon":
+        elif alloc.backend == "archon":
             from areal.experimental.engine.archon_engine import ArchonPPOActor
 
             actor_cls = ArchonPPOActor
         else:
             raise ValueError(
-                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp, megatron or archon"
+                f"Invalid backend: {alloc.backend}, expected fsdp, megatron or archon"
             )
         if is_single_controller():
             actor = actor_cls.as_controller(actor_config, self.scheduler)
         else:
             actor = actor_cls(config=actor_config)
-        actor.create_process_group(parallel_strategy=self.allocation_mode.train)
+        actor.create_process_group(parallel_strategy=alloc.parallel)
         return actor
 
     def _create_critic(
-        self, critic_config: PPOCriticConfig
+        self, critic_config: PPOCriticConfig, alloc: ModelAllocation
     ) -> FSDPPPOCritic | MegatronPPOCritic | ArchonPPOCritic | PPOCriticController:
-        if self.allocation_mode.train_backend == "fsdp":
+        """Create a critic engine based on the allocation backend."""
+        if alloc.backend == "fsdp":
             from areal.engine import FSDPPPOCritic
 
             critic_cls = FSDPPPOCritic
-        elif self.allocation_mode.train_backend == "megatron":
+        elif alloc.backend == "megatron":
             from areal.engine import MegatronPPOCritic
 
             critic_cls = MegatronPPOCritic
-        elif self.allocation_mode.train_backend == "archon":
+        elif alloc.backend == "archon":
             from areal.experimental.engine.archon_engine import ArchonPPOCritic
 
             critic_cls = ArchonPPOCritic
         else:
             raise ValueError(
-                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp, megatron or archon"
+                f"Invalid backend: {alloc.backend}, expected fsdp, megatron or archon"
             )
         if is_single_controller():
             critic = critic_cls.as_controller(critic_config, self.scheduler)
         else:
             critic = critic_cls(config=critic_config)
-        critic.create_process_group(parallel_strategy=self.allocation_mode.train)
+        critic.create_process_group(parallel_strategy=alloc.parallel)
         return critic
-
-    def _create_teacher(self, teacher_config):
-        allocation_mode = AllocationMode.from_str(teacher_config.allocation_mode)
-
-        if allocation_mode.train_backend == "fsdp":
-            from areal.engine import FSDPPPOActor
-
-            actor_cls = FSDPPPOActor
-        elif allocation_mode.train_backend == "megatron":
-            from areal.engine import MegatronPPOActor
-
-            actor_cls = MegatronPPOActor
-        elif allocation_mode.train_backend == "archon":
-            from areal.experimental.engine.archon_engine import ArchonPPOActor
-
-            actor_cls = ArchonPPOActor
-        else:
-            raise ValueError(
-                f"Invalid backend: {allocation_mode.train_backend}, expected fsdp, megatron, or archon"
-            )
-
-        if is_single_controller():
-            teacher = actor_cls.as_controller(teacher_config, self.scheduler)
-        else:
-            teacher = actor_cls(config=teacher_config)
-
-        teacher.create_process_group(parallel_strategy=allocation_mode.train)
-        return teacher
 
     def _init_rollout(
         self,
@@ -728,7 +700,8 @@ class PPOTrainer:
                 spec.gpu = 0
 
         # Determine engine class and server args based on backend
-        if self.allocation_mode.gen_backend == "sglang":
+        rollout_backend = self.rollout_alloc.backend
+        if rollout_backend == "sglang":
             if self.config.rollout.return_routed_experts:
                 self.config.sglang.enable_return_routed_experts = True
             if lora_path is not None and self.config.actor.use_lora:
@@ -738,10 +711,10 @@ class PPOTrainer:
             engine_cls = RemoteSGLangEngine
             server_args = SGLangConfig.build_args(
                 sglang_config=self.config.sglang,
-                tp_size=self.allocation_mode.gen.tp_size,
+                tp_size=self.rollout_alloc.parallel.tp_size,
                 base_gpu_id=0,
             )
-        elif self.allocation_mode.gen_backend == "vllm":
+        elif rollout_backend == "vllm":
             if self.config.rollout.return_routed_experts:
                 raise ValueError(
                     "return_routed_experts is not supported with vLLM backend. Please disable return_routed_experts or switch to SGLang backend."
@@ -753,20 +726,20 @@ class PPOTrainer:
             engine_cls = RemotevLLMEngine
             server_args = vLLMConfig.build_args(
                 vllm_config=self.config.vllm,
-                tp_size=self.allocation_mode.gen.tp_size,
-                pp_size=self.allocation_mode.gen.pp_size,
+                tp_size=self.rollout_alloc.parallel.tp_size,
+                pp_size=self.rollout_alloc.parallel.pp_size,
             )
             # vLLM does not require LoRA paths during initialization.
             # LoRA is attached to generation requests.
         else:
             raise ValueError(
-                f"Invalid backend: {self.allocation_mode.gen_backend}, expected sglang or vllm"
+                f"Invalid backend: {rollout_backend}, expected sglang or vllm"
             )
 
         if not is_single_controller():
             engine = engine_cls(config)
             engine.initialize(
-                train_data_parallel_size=self.allocation_mode.train.dp_size
+                train_data_parallel_size=self.actor_alloc.parallel.dp_size
             )
             return engine
 
@@ -774,7 +747,6 @@ class PPOTrainer:
         controller = engine_cls.as_controller(config, self.scheduler)
         init_kwargs = dict(
             role="rollout",
-            alloc_mode=self.allocation_mode,
             server_args=server_args,
         )
         if is_eval:
@@ -927,10 +899,8 @@ class PPOTrainer:
 
     def _validate_cfg(self):
         """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
-        if (
-            self.allocation_mode.gen_backend == "vllm"
-            and self.config.rollout.return_routed_experts
-        ):
+        rollout_backend = self.rollout_alloc.backend
+        if rollout_backend == "vllm" and self.config.rollout.return_routed_experts:
             raise ValueError(
                 "return_routed_experts is only supported with SGLang backend. "
                 "Please disable return_routed_experts or switch to SGLang backend."

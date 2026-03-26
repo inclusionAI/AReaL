@@ -82,7 +82,7 @@ Need to add teacher configuration to your yaml:
 
 ```yaml
 teacher:
-  allocation_mode: d1p1t4
+  backend: fsdp:d1p1t4
   rl_loss_weight: 1.0
   distill_loss_weight: 0.005
   experiment_name: ${experiment_name}

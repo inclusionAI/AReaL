@@ -35,7 +35,8 @@ run: |
             trial_name=trial0 \
             cluster.n_nodes=$SKYPILOT_NUM_NODES \
             cluster.n_gpus_per_node=$SKYPILOT_NUM_GPUS_PER_NODE \
-            allocation_mode=sglang:d8+d8
+            rollout.backend=sglang:d8 \
+            actor.backend=fsdp:d8
   else
     sleep 10
     echo "Starting Ray worker node..."
