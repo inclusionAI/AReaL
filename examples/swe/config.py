@@ -73,6 +73,15 @@ class SweDataConfig:
             "Set to false to keep it for faster restarts."
         },
     )
+    dump_samples: int = field(
+        default=50,
+        metadata={
+            "help": "Number of random samples to dump for inspection after "
+            "dataset processing. Each sample is saved as .txt and .json "
+            "in a dumped_samples/ directory alongside logs. "
+            "Set to 0 to disable, -1 to dump all."
+        },
+    )
 
 
 @dataclass

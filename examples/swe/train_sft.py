@@ -39,6 +39,17 @@ def main(args):
     rank = int(os.getenv("RANK", "0"))
     cache_dir = _get_cache_dir(config)
 
+    dump_dir = None
+    if config.swe.dump_samples != 0:
+        dump_dir = os.path.join(
+            config.cluster.fileroot,
+            "logs",
+            getpass.getuser(),
+            config.experiment_name,
+            config.trial_name,
+            "dumped_samples",
+        )
+
     swe_kwargs = {
         "num_proc": config.swe.num_proc,
         "pre_split": config.swe.pre_split,
@@ -49,6 +60,8 @@ def main(args):
         "truncate_task_notifications": config.swe.truncate_task_notifications,
         "no_tools": config.swe.no_tools,
         "cache_dir": cache_dir,
+        "dump_dir": dump_dir,
+        "dump_samples": config.swe.dump_samples,
     }
 
     train_dataset = get_custom_dataset(

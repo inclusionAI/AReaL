@@ -175,7 +175,7 @@ def _is_bare_text_tool_call(msg):
     return not (match and match.group(1).strip())
 
 
-def _clean_message(msg, strip_thinking=True):
+def _clean_message(msg, strip_thinking=True, ensure_thinking=False):
     """Remove non-standard fields before tokenization.
 
     Keeps only the fields expected by tokenizer chat templates:
@@ -186,6 +186,11 @@ def _clean_message(msg, strip_thinking=True):
         strip_thinking: If True, remove ``<think>...</think>`` blocks from
             assistant content (used for context turns).  If False, preserve
             content as-is (used for the training-target assistant turn).
+        ensure_thinking: If True, set ``reasoning_content`` on assistant
+            tool_call turns that lack a thinking block, so that templates
+            without ``loop.last`` logic (e.g. Ling2.5/Bailing) still
+            render ``<think></think>``.  Mirrors Qwen3's ``loop.last``
+            behavior at the data level.
     """
     cleaned = {"role": msg["role"]}
 
@@ -193,9 +198,11 @@ def _clean_message(msg, strip_thinking=True):
     # they only contain tool_calls.  Preserve None so chat templates
     # that distinguish None vs "" render correctly.
     content = msg.get("content")
+    has_thinking = False
     if content is not None:
         if msg["role"] == "assistant":
             content = _normalize_thinking_tags(content)
+            has_thinking = bool(_THINK_RE.search(content))
             if strip_thinking:
                 content = _extract_thinking(content)
         cleaned["content"] = content
@@ -206,6 +213,18 @@ def _clean_message(msg, strip_thinking=True):
     else:
         # Non-assistant messages without content: default to empty string.
         cleaned["content"] = ""
+
+    # For the target assistant turn (last in pair) without a thinking
+    # block, inject reasoning_content='\n' so that templates without
+    # loop.last logic (e.g. Ling2.5/Bailing, which gate on
+    # `reasoning_content != ''`) still render <think></think>.
+    # NOTE: this relies on the template applying
+    # `reasoning_content.strip('\n')` before rendering.  Both Bailing
+    # and Qwen3 do this, so '\n' is equivalent to '' and the output is
+    # identical to the native non-empty reasoning_content path.  Verify
+    # when onboarding a new model template.
+    if ensure_thinking and msg["role"] == "assistant" and not has_thinking:
+        cleaned["reasoning_content"] = "\n"
 
     # Copy tool_calls for assistant messages
     if msg["role"] == "assistant" and msg.get("tool_calls"):
@@ -283,7 +302,9 @@ def _split_and_filter(
     if not strip_all_thinking:
         for asst_start, _ in segments:
             target_cleaned[asst_start] = _clean_message(
-                messages[asst_start], strip_thinking=False
+                messages[asst_start],
+                strip_thinking=False,
+                ensure_thinking=True,
             )
 
     for asst_start, seg_end in segments:
@@ -301,8 +322,13 @@ def _split_and_filter(
             n_filtered_bare_tc += 1
             continue
 
-        # Build pair from pre-cleaned messages (shallow copy of the slice).
-        pair = list(context_cleaned[:seg_end])
+        # Build pair: include context up to the target assistant turn,
+        # truncating tool responses that follow it.  This ensures the
+        # target assistant is always the *last* message so that chat
+        # templates with ``loop.last``-dependent rendering (e.g. Qwen3
+        # ``<think>`` injection) behave consistently.  The tool responses
+        # would have loss_mask=0 anyway and only add noise.
+        pair = list(context_cleaned[: asst_start + 1])
         if not strip_all_thinking:
             pair[asst_start] = target_cleaned[asst_start]
         pairs.append(pair)
@@ -318,6 +344,52 @@ _TEMPLATE_PATTERNS = [
 ]
 
 
+def _render_tokenize_mask(messages, tokenizer, assistant_pattern, tools=None):
+    """Render, tokenize, and build loss_mask for a single pair.
+
+    Returns:
+        Tuple of ``(full_text, input_ids, loss_mask, offset_mapping)``, or
+        ``None`` if ``apply_chat_template`` fails.
+    """
+    # 1) Render the full template text.
+    try:
+        kwargs = {"tokenize": False}
+        if tools is not None:
+            kwargs["tools"] = tools
+        full_text = tokenizer.apply_chat_template(messages, **kwargs)
+    except Exception as e:
+        logger.warning(
+            "apply_chat_template failed (likely unsupported tool_calls "
+            "or tool role): %s. Skipping sample.",
+            e,
+        )
+        return None
+
+    # 2) Tokenize with offset mapping so we can map char→token.
+    encoding = tokenizer(
+        full_text, add_special_tokens=False, return_offsets_mapping=True
+    )
+    input_ids = encoding["input_ids"]
+    offset_mapping = encoding["offset_mapping"]
+
+    # 3) Find the LAST assistant segment char range via regex.
+    # In progressive SFT, only the newest (last) assistant turn is
+    # the training target; earlier turns are context.
+    loss_mask = [0] * len(input_ids)
+    last_match = None
+    for m in assistant_pattern.finditer(full_text):
+        last_match = m
+    if last_match is not None:
+        # m.start(1) = first char of assistant content
+        # m.end(0)   = char after end-of-turn token
+        rs, re_ = last_match.start(1), last_match.end(0)
+        for tok_idx, (cs, ce) in enumerate(offset_mapping):
+            if ce > rs and cs < re_:
+                loss_mask[tok_idx] = 1
+
+    return full_text, input_ids, loss_mask, offset_mapping
+
+
 class _TokenizeAndMask:
     """Picklable callable for ``Dataset.map(num_proc=N)``."""
 
@@ -328,50 +400,18 @@ class _TokenizeAndMask:
         self.max_length = max_length
 
     def __call__(self, sample):
-        messages = sample["messages"]
-
-        # 1) Render the full template text.
-        try:
-            kwargs = {"tokenize": False}
-            if self.tools is not None:
-                kwargs["tools"] = self.tools
-            full_text = self.tokenizer.apply_chat_template(messages, **kwargs)
-        except Exception as e:
-            logger.warning(
-                "apply_chat_template failed (likely unsupported tool_calls "
-                "or tool role): %s. Skipping sample.",
-                e,
-            )
+        result = _render_tokenize_mask(
+            sample["messages"], self.tokenizer, self.assistant_pattern, self.tools
+        )
+        if result is None:
             return {"input_ids": [], "loss_mask": []}
 
-        # 2) Tokenize with offset mapping so we can map char→token.
-        encoding = self.tokenizer(
-            full_text, add_special_tokens=False, return_offsets_mapping=True
-        )
-        input_ids = encoding["input_ids"]
+        _full_text, input_ids, loss_mask, _offset_mapping = result
 
         # Early exit: overlength or empty → return empty so a single
         # filter pass removes it together with template-failure empties.
         if self.max_length is not None and len(input_ids) > self.max_length:
             return {"input_ids": [], "loss_mask": []}
-
-        offset_mapping = encoding["offset_mapping"]
-
-        loss_mask = [0] * len(input_ids)
-
-        # 3) Find the LAST assistant segment char range via regex.
-        # In progressive SFT, only the newest (last) assistant turn is
-        # the training target; earlier turns are context.
-        last_match = None
-        for m in self.assistant_pattern.finditer(full_text):
-            last_match = m
-        if last_match is not None:
-            # m.start(1) = first char of assistant content
-            # m.end(0)   = char after end-of-turn token
-            rs, re_ = last_match.start(1), last_match.end(0)
-            for tok_idx, (cs, ce) in enumerate(offset_mapping):
-                if ce > rs and cs < re_:
-                    loss_mask[tok_idx] = 1
 
         return {"input_ids": input_ids, "loss_mask": loss_mask}
 
@@ -643,6 +683,8 @@ def get_swe_sft_dataset(
     truncate_task_notifications: bool = False,
     no_tools: bool = False,
     cache_dir: str | None = None,
+    dump_dir: str | None = None,
+    dump_samples: int = 0,
 ):
     """Load SWE trajectory data and convert to SFT training pairs.
 
@@ -689,6 +731,10 @@ def get_swe_sft_dataset(
             saves here; other ranks load from this directory.  If the
             directory already contains a completed cache (``.done`` marker),
             all ranks load from it directly without reprocessing.
+        dump_dir: Directory to write sample dump files (``.txt`` + ``.json``).
+            Only rank 0 writes.  Set to None to disable.
+        dump_samples: Number of random samples to dump.  ``-1`` = all,
+            ``0`` = disabled.
 
     Returns:
         A HuggingFace ``Dataset`` with ``input_ids`` and ``loss_mask`` columns.
@@ -713,6 +759,21 @@ def get_swe_sft_dataset(
         logger.info(f"Final dataset: {len(dataset)} samples")
         return dataset
 
+    # --- Shared kwargs for _process_swe_sft ---
+    process_kwargs = dict(
+        max_length=max_length,
+        num_proc=num_proc,
+        pre_split=pre_split,
+        filter_errors=filter_errors,
+        strip_all_thinking=strip_all_thinking,
+        filter_empty_tool_calls=filter_empty_tool_calls,
+        filter_bare_text_tool_calls=filter_bare_text_tool_calls,
+        truncate_task_notifications=truncate_task_notifications,
+        no_tools=no_tools,
+        dump_dir=dump_dir,
+        dump_n_samples=dump_samples,
+    )
+
     # --- Distributed rank-0-only processing ---
     rank = int(os.getenv("RANK", "0"))
     world_size = int(os.getenv("WORLD_SIZE", "1"))
@@ -731,19 +792,7 @@ def get_swe_sft_dataset(
 
         if rank == 0:
             # Rank 0: do the heavy processing and save for other ranks.
-            dataset = _process_swe_sft(
-                path,
-                tokenizer,
-                max_length=max_length,
-                num_proc=num_proc,
-                pre_split=pre_split,
-                filter_errors=filter_errors,
-                strip_all_thinking=strip_all_thinking,
-                filter_empty_tool_calls=filter_empty_tool_calls,
-                filter_bare_text_tool_calls=filter_bare_text_tool_calls,
-                truncate_task_notifications=truncate_task_notifications,
-                no_tools=no_tools,
-            )
+            dataset = _process_swe_sft(path, tokenizer, **process_kwargs)
             os.makedirs(cache_dir, exist_ok=True)
             dataset.save_to_disk(cache_dir)
             # Write marker AFTER save completes so readers see a consistent dir.
@@ -763,19 +812,90 @@ def get_swe_sft_dataset(
             return dataset
 
     # --- Non-distributed or no cache_dir: process in current process ---
-    return _process_swe_sft(
-        path,
-        tokenizer,
-        max_length=max_length,
-        num_proc=num_proc,
-        pre_split=pre_split,
-        filter_errors=filter_errors,
-        strip_all_thinking=strip_all_thinking,
-        filter_empty_tool_calls=filter_empty_tool_calls,
-        filter_bare_text_tool_calls=filter_bare_text_tool_calls,
-        truncate_task_notifications=truncate_task_notifications,
-        no_tools=no_tools,
-    )
+    return _process_swe_sft(path, tokenizer, **process_kwargs)
+
+
+def _dump_samples(pairs, tokenizer, assistant_pattern, tools, dump_dir, n_samples):
+    """Dump sampled pairs as ``.txt`` + ``.json`` files for inspection.
+
+    Args:
+        pairs: List of message-list pairs (cleaned, ready for template).
+        tokenizer: Tokenizer with ``apply_chat_template`` support.
+        assistant_pattern: Compiled regex from ``_detect_template_pattern``.
+        tools: Tool definitions list (or None).
+        dump_dir: Directory to write files into (created if needed).
+        n_samples: Number of random samples to dump.  ``-1`` dumps all.
+    """
+    import random as _random
+
+    os.makedirs(dump_dir, exist_ok=True)
+
+    if n_samples == -1 or n_samples >= len(pairs):
+        indices = list(range(len(pairs)))
+    else:
+        indices = sorted(_random.sample(range(len(pairs)), n_samples))
+
+    n_written = 0
+    for i in indices:
+        pair = pairs[i]
+
+        result = _render_tokenize_mask(pair, tokenizer, assistant_pattern, tools)
+        if result is None:
+            continue
+
+        full_text, input_ids, loss_mask, offset_mapping = result
+        n_loss = sum(loss_mask)
+        base = os.path.join(dump_dir, f"pair_{i}")
+
+        # --- .txt ---
+        with open(base + ".txt", "w", encoding="utf-8") as fout:
+            fout.write(
+                f"Pair {i}: {len(pair)} messages, "
+                f"{len(input_ids)} tokens, loss=1: {n_loss}\n"
+            )
+            fout.write(f"Last msg role: {pair[-1]['role']}\n")
+            fout.write(f"{'=' * 72}\n\n")
+
+            fout.write("--- Rendered Text ---\n")
+            fout.write(full_text)
+            fout.write("\n\n")
+
+            fout.write("--- Token / Loss Mask ---\n")
+            fout.write(f"{'Idx':>6} | {'TokenID':>8} | Loss | Token Text\n")
+            fout.write(f"{'-' * 6}-+-{'-' * 8}-+------+{'-' * 40}\n")
+            for t in range(len(input_ids)):
+                cs, ce = offset_mapping[t]
+                tok_text = repr(full_text[cs:ce])
+                fout.write(
+                    f"{t:>6} | {input_ids[t]:>8} | {loss_mask[t]:>4} | {tok_text}\n"
+                )
+
+        # --- .json ---
+        tokens_list = []
+        for t in range(len(input_ids)):
+            cs, ce = offset_mapping[t]
+            tokens_list.append(
+                {
+                    "idx": t,
+                    "token_id": input_ids[t],
+                    "text": full_text[cs:ce],
+                    "loss": loss_mask[t],
+                }
+            )
+        record = {
+            "pair_index": i,
+            "n_messages": len(pair),
+            "n_tokens": len(input_ids),
+            "n_loss_tokens": n_loss,
+            "rendered_text": full_text,
+            "tokens": tokens_list,
+        }
+        with open(base + ".json", "w", encoding="utf-8") as fout:
+            json.dump(record, fout, ensure_ascii=False)
+
+        n_written += 1
+
+    logger.info(f"Dumped {n_written} sample pairs to {dump_dir}/")
 
 
 def _process_swe_sft(
@@ -791,6 +911,8 @@ def _process_swe_sft(
     filter_bare_text_tool_calls: bool = False,
     truncate_task_notifications: bool = False,
     no_tools: bool = False,
+    dump_dir: str | None = None,
+    dump_n_samples: int = 0,
 ):
     """Core processing: load JSONL, split into pairs, tokenize, and filter.
 
@@ -829,6 +951,17 @@ def _process_swe_sft(
     dataset = Dataset.from_dict({"messages": all_pairs})
 
     assistant_pattern = _detect_template_pattern(tokenizer, tools=tools)
+
+    # Dump sample pairs for inspection before the heavy map() pass.
+    if dump_dir and dump_n_samples != 0:
+        _dump_samples(
+            all_pairs,
+            tokenizer,
+            assistant_pattern,
+            tools,
+            dump_dir,
+            dump_n_samples,
+        )
     # Pass max_length so overlength samples are marked empty during
     # tokenization, allowing a single filter pass instead of three.
     process_fn = _TokenizeAndMask(
@@ -967,6 +1100,15 @@ if __name__ == "__main__":
         "Each line preserves the original record structure with the "
         "messages field updated.",
     )
+    parser.add_argument(
+        "--dump-samples",
+        default=None,
+        metavar="DIR",
+        help="Save sampled pairs to DIR, one file per pair. Each file "
+        "contains the rendered text and a token-by-token table with "
+        "token id, decoded text, and loss_mask. Uses --num-samples "
+        "to control how many pairs are dumped (default: all).",
+    )
     args = parser.parse_args()
 
     filter_errors = not args.no_filter_errors
@@ -1023,6 +1165,10 @@ if __name__ == "__main__":
     # --- Fast path: preprocess and save tokenized dataset ---
     if args.save_tokenized:
         tok = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
+        dump_dir = args.dump_samples if args.dump_samples else None
+        dump_n = (
+            -1 if dump_dir and args.num_samples is None else (args.num_samples or -1)
+        )
         ds = get_swe_sft_dataset(
             path=args.path,
             tokenizer=tok,
@@ -1035,6 +1181,8 @@ if __name__ == "__main__":
             filter_bare_text_tool_calls=filter_bare_text_tool_calls,
             truncate_task_notifications=truncate_task_notifications,
             no_tools=args.no_tools,
+            dump_dir=dump_dir,
+            dump_samples=dump_n if dump_dir else 0,
         )
         ds.save_to_disk(args.save_tokenized)
         print(f"Saved tokenized dataset ({len(ds)} samples) to {args.save_tokenized}")
@@ -1146,3 +1294,16 @@ if __name__ == "__main__":
                     ctx_end = min(len(ids), j + 3)
                     ctx = tok.decode(ids[ctx_start:ctx_end])
                     print(f"  Token {j}: {mask[j - 1]}->{mask[j]}  context: {ctx!r}")
+
+    # --- Dump samples ---
+    if args.dump_samples:
+        dump_tools = None if args.no_tools else tools
+        assistant_pattern = _detect_template_pattern(tok, tools=dump_tools)
+        _dump_samples(
+            all_pairs,
+            tok,
+            assistant_pattern,
+            dump_tools,
+            args.dump_samples,
+            n_samples=-1,
+        )
