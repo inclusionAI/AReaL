@@ -1311,6 +1311,13 @@ class FSDPEngine(TrainEngine):
         if is_qwen_vl_model(self.model_config.model_type):
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
+            # NOTE: Qwen-VL get_rope_index performs indexed assignment where
+            # source positions are int64 and position_ids inherits input_ids.dtype.
+            # Ensure input_ids uses int64 so destination/source dtypes align and
+            # avoid "Index put requires the source and destination dtypes match".
+            if input_ids.dtype != torch.long:
+                input_ids = input_ids.to(torch.long)
+                input_["input_ids"] = input_ids
             image_grid_thw = None
             video_grid_thw = None
             if "multi_modal_input" in input_:
@@ -1331,7 +1338,10 @@ class FSDPEngine(TrainEngine):
                     video_grid_thw = torch.cat(video_grid_thw_list)
 
             position_ids, _ = self.model.model.get_rope_index(
-                input_ids, image_grid_thw, video_grid_thw, attn_mask
+                input_ids=input_ids,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                attention_mask=attn_mask,
             )
             position_ids = torch.einsum("ijk->jki", position_ids)
             input_["position_ids"] = position_ids
