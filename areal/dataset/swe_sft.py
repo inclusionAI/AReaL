@@ -479,6 +479,7 @@ def get_swe_sft_dataset(
     filter_errors: bool = True,
     strip_all_thinking: bool = False,
     no_tools: bool = False,
+    skip_pretokenized_filter: bool = False,
 ):
     """Load SWE trajectory data and convert to SFT training pairs.
 
@@ -507,6 +508,11 @@ def get_swe_sft_dataset(
             assistant turn including the training target.
         no_tools: If True, do not pass tool definitions to
             ``apply_chat_template`` even if the data contains them.
+        skip_pretokenized_filter: If True, skip the ``max_length`` filter
+            when loading a pre-tokenized dataset.  Useful when the dataset
+            was already filtered during pretokenization and you want to
+            avoid NFS cache conflicts from concurrent ``dataset.filter()``
+            calls across ranks.
 
     Returns:
         A HuggingFace ``Dataset`` with ``input_ids`` and ``loss_mask`` columns.
@@ -518,7 +524,7 @@ def get_swe_sft_dataset(
         logger.info(f"Loading pre-tokenized dataset from {path}")
         dataset = load_from_disk(path)
 
-        if max_length is not None:
+        if max_length is not None and not skip_pretokenized_filter:
             before_filter = len(dataset)
             dataset = dataset.filter(
                 lambda x: len(x["input_ids"]) <= max_length, num_proc=num_proc

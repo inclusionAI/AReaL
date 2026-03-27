@@ -21,6 +21,7 @@ def main(args):
         "filter_errors": config.swe.filter_errors,
         "strip_all_thinking": config.swe.strip_all_thinking,
         "no_tools": config.swe.no_tools,
+        "skip_pretokenized_filter": config.swe.skip_pretokenized_filter,
     }
 
     train_dataset = get_custom_dataset(

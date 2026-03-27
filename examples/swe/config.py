@@ -44,6 +44,15 @@ class SweDataConfig:
             "rendered in the system prompt (e.g. Qwen3 '# Tools' block)."
         },
     )
+    skip_pretokenized_filter: bool = field(
+        default=False,
+        metadata={
+            "help": "Skip max_length filtering when loading a pre-tokenized "
+            "dataset. Useful when the dataset was already filtered during "
+            "pretokenization to avoid NFS cache conflicts from concurrent "
+            "dataset.filter() calls across ranks."
+        },
+    )
 
 
 @dataclass
