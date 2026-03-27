@@ -1,29 +1,37 @@
 experiment_name: swe-sft
-trial_name: 30b-moe
+trial_name: ring-max
 
 seed: 1
-enable_offload: false
-total_train_epochs: 200
-total_train_steps: 500
+enable_offload: true
+total_train_epochs: 7
 tokenizer_path: ${actor.path}
 
 cluster:
-  n_nodes: 4
+  n_nodes: 32
   n_gpus_per_node: 8
   fileroot: /tmp/experiments
   name_resolve:
     type: nfs
     nfs_record_root: /tmp/name_resolve
 
-allocation_mode: "megatron:(attn:d4p4t2|ffn:d2p4e4)"
+# 16 nodes x 8 GPUs = 128 GPUs
+# Bailing Flash (BailingMoeV2_5): 32 layers, H=4096, 256 experts, 32 heads
+# PP=4 to reduce per-rank model params
+# Attention: DP=4, PP=4, TP=4, CP=2 -> world = 4*4*4*2 = 128
+# FFN:       DP=4, PP=4, EP=8        -> world = 4*4*8   = 128
+# heads_per_tp = 32/4 = 8, 8 % CP(2) = 0 ✓
+# layers/PP = 32/4 = 8 ✓
+# 256 experts % EP(8) = 0 ✓
+# TP=4 to further reduce model+activation memory (TP=2 OOM by 0.08GB on all_gather)
+allocation_mode: "megatron:(attn:d1p16t8c2|ffn:d1p16e16)"
 
 scheduler:
-  type: slurm
+  type: null
 
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen3-30B-A3B-Thinking
+  path: /storage/openpsi/users/fenghui/ring_2_5_validation_release24_128k_0215_1344_iter2961/sglang_release/
   init_from_scratch: false
   gradient_checkpointing: true
   dtype: bfloat16
@@ -31,29 +39,31 @@ actor:
   mb_spec:
     n_mbs: 1
     granularity: 1
-    max_tokens_per_mb: 32768
+    max_tokens_per_mb: 131072
     n_mbs_divisor: 1
   optimizer:
     type: adam
     lr: 5e-6
-    weight_decay: 0.005
+    weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
-    eps: 1.0e-08
-    lr_scheduler_type: cosine
+    eps: 0.00001
+    lr_scheduler_type: constant
     gradient_clipping: 1.0
-    warmup_steps_proportion: 0.03
+    warmup_steps_proportion: 0.001
     min_loss_scale: 1.0
     loss_scale_window: 5.0
     hysteresis: 2
   megatron:
     wrap_with_ddp: true
     ddp:
+      # v2 change: fp32 grad reduce for accurate grad_norm (was false)
       grad_reduce_in_fp32: true
-      overlap_grad_reduce: false
+      # v2 change: overlap for performance (was false)
+      overlap_grad_reduce: true
       overlap_param_gather: false
       use_distributed_optimizer: true
-    use_deterministic_algorithms: true
+    use_deterministic_algorithms: false
     recompute_granularity: full
     recompute_method: uniform
     recompute_num_layers: 1
@@ -65,18 +75,27 @@ actor:
       gpu: 1
       cpu: 4
       mem: 32
+      image: /storage/openpsi/images/areal-dev.sif
       cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars:
         NCCL_DEBUG: "WARN"
+        NCCL_ASYNC_ERROR_HANDLING: "1"
+        PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+        PYTHONPATH: "/storage/openpsi/users/chucai.dzq/codes/flash-linear-attention"
+        HF_DATASETS_CACHE: "/storage/openpsi/users/chucai.dzq/.hf_cache"
+      additional_bash_cmds:
+        - export UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ && uv pip install -e . && uv pip install torch_memory_saver
+        - export LD_PRELOAD=$(find /AReaL/.venv -name torch_memory_saver_hook_mode_preload.abi3.so 2>/dev/null | head -1)
 
 # SWE-specific data processing
 swe:
   filter_errors: true
+  strip_all_thinking: false
   pre_split: false
-  num_proc: 1
+  num_proc: 16
 
 train_dataset:
-  batch_size: 16
+  batch_size: 256
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -91,14 +110,18 @@ saver:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
+  freq_secs: 36000
 
+# v2: recovery enabled, skip optimizer save (flattened_range incompatible with dist optimizer)
 recover:
-  mode: disabled
+  mode: auto
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
   freq_secs: 3600
+  no_save_optim: true
+  no_load_optim: true
 
 evaluator:
   experiment_name: ${experiment_name}

@@ -7,15 +7,16 @@ set -euo pipefail
 MODEL_PATH=/storage/openpsi/users/fenghui/ring_2_5_validation_release24_128k_0215_1344_iter2961/sglang_release/
 
 PYTHONPATH=/storage/openpsi/users/chucai.dzq/codes/AReaL \
-WANDB_API_KEY=local-b8ad8e6a05487e8245c05b20d58c32fadecd8952 \
+WANDB_API_KEY=local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe \
 WANDB_BASE_URL=http://8.150.1.98:8080 \
 python -m areal.infra.launcher.slurm examples/swe/train_sft.py \
-      --config examples/swe/swe_sft_flash_moe_v2.yaml \
+      --config examples/swe/sft_ring_max.yaml \
       scheduler.type=null \
+      allocation_mode="megatron:(attn:d1p16t8c2|ffn:d1p16e16)" \ 
       stats_logger.wandb.mode=online \
-      experiment_name=dzq-swe-sft \
-      trial_name=0326_max_moe_bs256_lr5e-6_p16t8c2_deterministic_v16 \
-      total_train_epochs=4 \
+      experiment_name=swe-ring-max-sft \
+      trial_name=bs256_lr5e-6_p16t8c2_traindata_0327_0 \
+      total_train_epochs=5 \
       train_dataset.batch_size=256 \
       swe.num_proc=1 \
       swe.filter_errors=true \

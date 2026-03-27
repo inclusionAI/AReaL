@@ -23,7 +23,7 @@ cluster:
 # layers/PP = 32/4 = 8 ✓
 # 256 experts % EP(8) = 0 ✓
 # TP=4 to further reduce model+activation memory (TP=2 OOM by 0.08GB on all_gather)
-allocation_mode: "megatron:(attn:d4p4t4c2|ffn:d4p4e8)"
+allocation_mode: "megatron:(attn:d1p16t8c2|ffn:d1p16e16)"
 
 scheduler:
   type: slurm
@@ -63,7 +63,7 @@ actor:
       overlap_grad_reduce: true
       overlap_param_gather: false
       use_distributed_optimizer: true
-    use_deterministic_algorithms: true
+    use_deterministic_algorithms: false
     recompute_granularity: full
     recompute_method: uniform
     recompute_num_layers: 1
@@ -114,6 +114,7 @@ saver:
 # v2: recovery enabled, skip optimizer save (flattened_range incompatible with dist optimizer)
 recover:
   mode: auto
+  retries: 5000
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
