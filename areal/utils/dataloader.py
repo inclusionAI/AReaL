@@ -4,7 +4,7 @@ from datasets import Dataset
 from torch.utils.data import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import _DatasetConfig, ValidDatasetConfig
+from areal.api.cli_args import ValidDatasetConfig, _DatasetConfig
 
 
 def create_dataloader(
@@ -70,13 +70,13 @@ class EvalDistributedSampler(DistributedSampler):
     """
 
     def __init__(
-            self,
-            dataset: Dataset,
-            num_replicas: int | None = None,
-            rank: int | None = None,
-            shuffle: bool = True,
-            seed: int = 0,
-            drop_last: bool = False,
+        self,
+        dataset: Dataset,
+        num_replicas: int | None = None,
+        rank: int | None = None,
+        shuffle: bool = True,
+        seed: int = 0,
+        drop_last: bool = False,
     ) -> None:
         super().__init__(dataset, num_replicas, rank, shuffle, seed, drop_last)
 
