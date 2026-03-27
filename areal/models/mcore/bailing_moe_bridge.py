@@ -79,6 +79,7 @@ _MLA_ATTENTION_MAPPING_COMMON = {
 }
 
 
+@register_model("bailing_moe_v2")
 @register_model("bailing_moe_linear")
 @register_model("bailing_hybrid")
 class BailingMoeBridge(LLMBridge):
@@ -232,6 +233,25 @@ class BailingMoeBridge(LLMBridge):
             raise NotImplementedError(
                 f"Unsupported parameter name: {mcore_weights_name}"
             )
+
+    def _weight_merge_across_tp(
+        self,
+        mcore_weights_name: str,
+        tp_shards: list[torch.Tensor],
+        param: torch.Tensor,
+    ) -> torch.Tensor:
+        """Override to handle MLA duplicated weights.
+
+        linear_q_down_proj and linear_kv_down_proj use parallel_mode='duplicated'
+        in megatron-core MLA — they are replicated (not sharded) across TP ranks.
+        All shards are identical, so just return the first one.
+        """
+        if (
+            "linear_q_down_proj." in mcore_weights_name
+            or "linear_kv_down_proj." in mcore_weights_name
+        ):
+            return tp_shards[0].clone()
+        return super()._weight_merge_across_tp(mcore_weights_name, tp_shards, param)
 
     def _weight_to_mcore_format(
         self, mcore_weights_name: str, hf_weights: list[torch.Tensor]

@@ -1060,6 +1060,25 @@ class MegatronEngine(TrainEngine):
 
         self.engine_lock.release()
 
+    @property
+    def _duplicated_param_names(self) -> set[str]:
+        """Parameter names whose parent module has parallel_mode='duplicated'.
+
+        These params are replicated (not TP-sharded) but TE incorrectly marks
+        them with tensor_model_parallel=True. Cached after first computation.
+        """
+        if not hasattr(self, "_cached_duplicated_param_names"):
+            duplicated = set()
+            if self.model is not None:
+                for model in self.model:
+                    for mod_name, module in model.named_modules():
+                        if getattr(module, "parallel_mode", None) == "duplicated":
+                            for p_name, _ in module.named_parameters(recurse=False):
+                                full = f"{mod_name}.{p_name}" if mod_name else p_name
+                                duplicated.add(full)
+            self._cached_duplicated_param_names = duplicated
+        return self._cached_duplicated_param_names
+
     def _collect_param(
         self,
         name: str,
@@ -1081,6 +1100,7 @@ class MegatronEngine(TrainEngine):
             param,
             self.fp8_direct_convert,
             quantization_config=self.quantization_config,
+            duplicated_param_names=self._duplicated_param_names,
         )
         param = remove_padding(name, param, self.hf_config.vocab_size)
 

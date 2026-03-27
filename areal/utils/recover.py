@@ -327,7 +327,6 @@ class RecoverHandler:
             base_model_path=None,
         )
         engine.load(meta)
-        logger.info(f"Loaded recover checkpoint from {path} (with_optim={with_optim})")
 
 
 def check_if_auto_recover(config: RecoverConfig) -> bool:

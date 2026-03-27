@@ -123,15 +123,59 @@ def copy_hf_configs(src_model_dir, dst_model_dir):
             logger.info(f"copied {file} from {src_model_dir} to {dst_model_dir}")
         except FileNotFoundError:
             logger.info(f"{file} not exist in {src_model_dir} skipping.")
-    # Copy remote codes
+    # Copy remote codes and chat template files
     for file in os.listdir(src_model_dir):
+        copy = False
         for prefix in ["chat_format", "configuration_", "modeling_", "tokenization_"]:
             if file.startswith(prefix) and file.endswith(".py"):
-                shutil.copy(
-                    os.path.join(src_model_dir, file),
-                    os.path.join(dst_model_dir, file),
-                )
-                logger.info(f"copied {file} from {src_model_dir} to {dst_model_dir}")
+                copy = True
+                break
+        # Chat template files (e.g. chat_template.jinja)
+        if file.startswith("chat_template"):
+            copy = True
+        if copy:
+            shutil.copy(
+                os.path.join(src_model_dir, file),
+                os.path.join(dst_model_dir, file),
+            )
+            logger.info(f"copied {file} from {src_model_dir} to {dst_model_dir}")
+
+
+def _patch_saved_config(base_model_path, saved_path):
+    """Patch saved config.json to preserve model_type and torch_dtype.
+
+    Some HF config classes lack a ``model_type`` class attribute, causing
+    ``save_pretrained()`` to lose the field (``PretrainedConfig.to_dict()``
+    reads the class attribute, not the instance value).  This restores
+    critical fields from the original model's config.json.
+    """
+    orig_config_path = os.path.join(base_model_path, "config.json")
+    saved_config_path = os.path.join(saved_path, "config.json")
+
+    if not os.path.exists(orig_config_path) or not os.path.exists(saved_config_path):
+        return
+
+    with open(orig_config_path) as f:
+        orig_config = json.load(f)
+    with open(saved_config_path) as f:
+        saved_config = json.load(f)
+
+    patched_fields = []
+
+    # Restore model_type if missing or null
+    if not saved_config.get("model_type") and orig_config.get("model_type"):
+        saved_config["model_type"] = orig_config["model_type"]
+        patched_fields.append(f"model_type={orig_config['model_type']}")
+
+    # Restore torch_dtype if missing
+    if "torch_dtype" not in saved_config and "torch_dtype" in orig_config:
+        saved_config["torch_dtype"] = orig_config["torch_dtype"]
+        patched_fields.append(f"torch_dtype={orig_config['torch_dtype']}")
+
+    if patched_fields:
+        with open(saved_config_path, "w") as f:
+            json.dump(saved_config, f, indent=2)
+        logger.info(f"Patched config.json: {', '.join(patched_fields)}")
 
 
 def split_state_dict_into_shards(state_dict: dict, n_shards: int) -> list[dict]:
@@ -538,6 +582,7 @@ def save_weights_to_hf_with_mbridge_fast(
             json.dump(bin_index, f, indent=4)
         if base_model_path is not None:
             copy_hf_configs(base_model_path, weights_path)
+            _patch_saved_config(base_model_path, weights_path)
 
     # 8. Save ValueHead weights separately for critic models.
     if is_critic and mpu.is_pipeline_last_stage():

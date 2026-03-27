@@ -91,6 +91,7 @@ def all_gather_param(
     param: Parameter | Tensor,
     fp8_direct_convert: bool = False,
     quantization_config: dict[str, int | str | list[str]] | None = None,
+    duplicated_param_names: set[str] | None = None,
 ) -> torch.Tensor | FP8BlockwiseTensorHelper:
     if "expert_bias" in name:
         return param
@@ -100,10 +101,16 @@ def all_gather_param(
 
     param_is_fp8 = is_float8tensor(param)
 
-    if (
-        not param.tensor_model_parallel
-        or getattr(param, "parallel_mode", None) == "duplicated"
-    ):
+    # Check if this param is truly NOT TP-sharded.
+    # NOTE: TE unconditionally sets tensor_model_parallel=True on all Linear
+    # weights, even for modules with parallel_mode='duplicated'. The original
+    # getattr(param, "parallel_mode", ...) check was dead code because
+    # parallel_mode is a module attribute, not a tensor attribute.
+    # Use the caller-provided duplicated_param_names set for reliable detection.
+    is_duplicated = (
+        duplicated_param_names is not None and name in duplicated_param_names
+    )
+    if not param.tensor_model_parallel or is_duplicated:
         # NOTE: For FP8 tensors with direct conversion, return the tensor directly
         # without accessing .data to avoid dequantization (accessing .data on
         # QuantizedTensor triggers __torch_dispatch__ which dequantizes to bfloat16).
