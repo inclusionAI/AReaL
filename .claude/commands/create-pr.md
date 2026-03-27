@@ -43,6 +43,75 @@ gh --version
 **Action:** If there are uncommitted changes, stop, and then ask user to commit or stash
 them first.
 
+### Step 1.5: Determine Push Remote (Fork Support)
+
+Check if user has push access to `origin`, and if not, identify the fork remote.
+
+```bash
+# List all remotes
+git remote -v
+
+# Try to determine push remote
+# Option 1: Check if origin is writable (try a dry-run push)
+git push --dry-run origin $(git branch --show-current) 2>&1
+
+# Option 2: Check gh auth status and repo permissions
+gh auth status
+gh repo view --json owner,name,viewerPermission
+```
+
+**Logic for Determining Push Remote:**
+
+**If `origin` is writable**: Use `origin` directly (maintainer workflow)
+
+**If `origin` is NOT writable**: Look for a fork remote
+
+- Common fork remote names: `fork`, `user`, `<username>`, or any remote pointing to
+  user's fork
+- Verify the fork remote points to user's own fork via
+  `gh repo view <remote-url> --json owner`
+
+**If no fork remote found**: Ask user to add their fork as a remote:
+
+```bash
+git remote add fork https://github.com/<username>/AReaL.git
+```
+
+**Store for later use:**
+
+- `PUSH_REMOTE`: The remote to push to (e.g., `origin` or `fork`)
+- `UPSTREAM_REPO`: The upstream repo for PR target (e.g., `inclusionAI/AReaL`)
+- `FORK_OWNER`: Fork owner username (for `--head` parameter if needed)
+
+```bash
+# Example detection script
+UPSTREAM_REPO="inclusionAI/AReaL"
+PUSH_REMOTE=""
+
+# Check if we can push to origin
+if git push --dry-run origin HEAD 2>/dev/null; then
+  PUSH_REMOTE="origin"
+else
+  # Find fork remote (any remote that's not origin and points to user's fork)
+  for remote in $(git remote); do
+    if [[ "$remote" != "origin" ]]; then
+      remote_url=$(git remote get-url "$remote" 2>/dev/null)
+      if [[ "$remote_url" =~ github\.com/([^/]+)/AReaL ]]; then
+        PUSH_REMOTE="$remote"
+        FORK_OWNER="${BASH_REMATCH[1]}"
+        break
+      fi
+    fi
+  done
+fi
+
+if [[ -z "$PUSH_REMOTE" ]]; then
+  echo "ERROR: No writable remote found. Please add your fork:"
+  echo "  git remote add fork https://github.com/<username>/AReaL.git"
+  exit 1
+fi
+```
+
 ### Step 2: Check for Existing PR
 
 ```bash
@@ -256,6 +325,7 @@ Show preview to user:
 
 ```
 ─────────────────────────────────────────────────
+Remote: <fork-remote> (fork) → origin (upstream)
 Branch: feat/vision-rlvr → main
 
 PR Title:
@@ -310,22 +380,38 @@ Files changed:
 ─────────────────────────────────────────────────
 
 Commands to execute:
-1. git push -u origin feat/vision-rlvr
-2. gh pr create --title "..." --body "..." [--draft]
+1. git push -f -u <fork-remote> feat/vision-rlvr
+2. gh pr create --repo inclusionAI/AReaL --head <username>:feat/vision-rlvr --base main --title "..." --body "..." [--draft]
 ─────────────────────────────────────────────────
 ```
 
 **Confirm with user**, then execute:
 
 ```bash
-# Force push branch to remote (required after squash)
-git push -f -u origin $(git branch --show-current)
+# Get current branch name
+CURRENT_BRANCH=$(git branch --show-current)
+
+# Force push branch to determined remote (required after squash)
+# PUSH_REMOTE was determined in Step 1.5
+git push -f -u "$PUSH_REMOTE" "$CURRENT_BRANCH"
+
+# Determine if this is a fork PR (cross-repo)
+if [[ "$PUSH_REMOTE" != "origin" ]]; then
+  # Fork workflow: PR from fork to upstream
+  PR_HEAD="${FORK_OWNER}:${CURRENT_BRANCH}"
+  GH_PR_REPO="--repo ${UPSTREAM_REPO}"
+else
+  # Maintainer workflow: PR within same repo
+  PR_HEAD="$CURRENT_BRANCH"
+  GH_PR_REPO=""
+fi
 
 # Create or edit PR using gh CLI with GitHub template format
 # If PR exists, use 'gh pr edit' instead of 'gh pr create'
-if gh pr view &>/dev/null; then
+if gh pr view --repo "${UPSTREAM_REPO}" --head "${PR_HEAD}" &>/dev/null; then
   # Update existing PR
   gh pr edit \
+    --repo "${UPSTREAM_REPO}" \
     --title "feat(workflow): add vision support to RLVR" \
     --body "$(cat <<'EOF'
 [PR description here]
@@ -334,6 +420,8 @@ EOF
 else
   # Create new PR
   gh pr create \
+    --repo "${UPSTREAM_REPO}" \
+    --head "${PR_HEAD}" \
     --base main \
     --title "feat(workflow): add vision support to RLVR" \
     --body "$(cat <<'EOF'
@@ -614,7 +702,14 @@ If force push fails:
 1. Verify remote branch exists
 1. Check GitHub authentication: `gh auth status`
 1. Confirm branch protection rules allow force push
-1. Provide manual push instructions if needed
+1. **For fork workflow**: Verify the fork remote URL is correct and you have push access
+1. Provide manual push instructions if needed:
+   ```bash
+   # Fork workflow
+   git push -f -u <fork-remote> <branch>
+   # Maintainer workflow
+   git push -f -u origin <branch>
+   ```
 
 ### PR Creation/Update Failures
 
@@ -669,7 +764,10 @@ Invocation: /create-pr
 
 ## Design Philosophy
 
-- Automates full PR creation workflow: fetch, rebase, **squash to single commit**, push, create/update PR
+- Automates full PR creation workflow: detect remote, fetch, rebase, **squash to single commit**, push, create/update PR
+- **Supports both maintainer and fork workflows**:
+  - Maintainer: push to `origin`, create PR within same repo
+  - Fork: push to fork remote, create cross-repo PR to upstream
 - **Always squashes all commits** since `origin/main` into a single commit with message generated via the `commit-conventions` skill
 - **Handles existing PRs** by detecting them and force-updating after user permission
 - Follows repository's Conventional Commits format
