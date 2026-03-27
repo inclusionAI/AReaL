@@ -91,6 +91,7 @@ def all_gather_param(
     param: Parameter | Tensor,
     fp8_direct_convert: bool = False,
     quantization_config: dict[str, int | str | list[str]] | None = None,
+    duplicated_param_names: set[str] | None = None,
 ) -> torch.Tensor | FP8BlockwiseTensorHelper:
     if "expert_bias" in name:
         return param
@@ -100,10 +101,16 @@ def all_gather_param(
 
     param_is_fp8 = is_float8tensor(param)
 
-    if (
-        not param.tensor_model_parallel
-        or getattr(param, "parallel_mode", None) == "duplicated"
-    ):
+    # Check if this param is truly NOT TP-sharded.
+    # NOTE: TE unconditionally sets tensor_model_parallel=True on all Linear
+    # weights, even for modules with parallel_mode='duplicated'. The original
+    # getattr(param, "parallel_mode", ...) check was dead code because
+    # parallel_mode is a module attribute, not a tensor attribute.
+    # Use the caller-provided duplicated_param_names set for reliable detection.
+    is_duplicated = (
+        duplicated_param_names is not None and name in duplicated_param_names
+    )
+    if not param.tensor_model_parallel or is_duplicated:
         # NOTE: For FP8 tensors with direct conversion, return the tensor directly
         # without accessing .data to avoid dequantization (accessing .data on
         # QuantizedTensor triggers __torch_dispatch__ which dequantizes to bfloat16).
@@ -550,6 +557,202 @@ def convert_deepseekv3_to_hf(
     raise ValueError(f"Unknown parameter name: {name}")
 
 
+# BailingMoeV2_5 weight conversion
+#
+# BailingMoe HF uses "attention." prefix (not "self_attn.").
+# Lightning layers: fused QKV (query_key_value), gate (g_proj), gate norm (g_norm),
+#                   output proj (dense), Q/K norms (query_layernorm/key_layernorm)
+# MLA layers: separate Q/KV low-rank projections (q_a_proj, q_b_proj, kv_a_proj_with_mqa, kv_b_proj),
+#             output proj (dense), Q/KV norms (q_a_layernorm, kv_a_layernorm)
+def convert_bailingmoe_to_hf(
+    tf_config: TransformerConfig,
+    name: str,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
+):
+    """Convert BailingMoeV2_5 megatron-core weights to HuggingFace format.
+
+    BailingMoeV2_5 has two attention types per layer:
+    - Lightning Attention: uses fused QKV (linear_qkv) + gate projection (linear_gate)
+    - MLA: uses separate Q/KV down/up projections
+
+    The layer type is determined by the parameter name structure:
+    - Lightning layers have: linear_qkv, linear_gate, gate_norm
+    - MLA layers have: linear_q_down_proj, linear_q_up_proj, linear_kv_down_proj, etc.
+
+    HF naming convention uses "attention." prefix (not "self_attn.").
+    """
+    if "_extra_state" in name:
+        return []
+    if name == "module.module.embedding.word_embeddings.weight":
+        return [("model.word_embeddings.weight", param)]
+    if name == "module.module.output_layer.weight":
+        return [("lm_head.weight", param)]
+    if name == "module.module.decoder.final_layernorm.weight":
+        return [("model.norm.weight", param)]
+
+    decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
+    match = re.match(decoder_layers_pattern, name)
+    if match:
+        layer_idx, rest = match.groups()
+
+        # === MoE experts ===
+        expert_pattern = r"mlp.experts\.(.+)\.weight(\d+)"
+        match = re.match(expert_pattern, rest)
+        if match:
+            rest, expert_idx = match.groups()
+            if rest == "linear_fc1":
+                gate_weight, up_weight = param.chunk(2, dim=0)
+                return [
+                    (
+                        f"model.layers.{layer_idx}.mlp.experts.{expert_idx}.gate_proj.weight",
+                        gate_weight,
+                    ),
+                    (
+                        f"model.layers.{layer_idx}.mlp.experts.{expert_idx}.up_proj.weight",
+                        up_weight,
+                    ),
+                ]
+            elif rest == "linear_fc2":
+                return [
+                    (
+                        f"model.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.weight",
+                        param,
+                    ),
+                ]
+            else:
+                raise ValueError(f"Unknown expert parameter name: {name}")
+
+        # === Shared experts ===
+        shared_expert_pattern = r"mlp.shared_experts\.(.+)"
+        match = re.match(shared_expert_pattern, rest)
+        if match:
+            rest = match.groups()[0]
+            if rest == "linear_fc1.weight":
+                gate_weight, up_weight = param.chunk(2, dim=0)
+                return [
+                    (
+                        f"model.layers.{layer_idx}.mlp.shared_experts.gate_proj.weight",
+                        gate_weight,
+                    ),
+                    (
+                        f"model.layers.{layer_idx}.mlp.shared_experts.up_proj.weight",
+                        up_weight,
+                    ),
+                ]
+            elif rest == "linear_fc2.weight":
+                return [
+                    (
+                        f"model.layers.{layer_idx}.mlp.shared_experts.down_proj.weight",
+                        param,
+                    )
+                ]
+            else:
+                raise ValueError(f"Unknown shared expert parameter name: {name}")
+
+        # === Dense MLP ===
+        if rest == "mlp.linear_fc1.weight":
+            gate_weight, up_weight = param.chunk(2, dim=0)
+            return [
+                (f"model.layers.{layer_idx}.mlp.gate_proj.weight", gate_weight),
+                (f"model.layers.{layer_idx}.mlp.up_proj.weight", up_weight),
+            ]
+        elif rest == "mlp.linear_fc2.weight":
+            return [(f"model.layers.{layer_idx}.mlp.down_proj.weight", param)]
+
+        # === MoE router ===
+        elif rest == "mlp.router.weight":
+            return [(f"model.layers.{layer_idx}.mlp.gate.weight", param)]
+        elif rest == "mlp.router.expert_bias":
+            return [(f"model.layers.{layer_idx}.mlp.gate.expert_bias", param)]
+
+        # === Lightning Attention layers (fused QKV) ===
+        elif rest == "self_attention.linear_qkv.weight":
+            # Mcore stores QKV in interleaved [H, 3, D] format: [q0,k0,v0, q1,k1,v1,...]
+            # HF stores QKV in concatenated [Q_all, K_all, V_all] format
+            # Convert interleaved → concatenated for HF checkpoint
+            num_heads = tf_config.num_attention_heads
+            head_dim = param.shape[0] // (num_heads * 3)
+            hidden = param.shape[1]
+            qkv = param.view(num_heads, 3, head_dim, hidden)
+            q = qkv[:, 0].reshape(-1, hidden)  # [H*D, hidden]
+            k = qkv[:, 1].reshape(-1, hidden)
+            v = qkv[:, 2].reshape(-1, hidden)
+            param = torch.cat([q, k, v], dim=0)  # [3*H*D, hidden]
+            return [
+                (
+                    f"model.layers.{layer_idx}.attention.query_key_value.weight",
+                    param,
+                )
+            ]
+        elif rest == "self_attention.linear_qkv.bias":
+            return [
+                (
+                    f"model.layers.{layer_idx}.attention.query_key_value.bias",
+                    param,
+                )
+            ]
+
+        # === Lightning gate projection and norm ===
+        elif rest == "self_attention.linear_gate.weight":
+            return [(f"model.layers.{layer_idx}.attention.g_proj.weight", param)]
+        elif rest == "self_attention.linear_gate.bias":
+            return [(f"model.layers.{layer_idx}.attention.g_proj.bias", param)]
+        elif rest == "self_attention.gate_norm.weight":
+            return [(f"model.layers.{layer_idx}.attention.g_norm.weight", param)]
+
+        # === MLA layers (separate Q/KV projections) ===
+        elif rest == "self_attention.linear_q_down_proj.weight":
+            return [(f"model.layers.{layer_idx}.attention.q_a_proj.weight", param)]
+        elif rest == "self_attention.linear_q_up_proj.layer_norm_weight":
+            return [(f"model.layers.{layer_idx}.attention.q_a_layernorm.weight", param)]
+        elif rest == "self_attention.linear_q_up_proj.weight":
+            return [(f"model.layers.{layer_idx}.attention.q_b_proj.weight", param)]
+        elif rest == "self_attention.linear_kv_down_proj.weight":
+            return [
+                (
+                    f"model.layers.{layer_idx}.attention.kv_a_proj_with_mqa.weight",
+                    param,
+                )
+            ]
+        elif rest == "self_attention.linear_kv_up_proj.layer_norm_weight":
+            return [
+                (f"model.layers.{layer_idx}.attention.kv_a_layernorm.weight", param)
+            ]
+        elif rest == "self_attention.linear_kv_up_proj.weight":
+            return [(f"model.layers.{layer_idx}.attention.kv_b_proj.weight", param)]
+        elif rest == "self_attention.linear_q_proj.weight":
+            return [(f"model.layers.{layer_idx}.attention.q_proj.weight", param)]
+
+        # === Output projection (both layer types) -> attention.dense ===
+        elif rest == "self_attention.linear_proj.weight":
+            return [(f"model.layers.{layer_idx}.attention.dense.weight", param)]
+
+        # === LayerNorm weights ===
+        elif (
+            rest == "self_attention.linear_qkv.layer_norm_weight"
+            or rest == "input_layernorm.weight"
+        ):
+            return [(f"model.layers.{layer_idx}.input_layernorm.weight", param)]
+        elif rest == "mlp.linear_fc1.layer_norm_weight":
+            return [
+                (f"model.layers.{layer_idx}.post_attention_layernorm.weight", param)
+            ]
+        elif rest == "pre_mlp_layernorm.weight":
+            return [
+                (f"model.layers.{layer_idx}.post_attention_layernorm.weight", param)
+            ]
+
+        # === Lightning Q/K norms ===
+        elif rest == "self_attention.q_layernorm.weight":
+            return [
+                (f"model.layers.{layer_idx}.attention.query_layernorm.weight", param)
+            ]
+        elif rest == "self_attention.k_layernorm.weight":
+            return [(f"model.layers.{layer_idx}.attention.key_layernorm.weight", param)]
+
+    raise ValueError(f"Unknown parameter name: {name}")
+
+
 # Adapted from slime
 # A registry for conversion functions is more extensible.
 _CONVERSION_FN_REGISTRY = {
@@ -557,6 +760,9 @@ _CONVERSION_FN_REGISTRY = {
     "qwen2": convert_qwen2_to_hf,
     "qwen3": convert_qwen2_to_hf,
     "deepseekv3": convert_deepseekv3_to_hf,
+    "bailing_moe_v2": convert_bailingmoe_to_hf,
+    "bailing_moe_linear": convert_bailingmoe_to_hf,
+    "bailing_hybrid": convert_bailingmoe_to_hf,
 }
 
 

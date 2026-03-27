@@ -10,6 +10,10 @@ from megatron.core.transformer import TransformerConfig
 from transformers import AutoConfig, PretrainedConfig
 
 from areal.api.cli_args import MegatronEngineConfig
+from areal.models.mcore.bailing_moe import (
+    hf_to_mcore_config_bailing_moe,
+    make_mcore_layer_specs_bailing_moe,
+)
 from areal.models.mcore.qwen3 import (
     hf_to_mcore_config_qwen3_dense,
     make_mcore_layer_specs_qwen3_dense,
@@ -111,6 +115,12 @@ def make_hf_and_mcore_config(
         architecture = hf_config.architectures[0]
         if architecture == "Qwen3ForCausalLM":
             return hf_config, hf_to_mcore_config_qwen3_dense(hf_config, dtype)
+        elif architecture in (
+            "BailingMoeV2_5ForCausalLM",
+            "BailingMoeLinearForCausalLM",
+            "BailingHybridForCausalLM",
+        ):
+            return hf_config, hf_to_mcore_config_bailing_moe(hf_config, dtype)
         else:
             raise ValueError(
                 f"Architecture not registered for config conversion: {architecture}."
@@ -122,6 +132,12 @@ def make_mcore_layer_specs(hf_config: PretrainedConfig, tf_config: TransformerCo
     architecture = hf_config.architectures[0]
     if architecture == "Qwen3ForCausalLM":
         return make_mcore_layer_specs_qwen3_dense(tf_config, use_te=True)
+    elif architecture in (
+        "BailingMoeV2_5ForCausalLM",
+        "BailingMoeLinearForCausalLM",
+        "BailingHybridForCausalLM",
+    ):
+        return make_mcore_layer_specs_bailing_moe(tf_config, hf_config, use_te=True)
     else:
         raise ValueError(
             f"Architecture not registered for config conversion: {architecture}."
