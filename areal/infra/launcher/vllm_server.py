@@ -24,7 +24,7 @@ from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH, get_scheduling_spec
 from areal.infra.utils.proc import kill_process_tree
 from areal.utils import logging, name_resolve, names
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_hostport, gethostip
 
 logger = logging.getLogger("VLLMWrapper")
 
@@ -196,7 +196,7 @@ class vLLMServerWrapper:
                 dist_init_addr=dist_init_addr,
             )
             launch_server_args.append((cmd, host_ip, server_port, custom_env))
-            server_addresses.append(f"http://{host_ip}:{server_port}")
+            server_addresses.append(f"http://{format_hostport(host_ip, server_port)}")
 
         try:
             with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
@@ -240,10 +240,12 @@ class vLLMServerWrapper:
         custom_env: dict[str, str] | None = None,
     ):
         server_process = launch_server_cmd(cmd, custom_env=custom_env)
-        wait_for_server(f"http://{host_ip}:{server_port}")
+        wait_for_server(f"http://{format_hostport(host_ip, server_port)}")
         name = names.gen_servers(self.experiment_name, self.trial_name)
         name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
-        logger.info(f"vllm server launched at: http://{host_ip}:{server_port}")
+        logger.info(
+            f"vllm server launched at: http://{format_hostport(host_ip, server_port)}"
+        )
         return server_process
 
 

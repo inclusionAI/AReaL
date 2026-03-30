@@ -1858,6 +1858,20 @@ class RecoverConfig(_Timer):
         default=3,
         metadata={"help": "Number of recovery retries when recovery is enabled."},
     )
+    no_save_optim: bool = field(
+        default=False,
+        metadata={
+            "help": "Do not save optimizer state in recovery checkpoints. "
+            "Required when using use_distributed_optimizer with Megatron "
+            "(flattened_range incompatibility)."
+        },
+    )
+    no_load_optim: bool = field(
+        default=False,
+        metadata={
+            "help": "Do not load optimizer state when recovering from checkpoint."
+        },
+    )
 
     def __post_init__(self):
         valid_modes = {"on", "off", "auto", "disabled"}

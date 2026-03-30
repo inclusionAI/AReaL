@@ -29,6 +29,7 @@ from torch import nn
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
+import areal.models.mcore.bailing_moe_bridge  # noqa: F401  # register bridge
 from areal.api import (
     FinetuneSpec,
     InferenceEngine,
@@ -98,7 +99,7 @@ from areal.utils.data import (
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_host_for_url, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
@@ -352,7 +353,7 @@ class MegatronEngine(TrainEngine):
 
     def _build_hf_mcore_bridge(self):
         if self.bridge_cls == "mbridge":
-            self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
+            self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path, trust_remote_code=True)
             self.bridge.dtype = self.dtype
             if self.config.gradient_checkpointing:
                 self.bridge.set_extra_args(
@@ -375,6 +376,7 @@ class MegatronEngine(TrainEngine):
                 self.config.path,
                 trust_remote_code=True,
                 dtype=self.config.dtype,
+                trust_remote_code=True,
             )
             self.logger.info(
                 "Using megatron-bridge to create models and hf model save/load in MegatronEngine."
@@ -1087,6 +1089,25 @@ class MegatronEngine(TrainEngine):
 
         self.engine_lock.release()
 
+    @property
+    def _duplicated_param_names(self) -> set[str]:
+        """Parameter names whose parent module has parallel_mode='duplicated'.
+
+        These params are replicated (not TP-sharded) but TE incorrectly marks
+        them with tensor_model_parallel=True. Cached after first computation.
+        """
+        if not hasattr(self, "_cached_duplicated_param_names"):
+            duplicated = set()
+            if self.model is not None:
+                for model in self.model:
+                    for mod_name, module in model.named_modules():
+                        if getattr(module, "parallel_mode", None) == "duplicated":
+                            for p_name, _ in module.named_parameters(recurse=False):
+                                full = f"{mod_name}.{p_name}" if mod_name else p_name
+                                duplicated.add(full)
+            self._cached_duplicated_param_names = duplicated
+        return self._cached_duplicated_param_names
+
     def _collect_param(
         self,
         name: str,
@@ -1108,6 +1129,7 @@ class MegatronEngine(TrainEngine):
             param,
             self.fp8_direct_convert,
             quantization_config=self.quantization_config,
+            duplicated_param_names=self._duplicated_param_names,
         )
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
@@ -1261,15 +1283,16 @@ class MegatronEngine(TrainEngine):
             fut = self.rollout_engine.init_weights_update_group(meta)
 
             gen_world_size = meta.gen_allocation.parallel.world_size
+            init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             self.logger.info(
                 f"Initializing weight update group: type={meta.type} "
-                f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port} "
+                f"init_method={init_method} "
                 f"group={self.weight_update_group_name}"
             )
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
                 world_size=gen_world_size + 1,
-                init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
+                init_method=init_method,
                 rank=0,
                 group_name=self.weight_update_group_name,
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,

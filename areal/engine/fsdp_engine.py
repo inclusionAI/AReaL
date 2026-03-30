@@ -119,7 +119,7 @@ from areal.utils.data import (
 )
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_host_for_url, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
@@ -1097,15 +1097,16 @@ class FSDPEngine(TrainEngine):
             fut = self.rollout_engine.init_weights_update_group(meta)
 
             gen_world_size = meta.gen_allocation.parallel.world_size
+            init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             self.logger.info(
                 f"Initializing weight update group: type={meta.type} "
-                f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port} "
+                f"init_method={init_method} "
                 f"group={meta.nccl_group_name}"
             )
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
                 world_size=gen_world_size + 1,
-                init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
+                init_method=init_method,
                 rank=0,
                 group_name=meta.nccl_group_name,
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,
@@ -1311,6 +1312,13 @@ class FSDPEngine(TrainEngine):
         if is_qwen_vl_model(self.model_config.model_type):
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
+            # NOTE: Qwen-VL get_rope_index performs indexed assignment where
+            # source positions are int64 and position_ids inherits input_ids.dtype.
+            # Ensure input_ids uses int64 so destination/source dtypes align and
+            # avoid "Index put requires the source and destination dtypes match".
+            if input_ids.dtype != torch.long:
+                input_ids = input_ids.to(torch.long)
+                input_["input_ids"] = input_ids
             image_grid_thw = None
             video_grid_thw = None
             if "multi_modal_input" in input_:
@@ -1331,7 +1339,10 @@ class FSDPEngine(TrainEngine):
                     video_grid_thw = torch.cat(video_grid_thw_list)
 
             position_ids, _ = self.model.model.get_rope_index(
-                input_ids, image_grid_thw, video_grid_thw, attn_mask
+                input_ids=input_ids,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                attention_mask=attn_mask,
             )
             position_ids = torch.einsum("ijk->jki", position_ids)
             input_["position_ids"] = position_ids
