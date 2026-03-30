@@ -1212,7 +1212,9 @@ def make_repository(args: "NameResolveConfig"):
         os.makedirs(repo.record_root, exist_ok=True)
         return repo
     elif args.type == "etcd3":
-        host, port = args.etcd3_addr.split(":")
+        from areal.utils.network import split_hostport
+
+        host, port = split_hostport(args.etcd3_addr)
         return Etcd3NameRecordRepository(host=host, port=int(port))
     elif args.type == "ray":
         return RayNameResolveRepository(actor_name=args.ray_actor_name)

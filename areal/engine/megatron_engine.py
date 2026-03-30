@@ -98,7 +98,7 @@ from areal.utils.data import (
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_host_for_url, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
@@ -1254,15 +1254,16 @@ class MegatronEngine(TrainEngine):
             fut = self.rollout_engine.init_weights_update_group(meta)
 
             gen_world_size = meta.gen_allocation.parallel.world_size
+            init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             self.logger.info(
                 f"Initializing weight update group: type={meta.type} "
-                f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port} "
+                f"init_method={init_method} "
                 f"group={self.weight_update_group_name}"
             )
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
                 world_size=gen_world_size + 1,
-                init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
+                init_method=init_method,
                 rank=0,
                 group_name=self.weight_update_group_name,
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,

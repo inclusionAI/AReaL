@@ -34,7 +34,11 @@ from areal.utils.data import (
     tensor_container_to,
 )
 from areal.utils.dynamic_import import import_from_string
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import (
+    find_free_ports,
+    format_hostport,
+    gethostip,
+)
 
 logger = logging.getLogger("SyncRPCServer")
 
@@ -182,7 +186,7 @@ def _wait_for_worker_ready(host: str, port: int, timeout: float = 60) -> bool:
     Returns:
         True if the worker is ready, False if timeout is reached.
     """
-    url = f"http://{host}:{port}/health"
+    url = f"http://{format_hostport(host, port)}/health"
     deadline = time.time() + timeout
 
     while time.time() < deadline:
@@ -1035,9 +1039,16 @@ def main():
         _nfs_record_root, \
         _etcd3_addr, \
         _fileroot
-    _server_host = args.host
-    if _server_host == "0.0.0.0":
+    bind_host = args.host
+    if bind_host == "0.0.0.0":
+        host_ip = gethostip()
+        if ":" in host_ip:
+            bind_host = "::"
+        _server_host = host_ip
+    elif bind_host == "::":
         _server_host = gethostip()
+    else:
+        _server_host = bind_host
     _role = args.role
 
     # Set global config for fork endpoint
@@ -1059,7 +1070,7 @@ def main():
     worker_id = f"{worker_role}/{worker_index}"
 
     # Make a flask server
-    server = make_server(args.host, args.port, app, threaded=True)
+    server = make_server(bind_host, args.port, app, threaded=True)
     _server_port = server.socket.getsockname()[1]
 
     name_resolve.reconfigure(
@@ -1072,7 +1083,7 @@ def main():
     key = names.worker_discovery(
         args.experiment_name, args.trial_name, args.role, worker_index
     )
-    name_resolve.add(key, f"{_server_host}:{_server_port}", replace=True)
+    name_resolve.add(key, format_hostport(_server_host, _server_port), replace=True)
 
     global _allocated_ports
     _allocated_ports.add(_server_port)

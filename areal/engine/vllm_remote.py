@@ -29,6 +29,7 @@ from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
 from areal.utils import logging, perf_tracer, stats_tracker
+from areal.utils.network import format_host_for_url
 
 logger = logging.getLogger("vLLMEngine")
 
@@ -198,7 +199,7 @@ class VLLMBackend:
         gen_parallel = meta.gen_allocation.parallel
         rank_offset = 1 + server_idx * gen_parallel.tp_size * gen_parallel.pp_size
         payload = {
-            "master_address": meta.nccl_master_address,
+            "master_address": format_host_for_url(meta.nccl_master_address),
             "master_port": str(meta.nccl_master_port),
             "rank_offset": rank_offset,
             "world_size": gen_parallel.world_size + 1,

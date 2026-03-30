@@ -47,6 +47,7 @@ from areal.infra.utils.slurm import (
 )
 from areal.utils import logging, name_resolve, names
 from areal.utils.fs import validate_shared_path
+from areal.utils.network import format_hostport, split_hostport
 from areal.utils.offload import get_tms_env_vars
 
 logger = logging.getLogger("SlurmScheduler")
@@ -272,7 +273,7 @@ class SlurmScheduler(Scheduler):
             return False
 
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/health"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/health"
 
         try:
             response = requests.get(url, timeout=2.0)
@@ -287,7 +288,7 @@ class SlurmScheduler(Scheduler):
 
         worker_id = worker_info.worker.id
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/configure"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/configure"
 
         try:
             response = requests.post(
@@ -354,18 +355,18 @@ class SlurmScheduler(Scheduler):
                 addr = name_resolve.get(key)
             except name_resolve.NameEntryNotFoundError:
                 continue
-            ip, ports_str = addr.split(":")
+            ip, port = split_hostport(addr)
             worker_info.worker.ip = ip
-            worker_info.discovered = True
-            worker_ports = [ports_str]
+            worker_ports = [str(port)]
             worker_info.worker.worker_ports = worker_ports
+            worker_info.discovered = True
 
             self._wait_worker_ready(worker_info)
 
             # Allocate new ports from the worker
             if worker_info.spec.port_count > 1:
                 resp = requests.post(
-                    f"http://{addr}/alloc_ports",
+                    f"http://{format_hostport(ip, port)}/alloc_ports",
                     json=dict(count=worker_info.spec.port_count - 1),
                 )
                 resp.raise_for_status()
@@ -450,9 +451,7 @@ class SlurmScheduler(Scheduler):
             If specified, the forked process runs this module.
         """
         worker_id = f"{role}/{idx}"
-        target_url = (
-            f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/fork"
-        )
+        target_url = f"http://{format_hostport(target_wi.worker.ip, int(target_wi.worker.worker_ports[0]))}/fork"
 
         try:
             payload = {"role": role, "worker_index": idx}
@@ -504,7 +503,7 @@ class SlurmScheduler(Scheduler):
         port_cnt = len(self._workers[target_role][0].worker.worker_ports)
         if port_cnt > 1:
             async with session.post(
-                f"http://{forked_host}:{forked_port}/alloc_ports",
+                f"http://{format_hostport(forked_host, forked_port)}/alloc_ports",
                 json=dict(count=port_cnt - 1),
             ) as response:
                 if response.status != 200:
@@ -535,7 +534,7 @@ class SlurmScheduler(Scheduler):
         target_wi: SlurmWorkerInfo,
     ) -> None:
         """Kill a single forked worker via its parent's RPC server."""
-        target_url = f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/kill_forked_worker"
+        target_url = f"http://{format_hostport(target_wi.worker.ip, int(target_wi.worker.worker_ports[0]))}/kill_forked_worker"
 
         try:
             payload = {"role": role, "worker_index": idx}
@@ -1218,7 +1217,7 @@ class SlurmScheduler(Scheduler):
 
         payload = {"env": env}
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/set_env"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/set_env"
 
         try:
             timeout = aiohttp.ClientTimeout(total=30.0)
@@ -1303,7 +1302,7 @@ class SlurmScheduler(Scheduler):
         }
 
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/create_engine"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/create_engine"
 
         try:
             logger.debug(
@@ -1422,7 +1421,7 @@ class SlurmScheduler(Scheduler):
         }
 
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/call"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/call"
         last_error = None
 
         for attempt in range(1, max_retries + 1):
@@ -1553,7 +1552,7 @@ class SlurmScheduler(Scheduler):
         }
 
         port = int(worker_info.worker.worker_ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/call"
+        url = f"http://{format_hostport(worker_info.worker.ip, port)}/call"
         last_error = None
 
         for attempt in range(1, max_retries + 1):

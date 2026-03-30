@@ -17,7 +17,7 @@ from areal.infra.platforms import current_platform
 from areal.utils import name_resolve, names
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.lock import DistributedLock
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_host_for_url, gethostip
 from areal.utils.perf_tracer import trace_perf
 
 if TYPE_CHECKING:
@@ -70,15 +70,16 @@ def init_weight_update_group(
             fut = engine.rollout_engine.init_weights_update_group(meta)
 
             gen_world_size = meta.gen_allocation.parallel.world_size
+            init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             engine.logger.info(
                 f"Initializing weight update group: type={meta.type}, "
-                f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port}, "
+                f"init_method={init_method}, "
                 f"group={meta.nccl_group_name}"
             )
             state.group = init_custom_process_group(
                 backend=current_platform.communication_backend,
                 world_size=gen_world_size + 1,
-                init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
+                init_method=init_method,
                 rank=0,
                 group_name=meta.nccl_group_name,
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,
