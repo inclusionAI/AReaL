@@ -13,6 +13,22 @@ Shifting from FSDP to Megatron requires only a single line of change: the
 For a complete guide on allocation mode syntax, parallelism dimensions, and GPU
 calculations, see the [Allocation Mode Reference](../reference/alloc_mode.md).
 
+## Bridge Backend Selection
+
+`MegatronEngine` supports two bridge backends configured by
+`actor.megatron.bridge_type`:
+
+```yaml
+actor:
+    megatron:
+        bridge_type: mbridge  # default (backward compatible)
+```
+
+Set `bridge_type: megatron-bridge` to use the new backend.
+
+For trade-offs and migration guidance, see the
+[Megatron Bridge Backend Reference](../reference/bridge_backend.md).
+
 ## MoE Parallel Strategy
 
 For MoE models, Megatron supports separate parallelism for attention and FFN modules
