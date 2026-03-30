@@ -295,10 +295,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
 
                     # For Round 2+, add prompt to avoid repeating previous wrong answers (temporary, not saved)
                     if current_round > 1 and all_wrong_answers:
-                        wrong_answers_str = "\n".join(f"- Round {i+1}: {ans}" for i, ans in enumerate(all_wrong_answers))
-                        formatted_prompt = ITERATIVE_FINAL_ANSWER_PROMPT.format(
-                            wrong_answers=wrong_answers_str,
-                        )
+                        formatted_prompt = ITERATIVE_FINAL_ANSWER_PROMPT
                         task.append_system_prompt(formatted_prompt)
 
                     agent.config.generate_config = phase_configs.final_answer
