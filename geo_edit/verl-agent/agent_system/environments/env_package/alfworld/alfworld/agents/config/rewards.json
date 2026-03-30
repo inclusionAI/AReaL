@@ -1,0 +1,87 @@
+{
+  "Generic":
+  {
+    "success": 2,
+    "failure": -0.05,
+    "step_penalty": -0.01,
+    "goal_reward": 5
+  },
+  "BaseAction":
+  {
+    "positive": 1,
+    "negative": 0,
+    "neutral": 0,
+    "invalid_action": -0.1
+  },
+  "GotoLocationAction":
+  {
+    "positive": 4,
+    "negative": 0,
+    "neutral": 0,
+    "invalid_action": -0.5,
+    "min_reach_distance": 3
+  },
+  "PickupObjectAction":
+  {
+    "positive": 2,
+    "negative": -1,
+    "neutral": 0,
+    "invalid_action": -0.1
+  },
+  "PutObjectAction":
+  {
+    "positive": 2,
+    "negative": -1,
+    "neutral": 0,
+    "invalid_action": -0.1
+  },
+  "OpenObjectAction":
+  {
+    "positive": 2,
+    "negative": -0.05,
+    "neutral": 0,
+    "invalid_action": -0.1
+  },
+  "CloseObjectAction":
+  {
+    "positive": 1,
+    "negative": 0,
+    "neutral": 0,
+    "invalid_action": -0.1
+  },
+  "ToggleObjectAction":
+  {
+    "positive": 1,
+    "negative": -1,
+    "neutral": 0,
+    "invalid_action": -0.1
+  },
+  "SliceObjectAction":
+  {
+    "positive": 1,
+    "negative": -4,
+    "neutral": 0,
+    "invalid_action": -0.1
+  },
+  "CleanObjectAction":
+  {
+    "positive": 2,
+    "negative": 0,
+    "neutral": 0,
+    "invalid_action": -0.1
+  },
+  "HeatObjectAction":
+  {
+    "positive": 2,
+    "negative": 0,
+    "neutral": 0,
+    "invalid_action": -0.1
+  },
+  "CoolObjectAction":
+  {
+    "positive": 2,
+    "negative": 0,
+    "neutral": 0,
+    "invalid_action": -0.1
+  }
+}

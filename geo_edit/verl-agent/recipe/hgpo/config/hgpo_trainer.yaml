@@ -1,0 +1,34 @@
+hydra:
+  searchpath:
+    - file://verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  gen_batch_size: ${data.train_batch_size}
+
+reward_model:
+  reward_manager: episode
+  overlong_buffer:
+    enable: False
+    len: 0
+    penalty_factor: 0.0
+    log: False
+
+algorithm:
+  hgpo:
+    mode: "mean_std_norm"
+    weight_type: "length"
+    length_weight_alpha: 1.0
+    base_group: false
+  filter_groups:
+    enable: False
+    metric: null
+    max_num_gen_batches: 0
+
+trainer:
+  project_name: verl-hgpo
+  val_out: False
+  val_only: False

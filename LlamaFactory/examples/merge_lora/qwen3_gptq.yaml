@@ -1,0 +1,12 @@
+### model
+model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
+template: qwen3_nothink
+trust_remote_code: true
+
+### export
+export_dir: saves/qwen3_gptq
+export_quantization_bit: 4
+export_quantization_dataset: data/c4_demo.jsonl
+export_size: 5
+export_device: cpu  # choices: [cpu, auto]
+export_legacy_format: false

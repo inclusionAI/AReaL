@@ -1,0 +1,42 @@
+model: Qwen/Qwen3-0.6B
+model_class: llm
+
+template: qwen3_nothink
+
+# PEFT Configuration
+peft_config:
+  name: lora
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules: all
+
+# Kernel Config
+kernel_config:
+  name: auto
+  include_kernels: auto
+
+# FSDP Config
+dist_config:
+  name: fsdp2
+  dcp_path: null
+
+# Quantization Config
+quant_config:
+  name: bnb # choice: auto/bnb if auto is selected, the quantization method will be automatically selected based on the model and environment.
+  quantization_bit: 4 # choice: 8/4(bnb)
+
+### data
+train_dataset: data/v1_sft_demo.yaml
+
+### training
+output_dir: outputs/test_quantization
+micro_batch_size: 1
+cutoff_len: 2048
+learning_rate: 1.0e-4
+bf16: false
+max_steps: 10
+
+### sample
+sample_backend: hf
+max_new_tokens: 128

@@ -1,0 +1,93 @@
+name: tests_npu
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+      - "Makefile"
+      - ".github/workflows/*.yml"
+  pull_request:
+    branches:
+      - "main"
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+      - "Makefile"
+      - ".github/workflows/*.yml"
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        python:
+          - "3.11"
+        os:
+          - "linux-aarch64-a2-4"
+        pytorch_npu:
+          - "2.7.1"
+
+    runs-on: ${{ matrix.os }}
+
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.os }}-${{ matrix.python }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+    container:
+      image: ascendai/cann:8.3.rc2-910b-ubuntu22.04-py3.11
+      env:
+        HF_ENDPOINT: https://hf-mirror.com
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        OS_NAME: ${{ matrix.os }}
+        UV_NO_SYNC: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set nginx-cache for Ascend CI
+        run: |
+          sed -Ei 's@(ports|archive).ubuntu.com@cache-service.nginx-pypi-cache.svc.cluster.local:8081@g' /etc/apt/sources.list
+          pip config set global.index-url http://cache-service.nginx-pypi-cache.svc.cluster.local/pypi/simple
+          pip config set global.trusted-host cache-service.nginx-pypi-cache.svc.cluster.local
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+          github-token: ${{ github.token }}
+          enable-cache: false
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -r requirements/npu.txt
+          uv pip install -e .
+          uv pip install -r requirements/dev.txt
+
+      - name: Install node
+        run: |
+          apt-get update || true
+          apt-get install -y curl
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs
+
+      - name: Check quality
+        run: |
+          make style && make quality
+
+      - name: Check license
+        run: |
+          make license
+
+      - name: Check build
+        run: |
+          make build
+
+      - name: Test with pytest
+        run: |
+          make test

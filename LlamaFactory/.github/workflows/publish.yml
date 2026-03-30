@@ -1,0 +1,37 @@
+name: publish
+
+on:
+  workflow_dispatch:
+  release:
+    types:
+      - published
+
+jobs:
+  publish:
+    name: Upload release to PyPI
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: release
+      url: https://pypi.org/p/llamafactory
+
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+          github-token: ${{ github.token }}
+
+      - name: Build package
+        run: |
+          make build
+
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@release/v1

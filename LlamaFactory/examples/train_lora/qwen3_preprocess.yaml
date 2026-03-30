@@ -1,0 +1,22 @@
+### model
+model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+
+### dataset
+dataset: identity,alpaca_en_demo
+template: qwen3_nothink
+cutoff_len: 2048
+max_samples: 1000
+preprocessing_num_workers: 16
+tokenized_path: saves/qwen3-4b/dataset/sft
+
+### output (not used)
+output_dir: saves/qwen3-4b/lora/sft
+overwrite_output_dir: true

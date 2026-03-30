@@ -1,0 +1,7 @@
+model: Qwen/Qwen3-4B
+peft_config:
+  name: lora
+  adapter_name_or_path: ./outputs/test_lora
+  export_dir: ./merge_lora_model
+  export_size: 5
+  infer_dtype: auto

@@ -1,0 +1,81 @@
+# basic pyproject.toml for skyrl-gym
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skyrl-gym"
+version = "0.1.1"
+description = "RL environments for LLMs implemented with the Gymnasium API."
+authors = [
+    { name = "NovaSkyAI AI Team"}
+]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "func_timeout",
+    "pandas", 
+    "requests",
+    "omegaconf",
+]
+
+[project.urls]
+Repository = "https://github.com/NovaSky-AI/SkyRL"
+
+[tool.setuptools.packages.find]
+include = ["skyrl_gym*"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest"
+]
+
+[tool.black]
+line-length = 120
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.flake8]
+max-line-length = 120
+max-doc-length = 120
+extend-ignore = [
+    # Default ignored errors by flake8
+    "E121", "E123", "E126", "E226", "E24", "E704",
+    # F401 module imported but unused
+    "F401",
+    # E203 whitespace before ':' (conflict with black)
+    "E203",
+    # E231 missing whitespace after ',' (conflict with black)
+    "E231",
+    # E501 line too long (conflict with black)
+    "E501",
+    # E741 do not use variables named 'l', 'O', or 'I'
+    "E741",
+    # W503 line break before binary operator (conflict with black)
+    "W503",
+    # W504 line break after binary operator (conflict with black)
+    "W504",
+    # W505 doc line too long (conflict with black)
+    "W505",
+    # W605 invalid escape sequence 'x' (conflict with latex within docs)
+    "W605",
+]
+
+[tool.ruff.lint]
+ignore = [
+    "F722" # Syntax error in annotation - ignored because this doesn't play well with jaxtyping
+]

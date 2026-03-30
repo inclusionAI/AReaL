@@ -1,0 +1,37 @@
+model: Qwen/Qwen3-4B
+model_class: llm
+
+template: qwen3_nothink
+
+# Freeze Configuration
+peft_config:
+  name: freeze
+  freeze_trainable_layers: 2      # Train the last 2 layers
+  freeze_trainable_modules: all       # In these layers, train specific modules
+  freeze_extra_modules: null      # Extra modules to train (e.g. embed_tokens, lm_head)
+
+# Kernel Config
+kernel_config:
+  name: auto
+  include_kernels: auto
+
+# FSDP Config
+dist_config:
+  name: fsdp2
+  dcp_path: null
+
+### data
+train_dataset: data/v1_sft_demo.yaml
+
+### training
+output_dir: ./outputs/test_freeze
+micro_batch_size: 1
+global_batch_size: 4
+cutoff_len: 2048
+learning_rate: 2.0e-5
+bf16: false
+max_steps: 10
+
+### sample
+sample_backend: hf
+max_new_tokens: 128
