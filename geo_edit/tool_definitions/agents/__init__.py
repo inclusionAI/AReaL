@@ -8,7 +8,7 @@ Supports both legacy single-tool declarations and new multi-tool declarations (D
 
 from typing import Dict, Type, Any
 
-from geo_edit.tool_definitions.agents import multimath, gllava, chartr1, ovr, sam2, grounding_dino, paddleocr_tool
+from geo_edit.tool_definitions.agents import multimath, gllava, chartr1, ovr, sam2, grounding_dino, paddleocr_tool, thinkmorph
 
 # Agent declarations for API tool definitions
 # Note: paddleocr and sam2 legacy tools removed - use fine-grained multi-tools instead
@@ -39,6 +39,7 @@ AGENT_CONFIGS: Dict[str, dict] = {
     "sam2": sam2.agent_config,
     "grounding_dino": grounding_dino.agent_config,
     "paddleocr": paddleocr_tool.agent_config,
+    "thinkmorph": thinkmorph.agent_config,
 }
 
 # Export system prompts for tool_agents manager
@@ -50,6 +51,7 @@ AGENT_SYSTEM_PROMPTS: Dict[str, str] = {
     "sam2": sam2.SYSTEM_PROMPT,
     "grounding_dino": grounding_dino.SYSTEM_PROMPT,
     "paddleocr": paddleocr_tool.SYSTEM_PROMPT,
+    "thinkmorph": thinkmorph.SYSTEM_PROMPT,
 }
 
 # Export Actor classes for tool_agents manager
@@ -61,6 +63,7 @@ AGENT_ACTOR_CLASSES: Dict[str, Type] = {
     "sam2": sam2.ACTOR_CLASS,
     "grounding_dino": grounding_dino.ACTOR_CLASS,
     "paddleocr": paddleocr_tool.ACTOR_CLASS,
+    "thinkmorph": thinkmorph.ACTOR_CLASS,
 }
 
 # =============================================================================
@@ -103,6 +106,17 @@ if hasattr(multimath, 'DECLARATIONS'):
             "agent_config": multimath.agent_config,
             # Use tool-specific prompt if available
             "system_prompt": decl.get("fixed_prompt", multimath.SYSTEM_PROMPT),
+        }
+
+# Register ThinkMorph multi-tools
+if hasattr(thinkmorph, 'DECLARATIONS'):
+    for tool_name, decl in thinkmorph.DECLARATIONS.items():
+        MULTI_TOOL_DECLARATIONS[tool_name] = {
+            "declaration": decl,
+            "base_agent": "thinkmorph",
+            "actor_class": thinkmorph.ACTOR_CLASS,
+            "agent_config": thinkmorph.agent_config,
+            "system_prompt": thinkmorph.SYSTEM_PROMPT,
         }
 
 # Register Chart-R1 multi-tools (replaces ChartMoE)

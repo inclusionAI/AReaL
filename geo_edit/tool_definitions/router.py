@@ -47,6 +47,7 @@ TOOL_CATEGORIES = {
     "document": ["seal_ocr"],
     "ocr": ["text_ocr", "table_ocr", "formula_ocr", "chart_text_ocr", "text_spotting", "seal_ocr", "map_text_ocr"],
     "segment": ["auto_segment", "bbox_segment"],
+    "reasoning": ["visual_reasoning"],
 }
 
 
@@ -74,16 +75,24 @@ def expand_tool_names(tool_specs: List[str]) -> List[str]:
     return list(expanded)
 
 
-def _make_agent_execute(agent_name: str, fixed_params: Optional[Dict[str, Any]] = None) -> Callable[..., str]:
+def _make_agent_execute(
+    agent_name: str,
+    fixed_params: Optional[Dict[str, Any]] = None,
+    return_type: str = "text",
+) -> Callable[..., Any]:
     """Create an execute function for a specific agent.
 
     Args:
         agent_name: Name of the base agent to call.
         fixed_params: Optional dict of fixed parameters to inject (e.g., fixed_task, fixed_prompt, filter_map).
+        return_type: Return type of the tool ("text" or "image"). When "image", the base64
+            string returned by the actor is decoded back to a PIL.Image.Image.
     """
+    import base64
     import json
+    from io import BytesIO
 
-    def execute(image_list: List[Image.Image], image_index: int, **kwargs) -> str:
+    def execute(image_list: List[Image.Image], image_index: int, **kwargs) -> Any:
         from geo_edit.environment.tool_agents import call_agent
 
         # Inject fixed parameters if specified
@@ -118,6 +127,15 @@ def _make_agent_execute(agent_name: str, fixed_params: Optional[Dict[str, Any]] 
             except (json.JSONDecodeError, ImportError) as e:
                 logger.warning(f"Failed to post-process map OCR result: {e}")
 
+        # Convert base64 string to PIL.Image for image-returning agents
+        if return_type == "image" and isinstance(result, str) and not result.startswith("Error"):
+            try:
+                image_bytes = base64.b64decode(result)
+                return Image.open(BytesIO(image_bytes))
+            except Exception as e:
+                logger.warning(f"Failed to decode agent image result: {e}")
+                return result
+
         return result
     return execute
 
@@ -128,11 +146,12 @@ def _build_tool_registry() -> Dict[str, tuple]:
 
     # Add legacy agent tools with dynamically created execute functions
     for name, declaration in AGENT_DECLARATIONS.items():
+        ret_type = AGENT_RETURN_TYPES[name]
         registry[name] = (
             declaration,
-            _make_agent_execute(name),
+            _make_agent_execute(name, return_type=ret_type),
             "agent",
-            AGENT_RETURN_TYPES[name],
+            ret_type,
         )
 
     # Add multi-tool declarations (fine-grained tools)
@@ -154,11 +173,12 @@ def _build_tool_registry() -> Dict[str, tuple]:
         # Create clean declaration without internal fields
         clean_decl = {k: v for k, v in decl.items() if k not in ("fixed_task", "fixed_prompt", "fixed_mode", "filter_map", "return_type")}
 
+        tool_return_type = decl.get("return_type", "text")
         registry[tool_name] = (
             clean_decl,
-            _make_agent_execute(base_agent, fixed_params if fixed_params else None),
+            _make_agent_execute(base_agent, fixed_params if fixed_params else None, return_type=tool_return_type),
             "agent",
-            decl.get("return_type", "text"),
+            tool_return_type,
         )
 
     return registry

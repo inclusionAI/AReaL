@@ -53,3 +53,8 @@ map_text_ocr: false        # Map-optimized OCR: filters numbers, merges adjacent
 # =============================================================================
 seal_ocr: false            # Seal/stamp recognition
 
+# =============================================================================
+# REASONING TOOLS - Visual reasoning and auxiliary image generation
+# =============================================================================
+visual_reasoning: false    # ThinkMorph visual reasoning image generation
+
