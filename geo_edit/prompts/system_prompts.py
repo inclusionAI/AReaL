@@ -210,10 +210,8 @@ CRITICAL: You MUST call a tool - do NOT provide an answer yet.
 # Prompt for Phase 3 in Round 2+ (to avoid repeating previous wrong answers)
 ITERATIVE_FINAL_ANSWER_PROMPT = """
 IMPORTANT: Your previous answers were ALL INCORRECT:
-{wrong_answers}
-
-Based on the NEW tool results you just received, provide a DIFFERENT answer.
-Do NOT repeat any of the above answers. Re-analyze the information carefully.
+Based on the NEW tool results you just received, provide a new answer.
+Re-analyze the information carefully.
 """
 
 
