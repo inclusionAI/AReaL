@@ -330,7 +330,15 @@ def load_model_from_hf(engine: ArchonEngine, path: str) -> None:
 
     engine.logger.info(f"Loading HF checkpoint from {path}")
 
-    # Get model state dict structure
+    from areal.experimental.models.archon.fp8_checkpoint import (
+        _get_scale_inv_keys,
+        _prepare_fp8_state_dict,
+        dequant_fp8_state_dict,
+    )
+
+    _fp8_scale_keys = _get_scale_inv_keys(path)
+    _is_fp8_ckpt = len(_fp8_scale_keys) > 0
+
     options = StateDictOptions(full_state_dict=False, cpu_offload=True)
     state_dict = _get_merged_state_dict(engine, options)
 
@@ -353,11 +361,22 @@ def load_model_from_hf(engine: ArchonEngine, path: str) -> None:
         if embed_key not in hf_state_dict:
             hf_state_dict[embed_key] = torch.empty_like(state_dict["output.weight"])
 
+    if _is_fp8_ckpt:
+        hf_state_dict = _prepare_fp8_state_dict(
+            hf_state_dict, path, _cached_keys=_fp8_scale_keys
+        )
+
     # Load using DCP with HuggingFaceStorageReader
     dcp.load(
         hf_state_dict,
         storage_reader=engine.state_dict_adapter.get_hf_storage_reader(path),
     )
+
+    if _is_fp8_ckpt:
+        hf_state_dict = dequant_fp8_state_dict(
+            hf_state_dict,
+            target_dtype=getattr(torch, engine.config.dtype),
+        )
 
     # Convert back to Archon format
     archon_state_dict = engine.state_dict_adapter.from_hf(hf_state_dict)
@@ -392,8 +411,7 @@ def load_model_from_hf(engine: ArchonEngine, path: str) -> None:
                 f"Unexpected extra keys in checkpoint: {unexpected_keys}"
             )
 
-    # Load into model(s)
-    load_options = StateDictOptions(strict=False)
+    load_options = StateDictOptions(strict=False, full_state_dict=False)
     if engine.parallel_dims.pp_enabled:
         for model_part in engine.model_parts:
             set_model_state_dict(
