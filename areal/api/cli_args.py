@@ -1903,6 +1903,36 @@ class TensorBoardConfig:
 
 
 @dataclass
+class TrackioConfig:
+    """Configuration for Trackio experiment tracking (Hugging Face).
+
+    Trackio is a lightweight, local-first experiment tracking library
+    with a wandb-compatible API. Dashboards can be viewed locally or
+    deployed to Hugging Face Spaces.
+
+    See: https://github.com/gradio-app/trackio
+    """
+
+    mode: str = "disabled"
+    """Tracking mode. One of "disabled", "online", or "local"."""
+    project: str | None = None
+    """Project name. Defaults to experiment_name if not set."""
+    name: str | None = None
+    """Run name. Defaults to trial_name if not set."""
+    space_id: str | None = None
+    """HF Space ID for remote dashboard deployment (e.g. "user/my-space").
+    When set, metrics are also pushed to the specified Hugging Face Space."""
+
+    def __post_init__(self):
+        """Validate Trackio configuration."""
+        valid_modes = {"disabled", "online", "local"}
+        if self.mode not in valid_modes:
+            raise ValueError(
+                f"Invalid trackio mode: '{self.mode}'. Must be one of {valid_modes}."
+            )
+
+
+@dataclass
 class StatsLoggerConfig:
     """Configuration for experiment statistics logging and tracking services."""
 
@@ -1920,6 +1950,10 @@ class StatsLoggerConfig:
     tensorboard: TensorBoardConfig = field(
         default_factory=TensorBoardConfig,
         metadata={"help": "TensorBoard configuration. Only 'path' field required."},
+    )
+    trackio: TrackioConfig = field(
+        default_factory=TrackioConfig,
+        metadata={"help": "Trackio configuration (Hugging Face experiment tracking)."},
     )
 
 

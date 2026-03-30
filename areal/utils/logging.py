@@ -414,7 +414,7 @@ _LATEST_LOG_STEP = 0
 
 
 def log_swanlab_wandb_tensorboard(data, step=None, summary_writer=None):
-    # Logs data to SwanLab、 wandb、 TensorBoard.
+    # Logs data to SwanLab, wandb, TensorBoard, and Trackio.
 
     global _LATEST_LOG_STEP
     if step is None:
@@ -434,6 +434,14 @@ def log_swanlab_wandb_tensorboard(data, step=None, summary_writer=None):
     import wandb
 
     wandb.log(data, step=step)
+
+    # trackio
+    try:
+        import trackio
+
+        trackio.log(data, step=step)
+    except (ModuleNotFoundError, ImportError):
+        pass
 
     # tensorboard
     if summary_writer is not None:
