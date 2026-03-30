@@ -984,10 +984,22 @@ class FSDPEngine(TrainEngine):
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
-    def _get_model_name_parameters(self) -> Iterator[tuple[str, nn.Parameter]]:
+    def _get_model_name_parameters(
+        self, meta: WeightUpdateMeta
+    ) -> Iterator[tuple[str, nn.Parameter]]:
         name_params_iterator = self.model.named_parameters()
         if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
             for name, value in name_params_iterator:
+                if meta.gen_allocation.backend == "sglang":
+                    # SGLang 0.5.9 branch
+                    # LLM part: "model.language_model.norm.weight" -> "model.norm.weight"
+                    # Vision part: "model.visual.blocks.5.mlp.gate_proj.weight" -> "visual.blocks.5.mlp.gate_proj.weight"
+                    new_name = name.replace("language_model.", "", 1)
+                    if new_name.startswith("model.visual."):
+                        new_name = new_name.replace("model.", "", 1)
+                    yield new_name, value
+                    continue
+                # vLLM 0.17.0 branch
                 new_name = name.replace("model.", "", 1)
                 if new_name.startswith("language_model."):
                     new_name = new_name.replace(
@@ -1138,12 +1150,12 @@ class FSDPEngine(TrainEngine):
             # For LoRA, only iterate over trainable LoRA parameters
             param_iterator = (
                 (name, param)
-                for name, param in self._get_model_name_parameters()
+                for name, param in self._get_model_name_parameters(meta)
                 if param.requires_grad
             )
         else:
             # For full model, iterate over all parameters
-            param_iterator = self._get_model_name_parameters()
+            param_iterator = self._get_model_name_parameters(meta)
 
         for name, param in param_iterator:
             tensor = self._get_full_tensor(param)

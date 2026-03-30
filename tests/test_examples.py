@@ -267,10 +267,16 @@ def test_gsm8k_eval(tmp_path_factory):
     assert success, "GSM8K Eval example failed"
 
 
-@pytest.mark.sglang
-@pytest.mark.skip("Currently VLM dataloading is too slow. Needs to be fixed.")
+@pytest.mark.ci
 @pytest.mark.multi_gpu
-def test_vlm_grpo(tmp_path_factory):
+@pytest.mark.parametrize(
+    "rollout_backend,actor_backend",
+    [
+        pytest.param("sglang:d1", "fsdp:d1", marks=pytest.mark.sglang),
+        pytest.param("vllm:d1", "fsdp:d1", marks=pytest.mark.vllm),
+    ],
+)
+def test_vlm_grpo(tmp_path_factory, rollout_backend, actor_backend):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = get_model_path(
@@ -278,23 +284,23 @@ def test_vlm_grpo(tmp_path_factory):
         "Qwen/Qwen2.5-VL-3B-Instruct",
     )
     dataset_path = get_dataset_path(
-        "/storage/openpsi/data/BUAADreamer__clevr_count_70k",
-        "BUAADreamer/clevr_count_70k",
+        "/storage/openpsi/data/hiyouga__geometry3k/",
+        "hiyouga/geometry3k",
     )
 
-    example_file = "examples/vlm/clevr_count_70k_grpo.py"
-    config_name = "examples/vlm/clevr_count_70k_grpo.yaml"
+    example_file = "examples/vlm/geometry3k_grpo.py"
+    config_name = "examples/vlm/geometry3k_grpo.yaml"
     success = run_async_task(
         run_example,
         example_file,
         config_name,
-        "rollout.backend=sglang:d1",
-        "actor.backend=fsdp:d1",
+        f"rollout.backend={rollout_backend}",
+        f"actor.backend={actor_backend}",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=1024",
-        "train_dataset.batch_size=16",
-        "valid_dataset.batch_size=16",
+        "train_dataset.batch_size=2",
+        "valid_dataset.batch_size=2",
         f"train_dataset.path={dataset_path}",
         f"valid_dataset.path={dataset_path}",
         "cluster.n_gpus_per_node=2",

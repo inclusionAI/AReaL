@@ -74,11 +74,16 @@ class DockerInstallationValidator(BaseInstallationValidator):
         """Parse pyproject.toml and add Docker-specific packages."""
         super().parse_pyproject()
 
-        # Add flash-attn (installed separately in Dockerfile, not in pyproject.toml)
-        self.add_additional_package("flash-attn", "==2.8.3", required=True)
-        print("  Note: Expecting flash-attn version 2.8.3 for Docker environment")
+        # Version pins are read from pyproject.toml optional-dependencies
+        # so they stay in sync automatically.
+        opt_versions = self._get_optional_dep_versions()
 
-        # Add Docker-specific packages not in pyproject.toml
+        # flash-attn (pre-built wheel installed in Dockerfile)
+        fa_spec = opt_versions.get("flash-attn", "==2.8.3")
+        self.add_additional_package("flash-attn", fa_spec, required=True)
+        print(f"  Note: Expecting flash-attn {fa_spec} for Docker environment")
+
+        # C++ packages built from source in Dockerfile (not in pyproject.toml)
         self.add_additional_package("grouped_gemm", required=True)
         self.add_additional_package("apex", required=True)
         self.add_additional_package("transformer_engine", required=True)
@@ -99,14 +104,23 @@ class DockerInstallationValidator(BaseInstallationValidator):
             )
 
         if has_sglang:
-            self.add_additional_package("sglang", "==0.5.9", required=True)
+            self.add_additional_package(
+                "sglang", opt_versions.get("sglang", ""), required=True
+            )
             self.CRITICAL_PACKAGES = {*self.CRITICAL_PACKAGES, "sglang"}
             print("  Detected variant: sglang")
+            self.add_additional_package(
+                "nvidia-cudnn-cu12",
+                opt_versions.get("nvidia-cudnn-cu12", ""),
+                required=False,
+            )
         else:
             self.add_additional_package("sglang", required=False)
 
         if has_vllm:
-            self.add_additional_package("vllm", "==0.17.0", required=True)
+            self.add_additional_package(
+                "vllm", opt_versions.get("vllm", ""), required=True
+            )
             self.CRITICAL_PACKAGES = {*self.CRITICAL_PACKAGES, "vllm"}
             print("  Detected variant: vllm")
         else:
@@ -121,10 +135,32 @@ class DockerInstallationValidator(BaseInstallationValidator):
                 "No inference backend installed (need either sglang or vllm)"
             )
 
-        self.add_additional_package("megatron-core", "==0.16.0", required=True)
-        self.add_additional_package("mbridge", "==0.15.1", required=True)
+        # Megatron packages (from cuda-train > megatron extra)
+        self.add_additional_package(
+            "megatron-core",
+            opt_versions.get("megatron-core", ""),
+            required=True,
+        )
+        self.add_additional_package(
+            "mbridge", opt_versions.get("mbridge", ""), required=True
+        )
+        self.add_additional_package(
+            "megatron-bridge",
+            opt_versions.get("megatron-bridge", ""),
+            required=True,
+        )
 
-        # Add DeepSeek-V3 related packages (installed in Dockerfile, not pyproject.toml)
+        # Training packages (from cuda-train extra)
+        self.add_additional_package(
+            "torch_memory_saver",
+            opt_versions.get("torch-memory-saver", ""),
+            required=False,
+        )
+        self.add_additional_package(
+            "kernels", opt_versions.get("kernels", ""), required=True
+        )
+
+        # DeepSeek-V3 related packages (built from source in Dockerfile)
         self.add_additional_package("flash_mla", required=False)  # SM90+ only
         self.add_additional_package("deep_gemm", required=False)  # SM90+ only
         self.add_additional_package("deep_ep", required=False)  # SM80+ only
@@ -132,7 +168,7 @@ class DockerInstallationValidator(BaseInstallationValidator):
             "fla", required=True
         )  # Pure Triton, works everywhere
 
-        # Mamba-related packages (installed in Dockerfile, not pyproject.toml)
+        # Mamba-related packages (built from source in Dockerfile)
         self.add_additional_package("causal_conv1d", "==1.6.0", required=True)
 
     def test_cuda_functionality(self):
