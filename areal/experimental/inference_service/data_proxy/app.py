@@ -384,6 +384,47 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # via HttpRTensorBackend._fetch_tensor().
     # =========================================================================
 
+    @app.post("/data/batch")
+    async def retrieve_data_shard_batch(request: Request):
+        """Retrieve multiple tensor shards in one request.
+
+        Mirrors the ``POST /data/batch`` endpoint on the Flask RPC server
+        (``rpc_server.py``) so that ``HttpRTensorBackend._fetch_shard_group``
+        works against data-proxy addresses.
+        """
+        payload = await request.json()
+        shard_ids = payload.get("shard_ids", [])
+        if not isinstance(shard_ids, list) or not all(
+            isinstance(sid, str) for sid in shard_ids
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Expected JSON body with string list field 'shard_ids'",
+            )
+
+        data = []
+        missing: list[str] = []
+        for sid in shard_ids:
+            try:
+                data.append(rtensor_storage.fetch(sid))
+            except KeyError:
+                missing.append(sid)
+
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"One or more requested shards were not found: {missing}",
+            )
+
+        serialized_data = serialize_value(data)
+        data_bytes = orjson.dumps(serialized_data)
+        logger.debug(
+            "Retrieved %d RTensor shards in batch (size=%d bytes)",
+            len(shard_ids),
+            len(data_bytes),
+        )
+        return RawResponse(content=data_bytes, media_type="application/octet-stream")
+
     @app.put("/data/{shard_id}")
     async def store_data_shard(shard_id: str, request: Request):
         """Store a tensor shard in local RTensor storage."""
