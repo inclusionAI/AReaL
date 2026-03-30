@@ -353,7 +353,9 @@ class MegatronEngine(TrainEngine):
 
     def _build_hf_mcore_bridge(self):
         if self.bridge_cls == "mbridge":
-            self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path, trust_remote_code=True)
+            self.bridge = mbridge.AutoBridge.from_pretrained(
+                self.config.path, trust_remote_code=True
+            )
             self.bridge.dtype = self.dtype
             if self.config.gradient_checkpointing:
                 self.bridge.set_extra_args(
@@ -376,7 +378,6 @@ class MegatronEngine(TrainEngine):
                 self.config.path,
                 trust_remote_code=True,
                 dtype=self.config.dtype,
-                trust_remote_code=True,
             )
             self.logger.info(
                 "Using megatron-bridge to create models and hf model save/load in MegatronEngine."
