@@ -917,6 +917,13 @@ def pad_packed_tensor_dict(
         raise ValueError(
             f"pad_to_length {pad_to_length} is smaller than total length {total_length}."
         )
+    elif pad_length == 0:
+        return (
+            data,
+            pad_length,
+            old_cu_seqlens,
+            align_to_length,
+        )
     new_cu_seqlens = F.pad(cu_seqlens, (0, 1), value=pad_to_length)
     new_max_seqlen = max(max_seqlen, pad_length)
     padded_data = {}
