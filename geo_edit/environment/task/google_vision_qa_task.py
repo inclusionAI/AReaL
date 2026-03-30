@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PIL import Image
 
@@ -34,11 +34,26 @@ class GoogleVisionQATask(VisionQATask):
             api_mode="responses",  # Google uses its own native API, api_mode is ignored
             **kwargs,
         )
+        self._init_contents()
+
+    def _init_contents(self) -> None:
+        """Initialize contents to initial state."""
         if self.text_only:
             logger.info("Initializing GoogleVisionQATask in text only mode.")
             self.contents = [self.task_prompt]
         else:
             self.contents = ["Observation 0:", self.image_list[0], self.task_prompt]
+
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Reset the task to initial state."""
+        obs, info = super().reset(seed=seed, options=options)
+        self._init_contents()
+        return self._get_observation(), info
 
     def _stringify_observation_item(self, item: Any) -> Any:
         from google.genai import types

@@ -208,14 +208,8 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                         (f" (retry {round_retry_count})" if round_retry_count > 0 else ""))
 
             # Save state at the beginning of this round for potential retry
-            contents_before_round = copy.deepcopy(task.contents)
-            conv_history_before_round = len(task.conversation_history)
-            agent_state_before_round = {
-                "conversation_history": list(agent.conversation_history),
-                "step_count": agent.step_count,
-                "total_tokens_used": agent.total_tokens_used,
-                "cost": list(agent.cost),
-            }
+            task_state_before_round = task.save_state()
+            agent_state_before_round = agent.save_state()
             thinking_text_before_round = list(all_thinking_text)
             actual_tools_before_round = set(all_actual_tools)
 
@@ -277,27 +271,24 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             except Exception as e:
                 logger.warning(f"[{task_id}] Round {current_round} Phase 1/2 failed: {e}")
                 # Restore state and retry round
-                task.contents = contents_before_round
-                task.conversation_history = task.conversation_history[:conv_history_before_round]
-                agent.conversation_history = agent_state_before_round["conversation_history"]
-                agent.step_count = agent_state_before_round["step_count"]
-                agent.total_tokens_used = agent_state_before_round["total_tokens_used"]
-                agent.cost = agent_state_before_round["cost"]
+                task.restore_state(task_state_before_round)
+                agent.restore_state(agent_state_before_round)
                 all_thinking_text = thinking_text_before_round
                 all_actual_tools = actual_tools_before_round
                 round_retry_count += 1
                 continue
 
             # ===== Phase 3: Try final answer multiple times =====
+            # Save state after Phase 2 for Phase 3 retries
+            task_state_after_phase2 = task.save_state()
             round_last_wrong_answer = ""  # Track this round's last wrong answer
             for attempt in range(_WORKER_ATTEMPTS_PER_ROUND):
                 total_attempts += 1
                 logger.info(f"[{task_id}] Round {current_round} Attempt {attempt + 1}: Generating final answer")
 
                 try:
-                    # Save contents state before Phase 3 (for retry) - deep copy needed
-                    contents_before_phase3 = copy.deepcopy(task.contents)
-                    conv_history_len = len(task.conversation_history)
+                    # Save contents before adding temporary prompts
+                    contents_before_prompts = copy.deepcopy(task.contents)
 
                     if answer_format:
                         task.append_prompt(answer_format)
@@ -314,8 +305,8 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     action, extra_info = agent.act(task.contents)
                     agent.config.generate_config = original_generate_config
 
-                    # Restore contents (remove the temporary prompt) before parsing action
-                    task.contents = contents_before_phase3
+                    # Restore contents (remove the temporary prompts) before parsing action
+                    task.contents = contents_before_prompts
                     if answer_format:
                         task.append_prompt(answer_format)
 
@@ -324,8 +315,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     if not task.state:
                         logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1}: task.state is False")
                         # Restore state for retry
-                        task.contents = contents_before_phase3
-                        task.conversation_history = task.conversation_history[:conv_history_len]
+                        task.restore_state(task_state_after_phase2)
                         continue
 
                     # Validate first (don't save yet)
@@ -359,12 +349,8 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                                     f"will retry round ({round_retry_count + 1}/{max_round_retries})")
                         should_retry_round = True
                         # Restore state to before this round
-                        task.contents = contents_before_round
-                        task.conversation_history = task.conversation_history[:conv_history_before_round]
-                        agent.conversation_history = agent_state_before_round["conversation_history"]
-                        agent.step_count = agent_state_before_round["step_count"]
-                        agent.total_tokens_used = agent_state_before_round["total_tokens_used"]
-                        agent.cost = agent_state_before_round["cost"]
+                        task.restore_state(task_state_before_round)
+                        agent.restore_state(agent_state_before_round)
                         all_thinking_text = thinking_text_before_round
                         all_actual_tools = actual_tools_before_round
                         break  # Break from Phase 3 attempts loop to retry round
@@ -379,8 +365,12 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     # Restore state for retry (model won't see previous Phase 3)
                     # For final attempt: keep conversation_history (for trajectory), only restore contents
                     if not is_final_attempt:
-                        task.conversation_history = task.conversation_history[:conv_history_len]
-                    task.contents = contents_before_phase3
+                        task.restore_state(task_state_after_phase2)
+                    else:
+                        # Keep conversation_history but restore contents
+                        saved_history = task.conversation_history
+                        task.restore_state(task_state_after_phase2)
+                        task.conversation_history = saved_history
 
                 except Exception as e:
                     logger.warning(f"[{task_id}] Round {current_round} Attempt {attempt + 1} failed: {e}")
@@ -388,8 +378,11 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     is_final_attempt = (current_round == _WORKER_MAX_ITERATIVE_ROUNDS and
                                         attempt == _WORKER_ATTEMPTS_PER_ROUND - 1)
                     if not is_final_attempt:
-                        task.conversation_history = task.conversation_history[:conv_history_len]
-                    task.contents = contents_before_phase3
+                        task.restore_state(task_state_after_phase2)
+                    else:
+                        saved_history = task.conversation_history
+                        task.restore_state(task_state_after_phase2)
+                        task.conversation_history = saved_history
                     continue
 
             # Check if we need to retry the round due to non-answer-error

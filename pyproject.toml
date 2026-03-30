@@ -41,6 +41,7 @@ classifiers = [
 
 dependencies = [
     # Core ML/AI libraries
+    "gymnasium>=1.0.0",
     "torch==2.8.0",
     "torchaudio",
     "torchvision",

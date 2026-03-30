@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from PIL import Image
 from geo_edit.environment.task.vision_qa_task import ToolCall, VisionQATask
 from geo_edit.utils.image_utils import image_to_data_url
@@ -104,6 +104,24 @@ class OpenAICompatibleVisionQATask(VisionQATask):
                 ])
             content.append({"type": "text", "text": self.task_prompt})
             self.contents.append({"role": "user", "content": content})
+
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Reset the task to initial state."""
+        obs, info = super().reset(seed=seed, options=options)
+
+        # Re-initialize contents structure based on API mode
+        if self._use_responses_format:
+            self.contents = {"input": [], "previous_response_id": None}
+        else:
+            self.contents = []
+
+        self._append_initial_observation()
+        return self._get_observation(), info
 
     def _stringify_observation_item(self, item: Any) -> Any:
         """Convert observation item to JSON-serializable format."""

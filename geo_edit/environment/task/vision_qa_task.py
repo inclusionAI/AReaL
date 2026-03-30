@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
@@ -7,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
+import gymnasium as gym
+from gymnasium import spaces
 from PIL import Image
 
 from geo_edit.environment.task.base import AbstractVLMTask
@@ -23,8 +26,23 @@ class ToolCall:
     call_id: Optional[str] = None
 
 
-class VisionQATask(AbstractVLMTask):
-    """Base vision QA task shared by API providers."""
+class VisionQATask(AbstractVLMTask, gym.Env):
+    """Base vision QA task shared by API providers.
+
+    Implements Gymnasium interface for RL training while maintaining backwards
+    compatibility with existing inference scripts.
+
+    Gym Interface:
+        - reset(): Resets task state and returns (observation, info)
+        - step(action): Executes action and returns (obs, reward, terminated, truncated, info)
+
+    Legacy Interface (still supported):
+        - parse_action(): Parse model response into tool calls
+        - update_observation_from_action(): Execute tool calls and update state
+    """
+
+    # Gymnasium metadata
+    metadata = {"render_modes": ["human"]}
 
     def __init__(
         self,
@@ -37,9 +55,12 @@ class VisionQATask(AbstractVLMTask):
         api_mode: Literal["responses", "chat_completions"] = "responses",
         tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
         tool_return_types: Optional[Dict[str, str]] = None,
+        max_steps: int = 10,
         **kwargs,
     ):
-        super().__init__(task_id)
+        AbstractVLMTask.__init__(self, task_id)
+        gym.Env.__init__(self)
+
         self.task_prompt = task_prompt
         self.task_answer = task_answer
         self.task_image_path = task_image_path
@@ -50,6 +71,8 @@ class VisionQATask(AbstractVLMTask):
         self.state = True
         self.options = kwargs["options"] if "options" in kwargs else None
         self.meta_info_extra = kwargs.get("meta_info_extra")
+        self.max_steps = max_steps
+        self._step_count = 0
 
         self.image_path_map: Dict[int, str] = {}
         self.image_url_map: Dict[str, str] = {}  # For OpenAI/VLLM: maps data URL to file path
@@ -58,6 +81,10 @@ class VisionQATask(AbstractVLMTask):
             image = Image.open(self.task_image_path).convert("RGB")
             self.image_list.append(image)
             self.image_path_map[id(image)] = self.task_image_path
+
+        # Store initial image state for reset
+        self._initial_image_list = [img.copy() for img in self.image_list]
+        self._initial_image_path_map = dict(self.image_path_map)
 
         self.text_only = kwargs.get("text_only", False) or not self.image_list
         self.conversation_history: List[Dict[str, Any]] = []
@@ -70,6 +97,13 @@ class VisionQATask(AbstractVLMTask):
         self.trajectory_jsonl_path = os.path.join(self.save_dir, "trajectory.jsonl")
         self.image_save_dir = os.path.join(self.save_dir, "images")
         os.makedirs(self.image_save_dir, exist_ok=True)
+
+        # Gymnasium spaces - contents is API-specific so we use a flexible Dict space
+        self.observation_space = spaces.Dict({
+            "contents": spaces.Sequence(spaces.Text(max_length=100000)),
+            "step": spaces.Discrete(max_steps + 1),
+        })
+        self.action_space = spaces.Text(max_length=100000)
 
     def validate(
         self,
@@ -453,3 +487,180 @@ class VisionQATask(AbstractVLMTask):
             pass
 
         return meta_info
+
+    def save_state(self) -> Dict[str, Any]:
+        """Save current task state snapshot for later restoration.
+
+        Returns:
+            Dictionary containing restorable state
+        """
+        return {
+            "contents": copy.deepcopy(self.contents),
+            "conversation_history": copy.deepcopy(self.conversation_history),
+            "image_list": [img.copy() for img in self.image_list],
+            "state": self.state,
+            "step_count": self._step_count,
+        }
+
+    def restore_state(self, state: Dict[str, Any]) -> None:
+        """Restore task to a previously saved state.
+
+        Args:
+            state: State dictionary from save_state()
+        """
+        self.contents = copy.deepcopy(state["contents"])
+        self.conversation_history = copy.deepcopy(state["conversation_history"])
+        self.image_list = [img.copy() for img in state["image_list"]]
+        self.state = state["state"]
+        if "step_count" in state:
+            self._step_count = state["step_count"]
+
+    # =========================================================================
+    # Gymnasium Interface
+    # =========================================================================
+
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Reset the task to initial state.
+
+        This method is called at the start of each episode. It resets all mutable
+        state while keeping task configuration (prompt, answer, etc.) intact.
+
+        Args:
+            seed: Optional random seed (unused, kept for Gym compatibility)
+            options: Optional dict that may contain:
+                - task_prompt: Override task prompt
+                - task_answer: Override expected answer
+
+        Returns:
+            observation: Dict containing 'contents' and 'step'
+            info: Dict with task metadata
+        """
+        super().reset(seed=seed)
+
+        # Reset step counter
+        self._step_count = 0
+        self.state = True
+
+        # Reset image list to initial state
+        self.image_list = [img.copy() for img in self._initial_image_list]
+        self.image_path_map = dict(self._initial_image_path_map)
+        self.image_url_map = {}
+
+        # Reset conversation history
+        self.conversation_history = []
+
+        # Handle options override
+        if options:
+            if "task_prompt" in options:
+                self.task_prompt = options["task_prompt"]
+            if "task_answer" in options:
+                self.task_answer = options["task_answer"]
+
+        # Contents will be re-initialized by subclass _append_initial_observation()
+        # This reset() is called by subclasses that override it
+
+        observation = self._get_observation()
+        info = self.get_info()
+        return observation, info
+
+    def step(
+        self,
+        action: Any,
+        extra_info: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Dict[str, Any], float, bool, bool, Dict[str, Any]]:
+        """Execute one step in the environment.
+
+        This combines parse_action() and update_observation_from_action() into
+        a single Gymnasium-compatible step.
+
+        Args:
+            action: Model response object (API-specific format)
+            extra_info: Optional dict with token usage etc.
+
+        Returns:
+            observation: Current state after action
+            reward: Reward value (0.0 during episode, computed at end)
+            terminated: True if episode ended (final answer or error)
+            truncated: True if max steps reached
+            info: Dict with additional information including 'tool_calls'
+        """
+        self._step_count += 1
+        extra_info = extra_info or {}
+
+        # Parse the action to extract tool calls
+        try:
+            tool_calls = self.parse_action(
+                step=self._step_count,
+                action=action,
+                extra_info=extra_info,
+            )
+        except Exception as e:
+            logger.error("Failed to parse action: %s", e)
+            self.state = False
+            return (
+                self._get_observation(),
+                0.0,
+                True,  # terminated
+                False,
+                {"error": str(e), "tool_calls": []},
+            )
+
+        # If no tool calls, episode is done (final answer given)
+        if not tool_calls:
+            reward = self._calculate_reward()
+            return (
+                self._get_observation(),
+                reward,
+                True,  # terminated
+                False,
+                {"tool_calls": [], "final_answer": True},
+            )
+
+        # Execute tool calls
+        self.update_observation_from_action(tool_calls)
+
+        # Check if truncated (max steps)
+        truncated = self._step_count >= self.max_steps
+
+        return (
+            self._get_observation(),
+            0.0,  # reward only at episode end
+            False,  # not terminated
+            truncated,
+            {"tool_calls": [(tc.name, tc.args) for tc in tool_calls]},
+        )
+
+    def _get_observation(self) -> Dict[str, Any]:
+        """Get current observation in Gymnasium format.
+
+        Returns:
+            Dict with 'contents' and 'step' keys
+        """
+        return {
+            "contents": self.contents,
+            "step": self._step_count,
+        }
+
+    def _calculate_reward(self) -> float:
+        """Calculate reward at episode end.
+
+        Override this in subclasses for task-specific reward computation.
+        Default implementation returns 0.0.
+
+        Returns:
+            Reward value
+        """
+        return 0.0
+
+    def render(self) -> None:
+        """Render the environment (optional, for debugging)."""
+        pass
+
+    def close(self) -> None:
+        """Clean up resources."""
+        pass

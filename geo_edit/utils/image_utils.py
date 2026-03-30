@@ -4,7 +4,8 @@ import base64
 import io
 import logging
 import os
-from typing import Any, Dict, Tuple
+from io import BytesIO
+from typing import Any, Dict, Tuple, Union
 
 from PIL import Image
 
@@ -45,4 +46,21 @@ def load_image_safely(image_path: str, default_size: Tuple[int, int] = (336, 336
     draw.text((10, 10), "IMAGE NOT FOUND", fill="white")
     draw.rectangle([5, 5, default_size[0] - 5, default_size[1] - 5], outline="white", width=2)
     return placeholder
+
+
+def save_image(image: Union[Image.Image, bytes, Dict[str, Any]], path: str) -> None:
+    """Save image from various formats to file.
+
+    Args:
+        image: PIL Image, bytes, or dict with "bytes" key
+        path: Destination file path
+    """
+    if isinstance(image, Image.Image):
+        image.save(path)
+    elif isinstance(image, dict) and "bytes" in image:
+        Image.open(BytesIO(image["bytes"])).save(path)
+    elif isinstance(image, bytes):
+        Image.open(BytesIO(image)).save(path)
+    else:
+        raise TypeError(f"Unsupported image type: {type(image)}")
 

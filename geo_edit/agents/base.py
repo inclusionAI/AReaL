@@ -191,3 +191,27 @@ class BaseAgent(ABC):
             "total_cost": sum(self.cost),
             "config": self.config.__dict__,
         }
+
+    def save_state(self) -> Dict[str, Any]:
+        """Save current state snapshot (in memory) for later restoration.
+
+        Returns:
+            Dictionary containing restorable state
+        """
+        return {
+            "conversation_history": list(self.conversation_history),
+            "step_count": self.step_count,
+            "total_tokens_used": self.total_tokens_used,
+            "cost": list(self.cost),
+        }
+
+    def restore_state(self, state: Dict[str, Any]) -> None:
+        """Restore agent to a previously saved state.
+
+        Args:
+            state: State dictionary from save_state()
+        """
+        self.conversation_history = state["conversation_history"]
+        self.step_count = state["step_count"]
+        self.total_tokens_used = state["total_tokens_used"]
+        self.cost = state["cost"]
