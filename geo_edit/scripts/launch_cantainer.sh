@@ -2,7 +2,7 @@
 set -euo pipefail
 
 WORKDIR=/storage/openpsi/users/lichangye.lcy/antoinegg1/AReaL
-IMAGE=/storage/openpsi/images/areal-dev.sif
+IMAGE=/storage/openpsi/images/areal/areal-dev-20260129.sif
 
 # 只启动一个交互容器；后续在容器内再算 IP、起 Ray
 srun --mpi=pmi2 \
