@@ -353,6 +353,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--max-llm-workers", type=int, default=8, help="Workers for LLM diversification"
     )
+    p.add_argument(
+        "--temperature",
+        type=float,
+        default=0.7,
+        help="Temperature for diversification LLM (use 1.0 for kimi-k2.5)",
+    )
 
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument(
@@ -431,6 +437,7 @@ def main() -> None:
                 api_base=args.api_base,
                 api_key=api_key,
                 model=args.model,
+                temperature=args.temperature,
             )
             logger.info("Diversification client initialised: model=%s", args.model)
         else:
