@@ -28,6 +28,9 @@ SERVER_STARTUP_TIMEOUT = 180  # seconds
 EXPR_NAME = "test_gateway_controller_integration"
 TRIAL_NAME = "trial_0"
 
+VLM_LOCAL_MODEL_PATH = "/storage/openpsi/models/Qwen3-VL-2B-Instruct"
+VLM_HF_MODEL_ID = "Qwen/Qwen3-VL-2B-Instruct"
+
 
 # =============================================================================
 # Helper Functions
@@ -76,6 +79,15 @@ def get_test_model_path() -> str:
         str: Path to the test model, falling back to HuggingFace if not available locally.
     """
     return _get_model_path(LOCAL_MODEL_PATH, HF_MODEL_ID)
+
+
+def get_vlm_test_model_path() -> str:
+    """Get the VLM model path for tests (Qwen3-VL-2B-Instruct).
+
+    Returns:
+        str: Path to the VLM test model, falling back to HuggingFace if not available locally.
+    """
+    return _get_model_path(VLM_LOCAL_MODEL_PATH, VLM_HF_MODEL_ID)
 
 
 def check_server_health(base_url: str) -> bool:

@@ -12,6 +12,8 @@ The test launches:
 
 from __future__ import annotations
 
+import base64
+import io
 import subprocess
 import sys
 import time
@@ -19,12 +21,14 @@ import time
 import httpx
 import pytest
 import torch
+from PIL import Image
 
 from tests.experimental.inference_service.integration_utils import (
     EXPR_NAME,
     TRIAL_NAME,
     check_server_health,
     get_test_model_path,
+    get_vlm_test_model_path,
     has_gpu,
 )
 
@@ -53,7 +57,7 @@ def sglang_server():
         sglang_config=SGLangConfig(
             skip_tokenizer_init=True,
             model_path=get_test_model_path(),
-            mem_fraction_static=0.3,
+            mem_fraction_static=0.15,
         ),
         host=host,
         port=port,
@@ -479,7 +483,7 @@ def gateway_controller_full_init(local_scheduler, model_path):
 
     server_args = {
         "skip_tokenizer_init": True,
-        "mem_fraction_static": 0.3,
+        "mem_fraction_static": 0.15,
     }
 
     ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
@@ -761,7 +765,7 @@ def gateway_controller_full_init_vllm(local_scheduler, model_path):
     )
 
     server_args = {
-        "gpu_memory_utilization": 0.3,
+        "gpu_memory_utilization": 0.15,
     }
 
     ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
@@ -859,3 +863,270 @@ class TestControllerFullInitVLLM:
 
         assert isinstance(traj["input_ids"], RTensor)
         assert traj["input_ids"].ndim == 2
+
+
+# =============================================================================
+# VLM image input tests (Qwen3-VL-2B, real images, no mocks)
+# =============================================================================
+
+
+def _make_solid_color_png_b64(width: int, height: int, color: tuple) -> str:
+    img = Image.new("RGB", (width, height), color=color)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _do_vlm_chat_session(
+    ctrl, task_id: str, messages: list, *, max_tokens: int = 64
+) -> dict:
+    """grant_capacity → start_session → chat/completions → end_session."""
+    gw = ctrl._gateway_addr
+    admin = "test-admin"
+
+    resp = httpx.post(
+        f"{gw}/grant_capacity",
+        headers={"Authorization": f"Bearer {admin}"},
+        timeout=10.0,
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = httpx.post(
+        f"{gw}/rl/start_session",
+        json={"task_id": task_id},
+        headers={"Authorization": f"Bearer {admin}"},
+        timeout=30.0,
+    )
+    assert resp.status_code == 201, resp.text
+    session_api_key = resp.json()["api_key"]
+
+    resp = httpx.post(
+        f"{gw}/chat/completions",
+        json={
+            "model": "default",
+            "messages": messages,
+            "max_completion_tokens": max_tokens,
+            "temperature": 0.0,
+            "stream": False,
+        },
+        headers={"Authorization": f"Bearer {session_api_key}"},
+        timeout=120.0,
+    )
+    assert resp.status_code == 200, resp.text
+    completion = resp.json()
+    assert completion["object"] == "chat.completion"
+    assert len(completion["choices"]) == 1
+    assert len(completion["choices"][0]["message"]["content"]) > 0
+    assert completion["usage"]["completion_tokens"] > 0
+
+    resp = httpx.post(
+        f"{gw}/rl/end_session",
+        headers={"Authorization": f"Bearer {session_api_key}"},
+        timeout=10.0,
+    )
+    assert resp.status_code == 200, resp.text
+
+    return completion
+
+
+@pytest.fixture(scope="module")
+def vlm_model_path() -> str:
+    return get_vlm_test_model_path()
+
+
+@pytest.fixture(scope="module")
+def gateway_controller_full_init_vlm_sglang(local_scheduler, vlm_model_path):
+    if not has_gpu():
+        pytest.skip("GPU required")
+
+    from areal.api.cli_args import SchedulingSpec
+    from areal.experimental.inference_service.controller.config import (
+        GatewayControllerConfig,
+    )
+    from areal.experimental.inference_service.controller.controller import (
+        GatewayInferenceController,
+    )
+
+    config = GatewayControllerConfig(
+        tokenizer_path=vlm_model_path,
+        model_path=vlm_model_path,
+        backend="sglang:d1",
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=1, cmd="python -m areal.experimental.inference_service.guard"
+            ),
+        ),
+        admin_api_key="test-admin",
+        consumer_batch_size=8,
+        max_head_offpolicyness=1024,
+        setup_timeout=300.0,
+    )
+
+    ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
+    ctrl.initialize(
+        role="rollout-vlm-sglang",
+        server_args={"skip_tokenizer_init": True, "mem_fraction_static": 0.25},
+    )
+
+    try:
+        yield ctrl
+    finally:
+        ctrl.destroy()
+
+
+@pytest.fixture(scope="module")
+def gateway_controller_full_init_vlm_vllm(local_scheduler, vlm_model_path):
+    if not has_gpu():
+        pytest.skip("GPU required")
+
+    from areal.api.cli_args import SchedulingSpec
+    from areal.experimental.inference_service.controller.config import (
+        GatewayControllerConfig,
+    )
+    from areal.experimental.inference_service.controller.controller import (
+        GatewayInferenceController,
+    )
+
+    config = GatewayControllerConfig(
+        tokenizer_path=vlm_model_path,
+        model_path=vlm_model_path,
+        backend="vllm:d1",
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=1, cmd="python -m areal.experimental.inference_service.guard"
+            ),
+        ),
+        admin_api_key="test-admin",
+        consumer_batch_size=8,
+        max_head_offpolicyness=1024,
+        setup_timeout=300.0,
+    )
+
+    ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
+    ctrl.initialize(
+        role="rollout-vlm-vllm",
+        server_args={"gpu_memory_utilization": 0.25},
+    )
+
+    try:
+        yield ctrl
+    finally:
+        ctrl.destroy()
+
+
+@pytest.mark.slow
+@pytest.mark.ci
+@pytest.mark.sglang
+@pytest.mark.skipif(not has_gpu(), reason="GPU required")
+class TestControllerVLMImageSGLang:
+    def test_single_image_chat(self, gateway_controller_full_init_vlm_sglang):
+        img = _make_solid_color_png_b64(64, 64, (255, 0, 0))
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image briefly."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{img}"},
+                    },
+                ],
+            }
+        ]
+        _do_vlm_chat_session(
+            gateway_controller_full_init_vlm_sglang, "vlm-sg-1img", messages
+        )
+
+    def test_multiple_images_chat(self, gateway_controller_full_init_vlm_sglang):
+        red = _make_solid_color_png_b64(32, 32, (255, 0, 0))
+        blue = _make_solid_color_png_b64(32, 32, (0, 0, 255))
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe these two images."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{red}"},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{blue}"},
+                    },
+                ],
+            }
+        ]
+        _do_vlm_chat_session(
+            gateway_controller_full_init_vlm_sglang,
+            "vlm-sg-2img",
+            messages,
+            max_tokens=128,
+        )
+
+    def test_text_only_on_vlm(self, gateway_controller_full_init_vlm_sglang):
+        messages = [{"role": "user", "content": "What is 2+2? Answer briefly."}]
+        _do_vlm_chat_session(
+            gateway_controller_full_init_vlm_sglang,
+            "vlm-sg-text",
+            messages,
+            max_tokens=32,
+        )
+
+
+@pytest.mark.slow
+@pytest.mark.ci
+@pytest.mark.vllm
+@pytest.mark.skipif(not has_gpu(), reason="GPU required")
+class TestControllerVLMImageVLLM:
+    def test_single_image_chat(self, gateway_controller_full_init_vlm_vllm):
+        img = _make_solid_color_png_b64(64, 64, (255, 0, 0))
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image briefly."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{img}"},
+                    },
+                ],
+            }
+        ]
+        _do_vlm_chat_session(
+            gateway_controller_full_init_vlm_vllm, "vlm-vl-1img", messages
+        )
+
+    def test_multiple_images_chat(self, gateway_controller_full_init_vlm_vllm):
+        red = _make_solid_color_png_b64(32, 32, (255, 0, 0))
+        blue = _make_solid_color_png_b64(32, 32, (0, 0, 255))
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe these two images."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{red}"},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{blue}"},
+                    },
+                ],
+            }
+        ]
+        _do_vlm_chat_session(
+            gateway_controller_full_init_vlm_vllm,
+            "vlm-vl-2img",
+            messages,
+            max_tokens=128,
+        )
+
+    def test_text_only_on_vlm(self, gateway_controller_full_init_vlm_vllm):
+        messages = [{"role": "user", "content": "What is 2+2? Answer briefly."}]
+        _do_vlm_chat_session(
+            gateway_controller_full_init_vlm_vllm,
+            "vlm-vl-text",
+            messages,
+            max_tokens=32,
+        )

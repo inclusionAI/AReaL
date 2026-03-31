@@ -138,6 +138,7 @@ class SGLangBridgeBackend:
 
         payload: dict[str, Any] = {
             "input_ids": list(req.input_ids),
+            "image_data": req.image_data,
             "sampling_params": sampling_params,
             "return_logprob": True,
             "stream": False,

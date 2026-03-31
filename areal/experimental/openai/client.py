@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import re
 import uuid
 from collections.abc import AsyncGenerator, Iterable, Mapping
 from copy import deepcopy
@@ -34,7 +35,7 @@ from openai.types.chat.chat_completion_tool_choice_option_param import (
     ChatCompletionToolChoiceOptionParam,
 )
 from openai.types.completion_usage import CompletionUsage
-from openai.types.responses import ResponseInputItemParam, response_create_params
+from openai.types.responses import response_create_params
 from openai.types.responses.response import Response
 from openai.types.responses.response_input_param import ResponseInputParam
 from openai.types.responses.response_output_message import ResponseOutputMessage
@@ -138,6 +139,205 @@ def _find_kth(lst: list, target, k: int) -> int:
         return result
     except StopIteration:
         return -1
+
+
+# Regex for data URI: data:image/<subtype>;base64,<data>
+_DATA_URI_RE = re.compile(r"^data:image/[a-zA-Z0-9.+-]+;base64,(.+)$", re.DOTALL)
+
+
+def _extract_images_from_messages(
+    messages: list[dict[str, Any]],
+) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Extract image data from OpenAI-format messages.
+
+    Scans message ``content`` lists for ``image_url`` content parts,
+    extracts base64 data (or raw URLs), and converts messages to a
+    HuggingFace-compatible format for ``apply_chat_template``.
+
+    Args:
+        messages: Normalized list of message dicts (OpenAI format).
+
+    Returns:
+        A 3-tuple of:
+
+        - **image_data** – list of base64 image strings (no data-URI prefix)
+          or raw URL strings for each image found.
+        - **messages_for_tokenizer** – deep copy of *messages* where every
+          ``{"type": "image_url", ...}`` part is replaced by
+          ``{"type": "image"}`` so that HuggingFace VLM tokenizers insert
+          the correct image-placeholder tokens.
+        - **vision_messages_for_vllm** – deep copy of *messages* where
+          ``image_url`` parts retain the ``image_url`` key but the ``url``
+          value is replaced with a placeholder (the actual base64 data URI
+          is injected later by the vLLM backend from *image_data*).
+    """
+    image_data: list[str] = []
+    messages_for_tokenizer: list[dict[str, Any]] = []
+    vision_messages_for_vllm: list[dict[str, Any]] = []
+
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            messages_for_tokenizer.append(deepcopy(msg))
+            vision_messages_for_vllm.append(deepcopy(msg))
+            continue
+
+        tok_parts: list[dict[str, Any]] = []
+        vllm_parts: list[dict[str, Any]] = []
+
+        for part in content:
+            if not isinstance(part, dict):
+                tok_parts.append(part)
+                vllm_parts.append(deepcopy(part))
+                continue
+
+            if part.get("type") == "image_url":
+                image_url_obj = part.get("image_url", {})
+                url = (
+                    image_url_obj.get("url", "")
+                    if isinstance(image_url_obj, dict)
+                    else ""
+                )
+
+                if not url:
+                    raise ValueError(
+                        "image_url content part has an empty or missing URL. "
+                        "Provide a valid data URI or HTTP(S) URL in "
+                        "image_url.url."
+                    )
+
+                # Extract base64 payload from data URIs; keep raw URLs as-is.
+                m = _DATA_URI_RE.match(url)
+                if m:
+                    image_data.append(m.group(1))
+                else:
+                    image_data.append(url)
+
+                tok_parts.append({"type": "image"})
+
+                # vLLM backend injects actual data URI from req.image_data.
+                vllm_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "placeholder"},
+                    }
+                )
+            else:
+                tok_parts.append(deepcopy(part))
+                vllm_parts.append(deepcopy(part))
+
+        tok_msg = {**msg, "content": tok_parts}
+        vllm_msg = {**msg, "content": vllm_parts}
+        messages_for_tokenizer.append(tok_msg)
+        vision_messages_for_vllm.append(vllm_msg)
+
+    return image_data, messages_for_tokenizer, vision_messages_for_vllm
+
+
+def _convert_tool_output_format(
+    item: dict,
+) -> ChatCompletionToolMessageParam | dict:
+    """Convert custom tool output format to standard chat template format.
+
+    Converts openai.types.responses.response_input_item_param.FunctionCallOutput
+    to openai.types.chat.ChatCompletionToolMessageParam.
+
+    Args:
+        item: Input dict, could be FunctionCallOutput from openai-agents SDK
+            with format: {'call_id': str, 'output': str, 'type': 'function_call_output'}
+
+    Returns:
+        ChatCompletionToolMessageParam (TypedDict) with format:
+        {'role': 'tool', 'content': str, 'tool_call_id': str}
+        or the original dict if conversion is not needed.
+    """
+    if (
+        isinstance(item, dict)
+        and "output" in item
+        and item.get("type") == "function_call_output"
+    ):
+        converted = {
+            "role": "tool",
+            "content": item["output"],
+        }
+        # Add tool_call_id if present
+        if "call_id" in item:
+            converted["tool_call_id"] = item["call_id"]
+        return converted
+    return item
+
+
+def _build_messages_list(item: dict) -> list[dict]:
+    """Convert a Responses API input item into Chat Completions message dicts.
+
+    Handles ``output_text``, ``input_text``, ``input_image``, and
+    ``function_call_output`` content types.  When the item contains at
+    least one ``input_image`` part the returned message keeps a ``list``
+    content value (multimodal); otherwise each text part produces its own
+    flat ``{"role": …, "content": "…"}`` message.
+
+    Args:
+        item: A single normalised Responses-API input item (dict form of
+            :class:`ResponseInputItemParam`).
+
+    Returns:
+        One or more Chat-Completions-style message dicts.
+
+    Raises:
+        ValueError: On unsupported content types, non-dict content parts,
+            or ``input_image`` items that lack an ``image_url`` value.
+    """
+    messages_list: list[dict] = []
+    if "content" in item:
+        if isinstance(item["content"], str):
+            messages_list.append(
+                {"role": item["role"], "content": item["content"]},
+            )
+        elif isinstance(item["content"], Iterable):
+            content_parts: list[dict] = []
+            has_multimodal = False
+            for content in item["content"]:
+                if not isinstance(content, dict):
+                    raise ValueError("Unsupported content format")
+                ctype = content.get("type", "")
+                if ctype == "output_text" and "text" in content:
+                    content_parts.append({"type": "text", "text": content["text"]})
+                elif ctype == "input_text" and "text" in content:
+                    content_parts.append({"type": "text", "text": content["text"]})
+                elif ctype == "input_image":
+                    has_multimodal = True
+                    image_url = content.get("image_url", "")
+                    if not image_url:
+                        raise ValueError(
+                            "input_image content part requires a non-empty "
+                            "'image_url' field; file_id-only images are not "
+                            "supported."
+                        )
+                    image_url_dict: dict[str, Any] = {"url": image_url}
+                    if "detail" in content:
+                        image_url_dict["detail"] = content["detail"]
+                    content_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": image_url_dict,
+                        }
+                    )
+                else:
+                    raise ValueError(f"Unsupported content format: {ctype}")
+            if has_multimodal:
+                messages_list.append({"role": item["role"], "content": content_parts})
+            else:
+                for cp in content_parts:
+                    messages_list.append(
+                        {"role": item["role"], "content": cp["text"]},
+                    )
+        else:
+            raise ValueError("Unsupported input item format")
+    else:
+        # Convert tool output format if needed
+        converted = _convert_tool_output_format(item)
+        messages_list.append(deepcopy(converted))
+    return messages_list
 
 
 def concat_prompt_token_ids_with_parent(
@@ -397,22 +597,35 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             if not isinstance(tools, Iterable):
                 raise TypeError("tools must be an iterable of ChatCompletionToolParam")
             tools_list = list(tools)
+
+        image_data, messages_for_tokenizer, vision_messages_for_vllm = (
+            _extract_images_from_messages(messages_list)
+        )
+        has_images = len(image_data) > 0
+
+        tokenizer_messages = messages_for_tokenizer if has_images else messages_list
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
-                messages_list,
+                tokenizer_messages,
                 tools=tools_list,
                 add_generation_prompt=True,
                 tokenize=True,
                 **extra_body.get("chat_template_kwargs", {}),
             )
         elif self.chat_template_type == "concat":
-            messages_list = (
+            concat_messages = (
                 interaction.remaining_messages
                 if interaction is not None
                 else messages_list
             )
+            if has_images:
+                _, concat_tok_messages, _ = _extract_images_from_messages(
+                    concat_messages
+                )
+            else:
+                concat_tok_messages = concat_messages
             prompt_token_ids = concat_prompt_token_ids_with_parent(
-                messages_list,
+                concat_tok_messages,
                 interaction.parent if interaction is not None else None,
                 self.tokenizer,
                 tools=tools_list,
@@ -515,6 +728,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             rid=str(uuid.uuid4()),
             metadata=metadata if not is_omitted(metadata) else {},
             tokenizer=self.tokenizer,
+            image_data=image_data if has_images else None,
+            vision_msg_vllm=([vision_messages_for_vllm] if has_images else None),
         )
 
         # Call inference engine
@@ -756,65 +971,6 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         if is_omitted(input):
             raise ValueError("input is required for Responses.create")
 
-        def _convert_tool_output_format(
-            item: dict,
-        ) -> ChatCompletionToolMessageParam | dict:
-            """Convert custom tool output format to standard chat template format.
-
-            Converts openai.types.responses.response_input_item_param.FunctionCallOutput
-            to openai.types.chat.ChatCompletionToolMessageParam.
-
-            Args:
-                item: Input dict, could be FunctionCallOutput from openai-agents SDK
-                    with format: {'call_id': str, 'output': str, 'type': 'function_call_output'}
-
-            Returns:
-                ChatCompletionToolMessageParam (TypedDict) with format:
-                {'role': 'tool', 'content': str, 'tool_call_id': str}
-                or the original dict if conversion is not needed.
-            """
-            if (
-                isinstance(item, dict)
-                and "output" in item
-                and item.get("type") == "function_call_output"
-            ):
-                converted = {
-                    "role": "tool",
-                    "content": item["output"],
-                }
-                # Add tool_call_id if present
-                if "call_id" in item:
-                    converted["tool_call_id"] = item["call_id"]
-                return converted
-            return item
-
-        def _build_messages_list(item: ResponseInputItemParam) -> list[dict]:
-            messages_list = []
-            if "content" in item:
-                if isinstance(item["content"], str):
-                    messages_list.append(
-                        {"role": item["role"], "content": item["content"]},
-                    )
-                elif isinstance(item["content"], Iterable):
-                    for content in item["content"]:
-                        if (
-                            isinstance(content, dict)
-                            and content.get("type") == "output_text"
-                            and "text" in content
-                        ):
-                            messages_list.append(
-                                {"role": item["role"], "content": content["text"]},
-                            )
-                        else:
-                            raise ValueError("Unsupported content format")
-                else:
-                    raise ValueError("Unsupported input item format")
-            else:
-                # Convert tool output format if needed
-                converted = _convert_tool_output_format(item)
-                messages_list.append(deepcopy(converted))
-            return messages_list
-
         if isinstance(input, str):
             input = [{"role": "user", "content": input}]
         if isinstance(input, list):
@@ -844,17 +1000,29 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             if not isinstance(tools, Iterable):
                 raise TypeError("tools must be an iterable of ChatCompletionToolParam")
             tools_list = list(tools)
+
+        image_data, messages_for_tokenizer, vision_messages_for_vllm = (
+            _extract_images_from_messages(messages_list)
+        )
+        has_images = len(image_data) > 0
+
+        tokenizer_messages = messages_for_tokenizer if has_images else messages_list
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
-                messages_list,
+                tokenizer_messages,
                 tools=tools_list,
                 add_generation_prompt=True,
                 tokenize=True,
                 **extra_body.get("chat_template_kwargs", {}),
             )
         elif self.chat_template_type == "concat":
+            remaining = interaction.remaining_messages
+            if has_images:
+                _, remaining_tok, _ = _extract_images_from_messages(remaining)
+            else:
+                remaining_tok = remaining
             prompt_token_ids = concat_prompt_token_ids_with_parent(
-                interaction.remaining_messages,
+                remaining_tok,
                 interaction.parent if interaction is not None else None,
                 self.tokenizer,
                 tools=tools_list,
@@ -916,6 +1084,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             rid=str(uuid.uuid4()),
             metadata=metadata if not is_omitted(metadata) else {},
             tokenizer=self.tokenizer,
+            image_data=image_data if has_images else None,
+            vision_msg_vllm=([vision_messages_for_vllm] if has_images else None),
         )
 
         # Call inference engine
