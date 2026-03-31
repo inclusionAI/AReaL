@@ -39,6 +39,7 @@ actor:
   archon:
     fp8_config:
       mode: blockwise
+      # exclude_modules: [output, router, score]  # default; YAML replaces entire list
   scheduling_spec:
     - task_type: worker
       port_count: 2

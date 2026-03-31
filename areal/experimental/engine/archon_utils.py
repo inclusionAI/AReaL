@@ -330,7 +330,7 @@ def prepare_training_config(
         ac_config=ac_config,
         logger=logger,
     )
-    if config.archon.fp8_config.mode != "disabled" and enable_compile:
+    if config.archon.fp8_config.enabled and enable_compile:
         logger.warning(
             "FP8 blockwise training is incompatible with torch.compile. "
             "Disabling torch.compile."

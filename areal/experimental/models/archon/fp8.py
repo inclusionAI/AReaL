@@ -99,6 +99,7 @@ def _patch_fp8_experts_forward(mod: nn.Module, use_triton: bool) -> None:
     )
 
     mod._fp8_use_triton = use_triton  # type: ignore[attr-defined]
+    mod._fp8_block = _FP8_BLOCK  # type: ignore[attr-defined]
 
     def _fp8_expert_fwd(
         self: nn.Module,
@@ -147,8 +148,11 @@ def _patch_fp8_forward(mod: nn.Linear, fp8_blockwise_mm, use_triton: bool) -> No
         pad = (self._fp8_block - m % self._fp8_block) % self._fp8_block
         if pad > 0:
             x = F.pad(x, (0, 0, 0, pad))
+        weight = self.weight
+        if hasattr(weight, "to_local"):
+            weight = weight.to_local()
         out = self._fp8_mm.apply(
-            x, self.weight, self._fp8_block, x.dtype, self._fp8_use_triton
+            x, weight, self._fp8_block, x.dtype, self._fp8_use_triton
         )
         if pad > 0:
             out = out[:m]
@@ -168,31 +172,57 @@ def validate_fp8_shard_alignment(
     multiples of ``block_size``.  The FP8 kernel pads the token (M)
     dimension automatically, but weight dimensions (N, K) must be
     pre-aligned — a mismatch causes a Triton/cuBLAS crash at runtime.
+
+    Validates both ``nn.Linear`` modules (2D weights) and
+    ``GroupedExperts`` modules (3D weights ``[num_experts, dim_a, dim_b]``
+    where each per-expert slice must be block-aligned).
     """
+    from areal.experimental.models.archon.moe.grouped_experts import GroupedExperts
+
     try:
         from torch.distributed.tensor import DTensor
     except ImportError:
         DTensor = None  # type: ignore[assignment, misc]
 
+    def _local_shape(t: torch.Tensor) -> torch.Size:
+        if DTensor is not None and isinstance(t, DTensor):
+            return t.to_local().shape
+        return t.shape
+
     for part in model_parts:
         for fqn, mod in part.named_modules():
-            if not isinstance(mod, nn.Linear):
-                continue
             if not hasattr(mod, "_fp8_block"):
                 continue
 
-            weight = mod.weight
-            if DTensor is not None and isinstance(weight, DTensor):
-                local_shape = weight._local_tensor.shape
-            else:
-                local_shape = weight.shape
+            # --- nn.Linear: 2D weight (out_dim, in_dim) ---
+            if isinstance(mod, nn.Linear):
+                local_shape = _local_shape(mod.weight)
+                out_dim, in_dim = local_shape[0], local_shape[1]
+                if out_dim % block_size != 0 or in_dim % block_size != 0:
+                    raise ValueError(
+                        f"FP8 module {fqn!r} has non-{block_size}-aligned "
+                        f"local weight shape {tuple(local_shape)} after "
+                        f"parallelism. This will cause FP8 kernel failures "
+                        f"at runtime. Adjust TP degree or add this module's "
+                        f"name to fp8_config.exclude_modules."
+                    )
 
-            out_dim, in_dim = local_shape[0], local_shape[1]
-            if out_dim % block_size != 0 or in_dim % block_size != 0:
-                raise ValueError(
-                    f"FP8 module {fqn!r} has non-{block_size}-aligned local "
-                    f"weight shape {tuple(local_shape)} after parallelism. "
-                    f"This will cause FP8 kernel failures at runtime. "
-                    f"Adjust TP degree or add this module's name to "
-                    f"fp8_config.exclude_modules."
-                )
+            # --- GroupedExperts: 3D weights (num_experts, dim_a, dim_b) ---
+            elif isinstance(mod, GroupedExperts):
+                for wname in ("w1", "w2", "w3"):
+                    w = getattr(mod, wname, None)
+                    if w is None:
+                        continue
+                    local_shape = _local_shape(w)
+                    # Per-expert slice is (dim_a, dim_b); both must be aligned.
+                    dim_a, dim_b = local_shape[1], local_shape[2]
+                    if dim_a % block_size != 0 or dim_b % block_size != 0:
+                        raise ValueError(
+                            f"FP8 expert {fqn!r}.{wname} has non-"
+                            f"{block_size}-aligned local per-expert shape "
+                            f"({dim_a}, {dim_b}) (full local shape "
+                            f"{tuple(local_shape)}) after parallelism. "
+                            f"This will cause FP8 kernel failures at "
+                            f"runtime. Adjust TP/ETP degree or disable "
+                            f"fp8_config.include_experts."
+                        )

@@ -165,6 +165,10 @@ def _dequant_dtensor(
     )
     from torch.distributed.tensor.placement_types import Shard
 
+    # TODO(agent): Implement per-column scale slicing for Shard(1) to
+    #   support TP/ETP FP8 checkpoint loading. Requires slicing scale_inv
+    #   along dim-1 with block-boundary alignment (mirrors the dim-0 logic
+    #   below). Tracked as Phase 2 of FP8 support.
     for p in weight_fp8.placements:
         if isinstance(p, Shard) and p.dim != 0:
             raise ValueError(
@@ -251,12 +255,7 @@ def dequant_fp8_state_dict(
     Raises:
         KeyError: If a FP8 weight has no matching ``*_scale_inv`` key.
     """
-    fp8_dtypes = {
-        torch.float8_e4m3fn,
-        torch.float8_e5m2,
-        torch.float8_e4m3fnuz,
-        torch.float8_e5m2fnuz,
-    }
+    fp8_dtypes = {torch.float8_e4m3fn}
 
     fp8_keys = [
         k

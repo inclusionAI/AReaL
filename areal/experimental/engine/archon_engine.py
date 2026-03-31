@@ -300,7 +300,7 @@ class ArchonEngine(TrainEngine):
         # This assertion covers the training path (Phase 1A): blockwise FP8 matmuls
         # require BF16 master weights. Loading an FP8 checkpoint into a BF16 model
         # (Phase 1B, archon_checkpoint.py) is a separate path and may relax this.
-        if self.config.archon.fp8_config.mode != "disabled":
+        if self.config.archon.fp8_config.enabled:
             if self.config.dtype != "bfloat16":
                 raise ValueError(
                     f"FP8 training requires dtype=bfloat16 (master weights), "
@@ -342,7 +342,7 @@ class ArchonEngine(TrainEngine):
             f"Applied parallelism in {time.perf_counter() - tik:.2f} seconds"
         )
 
-        if self.config.archon.fp8_config.mode != "disabled":
+        if self.config.archon.fp8_config.enabled:
             from areal.experimental.models.archon.fp8 import (
                 validate_fp8_shard_alignment,
             )
