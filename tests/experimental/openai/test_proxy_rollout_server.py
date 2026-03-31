@@ -134,14 +134,14 @@ class TestStartSessionApiKey:
 
 
 # ---------------------------------------------------------------------------
-# Tests: set_reward(finish=True) returns interaction_count
+# Tests: end_session returns interaction_count
 # ---------------------------------------------------------------------------
 
 
-class TestSetRewardFinishInteractionCount:
+class TestEndSessionInteractionCount:
     @pytest.mark.asyncio
-    async def test_set_reward_finish_returns_interaction_count(self, monkeypatch):
-        """set_reward(finish=True) response includes interaction_count field."""
+    async def test_end_session_returns_interaction_count(self, monkeypatch):
+        """end_session response includes interaction_count field."""
         monkeypatch.setattr(srv, "_capacity", 1)
         async with _client() as client:
             # Start a session.
@@ -153,16 +153,15 @@ class TestSetRewardFinishInteractionCount:
             assert resp.status_code == 200
             api_key = resp.json()["api_key"]
 
-            # Finish it immediately (0 interactions).
+            # End it immediately (0 interactions).
             resp_end = await client.post(
-                "/rl/set_reward",
+                "/rl/end_session",
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={"reward": 0.0, "finish": True},
+                json={},
             )
             assert resp_end.status_code == 200
             data = resp_end.json()
             assert data["interaction_count"] == 0
-            assert data["finished"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -192,11 +191,11 @@ class TestExportTrajectories:
             session_id = resp.json()["session_id"]
             api_key = resp.json()["api_key"]
 
-            # Finish the session so export doesn't block.
+            # End the session so export doesn't block.
             await client.post(
-                "/rl/set_reward",
+                "/rl/end_session",
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={"reward": 0.0, "finish": True},
+                json={},
             )
 
             resp_export = await client.post(
@@ -222,9 +221,9 @@ class TestExportTrajectories:
             api_key = resp.json()["api_key"]
 
             await client.post(
-                "/rl/set_reward",
+                "/rl/end_session",
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={"reward": 0.0, "finish": True},
+                json={},
             )
 
             resp_export = await client.post(
@@ -265,11 +264,11 @@ class TestExportTrajectories:
             assert resp1.status_code == 200
             session_id_old = resp1.json()["session_id"]
 
-            # Finish the first session.
+            # End the first session.
             await client.post(
-                "/rl/set_reward",
+                "/rl/end_session",
                 headers={"Authorization": "Bearer shared-key"},
-                json={"reward": 0.0, "finish": True},
+                json={},
             )
 
             # Start a second session reusing the same key.

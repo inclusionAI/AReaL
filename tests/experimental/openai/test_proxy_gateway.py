@@ -172,12 +172,12 @@ class TestSessionForwardAuth:
             assert resp.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_set_reward_finish_rejects_unknown_session(self):
+    async def test_end_session_rejects_unknown_session(self):
         async with _make_client() as client:
             resp = await client.post(
-                "/rl/set_reward",
+                "/rl/end_session",
                 headers={"Authorization": "Bearer unknown-session-key"},
-                json={"reward": 0.0, "finish": True},
+                json={},
             )
             assert resp.status_code == 401
 
@@ -314,7 +314,7 @@ class TestRefresh:
 
     @pytest.mark.asyncio
     async def test_refresh_known_active_key(self):
-        """Full refresh: finish old session via set_reward, wait for ready worker, start new."""
+        """Full refresh: end old session, wait for ready worker, start new."""
         async with _make_mocked_client() as ctx:
             # Enqueue backend responses:
             # 1) first start_session → success
@@ -323,11 +323,11 @@ class TestRefresh:
                 200,
                 {"api_key": "reuse-key", "session_id": "s1"},
             )
-            # 2) set_reward(finish=True) during refresh → success
+            # 2) end_session during refresh → success
             ctx.mock.enqueue(
-                "set_reward",
+                "end_session",
                 200,
-                {"message": "success", "interaction_count": 3, "finished": True},
+                {"message": "success", "interaction_count": 3},
             )
             # 3) second start_session (after refresh) → success
             ctx.mock.enqueue(
@@ -365,7 +365,7 @@ class TestRefresh:
             )
             await asyncio.sleep(0.01)
 
-            # Step 3: refresh — same api_key triggers auto-finish + new session.
+            # Step 3: refresh — same api_key triggers auto-end + new session.
             resp2 = await ctx.post(
                 "/rl/start_session",
                 headers=_admin_headers(),
@@ -390,16 +390,16 @@ class TestRefresh:
     async def test_refresh_timeout_returns_429(self):
         """Refresh with no ready worker within timeout returns 429."""
         async with _make_mocked_client(refresh_timeout=0.1) as ctx:
-            # Enqueue: first start_session + set_reward(finish), but NO second start.
+            # Enqueue: first start_session + end_session, but NO second start.
             ctx.mock.enqueue(
                 "start_session",
                 200,
                 {"api_key": "k1", "session_id": "s1"},
             )
             ctx.mock.enqueue(
-                "set_reward",
+                "end_session",
                 200,
-                {"message": "success", "interaction_count": 0, "finished": True},
+                {"message": "success", "interaction_count": 0},
             )
 
             # Start initial session via ready queue.
@@ -452,16 +452,16 @@ class TestRefresh:
             assert resp1.status_code == 200
             assert resp1.json()["api_key"] == "k1"
 
-            # Finish session via set_reward (removes route, key stays in pool).
+            # End session (removes route, key stays in pool).
             ctx.mock.enqueue(
-                "set_reward",
+                "end_session",
                 200,
-                {"message": "success", "interaction_count": 1, "finished": True},
+                {"message": "success", "interaction_count": 1},
             )
             resp_end = await ctx.post(
-                "/rl/set_reward",
+                "/rl/end_session",
                 headers=_session_headers("k1"),
-                json={"reward": 0.0, "finish": True},
+                json={},
             )
             assert resp_end.status_code == 200
 
@@ -531,9 +531,9 @@ class TestRefresh:
                     {"api_key": f"k{i}", "session_id": f"s{i}"},
                 )
                 ctx.mock.enqueue(
-                    "set_reward",
+                    "end_session",
                     200,
-                    {"message": "success", "interaction_count": 0, "finished": True},
+                    {"message": "success", "interaction_count": 0},
                 )
 
                 resp = await ctx.post(
@@ -543,11 +543,11 @@ class TestRefresh:
                 )
                 assert resp.status_code == 200
 
-                # Finish session so the key has no active route.
+                # End session so the key has no active route.
                 resp_end = await ctx.post(
-                    "/rl/set_reward",
+                    "/rl/end_session",
                     headers=_session_headers(f"k{i}"),
-                    json={"reward": 0.0, "finish": True},
+                    json={},
                 )
                 assert resp_end.status_code == 200
 
@@ -640,9 +640,9 @@ class TestConcurrentRefreshRejected:
                 {"api_key": "k1", "session_id": "s1"},
             )
             ctx.mock.enqueue(
-                "set_reward",
+                "end_session",
                 200,
-                {"message": "success", "interaction_count": 0, "finished": True},
+                {"message": "success", "interaction_count": 0},
             )
 
             bg_wait = asyncio.create_task(
