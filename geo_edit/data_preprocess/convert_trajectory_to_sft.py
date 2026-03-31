@@ -476,6 +476,12 @@ def main():
                 "images": "images",
                 "system": "system",
             },
+            "tags": {
+                "role_tag": "from",
+                "content_tag": "value",
+                "user_tag": "human",
+                "assistant_tag": "gpt",
+            },
         }
     }
     info_path = os.path.join(dst_root, "dataset_info.json")
