@@ -491,13 +491,17 @@ class ArchonFP8Config:
         },
     )
 
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "disabled"
+
     def __post_init__(self):
         valid_modes = {"disabled", "blockwise"}
         if self.mode not in valid_modes:
             raise ValueError(
                 f"fp8_config.mode must be one of {valid_modes}, got {self.mode!r}"
             )
-        if self.mode != "disabled" and not self.use_triton:
+        if self.enabled and not self.use_triton:
             raise ValueError(
                 "fp8_config.use_triton must be True when FP8 is enabled. "
                 "torchao blockwise FP8 uses mixed per-operand scaling "

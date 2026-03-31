@@ -322,6 +322,37 @@ def save_model_to_hf(
         dist.barrier(group=engine.cpu_group)
 
 
+def _check_fp8_shard_compatibility(
+    hf_state_dict: dict[str, torch.Tensor],
+    scale_keys: list[str],
+) -> None:
+    """Fail fast if any FP8 weight has non-Shard(0) DTensor placement.
+
+    Must be called before ``_prepare_fp8_state_dict`` / ``dcp.load`` to
+    avoid wasting DCP I/O on a configuration that will fail at dequant.
+    """
+    try:
+        from torch.distributed.tensor import DTensor
+        from torch.distributed.tensor.placement_types import Shard
+    except ImportError:
+        return
+
+    for scale_key in scale_keys:
+        weight_key = scale_key.replace("_scale_inv", "")
+        weight = hf_state_dict.get(weight_key)
+        if weight is None or not isinstance(weight, DTensor):
+            continue
+        for p in weight.placements:
+            if isinstance(p, Shard) and p.dim != 0:
+                raise ValueError(
+                    f"FP8 checkpoint loading does not yet support "
+                    f"column-sharded weights (TP/ETP). Weight "
+                    f"{weight_key!r} has placements {weight.placements}. "
+                    f"Use TP=1 for FP8 checkpoint loading, or wait for "
+                    f"Shard(1) dequantization support (Phase 2)."
+                )
+
+
 def load_model_from_hf(engine: ArchonEngine, path: str) -> None:
     """Load model from HuggingFace format using DCP infrastructure."""
     _validate_model_initialized(engine)
@@ -362,6 +393,7 @@ def load_model_from_hf(engine: ArchonEngine, path: str) -> None:
             hf_state_dict[embed_key] = torch.empty_like(state_dict["output.weight"])
 
     if _is_fp8_ckpt:
+        _check_fp8_shard_compatibility(hf_state_dict, _fp8_scale_keys)
         hf_state_dict = _prepare_fp8_state_dict(
             hf_state_dict, path, _cached_keys=_fp8_scale_keys
         )
