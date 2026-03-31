@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
-"""Convert MapQA iterative trajectories to LLaMA Factory SFT (ShareGPT) format."""
+"""Convert trajectories to LLaMA Factory SFT (ShareGPT) format.
 
+Designed to consume the output of ``augment_sft_data.py`` (which already
+filters and diversifies), but can also be used standalone on raw
+iterative-sampling output with ``--refilter`` to apply correctness /
+brute-force checks.
+
+Usage (after augment — recommended):
+    python -m geo_edit.data_preprocess.convert_trajectory_to_sft \\
+        --src_dir /path/to/augmented_output \\
+        --dst_dir /path/to/sft_output
+
+Usage (standalone, with re-filtering):
+    python -m geo_edit.data_preprocess.convert_trajectory_to_sft \\
+        --src_dir /path/to/raw_trajectories \\
+        --dst_dir /path/to/sft_output \\
+        --refilter
+"""
+
+import argparse
+import glob
 import json
 import os
 import re
 import shutil
-import argparse
 from collections import Counter
 from pathlib import Path
 
 from geo_edit.data_preprocess.trajectory_utils import (
-    extract_answer_values,
     get_text_from_content,
     is_brute_force,
     load_meta_info,
@@ -48,8 +65,21 @@ def get_image_url_from_content(content):
     return urls
 
 
-def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id,
-                       system_prompt, tool_definitions_text):
+def _get_assistant_text(content) -> str:
+    """Robustly extract text from assistant message content.
+
+    Handles both string content (chat_completions mode) and list-of-parts
+    content (responses mode) so that downstream regex extraction works
+    regardless of the API mode used during trajectory generation.
+    """
+    if isinstance(content, str):
+        return content
+    return get_text_from_content(content)
+
+
+def convert_trajectory(
+    trajectory, src_dir, dst_images_dir, task_id, system_prompt, tool_definitions_text
+):
     """Convert a single trajectory to ShareGPT format.
 
     Returns a dict with keys: conversations, images, system
@@ -59,14 +89,12 @@ def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id,
     images = []  # relative paths for the output
     output_image_counter = 0
 
-    # Copy input image
-    input_src = os.path.join(src_dir, "input_image.png")
-    if not os.path.exists(input_src):
-        return None
-    input_dst_name = f"{task_id}_input.png"
-    input_dst = os.path.join(dst_images_dir, input_dst_name)
-    shutil.copy2(input_src, input_dst)
-    images.append(f"images/{input_dst_name}")
+    input_image_paths = sorted(glob.glob(os.path.join(src_dir, "input_image*.png")))
+    for idx, input_src in enumerate(input_image_paths):
+        basename = os.path.basename(input_src)
+        dst_name = f"{task_id}_{basename}"
+        shutil.copy2(input_src, os.path.join(dst_images_dir, dst_name))
+        images.append(f"images/{dst_name}")
 
     i = 0
     n = len(trajectory)
@@ -86,13 +114,11 @@ def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id,
         f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>\n\n'
         f"When you have the final answer:\n"
         f"<answer>your answer here</answer>\n\n"
-        f"Task: {question_text}\n"
-        f"<image>"
+        f"Task: {question_text}"
     )
-    conversations.append({
-        "from": "human",
-        "value": first_user_value
-    })
+    for _ in input_image_paths:
+        first_user_value += "\n<image>"
+    conversations.append({"from": "human", "value": first_user_value})
     i += 1
 
     # --- Process remaining messages ---
@@ -115,12 +141,21 @@ def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id,
                 if tool_calls:
                     tc = tool_calls[0]
                     func = tc.get("function", {})
-                    tool_call_json = {
-                        "name": func.get("name", ""),
-                        "arguments": json.loads(func.get("arguments", "{}"))
-                    }
+                    raw_args = func.get("arguments", "{}")
+                    if isinstance(raw_args, str):
+                        tool_call_json = {
+                            "name": func.get("name", ""),
+                            "arguments": json.loads(raw_args),
+                        }
+                    else:
+                        tool_call_json = {
+                            "name": func.get("name", ""),
+                            "arguments": raw_args,
+                        }
                 elif content:
-                    assistant_texts.append(content)
+                    text = _get_assistant_text(content)
+                    if text:
+                        assistant_texts.append(text)
 
                 i += 1
 
@@ -139,7 +174,9 @@ def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id,
                 value = f"<think>{think_content}</think>\n<action>{json.dumps(tool_call_json)}</action>"
                 conversations.append({"from": "gpt", "value": value})
             elif answer_content is not None:
-                value = f"<think>{think_content}</think>\n<answer>{answer_content}</answer>"
+                value = (
+                    f"<think>{think_content}</think>\n<answer>{answer_content}</answer>"
+                )
                 conversations.append({"from": "gpt", "value": value})
             else:
                 if merged_text.strip():
@@ -200,7 +237,11 @@ def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id,
                             break
                     except (json.JSONDecodeError, TypeError):
                         pass
-                    img_src = os.path.join(src_dir, "images", img_filename) if img_filename else None
+                    img_src = (
+                        os.path.join(src_dir, "images", img_filename)
+                        if img_filename
+                        else None
+                    )
 
                 if img_src and os.path.exists(img_src):
                     ext = os.path.splitext(img_filename)[1] if img_filename else ".jpg"
@@ -267,23 +308,54 @@ def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id,
     if conversations[0]["from"] != "human":
         return None
 
-    return {
-        "conversations": conversations,
-        "images": images,
-        "system": system_prompt
-    }
+    return {"conversations": conversations, "images": images, "system": system_prompt}
+
+
+def _discover_subdirs(src_root: str) -> list:
+    """Discover task subdirectories containing trajectory.json + meta_info.jsonl.
+
+    Accepts ANY directory name (not limited to numeric IDs) and also handles
+    nested multi-trajectory layouts (task_id/traj_N/).
+    """
+    subdirs = []
+    for name in sorted(os.listdir(src_root)):
+        subdir = os.path.join(src_root, name)
+        if not os.path.isdir(subdir):
+            continue
+
+        traj_path = os.path.join(subdir, "trajectory.json")
+        meta_path = os.path.join(subdir, "meta_info.jsonl")
+
+        if os.path.exists(traj_path) and os.path.exists(meta_path):
+            # Direct layout: src_root/{task_id}/trajectory.json
+            subdirs.append((name, subdir))
+        else:
+            # Check for nested multi-trajectory layout: src_root/{task_id}/traj_N/
+            for child_name in sorted(os.listdir(subdir)):
+                child_dir = os.path.join(subdir, child_name)
+                if not os.path.isdir(child_dir):
+                    continue
+                child_traj = os.path.join(child_dir, "trajectory.json")
+                child_meta = os.path.join(child_dir, "meta_info.jsonl")
+                if os.path.exists(child_traj) and os.path.exists(child_meta):
+                    composite_id = f"{name}_{child_name}"
+                    subdirs.append((composite_id, child_dir))
+
+    return subdirs
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert MapQA trajectories to SFT format")
+    parser = argparse.ArgumentParser(
+        description="Convert trajectories to LLaMA Factory SFT (ShareGPT) format"
+    )
     parser.add_argument(
         "--src_dir",
-        default="/storage/openpsi/data/lcy_image_edit/mapqa_iterative_0330",
+        required=True,
         help="Source directory containing trajectory subdirectories",
     )
     parser.add_argument(
         "--dst_dir",
-        default="/storage/openpsi/data/lcy_image_edit/mapqa_sft_0330",
+        required=True,
         help="Output directory for SFT data",
     )
     parser.add_argument(
@@ -292,6 +364,22 @@ def main():
         nargs="+",
         default=None,
         help="Override enabled tools (default: read from config.yaml)",
+    )
+    parser.add_argument(
+        "--dataset_name",
+        type=str,
+        default="trajectory_sft",
+        help="Dataset name used in dataset_info.json (default: trajectory_sft)",
+    )
+    parser.add_argument(
+        "--refilter",
+        action="store_true",
+        help=(
+            "Re-apply correctness and brute-force filtering. "
+            "Use when consuming raw iterative-sampling output directly "
+            "(without augment_sft_data). Skipped by default because "
+            "augment_sft_data already filters."
+        ),
     )
     args = parser.parse_args()
 
@@ -311,14 +399,12 @@ def main():
     system_prompt = TOOL_CALL_SYSTEM_PROMPT.strip()
 
     print(f"Enabled tools: {[d['name'] for d in declarations]}")
+    print(
+        f"Re-filtering: {'ON' if args.refilter else 'OFF (trusting upstream augment)'}"
+    )
 
-    # Collect all numbered subdirectories
-    subdirs = []
-    for name in os.listdir(src_root):
-        subdir = os.path.join(src_root, name)
-        if os.path.isdir(subdir) and name.isdigit():
-            subdirs.append((int(name), subdir))
-    subdirs.sort()
+    # Discover all valid task subdirectories (any name, flat or nested layout)
+    subdirs = _discover_subdirs(src_root)
 
     print(f"Found {len(subdirs)} task directories")
 
@@ -329,6 +415,7 @@ def main():
         meta_path = os.path.join(subdir, "meta_info.jsonl")
         traj_path = os.path.join(subdir, "trajectory.json")
 
+        # Files are guaranteed to exist by _discover_subdirs, but double-check
         if not os.path.exists(meta_path) or not os.path.exists(traj_path):
             stats["missing_files"] += 1
             continue
@@ -338,24 +425,34 @@ def main():
             stats["bad_meta"] += 1
             continue
 
-        if not is_correct(meta):
-            stats["incorrect"] += 1
-            continue
+        # Only re-filter when explicitly requested (standalone mode).
+        # When used after augment_sft_data, filtering was already done.
+        if args.refilter:
+            if not is_correct(meta):
+                stats["incorrect"] += 1
+                continue
 
         try:
-            with open(traj_path, "r") as f:
+            with open(traj_path) as f:
                 trajectory = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
+        except (json.JSONDecodeError, OSError) as e:
             stats["bad_trajectory"] += 1
             print(f"  [WARN] Task {task_id}: failed to load trajectory: {e}")
             continue
 
-        if is_brute_force(trajectory, meta):
-            stats["brute_force"] += 1
-            continue
+        if args.refilter:
+            if is_brute_force(trajectory, meta):
+                stats["brute_force"] += 1
+                continue
 
-        entry = convert_trajectory(trajectory, meta, subdir, dst_images, task_id,
-                                   system_prompt, tool_definitions_text)
+        entry = convert_trajectory(
+            trajectory,
+            subdir,
+            dst_images,
+            task_id,
+            system_prompt,
+            tool_definitions_text,
+        )
         if entry is None:
             stats["conversion_failed"] += 1
             continue
@@ -368,16 +465,17 @@ def main():
     with open(train_path, "w") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
-    # Save dataset_info.json
+    # Save dataset_info.json (LLaMA-Factory compatible)
+    dataset_name = args.dataset_name
     dataset_info = {
-        "mapqa_sft": {
+        dataset_name: {
             "file_name": "train.json",
             "formatting": "sharegpt",
             "columns": {
                 "messages": "conversations",
                 "images": "images",
-                "system": "system"
-            }
+                "system": "system",
+            },
         }
     }
     info_path = os.path.join(dst_root, "dataset_info.json")
@@ -385,13 +483,14 @@ def main():
         json.dump(dataset_info, f, indent=2)
 
     # Print summary
-    print(f"\n{'='*50}")
-    print(f"Conversion Summary")
-    print(f"{'='*50}")
+    print(f"\n{'=' * 50}")
+    print("Conversion Summary")
+    print(f"{'=' * 50}")
     print(f"Total task directories:  {len(subdirs)}")
     print(f"Kept (converted):        {stats['kept']}")
-    print(f"Filtered - incorrect:    {stats['incorrect']}")
-    print(f"Filtered - brute force:  {stats['brute_force']}")
+    if args.refilter:
+        print(f"Filtered - incorrect:    {stats['incorrect']}")
+        print(f"Filtered - brute force:  {stats['brute_force']}")
     print(f"Filtered - missing files:{stats['missing_files']}")
     print(f"Filtered - bad meta:     {stats['bad_meta']}")
     print(f"Filtered - bad traj:     {stats['bad_trajectory']}")
@@ -402,15 +501,15 @@ def main():
 
     # Spot check
     if results:
-        print(f"\n{'='*50}")
-        print(f"Spot Check: First entry")
-        print(f"{'='*50}")
+        print(f"\n{'=' * 50}")
+        print("Spot Check: First entry")
+        print(f"{'=' * 50}")
         first = results[0]
         print(f"  Num turns: {len(first['conversations'])}")
         print(f"  Num images: {len(first['images'])}")
         print(f"  Images: {first['images']}")
-        for j, turn in enumerate(first['conversations']):
-            preview = turn['value'][:120].replace('\n', '\\n')
+        for j, turn in enumerate(first["conversations"]):
+            preview = turn["value"][:120].replace("\n", "\\n")
             print(f"  Turn {j} [{turn['from']}]: {preview}...")
 
 

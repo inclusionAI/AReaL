@@ -25,8 +25,6 @@ Usage (full pipeline):
         --judge-model gpt-5-mini-2025-08-07 \\
         --judge-api-key $JUDGE_KEY \\
         --filter-wrong-answers \\
-        --filter-answer-leakage \\
-        --leakage-check-mode quick \\
         --max-concurrent 16 \\
         --seed 42
 """
@@ -37,6 +35,7 @@ import argparse
 import json
 import os
 import random
+import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -50,7 +49,11 @@ from geo_edit.data_preprocess.diversification import (
     extract_think_blocks,
 )
 from geo_edit.data_preprocess.trajectory_filter import AugmentStats, filter_subfolder
-from geo_edit.data_preprocess.trajectory_utils import load_trajectory
+from geo_edit.data_preprocess.trajectory_utils import (
+    get_text_from_content,
+    load_meta_info,
+    load_trajectory,
+)
 from geo_edit.evaluation.trajectory_judge import (
     TrajectoryFilterConfig,
     TrajectoryJudge,
@@ -58,6 +61,104 @@ from geo_edit.evaluation.trajectory_judge import (
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+_THINK_TOOL_RE = re.compile(
+    r"<think>.*?Tool:\s*(?:functions\.)?(\w+).*?</think>", re.DOTALL | re.IGNORECASE
+)
+
+
+def _discover_subfolders(src_dir: Path) -> List[Tuple[Path, Path]]:
+    """Find trajectory subfolders, handling both flat and nested layouts.
+
+    Returns (subfolder, image_dir) pairs where *subfolder* contains
+    ``trajectory.json`` + ``meta_info.jsonl`` and *image_dir* holds
+    ``input_image.png`` (same as subfolder for flat layout, parent
+    directory for nested ``task_id/traj_N/`` layout).
+    """
+    results: List[Tuple[Path, Path]] = []
+    for child in sorted(src_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        if (child / "trajectory.json").exists() and (
+            child / "meta_info.jsonl"
+        ).exists():
+            results.append((child, child))
+        else:
+            for grandchild in sorted(child.iterdir()):
+                if not grandchild.is_dir():
+                    continue
+                if (grandchild / "trajectory.json").exists() and (
+                    grandchild / "meta_info.jsonl"
+                ).exists():
+                    results.append((grandchild, child))
+    return results
+
+
+def _local_correctness_check(meta: Dict[str, Any]) -> Tuple[bool, str]:
+    """Lightweight correctness check using string comparison (no API needed).
+
+    Catches obviously wrong trajectories where output_text != answer.
+    For semantic equivalence checking, use --filter-wrong-answers with a judge.
+    """
+    output = str(meta.get("output_text", "")).strip()
+    answer = str(meta.get("answer", "")).strip()
+    if not output:
+        return False, "no output_text in meta"
+    if output.lower() == answer.lower():
+        return True, ""
+    return False, f"output '{output[:50]}' != answer '{answer[:50]}'"
+
+
+def _strict_tool_match(trajectory: List[Dict[str, Any]]) -> Tuple[bool, str]:
+    """Check that each Phase1 ``<think>Tool: X</think>`` matches the
+    immediately following Phase2 ``tool_calls[].function.name`` 1:1.
+
+    Returns ``(has_mismatch, reason)``.
+    """
+    i = 0
+    step = 0
+    while i < len(trajectory):
+        msg = trajectory[i]
+        if msg.get("role") != "assistant" or msg.get("tool_calls"):
+            i += 1
+            continue
+
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            content = get_text_from_content(content)
+        if not isinstance(content, str):
+            i += 1
+            continue
+
+        match = _THINK_TOOL_RE.search(content)
+        if not match:
+            i += 1
+            continue
+
+        planned_tool = match.group(1).lower()
+        step += 1
+
+        j = i + 1
+        while j < len(trajectory):
+            next_msg = trajectory[j]
+            if next_msg.get("role") == "assistant" and next_msg.get("tool_calls"):
+                tcs = next_msg["tool_calls"]
+                actual_name = (
+                    tcs[0].get("function", {}).get("name", "").lower() if tcs else ""
+                )
+                if actual_name and actual_name != planned_tool:
+                    return True, (
+                        f"Step {step}: planned '{planned_tool}' "
+                        f"but called '{actual_name}'"
+                    )
+                break
+            elif next_msg.get("role") != "assistant":
+                break
+            j += 1
+
+        i = j + 1 if j < len(trajectory) else i + 1
+
+    return False, ""
 
 
 # ── File copying ─────────────────────────────────────────────────────────────
@@ -91,6 +192,8 @@ def copy_subfolder(
         if src_file.exists():
             shutil.copy2(src_file, dst_sub / filename)
 
+    _INPUT_IMAGE_RE = re.compile(r"^input_image(?:_\d+)?\.png$")
+
     src_img = src_sub / "input_image.png"
     dst_img = dst_sub / "input_image.png"
     if src_img.exists():
@@ -99,6 +202,19 @@ def copy_subfolder(
                 os.symlink(src_img.resolve(), dst_img)
         else:
             shutil.copy2(src_img, dst_img)
+
+    for src_file in src_sub.iterdir():
+        if (
+            src_file.is_file()
+            and _INPUT_IMAGE_RE.match(src_file.name)
+            and src_file.name != "input_image.png"
+        ):
+            dst_file = dst_sub / src_file.name
+            if not dst_file.exists():
+                if use_symlink:
+                    os.symlink(src_file.resolve(), dst_file)
+                else:
+                    shutil.copy2(src_file, dst_file)
 
     src_images = src_sub / "images"
     dst_images = dst_sub / "images"
@@ -122,6 +238,8 @@ def copy_subfolder(
     for item in src_sub.iterdir():
         if item.name in _KNOWN_NAMES:
             continue
+        if _INPUT_IMAGE_RE.match(item.name):
+            continue
         dst_item = dst_sub / item.name
         if item.is_file():
             shutil.copy2(item, dst_item)
@@ -140,7 +258,9 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    p.add_argument("--src-dir", type=str, required=True, help="Source trajectory directory")
+    p.add_argument(
+        "--src-dir", type=str, required=True, help="Source trajectory directory"
+    )
     p.add_argument("--dst-dir", type=str, required=True, help="Output directory")
 
     p.add_argument(
@@ -149,7 +269,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default="https://matrixllm.alipay.com/v1",
         help="Diversification LLM API base URL",
     )
-    p.add_argument("--model", type=str, default="kimi-k2.5", help="Diversification model")
+    p.add_argument(
+        "--model", type=str, default="kimi-k2.5", help="Diversification model"
+    )
     p.add_argument(
         "--api-key",
         type=str,
@@ -184,7 +306,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--filter-answer-leakage",
         action="store_true",
-        help="Enable answer-leakage filtering",
+        default=True,
+        help="Enable answer-leakage filtering (default: True, quick regex mode)",
+    )
+    p.add_argument(
+        "--no-filter-answer-leakage",
+        dest="filter_answer_leakage",
+        action="store_false",
+        help="Disable answer-leakage filtering",
     )
     p.add_argument(
         "--filter-brute-force",
@@ -201,7 +330,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--filter-tool-mismatch",
         action="store_true",
-        help="Enable tool-plan mismatch filtering",
+        default=True,
+        help="Enable tool-plan mismatch filtering (default: True)",
+    )
+    p.add_argument(
+        "--no-filter-tool-mismatch",
+        dest="filter_tool_mismatch",
+        action="store_false",
+        help="Disable tool-plan mismatch filtering",
     )
     p.add_argument(
         "--leakage-check-mode",
@@ -302,10 +438,10 @@ def main() -> None:
                 "No API key for diversification — will copy without diversifying"
             )
 
-    subfolders = sorted(d for d in src_dir.iterdir() if d.is_dir())
-    stats = AugmentStats(total=len(subfolders))
+    subfolders_with_images = _discover_subfolders(src_dir)
+    stats = AugmentStats(total=len(subfolders_with_images))
 
-    logger.info("Found %d subfolders in %s", len(subfolders), src_dir)
+    logger.info("Found %d subfolders in %s", len(subfolders_with_images), src_dir)
     logger.info(
         "Filters: brute_force=%s  wrong_answer=%s  leakage=%s (%s)  tool_mismatch=%s",
         args.filter_brute_force,
@@ -320,25 +456,46 @@ def main() -> None:
     )
 
     # ── Phase 1: Filter ─────────────────────────────────────────────────
-    logger.info("Phase 1 — Filtering %d subfolders …", len(subfolders))
-    passed_subfolders: List[Path] = []
+    logger.info("Phase 1 — Filtering %d subfolders …", len(subfolders_with_images))
+    passed_subfolders: List[Tuple[Path, Path]] = []
 
-    def _safe_filter(sf: Path) -> Tuple[Path, bool, str]:
+    def _safe_filter(sf: Path, img_dir: Path) -> Tuple[Path, Path, bool, str]:
         try:
+            meta = load_meta_info(sf / "meta_info.jsonl")
+            if not meta:
+                return sf, img_dir, False, "structure_error"
+            is_correct, reason = _local_correctness_check(meta)
+            if not is_correct:
+                logger.info("Filtered %s: %s", sf.name, reason)
+                return sf, img_dir, False, "wrong_answer"
+
             passed, reason = filter_subfolder(
                 sf, judge, config, args.filter_brute_force
             )
-            return sf, passed, reason
+            if passed and config.filter_tool_mismatch:
+                traj = load_trajectory(sf / "trajectory.json")
+                has_mismatch, mismatch_reason = _strict_tool_match(traj)
+                if has_mismatch:
+                    logger.info(
+                        "Filtered %s: strict tool mismatch — %s",
+                        sf.name,
+                        mismatch_reason,
+                    )
+                    return sf, img_dir, False, "tool_mismatch"
+            return sf, img_dir, passed, reason
         except Exception as exc:
             logger.error("Unexpected error filtering %s: %s", sf.name, exc)
-            return sf, False, "structure_error"
+            return sf, img_dir, False, "structure_error"
 
     with ThreadPoolExecutor(max_workers=args.max_concurrent) as pool:
-        futures = [pool.submit(_safe_filter, sf) for sf in subfolders]
+        futures = [
+            pool.submit(_safe_filter, sf, img_dir)
+            for sf, img_dir in subfolders_with_images
+        ]
         for future in as_completed(futures):
-            sf, passed, reason = future.result()
+            sf, img_dir, passed, reason = future.result()
             if passed:
-                passed_subfolders.append(sf)
+                passed_subfolders.append((sf, img_dir))
                 stats.passed_filter += 1
             elif reason == "wrong_answer":
                 stats.filtered_wrong_answer += 1
@@ -353,16 +510,14 @@ def main() -> None:
             else:
                 stats.filtered_structure_error += 1
 
-    logger.info(
-        "Phase 1 complete: %d / %d passed", stats.passed_filter, stats.total
-    )
+    logger.info("Phase 1 complete: %d / %d passed", stats.passed_filter, stats.total)
 
     if not passed_subfolders:
         logger.error("No subfolders passed filtering — nothing to output")
         print(stats.summary())
         return
 
-    passed_subfolders.sort()
+    passed_subfolders.sort(key=lambda t: t[0])
 
     # ── Phase 2: Diversify ──────────────────────────────────────────────
     modified_trajectories: Dict[Path, List[Dict[str, Any]]] = {}
@@ -374,7 +529,7 @@ def main() -> None:
         block_origins: List[Tuple[Path, int]] = []
         subfolder_data: Dict[Path, Tuple[List[Dict[str, Any]], List[ThinkBlock]]] = {}
 
-        for sf in passed_subfolders:
+        for sf, _img_dir in passed_subfolders:
             traj = load_trajectory(sf / "trajectory.json")
             blocks = extract_think_blocks(traj)
             classify_think_blocks(blocks)
@@ -411,7 +566,7 @@ def main() -> None:
                 sf, local_idx = block_origins[global_idx]
                 sf_new_texts.setdefault(sf, {})[local_idx] = new_text
 
-            for sf in passed_subfolders:
+            for sf, _img_dir in passed_subfolders:
                 if sf in subfolder_data and sf in sf_new_texts:
                     traj, blocks = subfolder_data[sf]
                     modified_trajectories[sf] = apply_diversified_blocks(
@@ -428,12 +583,27 @@ def main() -> None:
         logger.info("Phase 2 — Skipped (diversification disabled)")
 
     # ── Phase 3: Copy ───────────────────────────────────────────────────
-    logger.info("Phase 3 — Copying %d subfolders to %s …", len(passed_subfolders), dst_dir)
+    logger.info(
+        "Phase 3 — Copying %d subfolders to %s …", len(passed_subfolders), dst_dir
+    )
 
-    for sf in passed_subfolders:
-        dst_sub = dst_dir / sf.name
+    for sf, img_dir in passed_subfolders:
+        if sf == img_dir:
+            dst_sub = dst_dir / sf.name
+        else:
+            dst_sub = dst_dir / f"{img_dir.name}_{sf.name}"
         mod_traj = modified_trajectories.get(sf)
         copy_subfolder(sf, dst_sub, mod_traj, args.use_symlink)
+        if img_dir != sf:
+            _img_re = re.compile(r"^input_image(?:_\d+)?\.png$")
+            for src_file in img_dir.iterdir():
+                if src_file.is_file() and _img_re.match(src_file.name):
+                    dst_file = dst_sub / src_file.name
+                    if not dst_file.exists():
+                        if args.use_symlink:
+                            os.symlink(src_file.resolve(), dst_file)
+                        else:
+                            shutil.copy2(src_file, dst_file)
         stats.output_subfolders += 1
 
     summary = stats.summary()
