@@ -156,6 +156,33 @@ If you are ready to answer:
 PREFER selecting tools - they help verify and cross-check conclusions.
 """
 
+# Chain tool selection (for iterative sampling rounds > 1) - requires connective reasoning
+CHAIN_TOOL_SELECTION_PROMPT = """
+You are an AI agent selecting tools for visual analysis.
+
+Review ALL observations gathered so far. Start your reasoning with a brief
+reflection on what you have learned, using connective phrases such as:
+- "Ok, I have [what you just did]. Now I need to..."
+- "Wait, the result shows [observation]. Let me check..."
+- "Good, this confirms [finding]. Next I should..."
+- "Hmm, this is not what I expected. I need to..."
+
+Then decide your next action:
+
+If you need more information, select a tool:
+<think>
+[Your reflection with connective phrase]
+Tool: [tool_name]
+Reason: [what NEW information this tool will provide]
+</think>
+
+If you have enough information to answer:
+<think>[Your reflection and final reasoning]</think>
+<answer>[your answer]</answer>
+
+PREFER using tools to verify conclusions before answering.
+"""
+
 SEPARATED_USER_PROMPT="""
 Question: {Question}
 """

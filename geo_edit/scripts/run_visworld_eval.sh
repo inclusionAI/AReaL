@@ -53,7 +53,6 @@ for subset in "${SUBSETS[@]}"; do
         --sample_rate 1.0 \
         --max_concurrent_requests 16 \
         --max_iterative_rounds 15 \
-        --attempts_per_round 1 \
         --judge_model "gpt-5-mini-2025-08-07" \
         --judge_api_key "$JUDGE_API_KEY" \
         --judge_api_base "https://matrixllm.alipay.com/v1" \

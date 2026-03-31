@@ -23,6 +23,7 @@ from geo_edit.prompts.system_prompts import (
     SEPARATED_TOOL_CALL_ONLY_PROMPT,
     SEPARATED_FINAL_ANSWER_PROMPT,
     MULTI_ROUND_TOOL_SELECTION_PROMPT,
+    CHAIN_TOOL_SELECTION_PROMPT,
 )
 from geo_edit.tool_definitions import ToolRouter
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
@@ -42,6 +43,7 @@ class SeparatedReasoningConfigs:
     """Configuration container for separated reasoning phase configs."""
     reasoning_only: Any = None
     multi_round_reasoning: Any = None
+    chain_reasoning: Any = None  # For iterative sampling chain tool selection
     tool_call_only: Any = None
     final_answer: Any = None
     extended_reasoning: Any = None  # Optional, for iterative sampling
@@ -96,6 +98,9 @@ def build_phase_configs(
         configs.multi_round_reasoning = derive_google_config(
             base_config, system_prompt=MULTI_ROUND_TOOL_SELECTION_PROMPT, tool_mode="NONE"
         )
+        configs.chain_reasoning = derive_google_config(
+            base_config, system_prompt=CHAIN_TOOL_SELECTION_PROMPT, tool_mode="NONE"
+        )
         configs.tool_call_only = derive_google_config(
             base_config, system_prompt=SEPARATED_TOOL_CALL_ONLY_PROMPT
         )
@@ -119,6 +124,10 @@ def build_phase_configs(
         configs.multi_round_reasoning = derive_api_config(
             base_config, api_mode="chat_completions",
             system_prompt=MULTI_ROUND_TOOL_SELECTION_PROMPT, tool_choice="none"
+        )
+        configs.chain_reasoning = derive_api_config(
+            base_config, api_mode="chat_completions",
+            system_prompt=CHAIN_TOOL_SELECTION_PROMPT, tool_choice="none"
         )
         configs.tool_call_only = derive_api_config(
             base_config, api_mode="chat_completions",
