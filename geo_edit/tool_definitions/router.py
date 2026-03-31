@@ -40,7 +40,7 @@ with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
 TOOL_CATEGORIES = {
     "general": ["image_crop", "image_label", "draw_line", "bounding_box", "image_highlight",
                 "text_ocr", "auto_segment", "bbox_segment", "grounding_dino"],
-    "math": ["math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath", "ovr"],
+    "math": ["math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath"],
     "table": ["table_ocr"],
     "chart": ["chart_reasoning", "chart_data_extract", "chart_trend_analysis", "chart_text_ocr", "chartr1"],
     "map": ["text_spotting", "map_text_ocr"],

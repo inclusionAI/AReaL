@@ -56,7 +56,7 @@ for subset in "${SUBSETS[@]}"; do
         --judge_model "gpt-5-mini-2025-08-07" \
         --judge_api_key "$JUDGE_API_KEY" \
         --judge_api_base "https://matrixllm.alipay.com/v1" \
-        --enable_tools general map reasoning math
+        --enable_tools general map math
 
     echo "  DONE: $subset -> $output_dir"
 done
