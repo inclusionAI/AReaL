@@ -66,6 +66,9 @@ dependencies = [
     "seaborn",
 
     # Utilities and data processing
+    "pillow>=12.1.1",
+    "pylatexenc",
+    "zstandard",
     "setproctitle",
     "nltk",
     "sentencepiece",
@@ -138,6 +141,7 @@ dependencies = [
 sglang = [
     "sglang[tracing]==0.5.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
@@ -175,6 +179,7 @@ cuda-sglang = [
     "areal[sglang]",
     "areal[flash-attn]",
     "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
@@ -189,6 +194,7 @@ cuda-vllm = [
 cuda = [
     "areal[cuda-sglang]",
     "torch==2.9.1+cu129; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
@@ -267,8 +273,13 @@ override-dependencies = [
     # litellm[proxy] conflicts with sglang's exact pins:
     # - litellm requires openai>=2.8.0, sglang pins openai==2.6.1
     # - litellm requires soundfile>=0.12.1,<0.13.0, sglang pins soundfile==0.13.1
+    # sglang pins torchao==0.9.0, but we require >=0.15.0 for archon fp8
+    # the specific version (0.15.0 or 0.16.0) is controlled by extras
+    # nvidia-cudnn-cu12 is required for SGLang Vision Models
     "openai>=2.8.0",
     "soundfile>=0.12.1,<0.13.0",
+    "torchao==0.15.0",
+    "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Required by megatron-bridge but are optional (as per docs) cuda-based installs
     "transformer-engine; sys_platform == 'never'",

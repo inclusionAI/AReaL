@@ -36,8 +36,11 @@ class BaseInstallationValidator:
     # Map package names to their import names (when different)
     PACKAGE_IMPORT_MAP = {
         "hydra-core": "hydra",
+        "nvidia-cudnn-cu12": "nvidia.cudnn",
+        "pillow": "PIL",
+        "pyyaml": "yaml",
         "python-dotenv": "dotenv",
-        "megatron-core": "megatron",
+        "megatron-core": "megatron.core",
         "PyYAML": "yaml",
         "python-dateutil": "dateutil",
         "python_dateutil": "dateutil",
@@ -46,8 +49,9 @@ class BaseInstallationValidator:
         "camel-ai": "camel",
         "python-debian": "debian",
         "python_debian": "debian",
-        "openai-agents": "openai",
+        "openai-agents": "agents",
         "tensorboardx": "tensorboardX",
+        "megatron-bridge": "megatron.bridge",
     }
 
     # Map packages to their CUDA sub-modules for deep validation
@@ -109,6 +113,11 @@ class BaseInstallationValidator:
                 try:
                     req = Requirement(dep.strip())
 
+                    # Skip dependencies whose environment markers don't match
+                    # the current platform (e.g., macOS-only deps in Docker)
+                    if req.marker and not req.marker.evaluate():
+                        continue
+
                     # Convert extras set to string format "[extra1,extra2]"
                     extras_str = ""
                     if req.extras:
@@ -146,6 +155,43 @@ class BaseInstallationValidator:
         except Exception as e:
             print(f"Error parsing pyproject.toml: {e}")
             sys.exit(1)
+
+    def _get_optional_dep_versions(self) -> dict[str, str]:
+        """Extract version specifiers from [project.optional-dependencies].
+
+        Returns a dict mapping normalized package names to specifier strings
+        (e.g. ``{"sglang": "==0.5.9", "megatron-core": "==0.16.0"}``).
+        Self-references and marker-mismatched entries are skipped.
+        On any error the method returns an empty dict so callers can
+        fall back to hardcoded defaults.
+        """
+        if self.pyproject_path is None:
+            return {}
+        try:
+            with open(self.pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+
+            project_name = data.get("project", {}).get("name", "")
+            optional_deps = data.get("project", {}).get("optional-dependencies", {})
+            versions: dict[str, str] = {}
+
+            for deps in optional_deps.values():
+                for dep in deps:
+                    try:
+                        req = Requirement(dep.strip())
+                        if req.name == project_name:
+                            continue
+                        if req.marker and not req.marker.evaluate():
+                            continue
+                        spec_str = str(req.specifier)
+                        if spec_str and req.name not in versions:
+                            versions[req.name] = spec_str
+                    except InvalidRequirement:
+                        continue
+
+            return versions
+        except Exception:
+            return {}
 
     def add_additional_package(
         self, pkg_name: str, version_spec: str = "", required: bool = True
