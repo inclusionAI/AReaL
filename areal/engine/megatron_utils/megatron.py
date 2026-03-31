@@ -760,6 +760,7 @@ def convert_bailingmoe_to_hf(
 # A registry for conversion functions is more extensible.
 _CONVERSION_FN_REGISTRY = {
     "qwen3_lora": convert_qwen3_lora_to_hf,
+    "qwen2_lora": convert_qwen3_lora_to_hf,
     "qwen3_moe": convert_qwen3moe_to_hf,
     "qwen2": convert_qwen2_to_hf,
     "qwen3": convert_qwen2_to_hf,

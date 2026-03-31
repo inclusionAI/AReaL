@@ -601,6 +601,12 @@ class MegatronEngine(TrainEngine):
                 base_model_path=meta.base_model_path,
             )
         elif meta.weight_format == "dcp":
+            if self.checkpointer is None:
+                raise NotImplementedError(
+                    "DCP checkpoint save is not available for this Megatron configuration "
+                    "(e.g., LoRA path without distributed optimizer support). "
+                    "Please use weight_format='hf' for adapter/full-model export."
+                )
             self.checkpointer.save_checkpoint(meta.path, with_optimizer=meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
@@ -613,6 +619,12 @@ class MegatronEngine(TrainEngine):
                 )
             self._load_model_from_hf(meta.path)
         elif meta.weight_format == "dcp":
+            if self.checkpointer is None:
+                raise NotImplementedError(
+                    "DCP checkpoint load is not available for this Megatron configuration "
+                    "(e.g., LoRA path without distributed optimizer support). "
+                    "Please use weight_format='hf' for adapter/full-model load."
+                )
             self.checkpointer.load_checkpoint(meta.path, with_optimizer=meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
@@ -1411,7 +1423,7 @@ class MegatronEngine(TrainEngine):
         # Only pipeline parallel heads CAN contain named tensors here
         if converted_named_tensors:
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
-        elif self.is_pipeline_parallel_head():
+        elif self.is_pipeline_parallel_head() and not self.config.use_lora:
             self.logger.warning(
                 "No tensors were collected for distributed update at version %s.",
                 meta.version,
@@ -1512,9 +1524,9 @@ class MegatronEngine(TrainEngine):
             )
 
         if dist.get_rank() == 0:
-            if tokenizer is not None and not self.config.use_lora:
+            if tokenizer is not None:
                 tokenizer.save_pretrained(path)
-            if processor is not None and not self.config.use_lora:
+            if processor is not None:
                 processor.save_pretrained(path)
 
         current_platform.synchronize()
