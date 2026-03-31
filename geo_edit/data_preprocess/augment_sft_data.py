@@ -138,8 +138,8 @@ def augment_dataset_rulebased(data: list) -> list:
 
 def augment_with_llm(
     data: list,
-    api_base: str = "https://api.minimax.chat/v1",
-    model: str = "MiniMax-M1-40k",
+    api_base: str = "https://matrixllm.alipay.com/v1",
+    model: str = "kimi-k2.5",
     api_key: str = None,
 ) -> list:
     """Rephrase <think> blocks in-place via LLM. No data volume increase."""
@@ -149,11 +149,6 @@ def augment_with_llm(
         print("openai package not available, skipping LLM augmentation")
         return data
 
-    api_key = (
-        api_key
-        or os.environ.get("MINIMAX_API_KEY")
-        or os.environ.get("LLM_API_KEY", "dummy")
-    )
     client = OpenAI(base_url=api_base, api_key=api_key)
 
     failed = 0
@@ -223,13 +218,13 @@ def main():
     )
     parser.add_argument(
         "--api-base",
-        default="https://api.minimax.chat/v1",
+        default="https://matrixllm.alipay.com/v1",
         help="LLM API base URL (default: Minimax)",
     )
     parser.add_argument(
         "--model",
-        default="MiniMax-M1-40k",
-        help="LLM model name (default: MiniMax-M1-40k)",
+        default="kimi-k2.5",
+        help="LLM model name ",
     )
     parser.add_argument(
         "--api-key",

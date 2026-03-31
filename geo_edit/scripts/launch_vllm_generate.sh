@@ -14,8 +14,6 @@ nohup python -m vllm.entrypoints.openai.api_server \
   --max-model-len 65536 \
   --dtype auto \
   --gpu-memory-utilization 0.8 \
-  --enable-auto-tool-choice \
-  --tool-call-parser hermes \
   --enable-prefix-caching \
   > /tmp/log/vllm_api.log 2>&1 &
 #  --chat-template-content-format string \

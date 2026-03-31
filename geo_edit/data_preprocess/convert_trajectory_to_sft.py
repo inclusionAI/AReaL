@@ -8,19 +8,8 @@ import shutil
 import argparse
 from collections import Counter
 
-
-SYSTEM_PROMPT = """You are a visual reasoning assistant with access to map analysis tools.
-
-Available tools:
-- map_text_ocr(image_index): Extract place names and labels from map images
-- text_spotting(image_index): Detect text with bounding box coordinates
-- text_ocr(image_index): General text extraction
-- image_crop(image_index, bounding_box): Crop a region of the image
-- grounding_dino(image_index, question): Open-vocabulary object detection
-- auto_segment(image_index, ...): Image segmentation
-- image_highlight(image_index, ...): Highlight detected regions
-
-When analyzing a map image, use <think>...</think> to reason about your approach, <action>{...}</action> to call a tool, and <answer>...</answer> for your final answer."""
+from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
+from geo_edit.tool_definitions import ToolRouter, format_tool_declarations_text
 
 
 def load_meta_info(path):
@@ -112,7 +101,8 @@ def get_image_url_from_content(content):
     return urls
 
 
-def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id):
+def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id,
+                       system_prompt, tool_definitions_text):
     """Convert a single trajectory to ShareGPT format.
 
     Returns a dict with keys: conversations, images, system
@@ -143,9 +133,18 @@ def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id):
     # Remove "Observation 0:" prefix
     question_text = re.sub(r"^Observation\s+\d+:\s*\n?", "", question_text).strip()
 
+    first_user_value = (
+        f"Available tools:\n{tool_definitions_text}\n\n"
+        f"Use this format for tool calls:\n"
+        f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>\n\n'
+        f"When you have the final answer:\n"
+        f"<answer>your answer here</answer>\n\n"
+        f"Task: {question_text}\n"
+        f"<image>"
+    )
     conversations.append({
         "from": "human",
-        "value": f"<image>\n{question_text}"
+        "value": first_user_value
     })
     i += 1
 
@@ -324,7 +323,7 @@ def convert_trajectory(trajectory, meta, src_dir, dst_images_dir, task_id):
     return {
         "conversations": conversations,
         "images": images,
-        "system": SYSTEM_PROMPT
+        "system": system_prompt
     }
 
 
@@ -340,12 +339,31 @@ def main():
         default="/storage/openpsi/data/lcy_image_edit/mapqa_sft_0330",
         help="Output directory for SFT data",
     )
+    parser.add_argument(
+        "--enable_tools",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Override enabled tools (default: read from config.yaml)",
+    )
     args = parser.parse_args()
 
     src_root = args.src_dir
     dst_root = args.dst_dir
     dst_images = os.path.join(dst_root, "images")
     os.makedirs(dst_images, exist_ok=True)
+
+    # Build system prompt and tool definitions matching RL (verl-agent) format
+    tool_router = ToolRouter(
+        tool_mode="auto",
+        enable_tools=args.enable_tools,
+        skip_agent_init=True,
+    )
+    declarations = tool_router.get_available_declarations()
+    tool_definitions_text = format_tool_declarations_text(declarations)
+    system_prompt = TOOL_CALL_SYSTEM_PROMPT.strip()
+
+    print(f"Enabled tools: {[d['name'] for d in declarations]}")
 
     # Collect all numbered subdirectories
     subdirs = []
@@ -389,7 +407,8 @@ def main():
             stats["brute_force"] += 1
             continue
 
-        entry = convert_trajectory(trajectory, meta, subdir, dst_images, task_id)
+        entry = convert_trajectory(trajectory, meta, subdir, dst_images, task_id,
+                                   system_prompt, tool_definitions_text)
         if entry is None:
             stats["conversion_failed"] += 1
             continue

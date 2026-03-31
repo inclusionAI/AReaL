@@ -222,19 +222,8 @@ class GeoEditMultiProcessEnv:
 
     def get_tool_declarations_text(self) -> str:
         """Format tool declarations as text for inclusion in prompts."""
-        lines = []
-        for decl in self.tool_declarations:
-            name = decl["name"]
-            desc = decl.get("description", "").strip()
-            params = decl.get("parameters", {}).get("properties", {})
-            param_strs = []
-            for pname, pinfo in params.items():
-                ptype = pinfo.get("type", "string")
-                pdesc = pinfo.get("description", "")
-                param_strs.append(f"    - {pname} ({ptype}): {pdesc}")
-            params_text = "\n".join(param_strs) if param_strs else "    (no parameters)"
-            lines.append(f"- {name}: {desc}\n  Parameters:\n{params_text}")
-        return "\n\n".join(lines)
+        from geo_edit.tool_definitions.router import format_tool_declarations_text
+        return format_tool_declarations_text(self.tool_declarations)
 
     def _get_last_tool_feedback(self, task: OpenAICompatibleVisionQATask) -> str:
         """Extract tool execution feedback from task's contents.

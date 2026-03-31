@@ -26,6 +26,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
 
     _THINK_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
     _ANSWER_PATTERN = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
+    _ACTION_PATTERN = re.compile(r"<action>(.*?)</action>", re.DOTALL | re.IGNORECASE)
     # Fallback pattern for models that use <|begin_of_box|>...<|end_of_box|> format without </answer>
     _ANSWER_FALLBACK_PATTERN = re.compile(
         r"<answer>\s*(?:<\|begin_of_box\|>)?\s*(.*?)\s*(?:<\|end_of_box\|>)?\s*(?:</answer>|$)",
@@ -47,6 +48,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
         model_type: Literal["openai", "vllm", "sglang"] = "openai",
         api_mode: Literal["responses", "chat_completions"] = "responses",
+        action_tag_mode: bool = False,
         **kwargs,
     ):
         super().__init__(
@@ -60,6 +62,8 @@ class OpenAICompatibleVisionQATask(VisionQATask):
             api_mode=api_mode,
             **kwargs,
         )
+
+        self.action_tag_mode = action_tag_mode
 
         # Determine content format based on api_mode
         # responses API: uses "input_text", "input_image"
@@ -333,7 +337,20 @@ class OpenAICompatibleVisionQATask(VisionQATask):
 
         tool_calls: List[ToolCall] = []
         tool_call_records: List[Dict[str, Any]] = []
-        if native_tool_calls:
+
+        if self.action_tag_mode:
+            # Parse <action> tags from text content (matching SFT/RL format)
+            for i, m in enumerate(self._ACTION_PATTERN.finditer(content)):
+                try:
+                    action_json = json.loads(m.group(1).strip())
+                    name = action_json["name"]
+                    args = action_json.get("arguments", {})
+                    call_id = f"action_tag_{step}_{i}"
+                    tool_calls.append(ToolCall(name=name, args=args, call_id=call_id))
+                    tool_call_records.append({"id": call_id, "name": name, "args": args})
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning("Failed to parse <action> tag: %s", e)
+        elif native_tool_calls:
             for tc in native_tool_calls:
                 args = tc.function.arguments
                 if isinstance(args, str):
@@ -354,9 +371,9 @@ class OpenAICompatibleVisionQATask(VisionQATask):
             tool_calls = []
             tool_call_records = []
 
-        # Append assistant message
+        # Append assistant message (no tool_calls field in action_tag_mode)
         assistant_message: Dict[str, Any] = {"role": "assistant", "content": content}
-        if native_tool_calls:
+        if not self.action_tag_mode and native_tool_calls:
             assistant_message["tool_calls"] = [
                 {
                     "id": tc.id,
@@ -376,12 +393,21 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         if self._use_responses_format:
             output = payload if isinstance(payload, list) else json.dumps(payload, ensure_ascii=False)
             self.contents["input"].append({"type": "function_call_output", "call_id": call_id, "output": output})
+        elif self.action_tag_mode:
+            # In action-tag mode, append as user message (no role:tool, matching SFT/RL format)
+            text = json.dumps(payload, ensure_ascii=False) if isinstance(payload, (dict, list)) else str(payload)
+            self.contents.append({"role": "user", "content": [{"type": "text", "text": f"Tool result:\n{text}"}]})
         else:
             text = json.dumps(payload, ensure_ascii=False) if isinstance(payload, dict) else json.dumps(payload, ensure_ascii=False)
             self.contents.append({"role": "tool", "tool_call_id": call_id, "content": text})
 
     def _append_tool_error(self, tool_call: ToolCall, error_msg: str) -> None:
-        self._append_tool_result(tool_call.call_id, {"error": error_msg})
+        if self.action_tag_mode:
+            self.contents.append({"role": "user", "content": [
+                {"type": "text", "text": f"Tool execution failed: {error_msg}"}
+            ]})
+        else:
+            self._append_tool_result(tool_call.call_id, {"error": error_msg})
 
     def _append_tool_image_for_calls(
         self,
@@ -402,6 +428,13 @@ class OpenAICompatibleVisionQATask(VisionQATask):
             ]
             for call in tool_calls:
                 self._append_tool_result(call.call_id, output)
+        elif self.action_tag_mode:
+            # In action-tag mode, append image directly as user message (no role:tool)
+            content = [
+                {"type": "text", "text": f"Tool executed successfully. New image produced.\nObservation {image_index}:"},
+                {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}},
+            ]
+            self.contents.append({"role": "user", "content": content})
         else:
             # For chat_completions, append tool result then user message with image
             payload = {"image_ref": {f"Observation {image_index}": image_name}}
@@ -414,9 +447,15 @@ class OpenAICompatibleVisionQATask(VisionQATask):
             self.contents.append({"role": "user", "content": content})
 
     def _append_tool_text_for_calls(self, tool_calls: List[ToolCall], text: str) -> None:
-        payload = {"analysis": text}
-        for call in tool_calls:
-            self._append_tool_result(call.call_id, payload)
+        if self.action_tag_mode:
+            # In action-tag mode, append as user message (matching SFT/RL format)
+            self.contents.append({"role": "user", "content": [
+                {"type": "text", "text": f"Tool executed successfully.\nResult: {text}"}
+            ]})
+        else:
+            payload = {"analysis": text}
+            for call in tool_calls:
+                self._append_tool_result(call.call_id, payload)
 
     def append_prompt(self, prompt: str) -> None:
         if self.api_mode == "responses":

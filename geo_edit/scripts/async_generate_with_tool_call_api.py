@@ -18,8 +18,9 @@ from geo_edit.config import (
 )
 from geo_edit.constants import MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
+from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
-from geo_edit.tool_definitions import ToolRouter
+from geo_edit.tool_definitions import ToolRouter, format_tool_declarations_text
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.utils.logger import setup_logger
@@ -38,6 +39,7 @@ _WORKER_MODEL_TYPE: "str | None" = None
 _WORKER_SYSTEM_PROMPT: "str | None" = None
 _WORKER_API_MODE: "str | None" = None
 _WORKER_TOOL_ROUTER: "ToolRouter | None" = None
+_WORKER_ACTION_TAG_MODE: bool = False
 
 
 def _init_worker(
@@ -52,7 +54,7 @@ def _init_worker(
 ):
     from typing import cast, Literal
     tool_mode = cast(Literal["auto", "force", "direct"], use_tools)
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_API_MODE, _WORKER_TOOL_ROUTER
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_API_MODE, _WORKER_TOOL_ROUTER, _WORKER_ACTION_TAG_MODE
 
     # Initialize tool router with tool_mode
     # ToolRouter reads config.yaml to determine which tools are enabled
@@ -63,9 +65,6 @@ def _init_worker(
     if model_type in {"Google", "OpenAI"} and not api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
 
-    # get_system_prompt returns tool/no-tool prompt based on use_tools mode
-    system_prompt = get_system_prompt(model_type, tool_mode)
-
     # Determine api_mode based on model_type
     if model_type == "Google":
         api_mode = "google"
@@ -74,27 +73,56 @@ def _init_worker(
     else:
         api_mode = "responses"
 
-    # Build agent configs based on api_mode
-    if api_mode == "google":
-        agent_configs = build_google_agent_configs(
-            _WORKER_TOOL_ROUTER,
-            max_output_tokens=max_output_tokens,
-            thinking_level="low",
-            include_thoughts=True,
-            temperature=1.0,
-            system_prompt=system_prompt,
+    # For vLLM/SGLang (self-trained models): use text-based <action> tag mode
+    # matching SFT/RL format. No API tools param; tool definitions in prompt text.
+    _WORKER_ACTION_TAG_MODE = model_type in {"SGLang", "vLLM"}
+
+    if _WORKER_ACTION_TAG_MODE:
+        # Build system prompt with tool definitions matching RL template
+        declarations = _WORKER_TOOL_ROUTER.get_available_declarations()
+        tool_defs_text = format_tool_declarations_text(declarations)
+        system_prompt = (
+            f"{TOOL_CALL_SYSTEM_PROMPT.strip()}\n\n"
+            f"Available tools:\n{tool_defs_text}\n\n"
+            f"Use this format for tool calls:\n"
+            f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>\n\n'
+            f"When you have the final answer:\n"
+            f"<answer>your answer here</answer>"
         )
-        _WORKER_TASK_CLASS = GoogleVisionQATask
-    else:
+        # Build config WITHOUT tools in API params (use a direct-mode router)
+        no_tool_router = ToolRouter(tool_mode="direct", skip_agent_init=True)
         agent_configs = build_api_agent_configs(
-            _WORKER_TOOL_ROUTER,
+            no_tool_router,
             api_mode=api_mode,
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            reasoning_level="low" if model_type == "OpenAI" else None,
             system_prompt=system_prompt,
         )
         _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
+    else:
+        # Google/OpenAI API models: use native tool_calls for data collection
+        system_prompt = get_system_prompt(model_type, tool_mode)
+
+        if api_mode == "google":
+            agent_configs = build_google_agent_configs(
+                _WORKER_TOOL_ROUTER,
+                max_output_tokens=max_output_tokens,
+                thinking_level="low",
+                include_thoughts=True,
+                temperature=1.0,
+                system_prompt=system_prompt,
+            )
+            _WORKER_TASK_CLASS = GoogleVisionQATask
+        else:
+            agent_configs = build_api_agent_configs(
+                _WORKER_TOOL_ROUTER,
+                api_mode=api_mode,
+                max_output_tokens=max_output_tokens,
+                temperature=1.0,
+                reasoning_level="low" if model_type == "OpenAI" else None,
+                system_prompt=system_prompt,
+            )
+            _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
 
     config = AgentConfig(
         model_type=model_type,
@@ -148,6 +176,8 @@ def _run_one_task(task_payload: dict):
     # Add api_mode for non-Google tasks
     if _WORKER_API_MODE != "google":
         task_kwargs["api_mode"] = _WORKER_API_MODE
+    if _WORKER_ACTION_TAG_MODE:
+        task_kwargs["action_tag_mode"] = True
     extra_kwargs = task_payload.get("task_kwargs")
     if isinstance(extra_kwargs, dict):
         task_kwargs.update(extra_kwargs)

@@ -187,6 +187,27 @@ def _build_tool_registry() -> Dict[str, tuple]:
 _TOOL_REGISTRY: Dict[str, tuple] = _build_tool_registry()
 
 
+def format_tool_declarations_text(declarations: List[Dict]) -> str:
+    """Format tool declarations as human-readable text for inclusion in prompts.
+
+    This is the single source of truth for tool-list formatting used across
+    SFT data conversion, RL environment prompts, and inference evaluation.
+    """
+    lines = []
+    for decl in declarations:
+        name = decl["name"]
+        desc = decl.get("description", "").strip()
+        params = decl.get("parameters", {}).get("properties", {})
+        param_strs = []
+        for pname, pinfo in params.items():
+            ptype = pinfo.get("type", "string")
+            pdesc = pinfo.get("description", "")
+            param_strs.append(f"    - {pname} ({ptype}): {pdesc}")
+        params_text = "\n".join(param_strs) if param_strs else "    (no parameters)"
+        lines.append(f"- {name}: {desc}\n  Parameters:\n{params_text}")
+    return "\n\n".join(lines)
+
+
 # =============================================================================
 # ToolRouter Class
 # =============================================================================
