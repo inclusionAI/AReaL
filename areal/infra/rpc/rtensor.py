@@ -301,6 +301,34 @@ def set_backend(backend: RTensorBackend | None) -> None:
     _backend = backend
 
 
+# =============================================================================
+# Client-side Fetch Buffer
+# =============================================================================
+# Caches fetched tensors by shard_id so that repeated fetch() calls for the
+# same shard (e.g. when the same rollout_batch is sent to multiple engine
+# calls across RPC boundaries) avoid redundant network transfers.
+# Entries are evicted by clear_node() when clear_batches() runs at the end
+# of each train step.
+
+_fetch_buffer: dict[Any, torch.Tensor] = {}
+_fetch_buffer_lock = Lock()
+
+
+def clear_fetch_buffer() -> None:
+    """Remove all entries from the client-side fetch buffer."""
+    with _fetch_buffer_lock:
+        _fetch_buffer.clear()
+
+
+def buffer_stats() -> dict[str, int]:
+    """Get current fetch buffer statistics."""
+    with _fetch_buffer_lock:
+        return dict(
+            num_tensors=len(_fetch_buffer),
+            total_bytes=sum(t.nbytes for t in _fetch_buffer.values()),
+        )
+
+
 @dataclass
 class RTensor:
     shard: TensorShardInfo
@@ -309,7 +337,16 @@ class RTensor:
     def to_local(self) -> torch.Tensor:
         if not self.data.is_meta:
             return self.data
+        # Check client-side fetch buffer before making a network request.
+        with _fetch_buffer_lock:
+            cached = _fetch_buffer.get(self.shard.shard_id)
+            if cached is not None:
+                self.data = cached
+                return self.data
+        # Buffer miss: fetch from backend and populate buffer.
         self.data = get_backend().fetch([self.shard])[0]
+        with _fetch_buffer_lock:
+            _fetch_buffer[self.shard.shard_id] = self.data
         return self.data
 
     @staticmethod
@@ -389,12 +426,26 @@ class RTensor:
         RTensor._collect_all(obj, rtensors)
         meta_rtensors = [rt for rt in rtensors if rt.data.is_meta]
         if meta_rtensors:
-            shards = [rt.shard for rt in meta_rtensors]
-            results = get_backend().fetch(shards)
-            for rt, tensor in zip(meta_rtensors, results):
-                rt.data = tensor
+            # Resolve as many as possible from the client-side fetch buffer.
+            to_fetch: list[RTensor] = []
+            with _fetch_buffer_lock:
+                for rt in meta_rtensors:
+                    cached = _fetch_buffer.get(rt.shard.shard_id)
+                    if cached is not None:
+                        rt.data = cached
+                    else:
+                        to_fetch.append(rt)
 
-        # Recursively replace RTensors with local tensors (all cache hits now)
+            # Batch-fetch only the misses from the backend.
+            if to_fetch:
+                shards = [rt.shard for rt in to_fetch]
+                results = get_backend().fetch(shards)
+                with _fetch_buffer_lock:
+                    for rt, tensor in zip(to_fetch, results, strict=True):
+                        rt.data = tensor
+                        _fetch_buffer[rt.shard.shard_id] = tensor
+
+        # Recursively replace RTensors with local tensors (all buffer hits now)
         return RTensor._localize_recursive(obj)
 
     @staticmethod
@@ -459,7 +510,7 @@ class RTensor:
 
     @staticmethod
     async def clear_node(node_addr: str, shard_ids: list[Any]) -> None:
-        """Clear shards from a node.
+        """Clear shards from a node and evict them from the fetch buffer.
 
         Parameters
         ----------
@@ -468,6 +519,9 @@ class RTensor:
         shard_ids : list[Any]
             List of shard IDs to delete
         """
+        with _fetch_buffer_lock:
+            for sid in shard_ids:
+                _fetch_buffer.pop(sid, None)
         await get_backend().delete(node_addr, shard_ids)
 
     @property
