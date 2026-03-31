@@ -440,12 +440,14 @@ def main() -> None:
 
     subfolders_with_images = _discover_subfolders(src_dir)
     stats = AugmentStats(total=len(subfolders_with_images))
+    use_local_correctness = not args.filter_wrong_answers
 
     logger.info("Found %d subfolders in %s", len(subfolders_with_images), src_dir)
     logger.info(
-        "Filters: brute_force=%s  wrong_answer=%s  leakage=%s (%s)  tool_mismatch=%s",
+        "Filters: brute_force=%s  wrong_answer=%s (local_fallback=%s)  leakage=%s (%s)  tool_mismatch=%s",
         args.filter_brute_force,
         args.filter_wrong_answers,
+        use_local_correctness,
         args.filter_answer_leakage,
         args.leakage_check_mode,
         args.filter_tool_mismatch,
@@ -464,10 +466,11 @@ def main() -> None:
             meta = load_meta_info(sf / "meta_info.jsonl")
             if not meta:
                 return sf, img_dir, False, "structure_error"
-            is_correct, reason = _local_correctness_check(meta)
-            if not is_correct:
-                logger.info("Filtered %s: %s", sf.name, reason)
-                return sf, img_dir, False, "wrong_answer"
+            if use_local_correctness:
+                is_correct, reason = _local_correctness_check(meta)
+                if not is_correct:
+                    logger.info("Filtered %s: %s", sf.name, reason)
+                    return sf, img_dir, False, "wrong_answer"
 
             passed, reason = filter_subfolder(
                 sf, judge, config, args.filter_brute_force
