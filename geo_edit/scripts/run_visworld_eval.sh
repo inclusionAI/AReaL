@@ -11,15 +11,11 @@ if [ -z "${API_KEY:-}" ]; then
     echo "Error: API_KEY is required"
     exit 1
 fi
-if [ -z "${JUDGE_API_KEY:-}" ]; then
-    echo "Error: JUDGE_API_KEY is required"
-    exit 1
-fi
 
 DATASET_ROOT="/storage/openpsi/data/lcy_image_edit/VisWorld-Eval"
 OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/visworld_iterative_gpt5_0331"
-SUBSETS=(ballgame cube maze mmsi multihop paperfolding sokoban)
-
+# SUBSETS=(ballgame cube maze mmsi multihop paperfolding sokoban)
+SUBSETS=(ballgame)
 echo "============================================"
 echo "VisWorld-Eval Iterative Sampling"
 echo "Output: $OUTPUT_ROOT"
@@ -54,9 +50,9 @@ for subset in "${SUBSETS[@]}"; do
         --max_concurrent_requests 16 \
         --max_iterative_rounds 15 \
         --judge_model "gpt-5-mini-2025-08-07" \
-        --judge_api_key "$JUDGE_API_KEY" \
+        --judge_api_key "$API_KEY" \
         --judge_api_base "https://matrixllm.alipay.com/v1" \
-        --enable_tools general map math
+        --enable_tools general map math_latex_ocr math_image_describe formula_ocr
 
     echo "  DONE: $subset -> $output_dir"
 done
