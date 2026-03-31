@@ -8,9 +8,11 @@ server processes are forked through RPCGuard (a lightweight process manager).
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 import traceback
+import uuid
 from collections.abc import AsyncGenerator
 from threading import Lock
 from typing import TYPE_CHECKING, Any
@@ -42,7 +44,7 @@ class GatewayInferenceController:
     directly over HTTP — no engine creation or RPC calls on workers.
 
     The inference backend is determined from ``config.backend``
-    (currently ``"sglang"`` is supported; ``"vllm"`` is planned).
+    (``"sglang"`` and ``"vllm"`` are supported).
     """
 
     # Worker role suffix for RPCGuard workers
@@ -235,7 +237,7 @@ class GatewayInferenceController:
                 if server_args:
                     for k, v in server_args.items():
                         if hasattr(sglang_config, k):
-                            object.__setattr__(sglang_config, k, v)
+                            setattr(sglang_config, k, v)
                         else:
                             logger.warning(
                                 "SGLangConfig has no attribute %r, ignoring "
@@ -254,10 +256,29 @@ class GatewayInferenceController:
                     )
 
             elif inf_backend == "vllm":
-                raise NotImplementedError(
-                    "vLLM backend is not yet supported by the gateway "
-                    "rollout controller."
-                )
+                from areal.api.cli_args import vLLMConfig
+
+                vllm_config = vLLMConfig(model=cfg.model_path or cfg.tokenizer_path)
+                for k, v in (server_args or {}).items():
+                    if hasattr(vllm_config, k):
+                        setattr(vllm_config, k, v)
+                    else:
+                        logger.warning(
+                            "vLLMConfig has no attribute %r, ignoring "
+                            "server_args entry (value=%r)",
+                            k,
+                            v,
+                        )
+
+                def _build_launch_cmd(host: str, port: int) -> list[str]:
+                    return vLLMConfig.build_cmd(
+                        vllm_config=vllm_config,
+                        tp_size=tp_size,
+                        pp_size=alloc.parallel.pp_size,
+                        host=host,
+                        port=port,
+                    )
+
             else:
                 raise ValueError(f"Unsupported inference backend: {inf_backend!r}")
 
@@ -279,13 +300,34 @@ class GatewayInferenceController:
 
                 cmd = _build_launch_cmd(inf_host, inf_port)
 
+                fork_payload: dict[str, Any] = {
+                    "role": "inf-server",
+                    "worker_index": rank,
+                    "raw_cmd": cmd,
+                }
+                if inf_backend == "vllm":
+                    from areal.infra.utils.launcher import (
+                        TRITON_CACHE_PATH as _TRITON_CACHE,
+                    )
+                    from areal.infra.utils.launcher import (
+                        VLLM_CACHE_ROOT as _VLLM_CACHE,
+                    )
+
+                    fork_payload["env"] = {
+                        "TRITON_CACHE_PATH": os.path.join(
+                            os.environ.get("TRITON_CACHE_PATH", _TRITON_CACHE),
+                            str(uuid.uuid4()),
+                        ),
+                        "VLLM_CACHE_ROOT": os.path.join(
+                            os.environ.get("VLLM_CACHE_ROOT", _VLLM_CACHE),
+                            str(uuid.uuid4()),
+                        ),
+                        "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "True",
+                    }
+
                 resp = requests.post(
                     f"{guard_addr}/fork",
-                    json={
-                        "role": "inf-server",
-                        "worker_index": rank,
-                        "raw_cmd": cmd,
-                    },
+                    json=fork_payload,
                     timeout=30,
                 )
                 resp.raise_for_status()
@@ -359,6 +401,8 @@ class GatewayInferenceController:
             data_proxy_cmd = data_proxy_base_cmd + [
                 "--backend-addr",
                 self._inf_addrs[rank],
+                "--backend-type",
+                inf_backend or "sglang",
             ]
             data_proxy_host, data_proxy_port = self._fork_on_guard(
                 guard_addr=guard_addr,

@@ -9,8 +9,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import ModelRequest, ModelResponse
-from areal.experimental.inference_service.data_proxy.backend import SGLangBridgeBackend
+from areal.api.io_struct import ModelRequest, ModelResponse, get_versioned_lora_name
+from areal.experimental.inference_service.data_proxy.backend import (
+    SGLangBridgeBackend,
+    VLLMBridgeBackend,
+)
 from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
 from areal.experimental.inference_service.data_proxy.pause import PauseState
 
@@ -40,6 +43,25 @@ def _make_sglang_response(
     }
 
 
+def _make_vllm_response(
+    tokens: list[int],
+    token_logprobs: list[float],
+    finish_reason: str = "stop",
+) -> dict[str, Any]:
+    """Build a minimal vLLM completions JSON response."""
+    return {
+        "choices": [
+            {
+                "finish_reason": finish_reason,
+                "logprobs": {
+                    "tokens": [f"token:{token}" for token in tokens],
+                    "token_logprobs": token_logprobs,
+                },
+            }
+        ]
+    }
+
+
 def _make_request(
     input_ids: list[int] | None = None,
     max_new_tokens: int = 20,
@@ -48,6 +70,7 @@ def _make_request(
     greedy: bool = False,
     temperature: float = 1.0,
     metadata: dict[str, Any] | None = None,
+    lora_name: str | None = None,
 ) -> ModelRequest:
     """Create a ModelRequest with sensible defaults for testing."""
     if input_ids is None:
@@ -59,6 +82,8 @@ def _make_request(
         greedy=greedy,
         temperature=temperature,
     )
+    if lora_name is not None:
+        gconfig.lora_name = lora_name
     return ModelRequest(
         input_ids=input_ids,
         gconfig=gconfig,
@@ -68,15 +93,18 @@ def _make_request(
 
 def _make_bridge(
     pause_state: PauseState | None = None,
+    backend: SGLangBridgeBackend | VLLMBridgeBackend | None = None,
     **kwargs: Any,
 ) -> InfBridge:
-    """Create an InfBridge with SGLangBridgeBackend and sensible test defaults."""
+    """Create an InfBridge with a pluggable backend and sensible defaults."""
     if pause_state is None:
         pause_state = PauseState()
+    if backend is None:
+        backend = SGLangBridgeBackend()
     kwargs.setdefault("backend_addr", "http://mock")
     kwargs.setdefault("resubmit_wait", 0.01)
     return InfBridge(
-        backend=SGLangBridgeBackend(),
+        backend=backend,
         pause_state=pause_state,
         **kwargs,
     )
@@ -402,3 +430,234 @@ class TestInfBridge:
 
         assert resp.stop_reason == "length"
         bridge._send_request.assert_called_once()
+
+
+class TestVLLMBridgeBackend:
+    @pytest.mark.asyncio
+    async def test_vllm_text_abort_then_stop_accumulates_tokens(self):
+        """vLLM text completions resubmit by extending prompt + shrinking max_tokens."""
+        calls: list[dict[str, Any]] = []
+
+        async def mock_send(http_req, **kwargs):
+            calls.append(
+                {
+                    "prompt": list(http_req.payload["prompt"]),
+                    "max_tokens": http_req.payload["max_tokens"],
+                }
+            )
+            if len(calls) == 1:
+                return _make_vllm_response([100, 101], [-0.5, -0.3], "abort")
+            return _make_vllm_response([200], [-0.2], "stop")
+
+        bridge = _make_bridge(backend=VLLMBridgeBackend())
+        bridge._send_request = mock_send
+
+        req = _make_request(input_ids=[1, 2, 3], max_new_tokens=5)
+        resp = await bridge.agenerate(req)
+
+        assert calls == [
+            {"prompt": [1, 2, 3], "max_tokens": 5},
+            {"prompt": [1, 2, 3, 100, 101], "max_tokens": 3},
+        ]
+        assert resp.output_tokens == [100, 101, 200]
+        assert resp.output_logprobs == [-0.5, -0.3, -0.2]
+        assert resp.stop_reason == "stop"
+
+    def test_vllm_build_generation_request_for_text(self):
+        """vLLM bridge uses flat completions payload for text requests."""
+        backend = VLLMBridgeBackend()
+        req = _make_request(input_ids=[11, 12], max_new_tokens=7)
+
+        http_req = backend.build_generation_request(req, with_lora=False, version=0)
+
+        assert http_req.endpoint == "/v1/completions"
+        assert http_req.payload["prompt"] == [11, 12]
+        assert http_req.payload["max_tokens"] == 7
+        assert http_req.payload["stream"] is False
+
+    def test_vllm_parse_generation_response_for_chat_format(self):
+        """vLLM bridge parses chat logprobs content format."""
+        backend = VLLMBridgeBackend()
+        response = {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "logprobs": {
+                        "content": [
+                            {"token": "token:42", "logprob": -0.1},
+                            {"token": "token:43", "logprob": -0.2},
+                        ]
+                    },
+                }
+            ]
+        }
+
+        result = backend.parse_generation_response(response)
+
+        assert result.output_tokens == [42, 43]
+        assert result.output_logprobs == [-0.1, -0.2]
+        assert result.stop_reason == "stop"
+
+    # -- 4. max_new_tokens capped by max_tokens ----------------------------------
+
+    @pytest.mark.asyncio
+    async def test_vllm_max_new_tokens_capped_by_max_tokens(self):
+        """vLLM: max_tokens = min(max_tokens - input_len, max_new_tokens)."""
+        calls: list[dict[str, Any]] = []
+
+        async def mock_send(http_req, **kwargs):
+            calls.append(
+                {
+                    "prompt": list(http_req.payload["prompt"]),
+                    "max_tokens": http_req.payload["max_tokens"],
+                }
+            )
+            return _make_vllm_response([100], [-0.5], "stop")
+
+        bridge = _make_bridge(backend=VLLMBridgeBackend())
+        bridge._send_request = mock_send
+
+        # input_len=3, max_tokens=10 -> effective max_new_tokens = min(7, 20) = 7
+        req = _make_request(input_ids=[1, 2, 3], max_new_tokens=20, max_tokens=10)
+        await bridge.agenerate(req)
+
+        assert calls[0]["max_tokens"] == 7
+
+    # -- 5. greedy sets temperature zero -----------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_vllm_greedy_sets_temperature_zero(self):
+        """vLLM: gconfig.greedy=True -> temperature=0.0 in HTTP payload."""
+        calls: list[dict[str, Any]] = []
+
+        async def mock_send(http_req, **kwargs):
+            calls.append({"temperature": http_req.payload["temperature"]})
+            return _make_vllm_response([100], [-0.5], "stop")
+
+        bridge = _make_bridge(backend=VLLMBridgeBackend())
+        bridge._send_request = mock_send
+
+        req = _make_request(input_ids=[1, 2, 3], greedy=True, temperature=0.8)
+        await bridge.agenerate(req)
+
+        assert calls[0]["temperature"] == 0.0
+
+    # -- 6. LoRA name in payload --------------------------------------------------
+
+    def test_vllm_lora_name_in_payload(self):
+        """vLLM: with_lora=True sets payload['model'] to versioned lora name."""
+        backend = VLLMBridgeBackend()
+        req = _make_request(input_ids=[1, 2], lora_name="my_lora")
+
+        http_req = backend.build_generation_request(req, with_lora=True, version=3)
+
+        expected_model = get_versioned_lora_name("my_lora", 3)
+        assert http_req.payload["model"] == expected_model
+
+    # -- 7. Vision request uses chat endpoint ------------------------------------
+
+    def test_vllm_vision_request_uses_chat_endpoint(self):
+        """vLLM: vision_msg_vllm field routes request to /v1/chat/completions."""
+        backend = VLLMBridgeBackend()
+        gconfig = GenerationHyperparameters(
+            n_samples=1,
+            max_new_tokens=20,
+            max_tokens=32768,
+        )
+        vision_msgs = [
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "describe"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "placeholder"},
+                        },
+                    ],
+                }
+            ]
+        ]
+        req = ModelRequest(
+            input_ids=[1, 2, 3],
+            gconfig=gconfig,
+            metadata={},
+            vision_msg_vllm=vision_msgs,
+            image_data=["base64data"],
+        )
+
+        http_req = backend.build_generation_request(req, with_lora=False, version=0)
+
+        assert http_req.endpoint == "/v1/chat/completions"
+        assert "messages" in http_req.payload
+
+    # -- 8. Pause blocks vLLM backend -------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_vllm_pause_blocks_until_resumed(self):
+        """vLLM: while paused, agenerate waits; after resume, it completes."""
+        vllm_resp = _make_vllm_response([100], [-0.5], "stop")
+
+        pause_state = PauseState()
+        bridge = _make_bridge(pause_state=pause_state, backend=VLLMBridgeBackend())
+        bridge._send_request = AsyncMock(return_value=vllm_resp)
+
+        await pause_state.set_paused(True)
+        req = _make_request(input_ids=[1, 2, 3], max_new_tokens=5)
+        task = asyncio.create_task(bridge.agenerate(req))
+        await asyncio.sleep(0.05)  # let it start
+        assert not task.done()  # blocked by pause
+
+        await pause_state.set_paused(False)  # unblock
+        resp = await asyncio.wait_for(task, timeout=2.0)
+        assert resp.stop_reason == "stop"
+        assert resp.output_tokens == [100]
+
+    # -- 9. length stop reason passthrough ---------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_vllm_length_stop_reason_passthrough(self):
+        """vLLM: stop_reason='length' exits the loop normally without resubmit."""
+        vllm_resp = _make_vllm_response([100], [-0.5], "length")
+
+        bridge = _make_bridge(backend=VLLMBridgeBackend())
+        bridge._send_request = AsyncMock(return_value=vllm_resp)
+
+        req = _make_request(input_ids=[1, 2], max_new_tokens=20)
+        resp = await bridge.agenerate(req)
+
+        assert resp.stop_reason == "length"
+        bridge._send_request.assert_called_once()
+
+    # -- 10. output_versions populated correctly ---------------------------------
+
+    @pytest.mark.asyncio
+    async def test_vllm_output_versions_populated(self):
+        """vLLM: output_versions = [version] * len(output_tokens)."""
+        vllm_resp = _make_vllm_response([100, 101, 102], [-0.5, -0.3, -0.2], "stop")
+
+        bridge = _make_bridge(version=42, backend=VLLMBridgeBackend())
+        bridge._send_request = AsyncMock(return_value=vllm_resp)
+
+        req = _make_request(input_ids=[1, 2, 3])
+        resp = await bridge.agenerate(req)
+
+        assert resp.output_versions == [42, 42, 42]
+        assert len(resp.output_versions) == len(resp.output_tokens)
+
+    # -- 11. max retries abort becomes length ------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_vllm_max_retries_abort_becomes_length(self):
+        """vLLM: after max retries, final abort is converted to 'length'."""
+        vllm_resp = _make_vllm_response([10], [-0.1], "abort")
+
+        bridge = _make_bridge(max_resubmit_retries=3, backend=VLLMBridgeBackend())
+        bridge._send_request = AsyncMock(return_value=vllm_resp)
+
+        req = _make_request(input_ids=[1, 2], max_new_tokens=100)
+        resp = await bridge.agenerate(req)
+
+        assert bridge._send_request.call_count == 3
+        assert resp.stop_reason == "length"
+        assert len(resp.output_tokens) == 3  # 1 token per retry

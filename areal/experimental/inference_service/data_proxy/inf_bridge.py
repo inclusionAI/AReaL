@@ -159,7 +159,7 @@ class InfBridge:
         )
 
         # Extract effective max_new_tokens from the payload the backend built
-        ori_max_new_tokens: int = http_req.payload["sampling_params"]["max_new_tokens"]
+        ori_max_new_tokens = self.backend.get_generation_max_new_tokens(http_req)
         if ori_max_new_tokens <= 0:
             raise ValueError(
                 f"max_new_tokens must be > 0, got {ori_max_new_tokens} "
@@ -187,9 +187,12 @@ class InfBridge:
                 break
 
             # Patch the payload for this iteration (extend input, shrink budget)
-            payload = http_req.payload
-            payload["input_ids"] = list(req.input_ids) + accumulated_tokens
-            payload["sampling_params"]["max_new_tokens"] = remaining
+            self.backend.patch_generation_request(
+                http_req,
+                req,
+                accumulated_tokens,
+                remaining,
+            )
 
             data = await self._send_request(http_req)
             result = self.backend.parse_generation_response(data)

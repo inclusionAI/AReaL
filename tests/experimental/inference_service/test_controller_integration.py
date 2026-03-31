@@ -28,7 +28,6 @@ from tests.experimental.inference_service.integration_utils import (
     has_gpu,
 )
 
-pytestmark = pytest.mark.sglang
 SERVER_STARTUP_TIMEOUT = 180  # seconds
 
 
@@ -168,6 +167,7 @@ def gateway_controller(sglang_server, local_scheduler, model_path):
 # =============================================================================
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerLifecycle:
     """Verify controller lifecycle: init starts services, properties set, destroy cleans up."""
@@ -214,6 +214,7 @@ class TestControllerLifecycle:
 # =============================================================================
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerVersioning:
     """Verify version management on the controller."""
@@ -249,6 +250,7 @@ class TestControllerVersioning:
 # =============================================================================
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerPauseResume:
     """Verify pause/resume broadcasts to workers."""
@@ -296,6 +298,7 @@ class TestControllerPauseResume:
 # =============================================================================
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerRolloutBatch:
     """Test rollout_batch through the controller with SimpleAgent workflow."""
@@ -349,6 +352,7 @@ class _FakeDataLoader:
         yield self._items
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerPrepareBatch:
     """Test prepare_batch through the controller with SimpleAgent workflow."""
@@ -388,6 +392,7 @@ class TestControllerPrepareBatch:
 # =============================================================================
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerSubmitWait:
     """Test submit/wait API on the controller."""
@@ -489,6 +494,7 @@ def gateway_controller_full_init(local_scheduler, model_path):
         ctrl.destroy()
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerFullInitialization:
     """Test the full initialization path where the controller launches SGLang itself.
@@ -718,3 +724,138 @@ class TestControllerFullInitialization:
             assert isinstance(local_traj["input_ids"], torch.Tensor)
             assert not local_traj["input_ids"].is_meta
             assert local_traj["input_ids"].ndim == 2
+
+
+# =============================================================================
+# vLLM backend variants
+# =============================================================================
+
+
+@pytest.fixture(scope="module")
+def gateway_controller_full_init_vllm(local_scheduler, model_path):
+    """Controller that launches vLLM via the full init path."""
+    if not has_gpu():
+        pytest.skip("GPU required")
+
+    from areal.api.cli_args import SchedulingSpec
+    from areal.experimental.inference_service.controller.config import (
+        GatewayControllerConfig,
+    )
+    from areal.experimental.inference_service.controller.controller import (
+        GatewayInferenceController,
+    )
+
+    config = GatewayControllerConfig(
+        tokenizer_path=model_path,
+        model_path=model_path,
+        backend="vllm:d1",
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=1, cmd="python -m areal.experimental.inference_service.guard"
+            ),
+        ),
+        admin_api_key="test-admin",
+        consumer_batch_size=8,
+        max_head_offpolicyness=1024,
+        setup_timeout=300.0,
+    )
+
+    server_args = {
+        "gpu_memory_utilization": 0.3,
+    }
+
+    ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
+    ctrl.initialize(
+        role="rollout-vllm",
+        server_args=server_args,
+    )
+
+    try:
+        yield ctrl
+    finally:
+        ctrl.destroy()
+
+
+@pytest.mark.vllm
+@pytest.mark.skipif(not has_gpu(), reason="GPU required")
+class TestControllerFullInitVLLM:
+    def test_chat_completion_via_gateway_vllm(self, gateway_controller_full_init_vllm):
+        """Full e2e: controller init (vLLM) → start_session → chat → end."""
+        ctrl = gateway_controller_full_init_vllm
+        gw = ctrl._gateway_addr
+        admin_key = "test-admin"
+
+        resp = httpx.post(
+            f"{gw}/grant_capacity",
+            headers={"Authorization": f"Bearer {admin_key}"},
+            timeout=10.0,
+        )
+        assert resp.status_code == 200, resp.text
+
+        resp = httpx.post(
+            f"{gw}/rl/start_session",
+            json={"task_id": "vllm-ctrl-chat"},
+            headers={"Authorization": f"Bearer {admin_key}"},
+            timeout=30.0,
+        )
+        assert resp.status_code == 201, resp.text
+        session = resp.json()
+        session_api_key = session["api_key"]
+
+        resp = httpx.post(
+            f"{gw}/chat/completions",
+            json={
+                "model": "vllm",
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "max_completion_tokens": 64,
+                "temperature": 0.0,
+                "stream": False,
+            },
+            headers={"Authorization": f"Bearer {session_api_key}"},
+            timeout=60.0,
+        )
+        assert resp.status_code == 200, resp.text
+        completion = resp.json()
+        assert completion["object"] == "chat.completion"
+        assert len(completion["choices"]) == 1
+        choice = completion["choices"][0]
+        assert choice["message"]["role"] == "assistant"
+        assert len(choice["message"]["content"]) > 0
+        assert choice["finish_reason"] in ("stop", "length")
+        assert completion["usage"]["completion_tokens"] > 0
+
+        resp = httpx.post(
+            f"{gw}/rl/end_session",
+            headers={"Authorization": f"Bearer {session_api_key}"},
+            timeout=10.0,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["interaction_count"] == 1
+
+    def test_rollout_batch_with_simple_agent_vllm(
+        self, gateway_controller_full_init_vllm
+    ):
+        """rollout_batch with SimpleAgent via vLLM backend."""
+        ctrl = gateway_controller_full_init_vllm
+        data = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            }
+        ]
+
+        result = ctrl.rollout_batch(
+            data=data,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+        )
+
+        assert result is not None
+        assert isinstance(result, list)
+        assert len(result) == 1
+        traj = result[0]
+        assert isinstance(traj, dict)
+        assert "input_ids" in traj
+        from areal.infra.rpc.rtensor import RTensor
+
+        assert isinstance(traj["input_ids"], RTensor)
+        assert traj["input_ids"].ndim == 2
