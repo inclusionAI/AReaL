@@ -359,6 +359,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.7,
         help="Temperature for diversification LLM (use 1.0 for kimi-k2.5)",
     )
+    p.add_argument(
+        "--requests-per-minute",
+        type=int,
+        default=60,
+        help="Rate limit for diversification API (default: 60, 0 = no limit)",
+    )
 
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument(
@@ -438,6 +444,7 @@ def main() -> None:
                 api_key=api_key,
                 model=args.model,
                 temperature=args.temperature,
+                requests_per_minute=args.requests_per_minute,
             )
             logger.info("Diversification client initialised: model=%s", args.model)
         else:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -171,6 +172,7 @@ class DiversificationClient:
         model: str,
         max_retries: int = 3,
         temperature: float = 0.7,
+        requests_per_minute: int = 0,
     ):
         from openai import OpenAI  # lazy: allow --skip-diversify without openai
 
@@ -178,6 +180,15 @@ class DiversificationClient:
         self.model = model
         self.max_retries = max_retries
         self.temperature = temperature
+
+        # Rate limiting: 0 means no limit
+        self._rate_limit = requests_per_minute
+        if requests_per_minute > 0:
+            self._min_interval = 60.0 / requests_per_minute
+        else:
+            self._min_interval = 0.0
+        self._last_request_time = 0.0
+        self._rate_lock = threading.Lock()
 
     def _build_prompt(self, block: ThinkBlock) -> str:
         max_len = len(block.text) + 100
@@ -206,11 +217,23 @@ class DiversificationClient:
                 return False
         return True
 
+    def _wait_for_rate_limit(self) -> None:
+        """Block until enough time has passed since the last request."""
+        if self._min_interval <= 0:
+            return
+        with self._rate_lock:
+            now = time.monotonic()
+            elapsed = now - self._last_request_time
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_request_time = time.monotonic()
+
     def diversify_block(self, block: ThinkBlock) -> str:
         prompt = self._build_prompt(block)
 
         for attempt in range(self.max_retries):
             try:
+                self._wait_for_rate_limit()
                 resp = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
