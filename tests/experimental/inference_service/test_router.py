@@ -293,6 +293,36 @@ class TestRouterEndpoints:
         assert data["sessions"] == 0
         assert data["strategy"] == "round_robin"
 
+    @pytest.mark.asyncio
+    async def test_hitl_route_binds_first_use(self, client):
+        await client.post(
+            "/register",
+            json={"worker_addr": WORKER_1},
+            headers=admin_headers(),
+        )
+
+        resp = await client.post(
+            "/route",
+            json={
+                "api_key": ADMIN_KEY,
+                "path": "/chat/completions",
+            },
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["worker_addr"] == WORKER_1
+
+        pinned = await client.post(
+            "/route",
+            json={
+                "api_key": ADMIN_KEY,
+                "path": "/chat/completions",
+            },
+            headers=admin_headers(),
+        )
+        assert pinned.status_code == 200
+        assert pinned.json()["worker_addr"] == WORKER_1
+
     # ----- Worker registration -----
 
     @pytest.mark.asyncio
@@ -367,8 +397,7 @@ class TestRouterEndpoints:
     # ----- /route — admin key -----
 
     @pytest.mark.asyncio
-    async def test_route_admin_key_round_robin(self, client):
-        # Register two workers
+    async def test_route_admin_key_sticky_hitl(self, client):
         await client.post(
             "/register",
             json={"worker_addr": WORKER_1},
@@ -380,7 +409,6 @@ class TestRouterEndpoints:
             headers=admin_headers(),
         )
 
-        # Route with admin key — should round-robin
         resp1 = await client.post(
             "/route",
             json={"api_key": ADMIN_KEY, "path": "/generate"},
@@ -397,8 +425,7 @@ class TestRouterEndpoints:
         assert resp2.status_code == 200
         addr2 = resp2.json()["worker_addr"]
 
-        # Two calls should hit different workers (round-robin)
-        assert {addr1, addr2} == {WORKER_1, WORKER_2}
+        assert addr1 == addr2
 
     # ----- /route — session key -----
 
@@ -584,6 +611,43 @@ class TestRouterEndpoints:
         route_resp = await client.post(
             "/route",
             json={"api_key": "sess-key-1", "path": "/chat/completions"},
+            headers=admin_headers(),
+        )
+        assert route_resp.status_code == 200
+        assert route_resp.json()["worker_addr"] == WORKER_1
+
+    @pytest.mark.asyncio
+    async def test_remove_session_keeps_hitl_persistent_binding(self, client):
+        await client.post(
+            "/register",
+            json={"worker_addr": WORKER_1},
+            headers=admin_headers(),
+        )
+
+        await client.post(
+            "/route",
+            json={
+                "api_key": ADMIN_KEY,
+                "path": "/chat/completions",
+            },
+            headers=admin_headers(),
+        )
+
+        resp = await client.post(
+            "/remove_session",
+            json={"session_id": "__hitl__"},
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["removed"] is False
+        assert resp.json()["persistent"] is True
+
+        route_resp = await client.post(
+            "/route",
+            json={
+                "api_key": ADMIN_KEY,
+                "path": "/chat/completions",
+            },
             headers=admin_headers(),
         )
         assert route_resp.status_code == 200

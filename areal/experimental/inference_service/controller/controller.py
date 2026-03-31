@@ -8,14 +8,18 @@ server processes are forked through RPCGuard (a lightweight process manager).
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
+import threading
 import time
 import traceback
 import uuid
-from collections.abc import AsyncGenerator
+from collections import deque
+from collections.abc import AsyncGenerator, Callable
+from dataclasses import dataclass
 from threading import Lock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
@@ -30,6 +34,13 @@ from areal.utils import logging
 from areal.utils.network import format_hostport
 
 logger = logging.getLogger("GatewayInferenceController")
+
+_MAX_COMPLETED_ONLINE_RESULTS = 1024
+
+
+@dataclass
+class _OnlineWaiter:
+    future: asyncio.Future
 
 
 class GatewayInferenceController:
@@ -87,6 +98,20 @@ class GatewayInferenceController:
         # Staleness manager (created in initialize)
         self._staleness_manager = None
 
+        # Online callback server / waiter state
+        self._online_waiters: deque[_OnlineWaiter] = deque()
+        self._online_waiters_lock = Lock()
+        self._completed_online_results: deque[dict[str, Any]] = deque(
+            maxlen=_MAX_COMPLETED_ONLINE_RESULTS
+        )
+        self._callback_app = None
+        self._callback_server = None
+        self._callback_server_thread: threading.Thread | None = None
+        self._callback_port: int | None = None
+        self._callback_host: str | None = None
+        self._callback_loop: asyncio.AbstractEventLoop | None = None
+        self._callback_loop_ready = threading.Event()
+
         # Track which service roles were created for cleanup
         self._service_roles: list[str] = []
 
@@ -112,6 +137,7 @@ class GatewayInferenceController:
         from areal.infra.utils.concurrent import run_async_task
 
         self._worker_role = role
+        self._start_online_callback_server()
         run_async_task(
             self._async_initialize,
             server_args,
@@ -124,11 +150,13 @@ class GatewayInferenceController:
         self._register_data_proxies_in_router()
 
         # Create WorkflowExecutor directly (no intermediate engine)
+        from areal.api.cli_args import InferenceEngineConfig
+        from areal.infra.remote_inf_engine import RemoteInfEngine
         from areal.infra.workflow_executor import WorkflowExecutor
 
         self._workflow_executor = WorkflowExecutor(
-            config=self.config,
-            inference_engine=self,
+            config=cast(InferenceEngineConfig, self.config),
+            inference_engine=cast(RemoteInfEngine, self),
         )
         self._workflow_executor.initialize()
 
@@ -175,6 +203,7 @@ class GatewayInferenceController:
         alloc = self.rollout_alloc
         dp_size = alloc.parallel.dp_size
         cfg = self.config
+        admin_api_key = self.config.openai.admin_api_key
 
         inf_backend = alloc.backend
 
@@ -228,7 +257,7 @@ class GatewayInferenceController:
             tp_size = alloc.parallel.tp_size
 
             # Build backend-specific launch command builder
-            if inf_backend in ("sglang", None):
+            if inf_backend == "sglang":
                 from areal.api.cli_args import SGLangConfig
 
                 sglang_config = SGLangConfig(
@@ -357,7 +386,7 @@ class GatewayInferenceController:
             "-m",
             "areal.experimental.inference_service.router",
             "--admin-api-key",
-            cfg.admin_api_key,
+            admin_api_key,
             "--routing-strategy",
             cfg.routing_strategy,
             "--poll-interval",
@@ -386,11 +415,15 @@ class GatewayInferenceController:
             "--tokenizer-path",
             cfg.tokenizer_path,
             "--admin-api-key",
-            cfg.admin_api_key,
+            admin_api_key,
             "--log-level",
             cfg.log_level,
             "--request-timeout",
             str(cfg.request_timeout),
+            "--set-reward-finish-timeout",
+            str(cfg.set_reward_finish_timeout),
+            "--callback-server-addr",
+            f"http://{self.callback_addr}",
         ]
 
         for rank, worker in enumerate(inf_workers):
@@ -424,7 +457,7 @@ class GatewayInferenceController:
             "-m",
             "areal.experimental.inference_service.gateway",
             "--admin-api-key",
-            cfg.admin_api_key,
+            admin_api_key,
             "--router-addr",
             self._router_addr,
             "--forward-timeout",
@@ -471,7 +504,7 @@ class GatewayInferenceController:
             resp = requests.post(
                 f"{self._router_addr}/register",
                 json={"worker_addr": data_proxy_addr},
-                headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+                headers={"Authorization": f"Bearer {self.config.openai.admin_api_key}"},
                 timeout=5,
             )
             resp.raise_for_status()
@@ -484,10 +517,157 @@ class GatewayInferenceController:
                 worker_id,
             )
 
+    def _start_online_callback_server(self) -> None:
+        """Start callback server used by the router to deliver ready trajectories."""
+        if self._callback_server is not None:
+            return
+
+        from flask import Flask, jsonify, request
+        from werkzeug.serving import make_server
+
+        from areal.utils.network import find_free_ports, gethostip
+
+        app = Flask("online_rollout_callback")
+
+        @app.route("/callback/online_ready", methods=["POST"])
+        def online_ready():
+            if request.headers.get("Authorization") != (
+                f"Bearer {self.config.openai.admin_api_key}"
+            ):
+                return jsonify({"error": "Invalid admin API key"}), 403
+            payload = request.get_json() or {}
+            try:
+                if self._callback_loop is None:
+                    raise RuntimeError("Callback loop not ready")
+                result = self._callback_loop.run_until_complete(
+                    self._handle_online_ready_callback(payload)
+                )
+                return jsonify(result)
+            except RuntimeError as exc:
+                return jsonify({"error": str(exc)}), 425
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("Online callback handler error: %s", exc, exc_info=True)
+                return jsonify({"error": str(exc)}), 500
+
+        self._callback_port = int(find_free_ports(1)[0])
+        self._callback_host = gethostip()
+        self._callback_app = app
+        assert self._callback_host is not None
+        assert self._callback_port is not None
+        self._callback_server = make_server(
+            self._callback_host,
+            self._callback_port,
+            app,
+            threaded=False,
+        )
+        self._callback_server.RequestHandlerClass.log_request = (  # type: ignore[attr-defined]
+            lambda self, *args, **kwargs: None
+        )
+
+        def serve_forever():
+            self._callback_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._callback_loop)
+            self._callback_loop_ready.set()
+            logger.info(
+                "Online callback server started on %s",
+                format_hostport(self._callback_host, self._callback_port),
+            )
+            assert self._callback_server is not None
+            self._callback_server.serve_forever()
+
+        self._callback_server_thread = threading.Thread(
+            target=serve_forever, daemon=True
+        )
+        self._callback_server_thread.start()
+        self._callback_loop_ready.wait()
+
+    def _stop_online_callback_server(self) -> None:
+        if self._callback_server is not None:
+            logger.info("Stopping online callback server...")
+            self._callback_server.shutdown()
+            if self._callback_server_thread is not None:
+                self._callback_server_thread.join(timeout=5.0)
+            if self._callback_loop is not None:
+                self._callback_loop.close()
+            self._callback_server = None
+            self._callback_app = None
+            self._callback_server_thread = None
+            self._callback_port = None
+            self._callback_host = None
+            self._callback_loop = None
+            self._callback_loop_ready.clear()
+
+    @property
+    def callback_addr(self) -> str:
+        if self._callback_host is None or self._callback_port is None:
+            raise RuntimeError("Callback server not started")
+        return format_hostport(self._callback_host, self._callback_port)
+
+    def _pop_online_waiter(self) -> _OnlineWaiter | None:
+        with self._online_waiters_lock:
+            while self._online_waiters:
+                waiter = self._online_waiters.popleft()
+                if not waiter.future.cancelled():
+                    return waiter
+        return None
+
+    def _remove_online_waiter(self, future: asyncio.Future) -> None:
+        with self._online_waiters_lock:
+            self._online_waiters = deque(
+                waiter for waiter in self._online_waiters if waiter.future is not future
+            )
+
+    async def wait_for_online_trajectory(
+        self, timeout: float | None = None
+    ) -> dict[str, Any]:
+        future = asyncio.get_running_loop().create_future()
+        with self._online_waiters_lock:
+            if self._completed_online_results:
+                return self._completed_online_results.popleft()
+            self._online_waiters.append(_OnlineWaiter(future=future))
+        try:
+            if timeout is None:
+                return await future
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._remove_online_waiter(future)
+
+    async def _handle_online_ready_callback(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        session_id = payload.get("session_id")
+        trajectory_id = payload.get("trajectory_id")
+        if not session_id or trajectory_id is None:
+            raise RuntimeError("Missing session_id or trajectory_id")
+
+        export_request = {
+            "session_id": session_id,
+            "trajectory_id": int(trajectory_id),
+        }
+
+        waiter = self._pop_online_waiter()
+        if waiter is None:
+            with self._online_waiters_lock:
+                self._completed_online_results.append(export_request)
+        elif waiter.future.cancelled() or waiter.future.done():
+            with self._online_waiters_lock:
+                self._completed_online_results.append(export_request)
+        else:
+            waiter.future.get_loop().call_soon_threadsafe(
+                waiter.future.set_result, export_request
+            )
+        return {
+            "status": "ok",
+            "session_id": session_id,
+            "trajectory_id": int(trajectory_id),
+        }
+
     # -- Destroy -----------------------------------------------------------
 
     def destroy(self) -> None:
         """Tear down all services and release resources."""
+        self._stop_online_callback_server()
+
         # Destroy workflow executor
         if self._workflow_executor is not None:
             self._workflow_executor.destroy()
@@ -524,6 +704,12 @@ class GatewayInferenceController:
         self._service_roles.clear()
         self.workers.clear()
         self.server_infos.clear()
+        with self._online_waiters_lock:
+            for waiter in self._online_waiters:
+                if not waiter.future.done():
+                    waiter.future.cancel()
+            self._online_waiters.clear()
+            self._completed_online_results.clear()
         self._inf_addrs.clear()
         self._data_proxy_addrs.clear()
         self._worker_ids.clear()
@@ -558,6 +744,10 @@ class GatewayInferenceController:
     # -- Capacity ----------------------------------------------------------
 
     def get_capacity(self) -> int:
+        if self.staleness_manager is None:
+            raise RuntimeError(
+                "GatewayInferenceController.initialize() must be called first"
+            )
         return self.staleness_manager.get_capacity()
 
     # -- Submit / Wait / Batch ---------------------------------------------
@@ -571,16 +761,11 @@ class GatewayInferenceController:
         task_id: int | None = None,
         is_eval: bool = False,
         group_size: int = 1,
-        proxy_addr: str | None = None,
     ) -> int:
-        if proxy_addr is None:
-            proxy_addr = self._gateway_addr
         resolved_workflow = self._resolve_workflow(
             workflow,
             workflow_kwargs,
             group_size,
-            proxy_addr=proxy_addr,
-            controller=self,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         return self.workflow_executor.submit(
@@ -601,6 +786,18 @@ class GatewayInferenceController:
             count, timeout=timeout, raise_timeout=raise_timeout
         )
 
+    def wait_for_task(
+        self,
+        task_id: int,
+        timeout: float | None = None,
+        raise_timeout: bool = True,
+    ) -> dict[str, Any] | None:
+        return self.workflow_executor.wait_for_task(
+            task_id,
+            timeout=timeout,
+            raise_timeout=raise_timeout,
+        )
+
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
@@ -613,13 +810,10 @@ class GatewayInferenceController:
             raise RuntimeError(
                 "GatewayInferenceController.initialize() must be called first"
             )
-        proxy_addr = self._gateway_addr
         resolved_workflow = self._resolve_workflow(
             workflow,
             workflow_kwargs,
             group_size,
-            proxy_addr=proxy_addr,
-            controller=self,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         for item in data:
@@ -645,13 +839,10 @@ class GatewayInferenceController:
             raise RuntimeError(
                 "GatewayInferenceController.initialize() must be called first"
             )
-        proxy_addr = self._gateway_addr
         resolved_workflow = self._resolve_workflow(
             workflow,
             workflow_kwargs,
             group_size,
-            proxy_addr=proxy_addr,
-            controller=self,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         results = self.workflow_executor.prepare_batch(
@@ -677,7 +868,7 @@ class GatewayInferenceController:
             OpenAI-style chat messages.
         session_api_key : str | None
             If provided, authenticate as this session; otherwise use the
-            admin API key from the controller config.
+            admin API key from the OpenAI proxy config.
         **kwargs
             Optional overrides: ``temperature``, ``top_p``,
             ``max_completion_tokens``, ``stream``.
@@ -706,7 +897,7 @@ class GatewayInferenceController:
         api_key = (
             session_api_key
             if session_api_key is not None
-            else self.config.admin_api_key
+            else self.config.openai.admin_api_key
         )
         url = f"{self._gateway_addr}/chat/completions"
         headers = {
@@ -858,126 +1049,105 @@ class GatewayInferenceController:
 
     # -- Workflow resolution helpers ----------------------------------------
 
-    def _wrap_openai_agent(self, agent: Any, proxy_addr: str):
-        """Wrap an agent workflow in OpenAIProxyWorkflow (HTTP mode only).
+    def _wrap_agent(self, agent: Any):
+        from areal.experimental.inference_service.controller.workflow import (
+            InferenceServiceWorkflow,
+        )
 
-        Parameters
-        ----------
-        agent : Any | None
-            The agent workflow to wrap (any class with async run() method).
-            ``None`` is valid when ``mode='online'``.
-        proxy_addr : str
-            HTTP address of the proxy server (required)
-        """
-        from areal.experimental.openai import OpenAIProxyWorkflow
+        if not self._gateway_addr:
+            raise ValueError(
+                "Gateway address is unavailable; initialize the controller first"
+            )
 
         openai_cfg = self.config.openai
-        mode = getattr(openai_cfg, "mode", "inline")
-        admin_api_key = self.config.admin_api_key
-        turn_discount = getattr(openai_cfg, "turn_discount", 1.0)
-        export_style = getattr(openai_cfg, "export_style", "individual")
-        subproc_max_workers = getattr(openai_cfg, "subproc_max_workers", 4)
+        admin_api_key = openai_cfg.admin_api_key
+        turn_discount = openai_cfg.turn_discount
+        export_style = openai_cfg.export_style
 
-        return OpenAIProxyWorkflow(
-            mode=mode,
+        return InferenceServiceWorkflow(
+            controller=self,
             agent=agent,
-            proxy_addr=proxy_addr,
+            gateway_addr=self._gateway_addr,
             admin_api_key=admin_api_key,
             discount=turn_discount,
             export_style=export_style,
-            subproc_max_workers=subproc_max_workers,
-            proxy_gateway_addr=self._gateway_addr,
         )
 
-    @staticmethod
     def _resolve_workflow(
+        self,
         workflow,
         workflow_kwargs=None,
         group_size=1,
-        proxy_addr=None,
-        controller=None,
     ):
-        """Resolve a WorkflowLike to a RolloutWorkflow instance.
-
-        Handles both RolloutWorkflow types (cases 1-3) and agent-like
-        workflows that need wrapping in OpenAIProxyWorkflow (cases 4-5).
-
-        Parameters
-        ----------
-        workflow : WorkflowLike
-            A RolloutWorkflow instance, class, import path string,
-            agent class, or agent instance.
-        workflow_kwargs : dict, optional
-            Keyword arguments passed to the workflow/agent constructor.
-        group_size : int
-            Number of times to run the workflow per input.
-        proxy_addr : str, optional
-            HTTP address of the proxy server, required for agent workflows.
-        controller : GatewayInferenceController, optional
-            The controller instance, required for agent workflows (_wrap_openai_agent).
-        """
         from areal.api.workflow_api import RolloutWorkflow
         from areal.utils.dynamic_import import import_from_string
 
         if workflow is None:
-            raise ValueError("workflow must be specified")
+            from areal.experimental.inference_service.controller.workflow import (
+                InferenceServiceWorkflow,
+            )
 
-        resolved: RolloutWorkflow
-
-        # 1. Already a RolloutWorkflow instance
-        if isinstance(workflow, RolloutWorkflow):
-            resolved = workflow
-
-        # 2. RolloutWorkflow class
-        elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
-            if workflow_kwargs is None:
-                raise ValueError("workflow_kwargs required when workflow is a class")
-            resolved = workflow(**workflow_kwargs)
-
-        # 3. String import path
-        elif isinstance(workflow, str):
-            imported = import_from_string(workflow)
-            if isinstance(imported, type) and issubclass(imported, RolloutWorkflow):
-                if workflow_kwargs is None:
-                    raise ValueError(
-                        "workflow_kwargs required when workflow is a class"
-                    )
-                resolved = imported(**workflow_kwargs)
-            elif isinstance(imported, RolloutWorkflow):
-                resolved = imported
-            else:
-                # Treat as agent-like workflow (needs proxy wrapping)
-                if proxy_addr is None or controller is None:
-                    raise ValueError(
-                        f"proxy_addr and controller are required for agent workflows "
-                        f"(non-RolloutWorkflow). Got workflow={workflow!r}"
-                    )
-                if isinstance(imported, type):
-                    agent = imported(**(workflow_kwargs or {}))
-                else:
-                    agent = imported
-                resolved = controller._wrap_openai_agent(agent, proxy_addr=proxy_addr)
-
-        # 4. Callable class (agent-like workflow)
-        elif isinstance(workflow, type):
-            if proxy_addr is None or controller is None:
-                raise ValueError(
-                    "proxy_addr and controller are required for agent workflows "
-                    "(non-RolloutWorkflow). "
-                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
-                )
-            agent = workflow(**(workflow_kwargs or {}))
-            resolved = controller._wrap_openai_agent(agent, proxy_addr=proxy_addr)
-
-        # 5. Instance of agent-like workflow
+            online_kwargs = dict(workflow_kwargs or {})
+            online_kwargs.pop("controller", None)
+            resolved = InferenceServiceWorkflow(
+                controller=self,
+                agent=None,
+                gateway_addr=self._gateway_addr,
+                admin_api_key=self.config.openai.admin_api_key,
+                **online_kwargs,
+            )
         else:
-            if proxy_addr is None or controller is None:
-                raise ValueError(
-                    "proxy_addr and controller are required for agent workflows "
-                    "(non-RolloutWorkflow). "
-                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+            resolved: RolloutWorkflow
+
+            if isinstance(workflow, RolloutWorkflow):
+                raise TypeError(
+                    "GatewayInferenceController only accepts agent workflows with a "
+                    "run() method or None for online mode; direct RolloutWorkflow "
+                    "instances are not supported"
                 )
-            resolved = controller._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
+
+            elif isinstance(workflow, str):
+                imported = import_from_string(workflow)
+                if isinstance(imported, type) and issubclass(imported, RolloutWorkflow):
+                    raise TypeError(
+                        "GatewayInferenceController only accepts agent workflows with a "
+                        "run() method or None for online mode; direct RolloutWorkflow "
+                        "classes are not supported"
+                    )
+                elif isinstance(imported, RolloutWorkflow):
+                    raise TypeError(
+                        "GatewayInferenceController only accepts agent workflows with a "
+                        "run() method or None for online mode; direct RolloutWorkflow "
+                        "instances are not supported"
+                    )
+                else:
+                    if isinstance(imported, type):
+                        agent = imported(**(workflow_kwargs or {}))
+                    else:
+                        agent = imported
+                    if not callable(getattr(agent, "run", None)):
+                        raise TypeError(
+                            f"workflow must resolve to an agent with a callable run() "
+                            f"method. Got workflow={workflow!r}"
+                        )
+                    resolved = self._wrap_agent(agent)
+
+            elif isinstance(workflow, type):
+                agent = workflow(**(workflow_kwargs or {}))
+                if not callable(getattr(agent, "run", None)):
+                    raise TypeError(
+                        f"workflow must be an agent with a callable run() method. "
+                        f"Got workflow={workflow!r}"
+                    )
+                resolved = self._wrap_agent(agent)
+
+            else:
+                if not callable(getattr(workflow, "run", None)):
+                    raise TypeError(
+                        f"workflow must be an agent with a callable run() method. "
+                        f"Got workflow={workflow!r}"
+                    )
+                resolved = self._wrap_agent(workflow)
 
         if group_size > 1:
             from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
@@ -989,9 +1159,13 @@ class GatewayInferenceController:
         return resolved
 
     @staticmethod
-    def _resolve_should_accept_fn(should_accept_fn):
+    def _resolve_should_accept_fn(
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None,
+    ) -> Callable[[dict[str, Any]], bool] | None:
         """Resolve should_accept_fn to a callable or None."""
-        if should_accept_fn is None or callable(should_accept_fn):
+        if should_accept_fn is None:
+            return None
+        if callable(should_accept_fn):
             return should_accept_fn
         if isinstance(should_accept_fn, str):
             from areal.utils.dynamic_import import import_from_string
@@ -999,7 +1173,7 @@ class GatewayInferenceController:
             func = import_from_string(should_accept_fn)
             if not callable(func):
                 raise TypeError(f"Imported {should_accept_fn!r} is not callable")
-            return func
+            return cast(Callable[[dict[str, Any]], bool], func)
         raise TypeError(f"Invalid should_accept_fn type: {type(should_accept_fn)}")
 
     # -- Internal HTTP helpers ---------------------------------------------
@@ -1090,7 +1264,7 @@ class GatewayInferenceController:
             resp = requests.post(
                 url,
                 json=payload,
-                headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+                headers={"Authorization": f"Bearer {self.config.openai.admin_api_key}"},
                 timeout=self.config.request_timeout,
             )
             if resp.status_code >= 400:
@@ -1117,7 +1291,9 @@ class GatewayInferenceController:
                 resp = await client.post(
                     url,
                     json=payload,
-                    headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+                    headers={
+                        "Authorization": f"Bearer {self.config.openai.admin_api_key}"
+                    },
                 )
                 if resp.status_code >= 400:
                     raise RuntimeError(

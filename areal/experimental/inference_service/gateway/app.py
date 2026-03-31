@@ -168,36 +168,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
         )
 
     # =========================================================================
-    # POST /rl/end_session — session key ONLY
-    # =========================================================================
-
-    @app.post("/rl/end_session")
-    async def end_session(request: Request):
-        token = extract_bearer_token(request)
-        try:
-            worker_addr = await query_router(
-                config.router_addr,
-                token,
-                "/rl/end_session",
-                config.router_timeout,
-                admin_api_key=config.admin_api_key,
-            )
-        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
-            return _router_error_response(exc)
-
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
-        resp = await forward_request(
-            f"{worker_addr}/rl/end_session", body, headers, config.forward_timeout
-        )
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type=resp.headers.get("content-type"),
-        )
-
-    # =========================================================================
-    # POST /rl/set_reward — session key ONLY
+    # POST /rl/set_reward — session key or admin key (HITL)
     # =========================================================================
 
     @app.post("/rl/set_reward")
@@ -219,6 +190,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
         resp = await forward_request(
             f"{worker_addr}/rl/set_reward", body, headers, config.forward_timeout
         )
+
         return Response(
             content=resp.content,
             status_code=resp.status_code,
@@ -314,8 +286,9 @@ def create_app(config: GatewayConfig) -> FastAPI:
             config.forward_timeout,
         )
 
-        # Clean up session from router registry after successful export
-        # to prevent unbounded memory growth (best-effort).
+        # Always ask the router to clean up after successful export.
+        # The router itself distinguishes offline one-shot sessions from
+        # persistent online sessions and will keep online bindings intact.
         if resp.status_code == 200:
             await revoke_session_in_router(
                 config.router_addr,

@@ -187,7 +187,10 @@ def create_app(config: RouterConfig) -> FastAPI:
                 worker_addr,
                 revoked,
             )
-            return {"status": "ok", "sessions_revoked": revoked}
+            return {
+                "status": "ok",
+                "sessions_revoked": revoked,
+            }
         elif body.worker_addr is not None:
             await worker_registry.deregister(body.worker_addr)
             revoked = await session_registry.revoke_by_worker(body.worker_addr)
@@ -196,7 +199,10 @@ def create_app(config: RouterConfig) -> FastAPI:
                 body.worker_addr,
                 revoked,
             )
-            return {"status": "ok", "sessions_revoked": revoked}
+            return {
+                "status": "ok",
+                "sessions_revoked": revoked,
+            }
         else:
             raise HTTPException(
                 status_code=422,
@@ -223,17 +229,7 @@ def create_app(config: RouterConfig) -> FastAPI:
                 detail="Either 'api_key' or 'session_id' must be provided",
             )
 
-        # 1. Admin key → pick healthy worker via strategy
-        if hmac.compare_digest(body.api_key, config.admin_api_key):
-            healthy = await worker_registry.get_healthy_workers()
-            if not healthy:
-                raise HTTPException(status_code=503, detail="No healthy workers")
-            worker = strategy.pick(healthy)
-            if worker is None:
-                raise HTTPException(status_code=503, detail="No healthy workers")
-            return {"worker_addr": worker.worker_addr}
-
-        # 2. Session key → pinned worker
+        # 1. Session key → pinned worker (batch sessions)
         pinned = await session_registry.lookup_by_key(body.api_key)
         if pinned is not None:
             # Check if pinned worker is healthy
@@ -243,6 +239,21 @@ def create_app(config: RouterConfig) -> FastAPI:
             if w is None or not w.is_healthy:
                 raise HTTPException(status_code=503, detail="Pinned worker unhealthy")
             return {"worker_addr": pinned}
+
+        # 2. Admin key → HITL routing (sticky session)
+        if hmac.compare_digest(body.api_key, config.admin_api_key):
+            healthy = await worker_registry.get_healthy_workers()
+            if not healthy:
+                raise HTTPException(status_code=503, detail="No healthy workers")
+            worker = strategy.pick(healthy)
+            if worker is None:
+                raise HTTPException(status_code=503, detail="No healthy workers")
+            await session_registry.register_session(
+                body.api_key,
+                "__hitl__",
+                worker.worker_addr,
+            )
+            return {"worker_addr": worker.worker_addr}
 
         # 3. Unknown key
         raise HTTPException(status_code=404, detail="Unknown API key")
@@ -283,8 +294,20 @@ def create_app(config: RouterConfig) -> FastAPI:
         prevent unbounded memory growth in the session registry.
         """
         _require_admin_key(request, config.admin_api_key)
-        removed = await session_registry.revoke_session(body.session_id)
-        return {"status": "ok", "removed": removed}
+        session_key = await session_registry.session_key_for_id(body.session_id)
+        is_hitl_persistent = session_key is not None and hmac.compare_digest(
+            session_key, config.admin_api_key
+        )
+        removed = (
+            False
+            if is_hitl_persistent
+            else await session_registry.revoke_session(body.session_id)
+        )
+        return {
+            "status": "ok",
+            "removed": removed,
+            "persistent": is_hitl_persistent,
+        }
 
     # =========================================================================
     # Worker listing (admin key required)

@@ -227,7 +227,7 @@ class TestChatCompletionsIntegration:
 
     @pytest.mark.asyncio
     async def test_non_streaming_chat_completion(self, sglang_server, model_path):
-        """Full lifecycle: start_session → POST /chat/completions → end_session."""
+        """Full lifecycle: start_session → POST /chat/completions → set_reward(finish=True)."""
         app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
@@ -283,15 +283,19 @@ class TestChatCompletionsIntegration:
                 usage["prompt_tokens"] + usage["completion_tokens"]
             )
 
-            # --- end session ---
+            # --- finish session via set_reward ---
             resp = await client.post(
-                "/rl/end_session",
+                "/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
                 timeout=10.0,
             )
             assert resp.status_code == 200, resp.text
             end_data = resp.json()
             assert end_data["interaction_count"] == 1
+            assert end_data["ready_transition"] is True
 
     @pytest.mark.asyncio
     async def test_streaming_chat_completion(self, sglang_server, model_path):
@@ -359,9 +363,12 @@ class TestChatCompletionsIntegration:
             ids = {c["id"] for c in chunks}
             assert len(ids) == 1
 
-            # --- end session ---
+            # --- finish session via set_reward ---
             resp = await client.post(
-                "/rl/end_session",
+                "/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
                 timeout=10.0,
             )
@@ -428,18 +435,22 @@ class TestChatCompletionsIntegration:
             # Both completions should have different IDs
             assert turn1["id"] != turn2["id"]
 
-            # --- end session ---
+            # --- finish session via set_reward ---
             resp = await client.post(
-                "/rl/end_session",
+                "/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
                 timeout=10.0,
             )
             assert resp.status_code == 200, resp.text
             assert resp.json()["interaction_count"] == 2
+            assert resp.json()["ready_transition"] is True
 
     @pytest.mark.asyncio
     async def test_set_reward_and_export(self, sglang_server, model_path):
-        """Full lifecycle: start → chat → set_reward → end → export_trajectories."""
+        """Full lifecycle: start → chat → set_reward(finish=True) → export_trajectories."""
         app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
@@ -472,24 +483,19 @@ class TestChatCompletionsIntegration:
             )
             assert resp.status_code == 200, resp.text
 
-            # --- set reward ---
+            # --- set reward and finish session ---
             resp = await client.post(
                 "/rl/set_reward",
-                json={"reward": 1.0},
+                json={
+                    "reward": 1.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
                 timeout=10.0,
             )
             assert resp.status_code == 200, resp.text
             assert resp.json()["message"] == "success"
-
-            # --- end session ---
-            resp = await client.post(
-                "/rl/end_session",
-                headers={"Authorization": f"Bearer {session_api_key}"},
-                timeout=10.0,
-            )
-            assert resp.status_code == 200, resp.text
             assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
 
             # --- export trajectories ---
             resp = await client.post(

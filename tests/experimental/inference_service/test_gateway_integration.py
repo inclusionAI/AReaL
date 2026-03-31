@@ -366,13 +366,17 @@ class TestGatewayChatCompletions:
             assert completion["usage"]["prompt_tokens"] > 0
             assert completion["usage"]["completion_tokens"] > 0
 
-            # End session
+            # Finish session via set_reward
             resp = await client.post(
-                f"{gw}/rl/end_session",
+                f"{gw}/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200
             assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
 
     @pytest.mark.asyncio
     async def test_session_streaming_chat(self, gateway_stack):
@@ -434,12 +438,16 @@ class TestGatewayChatCompletions:
             ids = {c["id"] for c in chunks}
             assert len(ids) == 1
 
-            # End session
+            # Finish session via set_reward
             resp = await client.post(
-                f"{gw}/rl/end_session",
+                f"{gw}/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200
+            assert resp.json()["ready_transition"] is True
 
     @pytest.mark.asyncio
     async def test_multi_turn_session_chat(self, gateway_stack):
@@ -491,13 +499,17 @@ class TestGatewayChatCompletions:
             # Different completion IDs
             assert resp1.json()["id"] != resp2.json()["id"]
 
-            # End session — should report 2 interactions
+            # Finish session via set_reward — should report 2 interactions
             resp = await client.post(
-                f"{gw}/rl/end_session",
+                f"{gw}/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200
             assert resp.json()["interaction_count"] == 2
+            assert resp.json()["ready_transition"] is True
 
 
 @pytest.mark.sglang
@@ -507,7 +519,7 @@ class TestGatewaySessionLifecycle:
 
     @pytest.mark.asyncio
     async def test_full_lifecycle(self, gateway_stack):
-        """start_session → chat → set_reward → end_session → export_trajectories."""
+        """start_session → chat → set_reward(finish=True) → export_trajectories."""
         gw = gateway_stack["gateway_addr"]
         async with httpx.AsyncClient(timeout=60.0) as client:
             # --- start session ---
@@ -534,22 +546,18 @@ class TestGatewaySessionLifecycle:
             )
             assert resp.status_code == 200, resp.text
 
-            # --- set reward ---
+            # --- set reward and finish session ---
             resp = await client.post(
                 f"{gw}/rl/set_reward",
-                json={"reward": 1.0},
+                json={
+                    "reward": 1.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200, resp.text
             assert resp.json()["message"] == "success"
-
-            # --- end session ---
-            resp = await client.post(
-                f"{gw}/rl/end_session",
-                headers={"Authorization": f"Bearer {session_api_key}"},
-            )
-            assert resp.status_code == 200, resp.text
             assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
 
             # --- export trajectories ---
             resp = await client.post(
@@ -605,12 +613,28 @@ class TestGatewaySessionLifecycle:
             assert resp.status_code == 200
             assert resp.json()["worker_addr"] == pinned_worker
 
-            # End session
             resp = await client.post(
-                f"{gw}/rl/end_session",
+                f"{gw}/chat/completions",
+                json={
+                    "model": "sglang",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_completion_tokens": 8,
+                    "temperature": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200
+
+            # Finish session via set_reward
+            resp = await client.post(
+                f"{gw}/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["ready_transition"] is True
 
 
 @pytest.mark.sglang

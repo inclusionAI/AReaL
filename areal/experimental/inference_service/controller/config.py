@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from areal.api.cli_args import OpenAIProxyConfig
+from areal.api.cli_args import OpenAIProxyConfig
 
 
 @dataclass
@@ -16,9 +14,6 @@ class GatewayControllerConfig:
     Consolidates settings for the gateway, router, data proxy services,
     and the WorkflowExecutor / staleness management.
     """
-
-    # -- Shared credentials ------------------------------------------------
-    admin_api_key: str = "areal-admin-key"
 
     # -- Model / tokenizer -------------------------------------------------
     tokenizer_path: str = ""
@@ -31,6 +26,7 @@ class GatewayControllerConfig:
     # -- HTTP timeouts -----------------------------------------------------
     request_timeout: float = 120.0  # per-request timeout (seconds)
     setup_timeout: float = 300.0  # timeout waiting for services to start
+    set_reward_finish_timeout: float = 0.0
 
     # -- Log level for gateway micro-services ------------------------------
     log_level: str = "info"
@@ -55,6 +51,4 @@ class GatewayControllerConfig:
     pause_grace_period: float = 0.5
 
     # -- OpenAI proxy configuration (for agent-like workflows) ---------------
-    openai: OpenAIProxyConfig | None = (
-        None  # Optional; lazy import to avoid PEP 695 issues
-    )
+    openai: OpenAIProxyConfig = field(default_factory=lambda: OpenAIProxyConfig())
