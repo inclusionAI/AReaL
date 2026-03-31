@@ -107,21 +107,33 @@ def _validate_trajectory(
     question: str,
     ground_truth: str,
     prediction: str,
-    reasoning_text: str,
-    actual_tools: set,
+    reasoning_text: str = "",
+    actual_tools: set = None,
+    correctness_only: bool = False,
 ) -> Tuple[bool, str]:
-    """Validate trajectory using combined LLM check (single API call).
+    """Validate trajectory using judge.
 
-    Checks correctness, leakage, and tool match in one call.
+    When correctness_only=True, only checks answer correctness (skips leakage/tool match).
+    This is used when the model self-terminates with <answer> in Phase 1.
     """
     assert _WORKER_JUDGE is not None, "Judge not initialized"
+
+    if correctness_only:
+        is_correct, reason = _WORKER_JUDGE.judge_correctness(
+            question=question,
+            ground_truth=ground_truth,
+            prediction=prediction,
+        )
+        if is_correct:
+            return True, "valid"
+        return False, f"wrong_answer (gt={ground_truth}, pred={prediction}) reason={reason}"
 
     return _WORKER_JUDGE.validate_trajectory(
         question=question,
         ground_truth=ground_truth,
         prediction=prediction,
         reasoning_text=reasoning_text,
-        actual_tools=actual_tools,
+        actual_tools=actual_tools or set(),
     )
 
 
@@ -245,12 +257,12 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     logger.info(f"[{task_id}] Round {current_round}: Model produced answer: {answer_text}")
 
                     # Validate with judge BEFORE committing to contents/history
+                    # Model self-terminated with <answer>: only check correctness
                     is_valid, reason = _validate_trajectory(
                         question=question,
                         ground_truth=ground_truth,
                         prediction=answer_text,
-                        reasoning_text=reasoning_text,
-                        actual_tools=all_actual_tools,
+                        correctness_only=True,
                     )
 
                     if is_valid:
