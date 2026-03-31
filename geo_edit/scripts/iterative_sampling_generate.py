@@ -223,8 +223,8 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
         while retry_count < max_phase_retries:
             try:
                 # ===== Phase 1: Reasoning (select tool or answer) =====
-                if current_round == 1:
-                    # First round: force tool selection
+                if current_round == 1 or judge_failed:
+                    # First round or after wrong answer: force tool selection
                     agent.config.generate_config = phase_configs.reasoning_only
                 else:
                     # Subsequent rounds: chain reasoning (select tool or answer)
@@ -252,6 +252,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 # Check if model decided to answer
                 answer_match = answer_pattern.search(reasoning_text)
                 if answer_match and current_round > 1:
+                    if judge_failed:
+                        # After wrong answer, must call tool first — reject answer attempt
+                        raise ValueError("Model tried to answer immediately after wrong answer; forcing tool call")
                     # ===== Answer path =====
                     answer_text = answer_match.group(1).strip()
                     logger.info(f"[{task_id}] Round {current_round}: Model produced answer: {answer_text}")
