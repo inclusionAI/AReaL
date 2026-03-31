@@ -7,19 +7,16 @@ import re
 import shutil
 import argparse
 from collections import Counter
+from pathlib import Path
 
+from geo_edit.data_preprocess.trajectory_utils import (
+    extract_answer_values,
+    get_text_from_content,
+    is_brute_force,
+    load_meta_info,
+)
 from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
 from geo_edit.tool_definitions import ToolRouter, format_tool_declarations_text
-
-
-def load_meta_info(path):
-    """Load meta_info.jsonl and return the first JSON object."""
-    with open(path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                return json.loads(line)
-    return None
 
 
 def is_correct(meta):
@@ -29,56 +26,6 @@ def is_correct(meta):
     output = str(meta.get("output_text", "")).strip()
     answer = str(meta.get("answer", "")).strip()
     return output == answer
-
-
-def extract_answer_values(trajectory):
-    """Extract all distinct answer values from <answer>...</answer> tags in assistant messages."""
-    answers = []
-    for msg in trajectory:
-        if msg.get("role") != "assistant":
-            continue
-        content = msg.get("content", "")
-        if not isinstance(content, str):
-            continue
-        for m in re.finditer(r"<answer>(.*?)</answer>", content, re.DOTALL):
-            answers.append(m.group(1).strip())
-    return answers
-
-
-def is_brute_force(trajectory, meta):
-    """Detect brute-force elimination pattern.
-
-    Heuristics:
-    1. Any assistant message contains "By elimination" or "by elimination"
-    2. The model gives >3 different answer values across the trajectory
-    """
-    for msg in trajectory:
-        if msg.get("role") != "assistant":
-            continue
-        content = msg.get("content", "")
-        if not isinstance(content, str):
-            continue
-        if re.search(r"[Bb]y\s+elimination", content):
-            return True
-
-    answer_values = extract_answer_values(trajectory)
-    if len(set(answer_values)) > 3:
-        return True
-
-    return False
-
-
-def get_text_from_content(content):
-    """Extract concatenated text from a message content field (string or list of parts)."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        texts = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "text":
-                texts.append(part["text"])
-        return "\n".join(texts) if texts else ""
-    return ""
 
 
 def has_image_in_content(content):
@@ -386,8 +333,8 @@ def main():
             stats["missing_files"] += 1
             continue
 
-        meta = load_meta_info(meta_path)
-        if meta is None:
+        meta = load_meta_info(Path(meta_path))
+        if not meta:
             stats["bad_meta"] += 1
             continue
 

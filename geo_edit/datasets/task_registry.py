@@ -46,6 +46,17 @@ class DatasetSpec:
     separated_prompt_template: Optional[str] = None
     # Answer format instruction (added only in final answer phase)
     answer_format: Optional[str] = None
+    # Per-dataset tool usage guidance (injected in Phase 1 reasoning)
+    # Can be a static string or a callable(item) -> Optional[str] for per-item guidance
+    tool_guidance: "Optional[str | Callable[[Mapping[str, Any]], Optional[str]]]" = None
+
+    def get_tool_guidance(self, item: Optional[Mapping[str, Any]] = None) -> Optional[str]:
+        """Get tool guidance string, resolving callable if needed."""
+        if self.tool_guidance is None:
+            return None
+        if callable(self.tool_guidance):
+            return self.tool_guidance(item) if item is not None else None
+        return self.tool_guidance
 
     def build_prompt(self, item: Mapping[str, Any], use_tools: bool, separated: bool = False) -> str:
         values: Dict[str, Any] = {}
@@ -77,6 +88,29 @@ class DatasetSpec:
         if callable(self.answer_key):
             return self.answer_key(item)
         return item[self.answer_key]
+
+
+# =============================================================================
+# Per-dataset tool guidance
+# =============================================================================
+VISWORLD_TOOL_GUIDANCE = {
+    "ballgame": (
+        "Strategy: First use a tool to understand the image layout and identify key elements "
+        "(balls, holes, obstacles). Then use draw_line repeatedly to trace the ball's trajectory "
+        "step by step through the game board. Verify your traced path before answering."
+    ),
+}
+
+
+def _get_visworld_tool_guidance(item: Mapping[str, Any]) -> Optional[str]:
+    """Return tool guidance based on VisWorld-Eval category."""
+    category = item.get("category", "")
+    return VISWORLD_TOOL_GUIDANCE.get(category)
+
+
+# =============================================================================
+# Helper functions for dataset specs
+# =============================================================================
 
 
 def _format_babyvision_options(item: Mapping[str, Any]) -> str:
@@ -222,6 +256,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
                 "category": item.get("category", ""),
             },
         },
+        tool_guidance=_get_visworld_tool_guidance,
     ),
     "babyvision": DatasetSpec(
         name="babyvision",

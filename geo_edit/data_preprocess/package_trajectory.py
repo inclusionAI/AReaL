@@ -47,6 +47,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from datasets import Dataset, Features, Image as HFImage, Sequence, Value
+from geo_edit.data_preprocess.trajectory_utils import (
+    extract_final_answer,
+    extract_thinking_text,
+    get_question_from_trajectory,
+    get_text_from_content,
+    load_meta_info,
+    load_trajectory,
+)
 
 from geo_edit.evaluation.trajectory_judge import (
     FilterStats,
@@ -56,25 +64,8 @@ from geo_edit.evaluation.trajectory_judge import (
     quick_leakage_check,
 )
 from geo_edit.utils.logger import setup_logger
-from geo_edit.utils.text_utils import extract_answer
 
 logger = setup_logger(__name__)
-
-
-def _load_trajectory(trajectory_path: Path) -> List[Dict[str, Any]]:
-    """Load trajectory.json file."""
-    with trajectory_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _load_meta_info(meta_path: Path) -> Dict[str, Any]:
-    """Load first record from meta_info.jsonl."""
-    with meta_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                return json.loads(line)
-    return {}
 
 
 def _extract_turns_except_last(trajectory: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -199,83 +190,6 @@ def _count_tool_calls(trajectory: List[Dict[str, Any]]) -> Tuple[int, List[str]]
     return count, names
 
 
-def _get_text_from_content(content: Any) -> str:
-    """Extract text from message content (handles both string and list formats)."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        texts = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "text":
-                texts.append(part.get("text", ""))
-            elif isinstance(part, str):
-                texts.append(part)
-        return "\n".join(texts)
-    return str(content) if content else ""
-
-
-def _get_question_from_trajectory(trajectory: List[Dict[str, Any]]) -> str:
-    """Extract the initial question from the first user turn."""
-    for turn in trajectory:
-        if turn.get("role") == "user":
-            return _get_text_from_content(turn.get("content", ""))
-    return ""
-
-
-def _extract_final_answer_from_trajectory(
-    trajectory: List[Dict[str, Any]],
-) -> Optional[str]:
-    """Extract the final answer from the last assistant turn.
-
-    Looks for <answer>...</answer> tags in the last assistant message.
-    """
-    if not trajectory:
-        return None
-
-    # Find the last assistant turn
-    for turn in reversed(trajectory):
-        if turn.get("role") == "assistant":
-            content = _get_text_from_content(turn.get("content", ""))
-            if "<answer>" in content:
-                return extract_answer(content, mode="split")
-    return None
-
-
-def _extract_thinking_text(trajectory: List[Dict[str, Any]]) -> str:
-    """Extract assistant content from Phase 1 & 2, excluding the final answer (Phase 3).
-
-    Only extracts from role=assistant messages. User messages are ignored since
-    they may contain instructions with <answer> tags.
-
-    This represents the model's thinking/reasoning process (Phase 1 & 2 only).
-    """
-    texts = []
-
-    # Find the index of the last assistant turn with <answer> (Phase 3)
-    last_answer_idx = -1
-    for i in range(len(trajectory) - 1, -1, -1):
-        turn = trajectory[i]
-        if turn.get("role") == "assistant":
-            content = _get_text_from_content(turn.get("content", ""))
-            if "<answer>" in content.lower():
-                last_answer_idx = i
-                break
-
-    # Process all assistant turns except the final answer turn (Phase 3)
-    for i, turn in enumerate(trajectory):
-        # Only check assistant messages
-        if turn.get("role") != "assistant":
-            continue
-
-        # Completely skip the final answer turn (Phase 3)
-        if i == last_answer_idx:
-            continue
-
-        content = _get_text_from_content(turn.get("content", ""))
-        if content.strip():
-            texts.append(content)
-
-    return "\n\n".join(texts)
 
 
 # Filter result constants for tracking
@@ -317,8 +231,8 @@ def _process_subfolder(
 
     try:
         # Load data
-        trajectory = _load_trajectory(trajectory_path)
-        meta_info = _load_meta_info(meta_path)
+        trajectory = load_trajectory(trajectory_path)
+        meta_info = load_meta_info(meta_path)
 
         # Apply filtering if config is provided
         if config:
@@ -327,11 +241,11 @@ def _process_subfolder(
             if isinstance(ground_truth, list):
                 ground_truth = ", ".join(str(x) for x in ground_truth)
 
-            question = _get_question_from_trajectory(trajectory)
+            question = get_question_from_trajectory(trajectory)
 
             # Filter 1: Wrong answer check (requires judge/API)
             if config.filter_wrong_answers and judge:
-                prediction = _extract_final_answer_from_trajectory(trajectory)
+                prediction = extract_final_answer(trajectory)
                 if prediction:
                     try:
                         is_correct, _ = judge.judge_correctness(
@@ -358,7 +272,7 @@ def _process_subfolder(
             # Filter 2: Answer leakage check
             # Leakage = <answer> tags appearing in Phase 1/2 (thinking/tool-call)
             if config.filter_answer_leakage:
-                thinking_text = _extract_thinking_text(trajectory)
+                thinking_text = extract_thinking_text(trajectory)
                 if thinking_text:
                     # Quick mode: use regex only (fast, no API call needed)
                     if config.leakage_check_mode == "quick":
@@ -478,6 +392,7 @@ def package_trajectory_dataset(
     )
 
     if needs_api:
+        assert config is not None
         if config.api_key:
             judge = TrajectoryJudge(
                 api_key=config.api_key,

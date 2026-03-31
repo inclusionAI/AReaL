@@ -162,6 +162,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     image_path = task_payload["image_path"]
     text_only = task_payload.get("text_only", False)
     answer_format = task_payload.get("answer_format")
+    tool_guidance = task_payload.get("tool_guidance")
 
     # Check if already completed
     meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
@@ -237,6 +238,10 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     task.append_system_prompt(ITERATIVE_EXTENDED_REASONING_PROMPT.format(
                         used_tools=", ".join(all_actual_tools) if all_actual_tools else "None"
                     ))
+                elif tool_guidance:
+                    # Inject per-dataset tool guidance as temporary prompt
+                    contents_before_prompt = copy.deepcopy(task.contents)
+                    task.append_system_prompt(tool_guidance)
 
                 reasoning_action, reasoning_extra = agent.act(task.contents)
                 agent.config.generate_config = original_generate_config
@@ -541,6 +546,7 @@ def main():
                     "text_only": text_only,
                     "task_kwargs": dataset_spec.build_task_kwargs(item),
                     "answer_format": dataset_spec.answer_format,
+                    "tool_guidance": dataset_spec.get_tool_guidance(item),
                 }
 
                 ar = pool.apply_async(_run_one_task_iterative, (payload,))
