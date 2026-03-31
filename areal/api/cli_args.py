@@ -438,6 +438,75 @@ class FSDPEngineConfig:
 
 
 @dataclass
+class ArchonFP8Config:
+    """Archon FP8 training configuration."""
+
+    mode: str = field(
+        default="disabled",
+        metadata={
+            "help": "FP8 precision mode. "
+            "'disabled': FP8 training off (default). "
+            "'blockwise': blockwise 128x128 FP8 e4m3fn matmuls (requires Hopper GPU).",
+            "choices": ["disabled", "blockwise"],
+        },
+    )
+
+    exclude_modules: list[str] = field(
+        default_factory=lambda: ["output", "router", "score"],
+        metadata={
+            "help": (
+                "FQN substrings of nn.Linear modules to keep in BF16 (not converted to FP8). "
+                "Any module whose fully-qualified name contains one of these strings is skipped. "
+                "Meaningful values for Archon models: "
+                "'output' (LM head, logit precision sensitive), "
+                "'router' (MoE router gate, routing stability sensitive), "
+                "'score' (critic head, value precision sensitive). "
+                "Note: nn.Embedding modules (e.g. tok_embeddings) are never converted "
+                "regardless of this list. "
+                "WARNING: Setting this in YAML replaces the entire default list "
+                "(does not extend it). Include ALL modules you want to keep in BF16."
+            )
+        },
+    )
+
+    include_experts: bool = field(
+        default=False,
+        metadata={
+            "help": "Apply FP8 to MoE expert computation. "
+            "Uses per-expert blockwise FP8 matmuls via torchao."
+        },
+    )
+
+    use_triton: bool = field(
+        default=True,
+        metadata={
+            "help": (
+                "Use Triton GEMM kernel for FP8 blockwise matmuls instead of cuBLAS. "
+                "Currently must be True: torchao's blockwise FP8 is a prototype that uses "
+                "mixed per-operand scaling (1x128 activations + 128x128 weights), which "
+                "torch._scaled_mm does not support. The Triton kernel "
+                "(triton_fp8_gemm_1x128_128x128) handles this natively. "
+                "Revisit when torchao stabilizes mixed-mode cuBLAS dispatch."
+            ),
+        },
+    )
+
+    def __post_init__(self):
+        valid_modes = {"disabled", "blockwise"}
+        if self.mode not in valid_modes:
+            raise ValueError(
+                f"fp8_config.mode must be one of {valid_modes}, got {self.mode!r}"
+            )
+        if self.mode != "disabled" and not self.use_triton:
+            raise ValueError(
+                "fp8_config.use_triton must be True when FP8 is enabled. "
+                "torchao blockwise FP8 uses mixed per-operand scaling "
+                "(1x128 activations + 128x128 weights) which "
+                "torch._scaled_mm does not support."
+            )
+
+
+@dataclass
 class ArchonEngineConfig:
     """Configuration for Archon Engine training backend."""
 
@@ -549,6 +618,14 @@ class ArchonEngineConfig:
             "'always': always reshard after forward (saves memory). "
             "'never': never reshard after forward.",
             "choices": ["default", "always", "never"],
+        },
+    )
+
+    # FP8 Training
+    fp8_config: ArchonFP8Config = field(
+        default_factory=ArchonFP8Config,
+        metadata={
+            "help": "FP8 training configuration. Set mode='blockwise' to enable."
         },
     )
 

@@ -296,6 +296,30 @@ class ArchonEngine(TrainEngine):
 
         self.param_dtype = getattr(torch, self.config.dtype)
 
+        # FP8 conversion -- must run on meta device, before parallelism is applied.
+        # This assertion covers the training path (Phase 1A): blockwise FP8 matmuls
+        # require BF16 master weights. Loading an FP8 checkpoint into a BF16 model
+        # (Phase 1B, archon_checkpoint.py) is a separate path and may relax this.
+        if self.config.archon.fp8_config.mode != "disabled":
+            if self.config.dtype != "bfloat16":
+                raise ValueError(
+                    f"FP8 training requires dtype=bfloat16 (master weights), "
+                    f"got {self.config.dtype}"
+                )
+            from areal.experimental.models.archon.fp8 import (
+                enable_fp8_experts,
+                enable_fp8_linear,
+            )
+
+            fp8_cfg = self.config.archon.fp8_config
+            enable_fp8_linear(
+                self.model,
+                exclude_fqns=set(fp8_cfg.exclude_modules),
+                use_triton=fp8_cfg.use_triton,
+            )
+            if fp8_cfg.include_experts:
+                enable_fp8_experts(self.model, use_triton=fp8_cfg.use_triton)
+
         # NOTE: may mutate self.config.pad_to_maximum and set env vars
         # (CUBLAS_WORKSPACE_CONFIG, NCCL_ALGO, TORCH_COMPILE_DETERMINISTIC).
         ac_config, enable_compile = prepare_training_config(
@@ -317,6 +341,14 @@ class ArchonEngine(TrainEngine):
         self.logger.info(
             f"Applied parallelism in {time.perf_counter() - tik:.2f} seconds"
         )
+
+        if self.config.archon.fp8_config.mode != "disabled":
+            from areal.experimental.models.archon.fp8 import (
+                validate_fp8_shard_alignment,
+            )
+
+            parts = self.model_parts if self.parallel_dims.pp_enabled else [self.model]
+            validate_fp8_shard_alignment(parts)
 
         self._materialize_and_load_weights()
         self._create_optimizer(ft_spec)
