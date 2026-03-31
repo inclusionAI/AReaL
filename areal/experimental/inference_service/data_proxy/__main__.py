@@ -19,6 +19,11 @@ def main():
         default="http://localhost:30000",
     )
     parser.add_argument(
+        "--backend-type",
+        default="sglang",
+        choices=("sglang", "vllm"),
+    )
+    parser.add_argument(
         "--tokenizer-path",
         required=True,
     )
@@ -48,6 +53,7 @@ def main():
         host=args.host,
         port=args.port,
         backend_addr=args.backend_addr,
+        backend_type=args.backend_type,
         tokenizer_path=args.tokenizer_path,
         log_level=args.log_level,
         request_timeout=args.request_timeout,

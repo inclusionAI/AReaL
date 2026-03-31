@@ -192,6 +192,9 @@ def fork_worker():
             child_port = ports[0]
             _allocated_ports.add(child_port)
 
+        # Optional per-process environment overrides (e.g. TRITON_CACHE_PATH)
+        env_overrides: dict[str, str] = data.get("env", {})
+
         # Determine if this is raw-command mode or module-path mode
         is_raw_mode = raw_cmd is not None
 
@@ -237,13 +240,15 @@ def fork_worker():
 
         logger.info(f"Forked worker logs will be written to: {log_file}")
 
-        # Use streaming log utility for terminal, role log, and merged log output
+        child_env = os.environ.copy()
+        child_env.update(env_overrides)
+
         child_process = run_with_streaming_logs(
             cmd,
             log_file,
             merged_log,
             role,
-            env=os.environ.copy(),
+            env=child_env,
         )
 
         with _forked_children_lock:
