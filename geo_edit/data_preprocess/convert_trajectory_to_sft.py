@@ -19,6 +19,7 @@ Usage (standalone, with re-filtering):
 """
 
 import argparse
+import copy
 import glob
 import json
 import os
@@ -80,10 +81,13 @@ def _get_assistant_text(content) -> str:
 def convert_trajectory(
     trajectory, src_dir, dst_images_dir, task_id, system_prompt, tool_definitions_text
 ):
-    """Convert a single trajectory to ShareGPT format.
+    """Convert a single trajectory to step-level ShareGPT samples.
 
-    Returns a dict with keys: conversations, images, system
-    or None if conversion fails.
+    Each gpt turn produces one training sample containing all context up to
+    (and including) that turn.  A 3-step trajectory yields 3 samples.
+
+    Returns a list of dicts (each with keys: conversations, images, system),
+    or an empty list if conversion fails.
     """
     conversations = []
     images = []  # relative paths for the output
@@ -292,7 +296,7 @@ def convert_trajectory(
 
     # Validate: must have at least 2 turns and end with gpt
     if len(conversations) < 2:
-        return None
+        return []
 
     # Fix consecutive same-role messages by merging
     fixed = []
@@ -303,12 +307,27 @@ def convert_trajectory(
             fixed.append(turn)
     conversations = fixed
 
-    if conversations[-1]["from"] != "gpt":
-        return None
     if conversations[0]["from"] != "human":
-        return None
+        return []
 
-    return {"conversations": conversations, "images": images, "system": system_prompt}
+    # Step-level split: one sample per gpt turn
+    gpt_indices = [j for j, turn in enumerate(conversations) if turn["from"] == "gpt"]
+    if not gpt_indices:
+        return []
+
+    results = []
+    for gpt_idx in gpt_indices:
+        sub_conv = copy.deepcopy(conversations[:gpt_idx + 1])
+        # Count <image> tags in truncated conversation to determine needed images
+        image_count = sum(turn["value"].count("<image>") for turn in sub_conv)
+        sub_images = images[:image_count]
+        results.append({
+            "conversations": sub_conv,
+            "images": sub_images,
+            "system": system_prompt,
+        })
+
+    return results
 
 
 def _discover_subdirs(src_root: str) -> list:
@@ -445,7 +464,7 @@ def main():
                 stats["brute_force"] += 1
                 continue
 
-        entry = convert_trajectory(
+        entries = convert_trajectory(
             trajectory,
             subdir,
             dst_images,
@@ -453,12 +472,13 @@ def main():
             system_prompt,
             tool_definitions_text,
         )
-        if entry is None:
+        if not entries:
             stats["conversion_failed"] += 1
             continue
 
-        results.append(entry)
+        results.extend(entries)
         stats["kept"] += 1
+        stats["total_steps"] += len(entries)
 
     # Save train.json
     train_path = os.path.join(dst_root, "train.json")
@@ -493,7 +513,10 @@ def main():
     print("Conversion Summary")
     print(f"{'=' * 50}")
     print(f"Total task directories:  {len(subdirs)}")
-    print(f"Kept (converted):        {stats['kept']}")
+    print(f"Kept (trajectories):     {stats['kept']}")
+    print(f"Step-level samples:      {stats['total_steps']}")
+    if stats["kept"] > 0:
+        print(f"Avg steps/trajectory:    {stats['total_steps'] / stats['kept']:.1f}")
     if args.refilter:
         print(f"Filtered - incorrect:    {stats['incorrect']}")
         print(f"Filtered - brute force:  {stats['brute_force']}")
