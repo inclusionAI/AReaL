@@ -231,7 +231,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     # Subsequent rounds: chain reasoning (select tool or answer)
                     agent.config.generate_config = phase_configs.chain_reasoning
 
-                # If previous answer was rejected by judge, inject reflection prompt
+                # Inject temporary prompts
                 contents_before_prompt = None
                 if judge_failed and current_round > 1:
                     contents_before_prompt = copy.deepcopy(task.contents)
@@ -292,12 +292,17 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                         return True, meta_info
 
                     # Judge rejected: do NOT append to contents/history
-                    # Model won't see the wrong answer in subsequent rounds
+                    # Wrong answer does NOT consume a round — immediately force tool call
                     logger.warning(f"[{task_id}] Round {current_round} answer rejected: {reason}")
                     judge_failed = True
                     has_answered = True
-                    round_success = True
-                    break
+                    # Reset state to before this attempt, then retry within same round
+                    task.restore_state(task_state_before_round)
+                    agent.restore_state(agent_state_before_round)
+                    all_thinking_text = thinking_text_before_round
+                    all_actual_tools = actual_tools_before_round
+                    retry_count += 1
+                    continue  # Retry — next iteration will use reasoning_only (judge_failed=True)
 
                 # ===== Tool call path =====
                 # Validate Phase 1 format (must have Tool: in think tags)
