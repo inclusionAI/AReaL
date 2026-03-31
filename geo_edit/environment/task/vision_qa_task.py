@@ -49,7 +49,7 @@ class VisionQATask(AbstractVLMTask, gym.Env):
         task_id: str,
         task_prompt: str,
         task_answer: str,
-        task_image_path: str | None,
+        task_image_path: "str | List[str] | None",
         save_dir: Path | str,
         model_type: Literal["google", "openai", "vllm", "sglang"] = "openai",
         api_mode: Literal["responses", "chat_completions"] = "responses",
@@ -77,10 +77,14 @@ class VisionQATask(AbstractVLMTask, gym.Env):
         self.image_path_map: Dict[int, str] = {}
         self.image_url_map: Dict[str, str] = {}  # For OpenAI/VLLM: maps data URL to file path
         self.image_list: List[Image.Image] = []
+
+        # Normalize task_image_path to a list for uniform handling
         if self.task_image_path:
-            image = Image.open(self.task_image_path).convert("RGB")
-            self.image_list.append(image)
-            self.image_path_map[id(image)] = self.task_image_path
+            image_paths = self.task_image_path if isinstance(self.task_image_path, list) else [self.task_image_path]
+            for img_path in image_paths:
+                image = Image.open(img_path).convert("RGB")
+                self.image_list.append(image)
+                self.image_path_map[id(image)] = img_path
 
         # Store initial image state for reset
         self._initial_image_list = [img.copy() for img in self.image_list]

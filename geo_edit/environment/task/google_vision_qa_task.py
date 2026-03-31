@@ -19,7 +19,7 @@ class GoogleVisionQATask(VisionQATask):
         task_id: str,
         task_prompt: str,
         task_answer: str,
-        task_image_path: str | None,
+        task_image_path: "str | List[str] | None",
         save_dir: Path | str,
         tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
         **kwargs,
@@ -42,7 +42,10 @@ class GoogleVisionQATask(VisionQATask):
             logger.info("Initializing GoogleVisionQATask in text only mode.")
             self.contents = [self.task_prompt]
         else:
-            self.contents = ["Observation 0:", self.image_list[0], self.task_prompt]
+            self.contents = []
+            for idx, image in enumerate(self.image_list):
+                self.contents.extend([f"Observation {idx}:", image])
+            self.contents.append(self.task_prompt)
 
     def reset(
         self,

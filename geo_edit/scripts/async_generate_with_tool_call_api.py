@@ -350,23 +350,36 @@ def main():
                 os.makedirs(task_base_dir, exist_ok=True)
                 os.makedirs(traj_save_dir, exist_ok=True)
 
-                # Save input image to task_base_dir (shared across trajectories)
+                # Save input image(s) to task_base_dir (shared across trajectories)
                 image_path = None
                 text_only = dataset_spec.image_key is None
                 if dataset_spec.image_key:
-                    image_path = os.path.join(task_base_dir, "input_image.png")
-                    if not os.path.exists(image_path):
-                        image = item.get(dataset_spec.image_key)
-                        if isinstance(image, Image.Image):
-                            image.save(image_path)
-                        elif isinstance(image, dict) and "bytes" in image and isinstance(image["bytes"], (bytes, bytearray)):
-                            image = Image.open(BytesIO(image["bytes"]))
-                            image.save(image_path)
-                        elif isinstance(image, bytes):
-                            image = Image.open(BytesIO(image))
-                            image.save(image_path)
+                    raw_image = item.get(dataset_spec.image_key)
+                    images = raw_image if isinstance(raw_image, list) else [raw_image] if raw_image is not None else []
+
+                    def _save_one(img, path):
+                        if isinstance(img, Image.Image):
+                            img.save(path)
+                        elif isinstance(img, dict) and "bytes" in img and isinstance(img["bytes"], (bytes, bytearray)):
+                            Image.open(BytesIO(img["bytes"])).save(path)
+                        elif isinstance(img, bytes):
+                            Image.open(BytesIO(img)).save(path)
                         else:
-                            raise ValueError(f"Invalid image type: {type(image)}")
+                            raise ValueError(f"Invalid image type: {type(img)}")
+
+                    if len(images) == 1:
+                        image_path = os.path.join(task_base_dir, "input_image.png")
+                        if not os.path.exists(image_path):
+                            _save_one(images[0], image_path)
+                    elif len(images) > 1:
+                        image_path = []
+                        for img_idx, img in enumerate(images):
+                            p = os.path.join(task_base_dir, f"input_image_{img_idx}.png")
+                            if not os.path.exists(p):
+                                _save_one(img, p)
+                            image_path.append(p)
+                    else:
+                        text_only = True
                 else:
                     text_only = True
 

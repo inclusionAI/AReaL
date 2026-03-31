@@ -43,7 +43,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         task_id: str,
         task_prompt: str,
         task_answer: str,
-        task_image_path: str | None,
+        task_image_path: "str | List[str] | None",
         save_dir: Path | str,
         tool_functions: Optional[Dict[str, Callable[..., Image.Image | str]]] = None,
         model_type: Literal["openai", "vllm", "sglang"] = "openai",
@@ -81,29 +81,29 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         self._append_initial_observation()
 
     def _append_initial_observation(self) -> None:
-        """Append initial user message with prompt and image."""
+        """Append initial user message with prompt and image(s)."""
         if self._use_responses_format:
             content = []
-            if self.image_list:
-                image = self.image_list[0]
+            for idx, image in enumerate(self.image_list):
                 image_url = image_to_data_url(image)
-                if self.task_image_path:
-                    self.image_url_map[image_url] = self.task_image_path
+                img_path = self.image_path_map.get(id(image))
+                if img_path:
+                    self.image_url_map[image_url] = img_path
                 content.extend([
-                    {"type": "input_text", "text": "Observation 0:"},
+                    {"type": "input_text", "text": f"Observation {idx}:"},
                     {"type": "input_image", "image_url": image_url, "detail": "auto"},
                 ])
             content.append({"type": "input_text", "text": self.task_prompt})
             self.contents["input"].append({"role": "user", "content": content})
         else:
             content = []
-            if self.image_list:
-                image = self.image_list[0]
+            for idx, image in enumerate(self.image_list):
                 image_url = image_to_data_url(image)
-                if self.task_image_path:
-                    self.image_url_map[image_url] = self.task_image_path
+                img_path = self.image_path_map.get(id(image))
+                if img_path:
+                    self.image_url_map[image_url] = img_path
                 content.extend([
-                    {"type": "text", "text": "Observation 0:"},
+                    {"type": "text", "text": f"Observation {idx}:"},
                     {"type": "image_url", "image_url": {"url": image_url, "detail": "auto"}},
                 ])
             content.append({"type": "text", "text": self.task_prompt})

@@ -550,17 +550,28 @@ def main():
                 image_path = None
                 text_only = dataset_spec.image_key is None
                 if dataset_spec.image_key:
-                    image_path = os.path.join(task_base_dir, "input_image.png")
-                    if not os.path.exists(image_path):
-                        image = item.get(dataset_spec.image_key)
-                        if isinstance(image, list):
-                            image = image[0] if image else None
-                        if isinstance(image, Image.Image):
-                            image.save(image_path)
-                        elif isinstance(image, dict) and "bytes" in image:
-                            Image.open(BytesIO(image["bytes"])).save(image_path)
-                        elif isinstance(image, bytes):
-                            Image.open(BytesIO(image)).save(image_path)
+                    raw_image = item.get(dataset_spec.image_key)
+                    images = raw_image if isinstance(raw_image, list) else [raw_image] if raw_image is not None else []
+
+                    def _save_one(img, path):
+                        if isinstance(img, Image.Image):
+                            img.save(path)
+                        elif isinstance(img, dict) and "bytes" in img:
+                            Image.open(BytesIO(img["bytes"])).save(path)
+                        elif isinstance(img, bytes):
+                            Image.open(BytesIO(img)).save(path)
+
+                    if len(images) == 1:
+                        image_path = os.path.join(task_base_dir, "input_image.png")
+                        if not os.path.exists(image_path):
+                            _save_one(images[0], image_path)
+                    elif len(images) > 1:
+                        image_path = []
+                        for img_idx, img in enumerate(images):
+                            p = os.path.join(task_base_dir, f"input_image_{img_idx}.png")
+                            if not os.path.exists(p):
+                                _save_one(img, p)
+                            image_path.append(p)
 
                 payload = {
                     "id": task_id,
