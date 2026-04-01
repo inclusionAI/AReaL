@@ -1,21 +1,40 @@
 # LoRA Reference
 
-AReaL supports LoRA RL finetuning.
+LoRA is a parameter-efficient fine-tuning technique that injects trainable low-rank
+matrices into pre-trained weights, typically around linear layers. Compared with
+full-parameter fine-tuning, this reduces memory usage and compute cost substantially,
+making RL fine-tuning of large models much more practical on limited hardware.
+
+In AReaL, this is especially useful for:
+
+- reinforcement learning with very large models, including 70B+ models, on relatively
+  modest hardware such as 8 x 80 GB GPUs,
+- enabling larger batch sizes because LoRA reduces training memory pressure,
+- simplifying transfer and deployment because only the LoRA adapters need to be saved
+  and shipped,
+- \[Future\] fine-tune multiple LoRA adapters more efficiently in parallel for better
+  hardware utilization (see RFC
+  [#609](https://github.com/inclusionAI/AReaL/issues/609)).
+
+This guide explains how to enable LoRA in RL training and configure the related
+parameters.
 
 ## Backend Support
 
-LoRA is supported by both training backends:
+The current LoRA support matrix in AReaL is:
 
-- FSDP
-- Megatron (through `megatron-bridge`)
+| Engine   | vLLM | SGLang |
+| -------- | ---- | ------ |
+| FSDP2    | ✅   | ✅     |
+| Megatron | ✅   | ❌     |
+| Archon   | ❌   | ❌     |
 
-For Megatron, set:
+Example scripts:
 
-```yaml
-actor:
-  megatron:
-    bridge_type: megatron-bridge
-```
+| Engine   | Example script                                |
+| -------- | --------------------------------------------- |
+| FSDP2    | `examples/math/gsm8k_grpo_lora.yaml`          |
+| Megatron | `examples/math/gsm8k_grpo_megatron_lora.yaml` |
 
 ## Core LoRA Parameters
 
@@ -31,6 +50,5 @@ actor:
 
 - Start with `r=16` or `r=32` for most models, then tune upward only if needed.
 - Keep `target_modules` consistent with your model architecture naming.
-- If rollout uses vLLM or SGLang, enable matching LoRA-related rollout options too.
-- With Megatron + LoRA, prefer `megatron-bridge` rather than deprecated `mbridge`.
 - Currently only dense models (non MoE) are supported.
+- For Megatron backend, LoRA requires `megatron-bridge` instead of `mbridge`.

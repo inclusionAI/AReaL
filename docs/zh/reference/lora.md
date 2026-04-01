@@ -1,21 +1,34 @@
 # LoRA 参考
 
-AReaL 支持基于 LoRA 的 RL 微调。
+LoRA 是一种参数高效的微调技术，会在预训练权重中注入可训练的低秩矩阵， 通常作用在线性层附近。与全参数微调相比，LoRA 可以显著降低显存占用和 计算开销，从而让大模型的
+RL 微调在硬件资源有限的条件下也更具可行性。
+
+在 AReaL 中，LoRA 尤其适用于以下场景：
+
+- 在相对有限的硬件条件下进行超大模型的强化学习训练，例如使用 8 x 80 GB GPU 训练 70B+ 规模模型，
+- 由于显存压力更低，可以支持更大的 batch size，
+- 模型迁移与部署更加简单，因为只需要保存和分发 LoRA adapter，
+- \[Future\] 更高效地并行微调多个 LoRA adapter，以提升硬件利用率 （参见 RFC
+  [#609](https://github.com/inclusionAI/AReaL/issues/609)）。
+
+本文档说明如何在 RL 训练中启用 LoRA，并配置相关参数。
 
 ## 后端支持
 
-LoRA 同时支持以下训练后端：
+AReaL 当前的 LoRA 支持矩阵如下：
 
-- FSDP
-- Megatron（通过 `megatron-bridge`）
+| Engine   | vLLM | SGLang |
+| -------- | ---- | ------ |
+| FSDP2    | ✅   | ✅     |
+| Megatron | ✅   | ❌     |
+| Archon   | ❌   | ❌     |
 
-在 Megatron 中，请设置：
+示例脚本：
 
-```yaml
-actor:
-  megatron:
-    bridge_type: megatron-bridge
-```
+| Engine   | Example script                                |
+| -------- | --------------------------------------------- |
+| FSDP2    | `examples/math/gsm8k_grpo_lora.yaml`          |
+| Megatron | `examples/math/gsm8k_grpo_megatron_lora.yaml` |
 
 ## 核心 LoRA 参数
 
@@ -31,6 +44,5 @@ actor:
 
 - 可先从 `r=16` 或 `r=32` 开始，再按效果和资源逐步调参。
 - `target_modules` 需与具体模型的层命名保持一致。
-- 若 rollout 使用 vLLM 或 SGLang，也要同步开启对应 LoRA 相关配置。
-- 在 Megatron + LoRA 场景下，优先使用 `megatron-bridge`，不建议使用已逐步弃用的 `mbridge`。
 - 当前仅支持 dense 模型（非 MoE）。
+- 对于 Megatron 后端，LoRA 需要使用 `megatron-bridge`，而不是 `mbridge`。

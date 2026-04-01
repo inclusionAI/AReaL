@@ -903,10 +903,21 @@ class PPOTrainer:
     def _validate_cfg(self):
         """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
         rollout_backend = self.rollout_alloc.backend
+        actor_backend = self.actor_alloc.backend
         if rollout_backend == "vllm" and self.config.rollout.return_routed_experts:
             raise ValueError(
                 "return_routed_experts is only supported with SGLang backend. "
                 "Please disable return_routed_experts or switch to SGLang backend."
+            )
+        if (
+            actor_backend == "megatron"
+            and self.config.actor.use_lora
+            and rollout_backend == "sglang"
+        ):
+            raise ValueError(
+                "Megatron actor with LoRA is not supported with SGLang rollout in "
+                "RL trainer. Please use vLLM rollout backend, or disable LoRA, or "
+                "switch actor backend from Megatron."
             )
 
     def _requires_proxy_workflow(self, workflow: WorkflowLike | None) -> bool:

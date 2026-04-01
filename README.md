@@ -202,11 +202,11 @@ Check the [AI Coding Assistant Guide](docs/reference/ai_assisted_dev.md) and
 
 ### Training Backends
 
-| Backend            | DP          | Tensor Parallel | Sequence Parallel within TP | Context Parallel | Pipeline Parallel | Expert Parallel | 1D Sequence Packing | LoRA |
-| ------------------ | ----------- | --------------- | --------------------------- | ---------------- | ----------------- | --------------- | ------------------- | ---- |
-| **Megatron**       | ✅ (ZeRO-1) | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
-| **PyTorch FSDP**   | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ❌                | ❌              | ✅                  | ✅   |
-| **PyTorch Archon** | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
+| Backend            | DP          | Tensor Parallel | Sequence Parallel within TP | Context Parallel | Pipeline Parallel | Expert Parallel | 1D Sequence Packing | LoRA                             |
+| ------------------ | ----------- | --------------- | --------------------------- | ---------------- | ----------------- | --------------- | ------------------- | -------------------------------- |
+| **Megatron**       | ✅ (ZeRO-1) | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ✅ (with vLLM inference backend) |
+| **PyTorch FSDP**   | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ❌                | ❌              | ✅                  | ✅                               |
+| **PyTorch Archon** | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌                               |
 
 ### Inference Backends
 
@@ -252,6 +252,7 @@ Check the [AI Coding Assistant Guide](docs/reference/ai_assisted_dev.md) and
 ### Reference
 
 - [CLI Configurations](docs/en/cli_reference.md)
+- [LoRA RL](docs/en/reference/lora.md)
 - [Checkpointing](docs/en/reference/checkpointing.md)
 - [Metrics Tracking](docs/en/reference/metrics_tracking.md)
 - [Allocation Mode](docs/en/reference/alloc_mode.md)
