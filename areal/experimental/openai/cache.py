@@ -2,8 +2,6 @@ import threading
 from collections import OrderedDict
 from typing import Any
 
-import torch
-
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
 
@@ -30,13 +28,6 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         with self._lock:  # usually no need to lock, but just in case
             self._total_reward -= self[interaction_id].reward or 0.0
             self[interaction_id].reward = reward
-            cached = self[interaction_id]._cache
-            if cached is not None and "rewards" in cached:
-                cached["rewards"] = torch.tensor(
-                    [float(reward)],
-                    device=cached["rewards"].device,
-                    dtype=cached["rewards"].dtype,
-                )
             self._total_reward += reward
 
     def set_last_reward(self, reward: float) -> None:
