@@ -368,6 +368,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     check_correctness=False,
                 )
                 if not is_valid:
+                    logger.warning(f"[{task_id}] Round {current_round} tool-call rejected: {reason}")
                     raise ValueError(f"Tool-call validation failed: {reason}")
 
                 all_actual_tools.update(round_tool_names)
