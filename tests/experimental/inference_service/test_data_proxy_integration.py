@@ -1020,14 +1020,8 @@ class TestChatCompletionsVLLM:
                 timeout=10.0,
             )
             assert resp.status_code == 200, resp.text
-
-            resp = await client.post(
-                "/rl/end_session",
-                headers={"Authorization": f"Bearer {session_api_key}"},
-                timeout=10.0,
-            )
-            assert resp.status_code == 200, resp.text
             assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
 
             resp = await client.post(
                 "/export_trajectories",
@@ -1087,12 +1081,15 @@ class TestChatCompletionsVLLM:
             assert chunks[0]["choices"][0]["delta"].get("role") == "assistant"
             assert chunks[-1]["choices"][0]["finish_reason"] in ("stop", "length")
 
+            # Finish session via set_reward
             resp = await client.post(
-                "/rl/end_session",
+                "/rl/set_reward",
+                json={"reward": 0.0},
                 headers={"Authorization": f"Bearer {session_api_key}"},
                 timeout=10.0,
             )
             assert resp.status_code == 200, resp.text
+            assert resp.json()["ready_transition"] is True
 
 
 @pytest.mark.vllm

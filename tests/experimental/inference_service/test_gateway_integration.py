@@ -965,13 +965,8 @@ class TestGatewayVLLM:
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200, resp.text
-
-            resp = await client.post(
-                f"{gw}/rl/end_session",
-                headers={"Authorization": f"Bearer {session_api_key}"},
-            )
-            assert resp.status_code == 200, resp.text
             assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
 
             resp = await client.post(
                 f"{gw}/export_trajectories",

@@ -1171,12 +1171,14 @@ class TestControllerFullInitVLLM:
         assert completion["usage"]["completion_tokens"] > 0
 
         resp = httpx.post(
-            f"{gw}/rl/end_session",
+            f"{gw}/rl/set_reward",
+            json={"reward": 0.0},
             headers={"Authorization": f"Bearer {session_api_key}"},
             timeout=10.0,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["interaction_count"] == 1
+        assert resp.json()["ready_transition"] is True
 
     def test_rollout_batch_with_simple_agent_vllm(
         self, gateway_controller_full_init_vllm
