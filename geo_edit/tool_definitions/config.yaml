@@ -14,17 +14,13 @@ draw_path: false           # Draw multi-point connected path on image
 bounding_box: false        # Draw bounding boxes on image
 image_highlight: false     # Highlight regions on image
 text_ocr: false            # General text recognition (111 languages)
-grounding_dino: false      # Open-vocabulary object detection
-
-# =============================================================================
-# SEGMENT TOOLS - Segmentation and detection (SAM3.1)
-# =============================================================================
 auto_segment: false        # Automatic full-image segmentation (SAM3)
 bbox_segment: false        # Region-constrained segmentation (SAM3)
 text_segment: false        # [NEW] Text-prompted concept segmentation (SAM3)
 exemplar_segment: false    # [NEW] Visual exemplar-based segmentation (SAM3)
 concept_count: false       # [NEW] Object counting by text description (SAM3)
 presence_check: false      # [NEW] Quick concept presence verification (SAM3)
+grounding_dino: false      # Open-vocabulary object detection
 
 # =============================================================================
 # MATH TOOLS - Mathematical expressions and geometry
