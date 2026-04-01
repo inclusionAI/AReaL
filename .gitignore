@@ -19,6 +19,8 @@
 
 # Mac
 .DS_Store
+.zeta
+.zetaignore
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
