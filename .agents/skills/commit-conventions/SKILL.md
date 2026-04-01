@@ -115,7 +115,7 @@ delegation instead of hardcoded model names.
 
 Key changes:
 - Create .opencode/command/ with review-pr, create-pr
-- Replace Opus/Sonnet/Haiku with deep/unspecified-high/quick
+- Replace hardcoded model routing with platform-native review routing
 - Add expert subagent consultation patterns
 ```
 

@@ -22,7 +22,7 @@ PR.
 
 ## Reference Files
 
-- `references/review-pr-change-types.md`
+- `references/review-pr-domains-and-signals.md`
 - `references/review-pr-templates.md`
 
 ## Workflow
@@ -36,10 +36,10 @@ PR.
 
 ### Phase 2: Change analysis
 
-1. Classify changed files using `references/review-pr-change-types.md`.
+1. Classify changed files using `references/review-pr-domains-and-signals.md`.
 1. Determine the highest overall risk level: `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW`.
 1. Build a `CHANGE_ANALYSIS_REPORT` that lists:
-   - detected change types
+   - detected domains/signals
    - risk level
    - affected files
    - related frameworks
@@ -96,7 +96,8 @@ Use this structure:
 
 ```markdown
 CHANGE_ANALYSIS_REPORT:
-- detected_types: [...]
+- detected_domains: [...]
+- detected_signals: [...]
 - risk_level: ...
 - affected_files: [...]
 - related_frameworks: [...]
