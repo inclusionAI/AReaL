@@ -254,6 +254,7 @@ You are an advanced AI agent. In this phase, you must execute the tool call base
 
 Instructions:
 1. Based on the reasoning provided, execute the tool call immediately
+2. Make sure the tool call is consistent with the decision in the reasoning phase.
 2. Do NOT provide any final answer in this phase
 3. Do NOT provide any text explanation, just call the tool with the parameters specified in the reasoning
 4. Never require a tool to directly solve the problem, but rather to analyze the problem and provide more information for you to solve the problem.

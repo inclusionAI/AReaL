@@ -63,7 +63,7 @@ You are a visual reasoning AI assistant capable of understanding complex visual 
 
 If you need to analyze the image in detail, you can use the available tools. Otherwise, provide your answer directly.
 
-Please provide your final answer as an integer index (0, 1, 2, 3, etc.) in <answer></answer> tags.
+Please provide your final answer in <answer></answer> tags.
 """
 
 VISWORLD_EVAL_NOTOOL_INPUT_TEMPLATE = """\
@@ -71,7 +71,7 @@ You are a visual reasoning AI assistant capable of understanding complex visual 
 
 {prompt}
 
-Please analyze the image carefully and provide your final answer as an integer index (0, 1, 2, 3, etc.) in <answer></answer> tags.
+Please analyze the image carefully and provide your final answer in <answer></answer> tags.
 """
 
 BABYVISION_INPUT_TEMPLATE = """\
@@ -193,3 +193,43 @@ Provide a precise and concise answer based on the chart. For multiple choice que
 """
 
 CHARTQAPRO_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."
+
+FIGUREQA_INPUT_TEMPLATE = """\
+You are a chart understanding assistant specialized in analyzing figures and charts.
+
+Look at the figure image and answer the following Yes/No question about the data shown in the chart.
+
+Question: {question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Please provide your final answer (Yes or No) in <answer></answer> tags.
+"""
+
+FIGUREQA_NOTOOL_INPUT_TEMPLATE = """\
+You are a chart understanding assistant specialized in analyzing figures and charts.
+
+Look at the figure image carefully and answer the following Yes/No question about the data shown in the chart.
+
+Question: {question}
+
+Please analyze the chart and provide your final answer (Yes or No) in <answer></answer> tags.
+"""
+
+REASONMAP_INPUT_TEMPLATE = """\
+Look at the subway map image and answer the following question.
+
+{question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Please provide your final answer in <answer></answer> tags. For multiple choice questions, provide only the letter (A, B, C, or D). For yes/no questions, answer Yes or No. For counting questions, provide the number.
+"""
+
+REASONMAP_NOTOOL_INPUT_TEMPLATE = """\
+Look at the subway map image carefully and answer the following question.
+
+{question}
+
+Please provide your final answer in <answer></answer> tags. For multiple choice questions, provide only the letter (A, B, C, or D). For yes/no questions, answer Yes or No. For counting questions, provide the number.
+"""

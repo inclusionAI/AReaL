@@ -19,6 +19,10 @@ from geo_edit.datasets.input_template import (
     CHARTQAPRO_INPUT_TEMPLATE,
     CHARTQAPRO_NOTOOL_INPUT_TEMPLATE,
     CHARTQAPRO_SEPARATED_TEMPLATE,
+    FIGUREQA_INPUT_TEMPLATE,
+    FIGUREQA_NOTOOL_INPUT_TEMPLATE,
+    REASONMAP_INPUT_TEMPLATE,
+    REASONMAP_NOTOOL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_ANSWER_FORMAT,
     MAPEVAL_VISUAL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE,
@@ -95,7 +99,7 @@ class DatasetSpec:
 # =============================================================================
 VISWORLD_TOOL_GUIDANCE = {
     "ballgame": (
-        "Strategy: First use a tool to understand the image layout and identify key elements "
+        "Strategy: First understand the image layout and identify key elements "
         "(balls, holes, obstacles). Then use draw_line repeatedly to draw the ball's future trajectory "
         "step by step through the image. Until you can determine whether the ball will go into the hole or hit an obstacle. "
     ),
@@ -142,6 +146,22 @@ def _format_mapeval_visual_options(item: Mapping[str, Any]) -> str:
     # Options start from 1, answer=0 means unanswerable
     option_lines = [f"{i}. {opt}" for i, opt in enumerate(options, start=1)]
     return "\n".join(option_lines)
+
+
+def _get_reasonmap_answer(item: Mapping[str, Any]) -> str:
+    """Get answer for ReasonMap dataset (merged from ReasonMap-Plus and ReasonMap-Train).
+
+    - Counting1 (ABCD): answer is 0-indexed option index -> convert to A/B/C/D
+    - Counting2/3: answer is the actual count
+    - TorF1/TorF2: answer 0=No, 1=Yes
+    """
+    answer = item.get("answer", 0)
+    qtype = item.get("type", "")
+    if qtype == "Counting1":
+        return chr(65 + int(answer))  # 0->A, 1->B, 2->C, 3->D
+    if qtype in ("TorF1", "TorF2"):
+        return "Yes" if int(answer) == 1 else "No"
+    return str(answer)
 
 
 DATASET_SPECS: Dict[str, DatasetSpec] = {
@@ -334,6 +354,40 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
         separated_prompt_template=CHARTQAPRO_SEPARATED_TEMPLATE,
         answer_format=CHARTQAPRO_ANSWER_FORMAT,
+    ),
+    # Merged from FSCCS/ReasonMap-Plus (test) and FSCCS/ReasonMap-Train (train).
+    # Planning tasks are excluded during preprocessing; only Counting1/2/3 and
+    # TorF1/2 question types are kept.
+    "reasonmap": DatasetSpec(
+        name="reasonmap",
+        id_key="id",
+        answer_key=_get_reasonmap_answer,
+        image_key="image",
+        prompt_template=REASONMAP_INPUT_TEMPLATE,
+        notool_prompt_template=REASONMAP_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "type": item.get("type", ""),
+                "difficulty_city": item.get("difficulty_city", ""),
+                "difficulty_question": item.get("difficulty_question", ""),
+                "city": item.get("city", ""),
+                "country": item.get("country", ""),
+            },
+        },
+    ),
+    "figureqa": DatasetSpec(
+        name="figureqa",
+        id_key="id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=FIGUREQA_INPUT_TEMPLATE,
+        notool_prompt_template=FIGUREQA_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+        },
     ),
 }
 

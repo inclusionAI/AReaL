@@ -106,19 +106,35 @@ def _init_worker(
 def _validate_trajectory(
     question: str,
     ground_truth: str,
-    prediction: str,
+    prediction: str = "",
     reasoning_text: str = "",
     actual_tools: set = None,
-    correctness_only: bool = False,
+    check_correctness: bool = True,
+    task_category: str = "",
+    image_path: str = None,
 ) -> Tuple[bool, str]:
     """Validate trajectory using judge.
 
-    When correctness_only=True, only checks answer correctness (skips leakage/tool match).
-    This is used when the model self-terminates with <answer> in Phase 1.
+    Args:
+        check_correctness: If True, checks answer correctness (requires prediction).
+            If False, only checks leakage + tool consistency (for tool call rounds
+            where no answer exists yet).
+        task_category: Task category string. When "maze", uses algorithmic verification.
+        image_path: Path to task image, required for maze verification.
     """
+    # Maze tasks: use algorithmic wall-collision verification instead of LLM judge
+    if task_category == "maze" and image_path and check_correctness:
+        from geo_edit.evaluation.maze_verifier import maze_judge
+        return maze_judge(
+            question=question,
+            ground_truth=ground_truth,
+            prediction=prediction,
+            image_path=image_path,
+        )
+
     assert _WORKER_JUDGE is not None, "Judge not initialized"
 
-    if correctness_only:
+    if check_correctness:
         is_correct, reason = _WORKER_JUDGE.judge_correctness(
             question=question,
             ground_truth=ground_truth,
@@ -128,13 +144,19 @@ def _validate_trajectory(
             return True, "valid"
         return False, f"wrong_answer (gt={ground_truth}, pred={prediction}) reason={reason}"
 
-    return _WORKER_JUDGE.validate_trajectory(
+    is_valid, reason = _WORKER_JUDGE.validate_trajectory(
         question=question,
         ground_truth=ground_truth,
-        prediction=prediction,
+        prediction=prediction or "[not yet answered]",
         reasoning_text=reasoning_text,
         actual_tools=actual_tools or set(),
     )
+
+    if not is_valid and reason.startswith("wrong_answer"):
+        # No answer yet — ignore correctness failure, only leakage/tool_match matter
+        return True, "valid"
+
+    return is_valid, reason
 
 
 # =============================================================================
@@ -163,6 +185,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     text_only = task_payload.get("text_only", False)
     answer_format = task_payload.get("answer_format")
     tool_guidance = task_payload.get("tool_guidance")
+    task_category = task_payload.get("task_kwargs", {}).get(
+        "meta_info_extra", {}
+    ).get("category", "")
 
     # Check if already completed
     meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
@@ -270,7 +295,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                         question=question,
                         ground_truth=ground_truth,
                         prediction=answer_text,
-                        correctness_only=True,
+                        check_correctness=True,
+                        task_category=task_category,
+                        image_path=image_path,
                     )
 
                     if is_valid:
@@ -329,9 +356,21 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     round_success = True
                     break
 
-                # Collect tool names
-                for tool_call in function_call_part_list:
-                    all_actual_tools.add(tool_call.name.lower())
+                # Collect tool names for this round
+                round_tool_names = {tc.name.lower() for tc in function_call_part_list}
+
+                # Validate leakage + tool consistency before executing tools
+                is_valid, reason = _validate_trajectory(
+                    question=question,
+                    ground_truth=ground_truth,
+                    reasoning_text=reasoning_text,
+                    actual_tools=round_tool_names,
+                    check_correctness=False,
+                )
+                if not is_valid:
+                    raise ValueError(f"Tool-call validation failed: {reason}")
+
+                all_actual_tools.update(round_tool_names)
 
                 task.update_observation_from_action(function_call_part_list)
                 round_success = True
