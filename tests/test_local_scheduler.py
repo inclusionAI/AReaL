@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import time
 from unittest.mock import AsyncMock, Mock, call, patch
 
@@ -2054,10 +2055,35 @@ class TestForkColocationBehavior:
         """Should spawn a new RPC server process when /fork is called."""
         _, host, port = rpc_server_process
 
-        # Call /fork endpoint
+        alloc_resp = requests.post(
+            f"http://{host}:{port}/alloc_ports",
+            json={"count": 1},
+            timeout=10,
+        )
+        assert alloc_resp.status_code == 200
+        child_port = alloc_resp.json()["ports"][0]
+
+        raw_cmd = [
+            sys.executable,
+            "-m",
+            "areal.infra.rpc.rpc_server",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(child_port),
+            "--experiment-name",
+            "test_fork_exp",
+            "--trial-name",
+            "test_fork_trial",
+            "--role",
+            "ref",
+            "--worker-index",
+            "0",
+        ]
+
         response = requests.post(
             f"http://{host}:{port}/fork",
-            json={"role": "ref", "worker_index": 0},
+            json={"role": "ref", "worker_index": 0, "raw_cmd": raw_cmd},
             timeout=60,
         )
 
@@ -2065,40 +2091,85 @@ class TestForkColocationBehavior:
         result = response.json()
         assert result["status"] == "success"
         assert "host" in result
-        assert "port" in result
         assert "pid" in result
 
         forked_pid = result["pid"]
-        forked_port = result["port"]
 
         # Verify new process exists
         assert psutil.pid_exists(forked_pid)
 
-        # Verify forked server is responsive
-        forked_response = requests.get(
-            f"http://{result['host']}:{forked_port}/health", timeout=5
-        )
-        assert forked_response.status_code == 200
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                forked_response = requests.get(
+                    f"http://{result['host']}:{child_port}/health", timeout=2
+                )
+                if forked_response.status_code == 200:
+                    break
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+            ):
+                pass
+            time.sleep(0.5)
+        else:
+            pytest.fail("Forked worker did not become ready")
 
     def test_forked_worker_inherits_environment(self, rpc_server_process):
         """Forked worker should inherit environment variables from parent."""
         _, host, port = rpc_server_process
 
-        # Call /fork endpoint
+        alloc_resp = requests.post(
+            f"http://{host}:{port}/alloc_ports",
+            json={"count": 1},
+            timeout=10,
+        )
+        assert alloc_resp.status_code == 200
+        child_port = alloc_resp.json()["ports"][0]
+
+        raw_cmd = [
+            sys.executable,
+            "-m",
+            "areal.infra.rpc.rpc_server",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(child_port),
+            "--experiment-name",
+            "test_fork_exp",
+            "--trial-name",
+            "test_fork_trial",
+            "--role",
+            "ref",
+            "--worker-index",
+            "0",
+        ]
+
         response = requests.post(
             f"http://{host}:{port}/fork",
-            json={"role": "ref", "worker_index": 0},
+            json={"role": "ref", "worker_index": 0, "raw_cmd": raw_cmd},
             timeout=60,
         )
 
         assert response.status_code == 200
         result = response.json()
 
-        # Verify forked server is alive and accessible
-        forked_response = requests.get(
-            f"http://{result['host']}:{result['port']}/health", timeout=5
-        )
-        assert forked_response.status_code == 200
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                forked_response = requests.get(
+                    f"http://{result['host']}:{child_port}/health", timeout=2
+                )
+                if forked_response.status_code == 200:
+                    break
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+            ):
+                pass
+            time.sleep(0.5)
+        else:
+            pytest.fail("Forked worker did not become ready")
 
     def test_create_forked_workers_via_scheduler(self, tmp_path):
         """LocalScheduler should create forked workers through /fork endpoint."""
