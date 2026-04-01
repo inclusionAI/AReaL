@@ -819,6 +819,244 @@ class TestRemotize:
         assert torch.equal(localized["attention_mask"], expected_mask)
 
 
+class TestFetchBuffer:
+    """Test client-side fetch buffer for RTensor caching.
+
+    The fetch buffer avoids redundant network fetches when the same
+    rollout_batch is sent to multiple engine calls across RPC boundaries.
+    """
+
+    def setup_method(self):
+        """Clear fetch buffer before each test."""
+        from areal.infra.rpc.rtensor import _fetch_buffer, _fetch_buffer_lock
+
+        with _fetch_buffer_lock:
+            _fetch_buffer.clear()
+
+    def test_to_local_populates_buffer(self, rpc_server):
+        """to_local() should populate the fetch buffer on first access."""
+        from areal.infra.rpc.rtensor import _fetch_buffer
+
+        tensor = torch.randn(3, 5).cpu()
+        shard_id = str(uuid.uuid4())
+
+        serialized = serialize_value(tensor)
+        requests.put(
+            f"http://{rpc_server}/data/{shard_id}",
+            data=orjson.dumps(serialized),
+        )
+
+        rtensor = RTensor(
+            shard=TensorShardInfo(shard_id=shard_id, node_addr=rpc_server),
+            data=torch.empty(3, 5, device="meta"),
+        )
+
+        result = rtensor.to_local()
+        assert torch.allclose(result, tensor)
+        assert shard_id in _fetch_buffer
+
+    def test_to_local_serves_from_buffer(self, rpc_server):
+        """Second to_local() with a fresh RTensor (same shard_id) should
+        hit the buffer without making a network request."""
+        tensor = torch.randn(4, 6).cpu()
+        shard_id = str(uuid.uuid4())
+
+        serialized = serialize_value(tensor)
+        requests.put(
+            f"http://{rpc_server}/data/{shard_id}",
+            data=orjson.dumps(serialized),
+        )
+
+        # First access: populates buffer
+        rt1 = RTensor(
+            shard=TensorShardInfo(shard_id=shard_id, node_addr=rpc_server),
+            data=torch.empty(4, 6, device="meta"),
+        )
+        result1 = rt1.to_local()
+
+        # Delete shard from server so a real fetch would fail
+        requests.delete(
+            f"http://{rpc_server}/data/clear",
+            json={"shard_ids": [shard_id]},
+        )
+
+        # Second access with a new RTensor object (simulates RPC boundary)
+        rt2 = RTensor(
+            shard=TensorShardInfo(shard_id=shard_id, node_addr=rpc_server),
+            data=torch.empty(4, 6, device="meta"),
+        )
+        result2 = rt2.to_local()
+        assert torch.allclose(result1, result2)
+
+    def test_localize_populates_buffer(self, rpc_server):
+        """localize() should populate the fetch buffer for all fetched shards."""
+        from areal.infra.rpc.rtensor import _fetch_buffer
+
+        tensor1 = torch.randn(2, 3).cpu()
+        tensor2 = torch.randn(4, 5).cpu()
+        shard_id1 = str(uuid.uuid4())
+        shard_id2 = str(uuid.uuid4())
+
+        for sid, t in [(shard_id1, tensor1), (shard_id2, tensor2)]:
+            serialized = serialize_value(t)
+            requests.put(
+                f"http://{rpc_server}/data/{sid}",
+                data=orjson.dumps(serialized),
+            )
+
+        nested = {
+            "a": RTensor(
+                shard=TensorShardInfo(shard_id=shard_id1, node_addr=rpc_server),
+                data=torch.empty(2, 3, device="meta"),
+            ),
+            "b": RTensor(
+                shard=TensorShardInfo(shard_id=shard_id2, node_addr=rpc_server),
+                data=torch.empty(4, 5, device="meta"),
+            ),
+        }
+
+        localized = RTensor.localize(nested)
+        assert torch.allclose(localized["a"], tensor1)
+        assert torch.allclose(localized["b"], tensor2)
+        assert shard_id1 in _fetch_buffer
+        assert shard_id2 in _fetch_buffer
+
+    def test_localize_serves_from_buffer(self, rpc_server):
+        """Second localize() with fresh meta RTensors (same shard_ids) should
+        resolve entirely from the buffer."""
+        tensor = torch.randn(3, 4).cpu()
+        shard_id = str(uuid.uuid4())
+
+        serialized = serialize_value(tensor)
+        requests.put(
+            f"http://{rpc_server}/data/{shard_id}",
+            data=orjson.dumps(serialized),
+        )
+
+        def _make_rtensor():
+            return RTensor(
+                shard=TensorShardInfo(shard_id=shard_id, node_addr=rpc_server),
+                data=torch.empty(3, 4, device="meta"),
+            )
+
+        # First localize: populates buffer
+        result1 = RTensor.localize({"x": _make_rtensor()})
+
+        # Remove from server
+        requests.delete(
+            f"http://{rpc_server}/data/clear",
+            json={"shard_ids": [shard_id]},
+        )
+
+        # Second localize with fresh meta RTensor: should hit buffer
+        result2 = RTensor.localize({"x": _make_rtensor()})
+        assert torch.allclose(result1["x"], result2["x"])
+
+    def test_localize_partial_buffer_hit(self, rpc_server):
+        """When some shards are in the buffer and others are not, only the
+        misses should be fetched from the backend."""
+        from areal.infra.rpc.rtensor import _fetch_buffer
+
+        tensor_a = torch.randn(2, 3).cpu()
+        tensor_b = torch.randn(4, 5).cpu()
+        shard_a = str(uuid.uuid4())
+        shard_b = str(uuid.uuid4())
+
+        for sid, t in [(shard_a, tensor_a), (shard_b, tensor_b)]:
+            serialized = serialize_value(t)
+            requests.put(
+                f"http://{rpc_server}/data/{sid}",
+                data=orjson.dumps(serialized),
+            )
+
+        # Warm buffer with shard_a only
+        rt_a = RTensor(
+            shard=TensorShardInfo(shard_id=shard_a, node_addr=rpc_server),
+            data=torch.empty(2, 3, device="meta"),
+        )
+        RTensor.localize(rt_a)
+        assert shard_a in _fetch_buffer
+        assert shard_b not in _fetch_buffer
+
+        # Delete shard_a from server; shard_b remains
+        requests.delete(
+            f"http://{rpc_server}/data/clear",
+            json={"shard_ids": [shard_a]},
+        )
+
+        # Localize both: shard_a from buffer, shard_b from backend
+        nested = {
+            "a": RTensor(
+                shard=TensorShardInfo(shard_id=shard_a, node_addr=rpc_server),
+                data=torch.empty(2, 3, device="meta"),
+            ),
+            "b": RTensor(
+                shard=TensorShardInfo(shard_id=shard_b, node_addr=rpc_server),
+                data=torch.empty(4, 5, device="meta"),
+            ),
+        }
+        result = RTensor.localize(nested)
+        assert torch.allclose(result["a"], tensor_a)
+        assert torch.allclose(result["b"], tensor_b)
+
+    def test_clear_node_evicts_from_buffer(self, rpc_server):
+        """clear_node() should remove entries from the fetch buffer."""
+        from areal.infra.rpc.rtensor import _fetch_buffer
+
+        tensor = torch.randn(2, 3).cpu()
+        shard_id = str(uuid.uuid4())
+
+        serialized = serialize_value(tensor)
+        requests.put(
+            f"http://{rpc_server}/data/{shard_id}",
+            data=orjson.dumps(serialized),
+        )
+
+        # Populate buffer
+        rt = RTensor(
+            shard=TensorShardInfo(shard_id=shard_id, node_addr=rpc_server),
+            data=torch.empty(2, 3, device="meta"),
+        )
+        rt.to_local()
+        assert shard_id in _fetch_buffer
+
+        # clear_node evicts from buffer
+        asyncio.run(RTensor.clear_node(rpc_server, [shard_id]))
+        assert shard_id not in _fetch_buffer
+
+    def test_buffer_thread_safety(self, rpc_server):
+        """Concurrent to_local() calls with the same shard_id should not crash."""
+        import threading
+
+        tensor = torch.randn(5, 8).cpu()
+        shard_id = str(uuid.uuid4())
+
+        serialized = serialize_value(tensor)
+        requests.put(
+            f"http://{rpc_server}/data/{shard_id}",
+            data=orjson.dumps(serialized),
+        )
+
+        results = [None] * 10
+
+        def fetch_shard(idx):
+            rt = RTensor(
+                shard=TensorShardInfo(shard_id=shard_id, node_addr=rpc_server),
+                data=torch.empty(5, 8, device="meta"),
+            )
+            results[idx] = rt.to_local()
+
+        threads = [threading.Thread(target=fetch_shard, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        for result in results:
+            assert result is not None
+            assert torch.allclose(result, tensor)
+
+
 class TestTensorShardInfoDocumentation:
     """Tests verifying TensorShardInfo construction and field semantics."""
 
