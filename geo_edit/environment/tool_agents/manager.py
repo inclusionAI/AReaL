@@ -212,7 +212,7 @@ class ToolAgentManager:
 
         try:
             # Only pass temperature/max_tokens if they exist in config
-            # (some tools like grounding_dino and sam2 don't use them)
+            # (some tools like grounding_dino and sam3 don't use them)
             if "temperature" in cfg and "max_tokens" in cfg:
                 result = ray.get(
                     actor.analyze.remote(

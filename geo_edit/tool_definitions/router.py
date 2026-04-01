@@ -39,14 +39,15 @@ with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
 
 TOOL_CATEGORIES = {
     "general": ["image_crop", "image_label", "draw_line", "draw_path", "bounding_box", "image_highlight",
-                "text_ocr", "auto_segment", "bbox_segment", "grounding_dino"],
+                "text_ocr", "auto_segment", "bbox_segment", "text_segment", "exemplar_segment",
+                "concept_count", "presence_check", "grounding_dino"],
     "math": ["math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath"],
     "table": ["table_ocr"],
     "chart": ["chart_reasoning", "chart_data_extract", "chart_trend_analysis", "chart_text_ocr", "chartr1"],
     "map": ["text_spotting", "map_text_ocr"],
     "document": ["seal_ocr"],
     "ocr": ["text_ocr", "table_ocr", "formula_ocr", "chart_text_ocr", "text_spotting", "seal_ocr", "map_text_ocr"],
-    "segment": ["auto_segment", "bbox_segment"],
+    "segment": ["auto_segment", "bbox_segment", "text_segment", "exemplar_segment", "concept_count", "presence_check"],
     "reasoning": ["visual_reasoning"],
 }
 
@@ -103,10 +104,19 @@ def _make_agent_execute(
             # Handle fixed_prompt for Multimath/ChartMoE
             if "fixed_prompt" in fixed_params:
                 kwargs["question"] = fixed_params["fixed_prompt"]
-            # Handle fixed_mode for SAM2
+            # Handle fixed_mode for SAM3
             if "fixed_mode" in fixed_params:
-                if fixed_params["fixed_mode"] == "auto":
-                    kwargs.pop("bounding_box", None)  # Remove bbox for auto mode
+                mode = fixed_params["fixed_mode"]
+                kwargs["mode"] = mode
+                if mode == "auto":
+                    kwargs.pop("bounding_box", None)
+                    kwargs.pop("text_prompt", None)
+                elif mode == "bbox":
+                    kwargs.pop("text_prompt", None)
+                elif mode == "exemplar_segment":
+                    kwargs.pop("text_prompt", None)  # Uses bounding_box as exemplar
+                elif mode in ("text_segment", "concept_count", "presence_check"):
+                    kwargs.pop("bounding_box", None)  # Only needs text_prompt
 
         result = call_agent(agent_name, image_list, image_index, **kwargs)
 
@@ -298,7 +308,7 @@ class ToolRouter:
         """Get list of unique base agent names for Ray Actor initialization.
 
         Maps fine-grained tool names to their base agents and deduplicates.
-        E.g., [text_ocr, text_spotting, auto_segment] -> [paddleocr, sam2]
+        E.g., [text_ocr, text_spotting, auto_segment] -> [paddleocr, sam3]
         """
         base_agents = set()
         for name in self._get_enabled_tool_names():

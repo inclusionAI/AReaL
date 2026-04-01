@@ -8,10 +8,10 @@ Supports both legacy single-tool declarations and new multi-tool declarations (D
 
 from typing import Dict, Type, Any
 
-from geo_edit.tool_definitions.agents import multimath, gllava, chartr1, ovr, sam2, grounding_dino, paddleocr_tool, thinkmorph
+from geo_edit.tool_definitions.agents import multimath, gllava, chartr1, ovr, sam3, grounding_dino, paddleocr_tool, thinkmorph
 
 # Agent declarations for API tool definitions
-# Note: paddleocr and sam2 legacy tools removed - use fine-grained multi-tools instead
+# Note: paddleocr and sam3 legacy tools removed - use fine-grained multi-tools instead
 # Note: chartmoe deprecated - use chartr1 (Chart-R1) instead
 AGENT_DECLARATIONS: Dict[str, dict] = {
     "multimath": multimath.DECLARATION,
@@ -36,7 +36,7 @@ AGENT_CONFIGS: Dict[str, dict] = {
     "gllava": gllava.agent_config,
     "chartr1": chartr1.agent_config,
     "ovr": ovr.agent_config,
-    "sam2": sam2.agent_config,
+    "sam3": sam3.agent_config,
     "grounding_dino": grounding_dino.agent_config,
     "paddleocr": paddleocr_tool.agent_config,
     "thinkmorph": thinkmorph.agent_config,
@@ -48,7 +48,7 @@ AGENT_SYSTEM_PROMPTS: Dict[str, str] = {
     "gllava": gllava.SYSTEM_PROMPT,
     "chartr1": chartr1.SYSTEM_PROMPT,
     "ovr": ovr.SYSTEM_PROMPT,
-    "sam2": sam2.SYSTEM_PROMPT,
+    "sam3": sam3.SYSTEM_PROMPT,
     "grounding_dino": grounding_dino.SYSTEM_PROMPT,
     "paddleocr": paddleocr_tool.SYSTEM_PROMPT,
     "thinkmorph": thinkmorph.SYSTEM_PROMPT,
@@ -60,7 +60,7 @@ AGENT_ACTOR_CLASSES: Dict[str, Type] = {
     "gllava": gllava.ACTOR_CLASS,
     "chartr1": chartr1.ACTOR_CLASS,
     "ovr": ovr.ACTOR_CLASS,
-    "sam2": sam2.ACTOR_CLASS,
+    "sam3": sam3.ACTOR_CLASS,
     "grounding_dino": grounding_dino.ACTOR_CLASS,
     "paddleocr": paddleocr_tool.ACTOR_CLASS,
     "thinkmorph": thinkmorph.ACTOR_CLASS,
@@ -85,15 +85,15 @@ if hasattr(paddleocr_tool, 'DECLARATIONS'):
             "system_prompt": paddleocr_tool.SYSTEM_PROMPT,
         }
 
-# Register SAM2 multi-tools
-if hasattr(sam2, 'DECLARATIONS'):
-    for tool_name, decl in sam2.DECLARATIONS.items():
+# Register SAM3 multi-tools (replaces SAM2)
+if hasattr(sam3, 'DECLARATIONS'):
+    for tool_name, decl in sam3.DECLARATIONS.items():
         MULTI_TOOL_DECLARATIONS[tool_name] = {
             "declaration": decl,
-            "base_agent": "sam2",
-            "actor_class": sam2.ACTOR_CLASS,
-            "agent_config": sam2.agent_config,
-            "system_prompt": sam2.SYSTEM_PROMPT,
+            "base_agent": "sam3",
+            "actor_class": sam3.ACTOR_CLASS,
+            "agent_config": sam3.agent_config,
+            "system_prompt": sam3.SYSTEM_PROMPT,
         }
 
 # Register Multimath multi-tools
