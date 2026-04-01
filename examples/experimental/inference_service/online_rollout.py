@@ -84,13 +84,17 @@ def main(args: list[str]) -> None:
 
         logger.info("Proxy gateway available at %s", ctrl.proxy_gateway_addr)
 
-        data = [{} for _ in range(config.train_dataset.batch_size)]
+        # Online mode: pass None for both data and workflow so the
+        # controller creates empty-dict placeholders and uses the
+        # online InferenceServiceWorkflow (no agent).
         result = ctrl.rollout_batch(
-            data=data,
+            data=None,
+            batch_size=config.train_dataset.batch_size,
             workflow=None,
-            workflow_kwargs={"timeout": config.rollout.request_timeout},
         )
 
+        # Localize RTensor references into real torch tensors so we
+        # can compute aggregate reward statistics.
         localized_rewards = [RTensor.localize(traj)["rewards"] for traj in result]
         all_rewards = torch.cat(localized_rewards, dim=0)
         logger.info(

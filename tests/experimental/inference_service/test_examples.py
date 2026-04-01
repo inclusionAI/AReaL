@@ -253,7 +253,6 @@ def test_tau2_rollout(tmp_path_factory):
             "stats_logger.wandb.mode=disabled",
             timeout=600,
             success_pattern=re.compile(r"Rollout complete"),
-            single_controller=True,
         )
         assert success, "Tau2 rollout example failed"
     finally:
