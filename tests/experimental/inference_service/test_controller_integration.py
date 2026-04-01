@@ -1264,7 +1264,8 @@ def _do_vlm_chat_session(
     assert completion["usage"]["completion_tokens"] > 0
 
     resp = httpx.post(
-        f"{gw}/rl/end_session",
+        f"{gw}/rl/set_reward",
+        json={"reward": 0.0, "finish": True},
         headers={"Authorization": f"Bearer {session_api_key}"},
         timeout=10.0,
     )
@@ -1279,11 +1280,11 @@ def vlm_model_path() -> str:
 
 
 @pytest.fixture(scope="module")
-def gateway_controller_full_init_vlm_sglang(local_scheduler, vlm_model_path):
+def gateway_controller_full_init_vlm_sglang(vlm_model_path, tmp_path_factory):
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import SchedulingSpec
+    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -1300,12 +1301,15 @@ def gateway_controller_full_init_vlm_sglang(local_scheduler, vlm_model_path):
                 gpu=1, cmd="python -m areal.experimental.inference_service.guard"
             ),
         ),
-        admin_api_key="test-admin",
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
+        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
     )
 
+    local_scheduler = _make_local_scheduler(
+        tmp_path_factory, "gateway_controller_full_init_vlm_sglang"
+    )
     ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
     ctrl.initialize(
         role="rollout-vlm-sglang",
@@ -1316,14 +1320,15 @@ def gateway_controller_full_init_vlm_sglang(local_scheduler, vlm_model_path):
         yield ctrl
     finally:
         ctrl.destroy()
+        local_scheduler.delete_workers(None)
 
 
 @pytest.fixture(scope="module")
-def gateway_controller_full_init_vlm_vllm(local_scheduler, vlm_model_path):
+def gateway_controller_full_init_vlm_vllm(vlm_model_path, tmp_path_factory):
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import SchedulingSpec
+    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -1340,12 +1345,15 @@ def gateway_controller_full_init_vlm_vllm(local_scheduler, vlm_model_path):
                 gpu=1, cmd="python -m areal.experimental.inference_service.guard"
             ),
         ),
-        admin_api_key="test-admin",
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
+        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
     )
 
+    local_scheduler = _make_local_scheduler(
+        tmp_path_factory, "gateway_controller_full_init_vlm_vllm"
+    )
     ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
     ctrl.initialize(
         role="rollout-vlm-vllm",
@@ -1356,6 +1364,7 @@ def gateway_controller_full_init_vlm_vllm(local_scheduler, vlm_model_path):
         yield ctrl
     finally:
         ctrl.destroy()
+        local_scheduler.delete_workers(None)
 
 
 @pytest.mark.slow
