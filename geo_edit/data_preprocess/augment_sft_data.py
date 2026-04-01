@@ -270,7 +270,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Diversification LLM API base URL",
     )
     p.add_argument(
-        "--model", type=str, default="kimi-k2.5", help="Diversification model"
+        "--model", type=str, default="GLM-4.7", help="Diversification model"
     )
     p.add_argument(
         "--api-key",

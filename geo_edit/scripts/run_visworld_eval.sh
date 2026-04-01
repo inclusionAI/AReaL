@@ -7,14 +7,15 @@
 #   API_KEY=your_key JUDGE_API_KEY=your_judge_key bash geo_edit/scripts/run_visworld_eval.sh
 set -euo pipefail
 
-if [ -z "${API_KEY:-}" ]; then
+if [ -z "${API_KEY:-}" ]; then 
     echo "Error: API_KEY is required"
     exit 1
 fi
 
 DATASET_ROOT="/storage/openpsi/data/lcy_image_edit/VisWorld-Eval"
 OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/visworld_iterative_gpt5_0331"
-# SUBSETS=(ballgame cube maze mmsi multihop paperfolding sokoban)
+# SUBSETS=(ballgame cube maze )
+# SUBSETS=(mmsi multihop paperfolding sokoban)
 SUBSETS=(ballgame)
 echo "============================================"
 echo "VisWorld-Eval Iterative Sampling"
@@ -48,7 +49,7 @@ for subset in "${SUBSETS[@]}"; do
         --output_dir "$output_dir" \
         --sample_rate 1.0 \
         --max_concurrent_requests 16 \
-        --max_iterative_rounds 15 \
+        --max_iterative_rounds 10 \
         --judge_model "gpt-5-mini-2025-08-07" \
         --judge_api_key "$API_KEY" \
         --judge_api_base "https://matrixllm.alipay.com/v1" \
