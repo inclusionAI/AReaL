@@ -1228,18 +1228,6 @@ class GatewayInferenceController:
         #     Three input forms: string import path, callable class, or instance.
         if isinstance(workflow, str):
             imported = import_from_string(workflow)
-            if isinstance(imported, type) and issubclass(imported, RolloutWorkflow):
-                raise TypeError(
-                    "GatewayInferenceController only accepts agent workflows with a "
-                    "run() method or None for online mode; direct RolloutWorkflow "
-                    "classes are not supported"
-                )
-            elif isinstance(imported, RolloutWorkflow):
-                raise TypeError(
-                    "GatewayInferenceController only accepts agent workflows with a "
-                    "run() method or None for online mode; direct RolloutWorkflow "
-                    "instances are not supported"
-                )
             # Imported is an agent class or instance
             if isinstance(imported, type):
                 agent = imported(**(workflow_kwargs or {}))
@@ -1253,11 +1241,6 @@ class GatewayInferenceController:
 
         elif isinstance(workflow, type):
             agent = workflow(**(workflow_kwargs or {}))
-            if not callable(getattr(agent, "run", None)):
-                raise TypeError(
-                    f"workflow must be an agent with a callable run() method. "
-                    f"Got workflow={workflow!r}"
-                )
 
         else:
             # Instance path
