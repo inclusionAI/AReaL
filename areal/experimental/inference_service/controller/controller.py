@@ -43,6 +43,20 @@ class _OnlineWaiter:
     future: asyncio.Future
 
 
+class _DummyDataLoader:
+    """Minimal dataloader that yields a single batch of empty dicts.
+
+    Used by :meth:`GatewayInferenceController.prepare_batch` when
+    ``dataloader`` is ``None`` (online-agent mode).
+    """
+
+    def __init__(self, batch_size: int) -> None:
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        yield [{} for _ in range(self.batch_size)]
+
+
 class GatewayInferenceController:
     """Inference controller that routes everything through the gateway HTTP stack.
 
@@ -800,15 +814,56 @@ class GatewayInferenceController:
 
     def rollout_batch(
         self,
-        data: list[dict[str, Any]],
+        data: list[dict[str, Any]] | None,
         workflow: Any,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Any = None,
         group_size: int = 1,
+        batch_size: int | None = None,
     ) -> list[dict[str, Any]]:
+        """Submit a batch of data items and wait for all results.
+
+        Parameters
+        ----------
+        data : list[dict[str, Any]] | None
+            A list of data dicts to submit for rollout.  When ``None``
+            (online-agent mode), a list of ``batch_size`` empty dicts is
+            used automatically; ``batch_size`` **must** be provided in
+            this case.
+        workflow : Any
+            Agent instance, agent class, import-path string, or ``None``
+            for online mode.
+        workflow_kwargs : dict[str, Any] | None
+            Keyword arguments forwarded to the workflow/agent constructor.
+        should_accept_fn : Any
+            Optional predicate ``(trajectory_dict) -> bool`` used to
+            filter results.
+        group_size : int
+            Number of times to run the workflow per input (default ``1``).
+        batch_size : int | None
+            Expected batch size.  **Required** when ``data`` is ``None``;
+            when ``data`` is provided, an optional consistency check
+            ensures ``len(data) == batch_size``.  Pass ``None`` (default)
+            to skip the check.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            A list of trajectory dicts (one per completed rollout).
+        """
         if not self._gateway_addr:
             raise RuntimeError(
                 "GatewayInferenceController.initialize() must be called first"
+            )
+        if data is None:
+            if batch_size is None:
+                raise ValueError(
+                    "batch_size must be specified when data is None (online-agent mode)"
+                )
+            data = [{} for _ in range(batch_size)]
+        elif batch_size is not None and len(data) != batch_size:
+            raise ValueError(
+                f"len(data)={len(data)} does not match batch_size={batch_size}"
             )
         resolved_workflow = self._resolve_workflow(
             workflow,
@@ -834,11 +889,50 @@ class GatewayInferenceController:
         should_accept_fn: Any = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        batch_size: int | None = None,
     ) -> list[dict[str, Any]]:
+        """Prepare a full training batch by consuming data from a dataloader.
+
+        Parameters
+        ----------
+        dataloader : Any | None
+            An iterable that yields batches of data dicts and exposes a
+            ``batch_size`` attribute.  When ``None`` (online-agent mode),
+            an internal dummy dataloader is used that produces a single
+            batch of empty dicts sized by ``batch_size``.
+        workflow : Any
+            Agent instance, agent class, import-path string, or ``None``
+            for online mode.
+        workflow_kwargs : dict[str, Any] | None
+            Keyword arguments forwarded to the workflow/agent constructor.
+        should_accept_fn : Any
+            Optional predicate ``(trajectory_dict) -> bool`` used to
+            filter results.
+        group_size : int
+            Number of times to run the workflow per input (default ``1``).
+        dynamic_bs : bool
+            Enable dynamic batch sizing (default ``False``).
+        batch_size : int | None
+            Batch size for the dummy dataloader when ``dataloader`` is
+            ``None``.  **Required** when ``dataloader`` is ``None``.
+            Ignored when ``dataloader`` is not ``None``.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            A list of trajectory dicts (matching ``RolloutController`` API).
+        """
         if not self._gateway_addr:
             raise RuntimeError(
                 "GatewayInferenceController.initialize() must be called first"
             )
+        if dataloader is None:
+            if batch_size is None:
+                raise ValueError(
+                    "batch_size must be specified when dataloader is None "
+                    "(online-agent mode)"
+                )
+            dataloader = _DummyDataLoader(batch_size=batch_size)
         resolved_workflow = self._resolve_workflow(
             workflow,
             workflow_kwargs,
