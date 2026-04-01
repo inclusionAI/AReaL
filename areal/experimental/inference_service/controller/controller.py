@@ -1224,35 +1224,29 @@ class GatewayInferenceController:
 
             return resolved
 
-        # (b) Resolve workflow and workflow_kwargs into an agent object.
-        #     Three input forms: string import path, callable class, or instance.
+        # (b) Resolve workflow input (string import path, class, or instance).
+        #     Defer instantiation until after the RolloutWorkflow guard.
         if isinstance(workflow, str):
-            imported = import_from_string(workflow)
-            # Imported is an agent class or instance
-            if isinstance(imported, type):
-                agent = imported(**(workflow_kwargs or {}))
-            else:
-                agent = imported
-            if not callable(getattr(agent, "run", None)):
-                raise TypeError(
-                    f"workflow must resolve to an agent with a callable run() "
-                    f"method. Got workflow={workflow!r}"
-                )
-
-        elif isinstance(workflow, type):
-            agent = workflow(**(workflow_kwargs or {}))
-
+            agent = import_from_string(workflow)
         else:
-            # Instance path
             agent = workflow
 
-        # (c) Reject RolloutWorkflow instances/subclasses
+        # (c) Reject RolloutWorkflow classes and instances
+        if isinstance(agent, type) and issubclass(agent, RolloutWorkflow):
+            raise TypeError(
+                "GatewayInferenceController only accepts agent classes or instances with a "
+                "run() method or None for online mode; direct RolloutWorkflow "
+                "classes are not supported"
+            )
         if isinstance(agent, RolloutWorkflow):
             raise TypeError(
-                "GatewayInferenceController only accepts agent workflows with a "
+                "GatewayInferenceController only accepts agent classes or instances with a "
                 "run() method or None for online mode; direct RolloutWorkflow "
                 "instances are not supported"
             )
+
+        if isinstance(agent, type):
+            agent = agent(**(workflow_kwargs or {}))
         if not callable(getattr(agent, "run", None)):
             raise TypeError(
                 f"workflow must be an agent with a callable run() method. "

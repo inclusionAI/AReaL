@@ -55,23 +55,29 @@ def test_guard_main_registers_ipv6_worker_addr():
         etcd3_addr="localhost:2379",
         fileroot=None,
     )
-    mock_server = MagicMock()
-    mock_server.socket.getsockname.return_value = ("::1", 18080, 0, 0)
-    mock_server.serve_forever.side_effect = KeyboardInterrupt
 
     with (
         patch.object(
-            guard_main.argparse.ArgumentParser,
-            "parse_known_args",
-            return_value=(args, []),
+            guard_main,
+            "make_base_parser",
+            return_value=MagicMock(
+                parse_known_args=MagicMock(return_value=(args, [])),
+            ),
         ),
-        patch.object(guard_main, "make_server", return_value=mock_server),
-        patch.object(guard_main.name_resolve, "reconfigure"),
-        patch.object(guard_main.name_resolve, "add") as mock_add,
-        patch.object(guard_main.names, "worker_discovery", return_value="worker-key"),
-        patch.object(guard_main.guard_app, "cleanup_forked_children"),
+        patch.object(
+            guard_main,
+            "configure_state_from_args",
+            return_value="::1",
+        ) as mock_configure,
+        patch.object(guard_main, "run_server") as mock_run_server,
     ):
         guard_main.main()
 
-    mock_add.assert_called_once_with("worker-key", "[::1]:18080", replace=True)
-    mock_server.shutdown.assert_called_once()
+    mock_configure.assert_called_once()
+    called_state = mock_configure.call_args.args[0]
+    assert called_state is guard_main._state
+
+    mock_run_server.assert_called_once()
+    rs_args = mock_run_server.call_args
+    assert rs_args.args[2] == "::1"
+    assert rs_args.args[3] == 0
