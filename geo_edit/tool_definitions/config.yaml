@@ -10,6 +10,7 @@
 image_crop: false          # Crop image by bounding box
 image_label: false         # Add text labels to image
 draw_line: false           # Draw lines on image
+draw_path: false           # Draw multi-point connected path on image
 bounding_box: false        # Draw bounding boxes on image
 image_highlight: false     # Highlight regions on image
 text_ocr: false            # General text recognition (111 languages)

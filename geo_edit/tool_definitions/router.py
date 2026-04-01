@@ -38,7 +38,7 @@ with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
 # =============================================================================
 
 TOOL_CATEGORIES = {
-    "general": ["image_crop", "image_label", "draw_line", "bounding_box", "image_highlight",
+    "general": ["image_crop", "image_label", "draw_line", "draw_path", "bounding_box", "image_highlight",
                 "text_ocr", "auto_segment", "bbox_segment", "grounding_dino"],
     "math": ["math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath"],
     "table": ["table_ocr"],
