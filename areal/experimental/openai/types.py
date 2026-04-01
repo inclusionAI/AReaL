@@ -39,6 +39,7 @@ class InteractionWithTokenLogpReward:
     # Common
     model_response: ModelResponse | None = None
     reward: float | None = None
+    norm_group: str | None = None  # [MARL] add norm_group for shared backend case
     parent: InteractionWithTokenLogpReward | None = None
     chat_template_type: str = "hf"
     _cache: dict[str, torch.Tensor] | None = None

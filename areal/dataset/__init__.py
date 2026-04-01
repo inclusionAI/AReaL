@@ -19,6 +19,8 @@ VALID_DATASETS = [
     "virl39k",
     "hh-rlhf",
     "torl_data",
+    "MATH-500",
+    "amc12"
 ]
 
 logger = logging.getLogger("Dataset")
@@ -117,6 +119,24 @@ def _get_custom_dataset(
         from .torl_data import get_torl_data_rl_dataset
 
         return get_torl_data_rl_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            **kwargs,
+        )
+    elif "MATH-500" in path and type == 'rl':
+        from .math500 import get_math500_rl_dataset
+        return get_math500_rl_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            **kwargs,
+        )
+    elif "amc12" in path and type == 'rl':
+        from .amc12 import get_amc12_rl_dataset
+        return get_amc12_rl_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
