@@ -314,21 +314,6 @@ _fetch_buffer: dict[Any, torch.Tensor] = {}
 _fetch_buffer_lock = Lock()
 
 
-def clear_fetch_buffer() -> None:
-    """Remove all entries from the client-side fetch buffer."""
-    with _fetch_buffer_lock:
-        _fetch_buffer.clear()
-
-
-def buffer_stats() -> dict[str, int]:
-    """Get current fetch buffer statistics."""
-    with _fetch_buffer_lock:
-        return dict(
-            num_tensors=len(_fetch_buffer),
-            total_bytes=sum(t.nbytes for t in _fetch_buffer.values()),
-        )
-
-
 @dataclass
 class RTensor:
     shard: TensorShardInfo

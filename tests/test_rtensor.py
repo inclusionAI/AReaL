@@ -828,9 +828,10 @@ class TestFetchBuffer:
 
     def setup_method(self):
         """Clear fetch buffer before each test."""
-        from areal.infra.rpc.rtensor import clear_fetch_buffer
+        from areal.infra.rpc.rtensor import _fetch_buffer, _fetch_buffer_lock
 
-        clear_fetch_buffer()
+        with _fetch_buffer_lock:
+            _fetch_buffer.clear()
 
     def test_to_local_populates_buffer(self, rpc_server):
         """to_local() should populate the fetch buffer on first access."""
@@ -1022,29 +1023,6 @@ class TestFetchBuffer:
         # clear_node evicts from buffer
         asyncio.run(RTensor.clear_node(rpc_server, [shard_id]))
         assert shard_id not in _fetch_buffer
-
-    def test_clear_fetch_buffer(self, rpc_server):
-        """clear_fetch_buffer() should remove all entries."""
-        from areal.infra.rpc.rtensor import _fetch_buffer, clear_fetch_buffer
-
-        tensor = torch.randn(2, 3).cpu()
-        shard_id = str(uuid.uuid4())
-
-        serialized = serialize_value(tensor)
-        requests.put(
-            f"http://{rpc_server}/data/{shard_id}",
-            data=orjson.dumps(serialized),
-        )
-
-        rt = RTensor(
-            shard=TensorShardInfo(shard_id=shard_id, node_addr=rpc_server),
-            data=torch.empty(2, 3, device="meta"),
-        )
-        rt.to_local()
-        assert len(_fetch_buffer) > 0
-
-        clear_fetch_buffer()
-        assert len(_fetch_buffer) == 0
 
     def test_buffer_thread_safety(self, rpc_server):
         """Concurrent to_local() calls with the same shard_id should not crash."""
