@@ -75,7 +75,7 @@ client, provides feedback after each conversation, and the gateway accumulates
 trajectories into a training batch. It is the simplest end-to-end illustration of how
 AReaL's inference service enables closed-loop RL without modifying the training code.
 
-The automated demo script is `run_online_demo.sh`. It uses
+The automated demo script is `human_in_the_loop_demo.py`. It uses
 [zeroclaw](https://github.com/dhh1995/zeroclaw) as the chat client and exercises the
 following procedure:
 
@@ -87,8 +87,8 @@ following procedure:
 3. **Run four HITL rounds** — for each round the script:
    - Asks the model *"how many r's are in the word strawberry?"*.
    - If the answer is wrong, provides a corrective turn and asks once more.
-   - Calls `set_reward.py` to push a scalar reward (`1.0` for correct, `0.0` for
-     wrong after two attempts) back to the gateway via `POST /rl/set_reward`.
+   - Calls `POST /rl/set_reward` on the gateway to push a scalar reward (`1.0` for
+     correct, `0.0` for wrong after two attempts).
 4. **Verify the batch** — waits for `online_rollout.py` to emit a `Rollout complete`
    log line confirming that all four trajectories (= `batch_size`) were collected and
    processed.
@@ -108,24 +108,24 @@ following procedure:
 All commands should be executed from the **repository root**.
 
 ```bash
-bash examples/experimental/inference_service/run_online_demo.sh
+python3 examples/experimental/inference_service/human_in_the_loop_demo.py
 ```
 
-Key tunables at the top of the script:
+Key CLI arguments:
 
-| Variable             | Default                         | Description                                                               |
-| -------------------- | ------------------------------- | ------------------------------------------------------------------------- |
-| `ACTOR_PATH`         | `/storage/.../Qwen__Qwen3-0.6B` | Path to the HuggingFace model weights                                     |
-| `ADMIN_KEY`          | `sk-test123456`                 | Admin API key (must match `rollout.openai.admin_api_key` in the YAML)     |
-| `REQUEST_TIMEOUT`    | `3600`                          | Per-request timeout in seconds                                            |
-| `GATEWAY_WAIT_SECS`  | `600`                           | Seconds to wait for the gateway to become ready                           |
-| `QUESTION`           | *strawberry question*           | Question posed in every HITL round                                        |
+| Argument             | Default                          | Description                                                           |
+| -------------------- | -------------------------------- | --------------------------------------------------------------------- |
+| `--actor-path`       | `Qwen/Qwen3-0.6B`               | Path to the HuggingFace model weights                                 |
+| `--admin-key`        | `sk-test123456`                  | Admin API key (must match `rollout.openai.admin_api_key` in the YAML) |
+| `--request-timeout`  | `3600`                           | Per-request timeout in seconds                                        |
+| `--gateway-wait`     | `600`                            | Seconds to wait for the gateway to become ready                       |
+| `--question`         | *strawberry question*            | Question posed in every HITL round                                    |
 
 You can override the model path without editing the script:
 
 ```bash
-ACTOR_PATH=/path/to/your/model \
-bash examples/experimental/inference_service/run_online_demo.sh
+python3 examples/experimental/inference_service/human_in_the_loop_demo.py \
+    --actor-path /path/to/your/model
 ```
 
 ### Running a Manual HITL Session
@@ -149,13 +149,13 @@ Proxy gateway available at http://127.0.0.1:<PORT>
 **Step 2 — Chat with the model** using any OpenAI-compatible client, pointing it at
 `http://127.0.0.1:<PORT>/v1` with `Authorization: Bearer sk-test123456`.
 
-**Step 3 — Submit a reward** after each conversation turn:
+**Step 3 — Submit a reward** after each conversation turn via HTTP:
 
 ```bash
-python3 examples/experimental/inference_service/set_reward.py \
-    http://127.0.0.1:<PORT> \
-    --api-key sk-test123456 \
-    --reward 1.0
+curl -X POST http://127.0.0.1:<PORT>/rl/set_reward \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-test123456" \
+    -d '{"reward": 1.0}'
 ```
 
 Repeat Steps 2–3 until `batch_size` (default: 4) trajectories are complete. The server
@@ -171,7 +171,7 @@ When the demo finishes successfully you should see:
 ════════════════════════════════════════════════════════════════
   ── Rollout log (last 40 lines) ──
   ...
-  ✔ Databatch detected in online_rollout output:
+  ✔ Databatch detected:
   (AReaL) ... InferenceServiceOnlineTrain INFO: Rollout complete (4 trajectories), avg_reward=X.XXXX
 ```
 
