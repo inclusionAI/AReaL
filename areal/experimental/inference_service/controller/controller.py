@@ -1050,6 +1050,13 @@ class GatewayInferenceController:
     # -- Workflow resolution helpers ----------------------------------------
 
     def _wrap_agent(self, agent: Any):
+        """Wrap an agent in an InferenceServiceWorkflow.
+
+        Parameters
+        ----------
+        agent : Any
+            The agent to wrap (any object with an async ``run()`` method).
+        """
         from areal.experimental.inference_service.controller.workflow import (
             InferenceServiceWorkflow,
         )
@@ -1079,9 +1086,26 @@ class GatewayInferenceController:
         workflow_kwargs=None,
         group_size=1,
     ):
+        """Resolve a workflow-like input to an InferenceServiceWorkflow.
+
+        Unlike ``RolloutController._resolve_workflow``, this method does
+        **not** accept ``RolloutWorkflow`` instances or subclasses directly.
+        It accepts agent objects/classes with an async ``run()`` method, or
+        ``None`` for online mode.
+
+        Parameters
+        ----------
+        workflow : Any
+            An agent instance, agent class, import-path string, or ``None``.
+        workflow_kwargs : dict, optional
+            Keyword arguments passed to the agent constructor.
+        group_size : int
+            Number of times to run the workflow per input.
+        """
         from areal.api.workflow_api import RolloutWorkflow
         from areal.utils.dynamic_import import import_from_string
 
+        # (a) None → online mode: create InferenceServiceWorkflow without agent
         if workflow is None:
             from areal.experimental.inference_service.controller.workflow import (
                 InferenceServiceWorkflow,
@@ -1096,59 +1120,72 @@ class GatewayInferenceController:
                 admin_api_key=self.config.openai.admin_api_key,
                 **online_kwargs,
             )
-        else:
-            resolved: RolloutWorkflow
 
-            if isinstance(workflow, RolloutWorkflow):
+            if group_size > 1:
+                from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
+
+                resolved = GroupedRolloutWorkflow(
+                    resolved, group_size, logging.getLogger("RolloutController")
+                )
+
+            return resolved
+
+        # (b) Resolve workflow and workflow_kwargs into an agent object.
+        #     Three input forms: string import path, callable class, or instance.
+        if isinstance(workflow, str):
+            imported = import_from_string(workflow)
+            if isinstance(imported, type) and issubclass(imported, RolloutWorkflow):
+                raise TypeError(
+                    "GatewayInferenceController only accepts agent workflows with a "
+                    "run() method or None for online mode; direct RolloutWorkflow "
+                    "classes are not supported"
+                )
+            elif isinstance(imported, RolloutWorkflow):
                 raise TypeError(
                     "GatewayInferenceController only accepts agent workflows with a "
                     "run() method or None for online mode; direct RolloutWorkflow "
                     "instances are not supported"
                 )
-
-            elif isinstance(workflow, str):
-                imported = import_from_string(workflow)
-                if isinstance(imported, type) and issubclass(imported, RolloutWorkflow):
-                    raise TypeError(
-                        "GatewayInferenceController only accepts agent workflows with a "
-                        "run() method or None for online mode; direct RolloutWorkflow "
-                        "classes are not supported"
-                    )
-                elif isinstance(imported, RolloutWorkflow):
-                    raise TypeError(
-                        "GatewayInferenceController only accepts agent workflows with a "
-                        "run() method or None for online mode; direct RolloutWorkflow "
-                        "instances are not supported"
-                    )
-                else:
-                    if isinstance(imported, type):
-                        agent = imported(**(workflow_kwargs or {}))
-                    else:
-                        agent = imported
-                    if not callable(getattr(agent, "run", None)):
-                        raise TypeError(
-                            f"workflow must resolve to an agent with a callable run() "
-                            f"method. Got workflow={workflow!r}"
-                        )
-                    resolved = self._wrap_agent(agent)
-
-            elif isinstance(workflow, type):
-                agent = workflow(**(workflow_kwargs or {}))
-                if not callable(getattr(agent, "run", None)):
-                    raise TypeError(
-                        f"workflow must be an agent with a callable run() method. "
-                        f"Got workflow={workflow!r}"
-                    )
-                resolved = self._wrap_agent(agent)
-
+            # Imported is an agent class or instance
+            if isinstance(imported, type):
+                agent = imported(**(workflow_kwargs or {}))
             else:
-                if not callable(getattr(workflow, "run", None)):
-                    raise TypeError(
-                        f"workflow must be an agent with a callable run() method. "
-                        f"Got workflow={workflow!r}"
-                    )
-                resolved = self._wrap_agent(workflow)
+                agent = imported
+            if not callable(getattr(agent, "run", None)):
+                raise TypeError(
+                    f"workflow must resolve to an agent with a callable run() "
+                    f"method. Got workflow={workflow!r}"
+                )
 
+        elif isinstance(workflow, type):
+            agent = workflow(**(workflow_kwargs or {}))
+            if not callable(getattr(agent, "run", None)):
+                raise TypeError(
+                    f"workflow must be an agent with a callable run() method. "
+                    f"Got workflow={workflow!r}"
+                )
+
+        else:
+            # Instance path
+            agent = workflow
+
+        # (c) Reject RolloutWorkflow instances/subclasses
+        if isinstance(agent, RolloutWorkflow):
+            raise TypeError(
+                "GatewayInferenceController only accepts agent workflows with a "
+                "run() method or None for online mode; direct RolloutWorkflow "
+                "instances are not supported"
+            )
+        if not callable(getattr(agent, "run", None)):
+            raise TypeError(
+                f"workflow must be an agent with a callable run() method. "
+                f"Got workflow={workflow!r}"
+            )
+
+        # (d) Wrap the agent in InferenceServiceWorkflow
+        resolved = self._wrap_agent(agent)
+
+        # (e) Optionally wrap in GroupedRolloutWorkflow
         if group_size > 1:
             from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
 
