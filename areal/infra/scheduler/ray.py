@@ -543,24 +543,7 @@ class RayScheduler(Scheduler):
         """Fork new worker processes from existing workers.
 
         Creates new Ray actors colocated with existing workers of the target role.
-        The forked workers share the same placement groups as their target workers.
-
-        Note: The `command` parameter is ignored for RayScheduler since Ray actors
-        always run the RayRPCServer. For custom module behavior, use LocalScheduler.
-
-        Parameters
-        ----------
-        role : str
-            Role name for the new forked workers (e.g., "proxy")
-        target_role : str
-            Role of existing workers to fork from (e.g., "rollout")
-        command : str, optional
-            Custom module path (ignored for Ray - Ray actors always run RayRPCServer)
-
-        Returns
-        -------
-        list[str]
-            List of worker IDs created (e.g., ["proxy/0", "proxy/1"])
+        The ``command`` parameter is ignored — Ray actors always run RayRPCServer.
         """
         if command is not None:
             logger.warning(
