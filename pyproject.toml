@@ -111,6 +111,7 @@ dependencies = [
     # Monitoring and logging
     "wandb",
     "tensorboardx",
+    "trackio",
     "colorama",
     "colorlog",
     "swanboard==0.1.9b1",
