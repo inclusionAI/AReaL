@@ -5,12 +5,12 @@ This directory contains two examples that use the AReaL Inference Service
 OpenAI-compatible proxy gateway so any external agent runtime can submit chat requests
 and receive RL training data.
 
----
+______________________________________________________________________
 
 ## Example 1: Offline τ²-Bench Rollout
 
 This example runs rollout-only data generation on the
-[$\tau^2$-Bench](https://github.com/sierra-research/tau2-bench) using the AReaL
+[$\\tau^2$-Bench](https://github.com/sierra-research/tau2-bench) using the AReaL
 Inference Service. Unlike the full training pipeline in `examples/tau2/`, this script
 performs rollouts without a training step — useful for evaluation, data collection, or
 debugging agent behaviour.
@@ -65,7 +65,7 @@ A successful rollout prints per-batch statistics after every batch:
 Each line reports the batch index, number of trajectories, individual rewards, and the
 batch-level average reward.
 
----
+______________________________________________________________________
 
 ## Example 2: Human-in-the-Loop Online RL Demo
 
@@ -81,16 +81,16 @@ following procedure:
 
 1. **Launch `online_rollout.py`** — starts the SGLang inference engine and the proxy
    gateway, then waits until the gateway address is printed to the log.
-2. **Patch `~/.zeroclaw/config.toml`** — redirects zeroclaw's default provider to the
-   local gateway and injects the admin API key so all requests are attributed to a single
-   RL session. The original config is restored on exit.
-3. **Run four HITL rounds** — for each round the script:
+1. **Patch `~/.zeroclaw/config.toml`** — redirects zeroclaw's default provider to the
+   local gateway and injects the admin API key so all requests are attributed to a
+   single RL session. The original config is restored on exit.
+1. **Run four HITL rounds** — for each round the script:
    - Asks the model *"how many r's are in the word strawberry?"*.
    - If the answer is wrong, provides a corrective turn and asks once more.
    - Calls `POST /rl/set_reward` on the gateway to push a scalar reward (`1.0` for
      correct, `0.0` for wrong after two attempts).
-4. **Verify the batch** — waits for `online_rollout.py` to emit a `Rollout complete`
-   log line confirming that all four trajectories (= `batch_size`) were collected and
+1. **Verify the batch** — waits for `online_rollout.py` to emit a `Rollout complete` log
+   line confirming that all four trajectories (= `batch_size`) were collected and
    processed.
 
 ### Prerequisites
@@ -99,8 +99,8 @@ following procedure:
   [installation guide](https://inclusionai.github.io/AReaL/en/tutorial/installation.html).
 - **zeroclaw installed** — any OpenAI-compatible CLI that supports
   `--session-state-file` can be substituted; the demo uses zeroclaw for convenience.
-- **A zeroclaw config at `~/.zeroclaw/config.toml`** with at least a
-  `default_provider` key — the script will patch it temporarily.
+- **A zeroclaw config at `~/.zeroclaw/config.toml`** with at least a `default_provider`
+  key — the script will patch it temporarily.
 - **One GPU** — the default YAML (`online_rollout.yaml`) requests 1 GPU with SGLang.
 
 ### Running the Automated Demo
@@ -113,13 +113,13 @@ python3 examples/experimental/inference_service/human_in_the_loop_demo.py
 
 Key CLI arguments:
 
-| Argument             | Default                          | Description                                                           |
-| -------------------- | -------------------------------- | --------------------------------------------------------------------- |
-| `--actor-path`       | `Qwen/Qwen3-0.6B`               | Path to the HuggingFace model weights                                 |
-| `--admin-key`        | `sk-test123456`                  | Admin API key (must match `rollout.openai.admin_api_key` in the YAML) |
-| `--request-timeout`  | `3600`                           | Per-request timeout in seconds                                        |
-| `--gateway-wait`     | `600`                            | Seconds to wait for the gateway to become ready                       |
-| `--question`         | *strawberry question*            | Question posed in every HITL round                                    |
+| Argument            | Default               | Description                                                           |
+| ------------------- | --------------------- | --------------------------------------------------------------------- |
+| `--actor-path`      | `Qwen/Qwen3-0.6B`     | Path to the HuggingFace model weights                                 |
+| `--admin-key`       | `sk-test123456`       | Admin API key (must match `rollout.openai.admin_api_key` in the YAML) |
+| `--request-timeout` | `3600`                | Per-request timeout in seconds                                        |
+| `--gateway-wait`    | `600`                 | Seconds to wait for the gateway to become ready                       |
+| `--question`        | *strawberry question* | Question posed in every HITL round                                    |
 
 You can override the model path without editing the script:
 
