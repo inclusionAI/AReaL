@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sys
 import warnings
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from datasets import Dataset
@@ -22,7 +22,6 @@ from areal.api.cli_args import (
     BaseExperimentConfig,
     GenerationHyperparameters,
     InferenceEngineConfig,
-    OpenAIProxyConfig,
     SGLangConfig,
     TrainDatasetConfig,
     load_expr_config,
@@ -179,12 +178,6 @@ def main(argv: list[str]) -> None:
     )
 
     # --- Build GatewayControllerConfig from YAML rollout section ---
-    openai_cfg = rollout_cfg.openai
-    if openai_cfg is None:
-        openai_cfg = OpenAIProxyConfig(admin_api_key="rollout-admin")
-    else:
-        openai_cfg = replace(openai_cfg, admin_api_key="rollout-admin")
-
     ctrl_config = GatewayControllerConfig(
         tokenizer_path=config.tokenizer_path,
         model_path=config.model_path,
@@ -201,7 +194,7 @@ def main(argv: list[str]) -> None:
         scheduling_spec=rollout_cfg.scheduling_spec,
         setup_timeout=rollout_cfg.setup_timeout,
         request_timeout=rollout_cfg.request_timeout,
-        openai=openai_cfg,
+        openai=rollout_cfg.openai,
     )
 
     # --- Scheduler ---
