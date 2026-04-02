@@ -71,6 +71,7 @@ from areal.engine.core.model import (
     is_qwen_vl_model,
     is_valid_vision_model,
 )
+from areal.engine.core.tensor_hash import hash_parameter_shards, hash_string_sequence
 from areal.engine.fsdp_utils import (
     fsdp2_load_full_state_dict,
     get_cosine_schedule_with_warmup,
@@ -215,6 +216,11 @@ class FSDPEngine(TrainEngine):
         self.is_offload: bool = False
         self._per_layer_optim_wrapper: PerLayerOptimWrapper | None = None
         self.enable_tree_training: bool = self.config.enable_tree_training
+
+        # Hash-based sparse weight update state
+        self._param_hashes: torch.Tensor | None = None
+        self._weight_sync_groups: tuple[dist.ProcessGroup, ...] = ()
+        self._weight_update_meta: WeightUpdateMeta | None = None  # cached for hash init
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -435,6 +441,8 @@ class FSDPEngine(TrainEngine):
             self.logger.warning(
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
             )
+        if meta.type == "xccl":
+            self._param_hashes = None
         self.rollout_engine = engine
         self.rollout_coordinator = DistRolloutCoordinator(
             rollout_engine=engine, train_engine=self
@@ -443,6 +451,12 @@ class FSDPEngine(TrainEngine):
         if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
+
+            # Initialize param hashes for incremental weight updates.
+            # Must happen after model is loaded and before first update_weights().
+            self._weight_sync_groups = self._build_weight_sync_groups()
+            self._weight_update_meta = meta
+            self._init_param_hashes(meta)
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
@@ -1031,6 +1045,85 @@ class FSDPEngine(TrainEngine):
         else:
             yield from name_params_iterator
 
+    def _materialize_param_list(
+        self, meta: WeightUpdateMeta
+    ) -> list[tuple[str, nn.Parameter]]:
+        """Materialize the parameter iterator into a stable list.
+
+        Applies the same LoRA filtering as _update_weights_from_distributed().
+        """
+        if self.config.use_lora:
+            return [
+                (name, param)
+                for name, param in self._get_model_name_parameters(meta)
+                if param.requires_grad
+            ]
+        return list(self._get_model_name_parameters(meta))
+
+    def _build_weight_sync_groups(self) -> tuple[dist.ProcessGroup, ...]:
+        """Build process groups for hash-based change detection all-reduce.
+
+        Uses two-phase all-reduce on orthogonal mesh dimensions (same pattern
+        as grad norm computation in fsdp_utils/grad.py, adapted from Megatron-LM).
+
+        NOTE: FSDP Engine has no Pipeline Parallelism. All ranks share identical
+        named_parameters() ordering because they hold the same nn.Module structure
+        with only FSDP shard placement differences. This makes list-index-based
+        all-reduce safe across all ranks in the dp_sp group.
+        """
+        groups: list[dist.ProcessGroup] = []
+        groups.append(self.world_mesh["dp_sp"].get_group())
+        tp_group = self.world_mesh["tp"].get_group()
+        if self.parallel_helper.tp_enabled:
+            groups.append(tp_group)
+        return tuple(groups)
+
+    def _init_param_hashes(self, meta: WeightUpdateMeta) -> None:
+        """Initialize parameter hashes after model loading.
+
+        Called once during connect_engine() so the first weight update
+        can benefit from incremental detection (inference engine starts
+        with the same initial weights).
+
+        Also performs a one-time verification that all ranks in the
+        weight sync groups see identical parameter names in the same order.
+        """
+        param_list = self._materialize_param_list(meta)
+
+        # One-time ordering verification across ranks
+        param_names = tuple(name for name, _ in param_list)
+        name_hash_tensor = hash_string_sequence(
+            param_names, output_device=current_platform.current_device()
+        )
+        for group in self._weight_sync_groups:
+            gathered = [
+                torch.zeros_like(name_hash_tensor)
+                for _ in range(dist.get_world_size(group=group))
+            ]
+            dist.all_gather(gathered, name_hash_tensor, group=group)
+            if not all(torch.equal(g, name_hash_tensor) for g in gathered):
+                raise RuntimeError(
+                    f"Parameter ordering mismatch across ranks in weight sync group. "
+                    f"This rank sees {len(param_names)} params starting with "
+                    f"{list(param_names[:3])}"
+                )
+
+        if self.config.use_lora or not self.config.sparse_weight_sync:
+            reason = "LoRA mode" if self.config.use_lora else "sparse_weight_sync=False"
+            self.logger.info(
+                f"{reason}: sparse weight sync disabled for "
+                f"{len(param_list)} parameters."
+            )
+            return
+
+        self._param_hashes = hash_parameter_shards(
+            param_list, output_device=current_platform.current_device()
+        )
+        self.logger.info(
+            f"Initialized param hashes for {len(param_list)} parameters "
+            f"(hash shape: {self._param_hashes.shape})."
+        )
+
     def _get_full_tensor(self, param: nn.Parameter) -> torch.Tensor:
         """Get full tensor from a parameter, handling DTensor and CPU offloaded tensors."""
         tensor = param.data
@@ -1167,12 +1260,25 @@ class FSDPEngine(TrainEngine):
 
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
-        """Broadcast parameters with single-pending-bucket pipelining."""
+        """Broadcast parameters with hash-based skip for unchanged params.
 
-        # Reset weight weight meta with local info
+        Two-pass approach:
+          Pass 1: Compute per-param hashes of local FSDP shards, compare with
+                  stored hashes, all-reduce change flags across weight sync groups.
+          Pass 2: Only call _get_full_tensor() + broadcast for changed params.
+                  All ranks agree on skip set, so collective calls stay synchronized.
+
+        LoRA mode: Pass 1 is skipped entirely.  The inference engine removes
+        and rebuilds the full adapter from the received tensors, so a sparse
+        payload would produce an incomplete adapter.  LoRA adapters are small
+        enough that the overhead of always sending everything is negligible.
+        """
+        # Reset weight meta with local info
         meta.nccl_master_address = self.weight_update_master_addr
         meta.nccl_master_port = self.weight_update_master_port
         meta.nccl_group_name = self.weight_update_group_name
+
+        assert self.rollout_engine is not None
 
         main_rank = dist.get_rank() == 0
         if main_rank:
@@ -1180,6 +1286,50 @@ class FSDPEngine(TrainEngine):
 
         dist.barrier(group=self.cpu_group)
 
+        # ── Change detection ──
+        param_list = self._materialize_param_list(meta)
+        n = len(param_list)
+
+        if self.config.use_lora or not self.config.sparse_weight_sync:
+            # LoRA: always send all params (see docstring above).
+            # sparse_weight_sync=False: skip hash-based detection entirely.
+            changed_list = [1] * n
+            num_changed = n
+            new_hashes = None
+        else:
+            # ── Pass 1: Hash-based change detection ──
+            new_hashes = hash_parameter_shards(
+                param_list, output_device=current_platform.current_device()
+            )
+
+            if self._param_hashes is None:
+                changed_list = [1] * n
+                num_changed = n
+                self.logger.info(
+                    "Full weight sync forced (param hashes cleared after engine reconnect)."
+                )
+            else:
+                if self._param_hashes.shape != new_hashes.shape:
+                    raise RuntimeError(
+                        "Parameter hash shape changed after initialization. "
+                        f"Expected {self._param_hashes.shape}, got {new_hashes.shape}."
+                    )
+                changed = (new_hashes != self._param_hashes).to(torch.int32)
+
+                # Two-phase all-reduce on orthogonal dims (same pattern as grad norm)
+                for group in self._weight_sync_groups:
+                    dist.all_reduce(changed, op=dist.ReduceOp.MAX, group=group)
+
+                changed_list = changed.tolist()
+                num_changed = int(changed.sum().item())
+
+        if main_rank:
+            self.logger.info(
+                f"Weight update: {num_changed}/{n} params changed "
+                f"({100 * num_changed / max(n, 1):.1f}%)"
+            )
+
+        # ── Pass 2: Selective weight update (only changed params) ──
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
         broadcast_stream = None
 
@@ -1194,19 +1344,11 @@ class FSDPEngine(TrainEngine):
         named_tensors: list[tuple[str, torch.Tensor]] = []
         pending_bucket: _PendingWeightUpdateBucket | None = None
 
-        if self.config.use_lora:
-            # For LoRA, only iterate over trainable LoRA parameters
-            param_iterator = (
-                (name, param)
-                for name, param in self._get_model_name_parameters(meta)
-                if param.requires_grad
-            )
-        else:
-            # For full model, iterate over all parameters
-            param_iterator = self._get_model_name_parameters(meta)
-
         try:
-            for name, param in param_iterator:
+            for i, (name, param) in enumerate(param_list):
+                if changed_list[i] == 0:
+                    continue  # All ranks skip together — no deadlock
+
                 # Ranks other than 0 only help to get the full tensor
                 tensor = self._get_full_tensor(param)
                 if not main_rank:
@@ -1218,7 +1360,6 @@ class FSDPEngine(TrainEngine):
                     and tensor_size + buffer_size > weight_chunked_mem_size
                 )
                 if bucket_overflow:
-                    # Only middle buckets need drain+align before the next all-gather.
                     if pending_bucket is not None:
                         self._wait_pending_weight_update_bucket(pending_bucket)
                         pending_bucket = None
@@ -1246,6 +1387,13 @@ class FSDPEngine(TrainEngine):
             if main_rank and pending_bucket is not None:
                 self._wait_pending_weight_update_bucket(pending_bucket)
                 pending_bucket = None
+
+        # Commit hashes only after all buckets complete successfully.
+        # If any broadcast/future failed above, the exception propagates
+        # past this point, preserving old hashes so the next retry
+        # re-sends those parameters.  LoRA skips hashing entirely.
+        if new_hashes is not None:
+            self._param_hashes = new_hashes
 
         dist.barrier(group=self.cpu_group)
         if main_rank:

@@ -12,6 +12,7 @@ from torch.distributed.tensor import DTensor
 
 from areal.api import ParamSpec, WeightUpdateMeta
 from areal.engine.core.distributed import init_custom_process_group
+from areal.engine.core.tensor_hash import hash_parameter_shards, hash_string_sequence
 from areal.experimental.engine.archon_checkpoint import save_model_to_hf
 from areal.infra.platforms import current_platform
 from areal.utils import name_resolve, names
@@ -42,6 +43,9 @@ class WeightSyncState:
         self.master_addr: str = ""
         self.master_port: int = 0
         self.group: dist.ProcessGroup | None = None
+        # Hash-based sparse weight update state
+        self.param_hashes: torch.Tensor | None = None
+        self.weight_sync_groups: tuple[dist.ProcessGroup, ...] = ()
 
 
 def init_weight_update_group(
@@ -90,6 +94,81 @@ def init_weight_update_group(
     state.group_initialized = True
 
 
+def build_weight_sync_groups(engine: ArchonEngine) -> tuple[dist.ProcessGroup, ...]:
+    """Build process groups for hash-based change detection all-reduce.
+
+    Uses two-phase all-reduce on orthogonal mesh dimensions (same pattern
+    as grad norm computation, adapted from Megatron-LM).
+
+    For Archon with PP: each PP stage independently manages its own hashes.
+    All ranks within the same PP stage share identical named_parameters()
+    ordering (they hold the same model_parts with only DTensor shard differences).
+    EP ranks also share identical param names (experts are DTensor Shard(0),
+    not separate modules).
+    """
+    groups: list[dist.ProcessGroup] = []
+    dp_shard_cp_group = engine.parallel_dims.get_group("dp_shard_cp")
+    if dp_shard_cp_group is not None:
+        groups.append(dp_shard_cp_group)
+    tp_group = engine.parallel_dims.get_group("tp")
+    if engine.parallel_dims.tp_enabled and tp_group is not None:
+        groups.append(tp_group)
+    return tuple(groups)
+
+
+def init_param_hashes(
+    state: WeightSyncState,
+    engine: ArchonEngine,
+) -> None:
+    """Initialize parameter hashes after model loading.
+
+    Called once during connect_engine() regardless of sparse_weight_sync.
+
+    Always performs ordering verification (collective-safety invariant):
+    all ranks in the weight sync groups must see identical parameter names
+    in the same order, because update_weights_from_distributed() iterates
+    param_list and calls DTensor.full_tensor() (a collective) in that order.
+
+    Hash caching for incremental detection is only done when
+    sparse_weight_sync is enabled.
+    """
+    param_list = list(engine._get_model_name_parameters())
+
+    # One-time ordering verification across ranks (unconditional).
+    param_names = tuple(name for name, _ in param_list)
+    name_hash_tensor = hash_string_sequence(
+        param_names, output_device=current_platform.current_device()
+    )
+    for group in state.weight_sync_groups:
+        gathered = [
+            torch.zeros_like(name_hash_tensor)
+            for _ in range(dist.get_world_size(group=group))
+        ]
+        dist.all_gather(gathered, name_hash_tensor, group=group)
+        if not all(torch.equal(g, name_hash_tensor) for g in gathered):
+            raise RuntimeError(
+                f"Parameter ordering mismatch across ranks in weight sync group. "
+                f"This rank sees {len(param_names)} params starting with "
+                f"{list(param_names[:3])}"
+            )
+
+    # Hash caching only needed for sparse weight sync.
+    if not engine.config.sparse_weight_sync:
+        engine.logger.info(
+            f"sparse_weight_sync=False: skipping hash caching for "
+            f"{len(param_list)} parameters."
+        )
+        return
+
+    state.param_hashes = hash_parameter_shards(
+        param_list, output_device=current_platform.current_device()
+    )
+    engine.logger.info(
+        f"Initialized param hashes for {len(param_list)} parameters "
+        f"(hash shape: {state.param_hashes.shape})."
+    )
+
+
 def _get_full_tensor(param: nn.Parameter) -> torch.Tensor:
     """Get full tensor from a parameter, handling DTensor and CPU offload."""
     tensor = param.data
@@ -114,7 +193,7 @@ def update_weights_from_distributed(
     meta: WeightUpdateMeta,
     engine: ArchonEngine,
 ) -> None:
-    """Update weights by broadcasting from training engine to inference engine."""
+    """Update weights with hash-based skip for unchanged params."""
     assert engine.rollout_engine is not None
 
     meta.nccl_master_address = state.master_addr
@@ -126,12 +205,56 @@ def update_weights_from_distributed(
 
     dist.barrier(group=engine.cpu_group)
 
+    # ── Pass 1: Hash-based change detection (no collectives) ──
+    param_list = list(engine._get_model_name_parameters())
+    n = len(param_list)
+
+    if not engine.config.sparse_weight_sync:
+        changed_list = [1] * n
+        num_changed = n
+        new_hashes = None
+    else:
+        new_hashes = hash_parameter_shards(
+            param_list, output_device=current_platform.current_device()
+        )
+
+        if state.param_hashes is None:
+            changed_list = [1] * n
+            num_changed = n
+            engine.logger.info(
+                "Full weight sync forced (param hashes cleared after engine reconnect)."
+            )
+        else:
+            if state.param_hashes.shape != new_hashes.shape:
+                raise RuntimeError(
+                    "Parameter hash shape changed after initialization. "
+                    f"Expected {state.param_hashes.shape}, got {new_hashes.shape}."
+                )
+            changed = (new_hashes != state.param_hashes).to(torch.int32)
+
+            # Two-phase all-reduce on orthogonal dims
+            for group in state.weight_sync_groups:
+                dist.all_reduce(changed, op=dist.ReduceOp.MAX, group=group)
+
+            changed_list = changed.tolist()
+            num_changed = int(changed.sum().item())
+
+    engine.logger.info(
+        f"Weight update: {num_changed}/{n} params changed "
+        f"({100 * num_changed / max(n, 1):.1f}%)"
+    )
+
+    # ── Pass 2: Selective weight update (only changed params) ──
+
     weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
     buffer_size = 0
     named_tensors: list[tuple[str, torch.Tensor]] = []
 
-    for name, param in engine._get_model_name_parameters():
+    for i, (name, param) in enumerate(param_list):
+        if changed_list[i] == 0:
+            continue  # All ranks skip together — no deadlock
+
         tensor = _get_full_tensor(param)
 
         if not engine.is_pipeline_parallel_head():
@@ -163,6 +286,13 @@ def update_weights_from_distributed(
         _update_bucket_weights(
             state, meta, engine.rollout_engine, engine.engine_lock, named_tensors
         )
+
+    # Commit hashes only after all buckets complete successfully.
+    # If any broadcast/future failed above, the exception propagates
+    # past this point, preserving old hashes so the next retry
+    # re-sends those parameters.
+    if new_hashes is not None:
+        state.param_hashes = new_hashes
 
     dist.barrier(group=engine.cpu_group)
 

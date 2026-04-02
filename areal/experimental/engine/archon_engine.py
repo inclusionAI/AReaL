@@ -56,6 +56,8 @@ from areal.experimental.engine.archon_utils import (
 )
 from areal.experimental.engine.archon_weight_sync import (
     WeightSyncState,
+    build_weight_sync_groups,
+    init_param_hashes,
     init_weight_update_group,
     update_weights_from_disk,
     update_weights_from_distributed,
@@ -614,6 +616,8 @@ class ArchonEngine(TrainEngine):
             self.logger.warning(
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
             )
+        if meta.type == "xccl":
+            self._weight_sync_state.param_hashes = None
         self.rollout_engine = engine
         self.rollout_coordinator = DistRolloutCoordinator(
             rollout_engine=engine, train_engine=self
@@ -625,6 +629,10 @@ class ArchonEngine(TrainEngine):
                 meta=meta,
                 engine=self,
             )
+            # Initialize param hashes for incremental weight updates.
+            state = self._weight_sync_state
+            state.weight_sync_groups = build_weight_sync_groups(self)
+            init_param_hashes(state=state, engine=self)
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
