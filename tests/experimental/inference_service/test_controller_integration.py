@@ -1,13 +1,14 @@
 """Integration tests for GatewayInferenceController with real SGLang servers.
 
-Requires GPU and a model. Run with:
+Requires GPU and a model. Marked @pytest.mark.slow to exclude from default CI.
+Run manually:
     uv run pytest tests/experimental/inference_service/test_controller_integration.py -v -s
 
 The test launches:
   1. A real SGLang server (GPU subprocess)
-  2. A LocalScheduler (module-scoped)
+  2. Module-scoped LocalScheduler / GatewayInferenceController fixtures
   3. A GatewayInferenceController that spins up Gateway, Router, and Data Proxy
-     micro-services in background threads.
+      micro-services in background threads.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import io
 import subprocess
 import sys
 import time
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -90,21 +92,20 @@ def model_path() -> str:
     return get_test_model_path()
 
 
-@pytest.fixture(scope="module")
-def local_scheduler(tmp_path_factory):
-    """Create a LocalScheduler for testing."""
+def _make_local_scheduler(tmp_path_factory: pytest.TempPathFactory, name: str):
+    """Create a LocalScheduler with a module-lifetime temp root."""
     if not has_gpu():
         pytest.skip("GPU required for LocalScheduler")
 
     from areal.infra.scheduler.local import LocalScheduler
 
-    tmp_path = tmp_path_factory.mktemp("local_scheduler")
+    tmp_path = tmp_path_factory.mktemp(name)
     fileroot = tmp_path / "fileroot"
     fileroot.mkdir()
     name_resolve_root = tmp_path / "name_resolve"
     name_resolve_root.mkdir()
 
-    scheduler = LocalScheduler(
+    return LocalScheduler(
         gpu_devices=[0],
         log_dir=str(tmp_path),
         experiment_name=EXPR_NAME,
@@ -112,27 +113,27 @@ def local_scheduler(tmp_path_factory):
         fileroot=str(fileroot),
         nfs_record_root=str(name_resolve_root),
     )
-    yield scheduler
-    scheduler.delete_workers(None)
 
 
-@pytest.fixture(scope="module")
-def gateway_controller(sglang_server, local_scheduler, model_path):
-    """Create and initialize a GatewayInferenceController, yield it, then destroy."""
-    if not has_gpu():
-        pytest.skip("GPU required")
-    from areal.api.cli_args import SchedulingSpec
-    from areal.api.io_struct import LocalInfServerInfo
+def _make_gateway_controller_config(
+    model_path: str,
+    *,
+    online_mode: bool = False,
+    set_reward_finish_timeout: float = 0.0,
+):
+    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
-    from areal.experimental.inference_service.controller.controller import (
-        GatewayInferenceController,
-    )
 
-    config = GatewayControllerConfig(
+    openai_cfg = OpenAIProxyConfig(admin_api_key="test-admin")
+    if online_mode:
+        openai_cfg = OpenAIProxyConfig(mode="online", admin_api_key="test-admin")
+
+    return GatewayControllerConfig(
         tokenizer_path=model_path,
         model_path=model_path,
+        set_reward_finish_timeout=set_reward_finish_timeout,
         scheduling_spec=(
             SchedulingSpec(
                 gpu=0,
@@ -141,29 +142,136 @@ def gateway_controller(sglang_server, local_scheduler, model_path):
                 cmd="python -m areal.experimental.inference_service.guard",
             ),
         ),
-        admin_api_key="test-admin",
-        consumer_batch_size=4,
+        consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=180.0,
+        openai=openai_cfg,
     )
 
+
+def _make_server_info(sglang_server: dict[str, object]):
+    from areal.api.io_struct import LocalInfServerInfo
+
+    return LocalInfServerInfo(
+        process=cast(subprocess.Popen[Any], sglang_server["process"]),
+        host=cast(str, sglang_server["host"]),
+        port=cast(int, sglang_server["port"]),
+    )
+
+
+def _export_trajectory_with_retry(
+    gateway_url: str,
+    admin_key: str,
+    session_id: str,
+    *,
+    discount: float,
+    timeout: float = 30.0,
+    wait_timeout: float = 20.0,
+) -> dict[str, object]:
+    deadline = time.time() + wait_timeout
+    last_response = None
+    while time.time() < deadline:
+        last_response = httpx.post(
+            f"{gateway_url}/export_trajectories",
+            json={
+                "session_id": session_id,
+                "discount": discount,
+                "style": "individual",
+            },
+            headers={"Authorization": f"Bearer {admin_key}"},
+            timeout=timeout,
+        )
+        if last_response.status_code == 200:
+            return last_response.json()
+        time.sleep(0.2)
+
+    assert last_response is not None
+    pytest.fail(
+        f"export_trajectories did not become ready: {last_response.status_code} {last_response.text}"
+    )
+
+
+@pytest.fixture(scope="module")
+def gateway_controller(sglang_server, model_path, tmp_path_factory):
+    """Create and initialize a GatewayInferenceController, yield it, then destroy."""
+    if not has_gpu():
+        pytest.skip("GPU required")
+
+    from areal.experimental.inference_service.controller.controller import (
+        GatewayInferenceController,
+    )
+
+    local_scheduler = _make_local_scheduler(tmp_path_factory, "gateway_controller")
+    config = _make_gateway_controller_config(model_path)
     ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
-
-    server_info = LocalInfServerInfo(
-        process=None,
-        host=sglang_server["host"],
-        port=sglang_server["port"],
-    )
 
     ctrl.initialize(
         role="rollout",
-        server_infos=[server_info],
+        server_infos=[_make_server_info(sglang_server)],
     )
 
     try:
         yield ctrl
     finally:
         ctrl.destroy()
+        local_scheduler.delete_workers(None)
+
+
+@pytest.fixture(scope="module")
+def gateway_controller_online(sglang_server, model_path, tmp_path_factory):
+    if not has_gpu():
+        pytest.skip("GPU required")
+
+    from areal.experimental.inference_service.controller.controller import (
+        GatewayInferenceController,
+    )
+
+    local_scheduler = _make_local_scheduler(
+        tmp_path_factory, "gateway_controller_online"
+    )
+    config = _make_gateway_controller_config(model_path, online_mode=True)
+    ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
+
+    ctrl.initialize(
+        role="rollout",
+        server_infos=[_make_server_info(sglang_server)],
+    )
+
+    try:
+        yield ctrl
+    finally:
+        ctrl.destroy()
+        local_scheduler.delete_workers(None)
+
+
+@pytest.fixture(scope="module")
+def gateway_controller_with_reward_timeout(sglang_server, model_path, tmp_path_factory):
+    if not has_gpu():
+        pytest.skip("GPU required")
+
+    from areal.experimental.inference_service.controller.controller import (
+        GatewayInferenceController,
+    )
+
+    local_scheduler = _make_local_scheduler(
+        tmp_path_factory, "gateway_controller_with_reward_timeout"
+    )
+    config = _make_gateway_controller_config(
+        model_path,
+        set_reward_finish_timeout=3.0,
+    )
+    ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
+
+    ctrl.initialize(
+        role="rollout-timeout",
+        server_infos=[_make_server_info(sglang_server)],
+    )
+
+    try:
+        yield ctrl
+    finally:
+        ctrl.destroy()
+        local_scheduler.delete_workers(None)
 
 
 # =============================================================================
@@ -171,7 +279,7 @@ def gateway_controller(sglang_server, local_scheduler, model_path):
 # =============================================================================
 
 
-@pytest.mark.sglang
+@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerLifecycle:
     """Verify controller lifecycle: init starts services, properties set, destroy cleans up."""
@@ -218,7 +326,7 @@ class TestControllerLifecycle:
 # =============================================================================
 
 
-@pytest.mark.sglang
+@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerVersioning:
     """Verify version management on the controller."""
@@ -229,24 +337,26 @@ class TestControllerVersioning:
 
     def test_set_version_updates_local(self, gateway_controller):
         """set_version should update the local version."""
-        gateway_controller.set_version(5)
-        assert gateway_controller.get_version() == 5
-        # Reset for other tests
-        gateway_controller.set_version(0)
+        try:
+            gateway_controller.set_version(5)
+            assert gateway_controller.get_version() == 5
+        finally:
+            gateway_controller.set_version(0)
 
     def test_set_version_does_not_raise_without_broadcast(self, gateway_controller):
         """set_version updates local state without broadcasting (broadcast removed)."""
         # Weight-update forwarding (including /set_version broadcast) has been
         # removed from the gateway HTTP stack.  This test verifies that
         # set_version still works for local version tracking.
-        gateway_controller.set_version(10)
-        assert gateway_controller.get_version() == 10
-        # Verify gateway is still healthy (no stale broadcast attempted)
-        addr = gateway_controller.proxy_gateway_addr
-        resp = httpx.get(f"{addr}/health", timeout=10.0)
-        assert resp.status_code == 200
-        # Reset
-        gateway_controller.set_version(0)
+        try:
+            gateway_controller.set_version(10)
+            assert gateway_controller.get_version() == 10
+            # Verify gateway is still healthy (no stale broadcast attempted)
+            addr = gateway_controller.proxy_gateway_addr
+            resp = httpx.get(f"{addr}/health", timeout=10.0)
+            assert resp.status_code == 200
+        finally:
+            gateway_controller.set_version(0)
 
 
 # =============================================================================
@@ -254,21 +364,22 @@ class TestControllerVersioning:
 # =============================================================================
 
 
-@pytest.mark.sglang
+@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerPauseResume:
     """Verify pause/resume broadcasts to workers."""
 
     def test_pause_broadcasts_to_workers(self, gateway_controller):
         """pause() should broadcast pause to all data proxy workers."""
-        gateway_controller.pause()
-        # Verify data proxy reports paused
-        dp_addr = gateway_controller._data_proxy_addrs[0]
-        resp = httpx.get(f"{dp_addr}/health", timeout=10.0)
-        assert resp.status_code == 200
-        assert resp.json().get("paused") is True
-        # Clean up: resume
-        gateway_controller.resume()
+        try:
+            gateway_controller.pause()
+            # Verify data proxy reports paused
+            dp_addr = gateway_controller._data_proxy_addrs[0]
+            resp = httpx.get(f"{dp_addr}/health", timeout=10.0)
+            assert resp.status_code == 200
+            assert resp.json().get("paused") is True
+        finally:
+            gateway_controller.resume()
 
     def test_resume_broadcasts_to_workers(self, gateway_controller):
         """resume() should broadcast resume to all data proxy workers."""
@@ -302,7 +413,7 @@ class TestControllerPauseResume:
 # =============================================================================
 
 
-@pytest.mark.sglang
+@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerRolloutBatch:
     """Test rollout_batch through the controller with SimpleAgent workflow."""
@@ -333,6 +444,35 @@ class TestControllerRolloutBatch:
         assert isinstance(traj["input_ids"], RTensor)
         assert traj["input_ids"].ndim == 2
 
+    def test_rollout_batch_with_should_accept_fn_accepts(self, gateway_controller):
+        """rollout_batch with an accepting should_accept_fn returns list of trajectory dicts."""
+
+        def accept_all(trajectory: dict) -> bool:
+            return True
+
+        data = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            }
+        ]
+
+        result = gateway_controller.rollout_batch(
+            data=data,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+            should_accept_fn=accept_all,
+        )
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        traj = result[0]
+        assert isinstance(traj, dict)
+        assert "input_ids" in traj
+        from areal.infra.rpc.rtensor import RTensor
+
+        assert isinstance(traj["input_ids"], RTensor)
+        assert traj["input_ids"].ndim == 2
+
 
 # =============================================================================
 # TestControllerPrepareBatch
@@ -356,7 +496,7 @@ class _FakeDataLoader:
         yield self._items
 
 
-@pytest.mark.sglang
+@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerPrepareBatch:
     """Test prepare_batch through the controller with SimpleAgent workflow."""
@@ -390,13 +530,47 @@ class TestControllerPrepareBatch:
         assert isinstance(traj["input_ids"], RTensor)
         assert traj["input_ids"].ndim == 2
 
+    def test_prepare_batch_with_should_accept_fn_accepts(self, gateway_controller):
+        """prepare_batch with an accepting should_accept_fn returns list of trajectory dicts."""
+
+        def accept_all(trajectory: dict) -> bool:
+            return True
+
+        items = [
+            {
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "answer": "4",
+            },
+            {
+                "messages": [{"role": "user", "content": "What is 3+3?"}],
+                "answer": "6",
+            },
+        ]
+        dataloader = _FakeDataLoader(items, batch_size=len(items))
+
+        result = gateway_controller.prepare_batch(
+            dataloader=dataloader,
+            workflow="tests.experimental.openai.utils.SimpleAgent",
+            should_accept_fn=accept_all,
+        )
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        traj = result[0]
+        assert isinstance(traj, dict)
+        assert "input_ids" in traj
+        from areal.infra.rpc.rtensor import RTensor
+
+        assert isinstance(traj["input_ids"], RTensor)
+        assert traj["input_ids"].ndim == 2
+
 
 # =============================================================================
 # TestControllerSubmitWait
 # =============================================================================
 
 
-@pytest.mark.sglang
+@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerSubmitWait:
     """Test submit/wait API on the controller."""
@@ -443,12 +617,170 @@ class TestControllerSubmitWait:
 
 
 # =============================================================================
+# TestControllerOnlineWorkflow
+# =============================================================================
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not has_gpu(), reason="GPU required")
+class TestControllerOnlineWorkflow:
+    """Test controller-in-the-loop online workflow through real gateway services."""
+
+    def test_online_workflow_submit_wait_roundtrip(self, gateway_controller_online):
+        import requests
+
+        gateway_url = gateway_controller_online.proxy_gateway_addr
+        assert gateway_controller_online.config.openai is not None
+        admin_key = gateway_controller_online.config.openai.admin_api_key
+
+        task_id = gateway_controller_online.submit(
+            data={},
+            workflow=None,
+            workflow_kwargs={"timeout": 120.0},
+        )
+        assert isinstance(task_id, int)
+
+        chat_resp = requests.post(
+            f"{gateway_url}/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {admin_key}",
+            },
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "max_tokens": 64,
+            },
+            timeout=30.0,
+        )
+        assert chat_resp.status_code == 200, chat_resp.text
+
+        reward_resp = requests.post(
+            f"{gateway_url}/rl/set_reward",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {admin_key}",
+            },
+            json={"reward": 1.0},
+            timeout=10.0,
+        )
+        assert reward_resp.status_code == 200, reward_resp.text
+        reward_data = reward_resp.json()
+        assert reward_data["session_id"] == "__hitl__"
+        assert reward_data["trajectory_id"] == 0
+
+        result = gateway_controller_online.wait_for_task(task_id=task_id, timeout=120.0)
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "rewards" in result
+
+        from areal.infra.rpc.rtensor import RTensor
+
+        local_result = RTensor.localize(result)
+        assert torch.is_tensor(local_result["rewards"])
+        assert local_result["rewards"].numel() >= 1
+        assert local_result["rewards"].reshape(-1)[0].item() == pytest.approx(1.0)
+
+    def test_offline_export_applies_discount_after_multiple_rewards_in_same_trajectory(
+        self, gateway_controller_with_reward_timeout
+    ):
+        gateway_url = gateway_controller_with_reward_timeout.proxy_gateway_addr
+        assert gateway_controller_with_reward_timeout.config.openai is not None
+        admin_key = gateway_controller_with_reward_timeout.config.openai.admin_api_key
+
+        grant_resp = httpx.post(
+            f"{gateway_url}/grant_capacity",
+            headers={"Authorization": f"Bearer {admin_key}"},
+            timeout=10.0,
+        )
+        assert grant_resp.status_code == 200, grant_resp.text
+
+        start_resp = httpx.post(
+            f"{gateway_url}/rl/start_session",
+            json={"task_id": "reward-timeout-export"},
+            headers={"Authorization": f"Bearer {admin_key}"},
+            timeout=30.0,
+        )
+        assert start_resp.status_code == 201, start_resp.text
+        session = start_resp.json()
+        session_id = session["session_id"]
+        session_api_key = session["api_key"]
+
+        first_chat = httpx.post(
+            f"{gateway_url}/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "max_tokens": 64,
+            },
+            headers={"Authorization": f"Bearer {session_api_key}"},
+            timeout=30.0,
+        )
+        assert first_chat.status_code == 200, first_chat.text
+        first_chat_id = first_chat.json()["id"]
+
+        first_reward = httpx.post(
+            f"{gateway_url}/rl/set_reward",
+            json={"reward": 1.0},
+            headers={"Authorization": f"Bearer {session_api_key}"},
+            timeout=10.0,
+        )
+        assert first_reward.status_code == 200, first_reward.text
+        first_reward_data = first_reward.json()
+        assert first_reward_data["ready_transition"] is False
+        assert first_reward_data["trajectory_ready"] is False
+        assert first_reward_data["trajectory_id"] is None
+
+        second_chat = httpx.post(
+            f"{gateway_url}/chat/completions",
+            json={
+                "model": "default",
+                "messages": [{"role": "user", "content": "What is 3+3?"}],
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "max_tokens": 64,
+            },
+            headers={"Authorization": f"Bearer {session_api_key}"},
+            timeout=30.0,
+        )
+        assert second_chat.status_code == 200, second_chat.text
+        second_chat_id = second_chat.json()["id"]
+
+        second_reward = httpx.post(
+            f"{gateway_url}/rl/set_reward",
+            json={"reward": 4.0},
+            headers={"Authorization": f"Bearer {session_api_key}"},
+            timeout=10.0,
+        )
+        assert second_reward.status_code == 200, second_reward.text
+        second_reward_data = second_reward.json()
+        assert second_reward_data["ready_transition"] is False
+        assert second_reward_data["trajectory_ready"] is False
+        assert second_reward_data["trajectory_id"] is None
+
+        export_data = _export_trajectory_with_retry(
+            gateway_url,
+            admin_key,
+            session_id,
+            discount=0.5,
+        )
+        interactions = export_data["interactions"]
+        assert list(interactions) == [first_chat_id, second_chat_id]
+        assert interactions[first_chat_id]["reward"] == pytest.approx(3.0)
+        assert interactions[second_chat_id]["reward"] == pytest.approx(4.0)
+
+
+# =============================================================================
 # TestControllerFullInitialization (no pre-existing server_infos)
 # =============================================================================
 
 
 @pytest.fixture(scope="module")
-def gateway_controller_full_init(local_scheduler, model_path):
+def gateway_controller_full_init(model_path, tmp_path_factory):
     """Create a GatewayInferenceController that launches SGLang via the full init path.
 
     Unlike ``gateway_controller`` which passes pre-existing ``server_infos``,
@@ -458,7 +790,7 @@ def gateway_controller_full_init(local_scheduler, model_path):
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import SchedulingSpec
+    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -475,10 +807,10 @@ def gateway_controller_full_init(local_scheduler, model_path):
                 gpu=1, cmd="python -m areal.experimental.inference_service.guard"
             ),
         ),
-        admin_api_key="test-admin",
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
+        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
     )
 
     server_args = {
@@ -486,6 +818,9 @@ def gateway_controller_full_init(local_scheduler, model_path):
         "mem_fraction_static": 0.15,
     }
 
+    local_scheduler = _make_local_scheduler(
+        tmp_path_factory, "gateway_controller_full_init"
+    )
     ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
     ctrl.initialize(
         role="rollout-full",
@@ -496,9 +831,10 @@ def gateway_controller_full_init(local_scheduler, model_path):
         yield ctrl
     finally:
         ctrl.destroy()
+        local_scheduler.delete_workers(None)
 
 
-@pytest.mark.sglang
+@pytest.mark.slow
 @pytest.mark.skipif(not has_gpu(), reason="GPU required")
 class TestControllerFullInitialization:
     """Test the full initialization path where the controller launches SGLang itself.
@@ -551,7 +887,7 @@ class TestControllerFullInitialization:
         assert len(dp_entries) > 0, "No data-proxy entries in _forked_services"
 
     def test_chat_completion_via_gateway(self, gateway_controller_full_init):
-        """Full e2e: start_session → /chat/completions → validate → end_session."""
+        """Full e2e: start_session → /chat/completions → validate → set_reward(finish=True)."""
         ctrl = gateway_controller_full_init
         gw = ctrl._gateway_addr
         admin_key = "test-admin"
@@ -613,14 +949,16 @@ class TestControllerFullInitialization:
             usage["prompt_tokens"] + usage["completion_tokens"]
         )
 
-        # --- end session ---
+        # --- finish session via set_reward ---
         resp = httpx.post(
-            f"{gw}/rl/end_session",
+            f"{gw}/rl/set_reward",
+            json={"reward": 0.0, "finish": True},
             headers={"Authorization": f"Bearer {session_api_key}"},
             timeout=10.0,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["interaction_count"] == 1
+        assert resp.json()["ready_transition"] is True
 
     def test_rollout_batch_with_simple_agent(self, gateway_controller_full_init):
         """rollout_batch with SimpleAgent should return list of trajectory dicts."""
@@ -736,12 +1074,12 @@ class TestControllerFullInitialization:
 
 
 @pytest.fixture(scope="module")
-def gateway_controller_full_init_vllm(local_scheduler, model_path):
+def gateway_controller_full_init_vllm(model_path, tmp_path_factory):
     """Controller that launches vLLM via the full init path."""
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import SchedulingSpec
+    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -758,16 +1096,19 @@ def gateway_controller_full_init_vllm(local_scheduler, model_path):
                 gpu=1, cmd="python -m areal.experimental.inference_service.guard"
             ),
         ),
-        admin_api_key="test-admin",
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
+        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
     )
 
     server_args = {
         "gpu_memory_utilization": 0.15,
     }
 
+    local_scheduler = _make_local_scheduler(
+        tmp_path_factory, "gateway_controller_full_init_vllm"
+    )
     ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
     ctrl.initialize(
         role="rollout-vllm",
@@ -778,6 +1119,7 @@ def gateway_controller_full_init_vllm(local_scheduler, model_path):
         yield ctrl
     finally:
         ctrl.destroy()
+        local_scheduler.delete_workers(None)
 
 
 @pytest.mark.vllm
@@ -829,12 +1171,14 @@ class TestControllerFullInitVLLM:
         assert completion["usage"]["completion_tokens"] > 0
 
         resp = httpx.post(
-            f"{gw}/rl/end_session",
+            f"{gw}/rl/set_reward",
+            json={"reward": 0.0},
             headers={"Authorization": f"Bearer {session_api_key}"},
             timeout=10.0,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["interaction_count"] == 1
+        assert resp.json()["ready_transition"] is True
 
     def test_rollout_batch_with_simple_agent_vllm(
         self, gateway_controller_full_init_vllm
@@ -920,7 +1264,8 @@ def _do_vlm_chat_session(
     assert completion["usage"]["completion_tokens"] > 0
 
     resp = httpx.post(
-        f"{gw}/rl/end_session",
+        f"{gw}/rl/set_reward",
+        json={"reward": 0.0, "finish": True},
         headers={"Authorization": f"Bearer {session_api_key}"},
         timeout=10.0,
     )
@@ -935,11 +1280,11 @@ def vlm_model_path() -> str:
 
 
 @pytest.fixture(scope="module")
-def gateway_controller_full_init_vlm_sglang(local_scheduler, vlm_model_path):
+def gateway_controller_full_init_vlm_sglang(vlm_model_path, tmp_path_factory):
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import SchedulingSpec
+    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -956,12 +1301,15 @@ def gateway_controller_full_init_vlm_sglang(local_scheduler, vlm_model_path):
                 gpu=1, cmd="python -m areal.experimental.inference_service.guard"
             ),
         ),
-        admin_api_key="test-admin",
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
+        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
     )
 
+    local_scheduler = _make_local_scheduler(
+        tmp_path_factory, "gateway_controller_full_init_vlm_sglang"
+    )
     ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
     ctrl.initialize(
         role="rollout-vlm-sglang",
@@ -972,14 +1320,15 @@ def gateway_controller_full_init_vlm_sglang(local_scheduler, vlm_model_path):
         yield ctrl
     finally:
         ctrl.destroy()
+        local_scheduler.delete_workers(None)
 
 
 @pytest.fixture(scope="module")
-def gateway_controller_full_init_vlm_vllm(local_scheduler, vlm_model_path):
+def gateway_controller_full_init_vlm_vllm(vlm_model_path, tmp_path_factory):
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import SchedulingSpec
+    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -996,12 +1345,15 @@ def gateway_controller_full_init_vlm_vllm(local_scheduler, vlm_model_path):
                 gpu=1, cmd="python -m areal.experimental.inference_service.guard"
             ),
         ),
-        admin_api_key="test-admin",
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
+        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
     )
 
+    local_scheduler = _make_local_scheduler(
+        tmp_path_factory, "gateway_controller_full_init_vlm_vllm"
+    )
     ctrl = GatewayInferenceController(config=config, scheduler=local_scheduler)
     ctrl.initialize(
         role="rollout-vlm-vllm",
@@ -1012,6 +1364,7 @@ def gateway_controller_full_init_vlm_vllm(local_scheduler, vlm_model_path):
         yield ctrl
     finally:
         ctrl.destroy()
+        local_scheduler.delete_workers(None)
 
 
 @pytest.mark.slow

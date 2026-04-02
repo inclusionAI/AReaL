@@ -131,7 +131,7 @@ class CapacityManager:
 class SessionRegistry:
     """Maps session API keys and session IDs to worker addresses.
 
-    Pinning persists even after ``/rl/end_session`` (needed for
+    Pinning persists after reward is set (needed for
     ``/export_trajectories``). Cleaned up after export_trajectories or
     when a worker is deleted.
     """
@@ -196,6 +196,10 @@ class SessionRegistry:
             if session_key is not None:
                 self._key_to_worker.pop(session_key, None)
             return True
+
+    async def session_key_for_id(self, session_id: str) -> str | None:
+        async with self._lock:
+            return self._id_to_key.get(session_id)
 
     async def count(self) -> int:
         """Return the number of registered session keys."""

@@ -179,7 +179,6 @@ def main(argv: list[str]) -> None:
 
     # --- Build GatewayControllerConfig from YAML rollout section ---
     ctrl_config = GatewayControllerConfig(
-        admin_api_key="rollout-admin",
         tokenizer_path=config.tokenizer_path,
         model_path=config.model_path,
         consumer_batch_size=rollout_cfg.consumer_batch_size,

@@ -245,6 +245,29 @@ class TestAdminEndpoints:
         mock_revoke.assert_called_once()
 
     @pytest.mark.asyncio
+    @patch(f"{MODULE}.revoke_session_in_router", new_callable=AsyncMock)
+    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
+    @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
+    async def test_online_export_with_trajectory_id_requests_router_cleanup(
+        self, mock_forward, mock_query_router, mock_revoke, client
+    ):
+        mock_query_router.return_value = WORKER_ADDR
+        mock_forward.return_value = httpx.Response(200, json={"interactions": []})
+
+        resp = await client.post(
+            "/export_trajectories",
+            json={
+                "session_id": "__hitl__",
+                "trajectory_id": 0,
+                "discount": 1.0,
+                "style": "individual",
+            },
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        mock_revoke.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_export_trajectories_missing_session_id(self, client):
         """Admin key → /export_trajectories without session_id → 400."""
         resp = await client.post(
@@ -289,19 +312,23 @@ class TestSessionEndpoints:
     @pytest.mark.asyncio
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
     @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
-    async def test_session_end_session(self, mock_query_router, mock_forward, client):
-        """Session key → /rl/end_session → forwarded to pinned worker."""
+    async def test_session_set_reward_finish(
+        self, mock_query_router, mock_forward, client
+    ):
+        """Session key → /rl/set_reward (finish=True) → forwarded to pinned worker."""
         mock_query_router.return_value = WORKER_ADDR
         mock_forward.return_value = httpx.Response(
-            200, json={"message": "success", "interaction_count": 5}
+            200,
+            json={"message": "success", "interaction_count": 5, "finished": True},
         )
 
         resp = await client.post(
-            "/rl/end_session",
-            content=b"",
+            "/rl/set_reward",
+            json={"reward": 0.0, "finish": True},
             headers=session_headers(),
         )
         assert resp.status_code == 200
+        mock_forward.assert_called_once()
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
@@ -317,6 +344,59 @@ class TestSessionEndpoints:
             headers=session_headers(),
         )
         assert resp.status_code == 200
+        mock_forward.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
+    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
+    async def test_set_reward_returns_ready_transition_without_router_notification(
+        self, mock_query_router, mock_forward, client
+    ):
+        mock_query_router.return_value = WORKER_ADDR
+        mock_forward.return_value = httpx.Response(
+            200,
+            json={
+                "message": "success",
+                "session_id": "__hitl__",
+                "trajectory_id": 0,
+                "trajectory_ready": True,
+                "ready_transition": True,
+            },
+        )
+
+        resp = await client.post(
+            "/rl/set_reward",
+            json={"reward": 1.0},
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ready_transition"] is True
+
+    @pytest.mark.asyncio
+    @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
+    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
+    async def test_set_reward_duplicate_ready_transition_is_forwarded_as_is(
+        self, mock_query_router, mock_forward, client
+    ):
+        mock_query_router.return_value = WORKER_ADDR
+        mock_forward.return_value = httpx.Response(
+            200,
+            json={
+                "message": "success",
+                "session_id": "__hitl__",
+                "trajectory_id": 0,
+                "trajectory_ready": True,
+                "ready_transition": False,
+            },
+        )
+
+        resp = await client.post(
+            "/rl/set_reward",
+            json={"reward": 1.0},
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ready_transition"] is False
 
 
 # =============================================================================

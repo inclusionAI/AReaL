@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import pytest_asyncio
 
-from areal.experimental.inference_service.data_proxy.app import create_app
+from areal.experimental.inference_service.data_proxy.app import (
+    _flush_ready_trajectories,
+    create_app,
+)
 from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
 from areal.experimental.inference_service.data_proxy.session import (
+    SessionData,
     SessionStore,
 )
 
@@ -64,25 +69,30 @@ def mock_areal_client():
 
     mock_client = MagicMock()
 
-    completion = ChatCompletion(
-        id="chatcmpl-test123",
-        choices=[
-            Choice(
-                finish_reason="stop",
-                index=0,
-                logprobs=None,
-                message=ChatCompletionMessage(content="Hello!", role="assistant"),
-            )
-        ],
-        created=1234567890,
-        model="sglang",
-        object="chat.completion",
-        usage=CompletionUsage(completion_tokens=3, prompt_tokens=5, total_tokens=8),
-    )
+    call_index = 0
 
     async def _mock_create(*, areal_cache=None, **kwargs):
         """Mock create that stores the interaction in session cache via areal_cache."""
         import torch
+
+        nonlocal call_index
+
+        completion = ChatCompletion(
+            id=f"chatcmpl-test{call_index}",
+            choices=[
+                Choice(
+                    finish_reason="stop",
+                    index=0,
+                    logprobs=None,
+                    message=ChatCompletionMessage(content="Hello!", role="assistant"),
+                )
+            ],
+            created=1234567890 + call_index,
+            model="sglang",
+            object="chat.completion",
+            usage=CompletionUsage(completion_tokens=3, prompt_tokens=5, total_tokens=8),
+        )
+        call_index += 1
 
         messages = kwargs.get("messages", [])
 
@@ -134,6 +144,7 @@ async def client(config, mock_tokenizer, mock_areal_client):
     app.state.pause_state = pause_state
     app.state.config = config
     store = SessionStore()
+    store.set_admin_key(config.admin_api_key)
     app.state.session_store = store
     app.state.version = 0
     transport = httpx.ASGITransport(app=app)
@@ -173,16 +184,88 @@ class TestSessionStore:
         store = SessionStore()
         assert store.get_session_by_api_key("nonexistent") is None
 
-    def test_end_session(self):
+    def test_set_reward_marks_trajectory_ready(self):
         store = SessionStore()
         session_id, _ = store.start_session("task-1")
-        count = store.end_session(session_id)
-        assert count == 0  # no interactions yet
+        session = store.get_session(session_id)
+        assert isinstance(session, SessionData)
+        assert not session.has_ready_trajectories
+        # Populate with a fake interaction so set_reward succeeds
+        from areal.experimental.openai.types import InteractionWithTokenLogpReward
 
-    def test_end_session_not_found(self):
+        interaction = InteractionWithTokenLogpReward(
+            messages=[{"role": "user", "content": "hi"}]
+        )
+        interaction.interaction_id = "fake-id"
+        interaction.output_message_list = [{"role": "assistant", "content": "hello"}]
+        session.active_completions["fake-id"] = interaction
+        result = session.set_reward(interaction_id="fake-id", reward=1.0)
+        assert session.has_ready_trajectories
+        assert result.ready_transition is True
+
+    def test_set_reward_waits_for_timeout_before_ready(self):
+        store = SessionStore(set_reward_finish_timeout=5.0)
+        session_id, _ = store.start_session("task-1")
+        session = store.get_session(session_id)
+        assert isinstance(session, SessionData)
+
+        from areal.experimental.openai.types import InteractionWithTokenLogpReward
+
+        interaction = InteractionWithTokenLogpReward(
+            messages=[{"role": "user", "content": "hi"}]
+        )
+        interaction.interaction_id = "fake-id"
+        interaction.output_message_list = [{"role": "assistant", "content": "hello"}]
+        session.active_completions["fake-id"] = interaction
+
+        pending = session.set_reward(interaction_id="fake-id", reward=1.0)
+        assert pending.ready_transition is False
+        assert pending.trajectory_id is None
+        assert not session.has_ready_trajectories
+
+        not_ready = session.finalize_if_reward_timeout_elapsed()
+        assert not_ready is None
+
+        ready = session.finalize_if_reward_timeout_elapsed(
+            now=session._last_access_time + 6.0
+        )
+        assert ready is not None
+        assert ready.ready_transition is True
+        assert ready.trajectory_id == 0
+        assert session.has_ready_trajectories
+
+    def test_multiple_set_reward_calls_update_same_trajectory_before_timeout(self):
+        session = SessionData("task-1", set_reward_finish_timeout=5.0)
+
+        from areal.experimental.openai.types import InteractionWithTokenLogpReward
+
+        interaction = InteractionWithTokenLogpReward(
+            messages=[{"role": "user", "content": "hi"}]
+        )
+        interaction.interaction_id = "fake-id"
+        interaction.output_message_list = [{"role": "assistant", "content": "hello"}]
+        session.active_completions["fake-id"] = interaction
+
+        first = session.set_reward(interaction_id="fake-id", reward=1.0)
+        second = session.set_reward(interaction_id="fake-id", reward=2.0)
+
+        assert first.ready_transition is False
+        assert second.ready_transition is False
+        assert second.trajectory_id is None
+
+        ready = session.finalize_if_reward_timeout_elapsed(
+            now=session._last_access_time + 6.0
+        )
+        assert ready is not None
+        assert ready.trajectory_id == 0
+
+        _, interactions = session.export_trajectory(discount=1.0, style="individual")
+        assert interactions["fake-id"].reward == 2.0
+
+    def test_finish_session_not_found(self):
         store = SessionStore()
-        with pytest.raises(KeyError):
-            store.end_session("nonexistent")
+        session = store.get_session("nonexistent")
+        assert session is None
 
     def test_session_count(self):
         store = SessionStore()
@@ -205,6 +288,20 @@ class TestSessionStore:
         sid2, _ = store.start_session("task-1")
         assert sid1 == "task-1-0"
         assert sid2 == "task-1-1"
+
+    def test_get_or_create_hitl_session_reuses_same_session(self):
+        store = SessionStore()
+        store.set_admin_key(ADMIN_KEY)
+        online_session1 = store.get_or_create_hitl_session()
+        online_session2 = store.get_or_create_hitl_session()
+        assert online_session1 is online_session2
+        assert online_session1.session_id == "__hitl__"
+
+    def test_online_session_count(self):
+        store = SessionStore()
+        store.set_admin_key(ADMIN_KEY)
+        store.get_or_create_hitl_session()
+        assert store.session_count == 1
 
 
 # =============================================================================
@@ -302,8 +399,20 @@ async def test_chat_completions_with_invalid_key(client):
 
 
 @pytest.mark.asyncio
+async def test_offline_chat_unknown_token_falls_through_to_standalone(client):
+    resp = await client.post(
+        "/chat/completions",
+        json={
+            "model": "sglang",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        headers=session_headers(f"{ADMIN_KEY}:agent-online"),
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_chat_completions_passes_sampling_params(client, mock_areal_client):
-    # Start session
     resp = await client.post(
         "/rl/start_session",
         json={"task_id": "sp-test"},
@@ -311,7 +420,6 @@ async def test_chat_completions_passes_sampling_params(client, mock_areal_client
     )
     api_key = resp.json()["api_key"]
 
-    # Call with explicit sampling params (OpenAI-compatible format)
     resp = await client.post(
         "/chat/completions",
         json={
@@ -325,7 +433,6 @@ async def test_chat_completions_passes_sampling_params(client, mock_areal_client
     )
     assert resp.status_code == 200
 
-    # Check that params were passed to areal_client.chat.completions.create
     call_kwargs = mock_areal_client.chat.completions.create.call_args
     kw = call_kwargs.kwargs if call_kwargs.kwargs else call_kwargs[1]
     assert kw["temperature"] == 0.5
@@ -340,7 +447,6 @@ async def test_chat_completions_passes_sampling_params(client, mock_areal_client
 
 @pytest.mark.asyncio
 async def test_set_reward_success(client):
-    # Start session
     resp = await client.post(
         "/rl/start_session",
         json={"task_id": "reward-test"},
@@ -348,7 +454,6 @@ async def test_set_reward_success(client):
     )
     api_key = resp.json()["api_key"]
 
-    # Do a chat completion to create an interaction
     resp = await client.post(
         "/chat/completions",
         json={
@@ -359,7 +464,6 @@ async def test_set_reward_success(client):
     )
     assert resp.status_code == 200
 
-    # Set reward (interaction_id=None → last interaction)
     resp = await client.post(
         "/rl/set_reward",
         json={"reward": 1.0},
@@ -367,11 +471,16 @@ async def test_set_reward_success(client):
     )
     assert resp.status_code == 200
     assert resp.json()["message"] == "success"
+    data = resp.json()
+    assert data["interaction_count"] == 1
+    assert data["session_id"].startswith("reward-test-")
+    assert data["trajectory_id"] == 0
+    assert data["trajectory_ready"] is True
+    assert data["ready_transition"] is True
 
 
 @pytest.mark.asyncio
 async def test_set_reward_no_interactions(client):
-    # Start session
     resp = await client.post(
         "/rl/start_session",
         json={"task_id": "reward-empty"},
@@ -379,7 +488,6 @@ async def test_set_reward_no_interactions(client):
     )
     api_key = resp.json()["api_key"]
 
-    # Set reward with no interactions
     resp = await client.post(
         "/rl/set_reward",
         json={"reward": 1.0},
@@ -399,13 +507,12 @@ async def test_set_reward_without_session_key(client):
 
 
 # =============================================================================
-# Endpoint tests: /rl/end_session
+# Endpoint tests: /rl/set_reward
 # =============================================================================
 
 
 @pytest.mark.asyncio
-async def test_end_session_success(client):
-    # Start session
+async def test_set_reward_auto_finishes(client):
     resp = await client.post(
         "/rl/start_session",
         json={"task_id": "end-test"},
@@ -413,41 +520,6 @@ async def test_end_session_success(client):
     )
     api_key = resp.json()["api_key"]
 
-    # End session
-    resp = await client.post(
-        "/rl/end_session",
-        headers=session_headers(api_key),
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["message"] == "success"
-    assert "interaction_count" in data
-
-
-@pytest.mark.asyncio
-async def test_end_session_without_key(client):
-    resp = await client.post("/rl/end_session")
-    assert resp.status_code == 401
-
-
-# =============================================================================
-# Endpoint tests: /export_trajectories
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_export_trajectories_after_end_session(client):
-    """Full lifecycle: start → chat → set_reward → end → export."""
-    # Start session
-    resp = await client.post(
-        "/rl/start_session",
-        json={"task_id": "export-test"},
-        headers=admin_headers(),
-    )
-    session_id = resp.json()["session_id"]
-    api_key = resp.json()["api_key"]
-
-    # Chat completion
     resp = await client.post(
         "/chat/completions",
         json={
@@ -458,30 +530,406 @@ async def test_export_trajectories_after_end_session(client):
     )
     assert resp.status_code == 200
 
-    # Set reward
+    resp = await client.post(
+        "/rl/set_reward",
+        json={"reward": 0.0},
+        headers=session_headers(api_key),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["message"] == "success"
+    assert "interaction_count" in data
+    assert data["session_id"].startswith("end-test-")
+    assert data["trajectory_id"] == 0
+    assert data["trajectory_ready"] is True
+    assert data["ready_transition"] is True
+
+
+@pytest.mark.asyncio
+async def test_set_reward_only_once_allowed(client):
+    resp = await client.post(
+        "/rl/start_session",
+        json={"task_id": "twice-test"},
+        headers=admin_headers(),
+    )
+    api_key = resp.json()["api_key"]
+
+    resp = await client.post(
+        "/chat/completions",
+        json={
+            "model": "sglang",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        headers=session_headers(api_key),
+    )
+    assert resp.status_code == 200
+
     resp = await client.post(
         "/rl/set_reward",
         json={"reward": 1.0},
         headers=session_headers(api_key),
     )
     assert resp.status_code == 200
+    assert resp.json()["ready_transition"] is True
 
-    # End session
     resp = await client.post(
-        "/rl/end_session",
+        "/rl/set_reward",
+        json={"reward": 2.0},
         headers=session_headers(api_key),
     )
     assert resp.status_code == 200
+    assert resp.json()["ready_transition"] is False
+    assert resp.json()["trajectory_ready"] is True
 
-    # Export trajectories
+
+@pytest.mark.asyncio
+async def test_set_reward_timeout_delays_readiness_and_direct_callback(
+    client, monkeypatch
+):
+    app = client._transport.app
+    app.state.config.set_reward_finish_timeout = 5.0
+    app.state.config.callback_server_addr = "http://controller"
+    app.state.session_store = SessionStore(set_reward_finish_timeout=5.0)
+    app.state.session_store.set_admin_key(ADMIN_KEY)
+
+    callback_calls = []
+
+    async def _mock_post_callback(
+        callback_server_addr, admin_api_key, notification, timeout
+    ):
+        callback_calls.append(
+            (
+                callback_server_addr,
+                admin_api_key,
+                notification.session_id,
+                notification.trajectory_id,
+            )
+        )
+        return True
+
+    monkeypatch.setattr(
+        "areal.experimental.inference_service.data_proxy.app._post_online_ready_callback",
+        _mock_post_callback,
+    )
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "hi"}]},
+        headers=session_headers(ADMIN_KEY),
+    )
+
+    reward_resp = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(ADMIN_KEY),
+    )
+    assert reward_resp.status_code == 200
+    assert reward_resp.json()["ready_transition"] is False
+    assert reward_resp.json()["trajectory_ready"] is False
+
+    await _flush_ready_trajectories(app)
+    assert callback_calls == []
+
+    hitl_session = app.state.session_store.get_session("__hitl__")
+    assert hitl_session is not None
+    hitl_session.finalize_if_reward_timeout_elapsed(now=time.time() + 6.0)
+    await _flush_ready_trajectories(app)
+
+    assert callback_calls == [("http://controller", ADMIN_KEY, "__hitl__", 0)]
+
+
+@pytest.mark.asyncio
+async def test_set_reward_without_key(client):
     resp = await client.post(
-        "/export_trajectories",
-        json={"session_id": session_id, "discount": 1.0, "style": "individual"},
-        headers=admin_headers(),
+        "/rl/set_reward",
+        json={"reward": 0.0},
+    )
+    assert resp.status_code == 401
+
+
+# =============================================================================
+# HITL tests — admin key → single persistent session
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_hitl_admin_key_creates_single_persistent_session(client):
+    resp = await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "hi"}]},
+        headers=session_headers(ADMIN_KEY),
     )
     assert resp.status_code == 200
+
+    resp2 = await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "bye"}]},
+        headers=session_headers(ADMIN_KEY),
+    )
+    assert resp2.status_code == 200
+
+    health = await client.get("/health")
+    assert health.json()["sessions"] == 1
+
+
+@pytest.mark.asyncio
+async def test_hitl_reuses_same_session_across_multiple_chat_requests(client):
+    store: SessionStore = client._transport.app.state.session_store
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "a"}]},
+        headers=session_headers(ADMIN_KEY),
+    )
+    session1 = store.get_session("__hitl__")
+    assert session1 is not None
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "b"}]},
+        headers=session_headers(ADMIN_KEY),
+    )
+    session2 = store.get_session("__hitl__")
+    assert session1 is session2
+
+
+@pytest.mark.asyncio
+async def test_hitl_online_set_reward_separates_trajectories(client):
+    token = ADMIN_KEY
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "t0"}]},
+        headers=session_headers(token),
+    )
+    r0 = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(token),
+    )
+    assert r0.status_code == 200
+    assert r0.json()["trajectory_id"] == 0
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "t1"}]},
+        headers=session_headers(token),
+    )
+    r1 = await client.post(
+        "/rl/set_reward",
+        json={"reward": 2.0},
+        headers=session_headers(token),
+    )
+    assert r1.status_code == 200
+    assert r1.json()["trajectory_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_hitl_ready_transition_after_each_online_set_reward(client):
+    token = ADMIN_KEY
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "hi"}]},
+        headers=session_headers(token),
+    )
+    resp = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(token),
+    )
+    assert resp.json()["ready_transition"] is True
+    assert resp.json()["trajectory_ready"] is True
+
+
+# =============================================================================
+# =============================================================================
+@pytest.mark.asyncio
+async def test_online_start_session_returns_generated_session_key(client):
+    resp = await client.post(
+        "/rl/start_session",
+        json={"task_id": "batch-1"},
+        headers=admin_headers(),
+    )
+    assert resp.status_code == 201
     data = resp.json()
-    assert "interactions" in data
+    assert "session_id" in data
+    assert "api_key" in data
+    assert data["session_id"].startswith("batch-1-")
+    assert len(data["api_key"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_batch_session_produces_single_trajectory(client):
+    start = await client.post(
+        "/rl/start_session",
+        json={"task_id": "batch-traj"},
+        headers=admin_headers(),
+    )
+    session_api_key = start.json()["api_key"]
+    session_id = start.json()["session_id"]
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "hi"}]},
+        headers=session_headers(session_api_key),
+    )
+    reward_resp = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(session_api_key),
+    )
+    assert reward_resp.status_code == 200
+    assert reward_resp.json()["trajectory_id"] == 0
+    assert reward_resp.json()["session_id"] == session_id
+    assert reward_resp.json()["ready_transition"] is True
+
+
+@pytest.mark.asyncio
+async def test_batch_online_set_reward_completes_that_session(client):
+    start = await client.post(
+        "/rl/start_session",
+        json={"task_id": "batch-complete"},
+        headers=admin_headers(),
+    )
+    session_api_key = start.json()["api_key"]
+    session_id = start.json()["session_id"]
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "q"}]},
+        headers=session_headers(session_api_key),
+    )
+    await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(session_api_key),
+    )
+
+    export_resp = await client.post(
+        "/export_trajectories",
+        json={
+            "session_id": session_id,
+            "trajectory_id": 0,
+            "discount": 1.0,
+            "style": "individual",
+        },
+        headers=admin_headers(),
+    )
+    assert export_resp.status_code == 200
+    assert "interactions" in export_resp.json()
+
+
+# =============================================================================
+# Coexistence tests — HITL and batch running simultaneously
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_hitl_and_batch_can_run_simultaneously(client):
+    start = await client.post(
+        "/rl/start_session",
+        json={"task_id": "coexist-batch"},
+        headers=admin_headers(),
+    )
+    batch_key = start.json()["api_key"]
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "hitl"}]},
+        headers=session_headers(ADMIN_KEY),
+    )
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "batch"}]},
+        headers=session_headers(batch_key),
+    )
+
+    hitl_reward = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(ADMIN_KEY),
+    )
+    batch_reward = await client.post(
+        "/rl/set_reward",
+        json={"reward": 2.0},
+        headers=session_headers(batch_key),
+    )
+
+    assert hitl_reward.status_code == 200
+    assert batch_reward.status_code == 200
+    assert hitl_reward.json()["session_id"] == "__hitl__"
+    assert batch_reward.json()["session_id"] == start.json()["session_id"]
+
+    health = await client.get("/health")
+    assert health.json()["sessions"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_key_still_only_maps_to_hitl_session_while_batch_uses_session_key(
+    client,
+):
+    store: SessionStore = client._transport.app.state.session_store
+
+    start = await client.post(
+        "/rl/start_session",
+        json={"task_id": "mapping"},
+        headers=admin_headers(),
+    )
+    batch_key = start.json()["api_key"]
+    batch_id = start.json()["session_id"]
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "hitl"}]},
+        headers=session_headers(ADMIN_KEY),
+    )
+
+    hitl_session = store.get_session("__hitl__")
+    batch_session = store.get_session(batch_id)
+    assert hitl_session is not None
+    assert batch_session is not None
+    assert hitl_session is not batch_session
+
+    batch_by_key = store.get_session_by_api_key(batch_key)
+    assert batch_by_key is batch_session
+
+
+# =============================================================================
+# Negative tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_online_start_session_rejects_wrong_admin_key(client):
+    resp = await client.post(
+        "/rl/start_session",
+        json={"task_id": "reject"},
+        headers={"Authorization": "Bearer wrong-key"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_online_set_reward_rejects_unknown_session_key(client):
+    resp = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers={"Authorization": "Bearer unknown-token-xyz"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_without_valid_token_falls_through_to_standalone(
+    client,
+):
+    resp = await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "hi"}]},
+        headers={"Authorization": "Bearer unknown-token-xyz"},
+    )
+    assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -501,6 +949,178 @@ async def test_export_trajectories_without_admin_key(client):
         json={"session_id": "x", "discount": 1.0, "style": "individual"},
     )
     assert resp.status_code == 401
+
+
+# =============================================================================
+# =============================================================================
+@pytest.mark.asyncio
+async def test_online_chat_completion_implicitly_binds_session(client):
+    resp = await client.post(
+        "/chat/completions",
+        json={
+            "model": "sglang",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        headers=session_headers(ADMIN_KEY),
+    )
+    assert resp.status_code == 200
+
+    health = await client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["sessions"] == 1
+
+
+@pytest.mark.asyncio
+async def test_online_set_reward_returns_trajectory_metadata(client):
+    token = ADMIN_KEY
+    await client.post(
+        "/chat/completions",
+        json={
+            "model": "sglang",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        headers=session_headers(token),
+    )
+
+    resp = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(token),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_id"] == "__hitl__"
+    assert data["trajectory_id"] == 0
+    assert data["trajectory_ready"] is True
+    assert data["ready_transition"] is True
+
+
+@pytest.mark.asyncio
+async def test_online_set_reward_duplicate_is_idempotent(client):
+    token = ADMIN_KEY
+    await client.post(
+        "/chat/completions",
+        json={
+            "model": "sglang",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        headers=session_headers(token),
+    )
+
+    first = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(token),
+    )
+    second = await client.post(
+        "/rl/set_reward",
+        json={"reward": 2.0},
+        headers=session_headers(token),
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["trajectory_id"] == second.json()["trajectory_id"] == 0
+    assert first.json()["ready_transition"] is True
+    assert second.json()["ready_transition"] is False
+
+
+@pytest.mark.asyncio
+async def test_online_export_latest_ready_without_trajectory_id(client):
+    token = ADMIN_KEY
+
+    await client.post(
+        "/chat/completions",
+        json={
+            "model": "sglang",
+            "messages": [{"role": "user", "content": "first"}],
+        },
+        headers=session_headers(token),
+    )
+    first_reward = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(token),
+    )
+    assert first_reward.status_code == 200
+
+    await client.post(
+        "/chat/completions",
+        json={
+            "model": "sglang",
+            "messages": [{"role": "user", "content": "second"}],
+        },
+        headers=session_headers(token),
+    )
+    second_reward = await client.post(
+        "/rl/set_reward",
+        json={"reward": 2.0},
+        headers=session_headers(token),
+    )
+    assert second_reward.status_code == 200
+    assert second_reward.json()["trajectory_id"] == 1
+
+    export_resp = await client.post(
+        "/export_trajectories",
+        json={"session_id": "__hitl__", "discount": 1.0, "style": "individual"},
+        headers=admin_headers(),
+    )
+    assert export_resp.status_code == 200
+    interactions = export_resp.json()["interactions"]
+    assert list(interactions) == ["chatcmpl-test1"]
+
+
+@pytest.mark.asyncio
+async def test_online_export_explicit_trajectory_id(client):
+    token = ADMIN_KEY
+
+    await client.post(
+        "/chat/completions",
+        json={
+            "model": "sglang",
+            "messages": [{"role": "user", "content": "first"}],
+        },
+        headers=session_headers(token),
+    )
+    first_reward = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(token),
+    )
+    assert first_reward.status_code == 200
+
+    await client.post(
+        "/chat/completions",
+        json={
+            "model": "sglang",
+            "messages": [{"role": "user", "content": "second"}],
+        },
+        headers=session_headers(token),
+    )
+    second_reward = await client.post(
+        "/rl/set_reward",
+        json={"reward": 2.0},
+        headers=session_headers(token),
+    )
+    assert second_reward.status_code == 200
+
+    export_resp = await client.post(
+        "/export_trajectories",
+        json={
+            "session_id": "__hitl__",
+            "trajectory_id": 0,
+            "discount": 1.0,
+            "style": "individual",
+        },
+        headers=admin_headers(),
+    )
+    assert export_resp.status_code == 200
+    interactions = export_resp.json()["interactions"]
+    assert list(interactions) == ["chatcmpl-test0"]
+
+    health = await client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["sessions"] == 1
 
 
 # =============================================================================
@@ -537,7 +1157,7 @@ async def test_health_sessions_count_after_start(client):
 
 @pytest.mark.asyncio
 async def test_full_session_lifecycle(client, mock_areal_client):
-    """Test the complete flow: start → chat → reward → end → export."""
+    """Test the complete flow: start → chat → set_reward → export."""
     # 1. Start session
     resp = await client.post(
         "/rl/start_session",
@@ -560,23 +1180,17 @@ async def test_full_session_lifecycle(client, mock_areal_client):
     assert resp.status_code == 200
     assert resp.json()["object"] == "chat.completion"
 
-    # 3. Set reward
+    # 3. Set reward (auto-finishes session)
     resp = await client.post(
         "/rl/set_reward",
         json={"reward": 1.0},
         headers=session_headers(api_key),
     )
     assert resp.status_code == 200
-
-    # 4. End session
-    resp = await client.post(
-        "/rl/end_session",
-        headers=session_headers(api_key),
-    )
-    assert resp.status_code == 200
     assert resp.json()["interaction_count"] == 1
+    assert resp.json()["ready_transition"] is True
 
-    # 5. Export trajectories
+    # 4. Export trajectories
     resp = await client.post(
         "/export_trajectories",
         json={"session_id": session_id, "discount": 1.0, "style": "individual"},

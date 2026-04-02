@@ -8,6 +8,7 @@ import uvicorn
 
 from areal.experimental.inference_service.data_proxy.app import create_app
 from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
+from areal.utils.network import format_hostport
 
 
 def main():
@@ -37,8 +38,17 @@ def main():
         default=120.0,
     )
     parser.add_argument(
+        "--set-reward-finish-timeout",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument(
         "--admin-api-key",
         default="areal-admin-key",
+    )
+    parser.add_argument(
+        "--callback-server-addr",
+        default="",
     )
     args, _ = parser.parse_known_args()
 
@@ -57,8 +67,10 @@ def main():
         tokenizer_path=args.tokenizer_path,
         log_level=args.log_level,
         request_timeout=args.request_timeout,
+        set_reward_finish_timeout=args.set_reward_finish_timeout,
         admin_api_key=args.admin_api_key,
-        serving_addr=f"{serving_host}:{args.port}",
+        callback_server_addr=args.callback_server_addr,
+        serving_addr=format_hostport(serving_host, args.port),
     )
     app = create_app(config)
     uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)

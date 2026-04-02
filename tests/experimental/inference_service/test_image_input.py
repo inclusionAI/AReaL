@@ -779,23 +779,16 @@ class TestDataProxyImagePassthrough:
         assert resp.status_code == 200
         assert resp.json()["object"] == "chat.completion"
 
-        # 3. Set reward
+        # 3. Set reward (finishes the session since set_reward_finish_timeout=0)
         resp = await client.post(
             "/rl/set_reward",
             json={"reward": 1.0},
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert resp.status_code == 200
-
-        # 4. End session
-        resp = await client.post(
-            "/rl/end_session",
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-        assert resp.status_code == 200
         assert resp.json()["interaction_count"] == 1
 
-        # 5. Export trajectories
+        # 4. Export trajectories
         resp = await client.post(
             "/export_trajectories",
             json={

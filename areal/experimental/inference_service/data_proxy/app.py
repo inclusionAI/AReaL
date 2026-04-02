@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
-import types
 from contextlib import asynccontextmanager
+from typing import Any
 
+import httpx
 import orjson
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -21,6 +23,8 @@ from areal.experimental.inference_service.data_proxy.pause import PauseState
 from areal.experimental.inference_service.data_proxy.session import (
     ExportTrajectoriesRequest,
     ExportTrajectoriesResponse,
+    ReadyNotification,
+    SessionData,
     SessionStore,
     SetRewardRequest,
     StartSessionRequest,
@@ -76,6 +80,25 @@ def _require_session_key(request: Request, store: SessionStore) -> str:
     return session.session_id
 
 
+def _resolve_session_from_token(
+    token: str | None,
+    store: SessionStore,
+) -> SessionData | None:
+    """Resolve a session from the bearer token.
+
+    Session key → lookup by API key.
+    Admin key → persistent HITL session.
+    """
+    if token is None:
+        return None
+    session = store.get_session_by_api_key(token)
+    if session is not None:
+        return session
+    if hmac.compare_digest(token, store.admin_api_key):
+        return store.get_or_create_hitl_session()
+    return None
+
+
 def _try_extract_bearer_token(request: Request) -> str | None:
     """Extract bearer token if present. Returns None if missing/malformed.
 
@@ -122,6 +145,79 @@ def _create_areal_client(
     )
 
 
+async def _post_online_ready_callback(
+    callback_server_addr: str,
+    admin_api_key: str,
+    notification: ReadyNotification,
+    timeout: float,
+) -> bool:
+    if not callback_server_addr:
+        return False
+
+    callback_base = callback_server_addr.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{callback_base}/callback/online_ready",
+                json={
+                    "session_id": notification.session_id,
+                    "trajectory_id": notification.trajectory_id,
+                },
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        if resp.status_code >= 400:
+            logger.warning(
+                "Online ready callback failed for %s/%s with %d: %s",
+                notification.session_id,
+                notification.trajectory_id,
+                resp.status_code,
+                resp.text,
+            )
+            return False
+        return True
+    except Exception as exc:
+        logger.warning(
+            "Online ready callback unreachable for %s/%s: %s",
+            notification.session_id,
+            notification.trajectory_id,
+            exc,
+        )
+        return False
+
+
+async def _flush_ready_trajectories(app: FastAPI) -> None:
+    store: SessionStore = app.state.session_store
+    config: DataProxyConfig = app.state.config
+
+    for ready_result in store.finalize_rewarded_trajectories():
+        logger.info(
+            "Trajectory ready: session=%s trajectory=%s interactions=%s",
+            ready_result.session_id,
+            ready_result.trajectory_id,
+            ready_result.interaction_count,
+        )
+
+    pending_notifications = store.pending_online_callbacks()
+    for notification in pending_notifications:
+        delivered = await _post_online_ready_callback(
+            config.callback_server_addr,
+            config.admin_api_key,
+            notification,
+            config.request_timeout,
+        )
+        if delivered:
+            store.mark_online_callback_delivered(
+                notification.session_id,
+                notification.trajectory_id,
+            )
+
+
+async def _ready_trajectory_loop(app: FastAPI) -> None:
+    while True:
+        await _flush_ready_trajectories(app)
+        await asyncio.sleep(0.1)
+
+
 def create_app(config: DataProxyConfig) -> FastAPI:
     """Factory that creates the FastAPI app with lifespan-managed resources."""
 
@@ -144,10 +240,20 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         app.state.areal_client = areal_client
         app.state.pause_state = pause_state
         app.state.config = config
-        app.state.session_store = SessionStore()
+        app.state.session_store = SessionStore(
+            set_reward_finish_timeout=config.set_reward_finish_timeout,
+        )
         app.state.session_store.set_admin_key(config.admin_api_key)
         app.state.version = 0
-        yield
+        ready_task = asyncio.create_task(_ready_trajectory_loop(app))
+        try:
+            yield
+        finally:
+            ready_task.cancel()
+            try:
+                await ready_task
+            except asyncio.CancelledError:
+                pass
         logger.info("Data proxy shutting down")
 
     app = FastAPI(title="AReaL Data Proxy", lifespan=lifespan)
@@ -223,44 +329,32 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(e))
         return StartSessionResponse(session_id=session_id, api_key=session_api_key)
 
-    @app.post("/rl/end_session")
-    async def end_session(request: Request):
-        store: SessionStore = app.state.session_store
-        session_id = _require_session_key(request, store)
-        try:
-            interaction_count = store.end_session(session_id)
-        except KeyError:
-            raise HTTPException(
-                status_code=410, detail="Session already ended or expired"
-            )
-        return {"message": "success", "interaction_count": interaction_count}
-
     @app.post("/rl/set_reward")
     async def set_reward(body: SetRewardRequest, request: Request):
         store: SessionStore = app.state.session_store
-        session_id = _require_session_key(request, store)
-        session_data = store.get_session(session_id)
-        if session_data is None:
+        token = _extract_bearer_token(request)
+        session = _resolve_session_from_token(token, store)
+        if session is None:
             raise HTTPException(
-                status_code=410, detail="Session already ended or expired"
+                status_code=401, detail="Invalid or expired session API key."
             )
-        session_data.update_last_access()
 
-        completions = session_data.completions
-        interaction_id = body.interaction_id
-        if interaction_id is None:
-            if len(completions) == 0:
-                raise HTTPException(
-                    status_code=400, detail="No interactions in session"
-                )
-            interaction_id = completions.last_interaction_id
-        elif interaction_id not in completions:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Interaction {interaction_id} not found",
+        try:
+            reward_result = session.set_reward(
+                interaction_id=body.interaction_id,
+                reward=body.reward,
             )
-        completions.set_reward(interaction_id, body.reward)
-        return {"message": "success"}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return {
+            "message": "success",
+            "interaction_count": reward_result.interaction_count,
+            "session_id": reward_result.session_id,
+            "trajectory_id": reward_result.trajectory_id,
+            "trajectory_ready": reward_result.trajectory_id is not None,
+            "ready_transition": reward_result.ready_transition,
+        }
 
     # =========================================================================
     # Chat completions — OpenAI-compatible
@@ -275,21 +369,13 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         store: SessionStore = app.state.session_store
         areal_client: ArealOpenAI = app.state.areal_client
 
-        # Try to resolve a session from the bearer token
         token = _try_extract_bearer_token(request)
-        session_data_obj = None
-        if token is not None:
-            session_obj = store.get_session_by_api_key(token)
-            if session_obj is not None:
-                session_data_obj = session_obj
-                session_data_obj.update_last_access()
-
-        if session_data_obj is not None:
-            # Session mode: use session cache
-            session_data = session_data_obj
+        session = _resolve_session_from_token(token, store)
+        if session is not None:
+            session.update_last_access()
+            areal_cache: Any = session.active_completions
         else:
-            # Standalone mode: no session, no caching
-            session_data = types.SimpleNamespace(completions=None)
+            areal_cache = None
 
         # Build kwargs from request body
         if isinstance(body, BaseModel):
@@ -309,9 +395,11 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         if "top_p" not in kwargs:
             kwargs["top_p"] = 1.0
 
+        create_fn: Any = areal_client.chat.completions.create
+
         try:
-            result = await areal_client.chat.completions.create(
-                areal_cache=session_data.completions,
+            result = await create_fn(
+                areal_cache=areal_cache,
                 **kwargs,
             )
         except ValueError as e:
@@ -350,23 +438,25 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         store: SessionStore = app.state.session_store
         _require_admin_key(request, store)
 
-        session_data = store.get_session(body.session_id)
-        if session_data is None:
+        session = store.get_session(body.session_id)
+        if session is None:
             raise HTTPException(
                 status_code=404, detail=f"Session {body.session_id} not found"
             )
 
-        # Wait for session to complete (non-blocking)
-        await session_data.wait_for_finish()
+        try:
+            _, interactions = session.export_trajectory(
+                discount=body.discount,
+                style=body.style,
+                trajectory_id=body.trajectory_id,
+            )
+        except KeyError as exc:
+            detail = str(exc).strip('"')
+            status_code = 404 if body.trajectory_id is not None else 409
+            raise HTTPException(status_code=status_code, detail=detail) from exc
 
-        # Export interactions
-        interactions = session_data.export_interactions(
-            discount=body.discount,
-            style=body.style,
-        )
-
-        # Remove session from store
-        store.remove_session(body.session_id)
+        if body.remove_session:
+            store.remove_session(body.session_id)
 
         # Serialize for HTTP transport, storing tensors locally as RTensor shards
         from areal.infra.rpc.rtensor import RTensor
@@ -492,8 +582,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         cleared_count = sum(rtensor_storage.remove(sid) for sid in shard_ids)
         stats = dict(cleared_count=cleared_count, **rtensor_storage.storage_stats())
         logger.info("Cleared %d RTensor shards. Stats: %s", cleared_count, stats)
-        stats.update({"status": "ok"})
-        return stats
+        return {"status": "ok", **stats}
 
     # =========================================================================
     # Runtime backend reconfiguration (for fork-based deployment)
