@@ -64,6 +64,7 @@ python3 train.py --config path/to/config.yaml actor.lr=1e-4 seed=42
 - [StatsLogger Configuration](section-stats-logger)
 - [Swanlab Configuration](section-swanlab)
 - [TensorBoard Configuration](section-tensor-board)
+- [Trackio Configuration](section-trackio)
 - [WandB Configuration](section-wand-b)
 
 ### Others
@@ -740,14 +741,15 @@ Configuration for model checkpoint saving scheduling and timing.
 
 Configuration for experiment statistics logging and tracking services.
 
-| Parameter         | Type                                        | Default      | Description                                            |
-| ----------------- | ------------------------------------------- | ------------ | ------------------------------------------------------ |
-| `experiment_name` | string                                      | **Required** | -                                                      |
-| `trial_name`      | string                                      | **Required** | -                                                      |
-| `fileroot`        | string                                      | **Required** | -                                                      |
-| `wandb`           | [`WandBConfig`](section-wand-b)             | **Required** | Weights & Biases configuration.                        |
-| `swanlab`         | [`SwanlabConfig`](section-swanlab)          | **Required** | SwanLab configuration.                                 |
-| `tensorboard`     | [`TensorBoardConfig`](section-tensor-board) | **Required** | TensorBoard configuration. Only 'path' field required. |
+| Parameter         | Type                                        | Default      | Description                                               |
+| ----------------- | ------------------------------------------- | ------------ | --------------------------------------------------------- |
+| `experiment_name` | string                                      | **Required** | -                                                         |
+| `trial_name`      | string                                      | **Required** | -                                                         |
+| `fileroot`        | string                                      | **Required** | -                                                         |
+| `wandb`           | [`WandBConfig`](section-wand-b)             | **Required** | Weights & Biases configuration.                           |
+| `swanlab`         | [`SwanlabConfig`](section-swanlab)          | **Required** | SwanLab configuration.                                    |
+| `tensorboard`     | [`TensorBoardConfig`](section-tensor-board) | **Required** | TensorBoard configuration. Only 'path' field required.    |
+| `trackio`         | [`TrackioConfig`](section-trackio)          | **Required** | Trackio configuration (Hugging Face experiment tracking). |
 
 (section-swanlab)=
 
@@ -773,6 +775,27 @@ Configuration for TensorBoard logging and visualization.
 | Parameter | Type           | Default | Description |
 | --------- | -------------- | ------- | ----------- |
 | `path`    | string \| None | `None`  | -           |
+
+(section-trackio)=
+
+## Trackio Configuration
+
+Configuration for Trackio experiment tracking (Hugging Face).
+
+Trackio is a lightweight, local-first experiment tracking library with a
+wandb-compatible API. Dashboards can be viewed locally or deployed to Hugging Face
+Spaces.
+
+```
+See: https://github.com/gradio-app/trackio
+```
+
+| Parameter  | Type           | Default      | Description |
+| ---------- | -------------- | ------------ | ----------- |
+| `mode`     | string         | `"disabled"` | -           |
+| `project`  | string \| None | `None`       | -           |
+| `name`     | string \| None | `None`       | -           |
+| `space_id` | string \| None | `None`       | -           |
 
 (section-wand-b)=
 
