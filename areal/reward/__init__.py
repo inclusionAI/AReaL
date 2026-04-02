@@ -208,8 +208,8 @@ class MathMultipleChoiceVerifyWorker:
 
             # Hard fallback: direct letter compare (useful if parsing fails)
             if score == 0.0:
-                gt_letter = re.search(r"\\boxed\{([A-E])\}", gt.upper())
-                pr_letter = re.search(r"\\boxed\{([A-E])\}", resp.upper())
+                gt_letter = re.search(r"\\BOXED\{([A-E])\}", gt.upper())
+                pr_letter = re.search(r"\\BOXED\{([A-E])\}", resp.upper())
                 if gt_letter and pr_letter:
                     return 1.0 if gt_letter.group(1) == pr_letter.group(1) else 0.0
 
