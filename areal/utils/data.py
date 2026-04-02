@@ -1639,3 +1639,36 @@ class KLEstimator:
         if apply_clamp:
             log_ratio = log_ratio.clamp(min=-10, max=10)
         return log_ratio
+
+
+def make_dummy_eval_item(template: dict[str, Any]) -> dict[str, Any]:
+    """Create a zero-contribution dummy item matching *template*'s schema.
+
+    Every tensor field is replaced with a minimal all-zeros tensor that
+    preserves dtype and device.  ``attention_mask`` and ``loss_mask`` are
+    set to zero so that downstream loss/metric code treats the item as
+    contributing nothing.
+    """
+
+    def _zero_tensor_like(tensor: torch.Tensor) -> torch.Tensor:
+        return torch.zeros((1, 1), dtype=tensor.dtype, device=tensor.device)
+
+    dummy: dict[str, Any] = {}
+    for key, value in template.items():
+        if key in {"attention_mask", "loss_mask"}:
+            if isinstance(value, torch.Tensor):
+                dummy[key] = _zero_tensor_like(value)
+            else:
+                dummy[key] = torch.zeros((1, 1), dtype=torch.bool)
+            continue
+
+        if key.startswith("multi_modal_input"):
+            dummy[key] = [{}]
+            continue
+
+        if isinstance(value, torch.Tensor):
+            dummy[key] = _zero_tensor_like(value)
+        else:
+            dummy[key] = copy.deepcopy(value)
+
+    return dummy

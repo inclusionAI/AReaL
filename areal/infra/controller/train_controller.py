@@ -21,6 +21,7 @@ from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
 from areal.infra.rpc.rtensor import RTensor
 from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, stats_tracker
+from areal.utils.data import make_dummy_eval_item
 from areal.utils.network import find_free_ports
 from areal.utils.seqpack import balanced_greedy_partition
 
@@ -55,32 +56,97 @@ def _is_tensor_like(obj: Any) -> bool:
     )
 
 
+def _item_weight(d: dict[str, Any]) -> int:
+    attn_mask = d.get("attention_mask")
+    if isinstance(attn_mask, torch.Tensor):
+        return int(attn_mask.sum().item())
+    if isinstance(attn_mask, RTensor):
+        return attn_mask.data.numel()
+    # Fallback: first tensor's numel
+    for v in d.values():
+        if isinstance(v, RTensor):
+            return v.data.numel()
+        if isinstance(v, torch.Tensor) and v.ndim >= 2:
+            return v.numel()
+    return 1
+
+
 def _dispatch_tensors(
     item_list: list[dict[str, Any]],
     dp_size: int,
+    group_size: int = 1,
 ) -> tuple[list[list[dict[str, Any]]], list[list[int]]]:
-    """Partition trajectories across DP groups by balanced token count."""
-    token_weights: list[int] = []
-    for d in item_list:
-        attn_mask = d.get("attention_mask")
-        if isinstance(attn_mask, torch.Tensor):
-            token_weights.append(int(attn_mask.sum().item()))
-        elif isinstance(attn_mask, RTensor):
-            token_weights.append(attn_mask.data.numel())
-        else:
-            # Fallback: first tensor's numel
-            w = 1
-            for v in d.values():
-                if isinstance(v, RTensor):
-                    w = v.data.numel()
-                    break
-                if isinstance(v, torch.Tensor) and v.ndim >= 2:
-                    w = v.numel()
-                    break
-            token_weights.append(w)
-    group_indices = balanced_greedy_partition(token_weights, K=dp_size)
-    splits = [[item_list[i] for i in idxs] for idxs in group_indices]
+    """Partition trajectories across DP groups by balanced token count.
+
+    Args:
+        group_size: number of consecutive items that form an atomic dispatch
+            unit (e.g. 2 for chosen/rejected RW pairs).  Groups are never
+            split across DP ranks.  ``group_size=1`` degenerates to per-item
+            partitioning.
+    """
+    n = len(item_list)
+    if n % group_size != 0:
+        raise ValueError(
+            f"item count ({n}) must be divisible by group_size ({group_size})"
+        )
+
+    token_weights = [_item_weight(d) for d in item_list]
+    n_groups = n // group_size
+
+    group_weights = [
+        sum(token_weights[g * group_size + k] for k in range(group_size))
+        for g in range(n_groups)
+    ]
+
+    gpart = balanced_greedy_partition(group_weights, K=dp_size)
+
+    group_indices: list[list[int]] = []
+    splits: list[list[dict[str, Any]]] = []
+    for gidxs in gpart:
+        item_idxs: list[int] = []
+        items: list[dict[str, Any]] = []
+        for g in gidxs:
+            for k in range(group_size):
+                idx = g * group_size + k
+                item_idxs.append(idx)
+                items.append(item_list[idx])
+        group_indices.append(item_idxs)
+        splits.append(items)
+
+    assert all(len(s) % group_size == 0 for s in splits), (
+        f"Post-dispatch invariant violated: shard sizes "
+        f"{[len(s) for s in splits]} not all divisible by group_size={group_size}"
+    )
     return splits, group_indices
+
+
+def _pad_eval_batch(
+    args: tuple[Any, ...], dp_size: int, group_size: int = 1
+) -> tuple[Any, ...]:
+    """Pad the first tensor-like arg to a multiple of ``dp_size * group_size``.
+
+    Called before dispatch for explicit evaluation controller paths so that
+    ``balanced_greedy_partition`` always receives a divisible input.
+    Dummy items have zero attention/loss masks and contribute nothing
+    to metrics or loss.
+    """
+    result = list(args)
+    pad_target = dp_size * group_size
+    for i, arg in enumerate(result):
+        if isinstance(arg, list) and arg and _is_tensor_like(arg):
+            n = len(arg)
+            pad_count = (-n) % pad_target
+            if pad_count > 0:
+                padded = list(arg)
+                template = arg[0]
+                padded.extend(make_dummy_eval_item(template) for _ in range(pad_count))
+                result[i] = padded
+                logger.info(
+                    f"Eval dispatch: padded {pad_count} dummy items "
+                    f"(total {len(padded)}) for dp_size={dp_size}"
+                )
+            break  # only pad the first tensor-like arg
+    return tuple(result)
 
 
 def _merge_tensors(
@@ -388,6 +454,20 @@ class TrainController:
         results = await self._call_workers(method, dp_args, dp_kwargs)
         return self._collect_results(results, group_indices)
 
+    def _pad_eval_dispatch_args(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        *,
+        group_size: int,
+    ) -> tuple[tuple[Any, ...], dict[str, Any]]:
+        """Pad eval batches for explicit algorithm-level evaluation dispatch."""
+        kwargs = dict(kwargs)
+        args = _pad_eval_batch(
+            args, self.parallel_strategy.dp_size, group_size=group_size
+        )
+        return args, kwargs
+
     def _prepare_dispatch(
         self, *args, **kwargs
     ) -> tuple[list[list[Any]], dict[str, list[Any]], list[list[int]] | None]:
@@ -396,12 +476,13 @@ class TrainController:
         Returns (dp_split_args, dp_split_kwargs, group_indices).
         group_indices is non-None only for tensor dispatches.
         """
+        group_size = kwargs.pop("group_size", 1)
         if _is_tensor_like(args) or _is_tensor_like(kwargs):
-            return self._partition_inputs(*args, **kwargs)
+            return self._partition_inputs(group_size, *args, **kwargs)
         return self._replicate_inputs(*args, **kwargs)
 
     def _partition_inputs(
-        self, *args, **kwargs
+        self, group_size: int, /, *args, **kwargs
     ) -> tuple[list[list[Any]], dict[str, list[Any]], list[list[int]]]:
         """Partition tensor args across DP groups; replicate others."""
         dp_size = self.parallel_strategy.dp_size
@@ -411,7 +492,9 @@ class TrainController:
             nonlocal group_indices
             if _is_tensor_like(item):
                 if group_indices is None:
-                    splits, group_indices = _dispatch_tensors(item, dp_size)
+                    splits, group_indices = _dispatch_tensors(
+                        item, dp_size, group_size=group_size
+                    )
                     return splits
                 return [[item[i] for i in idxs] for idxs in group_indices]
             return [item] * dp_size

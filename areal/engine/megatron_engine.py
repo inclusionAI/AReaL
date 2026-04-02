@@ -1546,6 +1546,10 @@ class MegatronEngine(TrainEngine):
         total_loss_weight: torch.Tensor,
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
+        local_weight = loss_weight_fn(inputs)
+        if local_weight == 0:
+            return output.mean() * 0.0
+
         if self.config.is_critic and self.enable_tree_training:
             raise NotImplementedError(
                 "Tree training with critic model is not supported yet."
@@ -1558,7 +1562,7 @@ class MegatronEngine(TrainEngine):
                 if trie_node is None or not trie_node.all_sequence_ids:
                     # Return zero loss that maintains gradient connection to output
                     # This ensures backward() works correctly for distributed synchronization
-                    return output.sum() * 0.0
+                    return output.mean() * 0.0
 
                 # For tree training, use gather_packed_tree_vocab_stats to properly
                 # unpack vocab stats from tree structure back to per-sequence format.
@@ -1599,7 +1603,7 @@ class MegatronEngine(TrainEngine):
             values = output.squeeze(-1)
             loss = loss_fn(values, inputs)
 
-        loss_scale = loss_weight_fn(inputs) / total_loss_weight * loss_multiplier
+        loss_scale = local_weight / total_loss_weight * loss_multiplier
         return loss * loss_scale
 
     def _compute_forward_result(
