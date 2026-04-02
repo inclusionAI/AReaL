@@ -95,7 +95,7 @@ class MathVerifyWorker:
         try:
             ret_score, _ = self.verify_func([ground_truth], [response])
             return float(ret_score)
-        except Exception as e:
+        except (Exception, TimeoutException) as e:  # TimeoutException inherits from BaseException
             logger.warning(
                 f"Exception {e} in MathVerifyWorker.verify for response={response} and ground_truth={ground_truth}",
                 exc_info=True,
