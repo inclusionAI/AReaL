@@ -713,6 +713,7 @@ class PPOTrainer:
                 sglang_config=self.config.sglang,
                 tp_size=self.rollout_alloc.parallel.tp_size,
                 base_gpu_id=0,
+                pp_size=self.rollout_alloc.parallel.pp_size,
             )
         elif rollout_backend == "vllm":
             if self.config.rollout.return_routed_experts:

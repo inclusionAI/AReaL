@@ -1590,6 +1590,7 @@ class SGLangConfig:
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
+        pp_size: int = 1,
     ):
         args = SGLangConfig.build_args(
             sglang_config=sglang_config,
@@ -1600,6 +1601,7 @@ class SGLangConfig:
             dist_init_addr=dist_init_addr,
             n_nodes=n_nodes,
             node_rank=node_rank,
+            pp_size=pp_size,
         )
 
         return SGLangConfig.build_cmd_from_args(args)
@@ -1618,6 +1620,7 @@ class SGLangConfig:
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
+        pp_size: int = 1,  
     ):
         # Map "all-linear" to "all"
         args: dict = conf_as_dict(sglang_config)
@@ -1639,6 +1642,7 @@ class SGLangConfig:
             is_embedding=False,
             # Other runtime options
             tp_size=tp_size,
+            pp_size=pp_size,
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
             base_gpu_id=base_gpu_id,
             nnodes=n_nodes,
