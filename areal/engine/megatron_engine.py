@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 import mbridge
 import torch
 import torch.distributed as dist
-from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
@@ -374,6 +373,7 @@ class MegatronEngine(TrainEngine):
                 raise NotImplementedError(
                     "Tree training is not supported with bridge_type='megatron-bridge'."
                 )
+            from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
             self.bridge = MegatronBridgeAutoBridge.from_hf_pretrained(
                 self.config.path,
                 trust_remote_code=True,
