@@ -192,7 +192,7 @@ class MathMultipleChoiceVerifyWorker:
 
     def _normalize_pred(self, response: str) -> str:
         resp = _canon_pred_mc(response)
-        m = re.search(r"\\boxed\{([A-E])\}", resp.upper())
+        m = re.search(r"\\BOXED\{([A-E])\}", resp.upper())
         if m and m.group(1) in self.choices:
             return f"\\boxed{{{m.group(1)}}}"
         return resp
