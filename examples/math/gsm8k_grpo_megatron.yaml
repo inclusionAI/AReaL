@@ -43,7 +43,7 @@ actor:
   backend: "megatron:d4p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-1.5B-Instruct
+  path: /models/Qwen2.5-1.5B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
