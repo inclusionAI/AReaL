@@ -46,6 +46,29 @@ def _log_gpu_memory(tag: str, device: torch.device | None = None) -> None:
     )
 
 
+def _chunked_lm_head_forward(
+    lm_head: torch.nn.Module,
+    hidden_states: torch.Tensor,
+    chunk_size: int = 1024,
+) -> torch.Tensor:
+    """Compute lm_head in chunks along seq dimension to avoid OOM.
+
+    Instead of materializing the full [batch, seq, vocab] tensor at once,
+    we compute chunks of [batch, chunk_size, vocab], which uses
+    chunk_size/seq_len fraction of the memory.
+    """
+    seq_len = hidden_states.shape[1]
+    if seq_len <= chunk_size:
+        return lm_head(hidden_states)
+
+    output_chunks = []
+    for start in range(0, seq_len, chunk_size):
+        end = min(start + chunk_size, seq_len)
+        chunk_output = lm_head(hidden_states[:, start:end, :])
+        output_chunks.append(chunk_output)
+    return torch.cat(output_chunks, dim=1)
+
+
 @functools.cache
 def _get_logger() -> logging.Logger:
     """Get rank-aware logger for this module."""
@@ -492,7 +515,10 @@ class _HFPipelineStageModule(nn.Module):
                 ):
                     hidden_states = model_self.score(hidden_states)
                 elif hasattr(model_self, "lm_head") and model_self.lm_head is not None:
-                    hidden_states = model_self.lm_head(hidden_states)
+                    # Use chunked forward to avoid materializing full [batch, seq, vocab] at once
+                    hidden_states = _chunked_lm_head_forward(
+                        model_self.lm_head, hidden_states, chunk_size=1024
+                    )
                 _log_gpu_memory(
                     f"stage_fwd[stage={stage_module.layer_indices}] AFTER output_head, output_shape={tuple(hidden_states.shape)}"
                 )
@@ -510,21 +536,19 @@ class _HFPipelineStageModule(nn.Module):
 
 
 class _NullOutputChunks(list):
-    """A list that silently discards appended items to save memory during training."""
+    """Discards all output tensors. Used in train path where outputs
+    are not needed (loss is computed in loss_fn callback)."""
 
     def append(self, item: Any) -> None:
-        pass
+        # Replace with placeholder to release the large tensor
+        placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)
+        super().append(placeholder)
 
 
 class _EagerProcessingOutputChunks(list):
-    """Output chunks list that eagerly processes logits to save memory during eval.
-
-    Instead of accumulating full [batch, seq, vocab] logits tensors (which cause OOM),
-    this list immediately applies process_output_fn to each chunk as it arrives,
-    storing only the compact result (e.g., logprobs of shape [seq]).
-
-    The PP schedule's output stage appends raw logits here via stage.output_chunks.
-    We intercept each append, process the logits, and store only the small result.
+    """Custom list that processes logits immediately on append() and replaces
+    the large output tensor with a tiny placeholder to prevent the PP schedule
+    from accumulating [batch, seq, vocab_size] tensors in memory.
     """
 
     def __init__(self, contexts: list[Any], process_output_fn: Callable):
@@ -535,7 +559,6 @@ class _EagerProcessingOutputChunks(list):
         self._results: list[Any] = []
 
     def append(self, item: Any) -> None:
-        # Process immediately and store only the compact result
         if self._chunk_idx < len(self._contexts):
             output = item
             if output.ndim == 3:
@@ -545,7 +568,11 @@ class _EagerProcessingOutputChunks(list):
             if result is not None:
                 self._results.append(result.detach())
             self._chunk_idx += 1
-        # Do NOT call super().append(item) — we don't store the raw logits
+        # Append a tiny placeholder instead of the original large tensor.
+        # This allows the PP schedule to see the correct number of outputs
+        # while releasing the [batch, seq, vocab] memory immediately.
+        placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)
+        super().append(placeholder)
 
     def get_results(self) -> list[Any]:
         return self._results
@@ -698,6 +725,7 @@ class FSDPPipelinedRunner:
 
         # Restore normal list for subsequent calls
         if output_stage is not None:
+            # Clear output_chunks to release any remaining placeholder references
             output_stage.output_chunks = []
 
         if not self.has_last_stage:
