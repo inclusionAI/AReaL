@@ -269,7 +269,7 @@ def pipeline_module_split_hf(
             model.score = None
 
         # Create a wrapper module that handles the partial forward
-        stage_model = _HFPipelineStageModule(
+        stage_wrapper = _HFPipelineStageModule(
             model=model,
             has_embed=has_embed,
             has_norm=has_norm,
@@ -279,14 +279,14 @@ def pipeline_module_split_hf(
         )
 
         stage = PipelineStage(
-            stage_model,
+            stage_wrapper.model,
             stage_idx,
             num_stages,
             device,
             group=pp_mesh.get_group(),
         )
 
-        return stage, stage_model
+        return stage, stage_wrapper
 
     def _get_stage_indices() -> tuple[int, ...]:
         """Get stage indices for this rank based on schedule style."""
@@ -370,69 +370,69 @@ class _HFPipelineStageModule(nn.Module):
         self.has_output_head = has_output_head
         self.layer_indices = layer_indices
         self.is_critic = is_critic
+        self._forward_patched = False
 
-    def _ensure_dtensor_compatible(self, tensor: torch.Tensor) -> torch.Tensor:
-        from torch.distributed.tensor import DTensor, Replicate
+    def _patch_model_forward(self):
+        """Replace the underlying HF model's forward with this stage's forward.
 
-        embed_weight = self.model.model.embed_tokens.weight
-        if isinstance(embed_weight, DTensor) and not isinstance(tensor, DTensor):
-            mesh = embed_weight.device_mesh
-            # Input should be replicated across all FSDP shards
-            placements = [Replicate()] * mesh.ndim
-            tensor = DTensor.from_local(tensor, device_mesh=mesh, placements=placements)
-        return tensor
-
-    def forward(self, hidden_states: torch.Tensor, **kwargs) -> torch.Tensor:
-        """Forward pass for this pipeline stage.
-
-        For the first stage, hidden_states is input_ids (Long tensor).
-        For middle/last stages, hidden_states is the continuous hidden state
-        from the previous stage.
-
-        Args:
-            hidden_states: Input tensor — input_ids for first stage,
-                          hidden states for subsequent stages.
-            **kwargs: Additional keyword arguments (position_ids, attention_mask, etc.)
-
-        Returns:
-            Hidden states (for middle stages) or logits (for last stage).
+        This must be called AFTER the model has been wrapped by FSDP2, so that
+        when PipelineSchedule calls model(*args), it triggers FSDPModule.__call__
+        which correctly sets up the DTensor context before reaching our patched
+        stage-aware forward logic.
         """
-        position_ids = kwargs.get("position_ids", None)
+        if self._forward_patched:
+            return
 
-        # First stage: apply embedding
-        if self.has_embed:
-            hidden_states = self._ensure_dtensor_compatible(hidden_states)
-            hidden_states = self.model.model.embed_tokens(hidden_states)
+        # Create a closure to capture 'self' (the _HFPipelineStageModule instance)
+        stage_module = self
 
-        # Apply transformer layers
-        for idx in self.layer_indices:
-            layer = self.model.model.layers[idx]
-            if layer is not None:
-                layer_outputs = layer(
-                    hidden_states,
-                    position_ids=position_ids,
-                )
-                # HF transformer layers return tuples: (hidden_states, ...)
-                if isinstance(layer_outputs, tuple):
-                    hidden_states = layer_outputs[0]
-                else:
-                    hidden_states = layer_outputs
+        def stage_forward(
+            model_self, hidden_states: torch.Tensor, **kwargs
+        ) -> torch.Tensor:
+            position_ids = kwargs.get("position_ids", None)
 
-        # Last stage: apply norm and output head
-        if self.has_norm and self.model.model.norm is not None:
-            hidden_states = self.model.model.norm(hidden_states)
+            # First stage: apply embedding
+            if stage_module.has_embed:
+                hidden_states = model_self.model.embed_tokens(hidden_states)
 
-        if self.has_output_head:
-            if (
-                self.is_critic
-                and hasattr(self.model, "score")
-                and self.model.score is not None
-            ):
-                hidden_states = self.model.score(hidden_states)
-            elif hasattr(self.model, "lm_head") and self.model.lm_head is not None:
-                hidden_states = self.model.lm_head(hidden_states)
+            # Apply transformer layers
+            for idx in stage_module.layer_indices:
+                layer = model_self.model.layers[idx]
+                if layer is not None:
+                    layer_outputs = layer(
+                        hidden_states,
+                        position_ids=position_ids,
+                    )
+                    # HF transformer layers return tuples: (hidden_states, ...)
+                    if isinstance(layer_outputs, tuple):
+                        hidden_states = layer_outputs[0]
+                    else:
+                        hidden_states = layer_outputs
 
-        return hidden_states
+            # Last stage: apply norm and output head
+            if stage_module.has_norm and model_self.model.norm is not None:
+                hidden_states = model_self.model.norm(hidden_states)
+
+            if stage_module.has_output_head:
+                if (
+                    stage_module.is_critic
+                    and hasattr(model_self, "score")
+                    and model_self.score is not None
+                ):
+                    hidden_states = model_self.score(hidden_states)
+                elif hasattr(model_self, "lm_head") and model_self.lm_head is not None:
+                    hidden_states = model_self.lm_head(hidden_states)
+
+            return hidden_states
+
+        import types
+
+        self.model.forward = types.MethodType(stage_forward, self.model)
+        self._forward_patched = True
+
+    def forward(self, *args, **kwargs):
+        """Fallback forward if called directly, though schedule should call model.forward."""
+        return self.model.forward(*args, **kwargs)
 
 
 class _NullOutputChunks(list):

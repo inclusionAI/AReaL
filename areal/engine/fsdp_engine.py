@@ -1057,6 +1057,10 @@ class FSDPEngine(TrainEngine):
                 pp_enabled=True,
             )
 
+        # AFTER FSDP wrapping: patch the HF model's forward with the stage-aware forward
+        for model_part in model_parts:
+            model_part._patch_model_forward()
+
         self._pp_stages = stages
         self._pp_model_parts = model_parts
         self._pp_has_first_stage = has_first
