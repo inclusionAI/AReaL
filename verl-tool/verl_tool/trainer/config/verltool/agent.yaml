@@ -1,0 +1,89 @@
+# Enable agent functionality
+enable_agent: True
+
+# Maximum number of turns (0 means no limit)
+max_turns: 1
+
+# Validation maximum number of turns (0 means same as max_turns)
+val_max_turns: 0
+
+# Minimum number of turns (0 means no limit)
+min_turns: 0
+
+# Maximum length of the initial prompt
+max_start_length: null
+
+# Maximum length of the prompt
+max_prompt_length: ${data.max_prompt_length}
+
+# Maximum length of the response
+max_response_length: ${data.max_response_length}
+
+# Training maximum length of the response
+train_max_response_length: ${data.max_response_length}
+
+# Validation maximum length of the response
+val_max_response_length: ${data.max_response_length}
+
+# Maximum model length, used for async rollout to limit the input length
+max_model_len: null
+
+# Maximum length of the observation
+max_obs_length: null
+
+# Maximum length of the action
+max_action_length: null
+
+# URL for the tool server, if any
+tool_server_url: null
+
+# Number of responses to generate in each rollout
+n: ${actor_rollout_ref.rollout.n}
+
+# Side to truncate observations if they exceed max_obs_length
+truncate_obs_side: left
+
+# Side to truncate responses if they exceed max_response_length
+truncate_response_side: left
+
+# Whether to roll the prompt with the response
+rolling_with_prompt: False
+
+# Whether to call the tool first in the multi-turn interaction
+call_tool_first: False
+
+# List of stop tokens for actions
+action_stop_tokens: null
+
+# Additional EOS token IDs to use
+additional_eos_token_ids: null
+
+# Whether to mask observations for KL loss and gradient descent
+mask_observations: True
+
+# Whether to force finish the last turn
+force_finish_for_last_turn: False
+
+# Whether to enable multi-turn training
+enable_mtrl: False
+
+# Role for multi-turn training, e.g., "user" or "assistant"
+mtrl_role: user
+
+# Separator for multi-turn training, e.g., "\n<|im_start|>system\n{obs}<|im_end|>\n<|im_start|>assistant\n"
+mtrl_sep: null
+
+# Token to indicate the end of a turn
+turn_end_token: "<|im_end|>"
+
+# Rollout mode: "sync" or "async"
+rollout_mode: async
+
+# Whether to mask the overlong trajectory to not train on it
+mask_overlong_loss: False
+
+# Maximum concurrent trajectories
+max_concurrent_trajectories: 1024
+
+# tool call timeout in seconds
+tool_call_timeout: 30
