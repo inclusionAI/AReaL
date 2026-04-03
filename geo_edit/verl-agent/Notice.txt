@@ -1,7 +1,0 @@
-This project includes code from the verl project.
-
-Copyright 2023-2024 Bytedance Ltd. and/or its affiliates 
-
-Additional modifications and contributions:
-
-Copyright 2025 Nanyang Technological University (NTU), Singapore and the verl-agent (GiGPO) team.
