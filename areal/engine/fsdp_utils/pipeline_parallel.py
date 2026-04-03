@@ -547,23 +547,20 @@ class _NullOutputChunks(list):
 
 
 class _EagerProcessingOutputChunks(list):
-    """Receives hidden_states (lm_head skipped in stage_forward).
-    Computes lm_head + process_output eagerly on each append(),
-    then immediately deletes the logits tensor.
-    PP schedule holds references to scalar placeholders (~0 bytes each),
-    not full logits (~2.87 GiB each).
+    """Output chunks list that eagerly processes logits to save memory during eval.
+
+    Instead of accumulating full [batch, seq, vocab] logits tensors (which cause OOM),
+    this list immediately applies process_output_fn to each chunk as it arrives,
+    storing only the compact result (e.g., logprobs of shape [seq]).
+
+    The PP schedule's output stage appends raw logits here via stage.output_chunks.
+    We intercept each append, process the logits, and store only the small result.
     """
 
-    def __init__(
-        self,
-        contexts: list[Any],
-        process_output_fn: Callable,
-        output_head: nn.Module | None = None,
-    ):
+    def __init__(self, contexts: list[Any], process_output_fn: Callable):
         super().__init__()
         self._contexts = contexts
         self._process_output_fn = process_output_fn
-        self._output_head = output_head
         self._chunk_idx = 0
         self._results: list[Any] = []
 
@@ -576,33 +573,13 @@ class _EagerProcessingOutputChunks(list):
                 placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)
                 super().append(placeholder)
                 return
-
-            hidden_states = item
-
-            if self._output_head is not None:
-                # Compute logits inside append — only ONE logits tensor alive at a time
-                _log_gpu_memory(
-                    f"EagerChunks[{self._chunk_idx - 1}] BEFORE lm_head, shape={tuple(hidden_states.shape)}"
-                )
-                logits = self._output_head(hidden_states)
-                _log_gpu_memory(
-                    f"EagerChunks[{self._chunk_idx - 1}] AFTER lm_head, shape={tuple(logits.shape)}"
-                )
-                if logits.ndim == 3:
-                    logits = logits.squeeze(0)
-                result = self._process_output_fn(logits, ctx)
-                del logits  # Immediately release ~2.87 GiB
-                _log_gpu_memory(f"EagerChunks[{self._chunk_idx - 1}] AFTER del logits")
-            else:
-                output = item
-                if output.ndim == 3:
-                    output = output.squeeze(0)
-                result = self._process_output_fn(output, ctx)
-
+            output = item
+            if output.ndim == 3:
+                output = output.squeeze(0)
+            result = self._process_output_fn(output, ctx)
             if result is not None:
                 self._results.append(result.detach())
-
-        # Replace with tiny placeholder so PP schedule doesn't hold large tensor ref
+        # Store a placeholder to keep the list length consistent for PP schedule
         placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)
         super().append(placeholder)
 
@@ -832,6 +809,17 @@ class FSDPPipelinedRunner:
                     pred = output_head(pred)
                 if pred.ndim == 3:
                     pred = pred.squeeze(0)
+                # Truncate pred to match original input_ids length (strip PP uniform padding).
+                # PP uniform padding (Fix 14) pads all microbatch input_ids to max_seqlen,
+                # but ctx["model_inputs"]["input_ids"] retains the original bucket-padded length.
+                # The model outputs logits at max_seqlen, but process_output_fn expects logits
+                # matching the original input_ids length.
+                if isinstance(ctx, dict) and "model_inputs" in ctx:
+                    input_ids = ctx["model_inputs"].get("input_ids", None)
+                    if input_ids is not None:
+                        original_seqlen = input_ids.shape[-1]
+                        if pred.shape[0] > original_seqlen:
+                            pred = pred[:original_seqlen]
                 loss = process_output_fn(pred, ctx)
                 if loss is None:
                     return pred.sum() * 0.0

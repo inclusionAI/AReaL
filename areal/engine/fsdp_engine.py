@@ -814,22 +814,15 @@ class FSDPEngine(TrainEngine):
         # Since pad_mb_list pads each microbatch to its nearest bucket (not global max),
         # different microbatches can have different sequence lengths. We must pad them
         # to a uniform length before torch.cat.
-        #
-        # Fix 23: Track the extra PP padding per-microbatch so it can be stripped
-        # from logits before process_output_fn is called. We add the extra padding
-        # to ctx["pad_length"] so _compute_logprobs_and_loss strips it automatically.
         if input_ids_chunks and len(input_ids_chunks) > 1:
             max_seqlen = max(chunk.shape[-1] for chunk in input_ids_chunks)
             padded_chunks = []
-            for i, chunk in enumerate(input_ids_chunks):
+            for chunk in input_ids_chunks:
                 seqlen = chunk.shape[-1]
-                pp_extra_pad = max_seqlen - seqlen
-                if pp_extra_pad > 0:
-                    chunk = torch.nn.functional.pad(chunk, (0, pp_extra_pad), value=0)
-                    # Add PP padding to the context's pad_length so it will be
-                    # stripped from logits in _compute_logprobs_and_loss
-                    if i < len(contexts):
-                        contexts[i]["pad_length"] = contexts[i].get("pad_length", 0) + pp_extra_pad
+                if seqlen < max_seqlen:
+                    pad_size = max_seqlen - seqlen
+                    # Pad on the right side of the last dimension with zeros
+                    chunk = torch.nn.functional.pad(chunk, (0, pad_size), value=0)
                 padded_chunks.append(chunk)
             input_ids_chunks = padded_chunks
 
@@ -909,9 +902,13 @@ class FSDPEngine(TrainEngine):
         def process_output(
             logits: torch.Tensor, ctx_dict: dict[str, Any]
         ) -> torch.Tensor:
-            # Strip PP-internal dummy flag before creating FSDPTrainContext
+            # Strip PP-internal keys before constructing FSDPTrainContext
             ctx_dict.pop("__pp_dummy__", None)
             ctx = FSDPTrainContext(**ctx_dict)
+            # Truncate logits to match original input_ids length (strip PP uniform padding)
+            original_seqlen = ctx.model_inputs["input_ids"].shape[-1]
+            if logits.shape[0] > original_seqlen:
+                logits = logits[:original_seqlen]
             return self._compute_logprobs_and_loss(
                 logits,
                 ctx,
@@ -949,9 +946,13 @@ class FSDPEngine(TrainEngine):
         def process_output(
             logits: torch.Tensor, ctx_dict: dict[str, Any]
         ) -> torch.Tensor:
-            # Strip PP-internal dummy flag before creating FSDPTrainContext
+            # Strip PP-internal keys before constructing FSDPTrainContext
             ctx_dict.pop("__pp_dummy__", None)
             ctx = FSDPTrainContext(**ctx_dict)
+            # Truncate logits to match original input_ids length (strip PP uniform padding)
+            original_seqlen = ctx.model_inputs["input_ids"].shape[-1]
+            if logits.shape[0] > original_seqlen:
+                logits = logits[:original_seqlen]
             loss = self._compute_logprobs_and_loss(
                 logits,
                 ctx,
@@ -990,55 +991,47 @@ class FSDPEngine(TrainEngine):
         outputs: list[torch.Tensor] = []
 
         def process_output(logits: torch.Tensor, ctx_dict: dict[str, Any]) -> None:
-            # Strip PP-internal dummy flag before creating FSDPTrainContext
+            # Strip PP-internal keys before constructing FSDPTrainContext
             ctx_dict.pop("__pp_dummy__", None)
             ctx = FSDPTrainContext(**ctx_dict)
+            # Truncate logits to match original input_ids length (strip PP uniform padding)
+            original_seqlen = ctx.model_inputs["input_ids"].shape[-1]
+            if logits.shape[0] > original_seqlen:
+                logits = logits[:original_seqlen]
             result = self._compute_forward_result(logits, ctx)
             outputs.append(result)
             return None
 
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
 
-        # Step 3.5: PP result broadcast — only last stage has outputs, broadcast to all
+        # --- Fix 24: PP broadcast for forward_batch results ---
+        # In PP mode, only the last stage computes outputs via process_output_fn.
+        # Other stages have empty outputs. Broadcast results from last stage to all.
         if self._pp_runner is not None and self.pp_group is not None:
             pp_ranks = dist.get_process_group_ranks(self.pp_group)
-            # Last PP stage global rank is the last rank in the PP group
             last_pp_global_rank = pp_ranks[-1]
             device = self.device
 
             if self._pp_has_last_stage:
-                # Last stage: send number of results and their sizes
-                n_results = torch.tensor(
-                    [len(outputs)], device=device, dtype=torch.long
-                )
+                # Last stage: send number of results, their sizes, and flat data
+                n_results = torch.tensor([len(outputs)], device=device, dtype=torch.long)
                 dist.broadcast(n_results, src=last_pp_global_rank, group=self.pp_group)
-
                 if len(outputs) > 0:
-                    # Send sizes of each result tensor
-                    sizes = torch.tensor(
-                        [r.numel() for r in outputs], device=device, dtype=torch.long
-                    )
+                    sizes = torch.tensor([r.numel() for r in outputs], device=device, dtype=torch.long)
                     dist.broadcast(sizes, src=last_pp_global_rank, group=self.pp_group)
-
-                    # Concatenate and send all results
-                    flat = torch.cat([r.reshape(-1) for r in outputs])
+                    flat = torch.cat([r.reshape(-1).float() for r in outputs])
                     dist.broadcast(flat, src=last_pp_global_rank, group=self.pp_group)
             else:
-                # Non-last stage: receive results
+                # Non-last stages: receive results
                 n_results = torch.tensor([0], device=device, dtype=torch.long)
                 dist.broadcast(n_results, src=last_pp_global_rank, group=self.pp_group)
-
                 n = n_results.item()
                 if n > 0:
                     sizes = torch.empty(n, device=device, dtype=torch.long)
                     dist.broadcast(sizes, src=last_pp_global_rank, group=self.pp_group)
-
                     total_size = sizes.sum().item()
-                    # Use same dtype as would be produced by _compute_forward_result
                     flat = torch.empty(total_size, device=device, dtype=torch.float32)
                     dist.broadcast(flat, src=last_pp_global_rank, group=self.pp_group)
-
-                    # Split back into individual result tensors
                     outputs = list(flat.split(sizes.tolist()))
 
         # Step 4: Aggregate and reorder outputs
