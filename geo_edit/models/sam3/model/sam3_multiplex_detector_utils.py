@@ -13,8 +13,8 @@ try:
 except ImportError:
     GENERIC_NMS_AVAILABLE = False
 
-from sam3.perflib.masks_ops import mask_iou
-from sam3.train.masks_ops import mask_iom
+from geo_edit.models.sam3.perflib.masks_ops import mask_iou
+from geo_edit.models.sam3.train.masks_ops import mask_iom
 
 
 def nms_masks(
@@ -357,13 +357,13 @@ def perf_mask_iou(pred_masks: torch.Tensor, gt_masks: torch.Tensor) -> torch.Ten
       - ious: (N, M) float Tensor, containing IoUs for each pair of predicted and ground truth masks
     """
     assert pred_masks.dtype == gt_masks.dtype == torch.bool
-    from sam3.perflib.iou import pairwise_iou
+    from geo_edit.models.sam3.perflib.iou import pairwise_iou
 
     return pairwise_iou(pred_masks, gt_masks, eps=None)
 
 
 def perf_mask_iom(pred_masks: torch.Tensor, gt_masks: torch.Tensor) -> torch.Tensor:
     assert pred_masks.dtype == gt_masks.dtype == torch.bool
-    from sam3.perflib.iou import pairwise_iom
+    from geo_edit.models.sam3.perflib.iou import pairwise_iom
 
     return pairwise_iom(pred_masks, gt_masks)

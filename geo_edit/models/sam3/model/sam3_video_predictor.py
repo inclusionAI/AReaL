@@ -16,8 +16,8 @@ from typing import List, Optional
 
 import psutil
 import torch
-from sam3.logger import get_logger
-from sam3.model.sam3_base_predictor import Sam3BasePredictor
+from geo_edit.models.sam3.logger import get_logger
+from geo_edit.models.sam3.model.sam3_base_predictor import Sam3BasePredictor
 
 logger = get_logger(__name__)
 
@@ -38,7 +38,7 @@ class Sam3VideoPredictor(Sam3BasePredictor):
         super().__init__()
         self.async_loading_frames = async_loading_frames
         self.video_loader_type = video_loader_type
-        from sam3.model_builder import build_sam3_video_model
+        from geo_edit.models.sam3.model_builder import build_sam3_video_model
 
         self.model = (
             build_sam3_video_model(

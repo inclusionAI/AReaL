@@ -15,7 +15,7 @@ import uuid
 from typing import Dict, List, Optional
 
 import torch
-from sam3.logger import get_logger
+from geo_edit.models.sam3.logger import get_logger
 
 logger = get_logger(__name__)
 

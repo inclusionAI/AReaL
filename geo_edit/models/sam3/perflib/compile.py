@@ -5,7 +5,7 @@
 from functools import wraps
 
 import torch
-from sam3.model.data_misc import BatchedDatapoint, NestedTensor
+from geo_edit.models.sam3.model.data_misc import BatchedDatapoint, NestedTensor
 from torch.utils._pytree import tree_map_only
 
 

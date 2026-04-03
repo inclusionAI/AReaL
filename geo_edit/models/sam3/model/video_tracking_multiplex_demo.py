@@ -5,11 +5,11 @@ from typing import Iterable, Optional
 
 import numpy as np
 import torch
-from sam3.model.data_misc import NestedTensor
-from sam3.model.io_utils import load_video_frames
-from sam3.model.multiplex_utils import MultiplexState
-from sam3.model.sam3_tracker_utils import fill_holes_in_mask_scores
-from sam3.model.video_tracking_multiplex import (
+from geo_edit.models.sam3.model.data_misc import NestedTensor
+from geo_edit.models.sam3.model.io_utils import load_video_frames
+from geo_edit.models.sam3.model.multiplex_utils import MultiplexState
+from geo_edit.models.sam3.model.sam3_tracker_utils import fill_holes_in_mask_scores
+from geo_edit.models.sam3.model.video_tracking_multiplex import (
     concat_points,
     NO_OBJ_SCORE,
     VideoTrackingDynamicMultiplex,

@@ -28,19 +28,19 @@ import torch
 import torch.distributed
 import torch.nn as nn
 import torch.nn.functional as F
-from sam3.model.data_misc import BatchedDatapoint, NestedTensor
-from sam3.model.memory import SimpleMaskEncoder
-from sam3.model.multiplex_mask_decoder import MLP, MultiplexMaskDecoder
-from sam3.model.multiplex_utils import MultiplexController, MultiplexState
-from sam3.model.sam3_tracker_utils import (
+from geo_edit.models.sam3.model.data_misc import BatchedDatapoint, NestedTensor
+from geo_edit.models.sam3.model.memory import SimpleMaskEncoder
+from geo_edit.models.sam3.model.multiplex_mask_decoder import MLP, MultiplexMaskDecoder
+from geo_edit.models.sam3.model.multiplex_utils import MultiplexController, MultiplexState
+from geo_edit.models.sam3.model.sam3_tracker_utils import (
     get_1d_sine_pe,
     get_next_point,
     sample_box_points,
     select_closest_cond_frames,
 )
-from sam3.sam.mask_decoder import MaskDecoder
-from sam3.sam.prompt_encoder import PositionEmbeddingRandom, PromptEncoder
-from sam3.sam.transformer import TwoWayTransformer
+from geo_edit.models.sam3.sam.mask_decoder import MaskDecoder
+from geo_edit.models.sam3.sam.prompt_encoder import PositionEmbeddingRandom, PromptEncoder
+from geo_edit.models.sam3.sam.transformer import TwoWayTransformer
 from timm.models.layers import trunc_normal_
 
 

@@ -13,8 +13,8 @@ via the shared Sam3BasePredictor handle_request/handle_stream_request API.
 from typing import Dict, Optional
 
 import torch
-from sam3.logger import get_logger
-from sam3.model.sam3_base_predictor import Sam3BasePredictor
+from geo_edit.models.sam3.logger import get_logger
+from geo_edit.models.sam3.model.sam3_base_predictor import Sam3BasePredictor
 
 logger = get_logger(__name__)
 

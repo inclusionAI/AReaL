@@ -76,7 +76,7 @@ def connected_components(input_tensor: torch.Tensor):
             return get_connected_components(input_tensor.to(torch.uint8))
         else:
             # triton fallback
-            from sam3.perflib.triton.connected_components import (
+            from geo_edit.models.sam3.perflib.triton.connected_components import (
                 connected_components_triton,
             )
 

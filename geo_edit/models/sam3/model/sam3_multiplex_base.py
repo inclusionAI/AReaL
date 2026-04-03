@@ -11,12 +11,12 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from sam3.logger import get_logger
-from sam3.model.box_ops import fast_diag_box_iou
-from sam3.model.data_misc import BatchedDatapoint, NestedTensor
-from sam3.model.sam3_multiplex_detector import Sam3MultiplexDetector
-from sam3.model.sam3_tracker_utils import fill_holes_in_mask_scores, mask_to_box
-from sam3.model.sam3_video_base import (
+from geo_edit.models.sam3.logger import get_logger
+from geo_edit.models.sam3.model.box_ops import fast_diag_box_iou
+from geo_edit.models.sam3.model.data_misc import BatchedDatapoint, NestedTensor
+from geo_edit.models.sam3.model.sam3_multiplex_detector import Sam3MultiplexDetector
+from geo_edit.models.sam3.model.sam3_tracker_utils import fill_holes_in_mask_scores, mask_to_box
+from geo_edit.models.sam3.model.sam3_video_base import (
     _associate_det_trk_compilable,
     LazyAssociateDetTrkResult,
     MaskletConfirmationStatus,
@@ -24,8 +24,8 @@ from sam3.model.sam3_video_base import (
     RealizedAssociateDetTrkresult,
     Sam3VideoBase,
 )
-from sam3.perflib.masks_ops import mask_iou
-from sam3.train.masks_ops import rle_encode
+from geo_edit.models.sam3.perflib.masks_ops import mask_iou
+from geo_edit.models.sam3.train.masks_ops import rle_encode
 from torch import nn, Tensor
 
 # a short 3-min timeout to quickly detect any synchronization failures

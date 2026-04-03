@@ -8,7 +8,7 @@
 from typing import List, Optional, Type
 
 import torch
-from sam3.sam.common import LayerNorm2d
+from geo_edit.models.sam3.sam.common import LayerNorm2d
 from torch import nn
 from torch.nn import functional as F
 

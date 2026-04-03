@@ -1,20 +1,20 @@
 import os
 
 import torch
-from sam3.model.vl_combiner import SAM3VLBackbone
+from geo_edit.models.sam3.model.vl_combiner import SAM3VLBackbone
 
 try:
-    from sam3.model.vl_combiner import SAM3VLBackboneTri
+    from geo_edit.models.sam3.model.vl_combiner import SAM3VLBackboneTri
 except ImportError:
     SAM3VLBackboneTri = None
 from typing import Dict, List, Optional
 
 import numpy as np
-from sam3.model.data_misc import BatchedDatapoint, FindStage
-from sam3.model.geometry_encoders import Prompt
-from sam3.model.model_misc import SAM3Output
-from sam3.model.sam3_image import Sam3Image
-from sam3.model.sam3_multiplex_detector_utils import nms_masks
+from geo_edit.models.sam3.model.data_misc import BatchedDatapoint, FindStage
+from geo_edit.models.sam3.model.geometry_encoders import Prompt
+from geo_edit.models.sam3.model.model_misc import SAM3Output
+from geo_edit.models.sam3.model.sam3_image import Sam3Image
+from geo_edit.models.sam3.model.sam3_multiplex_detector_utils import nms_masks
 
 
 class Sam3MultiplexImageBase(Sam3Image):

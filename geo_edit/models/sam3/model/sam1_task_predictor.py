@@ -13,8 +13,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL.Image import Image
-from sam3.model.sam3_tracker_base import Sam3TrackerBase
-from sam3.model.utils.sam1_utils import SAM2Transforms
+from geo_edit.models.sam3.model.sam3_tracker_base import Sam3TrackerBase
+from geo_edit.models.sam3.model.utils.sam1_utils import SAM2Transforms
 
 
 # Adapted from https://github.com/facebookresearch/sam2/blob/main/sam2/sam2_image_predictor.py
