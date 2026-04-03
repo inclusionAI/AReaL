@@ -576,6 +576,15 @@ class _EagerProcessingOutputChunks(list):
             output = item
             if output.ndim == 3:
                 output = output.squeeze(0)
+            # Truncate output to match original input_ids length (strip PP uniform padding).
+            # PP uniform padding (Fix 14) pads all microbatch input_ids to max_seqlen,
+            # but ctx["model_inputs"]["input_ids"] retains the original bucket-padded length.
+            if isinstance(ctx, dict) and "model_inputs" in ctx:
+                input_ids = ctx["model_inputs"].get("input_ids", None)
+                if input_ids is not None:
+                    original_seqlen = input_ids.shape[-1]
+                    if output.shape[0] > original_seqlen:
+                        output = output[:original_seqlen]
             result = self._process_output_fn(output, ctx)
             if result is not None:
                 self._results.append(result.detach())
@@ -663,35 +672,11 @@ class FSDPPipelinedRunner:
         Returns:
             Empty list (losses are computed inside pp_loss_fn).
         """
-        # Extract output_head and set skip_output_head=True so _stage_forward
-        # returns hidden_states [1, seq, hidden_dim] instead of logits [1, seq, vocab].
-        # lm_head will be computed inside pp_loss_fn instead.
-        output_head = None
-        stage_wrapper = None
-        if self.has_last_stage:
-            output_stage_tmp = self._get_output_stage()
-            stage_wrapper = self._get_stage_module_for_stage(output_stage_tmp)
-            if stage_wrapper is not None and stage_wrapper.has_output_head:
-                if (
-                    stage_wrapper.is_critic
-                    and hasattr(stage_wrapper.model, "score")
-                    and stage_wrapper.model.score is not None
-                ):
-                    output_head = stage_wrapper.model.score
-                elif (
-                    hasattr(stage_wrapper.model, "lm_head")
-                    and stage_wrapper.model.lm_head is not None
-                ):
-                    output_head = stage_wrapper.model.lm_head
-                if output_head is not None:
-                    stage_wrapper.skip_output_head = True
-
-        pp_loss_fn = self._create_loss_fn(contexts, process_output_fn, output_head=output_head)
+        pp_loss_fn = self._create_loss_fn(contexts, process_output_fn)
         schedule = self._create_schedule(n_microbatches, loss_fn=pp_loss_fn)
         self._patch_skip_output_merge(schedule)
 
-        # Replace output_chunks with _NullOutputChunks to prevent
-        # accumulating large tensors during training.
+        # Replace output_chunks with null list to free logits immediately after backward
         output_stage = None
         if self.has_last_stage:
             output_stage = self._get_output_stage()
@@ -710,17 +695,13 @@ class FSDPPipelinedRunner:
         else:
             batched_target = None
 
-        _log_gpu_memory(
-            f"run_train BEFORE schedule.step, n_microbatches={n_microbatches}"
-        )
+        _log_gpu_memory(f"run_train BEFORE schedule.step, n_microbatches={n_microbatches}")
         schedule.step(*args, target=batched_target, **(extra_kwargs or {}))
-        _log_gpu_memory("run_train AFTER schedule.step")
+        _log_gpu_memory(f"run_train AFTER schedule.step")
 
-        # Restore state
+        # Restore normal list for subsequent eval calls
         if output_stage is not None:
             output_stage.output_chunks = []
-        if stage_wrapper is not None and output_head is not None:
-            stage_wrapper.skip_output_head = False
 
         return []
 
@@ -732,55 +713,41 @@ class FSDPPipelinedRunner:
         contexts: list[Any],
         process_output_fn: Callable,
     ) -> list[torch.Tensor] | None:
+        """Run forward-only using PP schedule for evaluation.
+
+        Uses eager processing to avoid accumulating full vocab logits tensors
+        in GPU memory (which causes OOM). Each output chunk is processed
+        immediately as it is produced by the PP schedule, and only the compact
+        result (e.g., logprobs) is retained.
+
+        Returns:
+            List of results from process_output_fn, or None if not on last stage.
+        """
         schedule = self._create_schedule(n_microbatches, loss_fn=None)
         self._patch_skip_output_merge(schedule)
 
+        # On the last stage, replace output_chunks with an eager-processing list
+        # that converts logits to compact results immediately, avoiding OOM from
+        # accumulating [batch, seq, vocab_size] tensors across all microbatches.
         output_stage = None
         eager_chunks = None
         if self.has_last_stage:
             output_stage = self._get_output_stage()
-
-            # Find wrapper to access lm_head/score and skip_output_head flag
-            stage_wrapper = self._get_stage_module_for_stage(output_stage)
-            output_head = None
-            if stage_wrapper is not None and stage_wrapper.has_output_head:
-                if (
-                    stage_wrapper.is_critic
-                    and hasattr(stage_wrapper.model, "score")
-                    and stage_wrapper.model.score is not None
-                ):
-                    output_head = stage_wrapper.model.score
-                elif (
-                    hasattr(stage_wrapper.model, "lm_head")
-                    and stage_wrapper.model.lm_head is not None
-                ):
-                    output_head = stage_wrapper.model.lm_head
-
-                # Tell _stage_forward to skip lm_head/score
-                if output_head is not None:
-                    stage_wrapper.skip_output_head = True
-
-            eager_chunks = _EagerProcessingOutputChunks(
-                contexts, process_output_fn, output_head=output_head
-            )
+            eager_chunks = _EagerProcessingOutputChunks(contexts, process_output_fn)
             output_stage.output_chunks = eager_chunks
 
+        # schedule.eval() expects a single batched tensor, not per-microbatch args.
         if self.has_first_stage and input_ids_chunks:
             batched_input = torch.cat(input_ids_chunks, dim=0)
             args = (batched_input,)
         else:
             args = ()
-        _log_gpu_memory(
-            f"run_eval BEFORE schedule.eval, n_microbatches={n_microbatches}"
-        )
+        _log_gpu_memory(f"run_eval BEFORE schedule.eval, n_microbatches={n_microbatches}")
         schedule.eval(*args, **(extra_kwargs or {}))
-        _log_gpu_memory("run_eval AFTER schedule.eval")
+        _log_gpu_memory(f"run_eval AFTER schedule.eval")
 
-        # Restore state
+        # Restore normal list for subsequent calls
         if output_stage is not None:
-            stage_wrapper = self._get_stage_module_for_stage(output_stage)
-            if stage_wrapper is not None:
-                stage_wrapper.skip_output_head = False
             output_stage.output_chunks = []
 
         if not self.has_last_stage:
@@ -792,7 +759,6 @@ class FSDPPipelinedRunner:
         self,
         contexts: list[Any],
         process_output_fn: Callable,
-        output_head: torch.nn.Module | None = None,
     ) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
         if self.has_last_stage:
             ctx_iter = iter(contexts)
@@ -803,17 +769,9 @@ class FSDPPipelinedRunner:
                 # should produce zero loss to avoid corrupting gradients.
                 if isinstance(ctx, dict) and ctx.get("__pp_dummy__", False):
                     return pred.sum() * 0.0
-                # When skip_output_head=True, pred is hidden_states;
-                # compute lm_head/score here so logits are short-lived
-                if output_head is not None:
-                    pred = output_head(pred)
                 if pred.ndim == 3:
                     pred = pred.squeeze(0)
                 # Truncate pred to match original input_ids length (strip PP uniform padding).
-                # PP uniform padding (Fix 14) pads all microbatch input_ids to max_seqlen,
-                # but ctx["model_inputs"]["input_ids"] retains the original bucket-padded length.
-                # The model outputs logits at max_seqlen, but process_output_fn expects logits
-                # matching the original input_ids length.
                 if isinstance(ctx, dict) and "model_inputs" in ctx:
                     input_ids = ctx["model_inputs"].get("input_ids", None)
                     if input_ids is not None:
@@ -825,7 +783,6 @@ class FSDPPipelinedRunner:
                     return pred.sum() * 0.0
                 return loss
         else:
-
             def pp_loss_fn(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
                 return pred.sum() * 0.0
 

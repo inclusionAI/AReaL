@@ -1004,7 +1004,7 @@ class FSDPEngine(TrainEngine):
 
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
 
-        # --- Fix 24: PP broadcast for forward_batch results ---
+        # --- PP broadcast for forward_batch results ---
         # In PP mode, only the last stage computes outputs via process_output_fn.
         # Other stages have empty outputs. Broadcast results from last stage to all.
         if self._pp_runner is not None and self.pp_group is not None:
