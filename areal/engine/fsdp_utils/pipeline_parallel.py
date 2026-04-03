@@ -47,26 +47,29 @@ def _log_gpu_memory(tag: str, device: torch.device | None = None) -> None:
 
 
 def _chunked_lm_head_forward(
-    lm_head: torch.nn.Module,
+    lm_head: nn.Module,
     hidden_states: torch.Tensor,
-    chunk_size: int = 1024,
+    chunk_size: int = 4096,
 ) -> torch.Tensor:
-    """Compute lm_head in chunks along seq dimension to avoid OOM.
-
-    Instead of materializing the full [batch, seq, vocab] tensor at once,
-    we compute chunks of [batch, chunk_size, vocab], which uses
-    chunk_size/seq_len fraction of the memory.
-    """
-    seq_len = hidden_states.shape[1]
-    if seq_len <= chunk_size:
-        return lm_head(hidden_states)
-
-    output_chunks = []
-    for start in range(0, seq_len, chunk_size):
-        end = min(start + chunk_size, seq_len)
-        chunk_output = lm_head(hidden_states[:, start:end, :])
-        output_chunks.append(chunk_output)
-    return torch.cat(output_chunks, dim=1)
+    """Compute lm_head in chunks to reduce peak memory."""
+    if hidden_states.ndim == 3:
+        batch, seq_len, hidden = hidden_states.shape
+        if seq_len <= chunk_size:
+            return lm_head(hidden_states)
+        output_chunks = []
+        for i in range(0, seq_len, chunk_size):
+            chunk = hidden_states[:, i:i+chunk_size, :]
+            output_chunks.append(lm_head(chunk))
+        return torch.cat(output_chunks, dim=1)
+    else:
+        seq_len = hidden_states.shape[0]
+        if seq_len <= chunk_size:
+            return lm_head(hidden_states)
+        output_chunks = []
+        for i in range(0, seq_len, chunk_size):
+            chunk = hidden_states[i:i+chunk_size, :]
+            output_chunks.append(lm_head(chunk))
+        return torch.cat(output_chunks, dim=0)
 
 
 @functools.cache
@@ -413,8 +416,8 @@ class _HFPipelineStageModule(nn.Module):
         self.has_output_head = has_output_head
         self.layer_indices = layer_indices
         self.is_critic = is_critic
-        self.skip_output_head = False  # When True, skip lm_head/score in forward
         self._forward_patched = False
+        self.skip_output_head = False  # When True, skip lm_head/score in forward
 
     def _patch_model_forward(self):
         """Replace the underlying HF model's forward with this stage's forward.
@@ -506,23 +509,16 @@ class _HFPipelineStageModule(nn.Module):
 
             # ---- output head (lm_head / score) ----
             if stage_module.has_output_head and not stage_module.skip_output_head:
-                _log_gpu_memory(
-                    f"stage_fwd[stage={stage_module.layer_indices}] BEFORE output_head, hidden_shape={tuple(hidden_states.shape)}"
-                )
-                if (
-                    stage_module.is_critic
-                    and hasattr(model_self, "score")
-                    and model_self.score is not None
-                ):
-                    hidden_states = model_self.score(hidden_states)
-                elif hasattr(model_self, "lm_head") and model_self.lm_head is not None:
-                    # Use chunked forward to avoid materializing full [batch, seq, vocab] at once
-                    hidden_states = _chunked_lm_head_forward(
-                        model_self.lm_head, hidden_states, chunk_size=1024
-                    )
-                _log_gpu_memory(
-                    f"stage_fwd[stage={stage_module.layer_indices}] AFTER output_head, output_shape={tuple(hidden_states.shape)}"
-                )
+                _log_gpu_memory(f"stage_fwd[stage={stage_module.layer_indices}] BEFORE output_head, hidden_shape={tuple(hidden_states.shape)}")
+                if (stage_module.is_critic and hasattr(stage_module.model, "score")
+                        and stage_module.model.score is not None):
+                    hidden_states = stage_module.model.score(hidden_states)
+                elif (hasattr(stage_module.model, "lm_head")
+                      and stage_module.model.lm_head is not None):
+                    hidden_states = _chunked_lm_head_forward(stage_module.model.lm_head, hidden_states)
+                _log_gpu_memory(f"stage_fwd[stage={stage_module.layer_indices}] AFTER output_head, output_shape={tuple(hidden_states.shape)}")
+            elif stage_module.has_output_head and stage_module.skip_output_head:
+                _log_gpu_memory(f"stage_fwd[stage={stage_module.layer_indices}] SKIP output_head, hidden_shape={tuple(hidden_states.shape)}")
 
             return hidden_states
 
@@ -547,50 +543,68 @@ class _NullOutputChunks(list):
 
 
 class _EagerProcessingOutputChunks(list):
-    """Output chunks list that eagerly processes logits to save memory during eval.
+    """Output chunks that eagerly compute lm_head + process to save memory.
 
-    Instead of accumulating full [batch, seq, vocab] logits tensors (which cause OOM),
-    this list immediately applies process_output_fn to each chunk as it arrives,
-    storing only the compact result (e.g., logprobs of shape [seq]).
-
-    The PP schedule's output stage appends raw logits here via stage.output_chunks.
-    We intercept each append, process the logits, and store only the small result.
+    When skip_output_head=True, PP schedule produces hidden_states (~0.03 GiB)
+    instead of logits (~2.9 GiB). This class:
+    1. Receives hidden_states from the schedule
+    2. Computes lm_head -> logits (briefly ~2.9 GiB)
+    3. Truncates to original seqlen (undo PP uniform padding)
+    4. Calls process_output_fn -> compact result
+    5. Deletes logits immediately
+    So at most 1 microbatch's logits exist at any time.
     """
 
-    def __init__(self, contexts: list[Any], process_output_fn: Callable):
+    def __init__(
+        self,
+        contexts: list[Any],
+        process_output_fn: Callable,
+        output_head: nn.Module | None = None,
+    ):
         super().__init__()
         self._contexts = contexts
         self._process_output_fn = process_output_fn
+        self._output_head = output_head
         self._chunk_idx = 0
         self._results: list[Any] = []
 
     def append(self, item: Any) -> None:
-        if self._chunk_idx < len(self._contexts):
-            ctx = self._contexts[self._chunk_idx]
-            self._chunk_idx += 1
-            # Skip dummy microbatches (padded for PP schedule divisibility)
-            if isinstance(ctx, dict) and ctx.get("__pp_dummy__", False):
-                placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)
-                super().append(placeholder)
-                return
-            output = item
-            if output.ndim == 3:
-                output = output.squeeze(0)
-            # Truncate output to match original input_ids length (strip PP uniform padding).
-            # PP uniform padding (Fix 14) pads all microbatch input_ids to max_seqlen,
-            # but ctx["model_inputs"]["input_ids"] retains the original bucket-padded length.
-            if isinstance(ctx, dict) and "model_inputs" in ctx:
-                input_ids = ctx["model_inputs"].get("input_ids", None)
-                if input_ids is not None:
-                    original_seqlen = input_ids.shape[-1]
-                    if output.shape[0] > original_seqlen:
-                        output = output[:original_seqlen]
-            result = self._process_output_fn(output, ctx)
-            if result is not None:
-                self._results.append(result.detach())
-        # Store a placeholder to keep the list length consistent for PP schedule
-        placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)
-        super().append(placeholder)
+        idx = self._chunk_idx
+        self._chunk_idx += 1
+
+        if idx >= len(self._contexts):
+            return
+
+        ctx = self._contexts[idx]
+
+        # Skip dummy microbatches (padded for PP schedule divisibility)
+        if isinstance(ctx, dict) and ctx.get("__pp_dummy__", False):
+            return
+
+        output = item  # hidden_states [1, seq, hidden] or logits [1, seq, vocab]
+
+        # Compute lm_head if skip_output_head was used
+        if self._output_head is not None:
+            output = _chunked_lm_head_forward(self._output_head, output)
+
+        # Squeeze batch dim: [1, seq, X] -> [seq, X]
+        if output.ndim == 3:
+            output = output.squeeze(0)
+
+        # Truncate to original seqlen (undo PP uniform padding)
+        if isinstance(ctx, dict) and "model_inputs" in ctx:
+            original_seqlen = ctx["model_inputs"]["input_ids"].shape[-1]
+            if output.shape[0] > original_seqlen:
+                output = output[:original_seqlen]
+
+        result = self._process_output_fn(output, ctx)
+
+        # Free logits immediately
+        del output
+
+        if result is not None:
+            self._results.append(result.detach())
+        # Do NOT call super().append() — don't store raw tensors
 
     def get_results(self) -> list[Any]:
         return self._results
@@ -610,12 +624,14 @@ class FSDPPipelinedRunner:
         pp_group_size: int,
         has_first_stage: bool,
         has_last_stage: bool,
+        stage_wrappers: list | None = None,  # ← 新增
     ):
         self.pp_stages = pp_stages
         self.pp_schedule = pp_schedule
         self.pp_group_size = pp_group_size
         self.has_first_stage = has_first_stage
         self.has_last_stage = has_last_stage
+        self._stage_wrappers = stage_wrappers or []  # ← 新增
 
     def _create_schedule(
         self,
@@ -650,6 +666,28 @@ class FSDPPipelinedRunner:
         """Patch schedule to skip output merging, halving memory usage."""
         schedule._merge_outputs = lambda output_chunks: None
 
+    def _extract_and_enable_skip_output_head(self) -> nn.Module | None:
+        """Extract lm_head from stage wrappers and enable skip_output_head.
+        
+        Returns the lm_head module (or score for critic), or None.
+        """
+        output_head = None
+        for wrapper in self._stage_wrappers:
+            if wrapper.has_output_head:
+                wrapper.skip_output_head = True
+                # Extract the actual lm_head / score module
+                if wrapper.is_critic and hasattr(wrapper.model, 'score') and wrapper.model.score is not None:
+                    output_head = wrapper.model.score
+                elif hasattr(wrapper.model, 'lm_head') and wrapper.model.lm_head is not None:
+                    output_head = wrapper.model.lm_head
+        return output_head
+
+    def _restore_skip_output_head(self) -> None:
+        """Restore skip_output_head=False on all stage wrappers."""
+        for wrapper in self._stage_wrappers:
+            if wrapper.has_output_head:
+                wrapper.skip_output_head = False
+
     def run_train(
         self,
         n_microbatches: int,
@@ -661,29 +699,22 @@ class FSDPPipelinedRunner:
     ) -> list[torch.Tensor]:
         """Run forward-backward using PP schedule for training.
 
-        Args:
-            n_microbatches: Number of microbatches.
-            input_ids_chunks: List of input_ids per microbatch (only used on first stage).
-            target_chunks: List of target tensors per microbatch (only used on last stage).
-            extra_kwargs: Extra kwargs batched across microbatches.
-            contexts: List of context objects per microbatch (for loss computation).
-            process_output_fn: Callback to compute loss from logits and context.
-
-        Returns:
-            Empty list (losses are computed inside pp_loss_fn).
+        Uses skip_output_head to avoid accumulating full vocab logits.
+        lm_head is computed inside pp_loss_fn, immediately before backward.
         """
-        pp_loss_fn = self._create_loss_fn(contexts, process_output_fn)
+        output_head = None
+        if self.has_last_stage:
+            output_head = self._extract_and_enable_skip_output_head()
+
+        pp_loss_fn = self._create_loss_fn(contexts, process_output_fn, output_head=output_head)
         schedule = self._create_schedule(n_microbatches, loss_fn=pp_loss_fn)
         self._patch_skip_output_merge(schedule)
 
-        # Replace output_chunks with null list to free logits immediately after backward
         output_stage = None
         if self.has_last_stage:
             output_stage = self._get_output_stage()
             output_stage.output_chunks = _NullOutputChunks()
 
-        # schedule.step() expects a single batched tensor per input argument.
-        # It internally splits them into n_microbatches chunks via torch.tensor_split.
         if self.has_first_stage and input_ids_chunks:
             batched_input = torch.cat(input_ids_chunks, dim=0)
             args = (batched_input,)
@@ -699,7 +730,7 @@ class FSDPPipelinedRunner:
         schedule.step(*args, target=batched_target, **(extra_kwargs or {}))
         _log_gpu_memory(f"run_train AFTER schedule.step")
 
-        # Restore normal list for subsequent eval calls
+        self._restore_skip_output_head()
         if output_stage is not None:
             output_stage.output_chunks = []
 
@@ -715,38 +746,36 @@ class FSDPPipelinedRunner:
     ) -> list[torch.Tensor] | None:
         """Run forward-only using PP schedule for evaluation.
 
-        Uses eager processing to avoid accumulating full vocab logits tensors
-        in GPU memory (which causes OOM). Each output chunk is processed
-        immediately as it is produced by the PP schedule, and only the compact
-        result (e.g., logprobs) is retained.
-
-        Returns:
-            List of results from process_output_fn, or None if not on last stage.
+        Uses skip_output_head to avoid accumulating full vocab logits.
+        lm_head is computed lazily inside _EagerProcessingOutputChunks.append().
         """
         schedule = self._create_schedule(n_microbatches, loss_fn=None)
         self._patch_skip_output_merge(schedule)
 
-        # On the last stage, replace output_chunks with an eager-processing list
-        # that converts logits to compact results immediately, avoiding OOM from
-        # accumulating [batch, seq, vocab_size] tensors across all microbatches.
         output_stage = None
         eager_chunks = None
+        output_head = None
+
         if self.has_last_stage:
             output_stage = self._get_output_stage()
-            eager_chunks = _EagerProcessingOutputChunks(contexts, process_output_fn)
+            output_head = self._extract_and_enable_skip_output_head()
+            eager_chunks = _EagerProcessingOutputChunks(
+                contexts, process_output_fn, output_head=output_head,
+            )
             output_stage.output_chunks = eager_chunks
 
-        # schedule.eval() expects a single batched tensor, not per-microbatch args.
         if self.has_first_stage and input_ids_chunks:
             batched_input = torch.cat(input_ids_chunks, dim=0)
             args = (batched_input,)
         else:
             args = ()
+
         _log_gpu_memory(f"run_eval BEFORE schedule.eval, n_microbatches={n_microbatches}")
         schedule.eval(*args, **(extra_kwargs or {}))
         _log_gpu_memory(f"run_eval AFTER schedule.eval")
 
-        # Restore normal list for subsequent calls
+        # Restore state
+        self._restore_skip_output_head()
         if output_stage is not None:
             output_stage.output_chunks = []
 
@@ -759,26 +788,36 @@ class FSDPPipelinedRunner:
         self,
         contexts: list[Any],
         process_output_fn: Callable,
+        output_head: nn.Module | None = None,
     ) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
         if self.has_last_stage:
             ctx_iter = iter(contexts)
 
             def pp_loss_fn(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
                 ctx = next(ctx_iter)
-                # Dummy microbatches (padded for PP schedule divisibility)
-                # should produce zero loss to avoid corrupting gradients.
+                # Dummy microbatches produce zero loss
                 if isinstance(ctx, dict) and ctx.get("__pp_dummy__", False):
                     return pred.sum() * 0.0
-                if pred.ndim == 3:
-                    pred = pred.squeeze(0)
-                # Truncate pred to match original input_ids length (strip PP uniform padding).
+
+                # Compute lm_head if skip_output_head was used
+                if output_head is not None:
+                    logits = _chunked_lm_head_forward(output_head, pred)
+                else:
+                    logits = pred
+
+                if logits.ndim == 3:
+                    logits = logits.squeeze(0)
+
+                # Truncate to original seqlen (undo PP uniform padding)
                 if isinstance(ctx, dict) and "model_inputs" in ctx:
-                    input_ids = ctx["model_inputs"].get("input_ids", None)
-                    if input_ids is not None:
-                        original_seqlen = input_ids.shape[-1]
-                        if pred.shape[0] > original_seqlen:
-                            pred = pred[:original_seqlen]
-                loss = process_output_fn(pred, ctx)
+                    original_seqlen = ctx["model_inputs"]["input_ids"].shape[-1]
+                    if logits.shape[0] > original_seqlen:
+                        logits = logits[:original_seqlen]
+
+                loss = process_output_fn(logits, ctx)
+
+                del logits
+
                 if loss is None:
                     return pred.sum() * 0.0
                 return loss
@@ -896,28 +935,20 @@ def create_fsdp_runner(
     pp_group_size: int = 1,
     has_first_stage: bool = True,
     has_last_stage: bool = True,
-    stage_wrappers: list["_HFPipelineStageModule"] | None = None,
+    stage_wrappers: list | None = None,  # ← 新增参数
 ) -> FSDPPipelinedRunner | None:
-    """Factory function to create a PP runner for FSDP engine.
-
-    Returns None if PP is not enabled.
-    """
+    """Factory function to create a PP runner for FSDP engine."""
     if not pp_enabled:
         return None
 
     assert pp_stages is not None, "pp_stages required when pp_enabled=True"
     assert pp_schedule is not None, "pp_schedule required when pp_enabled=True"
 
-    runner = FSDPPipelinedRunner(
+    return FSDPPipelinedRunner(
         pp_stages=pp_stages,
         pp_schedule=pp_schedule,
         pp_group_size=pp_group_size,
         has_first_stage=has_first_stage,
         has_last_stage=has_last_stage,
+        stage_wrappers=stage_wrappers,  # ← 新增
     )
-
-    # Store stage wrappers so run_eval can find the output_head module
-    if stage_wrappers is not None:
-        runner._stage_wrappers = stage_wrappers
-
-    return runner

@@ -902,10 +902,10 @@ class FSDPEngine(TrainEngine):
         def process_output(
             logits: torch.Tensor, ctx_dict: dict[str, Any]
         ) -> torch.Tensor:
-            # Strip PP-internal keys before constructing FSDPTrainContext
+            # Strip PP dummy marker before constructing context
             ctx_dict.pop("__pp_dummy__", None)
             ctx = FSDPTrainContext(**ctx_dict)
-            # Truncate logits to match original input_ids length (strip PP uniform padding)
+            # Truncate logits if PP uniform padding made them longer than original
             original_seqlen = ctx.model_inputs["input_ids"].shape[-1]
             if logits.shape[0] > original_seqlen:
                 logits = logits[:original_seqlen]
@@ -946,10 +946,8 @@ class FSDPEngine(TrainEngine):
         def process_output(
             logits: torch.Tensor, ctx_dict: dict[str, Any]
         ) -> torch.Tensor:
-            # Strip PP-internal keys before constructing FSDPTrainContext
             ctx_dict.pop("__pp_dummy__", None)
             ctx = FSDPTrainContext(**ctx_dict)
-            # Truncate logits to match original input_ids length (strip PP uniform padding)
             original_seqlen = ctx.model_inputs["input_ids"].shape[-1]
             if logits.shape[0] > original_seqlen:
                 logits = logits[:original_seqlen]
@@ -991,10 +989,8 @@ class FSDPEngine(TrainEngine):
         outputs: list[torch.Tensor] = []
 
         def process_output(logits: torch.Tensor, ctx_dict: dict[str, Any]) -> None:
-            # Strip PP-internal keys before constructing FSDPTrainContext
             ctx_dict.pop("__pp_dummy__", None)
             ctx = FSDPTrainContext(**ctx_dict)
-            # Truncate logits to match original input_ids length (strip PP uniform padding)
             original_seqlen = ctx.model_inputs["input_ids"].shape[-1]
             if logits.shape[0] > original_seqlen:
                 logits = logits[:original_seqlen]
