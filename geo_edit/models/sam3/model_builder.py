@@ -383,9 +383,13 @@ def _load_checkpoint(model, checkpoint_path):
 
 
 def _setup_device_and_mode(model, device, eval_mode):
-    model = model.float()
+    """Setup model device, dtype, and evaluation mode."""
+    # Explicitly convert all parameters and buffers to float32 to avoid
+    # dtype mismatches with Sam3Processor inputs (which are float32).
+    # Checkpoint weights may be stored as bfloat16.
+    model = model.to(dtype=torch.float32)
     if device is not None and str(device) != "cpu":
-        model = model.to(device)
+        model = model.to(device=device)
     if eval_mode:
         model.eval()
     return model
