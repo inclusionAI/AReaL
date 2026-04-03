@@ -34,19 +34,13 @@ from geo_edit.models.sam3.model.model_misc import (
     MultiheadAttentionWrapper as MultiheadAttention,
     TransformerWrapper,
 )
-from geo_edit.models.sam3.model.multiplex_utils import MultiplexController
-from geo_edit.models.sam3.model.necks import Sam3DualViTDetNeck, Sam3TriViTDetNeck
+from geo_edit.models.sam3.model.necks import Sam3DualViTDetNeck
 from geo_edit.models.sam3.model.position_encoding import PositionEmbeddingSine
-from geo_edit.models.sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
-from geo_edit.models.sam3.model.sam3_image import Sam3Image, Sam3ImageOnVideoMultiGPU
-from geo_edit.models.sam3.model.sam3_tracking_predictor import Sam3TrackerPredictor
-from geo_edit.models.sam3.model.sam3_video_inference import Sam3VideoInferenceWithInstanceInteractivity
-from geo_edit.models.sam3.model.sam3_video_predictor import Sam3VideoPredictorMultiGPU
+from geo_edit.models.sam3.model.sam3_image import Sam3Image
 from geo_edit.models.sam3.model.text_encoder_ve import VETextEncoder
 from geo_edit.models.sam3.model.tokenizer_ve import SimpleTokenizer
-from geo_edit.models.sam3.model.video_tracking_multiplex import VideoTrackingDynamicMultiplex
 from geo_edit.models.sam3.model.vitdet import ViT
-from geo_edit.models.sam3.model.vl_combiner import SAM3VLBackbone, SAM3VLBackboneTri, TriHeadVisionOnly
+from geo_edit.models.sam3.model.vl_combiner import SAM3VLBackbone
 from geo_edit.models.sam3.sam.transformer import RoPEAttention
 
 
