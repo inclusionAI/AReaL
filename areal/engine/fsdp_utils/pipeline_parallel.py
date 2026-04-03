@@ -400,10 +400,28 @@ class _HFPipelineStageModule(nn.Module):
             # self.rotary_emb(hidden_states, position_ids) and passes the result
             # to each decoder layer as `position_embeddings`. Since our PP stage
             # forward bypasses the HF model's forward, we must compute it here.
+            #
+            # NOTE: The PP schedule (schedule.step/eval) only passes the batched
+            # input_ids tensor as a positional arg — it does NOT pass position_ids
+            # or any other kwargs. So position_ids will be None here. We construct
+            # it from the sequence length, which is correct for standard causal LM
+            # training where positions are [0, 1, 2, ..., seq_len-1].
             position_embeddings = None
             if stage_module.layer_indices:
                 inner_model = model_self.model
                 if hasattr(inner_model, "rotary_emb"):
+                    # Generate position_ids if not provided (PP schedule doesn't pass kwargs)
+                    if position_ids is None:
+                        seq_len = (
+                            hidden_states.shape[1] if hidden_states.ndim >= 2 else 1
+                        )
+                        position_ids = (
+                            torch.arange(
+                                seq_len, device=hidden_states.device, dtype=torch.long
+                            )
+                            .unsqueeze(0)
+                            .expand(hidden_states.shape[0], -1)
+                        )
                     position_embeddings = inner_model.rotary_emb(
                         hidden_states, position_ids
                     )
