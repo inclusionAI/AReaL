@@ -570,10 +570,9 @@ class _EagerProcessingOutputChunks(list):
     def append(self, item: Any) -> None:
         if self._chunk_idx < len(self._contexts):
             ctx = self._contexts[self._chunk_idx]
-
+            self._chunk_idx += 1
             # Skip dummy microbatches (padded for PP schedule divisibility)
             if isinstance(ctx, dict) and ctx.get("__pp_dummy__", False):
-                self._chunk_idx += 1
                 placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)
                 super().append(placeholder)
                 return
@@ -583,17 +582,17 @@ class _EagerProcessingOutputChunks(list):
             if self._output_head is not None:
                 # Compute logits inside append — only ONE logits tensor alive at a time
                 _log_gpu_memory(
-                    f"EagerChunks[{self._chunk_idx}] BEFORE lm_head, shape={tuple(hidden_states.shape)}"
+                    f"EagerChunks[{self._chunk_idx - 1}] BEFORE lm_head, shape={tuple(hidden_states.shape)}"
                 )
                 logits = self._output_head(hidden_states)
                 _log_gpu_memory(
-                    f"EagerChunks[{self._chunk_idx}] AFTER lm_head, shape={tuple(logits.shape)}"
+                    f"EagerChunks[{self._chunk_idx - 1}] AFTER lm_head, shape={tuple(logits.shape)}"
                 )
                 if logits.ndim == 3:
                     logits = logits.squeeze(0)
                 result = self._process_output_fn(logits, ctx)
                 del logits  # Immediately release ~2.87 GiB
-                _log_gpu_memory(f"EagerChunks[{self._chunk_idx}] AFTER del logits")
+                _log_gpu_memory(f"EagerChunks[{self._chunk_idx - 1}] AFTER del logits")
             else:
                 output = item
                 if output.ndim == 3:
@@ -602,7 +601,6 @@ class _EagerProcessingOutputChunks(list):
 
             if result is not None:
                 self._results.append(result.detach())
-            self._chunk_idx += 1
 
         # Replace with tiny placeholder so PP schedule doesn't hold large tensor ref
         placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)

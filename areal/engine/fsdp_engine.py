@@ -808,15 +808,28 @@ class FSDPEngine(TrainEngine):
                 torch.zeros(batch_size, device=self.device, dtype=torch.long)
             )
 
-        # Pad all microbatch input_ids to uniform sequence length
+        # --- Fix 14: Pad all microbatch input_ids to uniform sequence length ---
+        # PP schedule's step()/eval() calls torch.tensor_split on a single batched
+        # tensor, which requires all chunks to have the same shape on non-batch dims.
+        # Since pad_mb_list pads each microbatch to its nearest bucket (not global max),
+        # different microbatches can have different sequence lengths. We must pad them
+        # to a uniform length before torch.cat.
+        #
+        # Fix 23: Track the extra PP padding per-microbatch so it can be stripped
+        # from logits before process_output_fn is called. We add the extra padding
+        # to ctx["pad_length"] so _compute_logprobs_and_loss strips it automatically.
         if input_ids_chunks and len(input_ids_chunks) > 1:
             max_seqlen = max(chunk.shape[-1] for chunk in input_ids_chunks)
             padded_chunks = []
-            for chunk in input_ids_chunks:
+            for i, chunk in enumerate(input_ids_chunks):
                 seqlen = chunk.shape[-1]
-                if seqlen < max_seqlen:
-                    pad_size = max_seqlen - seqlen
-                    chunk = torch.nn.functional.pad(chunk, (0, pad_size), value=0)
+                pp_extra_pad = max_seqlen - seqlen
+                if pp_extra_pad > 0:
+                    chunk = torch.nn.functional.pad(chunk, (0, pp_extra_pad), value=0)
+                    # Add PP padding to the context's pad_length so it will be
+                    # stripped from logits in _compute_logprobs_and_loss
+                    if i < len(contexts):
+                        contexts[i]["pad_length"] = contexts[i].get("pad_length", 0) + pp_extra_pad
                 padded_chunks.append(chunk)
             input_ids_chunks = padded_chunks
 
