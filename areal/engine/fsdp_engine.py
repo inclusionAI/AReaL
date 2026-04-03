@@ -387,6 +387,26 @@ class FSDPEngine(TrainEngine):
         # NOTE: Apply parallelism — either PP + FSDP2 or plain FSDP2
         if self.parallel_helper.pp_enabled:
             self._apply_pipeline_parallelism()
+            # Log memory after PP setup
+            import torch
+
+            device = self.device
+            allocated = torch.cuda.memory_allocated(device) / (1024**3)
+            reserved = torch.cuda.memory_reserved(device) / (1024**3)
+            free_mem, total_mem = torch.cuda.mem_get_info(device)
+            free_gb = free_mem / (1024**3)
+            total_gb = total_mem / (1024**3)
+            self.logger.info(
+                f"[GPU_MEM] After PP setup: allocated={allocated:.2f}GiB, "
+                f"reserved={reserved:.2f}GiB, free={free_gb:.2f}GiB, total={total_gb:.2f}GiB"
+            )
+            for i, mp in enumerate(self._pp_model_parts):
+                param_bytes = sum(
+                    p.numel() * p.element_size() for p in mp.model.parameters()
+                )
+                self.logger.info(
+                    f"[GPU_MEM] PP stage {i} model_part param memory: {param_bytes / (1024**3):.3f} GiB"
+                )
         else:
             parallelize_model(
                 self.model,
@@ -758,6 +778,15 @@ class FSDPEngine(TrainEngine):
         n_microbatches = len(mb_list)
         if n_microbatches == 0:
             return None
+
+        allocated = torch.cuda.memory_allocated(self.device) / (1024**3)
+        reserved = torch.cuda.memory_reserved(self.device) / (1024**3)
+        free_mem, total_mem = torch.cuda.mem_get_info(self.device)
+        free_gb = free_mem / (1024**3)
+        self.logger.info(
+            f"[GPU_MEM] PP fwd/bwd START: forward_only={forward_only}, n_mb={n_microbatches}, "
+            f"allocated={allocated:.2f}GiB, reserved={reserved:.2f}GiB, free={free_gb:.2f}GiB"
+        )
 
         # Prepare inputs and contexts for all microbatches
         input_ids_chunks: list[torch.Tensor] = []

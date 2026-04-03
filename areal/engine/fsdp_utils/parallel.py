@@ -444,3 +444,19 @@ def parallelize_model(
         "reshard_after_forward": reshard_after_forward,
     }
     apply_fsdp2(model, fsdp_kwargs, wrap_policy)
+
+    if pp_enabled and torch.cuda.is_available():
+        device = torch.cuda.current_device()
+        allocated = torch.cuda.memory_allocated(device) / (1024**3)
+        reserved = torch.cuda.memory_reserved(device) / (1024**3)
+        free_mem, total_mem = torch.cuda.mem_get_info(device)
+        free_gb = free_mem / (1024**3)
+        rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+        param_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+        print(
+            f"[GPU_MEM Rank {rank}] After FSDP wrap (pp_enabled={pp_enabled}, "
+            f"reshard_after_forward={reshard_after_forward}): "
+            f"allocated={allocated:.2f}GiB, reserved={reserved:.2f}GiB, "
+            f"free={free_gb:.2f}GiB, param_bytes={param_bytes / (1024**3):.3f}GiB",
+            flush=True,
+        )

@@ -26,6 +26,26 @@ if TYPE_CHECKING:
     from torch.distributed.pipelining.schedules import _PipelineSchedule
 
 
+def _log_gpu_memory(tag: str, device: torch.device | None = None) -> None:
+    """Log GPU memory usage at a specific point for debugging."""
+    if device is None:
+        device = torch.cuda.current_device()
+    allocated = torch.cuda.memory_allocated(device) / (1024**3)
+    reserved = torch.cuda.memory_reserved(device) / (1024**3)
+    max_allocated = torch.cuda.max_memory_allocated(device) / (1024**3)
+    free_mem, total_mem = torch.cuda.mem_get_info(device)
+    free_gb = free_mem / (1024**3)
+    total_gb = total_mem / (1024**3)
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    print(
+        f"[GPU_MEM Rank {rank}] {tag}: "
+        f"allocated={allocated:.2f}GiB, reserved={reserved:.2f}GiB, "
+        f"max_allocated={max_allocated:.2f}GiB, "
+        f"free={free_gb:.2f}GiB, total={total_gb:.2f}GiB",
+        flush=True,
+    )
+
+
 @functools.cache
 def _get_logger() -> logging.Logger:
     """Get rank-aware logger for this module."""
@@ -391,26 +411,21 @@ class _HFPipelineStageModule(nn.Module):
         ) -> torch.Tensor:
             position_ids = kwargs.get("position_ids", None)
 
-            # First stage: apply embedding
+            # ---- embed_tokens ----
             if stage_module.has_embed:
+                _log_gpu_memory(
+                    f"stage_fwd[stage={stage_module.layer_indices}] BEFORE embed_tokens, input_shape={tuple(hidden_states.shape)}"
+                )
                 hidden_states = model_self.model.embed_tokens(hidden_states)
+                _log_gpu_memory(
+                    f"stage_fwd[stage={stage_module.layer_indices}] AFTER embed_tokens, output_shape={tuple(hidden_states.shape)}"
+                )
 
-            # Compute rotary position embeddings (cos, sin) for transformer layers.
-            # In normal HF forward, Qwen2Model.forward() computes this once via
-            # self.rotary_emb(hidden_states, position_ids) and passes the result
-            # to each decoder layer as `position_embeddings`. Since our PP stage
-            # forward bypasses the HF model's forward, we must compute it here.
-            #
-            # NOTE: The PP schedule (schedule.step/eval) only passes the batched
-            # input_ids tensor as a positional arg — it does NOT pass position_ids
-            # or any other kwargs. So position_ids will be None here. We construct
-            # it from the sequence length, which is correct for standard causal LM
-            # training where positions are [0, 1, 2, ..., seq_len-1].
+            # ---- position_embeddings ----
             position_embeddings = None
             if stage_module.layer_indices:
                 inner_model = model_self.model
                 if hasattr(inner_model, "rotary_emb"):
-                    # Generate position_ids if not provided (PP schedule doesn't pass kwargs)
                     if position_ids is None:
                         seq_len = (
                             hidden_states.shape[1] if hidden_states.ndim >= 2 else 1
@@ -426,12 +441,13 @@ class _HFPipelineStageModule(nn.Module):
                         hidden_states, position_ids
                     )
 
-            # Apply transformer layers
-            for idx in stage_module.layer_indices:
+            # ---- transformer layers ----
+            _log_gpu_memory(
+                f"stage_fwd[stage={stage_module.layer_indices}] BEFORE transformer_layers, hidden_shape={tuple(hidden_states.shape)}"
+            )
+            for layer_loop_i, idx in enumerate(stage_module.layer_indices):
                 layer = model_self.model.layers[idx]
                 if layer is not None:
-                    # Pass position_embeddings if available (Qwen2, Llama, etc.),
-                    # otherwise fall back to position_ids for older model architectures.
                     layer_kwargs = {}
                     if position_embeddings is not None:
                         layer_kwargs["position_embeddings"] = position_embeddings
@@ -442,17 +458,33 @@ class _HFPipelineStageModule(nn.Module):
                         hidden_states,
                         **layer_kwargs,
                     )
-                    # HF transformer layers return tuples: (hidden_states, ...)
                     if isinstance(layer_outputs, tuple):
                         hidden_states = layer_outputs[0]
                     else:
                         hidden_states = layer_outputs
 
-            # Last stage: apply norm and output head
+                    if (
+                        layer_loop_i == 0
+                        or layer_loop_i == len(stage_module.layer_indices) - 1
+                        or layer_loop_i % 4 == 0
+                    ):
+                        _log_gpu_memory(
+                            f"stage_fwd[stage={stage_module.layer_indices}] AFTER layer[{idx}] ({layer_loop_i + 1}/{len(stage_module.layer_indices)})"
+                        )
+
+            _log_gpu_memory(
+                f"stage_fwd[stage={stage_module.layer_indices}] AFTER all transformer_layers"
+            )
+
+            # ---- norm ----
             if stage_module.has_norm and model_self.model.norm is not None:
                 hidden_states = model_self.model.norm(hidden_states)
 
+            # ---- output head (lm_head / score) ----
             if stage_module.has_output_head:
+                _log_gpu_memory(
+                    f"stage_fwd[stage={stage_module.layer_indices}] BEFORE output_head, hidden_shape={tuple(hidden_states.shape)}"
+                )
                 if (
                     stage_module.is_critic
                     and hasattr(model_self, "score")
@@ -461,6 +493,9 @@ class _HFPipelineStageModule(nn.Module):
                     hidden_states = model_self.score(hidden_states)
                 elif hasattr(model_self, "lm_head") and model_self.lm_head is not None:
                     hidden_states = model_self.lm_head(hidden_states)
+                _log_gpu_memory(
+                    f"stage_fwd[stage={stage_module.layer_indices}] AFTER output_head, output_shape={tuple(hidden_states.shape)}"
+                )
 
             return hidden_states
 
@@ -605,7 +640,11 @@ class FSDPPipelinedRunner:
         else:
             batched_target = None
 
+        _log_gpu_memory(
+            f"run_train BEFORE schedule.step, n_microbatches={n_microbatches}"
+        )
         schedule.step(*args, target=batched_target, **(extra_kwargs or {}))
+        _log_gpu_memory("run_train AFTER schedule.step")
 
         # Restore normal list for subsequent eval calls
         if output_stage is not None:
@@ -650,7 +689,12 @@ class FSDPPipelinedRunner:
             args = (batched_input,)
         else:
             args = ()
+
+        _log_gpu_memory(
+            f"run_eval BEFORE schedule.eval, n_microbatches={n_microbatches}"
+        )
         schedule.eval(*args, **(extra_kwargs or {}))
+        _log_gpu_memory("run_eval AFTER schedule.eval")
 
         # Restore normal list for subsequent calls
         if output_stage is not None:
