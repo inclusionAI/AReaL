@@ -506,8 +506,18 @@ class FSDPPipelinedRunner:
             output_stage = self._get_output_stage()
             output_stage.output_chunks = _NullOutputChunks()
 
-        args = tuple(input_ids_chunks) if self.has_first_stage else ()
-        batched_target = target_chunks[0] if target_chunks else None
+        # schedule.step() expects a single batched tensor per input argument.
+        # It internally splits them into n_microbatches chunks via torch.tensor_split.
+        if self.has_first_stage and input_ids_chunks:
+            batched_input = torch.cat(input_ids_chunks, dim=0)
+            args = (batched_input,)
+        else:
+            args = ()
+
+        if target_chunks:
+            batched_target = torch.cat(target_chunks, dim=0)
+        else:
+            batched_target = None
 
         schedule.step(*args, target=batched_target, **(extra_kwargs or {}))
 
@@ -533,7 +543,12 @@ class FSDPPipelinedRunner:
         schedule = self._create_schedule(n_microbatches, loss_fn=None)
         self._patch_skip_output_merge(schedule)
 
-        args = tuple(input_ids_chunks) if self.has_first_stage else ()
+        # schedule.eval() expects a single batched tensor, not per-microbatch args.
+        if self.has_first_stage and input_ids_chunks:
+            batched_input = torch.cat(input_ids_chunks, dim=0)
+            args = (batched_input,)
+        else:
+            args = ()
         schedule.eval(*args, **(extra_kwargs or {}))
 
         if not self.has_last_stage:

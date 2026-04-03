@@ -294,6 +294,16 @@ class FSDPEngine(TrainEngine):
             torch_memory_saver.hook_mode = "preload"
         self.weight_update_group_name = "update_weight_group"
 
+        # PP requires all ranks to load actual weights (via from_pretrained)
+        # because pipeline_module_split does deepcopy. Override config early
+        # so _create_llm_actor_or_critic uses from_pretrained, not from_config.
+        if self.parallel_helper.pp_enabled and self.config.fsdp.memory_efficient_load:
+            self.logger.info(
+                "Overriding memory_efficient_load=False for pipeline parallelism."
+            )
+            # dataclass field override — safe because it's read-only after init
+            self.config.fsdp.memory_efficient_load = False
+
         # Create device model
         self._create_device_model()
 
@@ -329,6 +339,22 @@ class FSDPEngine(TrainEngine):
             and not self.is_vision_model
         )
 
+        # PP requires all ranks to have correct weights before the pipeline split
+        # (which does deepcopy). Disable memory_efficient_load for PP so that
+        # all ranks load via from_pretrained and the deepcopy picks up real weights.
+        if self.parallel_helper.pp_enabled and is_llm_cpu_load:
+            self.logger.warning(
+                "memory_efficient_load is not compatible with pipeline parallelism. "
+                "All ranks will load model weights independently. "
+                "Consider disabling memory_efficient_load when using PP."
+            )
+            is_llm_cpu_load = False
+
+        if self.parallel_helper.pp_enabled and self.config.use_lora:
+            raise ValueError(
+                "LoRA + Pipeline Parallelism is not currently supported. "
+                "Please disable either LoRA or PP."
+            )
         if is_llm_cpu_load or self.config.use_lora:
             need_broadcast = True
             if dist.get_rank() == 0:
@@ -370,15 +396,31 @@ class FSDPEngine(TrainEngine):
 
         if need_broadcast:
             broadcast_tik = time.perf_counter()
-            fsdp2_load_full_state_dict(
-                self.model,
-                full_state,
-                self.cpu_offload,
-                tie_word_embeddings=self.model_config.tie_word_embeddings,
-            )
-            self.logger.info(
-                f"Broadcasting model weights took {time.perf_counter() - broadcast_tik:.2f} seconds"
-            )
+            if self.parallel_helper.pp_enabled and self._pp_model_parts is not None:
+                # PP: load state into each model part's inner HF model
+                for part in self._pp_model_parts:
+                    inner_model = part.model if hasattr(part, "model") else part
+                    fsdp2_load_full_state_dict(
+                        inner_model,
+                        full_state,
+                        self.cpu_offload,
+                        tie_word_embeddings=self.model_config.tie_word_embeddings,
+                    )
+                self.logger.info(
+                    f"Broadcasting model weights (PP) took "
+                    f"{time.perf_counter() - broadcast_tik:.2f} seconds"
+                )
+            else:
+                fsdp2_load_full_state_dict(
+                    self.model,
+                    full_state,
+                    self.cpu_offload,
+                    tie_word_embeddings=self.model_config.tie_word_embeddings,
+                )
+                self.logger.info(
+                    f"Broadcasting model weights took "
+                    f"{time.perf_counter() - broadcast_tik:.2f} seconds"
+                )
 
         self.logger.info(
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
@@ -387,16 +429,22 @@ class FSDPEngine(TrainEngine):
         self._create_optimizer(ft_spec)
 
         if self.config.fsdp.per_layer_optim_step:
-            if self.optimizer_config.type != "adam":
+            if self.parallel_helper.pp_enabled:
+                self.logger.warning(
+                    "per_layer_optim_step is not compatible with pipeline parallelism. "
+                    "Disabling per_layer_optim_step."
+                )
+            elif self.optimizer_config.type != "adam":
                 raise ValueError(
                     f"per_layer_optim_step only supports 'adam' optimizer, got '{self.optimizer_config.type}'."
                 )
-            self._per_layer_optim_wrapper = PerLayerOptimWrapper(
-                model=self.model,
-                optimizer=self.optimizer,
-                device_id=self.device,
-                prefetch_layers=self.config.fsdp.optim_step_prefetch_layers,
-            )
+            else:
+                self._per_layer_optim_wrapper = PerLayerOptimWrapper(
+                    model=self.model,
+                    optimizer=self.optimizer,
+                    device_id=self.device,
+                    prefetch_layers=self.config.fsdp.optim_step_prefetch_layers,
+                )
 
         # Create PP runner if pipeline parallelism is enabled
         if self.parallel_helper.pp_enabled:
@@ -480,6 +528,10 @@ class FSDPEngine(TrainEngine):
     def train(self, mode: bool = True):
         assert self.model is not None
         self.model.train(mode=mode)
+        # PP: also set train/eval mode on all model parts
+        if self._pp_model_parts is not None:
+            for part in self._pp_model_parts:
+                part.train(mode=mode)
         return self
 
     def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
@@ -714,8 +766,12 @@ class FSDPEngine(TrainEngine):
             if input_ids is not None:
                 input_ids_chunks.append(input_ids)
             contexts.append(ctx.to_dict())
-            # Dummy target (PP schedule requires target arg even if unused)
-            target_chunks.append(torch.zeros(1, device=self.device, dtype=torch.long))
+            # Dummy target — schedule.step() will split the batched target into
+            # n_microbatches chunks, so each chunk must have matching batch dim.
+            batch_size = input_ids.shape[0] if input_ids is not None else 1
+            target_chunks.append(
+                torch.zeros(batch_size, device=self.device, dtype=torch.long)
+            )
 
         with trace_scope("fsdp_engine.pp_forward_backward"):
             if forward_only:
@@ -933,10 +989,14 @@ class FSDPEngine(TrainEngine):
             pp_last_stage_less_layers=pp_config.pp_last_stage_less_layers,
         )
 
-        # Apply TP + FSDP2 to each model part
+        # Apply TP + FSDP2 to each model part's inner HF model.
+        # We parallelize model_part.model (the pruned HuggingFace model) instead of
+        # the _HFPipelineStageModule wrapper, because apply_fsdp2 and apply_non_moe_tp
+        # expect a HuggingFace model with _no_split_modules, config, etc.
         for i, model_part in enumerate(model_parts):
+            inner_hf_model = model_part.model  # The pruned AutoModelForCausalLM
             parallelize_model(
-                model_part,
+                inner_hf_model,
                 config=self.config,
                 model_config=self.model_config,
                 nd_device_mesh=self.world_mesh,
@@ -945,8 +1005,6 @@ class FSDPEngine(TrainEngine):
                 wrap_policy=self.config.fsdp.wrap_policy,
                 pp_enabled=True,
             )
-            # Update stage reference to parallelized model
-            stages[i].submod = model_part
 
         self._pp_stages = stages
         self._pp_model_parts = model_parts
@@ -1096,6 +1154,16 @@ class FSDPEngine(TrainEngine):
         assert self.model is not None
         # Set up optimizer
         tik = time.perf_counter()
+
+        # When PP is enabled, collect parameters from ALL model parts
+        # (each rank may hold multiple stages in interleaved schedules).
+        if self._pp_model_parts is not None and len(self._pp_model_parts) > 1:
+            all_pp_params = []
+            for part in self._pp_model_parts:
+                all_pp_params.extend(list(part.parameters()))
+            _optim_params = all_pp_params
+        else:
+            _optim_params = self.model.parameters()
         assert self.optimizer_config.type in [
             "adam",
             "adam_bf16",
@@ -1112,7 +1180,7 @@ class FSDPEngine(TrainEngine):
         eps = self.optimizer_config.eps
         if self.optimizer_config.type == "adam":
             self.optimizer = torch.optim.AdamW(
-                self.model.parameters(),
+                _optim_params,
                 lr=lr,
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
@@ -1122,7 +1190,7 @@ class FSDPEngine(TrainEngine):
             )
         elif self.optimizer_config.type == "adam_bf16":
             self.optimizer = AnyPrecisionAdamW(
-                self.model.parameters(),
+                _optim_params,
                 lr=lr,
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
@@ -1132,7 +1200,7 @@ class FSDPEngine(TrainEngine):
             )
         else:
             self.optimizer = torch.optim.SGD(
-                self.model.parameters(),
+                _optim_params,
                 lr=lr,
                 weight_decay=weight_decay,
             )
@@ -1482,12 +1550,26 @@ class FSDPEngine(TrainEngine):
         # FSDP2 checkpoint saving
         # Get full state dict with FSDP2
         options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-        state_dict = get_model_state_dict(self.model, options=options)
+        if self._pp_model_parts is not None:
+            # PP: gather state dicts from all model parts' inner HF models
+            state_dict = {}
+            for part in self._pp_model_parts:
+                inner_model = part.model if hasattr(part, "model") else part
+                part_state = get_model_state_dict(inner_model, options=options)
+                state_dict.update(part_state)
+        else:
+            state_dict = get_model_state_dict(self.model, options=options)
 
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
-            self.model.save_pretrained(path, state_dict=state_dict)
+            # For PP, use the first model part's inner model for save_pretrained
+            save_model = self.model
+            if self._pp_model_parts is not None and hasattr(
+                self._pp_model_parts[0], "model"
+            ):
+                save_model = self._pp_model_parts[0].model
+            save_model.save_pretrained(path, state_dict=state_dict)
             self.model_config.save_pretrained(path)
             if tokenizer is not None and not self.config.use_lora:
                 tokenizer.save_pretrained(path)
@@ -1502,12 +1584,23 @@ class FSDPEngine(TrainEngine):
         else:
             full_state = {}
 
-        fsdp2_load_full_state_dict(
-            self.model,
-            full_state,
-            self.cpu_offload,
-            tie_word_embeddings=self.model_config.tie_word_embeddings,
-        )
+        if self._pp_model_parts is not None:
+            # PP: load into each model part's inner HF model
+            for part in self._pp_model_parts:
+                inner_model = part.model if hasattr(part, "model") else part
+                fsdp2_load_full_state_dict(
+                    inner_model,
+                    full_state,
+                    self.cpu_offload,
+                    tie_word_embeddings=self.model_config.tie_word_embeddings,
+                )
+        else:
+            fsdp2_load_full_state_dict(
+                self.model,
+                full_state,
+                self.cpu_offload,
+                tie_word_embeddings=self.model_config.tie_word_embeddings,
+            )
 
     def _save_to_dcp(
         self,
@@ -1520,7 +1613,13 @@ class FSDPEngine(TrainEngine):
 
         os.makedirs(path, exist_ok=True)
 
-        dcp_state = DCPState(self.model, self.optimizer if with_optim else None)
+        dcp_model = self.model
+        if self._pp_model_parts is not None:
+            self.logger.warning(
+                "DCP checkpoint saving with PP currently only saves the first model part. "
+                "Consider using HF format for PP checkpoints."
+            )
+        dcp_state = DCPState(dcp_model, self.optimizer if with_optim else None)
         state_dict = {"dcp": dcp_state}
         dcp.save(state_dict, checkpoint_id=path)
 

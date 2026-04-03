@@ -271,9 +271,7 @@ class ModelAllocation:
 
     def __post_init__(self):
         if self.backend == "fsdp":
-            if (
-                self.parallel.expert_parallel_size > 1
-            ):
+            if self.parallel.expert_parallel_size > 1:
                 raise AllocationValidationError(
                     f"FSDP backend only supports data/tensor/context/pipeline parallelism. "
                     f"Got strategy: {self.parallel}"

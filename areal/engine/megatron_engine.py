@@ -374,6 +374,7 @@ class MegatronEngine(TrainEngine):
                     "Tree training is not supported with bridge_type='megatron-bridge'."
                 )
             from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
+
             self.bridge = MegatronBridgeAutoBridge.from_hf_pretrained(
                 self.config.path,
                 trust_remote_code=True,
