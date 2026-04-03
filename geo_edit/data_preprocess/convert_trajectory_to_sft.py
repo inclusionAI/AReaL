@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
 """Convert trajectories to LLaMA Factory SFT (ShareGPT) format.
 
-Designed to consume the output of ``augment_sft_data.py`` (which already
-filters and diversifies), but can also be used standalone on raw
-iterative-sampling output with ``--refilter`` to apply correctness /
-brute-force checks.
+Consumes the output of ``augment_traj_data.py`` (which already filters and
+diversifies) and converts each trajectory into step-level ShareGPT samples.
 
-Usage (after augment — recommended):
+Usage:
     python -m geo_edit.data_preprocess.convert_trajectory_to_sft \\
         --src_dir /path/to/augmented_output \\
         --dst_dir /path/to/sft_output
-
-Usage (standalone, with re-filtering):
-    python -m geo_edit.data_preprocess.convert_trajectory_to_sft \\
-        --src_dir /path/to/raw_trajectories \\
-        --dst_dir /path/to/sft_output \\
-        --refilter
 """
 
 import argparse
@@ -26,24 +18,10 @@ import os
 import re
 import shutil
 from collections import Counter
-from pathlib import Path
 
-from geo_edit.data_preprocess.trajectory_utils import (
-    get_text_from_content,
-    is_brute_force,
-    load_meta_info,
-)
+from geo_edit.data_preprocess.trajectory_utils import get_text_from_content
 from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
 from geo_edit.tool_definitions import ToolRouter, format_tool_declarations_text
-
-
-def is_correct(meta):
-    """Check if the model's output matches the expected answer."""
-    if meta is None:
-        return False
-    output = str(meta.get("output_text", "")).strip()
-    answer = str(meta.get("answer", "")).strip()
-    return output == answer
 
 
 def has_image_in_content(content):
@@ -390,16 +368,6 @@ def main():
         default="trajectory_sft",
         help="Dataset name used in dataset_info.json (default: trajectory_sft)",
     )
-    parser.add_argument(
-        "--refilter",
-        action="store_true",
-        help=(
-            "Re-apply correctness and brute-force filtering. "
-            "Use when consuming raw iterative-sampling output directly "
-            "(without augment_sft_data). Skipped by default because "
-            "augment_sft_data already filters."
-        ),
-    )
     args = parser.parse_args()
 
     src_root = args.src_dir
@@ -418,9 +386,6 @@ def main():
     system_prompt = TOOL_CALL_SYSTEM_PROMPT.strip()
 
     print(f"Enabled tools: {[d['name'] for d in declarations]}")
-    print(
-        f"Re-filtering: {'ON' if args.refilter else 'OFF (trusting upstream augment)'}"
-    )
 
     # Discover all valid task subdirectories (any name, flat or nested layout)
     subdirs = _discover_subdirs(src_root)
@@ -431,25 +396,11 @@ def main():
     stats = Counter()
 
     for task_id, subdir in subdirs:
-        meta_path = os.path.join(subdir, "meta_info.jsonl")
         traj_path = os.path.join(subdir, "trajectory.json")
 
-        # Files are guaranteed to exist by _discover_subdirs, but double-check
-        if not os.path.exists(meta_path) or not os.path.exists(traj_path):
+        if not os.path.exists(traj_path):
             stats["missing_files"] += 1
             continue
-
-        meta = load_meta_info(Path(meta_path))
-        if not meta:
-            stats["bad_meta"] += 1
-            continue
-
-        # Only re-filter when explicitly requested (standalone mode).
-        # When used after augment_sft_data, filtering was already done.
-        if args.refilter:
-            if not is_correct(meta):
-                stats["incorrect"] += 1
-                continue
 
         try:
             with open(traj_path) as f:
@@ -458,11 +409,6 @@ def main():
             stats["bad_trajectory"] += 1
             print(f"  [WARN] Task {task_id}: failed to load trajectory: {e}")
             continue
-
-        if args.refilter:
-            if is_brute_force(trajectory, meta):
-                stats["brute_force"] += 1
-                continue
 
         entries = convert_trajectory(
             trajectory,
@@ -517,13 +463,9 @@ def main():
     print(f"Step-level samples:      {stats['total_steps']}")
     if stats["kept"] > 0:
         print(f"Avg steps/trajectory:    {stats['total_steps'] / stats['kept']:.1f}")
-    if args.refilter:
-        print(f"Filtered - incorrect:    {stats['incorrect']}")
-        print(f"Filtered - brute force:  {stats['brute_force']}")
-    print(f"Filtered - missing files:{stats['missing_files']}")
-    print(f"Filtered - bad meta:     {stats['bad_meta']}")
-    print(f"Filtered - bad traj:     {stats['bad_trajectory']}")
-    print(f"Filtered - conv failed:  {stats['conversion_failed']}")
+    print(f"Skipped - missing files: {stats['missing_files']}")
+    print(f"Skipped - bad traj:      {stats['bad_trajectory']}")
+    print(f"Skipped - conv failed:   {stats['conversion_failed']}")
     print(f"\nOutput: {train_path}")
     print(f"Images: {dst_images}")
     print(f"Dataset info: {info_path}")
