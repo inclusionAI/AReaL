@@ -688,11 +688,35 @@ class FSDPPipelinedRunner:
         Returns:
             Empty list (losses are computed inside pp_loss_fn).
         """
-        pp_loss_fn = self._create_loss_fn(contexts, process_output_fn)
+        # Extract output_head and set skip_output_head=True so _stage_forward
+        # returns hidden_states [1, seq, hidden_dim] instead of logits [1, seq, vocab].
+        # lm_head will be computed inside pp_loss_fn instead.
+        output_head = None
+        stage_wrapper = None
+        if self.has_last_stage:
+            output_stage_tmp = self._get_output_stage()
+            stage_wrapper = self._get_stage_module_for_stage(output_stage_tmp)
+            if stage_wrapper is not None and stage_wrapper.has_output_head:
+                if (
+                    stage_wrapper.is_critic
+                    and hasattr(stage_wrapper.model, "score")
+                    and stage_wrapper.model.score is not None
+                ):
+                    output_head = stage_wrapper.model.score
+                elif (
+                    hasattr(stage_wrapper.model, "lm_head")
+                    and stage_wrapper.model.lm_head is not None
+                ):
+                    output_head = stage_wrapper.model.lm_head
+                if output_head is not None:
+                    stage_wrapper.skip_output_head = True
+
+        pp_loss_fn = self._create_loss_fn(contexts, process_output_fn, output_head=output_head)
         schedule = self._create_schedule(n_microbatches, loss_fn=pp_loss_fn)
         self._patch_skip_output_merge(schedule)
 
-        # Replace output_chunks with null list to free logits immediately after backward
+        # Replace output_chunks with _NullOutputChunks to prevent
+        # accumulating large tensors during training.
         output_stage = None
         if self.has_last_stage:
             output_stage = self._get_output_stage()
@@ -717,9 +741,11 @@ class FSDPPipelinedRunner:
         schedule.step(*args, target=batched_target, **(extra_kwargs or {}))
         _log_gpu_memory("run_train AFTER schedule.step")
 
-        # Restore normal list for subsequent eval calls
+        # Restore state
         if output_stage is not None:
             output_stage.output_chunks = []
+        if stage_wrapper is not None and output_head is not None:
+            stage_wrapper.skip_output_head = False
 
         return []
 
@@ -791,6 +817,7 @@ class FSDPPipelinedRunner:
         self,
         contexts: list[Any],
         process_output_fn: Callable,
+        output_head: torch.nn.Module | None = None,
     ) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
         if self.has_last_stage:
             ctx_iter = iter(contexts)
@@ -801,6 +828,10 @@ class FSDPPipelinedRunner:
                 # should produce zero loss to avoid corrupting gradients.
                 if isinstance(ctx, dict) and ctx.get("__pp_dummy__", False):
                     return pred.sum() * 0.0
+                # When skip_output_head=True, pred is hidden_states;
+                # compute lm_head/score here so logits are short-lived
+                if output_head is not None:
+                    pred = output_head(pred)
                 if pred.ndim == 3:
                     pred = pred.squeeze(0)
                 loss = process_output_fn(pred, ctx)
