@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+from tqdm import tqdm
+
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -284,33 +286,26 @@ class DiversificationClient:
         if not eligible:
             return results
 
-        logger.info(
-            "Diversifying %d / %d eligible think blocks (%d workers)…",
-            len(eligible),
-            len(blocks),
-            max_workers,
-        )
-
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(self.diversify_block, block): idx
                 for idx, block in eligible
             }
 
-            completed = 0
+            pbar = tqdm(
+                total=len(eligible),
+                desc="Diversifying think blocks",
+                unit="block",
+            )
             for future in as_completed(futures):
                 idx = futures[future]
-                completed += 1
                 try:
                     results[idx] = future.result()
                 except Exception as e:
                     logger.error("Failed to diversify block %d: %s", idx, e)
                     results[idx] = blocks[idx].text
-
-                if completed % 50 == 0:
-                    logger.info(
-                        "  diversification progress: %d / %d", completed, len(eligible)
-                    )
+                pbar.update(1)
+            pbar.close()
 
         return results
 

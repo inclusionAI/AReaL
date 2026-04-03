@@ -69,6 +69,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from tqdm import tqdm
+
 from geo_edit.data_preprocess.diversification import (
     DiversificationClient,
     ThinkBlock,
@@ -497,7 +499,6 @@ def main() -> None:
     )
 
     # ── Phase 1: Filter ─────────────────────────────────────────────────
-    logger.info("Phase 1 — Filtering %d subfolders …", len(subfolders_with_images))
     passed_subfolders: List[Tuple[Path, Path]] = []
 
     def _safe_filter(sf: Path, img_dir: Path) -> Tuple[Path, Path, bool, str]:
@@ -508,7 +509,7 @@ def main() -> None:
             if use_local_correctness:
                 is_correct, reason = _local_correctness_check(meta)
                 if not is_correct:
-                    logger.info("Filtered %s: %s", sf.name, reason)
+                    logger.debug("Filtered %s: %s", sf.name, reason)
                     return sf, img_dir, False, "wrong_answer"
 
             passed, reason = filter_subfolder(
@@ -518,7 +519,7 @@ def main() -> None:
                 traj = load_trajectory(sf / "trajectory.json")
                 has_mismatch, mismatch_reason = _strict_tool_match(traj)
                 if has_mismatch:
-                    logger.info(
+                    logger.debug(
                         "Filtered %s: strict tool mismatch — %s",
                         sf.name,
                         mismatch_reason,
@@ -534,6 +535,9 @@ def main() -> None:
             pool.submit(_safe_filter, sf, img_dir)
             for sf, img_dir in subfolders_with_images
         ]
+        pbar = tqdm(
+            total=len(futures), desc="Phase 1: Filtering", unit="traj"
+        )
         for future in as_completed(futures):
             sf, img_dir, passed, reason = future.result()
             if passed:
@@ -551,8 +555,10 @@ def main() -> None:
                 stats.api_errors += 1
             else:
                 stats.filtered_structure_error += 1
+            pbar.update(1)
+        pbar.close()
 
-    logger.info("Phase 1 complete: %d / %d passed", stats.passed_filter, stats.total)
+    logger.info("Phase 1 complete: %d / %d passed filter", stats.passed_filter, stats.total)
 
     if not passed_subfolders:
         logger.error("No subfolders passed filtering — nothing to output")
@@ -565,8 +571,6 @@ def main() -> None:
     modified_trajectories: Dict[Path, List[Dict[str, Any]]] = {}
 
     if client is not None and not args.skip_diversify:
-        logger.info("Phase 2 — Extracting and diversifying think blocks …")
-
         all_blocks: List[ThinkBlock] = []
         block_origins: List[Tuple[Path, int]] = []
         subfolder_data: Dict[Path, Tuple[List[Dict[str, Any]], List[ThinkBlock]]] = {}
@@ -583,12 +587,6 @@ def main() -> None:
 
         stats.total_think_blocks = len(all_blocks)
         stats.blocks_skipped_short = sum(1 for b in all_blocks if len(b.text) < 20)
-
-        logger.info(
-            "Extracted %d think blocks (%d eligible for diversification)",
-            len(all_blocks),
-            len(all_blocks) - stats.blocks_skipped_short,
-        )
 
         if all_blocks:
             global_results = client.diversify_blocks_batch(
@@ -616,20 +614,14 @@ def main() -> None:
                     )
 
         logger.info(
-            "Phase 2 complete: %d diversified, %d failed, %d skipped",
+            "Phase 2 complete: %d diversified, %d failed, %d skipped (short)",
             stats.blocks_diversified,
             stats.blocks_failed,
             stats.blocks_skipped_short,
         )
-    else:
-        logger.info("Phase 2 — Skipped (diversification disabled)")
 
     # ── Phase 3: Copy ───────────────────────────────────────────────────
-    logger.info(
-        "Phase 3 — Copying %d subfolders to %s …", len(passed_subfolders), dst_dir
-    )
-
-    for sf, img_dir in passed_subfolders:
+    for sf, img_dir in tqdm(passed_subfolders, desc="Phase 3: Copying", unit="traj"):
         if sf == img_dir:
             dst_sub = dst_dir / sf.name
         else:
