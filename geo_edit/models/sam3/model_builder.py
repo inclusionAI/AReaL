@@ -10,22 +10,14 @@ import torch.nn as nn
 from huggingface_hub import hf_hub_download
 from iopath.common.file_io import g_pathmgr
 from geo_edit.models.sam3.model.decoder import (
-    DecoupledTransformerDecoderLayerv2,
-    SimpleRoPEAttention,
     TransformerDecoder,
     TransformerDecoderLayer,
-    TransformerDecoderLayerv2,
-    TransformerEncoderCrossAttention,
-    TransformerEncoderDecoupledCrossAttention,
 )
 from geo_edit.models.sam3.model.encoder import TransformerEncoderFusion, TransformerEncoderLayer
 from geo_edit.models.sam3.model.geometry_encoders import SequenceGeometryEncoder
 from geo_edit.models.sam3.model.maskformer_segmentation import PixelDecoder, UniversalSegmentationHead
 from geo_edit.models.sam3.model.memory import (
     CXBlock,
-    SimpleFuser,
-    SimpleMaskDownSampler,
-    SimpleMaskEncoder,
 )
 from geo_edit.models.sam3.model.model_misc import (
     DotProductScoring,
@@ -40,7 +32,6 @@ from geo_edit.models.sam3.model.text_encoder_ve import VETextEncoder
 from geo_edit.models.sam3.model.tokenizer_ve import SimpleTokenizer
 from geo_edit.models.sam3.model.vitdet import ViT
 from geo_edit.models.sam3.model.vl_combiner import SAM3VLBackbone
-from geo_edit.models.sam3.sam.transformer import RoPEAttention
 
 
 # Setup TensorFloat-32 for Ampere GPUs if available
@@ -317,175 +308,12 @@ def _create_sam3_model(
 
     matcher = None
     if not eval_mode:
-        from geo_edit.models.sam3.train.matcher import BinaryHungarianMatcherV2
-
-        matcher = BinaryHungarianMatcherV2(
-            focal=True,
-            cost_class=2.0,
-            cost_bbox=5.0,
-            cost_giou=2.0,
-            alpha=0.25,
-            gamma=2,
-            stable=False,
+        raise NotImplementedError(
+            "Training mode (eval_mode=False) requires the full sam3 package. "
+            "The vendored geo_edit.models.sam3 only supports eval_mode=True."
         )
     common_params["matcher"] = matcher
     model = Sam3Image(**common_params)
-
-    return model
-
-
-def _create_tracker_maskmem_backbone():
-    """Create the SAM3 Tracker memory encoder."""
-    # Position encoding for mask memory backbone
-    position_encoding = PositionEmbeddingSine(
-        num_pos_feats=64,
-        normalize=True,
-        scale=None,
-        temperature=10000,
-        precompute_resolution=1008,
-    )
-
-    # Mask processing components
-    mask_downsampler = SimpleMaskDownSampler(
-        kernel_size=3, stride=2, padding=1, interpol_size=[1152, 1152]
-    )
-
-    cx_block_layer = CXBlock(
-        dim=256,
-        kernel_size=7,
-        padding=3,
-        layer_scale_init_value=1.0e-06,
-        use_dwconv=True,
-    )
-
-    fuser = SimpleFuser(layer=cx_block_layer, num_layers=2)
-
-    maskmem_backbone = SimpleMaskEncoder(
-        out_dim=64,
-        position_encoding=position_encoding,
-        mask_downsampler=mask_downsampler,
-        fuser=fuser,
-    )
-
-    return maskmem_backbone
-
-
-def _create_tracker_transformer():
-    """Create the SAM3 Tracker transformer components."""
-    # Self attention
-    self_attention = RoPEAttention(
-        embedding_dim=256,
-        num_heads=1,
-        downsample_rate=1,
-        dropout=0.1,
-        rope_theta=10000.0,
-        feat_sizes=[72, 72],
-        use_fa3=False,
-        use_rope_real=False,
-    )
-
-    # Cross attention
-    cross_attention = RoPEAttention(
-        embedding_dim=256,
-        num_heads=1,
-        downsample_rate=1,
-        dropout=0.1,
-        kv_in_dim=64,
-        rope_theta=10000.0,
-        feat_sizes=[72, 72],
-        rope_k_repeat=True,
-        use_fa3=False,
-        use_rope_real=False,
-    )
-
-    # Encoder layer
-    encoder_layer = TransformerDecoderLayerv2(
-        cross_attention_first=False,
-        activation="relu",
-        dim_feedforward=2048,
-        dropout=0.1,
-        pos_enc_at_attn=False,
-        pre_norm=True,
-        self_attention=self_attention,
-        d_model=256,
-        pos_enc_at_cross_attn_keys=True,
-        pos_enc_at_cross_attn_queries=False,
-        cross_attention=cross_attention,
-    )
-
-    # Encoder
-    encoder = TransformerEncoderCrossAttention(
-        remove_cross_attention_layers=[],
-        batch_first=True,
-        d_model=256,
-        frozen=False,
-        pos_enc_at_input=True,
-        layer=encoder_layer,
-        num_layers=4,
-        use_act_checkpoint=False,
-    )
-
-    # Transformer wrapper
-    transformer = TransformerWrapper(
-        encoder=encoder,
-        decoder=None,
-        d_model=256,
-    )
-
-    return transformer
-
-
-def build_tracker(
-    apply_temporal_disambiguation: bool, with_backbone: bool = False, compile_mode=None
-) -> Sam3TrackerPredictor:
-    """
-    Build the SAM3 Tracker module for video tracking.
-
-    Returns:
-        Sam3TrackerPredictor: Wrapped SAM3 Tracker module
-    """
-
-    # Create model components
-    maskmem_backbone = _create_tracker_maskmem_backbone()
-    transformer = _create_tracker_transformer()
-    backbone = None
-    if with_backbone:
-        vision_backbone = _create_vision_backbone(compile_mode=compile_mode)
-        backbone = SAM3VLBackbone(scalp=1, visual=vision_backbone, text=None)
-    # Create the Tracker module
-    model = Sam3TrackerPredictor(
-        image_size=1008,
-        num_maskmem=7,
-        backbone=backbone,
-        backbone_stride=14,
-        transformer=transformer,
-        maskmem_backbone=maskmem_backbone,
-        # SAM parameters
-        multimask_output_in_sam=True,
-        # Evaluation
-        forward_backbone_per_frame_for_eval=True,
-        trim_past_non_cond_mem_for_eval=False,
-        # Multimask
-        multimask_output_for_tracking=True,
-        multimask_min_pt_num=0,
-        multimask_max_pt_num=1,
-        # Additional settings
-        always_start_from_first_ann_frame=False,
-        # Mask overlap
-        non_overlap_masks_for_mem_enc=False,
-        non_overlap_masks_for_output=False,
-        max_cond_frames_in_attn=4,
-        offload_output_to_cpu_for_eval=False,
-        # SAM decoder settings
-        sam_mask_decoder_extra_args={
-            "dynamic_multimask_via_stability": True,
-            "dynamic_multimask_stability_delta": 0.05,
-            "dynamic_multimask_stability_thresh": 0.98,
-        },
-        clear_non_cond_mem_around_input=True,
-        fill_hole_area=0,
-        use_memory_selection=apply_temporal_disambiguation,
-    )
 
     return model
 
@@ -621,10 +449,13 @@ def build_sam3_image_model(
     # Create geometry encoder
     input_geometry_encoder = _create_geometry_encoder()
     if enable_inst_interactivity:
-        sam3_pvs_base = build_tracker(apply_temporal_disambiguation=False)
-        inst_predictor = SAM3InteractiveImagePredictor(sam3_pvs_base)
-    else:
-        inst_predictor = None
+        raise NotImplementedError(
+            "enable_inst_interactivity=True requires the full sam3 package "
+            "(sam3.model.sam3_tracking_predictor and sam3.model.sam1_task_predictor). "
+            "The vendored geo_edit.models.sam3 only supports "
+            "enable_inst_interactivity=False."
+        )
+    inst_predictor = None
     # Create the SAM3 model
     model = _create_sam3_model(
         backbone,
@@ -676,7 +507,7 @@ def build_sam3_video_model(
     apply_temporal_disambiguation: bool = True,
     device="cuda" if torch.cuda.is_available() else "cpu",
     compile=False,
-) -> Sam3VideoInferenceWithInstanceInteractivity:
+) -> "Sam3VideoInferenceWithInstanceInteractivity":
     """
     Build SAM3 dense tracking model.
 

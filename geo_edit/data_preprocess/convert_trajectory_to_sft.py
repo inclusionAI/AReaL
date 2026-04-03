@@ -5,9 +5,9 @@ Consumes the output of ``augment_traj_data.py`` (which already filters and
 diversifies) and converts each trajectory into step-level ShareGPT samples.
 
 Usage:
-    python -m geo_edit.data_preprocess.convert_trajectory_to_sft \\
-        --src_dir /path/to/augmented_output \\
-        --dst_dir /path/to/sft_output
+    python -m geo_edit.data_preprocess.convert_trajectory_to_sft \
+        --src_dir /storage/openpsi/data/lcy_image_edit/chartqa_augmented_data \
+        --dst_dir /storage/openpsi/data/lcy_image_edit/chartqa_sft_data 
 """
 
 import argparse
