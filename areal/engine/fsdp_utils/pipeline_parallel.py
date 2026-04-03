@@ -481,6 +481,41 @@ class _NullOutputChunks(list):
         pass
 
 
+class _EagerProcessingOutputChunks(list):
+    """Output chunks list that eagerly processes logits to save memory during eval.
+
+    Instead of accumulating full [batch, seq, vocab] logits tensors (which cause OOM),
+    this list immediately applies process_output_fn to each chunk as it arrives,
+    storing only the compact result (e.g., logprobs of shape [seq]).
+
+    The PP schedule's output stage appends raw logits here via stage.output_chunks.
+    We intercept each append, process the logits, and store only the small result.
+    """
+
+    def __init__(self, contexts: list[Any], process_output_fn: Callable):
+        super().__init__()
+        self._contexts = contexts
+        self._process_output_fn = process_output_fn
+        self._chunk_idx = 0
+        self._results: list[Any] = []
+
+    def append(self, item: Any) -> None:
+        # Process immediately and store only the compact result
+        if self._chunk_idx < len(self._contexts):
+            output = item
+            if output.ndim == 3:
+                output = output.squeeze(0)
+            ctx = self._contexts[self._chunk_idx]
+            result = self._process_output_fn(output, ctx)
+            if result is not None:
+                self._results.append(result.detach())
+            self._chunk_idx += 1
+        # Do NOT call super().append(item) — we don't store the raw logits
+
+    def get_results(self) -> list[Any]:
+        return self._results
+
+
 class FSDPPipelinedRunner:
     """Pipeline-parallel runner for FSDP Engine.
 
@@ -588,11 +623,26 @@ class FSDPPipelinedRunner:
     ) -> list[torch.Tensor] | None:
         """Run forward-only using PP schedule for evaluation.
 
+        Uses eager processing to avoid accumulating full vocab logits tensors
+        in GPU memory (which causes OOM). Each output chunk is processed
+        immediately as it is produced by the PP schedule, and only the compact
+        result (e.g., logprobs) is retained.
+
         Returns:
             List of results from process_output_fn, or None if not on last stage.
         """
         schedule = self._create_schedule(n_microbatches, loss_fn=None)
         self._patch_skip_output_merge(schedule)
+
+        # On the last stage, replace output_chunks with an eager-processing list
+        # that converts logits to compact results immediately, avoiding OOM from
+        # accumulating [batch, seq, vocab_size] tensors across all microbatches.
+        output_stage = None
+        eager_chunks = None
+        if self.has_last_stage:
+            output_stage = self._get_output_stage()
+            eager_chunks = _EagerProcessingOutputChunks(contexts, process_output_fn)
+            output_stage.output_chunks = eager_chunks
 
         # schedule.eval() expects a single batched tensor, not per-microbatch args.
         if self.has_first_stage and input_ids_chunks:
@@ -602,19 +652,14 @@ class FSDPPipelinedRunner:
             args = ()
         schedule.eval(*args, **(extra_kwargs or {}))
 
+        # Restore normal list for subsequent calls
+        if output_stage is not None:
+            output_stage.output_chunks = []
+
         if not self.has_last_stage:
             return None
 
-        output_stage = self._get_output_stage()
-        results = []
-        for output, ctx in zip(output_stage.output_chunks, contexts, strict=True):
-            if output.ndim == 3:
-                output = output.squeeze(0)
-            result = process_output_fn(output, ctx)
-            if result is not None:
-                results.append(result.detach())
-        output_stage.output_chunks.clear()
-        return results
+        return eager_chunks.get_results()
 
     def _create_loss_fn(
         self,
