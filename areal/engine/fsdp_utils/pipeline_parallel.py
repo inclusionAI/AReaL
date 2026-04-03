@@ -575,6 +575,10 @@ class FSDPPipelinedRunner:
 
             def pp_loss_fn(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
                 ctx = next(ctx_iter)
+                # Dummy microbatches (padded for PP schedule divisibility)
+                # should produce zero loss to avoid corrupting gradients.
+                if isinstance(ctx, dict) and ctx.get("__pp_dummy__", False):
+                    return pred.sum() * 0.0
                 if pred.ndim == 3:
                     pred = pred.squeeze(0)
                 loss = process_output_fn(pred, ctx)

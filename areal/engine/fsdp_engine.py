@@ -778,6 +778,40 @@ class FSDPEngine(TrainEngine):
                 torch.zeros(batch_size, device=self.device, dtype=torch.long)
             )
 
+        # Pad microbatch count for PP schedule divisibility ---
+        pp_group_size = self._pp_runner.pp_group_size
+        remainder = n_microbatches % pp_group_size
+        if remainder != 0:
+            n_pad = pp_group_size - remainder
+            self.logger.info(
+                f"PP schedule requires n_microbatches divisible by pp_group_size={pp_group_size}. "
+                f"Padding {n_pad} dummy microbatch(es) (original={n_microbatches}, "
+                f"padded={n_microbatches + n_pad})."
+            )
+            if input_ids_chunks:
+                dummy_shape = input_ids_chunks[0].shape
+                dummy_dtype = input_ids_chunks[0].dtype
+            else:
+                dummy_shape = (1, 1)
+                dummy_dtype = torch.long
+
+            for _ in range(n_pad):
+                if input_ids_chunks:
+                    input_ids_chunks.append(
+                        torch.zeros(dummy_shape, device=self.device, dtype=dummy_dtype)
+                    )
+                dummy_ctx = contexts[0].copy()
+                dummy_ctx["__pp_dummy__"] = True
+                contexts.append(dummy_ctx)
+                target_chunks.append(
+                    torch.zeros(
+                        dummy_shape[0] if len(dummy_shape) > 0 else 1,
+                        device=self.device,
+                        dtype=torch.long,
+                    )
+                )
+            n_microbatches = n_microbatches + n_pad
+
         with trace_scope("fsdp_engine.pp_forward_backward"):
             if forward_only:
                 results = self._pp_runner.run_eval(
