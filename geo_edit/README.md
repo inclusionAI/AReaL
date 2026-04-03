@@ -323,7 +323,7 @@ echo "endpoint ready"
 
 ```bash
 # Join Ray cluster on Worker node, mark as tool_agent node
-ray start --address='33.180.160.172:6379' --resources='{"tool_agent": 8}'
+ray start --address='33.214.152.98:6379' --resources='{"tool_agent": 8}'
 ```
 
 > `"tool_agent": 8` indicates this node has 8 GPUs available for Tool Agents

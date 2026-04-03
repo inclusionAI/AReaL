@@ -169,8 +169,12 @@ class SAM3Actor(BaseToolModelActor):
         self._model = AutoModel.from_pretrained(
             self.model_name,
             torch_dtype=torch.float16,
+            trust_remote_code=True,
         ).to(self.device)
-        self._processor = AutoProcessor.from_pretrained(self.model_name)
+        self._processor = AutoProcessor.from_pretrained(
+            self.model_name,
+            trust_remote_code=True,
+        )
         self._initialized = True
 
         logger.info("SAM3Actor initialized on GPU %s: %s", self.gpu_ids, model_name)
