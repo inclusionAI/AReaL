@@ -569,6 +569,15 @@ class _EagerProcessingOutputChunks(list):
 
     def append(self, item: Any) -> None:
         if self._chunk_idx < len(self._contexts):
+            ctx = self._contexts[self._chunk_idx]
+
+            # Skip dummy microbatches (padded for PP schedule divisibility)
+            if isinstance(ctx, dict) and ctx.get("__pp_dummy__", False):
+                self._chunk_idx += 1
+                placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)
+                super().append(placeholder)
+                return
+
             hidden_states = item
 
             if self._output_head is not None:
@@ -582,7 +591,6 @@ class _EagerProcessingOutputChunks(list):
                 )
                 if logits.ndim == 3:
                     logits = logits.squeeze(0)
-                ctx = self._contexts[self._chunk_idx]
                 result = self._process_output_fn(logits, ctx)
                 del logits  # Immediately release ~2.87 GiB
                 _log_gpu_memory(f"EagerChunks[{self._chunk_idx}] AFTER del logits")
@@ -590,7 +598,6 @@ class _EagerProcessingOutputChunks(list):
                 output = item
                 if output.ndim == 3:
                     output = output.squeeze(0)
-                ctx = self._contexts[self._chunk_idx]
                 result = self._process_output_fn(output, ctx)
 
             if result is not None:
