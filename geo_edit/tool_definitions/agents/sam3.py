@@ -2,7 +2,7 @@
 
 Replaces SAM2 with SAM3.1, adding open-vocabulary text-prompted segmentation,
 exemplar-based segmentation, concept counting, and presence checking.
-Uses HuggingFace transformers API (AutoModel + AutoProcessor).
+Uses vendored sam3 package with native Sam3Processor API.
 """
 
 import base64
@@ -23,7 +23,7 @@ SYSTEM_PROMPT = ""
 
 # Model configuration
 agent_config = {
-    "model_name_or_path": "/storage/openpsi/models/sam3.1",
+    "model_name_or_path": "/storage/openpsi/models/sam3.1/sam3.1_multiplex.pt",
     "num_gpus": 1,
 }
 
@@ -34,104 +34,61 @@ NORMALIZED_SIZE = 1000  # Bounding box coordinate normalization factor
 PRESENCE_THRESHOLD = 0.1  # Lower threshold for presence_check (more sensitive)
 
 
-def masks_to_proposals(
-    masks: np.ndarray,
-    scores: np.ndarray,
-    image_size: Tuple[int, int],
-    score_threshold: float = SCORE_THRESHOLD,
+def _state_to_proposals(
+    state: Dict[str, Any],
     max_proposals: int = MAX_PROPOSALS,
 ) -> List[Dict[str, Any]]:
-    """Convert binary masks to proposal format.
+    """Convert Sam3Processor state output to proposal format.
 
     Args:
-        masks: Binary masks array with shape (N, H, W).
-        scores: Confidence scores array with shape (N,).
-        image_size: Tuple of (H, W) image dimensions.
-        score_threshold: Minimum score threshold for proposals.
-        max_proposals: Maximum number of proposals to return.
-
-    Returns:
-        List of proposal dictionaries sorted by score, limited to max_proposals.
-    """
-    H, W = image_size
-    proposals = []
-
-    for mask, score in zip(masks, scores):
-        if score < score_threshold:
-            continue
-
-        # Ensure mask is 2D
-        if mask.ndim > 2:
-            mask = mask.squeeze()
-        if mask.ndim != 2:
-            continue
-
-        # Find bounding box from mask
-        rows = np.any(mask, axis=1)
-        cols = np.any(mask, axis=0)
-        if not rows.any() or not cols.any():
-            continue
-
-        y_indices = np.where(rows)[0]
-        x_indices = np.where(cols)[0]
-        y1, y2 = int(y_indices[0]), int(y_indices[-1])
-        x1, x2 = int(x_indices[0]), int(x_indices[-1])
-
-        # Calculate area and centroid
-        area = int(mask.sum())
-        mask_coords = np.where(mask)
-        cy = float(np.mean(mask_coords[0]))
-        cx = float(np.mean(mask_coords[1]))
-
-        proposals.append({
-            "score": round(float(score), 2),
-            "bbox_xyxy": [x1, y1, x2, y2],
-            "area": area,
-            "centroid": [round(cx, 1), round(cy, 1)]
-        })
-
-    # Sort by score descending, limit to max_proposals
-    proposals.sort(key=lambda x: x["score"], reverse=True)
-    return proposals[:max_proposals]
-
-
-def instance_results_to_proposals(
-    results: Dict[str, Any],
-    max_proposals: int = MAX_PROPOSALS,
-) -> List[Dict[str, Any]]:
-    """Convert SAM3 post_process_instance_segmentation output to proposal format.
-
-    Args:
-        results: Single-image result dict from post_process_instance_segmentation,
-                 containing 'scores', 'boxes', and 'masks'.
+        state: Sam3Processor state dict containing 'masks', 'boxes', 'scores'.
         max_proposals: Maximum number of proposals to return.
 
     Returns:
         List of proposal dictionaries sorted by score.
     """
-    scores = results.get("scores", [])
-    boxes = results.get("boxes", [])
-    masks = results.get("masks", [])
+    import torch
+
+    masks = state.get("masks")
+    boxes = state.get("boxes")
+    scores = state.get("scores")
+
+    if masks is None or boxes is None or scores is None:
+        return []
+
+    # Convert tensors to numpy
+    if isinstance(scores, torch.Tensor):
+        scores_np = scores.cpu().numpy()
+    else:
+        scores_np = np.asarray(scores)
+
+    if isinstance(boxes, torch.Tensor):
+        boxes_np = boxes.cpu().numpy()
+    else:
+        boxes_np = np.asarray(boxes)
+
+    if isinstance(masks, torch.Tensor):
+        masks_np = masks.cpu().numpy()
+    else:
+        masks_np = np.asarray(masks)
 
     proposals = []
-    for i in range(len(scores)):
-        score = float(scores[i])
-        box = boxes[i]
+    for i in range(len(scores_np)):
+        score = float(scores_np[i])
+
+        # boxes are in [x1, y1, x2, y2] pixel coords from _forward_grounding
+        box = boxes_np[i]
         x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
 
-        # Calculate area and centroid from mask if available
-        if i < len(masks):
-            mask = np.asarray(masks[i], dtype=np.bool_)
-            if mask.ndim > 2:
-                mask = mask.squeeze()
-            area = int(mask.sum()) if mask.ndim == 2 else (x2 - x1) * (y2 - y1)
-            if mask.ndim == 2 and mask.any():
-                mask_coords = np.where(mask)
-                cy = float(np.mean(mask_coords[0]))
-                cx = float(np.mean(mask_coords[1]))
-            else:
-                cx = (x1 + x2) / 2.0
-                cy = (y1 + y2) / 2.0
+        # Get mask for area/centroid
+        mask = masks_np[i]
+        if mask.ndim > 2:
+            mask = mask.squeeze()
+        if mask.ndim == 2 and mask.any():
+            area = int(mask.sum())
+            mask_coords = np.where(mask)
+            cy = float(np.mean(mask_coords[0]))
+            cx = float(np.mean(mask_coords[1]))
         else:
             area = (x2 - x1) * (y2 - y1)
             cx = (x1 + x2) / 2.0
@@ -141,7 +98,7 @@ def instance_results_to_proposals(
             "score": round(score, 2),
             "bbox_xyxy": [x1, y1, x2, y2],
             "area": area,
-            "centroid": [round(cx, 1), round(cy, 1)]
+            "centroid": [round(cx, 1), round(cy, 1)],
         })
 
     proposals.sort(key=lambda x: x["score"], reverse=True)
@@ -149,16 +106,15 @@ def instance_results_to_proposals(
 
 
 class SAM3Actor(BaseToolModelActor):
-    """SAM3 Segmentation Actor using HuggingFace transformers."""
+    """SAM3 Segmentation Actor using vendored sam3 package."""
 
     def __init__(self, model_name: str):
         """Initialize SAM3 actor.
 
         Args:
-            model_name: Path to SAM3 model.
+            model_name: Path to SAM3 .pt checkpoint.
         """
         import torch
-        from transformers import AutoModel, AutoProcessor
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
@@ -166,14 +122,19 @@ class SAM3Actor(BaseToolModelActor):
 
         logger.info("Loading SAM3 model: %s", self.model_name)
 
-        self._model = AutoModel.from_pretrained(
-            self.model_name,
-            torch_dtype=torch.float16,
-            trust_remote_code=True,
-        ).to(self.device)
-        self._processor = AutoProcessor.from_pretrained(
-            self.model_name,
-            trust_remote_code=True,
+        from geo_edit.models.sam3 import build_sam3_image_model
+        from geo_edit.models.sam3.model.sam3_image_processor import Sam3Processor
+
+        self._model = build_sam3_image_model(
+            checkpoint_path=model_name,
+            device=self.device,
+            eval_mode=True,
+            load_from_HF=False,
+        )
+        self._processor = Sam3Processor(
+            self._model,
+            device=self.device,
+            confidence_threshold=SCORE_THRESHOLD,
         )
         self._initialized = True
 
@@ -234,7 +195,7 @@ class SAM3Actor(BaseToolModelActor):
             logger.error("SAM3 %s failed: %s", mode, e)
             return json.dumps({"error": str(e), "image_size": [H, W], "proposals": []})
 
-    def _parse_bbox(self, question: str, width: int, height: int) -> Optional[List[int]]:
+    def _parse_bbox(self, question: str, width: int, height: int) -> Optional[List[float]]:
         """Parse bounding box from question string.
 
         Args:
@@ -243,7 +204,7 @@ class SAM3Actor(BaseToolModelActor):
             height: Image height in pixels.
 
         Returns:
-            [x1, y1, x2, y2] in pixel coordinates, or None for auto mode.
+            [cx, cy, w, h] in normalized 0-1 coords for Sam3Processor, or None.
         """
         if not question or not question.strip():
             return None
@@ -256,91 +217,51 @@ class SAM3Actor(BaseToolModelActor):
         if not match:
             return None
 
-        # Convert from normalized (0-1000) to pixel coordinates
+        # Convert from normalized (0-1000) xyxy to normalized (0-1) cxcywh
         coords = [int(x) for x in match.groups()]
-        x1 = int(coords[0] * width / NORMALIZED_SIZE)
-        y1 = int(coords[1] * height / NORMALIZED_SIZE)
-        x2 = int(coords[2] * width / NORMALIZED_SIZE)
-        y2 = int(coords[3] * height / NORMALIZED_SIZE)
+        x1, y1, x2, y2 = coords
+        cx = (x1 + x2) / 2 / NORMALIZED_SIZE
+        cy = (y1 + y2) / 2 / NORMALIZED_SIZE
+        w = (x2 - x1) / NORMALIZED_SIZE
+        h = (y2 - y1) / NORMALIZED_SIZE
 
-        return [x1, y1, x2, y2]
+        return [cx, cy, w, h]
 
     def _auto_segment(self, image, H: int, W: int) -> str:
         """Automatic full-image segmentation detecting all objects."""
-        import torch
+        state = self._processor.set_image(image)
+        state = self._processor.set_text_prompt(prompt="objects", state=state)
 
-        # Use a generic prompt for automatic segmentation
-        inputs = self._processor(
-            images=image,
-            text="objects",
-            return_tensors="pt",
-        ).to(self.device, dtype=torch.float16)
-
-        outputs = self._model(**inputs)
-        results = self._processor.post_process_instance_segmentation(
-            outputs,
-            target_sizes=[(H, W)],
-            threshold=SCORE_THRESHOLD,
-        )[0]
-
-        proposals = instance_results_to_proposals(results)
+        proposals = _state_to_proposals(state)
         return json.dumps({"image_size": [H, W], "proposals": proposals})
 
-    def _bbox_segment(self, image, bbox: Optional[List[int]], H: int, W: int) -> str:
+    def _bbox_segment(self, image, bbox: Optional[List[float]], H: int, W: int) -> str:
         """Region-constrained segmentation within a bounding box."""
-        import torch
-
         if bbox is None:
-            # Fallback to auto if no bbox provided
             return self._auto_segment(image, H, W)
 
-        inputs = self._processor(
-            images=image,
-            text="visual",
-            input_boxes=[[[bbox[0], bbox[1], bbox[2], bbox[3]]]],
-            input_boxes_labels=[[1]],
-            original_sizes=[(H, W)],
-            return_tensors="pt",
-        ).to(self.device, dtype=torch.float16)
+        state = self._processor.set_image(image)
+        state = self._processor.add_geometric_prompt(
+            box=bbox, label=True, state=state,
+        )
 
-        outputs = self._model(**inputs)
-        results = self._processor.post_process_instance_segmentation(
-            outputs,
-            target_sizes=[(H, W)],
-            threshold=SCORE_THRESHOLD,
-        )[0]
-
-        proposals = instance_results_to_proposals(results)
+        proposals = _state_to_proposals(state)
         return json.dumps({"image_size": [H, W], "proposals": proposals})
 
     def _text_segment(self, image, text_prompt: str, H: int, W: int) -> str:
         """Open-vocabulary text-prompted segmentation."""
-        import torch
+        state = self._processor.set_image(image)
+        state = self._processor.set_text_prompt(prompt=text_prompt, state=state)
 
-        inputs = self._processor(
-            images=image,
-            text=text_prompt,
-            return_tensors="pt",
-        ).to(self.device, dtype=torch.float16)
-
-        outputs = self._model(**inputs)
-        results = self._processor.post_process_instance_segmentation(
-            outputs,
-            target_sizes=[(H, W)],
-            threshold=SCORE_THRESHOLD,
-        )[0]
-
-        proposals = instance_results_to_proposals(results)
+        proposals = _state_to_proposals(state)
         return json.dumps({
             "image_size": [H, W],
             "query": text_prompt,
             "proposals": proposals,
         })
 
-    def _exemplar_segment(self, image, bbox: Optional[List[int]], H: int, W: int) -> str:
+    def _exemplar_segment(self, image, bbox: Optional[List[float]], H: int, W: int) -> str:
         """Visual exemplar-based segmentation using a bounding box as positive prompt."""
-        import torch
-
         if bbox is None:
             return json.dumps({
                 "error": "No bounding box provided for exemplar_segment",
@@ -348,23 +269,12 @@ class SAM3Actor(BaseToolModelActor):
                 "proposals": [],
             })
 
-        inputs = self._processor(
-            images=image,
-            text="visual",
-            input_boxes=[[[bbox[0], bbox[1], bbox[2], bbox[3]]]],
-            input_boxes_labels=[[1]],
-            original_sizes=[(H, W)],
-            return_tensors="pt",
-        ).to(self.device, dtype=torch.float16)
+        state = self._processor.set_image(image)
+        state = self._processor.add_geometric_prompt(
+            box=bbox, label=True, state=state,
+        )
 
-        outputs = self._model(**inputs)
-        results = self._processor.post_process_instance_segmentation(
-            outputs,
-            target_sizes=[(H, W)],
-            threshold=SCORE_THRESHOLD,
-        )[0]
-
-        proposals = instance_results_to_proposals(results)
+        proposals = _state_to_proposals(state)
         return json.dumps({
             "image_size": [H, W],
             "exemplar_bbox": bbox,
@@ -373,34 +283,18 @@ class SAM3Actor(BaseToolModelActor):
 
     def _concept_count(self, image, text_prompt: str, H: int, W: int) -> str:
         """Count objects matching a text description."""
-        import torch
+        state = self._processor.set_image(image)
+        state = self._processor.set_text_prompt(prompt=text_prompt, state=state)
 
-        inputs = self._processor(
-            images=image,
-            text=text_prompt,
-            return_tensors="pt",
-        ).to(self.device, dtype=torch.float16)
-
-        outputs = self._model(**inputs)
-        results = self._processor.post_process_object_detection(
-            outputs,
-            threshold=SCORE_THRESHOLD,
-            target_sizes=[(H, W)],
-        )[0]
-
-        scores = results.get("scores", [])
-        boxes = results.get("boxes", [])
-
-        instances = []
-        for i in range(len(scores)):
-            box = boxes[i]
-            instances.append({
-                "bbox_xyxy": [int(box[0]), int(box[1]), int(box[2]), int(box[3])],
-                "score": round(float(scores[i]), 2),
-            })
-
-        instances.sort(key=lambda x: x["score"], reverse=True)
-        instances = instances[:MAX_PROPOSALS]
+        proposals = _state_to_proposals(state)
+        # Convert proposals to instance format for counting
+        instances = [
+            {
+                "bbox_xyxy": p["bbox_xyxy"],
+                "score": p["score"],
+            }
+            for p in proposals
+        ]
 
         return json.dumps({
             "image_size": [H, W],
@@ -413,36 +307,30 @@ class SAM3Actor(BaseToolModelActor):
         """Quick check whether a concept is present in the image."""
         import torch
 
-        inputs = self._processor(
-            images=image,
-            text=text_prompt,
-            return_tensors="pt",
-        ).to(self.device, dtype=torch.float16)
+        # Use a lower threshold for more sensitive detection
+        old_threshold = self._processor.confidence_threshold
+        self._processor.confidence_threshold = PRESENCE_THRESHOLD
 
-        outputs = self._model(**inputs)
+        state = self._processor.set_image(image)
+        state = self._processor.set_text_prompt(prompt=text_prompt, state=state)
 
-        # Use presence_logits if available for a direct confidence score
-        if hasattr(outputs, "presence_logits") and outputs.presence_logits is not None:
-            presence_logits = outputs.presence_logits
-            confidence = float(torch.sigmoid(presence_logits).max().cpu())
+        # Restore threshold
+        self._processor.confidence_threshold = old_threshold
+
+        scores = state.get("scores")
+        if scores is not None and len(scores) > 0:
+            if isinstance(scores, torch.Tensor):
+                all_scores = scores.cpu().numpy()
+            else:
+                all_scores = np.asarray(scores)
+            confidence = float(all_scores.max())
+            # Count only those above the normal threshold
+            count = int((all_scores >= SCORE_THRESHOLD).sum())
         else:
-            # Fallback: use detection with low threshold
-            results = self._processor.post_process_object_detection(
-                outputs,
-                threshold=PRESENCE_THRESHOLD,
-                target_sizes=[(H, W)],
-            )[0]
-            scores = results.get("scores", [])
-            confidence = float(max(scores)) if len(scores) > 0 else 0.0
+            confidence = 0.0
+            count = 0
 
         present = confidence >= SCORE_THRESHOLD
-        # Get count via detection
-        det_results = self._processor.post_process_object_detection(
-            outputs,
-            threshold=SCORE_THRESHOLD,
-            target_sizes=[(H, W)],
-        )[0]
-        count = len(det_results.get("scores", []))
 
         return json.dumps({
             "image_size": [H, W],

@@ -2,8 +2,6 @@
 
 # pyre-unsafe
 
-from .model_builder import build_sam3_image_model, build_sam3_predictor
+from .model_builder import build_sam3_image_model
 
-__version__ = "0.1.0"
-
-__all__ = ["build_sam3_image_model", "build_sam3_predictor"]
+__all__ = ["build_sam3_image_model"]
