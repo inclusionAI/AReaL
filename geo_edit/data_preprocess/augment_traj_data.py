@@ -9,24 +9,53 @@ The output directory mirrors the source layout so that
 ``convert_trajectory_to_sft.py`` can read it directly.
 
 Usage (filter only):
-    python -m geo_edit.data_preprocess.augment_sft_data \\
+    python -m geo_edit.data_preprocess.augment_traj_data \\
         --src-dir /path/to/trajectories \\
         --dst-dir /path/to/output \\
         --skip-diversify
 
-Usage (full pipeline):
-    python -m geo_edit.data_preprocess.augment_sft_data \\
+Usage (full pipeline, all options):
+    python -m geo_edit.data_preprocess.augment_traj_data \\
         --src-dir /path/to/trajectories \\
         --dst-dir /path/to/output \\
         --api-base https://matrixllm.alipay.com/v1 \\
-        --model kimi-k2.5 \\
+        --model GLM-4.7 \\
         --api-key $API_KEY \\
         --judge-api-base https://matrixllm.alipay.com/v1 \\
         --judge-model gpt-5-mini-2025-08-07 \\
         --judge-api-key $JUDGE_KEY \\
         --filter-wrong-answers \\
+        --filter-answer-leakage \\
+        --leakage-check-mode full \\
+        --filter-brute-force \\
+        --filter-tool-mismatch \\
         --max-concurrent 16 \\
-        --seed 42
+        --max-llm-workers 8 \\
+        --temperature 0.7 \\
+        --requests-per-minute 60
+
+All arguments:
+    --src-dir               Source trajectory directory (required)
+    --dst-dir               Output directory (required)
+    --api-base              Diversification LLM API base URL (default: https://matrixllm.alipay.com/v1)
+    --model                 Diversification model (default: GLM-4.7)
+    --api-key               Diversification API key (default: env LLM_API_KEY)
+    --judge-api-base        Judge API base URL (default: same as --api-base)
+    --judge-model           Judge model name (default: gpt-5-mini-2025-08-07)
+    --judge-api-key         Judge API key (default: same as --api-key)
+    --filter-wrong-answers  Enable wrong-answer filtering via judge
+    --filter-answer-leakage / --no-filter-answer-leakage
+                            Enable/disable answer-leakage filtering (default: on)
+    --filter-brute-force / --no-filter-brute-force
+                            Enable/disable brute-force filtering (default: on)
+    --filter-tool-mismatch / --no-filter-tool-mismatch
+                            Enable/disable tool-plan mismatch filtering (default: on)
+    --leakage-check-mode    Leakage check: 'quick' (regex) or 'full' (AI judge) (default: full)
+    --max-concurrent        Workers for parallel filtering (default: 16)
+    --max-llm-workers       Workers for LLM diversification (default: 8)
+    --temperature           Temperature for diversification LLM (default: 0.7)
+    --requests-per-minute   Rate limit for diversification API (default: 60, 0=no limit)
+    --skip-diversify        Only filter, skip LLM diversification
 """
 
 from __future__ import annotations
@@ -34,7 +63,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import random
 import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -164,28 +192,45 @@ def _strict_tool_match(trajectory: List[Dict[str, Any]]) -> Tuple[bool, str]:
 # ── File copying ─────────────────────────────────────────────────────────────
 
 
+def _rewrite_image_paths(trajectory: List[Dict[str, Any]], src_sub: Path, dst_sub: Path) -> List[Dict[str, Any]]:
+    """Rewrite file:// image URLs and image_path fields in trajectory to point to dst."""
+    src_str = str(src_sub.resolve())
+    dst_str = str(dst_sub.resolve())
+
+    raw = json.dumps(trajectory, ensure_ascii=False)
+    raw = raw.replace(f"file://{src_str}", f"file://{dst_str}")
+    raw = raw.replace(src_str.replace("\\", "/"), dst_str.replace("\\", "/"))
+    raw = raw.replace(src_str.replace("/", "\\\\"), dst_str.replace("/", "\\\\"))
+    return json.loads(raw)
+
+
 def copy_subfolder(
     src_sub: Path,
     dst_sub: Path,
     modified_trajectory: Optional[List[Dict[str, Any]]] = None,
-    use_symlink: bool = False,
 ) -> None:
     """Copy a trajectory subfolder to *dst_sub*, optionally injecting a
     modified ``trajectory.json``.
 
-    Images can be symlinked instead of copied to save disk space.
-    ``output.jsonl`` is copied as-is (it contains conversation_history
-    records without ``<think>`` blocks, so no sync is needed).
+    Image paths inside the trajectory are rewritten to point to *dst_sub*.
     """
     os.makedirs(dst_sub, exist_ok=True)
 
+    # Load trajectory (modified or from disk), rewrite paths, then save
     if modified_trajectory is not None:
-        with open(dst_sub / "trajectory.json", "w", encoding="utf-8") as f:
-            json.dump(modified_trajectory, f, ensure_ascii=False, indent=2)
+        traj = _rewrite_image_paths(modified_trajectory, src_sub, dst_sub)
     else:
         src_traj = src_sub / "trajectory.json"
         if src_traj.exists():
-            shutil.copy2(src_traj, dst_sub / "trajectory.json")
+            with open(src_traj, "r", encoding="utf-8") as f:
+                traj = json.load(f)
+            traj = _rewrite_image_paths(traj, src_sub, dst_sub)
+        else:
+            traj = None
+
+    if traj is not None:
+        with open(dst_sub / "trajectory.json", "w", encoding="utf-8") as f:
+            json.dump(traj, f, ensure_ascii=False, indent=2)
 
     for filename in ("meta_info.jsonl", "output.jsonl", "extra_info.jsonl"):
         src_file = src_sub / filename
@@ -197,11 +242,7 @@ def copy_subfolder(
     src_img = src_sub / "input_image.png"
     dst_img = dst_sub / "input_image.png"
     if src_img.exists():
-        if use_symlink:
-            if not dst_img.exists():
-                os.symlink(src_img.resolve(), dst_img)
-        else:
-            shutil.copy2(src_img, dst_img)
+        shutil.copy2(src_img, dst_img)
 
     for src_file in src_sub.iterdir():
         if (
@@ -211,21 +252,14 @@ def copy_subfolder(
         ):
             dst_file = dst_sub / src_file.name
             if not dst_file.exists():
-                if use_symlink:
-                    os.symlink(src_file.resolve(), dst_file)
-                else:
-                    shutil.copy2(src_file, dst_file)
+                shutil.copy2(src_file, dst_file)
 
     src_images = src_sub / "images"
     dst_images = dst_sub / "images"
     if src_images.exists() and src_images.is_dir():
-        if use_symlink:
-            if not dst_images.exists():
-                os.symlink(src_images.resolve(), dst_images)
-        else:
-            if dst_images.exists():
-                shutil.rmtree(dst_images)
-            shutil.copytree(src_images, dst_images)
+        if dst_images.exists():
+            shutil.rmtree(dst_images)
+        shutil.copytree(src_images, dst_images)
 
     _KNOWN_NAMES = {
         "trajectory.json",
@@ -342,7 +376,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--leakage-check-mode",
         type=str,
-        default="quick",
+        default="full",
         choices=["quick", "full"],
         help="Leakage check mode: 'quick' (regex) or 'full' (AI judge)",
     )
@@ -366,18 +400,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Rate limit for diversification API (default: 60, 0 = no limit)",
     )
 
-    p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument(
         "--skip-diversify",
         action="store_true",
         help="Only filter — skip LLM diversification",
     )
-    p.add_argument(
-        "--use-symlink",
-        action="store_true",
-        help="Symlink images instead of copying (saves disk)",
-    )
-
     return p
 
 
@@ -393,8 +420,6 @@ def main() -> None:
 
     if not src_dir.exists():
         raise FileNotFoundError(f"Source directory not found: {src_dir}")
-
-    random.seed(args.seed)
 
     api_key = args.api_key or os.environ.get("LLM_API_KEY", "")
     judge_api_base = args.judge_api_base or args.api_base
@@ -610,17 +635,14 @@ def main() -> None:
         else:
             dst_sub = dst_dir / f"{img_dir.name}_{sf.name}"
         mod_traj = modified_trajectories.get(sf)
-        copy_subfolder(sf, dst_sub, mod_traj, args.use_symlink)
+        copy_subfolder(sf, dst_sub, mod_traj)
         if img_dir != sf:
             _img_re = re.compile(r"^input_image(?:_\d+)?\.png$")
             for src_file in img_dir.iterdir():
                 if src_file.is_file() and _img_re.match(src_file.name):
                     dst_file = dst_sub / src_file.name
                     if not dst_file.exists():
-                        if args.use_symlink:
-                            os.symlink(src_file.resolve(), dst_file)
-                        else:
-                            shutil.copy2(src_file, dst_file)
+                        shutil.copy2(src_file, dst_file)
         stats.output_subfolders += 1
 
     summary = stats.summary()
