@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import shutil
@@ -91,6 +92,9 @@ from geo_edit.evaluation.trajectory_judge import (
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Suppress httpx INFO logs (OpenAI SDK HTTP request/response noise)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 _THINK_TOOL_RE = re.compile(
     r"<think>.*?Tool:\s*(?:functions\.)?(\w+).*?</think>", re.DOTALL | re.IGNORECASE
