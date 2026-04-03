@@ -112,8 +112,11 @@ class ParallelHelper:
         # Create submeshes for process groups
         # dp_sp: used for FSDP sharding (data parallel + sequence parallel)
         mesh["dp", "sp"]._flatten(mesh_dim_name="dp_sp")
-        # sp_tp: used for model parallel group
+        # sp_tp: used for model parallel group (without PP dimension)
         mesh["sp", "tp"]._flatten(mesh_dim_name="sp_tp")
+        # pp_sp_tp: used for full model parallel group (includes PP dimension)
+        # This is needed so that only one rank per DP group is the DP head.
+        mesh["pp", "sp", "tp"]._flatten(mesh_dim_name="pp_sp_tp")
 
         return mesh
 

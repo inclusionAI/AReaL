@@ -263,8 +263,13 @@ class FSDPEngine(TrainEngine):
         self.dp_group = self.world_mesh["dp"].get_group()
         self.sp_group = self.world_mesh["sp"].get_group()
 
-        # Sequence and model parallel group (sp+tp)
-        self.mp_group = self.world_mesh["sp_tp"].get_group()
+        # Sequence and model parallel group
+        # When PP is enabled, include PP in the model parallel group so that
+        # only one rank per DP group is identified as the DP head.
+        if self.parallel_helper.pp_enabled:
+            self.mp_group = self.world_mesh["pp_sp_tp"].get_group()
+        else:
+            self.mp_group = self.world_mesh["sp_tp"].get_group()
 
         # Pipeline parallel group (None if PP disabled)
         self.pp_group = self.parallel_helper.pp_group
