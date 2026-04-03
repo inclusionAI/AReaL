@@ -413,6 +413,7 @@ class _HFPipelineStageModule(nn.Module):
         self.has_output_head = has_output_head
         self.layer_indices = layer_indices
         self.is_critic = is_critic
+        self.skip_output_head = False  # When True, skip lm_head/score in forward
         self._forward_patched = False
 
     def _patch_model_forward(self):
@@ -504,7 +505,7 @@ class _HFPipelineStageModule(nn.Module):
                 hidden_states = model_self.model.norm(hidden_states)
 
             # ---- output head (lm_head / score) ----
-            if stage_module.has_output_head:
+            if stage_module.has_output_head and not stage_module.skip_output_head:
                 _log_gpu_memory(
                     f"stage_fwd[stage={stage_module.layer_indices}] BEFORE output_head, hidden_shape={tuple(hidden_states.shape)}"
                 )
@@ -546,31 +547,57 @@ class _NullOutputChunks(list):
 
 
 class _EagerProcessingOutputChunks(list):
-    """Custom list that processes logits immediately on append() and replaces
-    the large output tensor with a tiny placeholder to prevent the PP schedule
-    from accumulating [batch, seq, vocab_size] tensors in memory.
+    """Receives hidden_states (lm_head skipped in stage_forward).
+    Computes lm_head + process_output eagerly on each append(),
+    then immediately deletes the logits tensor.
+    PP schedule holds references to scalar placeholders (~0 bytes each),
+    not full logits (~2.87 GiB each).
     """
 
-    def __init__(self, contexts: list[Any], process_output_fn: Callable):
+    def __init__(
+        self,
+        contexts: list[Any],
+        process_output_fn: Callable,
+        output_head: nn.Module | None = None,
+    ):
         super().__init__()
         self._contexts = contexts
         self._process_output_fn = process_output_fn
+        self._output_head = output_head
         self._chunk_idx = 0
         self._results: list[Any] = []
 
     def append(self, item: Any) -> None:
         if self._chunk_idx < len(self._contexts):
-            output = item
-            if output.ndim == 3:
-                output = output.squeeze(0)
-            ctx = self._contexts[self._chunk_idx]
-            result = self._process_output_fn(output, ctx)
+            hidden_states = item
+
+            if self._output_head is not None:
+                # Compute logits inside append — only ONE logits tensor alive at a time
+                _log_gpu_memory(
+                    f"EagerChunks[{self._chunk_idx}] BEFORE lm_head, shape={tuple(hidden_states.shape)}"
+                )
+                logits = self._output_head(hidden_states)
+                _log_gpu_memory(
+                    f"EagerChunks[{self._chunk_idx}] AFTER lm_head, shape={tuple(logits.shape)}"
+                )
+                if logits.ndim == 3:
+                    logits = logits.squeeze(0)
+                ctx = self._contexts[self._chunk_idx]
+                result = self._process_output_fn(logits, ctx)
+                del logits  # Immediately release ~2.87 GiB
+                _log_gpu_memory(f"EagerChunks[{self._chunk_idx}] AFTER del logits")
+            else:
+                output = item
+                if output.ndim == 3:
+                    output = output.squeeze(0)
+                ctx = self._contexts[self._chunk_idx]
+                result = self._process_output_fn(output, ctx)
+
             if result is not None:
                 self._results.append(result.detach())
             self._chunk_idx += 1
-        # Append a tiny placeholder instead of the original large tensor.
-        # This allows the PP schedule to see the correct number of outputs
-        # while releasing the [batch, seq, vocab] memory immediately.
+
+        # Replace with tiny placeholder so PP schedule doesn't hold large tensor ref
         placeholder = torch.tensor(0, device=item.device, dtype=item.dtype)
         super().append(placeholder)
 
@@ -617,6 +644,16 @@ class FSDPPipelinedRunner:
             if stage.is_last:
                 return stage
         raise RuntimeError("No last stage found in pp_stages")
+
+    def _get_stage_module_for_stage(
+        self, stage: PipelineStage
+    ) -> "_HFPipelineStageModule | None":
+        """Find the _HFPipelineStageModule wrapper corresponding to a PipelineStage."""
+        if hasattr(self, "_stage_wrappers"):
+            for wrapper in self._stage_wrappers:
+                if wrapper.model is stage.submod:
+                    return wrapper
+        return None
 
     def _patch_skip_output_merge(self, schedule: "_PipelineSchedule") -> None:
         """Patch schedule to skip output merging, halving memory usage."""
@@ -687,45 +724,55 @@ class FSDPPipelinedRunner:
         contexts: list[Any],
         process_output_fn: Callable,
     ) -> list[torch.Tensor] | None:
-        """Run forward-only using PP schedule for evaluation.
-
-        Uses eager processing to avoid accumulating full vocab logits tensors
-        in GPU memory (which causes OOM). Each output chunk is processed
-        immediately as it is produced by the PP schedule, and only the compact
-        result (e.g., logprobs) is retained.
-
-        Returns:
-            List of results from process_output_fn, or None if not on last stage.
-        """
         schedule = self._create_schedule(n_microbatches, loss_fn=None)
         self._patch_skip_output_merge(schedule)
 
-        # On the last stage, replace output_chunks with an eager-processing list
-        # that converts logits to compact results immediately, avoiding OOM from
-        # accumulating [batch, seq, vocab_size] tensors across all microbatches.
         output_stage = None
         eager_chunks = None
         if self.has_last_stage:
             output_stage = self._get_output_stage()
-            eager_chunks = _EagerProcessingOutputChunks(contexts, process_output_fn)
+
+            # Find wrapper to access lm_head/score and skip_output_head flag
+            stage_wrapper = self._get_stage_module_for_stage(output_stage)
+            output_head = None
+            if stage_wrapper is not None and stage_wrapper.has_output_head:
+                if (
+                    stage_wrapper.is_critic
+                    and hasattr(stage_wrapper.model, "score")
+                    and stage_wrapper.model.score is not None
+                ):
+                    output_head = stage_wrapper.model.score
+                elif (
+                    hasattr(stage_wrapper.model, "lm_head")
+                    and stage_wrapper.model.lm_head is not None
+                ):
+                    output_head = stage_wrapper.model.lm_head
+
+                # Tell _stage_forward to skip lm_head/score
+                if output_head is not None:
+                    stage_wrapper.skip_output_head = True
+
+            eager_chunks = _EagerProcessingOutputChunks(
+                contexts, process_output_fn, output_head=output_head
+            )
             output_stage.output_chunks = eager_chunks
 
-        # schedule.eval() expects a single batched tensor, not per-microbatch args.
         if self.has_first_stage and input_ids_chunks:
             batched_input = torch.cat(input_ids_chunks, dim=0)
             args = (batched_input,)
         else:
             args = ()
-
         _log_gpu_memory(
             f"run_eval BEFORE schedule.eval, n_microbatches={n_microbatches}"
         )
         schedule.eval(*args, **(extra_kwargs or {}))
         _log_gpu_memory("run_eval AFTER schedule.eval")
 
-        # Restore normal list for subsequent calls
+        # Restore state
         if output_stage is not None:
-            # Clear output_chunks to release any remaining placeholder references
+            stage_wrapper = self._get_stage_module_for_stage(output_stage)
+            if stage_wrapper is not None:
+                stage_wrapper.skip_output_head = False
             output_stage.output_chunks = []
 
         if not self.has_last_stage:
@@ -868,6 +915,7 @@ def create_fsdp_runner(
     pp_group_size: int = 1,
     has_first_stage: bool = True,
     has_last_stage: bool = True,
+    stage_wrappers: list["_HFPipelineStageModule"] | None = None,
 ) -> FSDPPipelinedRunner | None:
     """Factory function to create a PP runner for FSDP engine.
 
@@ -879,10 +927,16 @@ def create_fsdp_runner(
     assert pp_stages is not None, "pp_stages required when pp_enabled=True"
     assert pp_schedule is not None, "pp_schedule required when pp_enabled=True"
 
-    return FSDPPipelinedRunner(
+    runner = FSDPPipelinedRunner(
         pp_stages=pp_stages,
         pp_schedule=pp_schedule,
         pp_group_size=pp_group_size,
         has_first_stage=has_first_stage,
         has_last_stage=has_last_stage,
     )
+
+    # Store stage wrappers so run_eval can find the output_head module
+    if stage_wrappers is not None:
+        runner._stage_wrappers = stage_wrappers
+
+    return runner

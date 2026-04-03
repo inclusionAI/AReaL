@@ -480,6 +480,7 @@ class FSDPEngine(TrainEngine):
                 pp_group_size=self.parallel_helper.pp_size,
                 has_first_stage=self._pp_has_first_stage,
                 has_last_stage=self._pp_has_last_stage,
+                stage_wrappers=self._pp_model_parts,
             )
             self.logger.info(
                 f"PP runner created: schedule={self.config.fsdp.pp_schedule}, "
