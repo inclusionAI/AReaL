@@ -36,6 +36,7 @@ DEFAULT_ADMIN_KEY = "sk-test123456"
 DEFAULT_REQUEST_TIMEOUT = 3600
 DEFAULT_GATEWAY_WAIT_SECS = 600
 DEFAULT_QUESTION = "how many r's are in the word strawberry?"
+DEFAULT_INFERENCE_BACKEND = "sglang"
 CORRECT_ANSWER_RE = re.compile(r"\b3\b|three", re.IGNORECASE)
 BATCH_SIZE = 4
 ROLLOUT_COMPLETE_WAIT_SECS = 60
@@ -207,6 +208,12 @@ def main() -> None:
     parser.add_argument(
         "--question", default=DEFAULT_QUESTION, help="Question for each HITL round"
     )
+    parser.add_argument(
+        "--inference-backend",
+        choices=("sglang", "vllm"),
+        default=DEFAULT_INFERENCE_BACKEND,
+        help="Inference backend used by online_rollout.py",
+    )
     args = parser.parse_args()
 
     online_rollout = (
@@ -248,6 +255,8 @@ def main() -> None:
                 "--config",
                 str(config_yaml),
                 f"actor.path={args.actor_path}",
+                f"rollout.backend={args.inference_backend}:d1",
+                f"rollout.openai.admin_api_key={args.admin_key}",
                 f"rollout.request_timeout={args.request_timeout}",
             ],
             stdout=log_fh,

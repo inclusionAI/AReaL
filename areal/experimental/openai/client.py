@@ -746,6 +746,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                     self.tool_call_parser,
                     self.reasoning_parser,
                     response.stop_reason,
+                    tokenizer=self.tokenizer,
                 )
         except json.JSONDecodeError as e:
             logger.warning(
@@ -1103,6 +1104,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                     self.reasoning_parser,
                     engine_resp.stop_reason,
                     use_responses=True,
+                    tokenizer=self.tokenizer,
                 )
         except json.JSONDecodeError as e:
             logger.warning(

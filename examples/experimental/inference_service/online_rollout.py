@@ -14,6 +14,7 @@ def main(args: list[str]) -> None:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
+    from areal.api.alloc_mode import ModelAllocation
     from areal.api.cli_args import PPOConfig, load_expr_config
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
@@ -37,14 +38,6 @@ def main(args: list[str]) -> None:
         raise NotImplementedError(
             "online_rollout.py requires single-controller execution (for example: scheduler.type=local)."
         )
-    from areal.api.alloc_mode import ModelAllocation
-
-    rollout_alloc = ModelAllocation.from_str(config.rollout.backend)
-    if rollout_alloc.backend == "vllm":
-        raise NotImplementedError(
-            "online_rollout.py currently supports only the SGLang generation backend."
-        )
-
     from areal.infra.scheduler.local import LocalScheduler
     from areal.infra.scheduler.slurm import SlurmScheduler
 
@@ -74,12 +67,19 @@ def main(args: list[str]) -> None:
         request_timeout=config.rollout.request_timeout,
         openai=openai_cfg,
     )
+    rollout_alloc = ModelAllocation.from_str(config.rollout.backend, name="rollout")
+    if rollout_alloc.backend == "sglang":
+        server_args = asdict(config.sglang)
+    elif rollout_alloc.backend == "vllm":
+        server_args = asdict(config.vllm)
+    else:
+        raise ValueError(f"Unsupported rollout backend: {rollout_alloc.backend}")
 
     ctrl = GatewayInferenceController(config=ctrl_config, scheduler=scheduler)
     try:
         ctrl.initialize(
             role="rollout",
-            server_args=asdict(config.sglang),
+            server_args=server_args,
         )
 
         logger.info("Proxy gateway available at %s", ctrl.proxy_gateway_addr)
