@@ -13,8 +13,8 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import torch
 import torch.nn.functional as torchF
-from sam3.sam.rope import apply_rotary_enc, apply_rotary_enc_real, compute_axial_cis
-from sam3.sam.transformer import RoPEAttention
+from geo_edit.models.sam3.sam.rope import apply_rotary_enc, apply_rotary_enc_real, compute_axial_cis
+from geo_edit.models.sam3.sam.transformer import RoPEAttention
 from torch import nn, Tensor
 from torch.nn.attention import sdpa_kernel, SDPBackend
 from torchvision.ops.roi_align import RoIAlign
@@ -1006,7 +1006,7 @@ def functional_attention(
             )
 
     if use_fa3:
-        from sam3.perflib.fa3 import flash_attn_func
+        from geo_edit.models.sam3.perflib.fa3 import flash_attn_func
 
         assert dropout == 0.0
         out = flash_attn_func(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2))

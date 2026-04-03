@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from huggingface_hub import hf_hub_download
 from iopath.common.file_io import g_pathmgr
-from sam3.model.decoder import (
+from geo_edit.models.sam3.model.decoder import (
     DecoupledTransformerDecoderLayerv2,
     SimpleRoPEAttention,
     TransformerDecoder,
@@ -19,35 +19,35 @@ from sam3.model.decoder import (
     TransformerEncoderCrossAttention,
     TransformerEncoderDecoupledCrossAttention,
 )
-from sam3.model.encoder import TransformerEncoderFusion, TransformerEncoderLayer
-from sam3.model.geometry_encoders import SequenceGeometryEncoder
-from sam3.model.maskformer_segmentation import PixelDecoder, UniversalSegmentationHead
-from sam3.model.memory import (
+from geo_edit.models.sam3.model.encoder import TransformerEncoderFusion, TransformerEncoderLayer
+from geo_edit.models.sam3.model.geometry_encoders import SequenceGeometryEncoder
+from geo_edit.models.sam3.model.maskformer_segmentation import PixelDecoder, UniversalSegmentationHead
+from geo_edit.models.sam3.model.memory import (
     CXBlock,
     SimpleFuser,
     SimpleMaskDownSampler,
     SimpleMaskEncoder,
 )
-from sam3.model.model_misc import (
+from geo_edit.models.sam3.model.model_misc import (
     DotProductScoring,
     MLP,
     MultiheadAttentionWrapper as MultiheadAttention,
     TransformerWrapper,
 )
-from sam3.model.multiplex_utils import MultiplexController
-from sam3.model.necks import Sam3DualViTDetNeck, Sam3TriViTDetNeck
-from sam3.model.position_encoding import PositionEmbeddingSine
-from sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
-from sam3.model.sam3_image import Sam3Image, Sam3ImageOnVideoMultiGPU
-from sam3.model.sam3_tracking_predictor import Sam3TrackerPredictor
-from sam3.model.sam3_video_inference import Sam3VideoInferenceWithInstanceInteractivity
-from sam3.model.sam3_video_predictor import Sam3VideoPredictorMultiGPU
-from sam3.model.text_encoder_ve import VETextEncoder
-from sam3.model.tokenizer_ve import SimpleTokenizer
-from sam3.model.video_tracking_multiplex import VideoTrackingDynamicMultiplex
-from sam3.model.vitdet import ViT
-from sam3.model.vl_combiner import SAM3VLBackbone, SAM3VLBackboneTri, TriHeadVisionOnly
-from sam3.sam.transformer import RoPEAttention
+from geo_edit.models.sam3.model.multiplex_utils import MultiplexController
+from geo_edit.models.sam3.model.necks import Sam3DualViTDetNeck, Sam3TriViTDetNeck
+from geo_edit.models.sam3.model.position_encoding import PositionEmbeddingSine
+from geo_edit.models.sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
+from geo_edit.models.sam3.model.sam3_image import Sam3Image, Sam3ImageOnVideoMultiGPU
+from geo_edit.models.sam3.model.sam3_tracking_predictor import Sam3TrackerPredictor
+from geo_edit.models.sam3.model.sam3_video_inference import Sam3VideoInferenceWithInstanceInteractivity
+from geo_edit.models.sam3.model.sam3_video_predictor import Sam3VideoPredictorMultiGPU
+from geo_edit.models.sam3.model.text_encoder_ve import VETextEncoder
+from geo_edit.models.sam3.model.tokenizer_ve import SimpleTokenizer
+from geo_edit.models.sam3.model.video_tracking_multiplex import VideoTrackingDynamicMultiplex
+from geo_edit.models.sam3.model.vitdet import ViT
+from geo_edit.models.sam3.model.vl_combiner import SAM3VLBackbone, SAM3VLBackboneTri, TriHeadVisionOnly
+from geo_edit.models.sam3.sam.transformer import RoPEAttention
 
 
 # Setup TensorFloat-32 for Ampere GPUs if available
@@ -324,7 +324,7 @@ def _create_sam3_model(
 
     matcher = None
     if not eval_mode:
-        from sam3.train.matcher import BinaryHungarianMatcherV2
+        from geo_edit.models.sam3.train.matcher import BinaryHungarianMatcherV2
 
         matcher = BinaryHungarianMatcherV2(
             focal=True,
@@ -980,7 +980,7 @@ def build_sam3_multiplex_video_model(
     )
 
     # Build the multiplex model (use demo class for init_state and other demo methods)
-    from sam3.model.video_tracking_multiplex_demo import Sam3VideoTrackingMultiplexDemo
+    from geo_edit.models.sam3.model.video_tracking_multiplex_demo import Sam3VideoTrackingMultiplexDemo
 
     model = Sam3VideoTrackingMultiplexDemo(
         backbone=backbone,
@@ -1109,12 +1109,12 @@ def build_sam3_multiplex_video_predictor(
             "sam3", "assets/bpe_simple_vocab_16e6.txt.gz"
         )
 
-    from sam3.model.sam3_multiplex_base import Sam3MultiplexPredictorWrapper
-    from sam3.model.sam3_multiplex_detector import Sam3MultiplexDetector
-    from sam3.model.sam3_multiplex_tracking import (
+    from geo_edit.models.sam3.model.sam3_multiplex_base import Sam3MultiplexPredictorWrapper
+    from geo_edit.models.sam3.model.sam3_multiplex_detector import Sam3MultiplexDetector
+    from geo_edit.models.sam3.model.sam3_multiplex_tracking import (
         Sam3MultiplexTrackingWithInteractivity,
     )
-    from sam3.model.sam3_multiplex_video_predictor import Sam3MultiplexVideoPredictor
+    from geo_edit.models.sam3.model.sam3_multiplex_video_predictor import Sam3MultiplexVideoPredictor
 
     # Build tracker
     tracker_model = build_sam3_multiplex_video_model(

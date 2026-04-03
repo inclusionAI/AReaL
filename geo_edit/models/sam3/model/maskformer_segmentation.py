@@ -108,7 +108,7 @@ class SegmentationHead(nn.Module):
         encoder_hidden_states,
     ) -> torch.Tensor:
         # Unwrap NestedTensors to plain tensors if needed (multiplex path)
-        from sam3.model.data_misc import NestedTensor
+        from geo_edit.models.sam3.model.data_misc import NestedTensor
 
         def _unwrap(x):
             return x.tensors if isinstance(x, NestedTensor) else x

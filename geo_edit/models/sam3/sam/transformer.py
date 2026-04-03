@@ -8,7 +8,7 @@ from typing import Tuple, Type
 
 import torch
 import torch.nn.functional as F
-from sam3.sam.rope import apply_rotary_enc, apply_rotary_enc_real, compute_axial_cis
+from geo_edit.models.sam3.sam.rope import apply_rotary_enc, apply_rotary_enc_real, compute_axial_cis
 from torch import nn, Tensor
 
 from .common import MLPBlock
@@ -246,7 +246,7 @@ class Attention(nn.Module):
         # ):
         # Let's trust the dispatcher....
         if self.use_fa3:
-            from sam3.perflib.fa3 import flash_attn_func
+            from geo_edit.models.sam3.perflib.fa3 import flash_attn_func
 
             assert dropout_p == 0.0
             out = flash_attn_func(
@@ -341,7 +341,7 @@ class RoPEAttention(Attention):
         # ):
         # Let's trust the dispatcher....
         if self.use_fa3:
-            from sam3.perflib.fa3 import flash_attn_func
+            from geo_edit.models.sam3.perflib.fa3 import flash_attn_func
 
             assert dropout_p == 0.0
             out = flash_attn_func(

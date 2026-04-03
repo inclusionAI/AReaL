@@ -383,7 +383,7 @@ def multi_head_attention_forward(
 
     if attn_type == AttentionType.Vanilla:
         if attn_mask is None and not is_causal and use_fa3:
-            from sam3.perflib.fa3 import flash_attn_func
+            from geo_edit.models.sam3.perflib.fa3 import flash_attn_func
 
             assert dropout_p == 0.0
             attn_output = flash_attn_func(

@@ -46,9 +46,9 @@ EVAL_SYSTEM_PROMPT = (
     "- Evaluate the correctness of the prediction compared to the answer."
 
     "The following are examples of correct and incorrect predictions:\n"
-    "- Correct: (pred=23.8 billion euros, gt=23.8 billion euros)                                                        
-    "- Correct: (pred=23.8 billion euros, gt=23.8 billion)   "                                                             
-
+    "- Correct: (pred=23.8 billion euros, gt=23.8 billion euros) "                                                       
+    "- Correct: (pred=60%, gt=60) "                                                             
+    "- Correct: “Don’t know” (6%)., gt=Don't Know"  
 )
 
 EVAL_QUERY_PROMPT = (

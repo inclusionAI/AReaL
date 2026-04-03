@@ -8,11 +8,11 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-from sam3.model.model_misc import SAM3Output
-from sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
-from sam3.model.vl_combiner import SAM3VLBackbone
-from sam3.perflib.nms import nms_masks
-from sam3.train.data.collator import BatchedDatapoint
+from geo_edit.models.sam3.model.model_misc import SAM3Output
+from geo_edit.models.sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
+from geo_edit.models.sam3.model.vl_combiner import SAM3VLBackbone
+from geo_edit.models.sam3.perflib.nms import nms_masks
+from geo_edit.models.sam3.train.data.collator import BatchedDatapoint
 
 from .act_ckpt_utils import activation_ckpt_wrapper
 from .box_ops import box_cxcywh_to_xyxy

@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from sam3.model.data_misc import NestedTensor
+from geo_edit.models.sam3.model.data_misc import NestedTensor
 
 
 class Sam3DualViTDetNeck(nn.Module):

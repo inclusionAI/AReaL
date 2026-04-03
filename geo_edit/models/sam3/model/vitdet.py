@@ -26,10 +26,10 @@ try:
 except ModuleNotFoundError:
     # compatibility for older timm versions
     from timm.models.layers import DropPath, trunc_normal_
-from sam3.model.data_misc import NestedTensor
-from sam3.model.model_misc import AttentionType, LayerScale
-from sam3.perflib.fused import addmm_act
-from sam3.sam.rope import apply_rotary_enc_real, VisionRotaryEmbeddingVE
+from geo_edit.models.sam3.model.data_misc import NestedTensor
+from geo_edit.models.sam3.model.model_misc import AttentionType, LayerScale
+from geo_edit.models.sam3.perflib.fused import addmm_act
+from geo_edit.models.sam3.sam.rope import apply_rotary_enc_real, VisionRotaryEmbeddingVE
 from torch import Tensor
 
 
@@ -608,7 +608,7 @@ class Attention(nn.Module):
 
         if self.attn_type == AttentionType.Vanilla:
             if self.use_fa3:
-                from sam3.perflib.fa3 import flash_attn_func
+                from geo_edit.models.sam3.perflib.fa3 import flash_attn_func
 
                 x = flash_attn_func(
                     q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
