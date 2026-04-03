@@ -1608,7 +1608,15 @@ class SGLangConfig:
 
     @staticmethod
     def build_cmd_from_args(args: dict[str, Any]):
-        return get_py_cmd("sglang.launch_server", args)
+        # When PP > 1, use wrapper module that monkey-patches SGLang's 
+        # GroupCoordinator.send/recv to fix the global-rank vs local-index bug 
+        # in PP weight tying. See areal/patches/sglang_pp_fix.py for details. 
+        pp_size = args.get("pp_size", 1) 
+        if pp_size is not None and int(pp_size) > 1: 
+            module = "areal.patches.sglang_launch_wrapper" 
+        else: 
+            module = "sglang.launch_server" 
+        return get_py_cmd(module, args)
 
     @staticmethod
     def build_args(
