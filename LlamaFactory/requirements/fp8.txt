@@ -1,2 +1,0 @@
-torchao>=0.8.0
-accelerate>=1.10.0

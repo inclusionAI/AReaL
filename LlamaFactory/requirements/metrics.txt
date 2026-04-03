@@ -1,3 +1,0 @@
-nltk
-jieba
-rouge-chinese
