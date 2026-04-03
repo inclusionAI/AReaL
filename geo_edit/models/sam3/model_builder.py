@@ -383,6 +383,7 @@ def _load_checkpoint(model, checkpoint_path):
 
 
 def _setup_device_and_mode(model, device, eval_mode):
+    model = model.float()
     if device is not None and str(device) != "cpu":
         model = model.to(device)
     if eval_mode:
