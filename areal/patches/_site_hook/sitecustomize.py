@@ -11,6 +11,8 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
 
     def _import_hook(name, *args, **kwargs):
         result = _real_import(name, *args, **kwargs)
+        
+        # 1. Patch GroupCoordinator
         ps = _sys.modules.get("sglang.srt.distributed.parallel_state")
         if (
             ps is not None
@@ -18,8 +20,29 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
             and not getattr(ps, "_areal_pp_fixed", False)
         ):
             ps._areal_pp_fixed = True
-            _builtins.__import__ = _real_import
             _apply_pp_fix(ps.GroupCoordinator)
+
+        # 2. Patch Qwen models
+        qwen2 = _sys.modules.get("sglang.srt.models.qwen2")
+        if (
+            qwen2 is not None 
+            and hasattr(qwen2, "Qwen2ForCausalLM")
+            and not getattr(qwen2, "_areal_vocab_fixed", False)
+        ):
+            qwen2._areal_vocab_fixed = True
+            _apply_vocab_fix(qwen2.Qwen2ForCausalLM, "Qwen2ForCausalLM")
+
+        qwen3 = _sys.modules.get("sglang.srt.models.qwen3")
+        if (
+            qwen3 is not None 
+            and hasattr(qwen3, "Qwen3ForCausalLM")
+            and not getattr(qwen3, "_areal_vocab_fixed", False)
+        ):
+            qwen3._areal_vocab_fixed = True
+            _apply_vocab_fix(qwen3.Qwen3ForCausalLM, "Qwen3ForCausalLM")
+            
+        # Unhook if all possible target modules have been patched
+        # (This is a simplified approach, leaving the hook active is generally fine since it's fast)
         return result
 
     def _resolve_group_local_rank(coordinator, rank_value, param_name):
@@ -56,6 +79,46 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
 
         GroupCoordinator.send = _patched_send
         GroupCoordinator.recv = _patched_recv
+        
+    def _apply_vocab_fix(model_cls, name):
+        if not hasattr(model_cls, "__init__"):
+            return
+        original_init = model_cls.__init__
+        if getattr(original_init, "_areal_vocab_patched", False):
+            return
+            
+        def _do_pp_weight_tying(model_instance, config):
+            pp_group = model_instance.pp_group
+            if pp_group.world_size <= 1 or not config.tie_word_embeddings:
+                return
+            if pp_group.is_first_rank:
+                pp_group.send(
+                    model_instance.model.embed_tokens.weight,
+                    dst=pp_group.last_rank,
+                )
+            elif pp_group.is_last_rank:
+                num_embeddings = model_instance.lm_head.num_embeddings_per_partition
+                emb_token_weight = pp_group.recv(
+                    size=(num_embeddings, config.hidden_size),
+                    dtype=next(model_instance.model.parameters()).dtype,
+                    src=pp_group.first_rank,
+                )
+                model_instance.lm_head.weight.copy_(emb_token_weight)
+
+        def patched_init(self, config, *args, **kwargs):
+            original_tie = config.tie_word_embeddings
+            if original_tie:
+                config.tie_word_embeddings = False
+                try:
+                    original_init(self, config, *args, **kwargs)
+                finally:
+                    config.tie_word_embeddings = original_tie
+                _do_pp_weight_tying(self, config)
+            else:
+                original_init(self, config, *args, **kwargs)
+                
+        patched_init._areal_vocab_patched = True
+        model_cls.__init__ = patched_init
 
     _builtins.__import__ = _import_hook
 
