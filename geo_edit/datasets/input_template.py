@@ -93,7 +93,7 @@ You are a map understanding assistant specialized in analyzing map images and an
 
 Look at the map image and answer the following question by selecting the correct option.
 
-Question: {question}
+{question}
 
 Options:
 {options_text}
@@ -110,7 +110,7 @@ You are a map understanding assistant specialized in analyzing map images and an
 
 Look at the map image carefully and answer the following question by selecting the correct option.
 
-Question: {question}
+{question}
 
 Options:
 {options_text}
@@ -122,7 +122,7 @@ Please provide your final answer as a single number in <answer></answer> tags.
 
 # Separated version: question only, no role/answer format (for separated reasoning mode)
 MAPEVAL_VISUAL_SEPARATED_TEMPLATE = """\
-Question: {question}
+{question}
 
 Options:
 {options_text}

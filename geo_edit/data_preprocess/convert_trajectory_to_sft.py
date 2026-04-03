@@ -111,14 +111,14 @@ def convert_trajectory(
     question_text = get_text_from_content(first_user["content"])
     # Remove "Observation 0:" prefix
     question_text = re.sub(r"^Observation\s+\d+:\s*\n?", "", question_text).strip()
+    # Remove duplicate "Question:" prefix (original dataset may already contain it)
+    question_text = re.sub(r"^(Question:\s*)+", "Question: ", question_text)
 
     first_user_value = (
         f"Available tools:\n{tool_definitions_text}\n\n"
         f"Use this format for tool calls:\n"
         f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>\n\n'
-        f"When you have the final answer:\n"
-        f"<answer>your answer here</answer>\n\n"
-        f"Task: {question_text}"
+        f"{question_text}"
     )
     for _ in input_image_paths:
         first_user_value += "\n<image>"
