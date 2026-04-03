@@ -371,6 +371,17 @@ class _HFPipelineStageModule(nn.Module):
         self.layer_indices = layer_indices
         self.is_critic = is_critic
 
+    def _ensure_dtensor_compatible(self, tensor: torch.Tensor) -> torch.Tensor:
+        from torch.distributed.tensor import DTensor, Replicate
+
+        embed_weight = self.model.model.embed_tokens.weight
+        if isinstance(embed_weight, DTensor) and not isinstance(tensor, DTensor):
+            mesh = embed_weight.device_mesh
+            # Input should be replicated across all FSDP shards
+            placements = [Replicate()] * mesh.ndim
+            tensor = DTensor.from_local(tensor, device_mesh=mesh, placements=placements)
+        return tensor
+
     def forward(self, hidden_states: torch.Tensor, **kwargs) -> torch.Tensor:
         """Forward pass for this pipeline stage.
 
@@ -390,6 +401,7 @@ class _HFPipelineStageModule(nn.Module):
 
         # First stage: apply embedding
         if self.has_embed:
+            hidden_states = self._ensure_dtensor_compatible(hidden_states)
             hidden_states = self.model.model.embed_tokens(hidden_states)
 
         # Apply transformer layers
