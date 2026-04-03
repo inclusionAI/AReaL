@@ -81,44 +81,56 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
         GroupCoordinator.recv = _patched_recv
         
     def _apply_vocab_fix(model_cls, name):
-        if not hasattr(model_cls, "__init__"):
-            return
-        original_init = model_cls.__init__
-        if getattr(original_init, "_areal_vocab_patched", False):
-            return
-            
-        def _do_pp_weight_tying(model_instance, config):
-            pp_group = model_instance.pp_group
-            if pp_group.world_size <= 1 or not config.tie_word_embeddings:
-                return
-            if pp_group.is_first_rank:
-                pp_group.send(
-                    model_instance.model.embed_tokens.weight,
-                    dst=pp_group.last_rank,
-                )
-            elif pp_group.is_last_rank:
-                num_embeddings = model_instance.lm_head.num_embeddings_per_partition
-                emb_token_weight = pp_group.recv(
-                    size=(num_embeddings, config.hidden_size),
-                    dtype=next(model_instance.model.parameters()).dtype,
-                    src=pp_group.first_rank,
-                )
-                model_instance.lm_head.weight.copy_(emb_token_weight)
-
-        def patched_init(self, config, *args, **kwargs):
-            original_tie = config.tie_word_embeddings
-            if original_tie:
-                config.tie_word_embeddings = False
-                try:
-                    original_init(self, config, *args, **kwargs)
-                finally:
-                    config.tie_word_embeddings = original_tie
-                _do_pp_weight_tying(self, config)
-            else:
-                original_init(self, config, *args, **kwargs)
+        if hasattr(model_cls, "__init__"):
+            orig_init = model_cls.__init__
+            if not getattr(orig_init, "_areal_pp_patched", False):
+                def patched_init(self, config, *args, **kwargs):
+                    original_tie = config.tie_word_embeddings
+                    if original_tie:
+                        config.tie_word_embeddings = False
+                        try:
+                            orig_init(self, config, *args, **kwargs)
+                        finally:
+                            config.tie_word_embeddings = original_tie
+                    else:
+                        orig_init(self, config, *args, **kwargs)
+                patched_init._areal_pp_patched = True
+                model_cls.__init__ = patched_init
                 
-        patched_init._areal_vocab_patched = True
-        model_cls.__init__ = patched_init
+        if hasattr(model_cls, "load_weights"):
+            orig_lw = model_cls.load_weights
+            if not getattr(orig_lw, "_areal_pp_patched", False):
+                def patched_load_weights(self, weights):
+                    need_pp_tying = (
+                        hasattr(self, "pp_group")
+                        and self.pp_group.world_size > 1
+                        and hasattr(self, "config")
+                        and getattr(self.config, "tie_word_embeddings", False)
+                    )
+                    if not need_pp_tying:
+                        return orig_lw(self, weights)
+
+                    def _intercepted_weights():
+                        for weight_name, loaded_weight in weights:
+                            yield weight_name, loaded_weight
+                            if (
+                                weight_name == "model.embed_tokens.weight"
+                                and self.pp_group.is_last_rank
+                            ):
+                                params_dict = dict(self.named_parameters())
+                                if "lm_head.weight" in params_dict:
+                                    lm_head_param = params_dict["lm_head.weight"]
+                                    weight_loader = getattr(lm_head_param, "weight_loader", None)
+                                    if weight_loader is not None:
+                                        weight_loader(lm_head_param, loaded_weight)
+                                    else:
+                                        lm_head_param.data.copy_(
+                                            loaded_weight[: lm_head_param.shape[0]]
+                                        )
+
+                    return orig_lw(self, _intercepted_weights())
+                patched_load_weights._areal_pp_patched = True
+                model_cls.load_weights = patched_load_weights
 
     _builtins.__import__ = _import_hook
 
