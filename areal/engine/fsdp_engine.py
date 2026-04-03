@@ -778,7 +778,19 @@ class FSDPEngine(TrainEngine):
                 torch.zeros(batch_size, device=self.device, dtype=torch.long)
             )
 
-        # Pad microbatch count for PP schedule divisibility ---
+        # Pad all microbatch input_ids to uniform sequence length
+        if input_ids_chunks and len(input_ids_chunks) > 1:
+            max_seqlen = max(chunk.shape[-1] for chunk in input_ids_chunks)
+            padded_chunks = []
+            for chunk in input_ids_chunks:
+                seqlen = chunk.shape[-1]
+                if seqlen < max_seqlen:
+                    pad_size = max_seqlen - seqlen
+                    chunk = torch.nn.functional.pad(chunk, (0, pad_size), value=0)
+                padded_chunks.append(chunk)
+            input_ids_chunks = padded_chunks
+
+        # Pad microbatch count for PP schedule divisibility
         pp_group_size = self._pp_runner.pp_group_size
         remainder = n_microbatches % pp_group_size
         if remainder != 0:
