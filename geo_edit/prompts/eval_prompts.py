@@ -41,9 +41,14 @@ EVAL_SYSTEM_PROMPT = (
     "Your task is to compare the predicted answer with the correct answer and determine if they match meaningfully.\n"
     "------\n"
     "##INSTRUCTIONS:\n"
-    "- Focus on the meaningful match between the predicted answer and the correct answer.\n"
+    "- Focus on the meaningful match between the predicted answer and the correct answer, ignoring minor differences in phrasing or formatting.\n"
     "- Consider synonyms or paraphrases as valid matches.\n"
     "- Evaluate the correctness of the prediction compared to the answer."
+
+    "The following are examples of correct and incorrect predictions:\n"
+    "- Correct: (pred=23.8 billion euros, gt=23.8 billion euros)                                                        
+    "- Correct: (pred=23.8 billion euros, gt=23.8 billion)   "                                                             
+
 )
 
 EVAL_QUERY_PROMPT = (
