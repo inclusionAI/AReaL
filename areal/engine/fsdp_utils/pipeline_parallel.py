@@ -28,22 +28,23 @@ if TYPE_CHECKING:
 
 def _log_gpu_memory(tag: str, device: torch.device | None = None) -> None:
     """Log GPU memory usage at a specific point for debugging."""
-    if device is None:
-        device = torch.cuda.current_device()
-    allocated = torch.cuda.memory_allocated(device) / (1024**3)
-    reserved = torch.cuda.memory_reserved(device) / (1024**3)
-    max_allocated = torch.cuda.max_memory_allocated(device) / (1024**3)
-    free_mem, total_mem = torch.cuda.mem_get_info(device)
-    free_gb = free_mem / (1024**3)
-    total_gb = total_mem / (1024**3)
-    rank = dist.get_rank() if dist.is_initialized() else 0
-    print(
-        f"[GPU_MEM Rank {rank}] {tag}: "
-        f"allocated={allocated:.2f}GiB, reserved={reserved:.2f}GiB, "
-        f"max_allocated={max_allocated:.2f}GiB, "
-        f"free={free_gb:.2f}GiB, total={total_gb:.2f}GiB",
-        flush=True,
-    )
+    pass
+    # if device is None:
+    #     device = torch.cuda.current_device()
+    # allocated = torch.cuda.memory_allocated(device) / (1024**3)
+    # reserved = torch.cuda.memory_reserved(device) / (1024**3)
+    # max_allocated = torch.cuda.max_memory_allocated(device) / (1024**3)
+    # free_mem, total_mem = torch.cuda.mem_get_info(device)
+    # free_gb = free_mem / (1024**3)
+    # total_gb = total_mem / (1024**3)
+    # rank = dist.get_rank() if dist.is_initialized() else 0
+    # print(
+    #     f"[GPU_MEM Rank {rank}] {tag}: "
+    #     f"allocated={allocated:.2f}GiB, reserved={reserved:.2f}GiB, "
+    #     f"max_allocated={max_allocated:.2f}GiB, "
+    #     f"free={free_gb:.2f}GiB, total={total_gb:.2f}GiB",
+    #     flush=True,
+    # )
 
 
 def _chunked_lm_head_forward(
