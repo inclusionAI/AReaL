@@ -383,9 +383,8 @@ def _load_checkpoint(model, checkpoint_path):
 
 
 def _setup_device_and_mode(model, device, eval_mode):
-    """Setup model device and evaluation mode."""
-    if device == "cuda":
-        model = model.cuda()
+    if device is not None and str(device) != "cpu":
+        model = model.to(device)
     if eval_mode:
         model.eval()
     return model
