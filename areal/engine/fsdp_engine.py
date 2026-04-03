@@ -79,6 +79,11 @@ from areal.engine.fsdp_utils.checkpoint import DCPState
 from areal.engine.fsdp_utils.grad import fsdp2_clip_grad_norm
 from areal.engine.fsdp_utils.optimizer import AnyPrecisionAdamW, PerLayerOptimWrapper
 from areal.engine.fsdp_utils.parallel import ParallelHelper, parallelize_model
+from areal.engine.fsdp_utils.pipeline_parallel import (
+    FSDPPipelinedRunner,
+    create_fsdp_runner,
+    pipeline_llm_hf,
+)
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
 from areal.models.fsdp.ulysses import (
@@ -206,6 +211,14 @@ class FSDPEngine(TrainEngine):
         self.dp_group: dist.ProcessGroup
         self.sp_group: dist.ProcessGroup
         self.mp_group: dist.ProcessGroup
+        self.pp_group: dist.ProcessGroup | None = None
+
+        # Pipeline parallelism state
+        self._pp_runner: FSDPPipelinedRunner | None = None
+        self._pp_stages: list | None = None
+        self._pp_model_parts: list | None = None
+        self._pp_has_first_stage: bool = True
+        self._pp_has_last_stage: bool = True
 
         self.world_size: int
         self.rank: int
@@ -253,11 +266,20 @@ class FSDPEngine(TrainEngine):
         # Sequence and model parallel group (sp+tp)
         self.mp_group = self.world_mesh["sp_tp"].get_group()
 
+        # Pipeline parallel group (None if PP disabled)
+        self.pp_group = self.parallel_helper.pp_group
+
         self.rank = dist.get_rank()
         self.world_size = dist.get_world_size()
 
         self.dp_head = dist.get_process_group_ranks(self.mp_group)[0]
         self.dp_rank = dist.get_rank(self.dp_group)
+
+        if self.parallel_helper.pp_enabled:
+            self.logger.info(
+                f"Pipeline parallelism enabled: pp_size={self.parallel_helper.pp_size}, "
+                f"pp_rank={self.parallel_helper.pp_rank}"
+            )
 
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
@@ -331,16 +353,20 @@ class FSDPEngine(TrainEngine):
             else:
                 full_state = {}
 
-        # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
-        parallelize_model(
-            self.model,
-            config=self.config,
-            model_config=self.model_config,
-            nd_device_mesh=self.world_mesh,
-            parallel_helper=self.parallel_helper,
-            cpu_offload=self.cpu_offload,
-            wrap_policy=self.config.fsdp.wrap_policy,
-        )
+        # NOTE: Apply parallelism — either PP + FSDP2 or plain FSDP2
+        if self.parallel_helper.pp_enabled:
+            self._apply_pipeline_parallelism()
+        else:
+            parallelize_model(
+                self.model,
+                config=self.config,
+                model_config=self.model_config,
+                nd_device_mesh=self.world_mesh,
+                parallel_helper=self.parallel_helper,
+                cpu_offload=self.cpu_offload,
+                wrap_policy=self.config.fsdp.wrap_policy,
+                pp_enabled=False,
+            )
 
         if need_broadcast:
             broadcast_tik = time.perf_counter()
@@ -372,6 +398,22 @@ class FSDPEngine(TrainEngine):
                 prefetch_layers=self.config.fsdp.optim_step_prefetch_layers,
             )
 
+        # Create PP runner if pipeline parallelism is enabled
+        if self.parallel_helper.pp_enabled:
+            self._pp_runner = create_fsdp_runner(
+                pp_enabled=True,
+                pp_stages=self._pp_stages,
+                pp_schedule=self.config.fsdp.pp_schedule,
+                pp_group_size=self.parallel_helper.pp_size,
+                has_first_stage=self._pp_has_first_stage,
+                has_last_stage=self._pp_has_last_stage,
+            )
+            self.logger.info(
+                f"PP runner created: schedule={self.config.fsdp.pp_schedule}, "
+                f"has_first_stage={self._pp_has_first_stage}, "
+                f"has_last_stage={self._pp_has_last_stage}"
+            )
+
         self._initialized = True
 
     @property
@@ -385,6 +427,16 @@ class FSDPEngine(TrainEngine):
     @property
     def data_parallel_world_size(self) -> int:
         return self.parallel_helper.dp_size
+
+    @property
+    def pp_enabled(self) -> bool:
+        """Whether pipeline parallelism is enabled."""
+        return self.parallel_helper.pp_enabled
+
+    @property
+    def pp_has_last_stage(self) -> bool:
+        """Whether this rank contains the last PP stage (which produces outputs)."""
+        return self._pp_has_last_stage
 
     @property
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
@@ -540,11 +592,20 @@ class FSDPEngine(TrainEngine):
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
 
+        # Collect parameters from all model parts when PP is enabled
+        if self._pp_model_parts is not None:
+            all_params = []
+            for part in self._pp_model_parts:
+                all_params.extend(list(part.parameters()))
+        else:
+            all_params = list(self.model.parameters())
+
         grad_norm = fsdp2_clip_grad_norm(
-            list(self.model.parameters()),
+            all_params,
             max_norm=self.optimizer_config.gradient_clipping,
             fsdp_group=self.world_mesh["dp_sp"].get_group(),
             tp_group=self.world_mesh["tp"].get_group(),
+            pp_group=self.pp_group,
             offload_params=self.config.fsdp.offload_params,
         )
 
@@ -579,7 +640,14 @@ class FSDPEngine(TrainEngine):
             [torch.Tensor, dict[str, Any]], torch.Tensor | None
         ],
         forward_only: bool = False,
-    ) -> None:
+    ) -> list | None:
+        # PP path: use pipeline schedule
+        if self._pp_runner is not None:
+            return self._forward_backward_batch_pp(
+                mb_list, process_output_fn, forward_only
+            )
+
+        # Non-PP path: sequential microbatch execution
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
@@ -612,6 +680,63 @@ class FSDPEngine(TrainEngine):
             if not forward_only and loss is not None:
                 with trace_scope("fsdp_engine.backward"):
                     loss.backward()
+
+        return None
+
+    def _forward_backward_batch_pp(
+        self,
+        mb_list: MicroBatchList,
+        process_output_fn: Callable[
+            [torch.Tensor, dict[str, Any]], torch.Tensor | None
+        ],
+        forward_only: bool = False,
+    ) -> list | None:
+        """Pipeline-parallel forward/backward using PP schedule.
+
+        Prepares chunked inputs for each microbatch and delegates to the
+        PP runner which handles the schedule-based execution (1F1B, etc.).
+        """
+        assert self._pp_runner is not None
+
+        n_microbatches = len(mb_list)
+        if n_microbatches == 0:
+            return None
+
+        # Prepare inputs and contexts for all microbatches
+        input_ids_chunks: list[torch.Tensor] = []
+        contexts: list[dict[str, Any]] = []
+        target_chunks: list[torch.Tensor] = []
+
+        for mb_item in mb_list:
+            inputs, ctx = self._prepare_mb_inputs(mb_item)
+            # For PP, the first stage needs input_ids
+            input_ids = inputs.get("input_ids", inputs.get("inputs_embeds", None))
+            if input_ids is not None:
+                input_ids_chunks.append(input_ids)
+            contexts.append(ctx.to_dict())
+            # Dummy target (PP schedule requires target arg even if unused)
+            target_chunks.append(torch.zeros(1, device=self.device, dtype=torch.long))
+
+        with trace_scope("fsdp_engine.pp_forward_backward"):
+            if forward_only:
+                results = self._pp_runner.run_eval(
+                    n_microbatches=n_microbatches,
+                    input_ids_chunks=input_ids_chunks,
+                    extra_kwargs=None,
+                    contexts=contexts,
+                    process_output_fn=process_output_fn,
+                )
+            else:
+                results = self._pp_runner.run_train(
+                    n_microbatches=n_microbatches,
+                    input_ids_chunks=input_ids_chunks,
+                    target_chunks=target_chunks,
+                    extra_kwargs=None,
+                    contexts=contexts,
+                    process_output_fn=process_output_fn,
+                )
+
+        return results
 
     def train_batch(
         self,
@@ -685,8 +810,8 @@ class FSDPEngine(TrainEngine):
 
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
 
-        # Step 4: Aggregate losses
-        return aggregate_eval_losses(losses, self.dp_group)
+        # Step 4: Aggregate losses (with PP broadcast if enabled)
+        return aggregate_eval_losses(losses, self.dp_group, pp_group=self.pp_group)
 
     @torch.no_grad()
     def forward_batch(
@@ -773,6 +898,69 @@ class FSDPEngine(TrainEngine):
         if perf_tracer.is_configured():
             return
         perf_tracer.configure(config, rank=rank, role=role)
+
+    def _apply_pipeline_parallelism(self) -> None:
+        """Apply pipeline parallelism: split model into stages, parallelize each part.
+
+        This method:
+        1. Determines the number of layers in the model
+        2. Calls pipeline_llm_hf to split the model into PP stages
+        3. Applies FSDP2 + TP to each model part
+        4. Creates optimizer for all model parts
+        """
+        num_layers = self.model_config.num_hidden_layers
+        is_critic = self.config.is_critic
+
+        pp_config = self.config.fsdp
+        pp_mesh = self.world_mesh["pp"]
+
+        self.logger.info(
+            f"Applying pipeline parallelism: pp_size={self.parallel_helper.pp_size}, "
+            f"num_layers={num_layers}, schedule={pp_config.pp_schedule}"
+        )
+
+        # Split model into pipeline stages
+        stages, model_parts, has_first, has_last = pipeline_llm_hf(
+            model=self.model,
+            device=self.device,
+            pp_mesh=pp_mesh,
+            pp_schedule=pp_config.pp_schedule,
+            pp_degree=self.parallel_helper.pp_size,
+            num_layers=num_layers,
+            is_critic=is_critic,
+            pp_layers_per_stage=pp_config.pp_layers_per_stage,
+            pp_first_stage_less_layers=pp_config.pp_first_stage_less_layers,
+            pp_last_stage_less_layers=pp_config.pp_last_stage_less_layers,
+        )
+
+        # Apply TP + FSDP2 to each model part
+        for i, model_part in enumerate(model_parts):
+            parallelize_model(
+                model_part,
+                config=self.config,
+                model_config=self.model_config,
+                nd_device_mesh=self.world_mesh,
+                parallel_helper=self.parallel_helper,
+                cpu_offload=self.cpu_offload,
+                wrap_policy=self.config.fsdp.wrap_policy,
+                pp_enabled=True,
+            )
+            # Update stage reference to parallelized model
+            stages[i].submod = model_part
+
+        self._pp_stages = stages
+        self._pp_model_parts = model_parts
+        self._pp_has_first_stage = has_first
+        self._pp_has_last_stage = has_last
+
+        # Replace self.model with the first model part for compatibility
+        # (optimizer creation, state_dict, etc.)
+        self.model = model_parts[0] if len(model_parts) == 1 else model_parts[0]
+
+        self.logger.info(
+            f"Pipeline parallelism applied: {len(stages)} stages, "
+            f"has_first_stage={has_first}, has_last_stage={has_last}"
+        )
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy

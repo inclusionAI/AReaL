@@ -38,48 +38,84 @@ class ParallelHelper:
 
     @classmethod
     def from_parallel_strategy(cls, fsdp_ps: FSDPParallelStrategy) -> "ParallelHelper":
-        assert fsdp_ps.pp_size == 1, "Pipeline parallelism is not supported in FSDP"
-
         return cls(_ps=fsdp_ps)
 
     def __str__(self) -> str:
         _ps = self._ps
-        return f"(dp={_ps.dp_size}, sp={_ps.cp_size}, tp={_ps.tp_size}, ep={_ps.ep_size}, etp={_ps.etp_size}, world_size={_ps.world_size})"
+        s = f"(dp={_ps.dp_size}, sp={_ps.cp_size}, tp={_ps.tp_size}, ep={_ps.ep_size}, etp={_ps.etp_size}"
+        if _ps.pp_size > 1:
+            s += f", pp={_ps.pp_size}"
+        s += f", world_size={_ps.world_size})"
+        return s
 
     def __post_init__(self):
         self._validate()
 
     def _validate(self):
-        dp, sp, tp, ep, etp, world_size = (
+        dp, sp, tp, pp, ep, etp, world_size = (
             self._ps.dp_size,
             self._ps.cp_size,
             self._ps.tp_size,
+            self._ps.pp_size,
             self._ps.ep_size,
             self._ps.etp_size,
             self._ps.world_size,
         )
-        for d in (sp, tp, ep, etp):
+        for d in (sp, tp, pp, ep, etp):
             assert d >= 1, "Parallelism degree should be >= 1"
 
-        if dp * sp * tp != world_size:
+        if dp * sp * tp * pp != world_size:
             raise ValueError(
-                f"Invalid parallel dims: dp({dp}) * sp({sp}) * tp({tp}) != WORLD_SIZE({world_size})"
+                f"Invalid parallel dims: dp({dp}) * sp({sp}) * tp({tp}) * pp({pp}) != WORLD_SIZE({world_size})"
+            )
+
+        if pp > 1 and ep > 1:
+            raise ValueError(
+                "FSDP Engine does not support PP + EP combination. "
+                "Use Archon Engine for PP + EP support."
             )
 
         if ep > 1:
             assert etp == tp or etp == 1, "Currently we only support ETP=TP or ETP=1"
             if etp == tp:
-                # ep would borrow all sp and some dp degree
                 assert ep % sp == 0 and (dp * sp) % ep == 0
             elif etp == 1:
-                # ep would borrow all sp and tp and some dp degree
                 assert ep % (sp * tp) == 0 and (dp * sp * tp) % ep == 0
 
     def build_mesh(self) -> DeviceMesh:
-        if self._ps.ep_size > 1:
+        if self._ps.pp_size > 1:
+            return self._build_mesh_with_pp()
+        elif self._ps.ep_size > 1:
             return self._build_mesh_with_ep()
         else:
             return self._build_mesh_without_ep()
+
+    def _build_mesh_with_pp(self) -> DeviceMesh:
+        """Build device mesh with pipeline parallelism.
+
+        Mesh dimensions (outermost to innermost): pp → dp → sp → tp
+        This mirrors torchtitan's approach where pp is the outermost dimension.
+        """
+        dp, sp, tp, pp = (
+            self._ps.dp_size,
+            self._ps.cp_size,
+            self._ps.tp_size,
+            self._ps.pp_size,
+        )
+
+        mesh = init_device_mesh(
+            current_platform.device_type,
+            mesh_shape=(pp, dp, sp, tp),
+            mesh_dim_names=("pp", "dp", "sp", "tp"),
+        )
+
+        # Create submeshes for process groups
+        # dp_sp: used for FSDP sharding (data parallel + sequence parallel)
+        mesh["dp", "sp"]._flatten(mesh_dim_name="dp_sp")
+        # sp_tp: used for model parallel group
+        mesh["sp", "tp"]._flatten(mesh_dim_name="sp_tp")
+
+        return mesh
 
     def _build_mesh_with_ep(self) -> DeviceMesh:
         dp, sp, tp, ep, etp = (
@@ -90,15 +126,11 @@ class ParallelHelper:
             self._ps.etp_size,
         )
 
-        # With ep, dp and ep are derived submeshes:
-        # dp = dp_mod_ep * dp_in_ep
         if etp == tp:
-            # ep = dp_in_ep * sp
             dp_mod_ep = dp * sp // ep
             dp_in_ep = ep // sp
         else:
             assert etp == 1
-            # ep = dp_in_ep * sp * tp
             dp_mod_ep = dp * sp * tp // ep
             dp_in_ep = ep // (sp * tp)
 
@@ -108,10 +140,6 @@ class ParallelHelper:
             mesh_dim_names=("dp_mod_ep", "dp_in_ep", "sp", "tp"),
         )
 
-        # Create all the submesh here for process groups
-        # Guaranteed dims:
-        #     root mesh: dp_mod_ep, dp_in_ep, sp, tp
-        #     sub  mesh: dp, dp_sp, sp_tp, ep
         mesh["dp_mod_ep", "dp_in_ep"]._flatten(mesh_dim_name="dp")
         mesh["dp_mod_ep", "dp_in_ep", "sp"]._flatten(mesh_dim_name="dp_sp")
         mesh["sp", "tp"]._flatten(mesh_dim_name="sp_tp")
@@ -129,10 +157,6 @@ class ParallelHelper:
             mesh_dim_names=("dp", "sp", "tp"),
         )
 
-        # Create all the submesh here for process groups
-        # Guaranteed dims:
-        #     root mesh: dp, sp, tp
-        #     sub  mesh: dp_sp, sp_tp
         mesh["dp", "sp"]._flatten(mesh_dim_name="dp_sp")
         mesh["sp", "tp"]._flatten(mesh_dim_name="sp_tp")
 
@@ -143,6 +167,10 @@ class ParallelHelper:
         if self._world_mesh is None:
             self._world_mesh = self.build_mesh()
         return self._world_mesh
+
+    @property
+    def pp_enabled(self) -> bool:
+        return self._ps.pp_size > 1
 
     @property
     def dp_enabled(self) -> bool:
@@ -163,6 +191,10 @@ class ParallelHelper:
     @property
     def etp_enabled(self) -> bool:
         return self._ps.etp_size > 1
+
+    @property
+    def pp_size(self) -> int:
+        return self._ps.pp_size
 
     @property
     def dp_size(self) -> int:
@@ -197,10 +229,21 @@ class ParallelHelper:
         return self.world_mesh["tp"].get_group()
 
     @property
+    def pp_group(self) -> ProcessGroup | None:
+        """Return PP process group, or None if PP is disabled."""
+        if self.pp_enabled:
+            return self.world_mesh["pp"].get_group()
+        return None
+
+    @property
+    def pp_rank(self) -> int:
+        """Return this rank's position in the PP dimension."""
+        if self.pp_enabled:
+            return self.world_mesh["pp"].get_local_rank()
+        return 0
+
+    @property
     def gradient_div_factor(self) -> int:
-        # This is needed for FSDP-sharded experts when Expert Parallel is enabled.
-        # Although the FSDP sharding of experts is done on a mesh of a different size than
-        # other parameters, the gradient division factor should be consistent with data.
         return self._ps.dp_size * self._ps.cp_size
 
     @property
@@ -209,8 +252,6 @@ class ParallelHelper:
 
     @property
     def seq_len_divisor(self) -> int:
-        # 1. Sequence Parallel requires that seq_len be divisible by TP degree.
-        # 2. Ulysses Sequence Parallel requires that seq_len be divisible by SP degree.
         return self._ps.tp_size * self._ps.cp_size
 
 
@@ -303,16 +344,10 @@ def apply_non_moe_tp(
     # For root module
     root_tp_plan: dict[str, ParallelStyle] = {}
     if hasattr(model, "lm_head") and isinstance(model.lm_head, nn.Module):
-        # Implicitly all-gather in ColwiseParallel
-        # Output is sharded on the last dimension (Shard(2))
         root_tp_plan["lm_head"] = ColwiseParallel(
             input_layouts=Shard(1),
         )
     if hasattr(model, "score") and isinstance(model.score, nn.Module):
-        # For PPO's critic model's score layer:
-        # 1. The input is sharded by sequence parallelism (Shard(1))
-        # 2. `score` is a linear layer with replicated weights
-        # 3. All-gather the output along the sequence dimension to get the full results
         root_tp_plan["score"] = ReplicateParallel(
             input_layout=Shard(1),
             desired_input_layout=Shard(1),
@@ -321,21 +356,13 @@ def apply_non_moe_tp(
 
     if is_valid_vision_model(model_config.model_type):
         if isinstance(model.model.language_model, nn.Module):
-            # For vision-language models, avoid sharding the embedding layer because
-            # the visual components access it without tensor parallelism support.
-            # Instead, configure the first transformer layer to handle input
-            # sharding properly.
             model_tp_plan.pop("embed_tokens", None)
             model_tp_plan["layers.0"] = PrepareModuleInput(
                 input_layouts=Replicate(),
                 desired_input_layouts=Shard(1),
             )
 
-            # For Qwen3 VL, patch _deepstack_process for TP
             if is_qwen3_vl_model(model_config.model_type):
-                # NOTE: Lazy import to avoid ImportError when qwen3_vl model is not used.
-                # transformers.models.qwen3_vl doesn't exist in all transformers versions,
-                # so we only import it when actually needed for Qwen3 VL models.
                 from areal.models.transformers.qwen3_vl import (
                     patch_qwen3_vl_deepstack_process_for_tp,
                 )
@@ -373,7 +400,24 @@ def parallelize_model(
     parallel_helper: ParallelHelper,
     cpu_offload: CPUOffloadPolicy | None = None,
     wrap_policy: FSDPWrapPolicy | None = None,
+    pp_enabled: bool = False,
 ):
+    """Apply N-D parallelism (TP + FSDP2) to a model or model part.
+
+    When PP is enabled, this function is called per model_part (pipeline stage)
+    with reshard_after_forward=False to avoid redundant all-gathers across
+    microbatches.
+
+    Args:
+        model: The model or model part to parallelize.
+        config: Training engine configuration.
+        model_config: HuggingFace model configuration.
+        nd_device_mesh: N-D device mesh.
+        parallel_helper: Parallel configuration helper.
+        cpu_offload: CPU offload policy for FSDP.
+        wrap_policy: FSDP wrap policy.
+        pp_enabled: Whether pipeline parallelism is active.
+    """
     tp_enabled = parallel_helper.tp_enabled
 
     if tp_enabled:
@@ -384,11 +428,16 @@ def parallelize_model(
         reduce_dtype=getattr(torch, config.grad_reduce_dtype),
         cast_forward_inputs=True,
     )
+
+    # When PP is enabled, keep parameters gathered after forward pass
+    # to avoid repeated all-gathers for each microbatch passing through the stage.
+    # This is the critical optimization from torchtitan/verl for FSDP2 + PP.
+    reshard_after_forward = not pp_enabled
+
     fsdp_kwargs = {
-        # This dim is guaranteed to exist by FSDPParallelDims
         "mesh": nd_device_mesh["dp_sp"],
         "mp_policy": mixed_precision_policy,
         "offload_policy": cpu_offload,
-        "reshard_after_forward": True,
+        "reshard_after_forward": reshard_after_forward,
     }
     apply_fsdp2(model, fsdp_kwargs, wrap_policy)

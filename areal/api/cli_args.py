@@ -422,10 +422,64 @@ class FSDPEngineConfig:
         metadata={"help": "Number of layers to prefetch during per-layer optim step."},
     )
 
+    # Pipeline Parallelism configuration
+    pp_schedule: str = field(
+        default="Interleaved1F1B",
+        metadata={
+            "help": "Pipeline parallel schedule type for FSDP engine. "
+            "Requires pipeline_parallel_size > 1 in parallel strategy.",
+            "choices": [
+                "1F1B",
+                "Interleaved1F1B",
+                "InterleavedZeroBubble",
+                "ZBVZeroBubble",
+            ],
+        },
+    )
+    pp_layers_per_stage: int | None = field(
+        default=None,
+        metadata={
+            "help": "Number of transformer layers per (virtual) pipeline stage. "
+            "If set, num_virtual_stages is calculated from num_layers. "
+            "If None, stages are inferred from schedule type "
+            "(1 stage/rank for 1F1B, 2 stages/rank for Interleaved/ZBV).",
+        },
+    )
+    pp_first_stage_less_layers: int = field(
+        default=1,
+        metadata={
+            "help": "Number of layers to reduce in the first pipeline stage. "
+            "Accounts for embedding layer overhead.",
+        },
+    )
+    pp_last_stage_less_layers: int = field(
+        default=1,
+        metadata={
+            "help": "Number of layers to reduce in the last pipeline stage. "
+            "Accounts for output layer overhead.",
+        },
+    )
+
     def __post_init__(self):
         if self.optim_step_prefetch_layers < 0:
             raise ValueError(
                 f"optim_step_prefetch_layers must be >= 0, got {self.optim_step_prefetch_layers}"
+            )
+
+        # PP validation
+        if self.pp_layers_per_stage is not None and self.pp_layers_per_stage < 1:
+            raise ValueError(
+                f"pp_layers_per_stage must be >= 1, got {self.pp_layers_per_stage}"
+            )
+        if self.pp_first_stage_less_layers < 0:
+            raise ValueError(
+                f"pp_first_stage_less_layers must be >= 0, "
+                f"got {self.pp_first_stage_less_layers}"
+            )
+        if self.pp_last_stage_less_layers < 0:
+            raise ValueError(
+                f"pp_last_stage_less_layers must be >= 0, "
+                f"got {self.pp_last_stage_less_layers}"
             )
 
     shard_vision_across_sp: bool = field(
