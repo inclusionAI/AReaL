@@ -395,13 +395,34 @@ class _HFPipelineStageModule(nn.Module):
             if stage_module.has_embed:
                 hidden_states = model_self.model.embed_tokens(hidden_states)
 
+            # Compute rotary position embeddings (cos, sin) for transformer layers.
+            # In normal HF forward, Qwen2Model.forward() computes this once via
+            # self.rotary_emb(hidden_states, position_ids) and passes the result
+            # to each decoder layer as `position_embeddings`. Since our PP stage
+            # forward bypasses the HF model's forward, we must compute it here.
+            position_embeddings = None
+            if stage_module.layer_indices:
+                inner_model = model_self.model
+                if hasattr(inner_model, "rotary_emb"):
+                    position_embeddings = inner_model.rotary_emb(
+                        hidden_states, position_ids
+                    )
+
             # Apply transformer layers
             for idx in stage_module.layer_indices:
                 layer = model_self.model.layers[idx]
                 if layer is not None:
+                    # Pass position_embeddings if available (Qwen2, Llama, etc.),
+                    # otherwise fall back to position_ids for older model architectures.
+                    layer_kwargs = {}
+                    if position_embeddings is not None:
+                        layer_kwargs["position_embeddings"] = position_embeddings
+                    else:
+                        layer_kwargs["position_ids"] = position_ids
+
                     layer_outputs = layer(
                         hidden_states,
-                        position_ids=position_ids,
+                        **layer_kwargs,
                     )
                     # HF transformer layers return tuples: (hidden_states, ...)
                     if isinstance(layer_outputs, tuple):
