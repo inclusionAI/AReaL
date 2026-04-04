@@ -1530,7 +1530,7 @@ class FSDPEngine(TrainEngine):
             t = local_state_dict[name]
             if t.device.type == "cpu":
                 t = t.to(device, non_blocking=True)
-            byte_chunks.append(t.contiguous().view(torch.uint8))
+            byte_chunks.append(t.contiguous().reshape(-1).view(torch.uint8))
 
         if byte_chunks:
             current_platform.synchronize()  # Ensure non_blocking transfers complete
@@ -1770,7 +1770,9 @@ class FSDPEngine(TrainEngine):
                 ]
                 try:
                     for name, tensor in mapped_params:
-                        # ★ FIX: Ensure tensor is on GPU for NCCL broadcast
+                        # ★ FIX: _gather_pp_full_state_dict returns CPU tensors
+                        # (cpu_offload=True), but _update_bucket_weights_from_distributed_async
+                        # uses dist.broadcast which requires GPU tensors for NCCL backend.
                         if tensor.device.type == "cpu":
                             tensor = tensor.to(self.device)
 
