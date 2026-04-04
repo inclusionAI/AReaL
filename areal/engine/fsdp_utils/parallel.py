@@ -118,6 +118,56 @@ class ParallelHelper:
         # This is needed so that only one rank per DP group is the DP head.
         mesh["pp", "sp", "tp"]._flatten(mesh_dim_name="pp_sp_tp")
 
+        # --- [PP_DIAG] PP mesh 拓扑校验 ---
+        import torch.distributed as _dist
+        _rank = _dist.get_rank() if _dist.is_initialized() else 0
+        _pp_group_ranks = _dist.get_process_group_ranks(mesh["pp"].get_group())
+        _dp_group_ranks = _dist.get_process_group_ranks(mesh["dp"].get_group())
+        _dp_sp_group_ranks = _dist.get_process_group_ranks(mesh["dp_sp"].get_group())
+        _sp_tp_group_ranks = _dist.get_process_group_ranks(mesh["sp_tp"].get_group())
+        _pp_sp_tp_group_ranks = _dist.get_process_group_ranks(mesh["pp_sp_tp"].get_group())
+
+        print(
+            f"[PP_DIAG][Rank {_rank}] PP mesh built: "
+            f"shape=(pp={pp}, dp={dp}, sp={sp}, tp={tp}), "
+            f"world_size={pp * dp * sp * tp}",
+            flush=True,
+        )
+        print(
+            f"[PP_DIAG][Rank {_rank}] PP group_ranks: "
+            f"pp={_pp_group_ranks}, dp={_dp_group_ranks}, "
+            f"dp_sp(fsdp_shard)={_dp_sp_group_ranks}, "
+            f"sp_tp={_sp_tp_group_ranks}, "
+            f"pp_sp_tp(model_parallel)={_pp_sp_tp_group_ranks}",
+            flush=True,
+        )
+
+        # DP+TP+PP 组合校验:
+        # 1) pp_sp_tp 的 size 应等于 pp * sp * tp
+        _expected_mp_size = pp * sp * tp
+        _actual_mp_size = len(_pp_sp_tp_group_ranks)
+        if _actual_mp_size != _expected_mp_size:
+            print(
+                f"[PP_DIAG][Rank {_rank}] WARNING: pp_sp_tp size mismatch! "
+                f"expected={_expected_mp_size}, actual={_actual_mp_size}",
+                flush=True,
+            )
+        # 2) dp 的 size 应等于 dp
+        if len(_dp_group_ranks) != dp:
+            print(
+                f"[PP_DIAG][Rank {_rank}] WARNING: dp group size mismatch! "
+                f"expected={dp}, actual={len(_dp_group_ranks)}",
+                flush=True,
+            )
+        # 3) dp_sp 的 size 应等于 dp * sp (FSDP sharding group)
+        _expected_fsdp_size = dp * sp
+        if len(_dp_sp_group_ranks) != _expected_fsdp_size:
+            print(
+                f"[PP_DIAG][Rank {_rank}] WARNING: dp_sp (FSDP shard) size mismatch! "
+                f"expected={_expected_fsdp_size}, actual={len(_dp_sp_group_ranks)}",
+                flush=True,
+            )
+
         return mesh
 
     def _build_mesh_with_ep(self) -> DeviceMesh:

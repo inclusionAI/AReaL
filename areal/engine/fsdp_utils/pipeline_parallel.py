@@ -28,23 +28,21 @@ if TYPE_CHECKING:
 
 def _log_gpu_memory(tag: str, device: torch.device | None = None) -> None:
     """Log GPU memory usage at a specific point for debugging."""
-    pass
-    # if device is None:
-    #     device = torch.cuda.current_device()
-    # allocated = torch.cuda.memory_allocated(device) / (1024**3)
-    # reserved = torch.cuda.memory_reserved(device) / (1024**3)
-    # max_allocated = torch.cuda.max_memory_allocated(device) / (1024**3)
-    # free_mem, total_mem = torch.cuda.mem_get_info(device)
-    # free_gb = free_mem / (1024**3)
-    # total_gb = total_mem / (1024**3)
-    # rank = dist.get_rank() if dist.is_initialized() else 0
-    # print(
-    #     f"[GPU_MEM Rank {rank}] {tag}: "
-    #     f"allocated={allocated:.2f}GiB, reserved={reserved:.2f}GiB, "
-    #     f"max_allocated={max_allocated:.2f}GiB, "
-    #     f"free={free_gb:.2f}GiB, total={total_gb:.2f}GiB",
-    #     flush=True,
-    # )
+    if not torch.cuda.is_available():
+        return
+    if device is None:
+        device = torch.cuda.current_device()
+    allocated = torch.cuda.memory_allocated(device) / (1024**3)
+    reserved = torch.cuda.memory_reserved(device) / (1024**3)
+    free_mem, total_mem = torch.cuda.mem_get_info(device)
+    free_gb = free_mem / (1024**3)
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    print(
+        f"[PP_DIAG][GPU_MEM Rank {rank}] {tag}: "
+        f"alloc={allocated:.2f}GiB, rsv={reserved:.2f}GiB, "
+        f"free={free_gb:.2f}GiB",
+        flush=True,
+    )
 
 
 def _chunked_lm_head_forward(
@@ -118,6 +116,14 @@ def build_pipeline_schedule(
             f"n_microbatches ({n_microbatches}) < num_total_stages ({num_total_stages}), "
             "may result in pipeline bubble"
         )
+
+    # --- [PP_DIAG] schedule 构建校验 ---
+    _get_logger().info(
+        f"[PP_DIAG] build_schedule: class={schedule_class.__name__}, "
+        f"looped={looped_schedule}, n_stages={len(stages)}, "
+        f"n_microbatches={n_microbatches}, pp_degree={pp_degree}, "
+        f"has_loss_fn={loss_fn is not None}"
+    )
 
     return schedule_class(
         stages if looped_schedule else stages[0],
@@ -325,6 +331,18 @@ def pipeline_module_split_hf(
             is_critic=has_score,
         )
 
+        # --- [PP_DIAG] 模型切分诊断 ---
+        _split_param_count = sum(p.numel() for p in model.parameters())
+        _split_param_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+        _get_logger().info(
+            f"[PP_DIAG] Stage {stage_idx}/{num_stages} split: "
+            f"has_embed={has_embed}, has_norm={has_norm}, "
+            f"has_lm_head={has_lm_head}, has_score={has_score}, "
+            f"layer_indices={sorted(layer_indices_to_keep)}, "
+            f"param_count={_split_param_count:,}, "
+            f"param_mem={_split_param_bytes/(1024**3):.3f}GiB"
+        )
+
         stage = PipelineStage(
             stage_wrapper.model,
             stage_idx,
@@ -504,6 +522,18 @@ class _HFPipelineStageModule(nn.Module):
                 f"stage_fwd[stage={stage_module.layer_indices}] AFTER all transformer_layers"
             )
 
+            # --- [PP_DIAG] 各stage输出维度+dtype校验 ---
+            _diag_rank = dist.get_rank() if dist.is_initialized() else 0
+            _get_logger().info(
+                f"[PP_DIAG][Rank {_diag_rank}] stage_fwd "
+                f"layers={stage_module.layer_indices}: "
+                f"output_shape={tuple(hidden_states.shape)}, "
+                f"dtype={hidden_states.dtype}, "
+                f"device={hidden_states.device}, "
+                f"has_nan={torch.isnan(hidden_states).any().item()}, "
+                f"abs_max={hidden_states.abs().max().item():.4f}"
+            )
+
             # ---- norm ----
             if stage_module.has_norm and model_self.model.norm is not None:
                 hidden_states = model_self.model.norm(hidden_states)
@@ -587,6 +617,20 @@ class _EagerProcessingOutputChunks(list):
         # Compute lm_head if skip_output_head was used
         if self._output_head is not None:
             output = _chunked_lm_head_forward(self._output_head, output)
+
+        # --- [PP_DIAG] eval 输出维度 ---
+        _get_logger().info(
+            f"[PP_DIAG] EagerChunks[{idx}]: "
+            f"input_shape={tuple(output.shape)}, dtype={output.dtype}"
+        )
+
+        # Compute lm_head if skip_output_head was used
+        if self._output_head is not None:
+            output = _chunked_lm_head_forward(self._output_head, output)
+            _get_logger().info(
+                f"[PP_DIAG] EagerChunks[{idx}]: "
+                f"after_lm_head shape={tuple(output.shape)}"
+            )
 
         # Squeeze batch dim: [1, seq, X] -> [seq, X]
         if output.ndim == 3:
@@ -727,9 +771,38 @@ class FSDPPipelinedRunner:
         else:
             batched_target = None
 
-        _log_gpu_memory(f"run_train BEFORE schedule.step, n_microbatches={n_microbatches}")
+        # --- [PP_DIAG] train schedule 诊断 ---
+        _diag_rank = dist.get_rank() if dist.is_initialized() else 0
+        _get_logger().info(
+            f"[PP_DIAG][Rank {_diag_rank}] run_train START: "
+            f"n_mb={n_microbatches}, schedule={self.pp_schedule}, "
+            f"pp_group_size={self.pp_group_size}, "
+            f"has_first={self.has_first_stage}, has_last={self.has_last_stage}"
+        )
+        if self.has_first_stage and args:
+            _get_logger().info(
+                f"[PP_DIAG][Rank {_diag_rank}] run_train: "
+                f"batched_input shape={tuple(args[0].shape)}, "
+                f"dtype={args[0].dtype}"
+            )
+        if batched_target is not None:
+            _get_logger().info(
+                f"[PP_DIAG][Rank {_diag_rank}] run_train: "
+                f"batched_target shape={tuple(batched_target.shape)}"
+            )
+
+        import time as _time_rt
+        _rt_t0 = _time_rt.perf_counter()
+        _log_gpu_memory(f"run_train BEFORE schedule.step, n_mb={n_microbatches}")
+
         schedule.step(*args, target=batched_target, **(extra_kwargs or {}))
+
         _log_gpu_memory(f"run_train AFTER schedule.step")
+        _rt_elapsed = _time_rt.perf_counter() - _rt_t0
+        _get_logger().info(
+            f"[PP_DIAG][Rank {_diag_rank}] run_train DONE: "
+            f"schedule.step took {_rt_elapsed:.3f}s"
+        )
 
         self._restore_skip_output_head()
         if output_stage is not None:
@@ -771,9 +844,33 @@ class FSDPPipelinedRunner:
         else:
             args = ()
 
-        _log_gpu_memory(f"run_eval BEFORE schedule.eval, n_microbatches={n_microbatches}")
+        # --- [PP_DIAG] eval schedule 诊断 ---
+        _diag_rank = dist.get_rank() if dist.is_initialized() else 0
+        _get_logger().info(
+            f"[PP_DIAG][Rank {_diag_rank}] run_eval START: "
+            f"n_mb={n_microbatches}, schedule={self.pp_schedule}, "
+            f"has_first={self.has_first_stage}, has_last={self.has_last_stage}"
+        )
+        if self.has_first_stage and args:
+            _get_logger().info(
+                f"[PP_DIAG][Rank {_diag_rank}] run_eval: "
+                f"batched_input shape={tuple(args[0].shape)}, "
+                f"dtype={args[0].dtype}"
+            )
+
+        import time as _time_re
+        _re_t0 = _time_re.perf_counter()
+        _log_gpu_memory(f"run_eval BEFORE schedule.eval, n_mb={n_microbatches}")
+
         schedule.eval(*args, **(extra_kwargs or {}))
+
         _log_gpu_memory(f"run_eval AFTER schedule.eval")
+        _re_elapsed = _time_re.perf_counter() - _re_t0
+        _n_results = len(eager_chunks.get_results()) if eager_chunks else 0
+        _get_logger().info(
+            f"[PP_DIAG][Rank {_diag_rank}] run_eval DONE: "
+            f"schedule.eval took {_re_elapsed:.3f}s, n_results={_n_results}"
+        )
 
         # Restore state
         self._restore_skip_output_head()
@@ -806,6 +903,13 @@ class FSDPPipelinedRunner:
                 else:
                     logits = pred
 
+                # --- [PP_DIAG] loss 函数维度校验 ---
+                _get_logger().info(
+                    f"[PP_DIAG] pp_loss_fn: pred_shape={tuple(pred.shape)}, "
+                    f"logits_shape={tuple(logits.shape)}, "
+                    f"pred_dtype={pred.dtype}, logits_dtype={logits.dtype}"
+                )
+
                 if logits.ndim == 3:
                     logits = logits.squeeze(0)
 
@@ -813,6 +917,10 @@ class FSDPPipelinedRunner:
                 if isinstance(ctx, dict) and "model_inputs" in ctx:
                     original_seqlen = ctx["model_inputs"]["input_ids"].shape[-1]
                     if logits.shape[0] > original_seqlen:
+                        _get_logger().info(
+                            f"[PP_DIAG] pp_loss_fn: truncating logits "
+                            f"{logits.shape[0]} -> {original_seqlen}"
+                        )
                         logits = logits[:original_seqlen]
 
                 loss = process_output_fn(logits, ctx)
@@ -821,6 +929,11 @@ class FSDPPipelinedRunner:
 
                 if loss is None:
                     return pred.sum() * 0.0
+
+                # --- [PP_DIAG] loss值 ---
+                _get_logger().info(
+                    f"[PP_DIAG] pp_loss_fn: loss={loss.item():.6f}"
+                )
                 return loss
         else:
             def pp_loss_fn(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:

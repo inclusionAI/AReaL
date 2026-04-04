@@ -286,6 +286,38 @@ class FSDPEngine(TrainEngine):
                 f"pp_rank={self.parallel_helper.pp_rank}"
             )
 
+        # --- [PP_DIAG] 完整 mesh 拓扑校验 (兼容 DP+TP+PP) ---
+        _dp_ranks = dist.get_process_group_ranks(self.dp_group)
+        _mp_ranks = dist.get_process_group_ranks(self.mp_group)
+        _sp_ranks = dist.get_process_group_ranks(self.sp_group)
+        _pp_ranks = dist.get_process_group_ranks(self.pp_group) if self.pp_group else []
+        _dp_sp_ranks = dist.get_process_group_ranks(self.world_mesh["dp_sp"].get_group())
+        self.logger.info(
+            f"[PP_DIAG] Mesh topology: global_rank={self.rank}, "
+            f"world_size={self.world_size}, "
+            f"dp_rank={self.dp_rank}, dp_head={self.dp_head}"
+        )
+        self.logger.info(
+            f"[PP_DIAG] Group ranks: "
+            f"dp={_dp_ranks}, sp={_sp_ranks}, "
+            f"mp(model_parallel)={_mp_ranks}, "
+            f"dp_sp(fsdp_shard)={_dp_sp_ranks}, "
+            f"pp={_pp_ranks if _pp_ranks else 'disabled'}"
+        )
+        if self.parallel_helper.pp_enabled:
+            # 校验: dp_head 在整个 DP group 中应该只有一个
+            # 当 PP 开启时, mp_group = pp_sp_tp, 确保每个DP group只有1个dp_head
+            self.logger.info(
+                f"[PP_DIAG] PP validation: pp_size={self.parallel_helper.pp_size}, "
+                f"pp_rank={self.parallel_helper.pp_rank}, "
+                f"dp_size={self.parallel_helper.dp_size}, "
+                f"tp_size={self.parallel_helper._ps.tp_size}, "
+                f"sp_size={self.parallel_helper._ps.cp_size}, "
+                f"product(dp*sp*tp*pp)="
+                f"{self.parallel_helper.dp_size * self.parallel_helper._ps.cp_size * self.parallel_helper._ps.tp_size * self.parallel_helper.pp_size}, "
+                f"world_size={self.world_size}"
+            )
+
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
@@ -308,6 +340,18 @@ class FSDPEngine(TrainEngine):
             )
             # dataclass field override — safe because it's read-only after init
             self.config.fsdp.memory_efficient_load = False
+
+        # --- [PP_DIAG] PP 配置校验 ---
+        if self.parallel_helper.pp_enabled:
+            self.logger.info(
+                f"[PP_DIAG] PP config: schedule={self.config.fsdp.pp_schedule}, "
+                f"layers_per_stage={self.config.fsdp.pp_layers_per_stage}, "
+                f"first_stage_less={self.config.fsdp.pp_first_stage_less_layers}, "
+                f"last_stage_less={self.config.fsdp.pp_last_stage_less_layers}, "
+                f"memory_efficient_load={self.config.fsdp.memory_efficient_load}, "
+                f"per_layer_optim={self.config.fsdp.per_layer_optim_step}, "
+                f"gradient_checkpointing={self.config.gradient_checkpointing}"
+            )
 
         # Create device model
         self._create_device_model()
@@ -678,6 +722,33 @@ class FSDPEngine(TrainEngine):
         else:
             all_params = list(self.model.parameters())
 
+        # --- [PP_DIAG] 优化器步骤: 参数与梯度校验 ---
+        _n_total = len(all_params)
+        _n_with_grad = sum(1 for p in all_params if p.grad is not None)
+        _n_requires_grad = sum(1 for p in all_params if p.requires_grad)
+        _grad_mem = sum(
+            p.grad.numel() * p.grad.element_size()
+            for p in all_params if p.grad is not None
+        ) / (1024**3)
+        self.logger.info(
+            f"[PP_DIAG] optimizer_step: n_total_params={_n_total}, "
+            f"n_requires_grad={_n_requires_grad}, "
+            f"n_with_grad={_n_with_grad}, "
+            f"grad_mem={_grad_mem:.3f}GiB, "
+            f"pp_enabled={self._pp_model_parts is not None}, "
+            f"n_model_parts={len(self._pp_model_parts) if self._pp_model_parts else 1}"
+        )
+        if _n_with_grad == 0:
+            self.logger.warning(
+                "[PP_DIAG] WARNING: No parameters have gradients! "
+                "This likely means backward pass did not flow through this rank."
+            )
+        elif _n_with_grad < _n_requires_grad:
+            self.logger.warning(
+                f"[PP_DIAG] WARNING: Only {_n_with_grad}/{_n_requires_grad} "
+                f"grad-requiring params have gradients."
+            )
+
         grad_norm = fsdp2_clip_grad_norm(
             all_params,
             max_norm=self.optimizer_config.gradient_clipping,
@@ -686,6 +757,17 @@ class FSDPEngine(TrainEngine):
             pp_group=self.pp_group,
             offload_params=self.config.fsdp.offload_params,
         )
+
+        # --- [PP_DIAG] grad_norm ---
+        self.logger.info(
+            f"[PP_DIAG] optimizer_step: grad_norm={grad_norm:.6f}, "
+            f"lr={self.lr_scheduler.get_last_lr()[0] if hasattr(self.lr_scheduler, 'get_last_lr') else 'N/A'}"
+        )
+        if torch.isnan(torch.tensor(grad_norm)) or torch.isinf(torch.tensor(grad_norm)):
+            self.logger.warning(
+                f"[PP_DIAG] WARNING: grad_norm is {grad_norm}! "
+                "Check for NaN/Inf in gradients."
+            )
 
         if not math.isfinite(grad_norm):
             self.optimizer_zero_grad()
@@ -860,6 +942,33 @@ class FSDPEngine(TrainEngine):
                 )
             n_microbatches = n_microbatches + n_pad
 
+        # --- [PP_DIAG] 微批次准备完成 ---
+        self.logger.info(
+            f"[PP_DIAG] PP fwd/bwd prepared: "
+            f"n_mb={n_microbatches}, forward_only={forward_only}, "
+            f"n_input_chunks={len(input_ids_chunks)}, "
+            f"n_contexts={len(contexts)}, "
+            f"n_targets={len(target_chunks)}"
+        )
+        if input_ids_chunks:
+            _shapes = [tuple(c.shape) for c in input_ids_chunks]
+            # 只打印前3个和最后1个, 避免过长
+            if len(_shapes) > 4:
+                _shapes_str = f"{_shapes[:3]} ... {_shapes[-1:]}"
+            else:
+                _shapes_str = str(_shapes)
+            self.logger.info(
+                f"[PP_DIAG] PP input_shapes: {_shapes_str}, "
+                f"dtype={input_ids_chunks[0].dtype}"
+            )
+            # 校验: 所有 input_ids_chunks 的 seq_len 维度应一致 (padding后)
+            _seq_lens = set(c.shape[-1] for c in input_ids_chunks)
+            if len(_seq_lens) > 1:
+                self.logger.warning(
+                    f"[PP_DIAG] WARNING: input_ids_chunks have inconsistent "
+                    f"seq_lens after padding: {_seq_lens}"
+                )
+
         with trace_scope("fsdp_engine.pp_forward_backward"):
             if forward_only:
                 results = self._pp_runner.run_eval(
@@ -908,6 +1017,12 @@ class FSDPEngine(TrainEngine):
             # Truncate logits if PP uniform padding made them longer than original
             original_seqlen = ctx.model_inputs["input_ids"].shape[-1]
             if logits.shape[0] > original_seqlen:
+                # --- [PP_DIAG] ---
+                self.logger.info(
+                    f"[PP_DIAG] train process_output: truncating logits "
+                    f"{logits.shape[0]} -> {original_seqlen}, "
+                    f"logits_shape={tuple(logits.shape)}"
+                )
                 logits = logits[:original_seqlen]
             return self._compute_logprobs_and_loss(
                 logits,
@@ -963,6 +1078,13 @@ class FSDPEngine(TrainEngine):
 
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
 
+        # --- [PP_DIAG] eval losses 聚合前 ---
+        self.logger.info(
+            f"[PP_DIAG] eval_batch: n_losses={len(losses)}, "
+            f"pp_group={'enabled' if self.pp_group else 'disabled'}, "
+            f"loss_values={[l.item() if isinstance(l, torch.Tensor) else l for l in losses[:5]]}"
+        )
+
         # Step 4: Aggregate losses (with PP broadcast if enabled)
         return aggregate_eval_losses(losses, self.dp_group, pp_group=self.pp_group)
 
@@ -1008,6 +1130,14 @@ class FSDPEngine(TrainEngine):
             last_pp_global_rank = pp_ranks[-1]
             device = self.device
 
+            # --- [PP_DIAG] forward_batch PP broadcast ---
+            self.logger.info(
+                f"[PP_DIAG] forward_batch broadcast START: "
+                f"pp_ranks={pp_ranks}, last_pp_global={last_pp_global_rank}, "
+                f"has_last_stage={self._pp_has_last_stage}, "
+                f"n_outputs_local={len(outputs)}"
+            )
+
             if self._pp_has_last_stage:
                 # Last stage: send number of results, their sizes, and flat data
                 n_results = torch.tensor([len(outputs)], device=device, dtype=torch.long)
@@ -1017,6 +1147,13 @@ class FSDPEngine(TrainEngine):
                     dist.broadcast(sizes, src=last_pp_global_rank, group=self.pp_group)
                     flat = torch.cat([r.reshape(-1).float() for r in outputs])
                     dist.broadcast(flat, src=last_pp_global_rank, group=self.pp_group)
+
+                # 在 last_stage 分支的3个broadcast全部完成后:
+                self.logger.info(
+                    f"[PP_DIAG] forward_batch broadcast: last_stage sent "
+                    f"n_results={len(outputs)}, "
+                    f"flat_size={flat.numel() if len(outputs) > 0 else 0}"
+                )
             else:
                 # Non-last stages: receive results
                 n_results = torch.tensor([0], device=device, dtype=torch.long)
@@ -1029,6 +1166,12 @@ class FSDPEngine(TrainEngine):
                     flat = torch.empty(total_size, device=device, dtype=torch.float32)
                     dist.broadcast(flat, src=last_pp_global_rank, group=self.pp_group)
                     outputs = list(flat.split(sizes.tolist()))
+
+                self.logger.info(
+                    f"[PP_DIAG] forward_batch broadcast: non-last received "
+                    f"n_results={n}, "
+                    f"output_shapes={[tuple(o.shape) for o in outputs[:3]]}"
+                )
 
         # Step 4: Aggregate and reorder outputs
         if self.enable_tree_training:
@@ -1153,6 +1296,37 @@ class FSDPEngine(TrainEngine):
         self.logger.info(
             f"Pipeline parallelism applied: {len(stages)} stages, "
             f"has_first_stage={has_first}, has_last_stage={has_last}"
+        )
+
+        # --- [PP_DIAG] 各stage详细信息 ---
+        for _i, (_stg, _mp) in enumerate(zip(stages, model_parts)):
+            _inner = _mp.model if hasattr(_mp, 'model') else _mp
+            _n_params = sum(p.numel() for p in _inner.parameters())
+            _param_bytes = sum(p.numel() * p.element_size() for p in _inner.parameters())
+            _layer_names = []
+            if hasattr(_inner, 'model') and hasattr(_inner.model, 'layers'):
+                for _li, _layer in enumerate(_inner.model.layers):
+                    if _layer is not None:
+                        _layer_names.append(str(_li))
+            self.logger.info(
+                f"[PP_DIAG] Stage[{_i}]: stage_idx={_stg.stage_index}, "
+                f"is_first={_stg.is_first}, is_last={_stg.is_last}, "
+                f"n_params={_n_params:,}, param_mem={_param_bytes/(1024**3):.3f}GiB, "
+                f"layers_present=[{','.join(_layer_names)}], "
+                f"has_embed={_mp.has_embed if hasattr(_mp, 'has_embed') else 'N/A'}, "
+                f"has_norm={_mp.has_norm if hasattr(_mp, 'has_norm') else 'N/A'}, "
+                f"has_output_head={_mp.has_output_head if hasattr(_mp, 'has_output_head') else 'N/A'}"
+            )
+        # 校验: 所有stage的参数量总和应接近完整模型参数量
+        _total_stage_params = 0
+        for _mp in model_parts:
+            _inner = _mp.model if hasattr(_mp, 'model') else _mp
+            _total_stage_params += sum(p.numel() for p in _inner.parameters())
+        _full_model_params = sum(p.numel() for p in self.model.parameters())
+        self.logger.info(
+            f"[PP_DIAG] Stage params total={_total_stage_params:,}, "
+            f"full_model_params={_full_model_params:,}, "
+            f"ratio={_total_stage_params/_full_model_params:.4f}"
         )
 
     def _make_parallel_strategy(
@@ -1299,6 +1473,18 @@ class FSDPEngine(TrainEngine):
             _optim_params = all_pp_params
         else:
             _optim_params = self.model.parameters()
+        # --- [PP_DIAG] 优化器参数收集 ---
+        _optim_param_list = list(_optim_params) if not isinstance(_optim_params, list) else _optim_params
+        self.logger.info(
+            f"[PP_DIAG] _create_optimizer: "
+            f"n_optim_params={len(_optim_param_list)}, "
+            f"n_model_parts={len(self._pp_model_parts) if self._pp_model_parts else 1}, "
+            f"optim_type={self.optimizer_config.type}"
+        )
+        # 注意: 如果 _optim_params 是 generator，上面 list() 会消耗它
+        # 所以需要用 _optim_param_list 替代后续的 _optim_params 使用
+        _optim_params = _optim_param_list
+
         assert self.optimizer_config.type in [
             "adam",
             "adam_bf16",
@@ -1427,6 +1613,13 @@ class FSDPEngine(TrainEngine):
                         continue
                     seen_names.add(name)
                     yield self._map_weight_update_name(name, meta), param
+            # --- [PP_DIAG] PP参数遍历 (首次调用时) ---
+            self.logger.info(
+                f"[PP_DIAG] _get_model_name_parameters PP: "
+                f"n_model_parts={len(self._pp_model_parts)}, "
+                f"n_unique_params={len(seen_names)}, "
+                f"sample_names={list(seen_names)[:3]}"
+            )
             return
 
         # ---- Original non-PP path (unchanged) ----
@@ -1518,6 +1711,15 @@ class FSDPEngine(TrainEngine):
             f"local_state_dict has {len(local_state_dict)} parameters"
         )
 
+        # --- [PP_DIAG] Step 1 参数名抽样 ---
+        _sample_keys = list(local_state_dict.keys())[:5]
+        logger.info(
+            f"[PP_DIAG][Rank {global_rank}] gather Step 1: "
+            f"n_local_params={len(local_state_dict)}, "
+            f"sample_keys={_sample_keys}, "
+            f"dtypes={set(str(v.dtype) for v in list(local_state_dict.values())[:5])}"
+        )
+
         if pp_size <= 1:
             return local_state_dict
 
@@ -1601,14 +1803,22 @@ class FSDPEngine(TrainEngine):
             for _ in range(pp_size)
         ]
 
+        import time as _time_s4
+        _s4_t0 = _time_s4.perf_counter()
         logger.info(
-            f"[FSDPEngine Rank {global_rank}] Step 4: all_gather start, "
-            f"buffer_size={max_nbytes} bytes ({max_nbytes / 1024 / 1024:.2f} MB)"
+            f"[PP_DIAG][Rank {global_rank}] gather Step 4: all_gather start, "
+            f"buffer={max_nbytes/(1024**2):.1f}MB, "
+            f"all_sizes_MB=[{', '.join(f'{s/(1024**2):.1f}' for s in size_list)}]"
         )
         dist.all_gather(gathered_buffers, padded, group=pp_group)
         del padded  # Free GPU memory
+        _s4_elapsed = _time_s4.perf_counter() - _s4_t0
 
-        logger.info(f"[FSDPEngine Rank {global_rank}] Step 4 done: all_gather complete")
+        logger.info(
+            f"[PP_DIAG][Rank {global_rank}] gather Step 4 done: "
+            f"all_gather took {_s4_elapsed:.3f}s, "
+            f"effective_bw={max_nbytes * pp_size / _s4_elapsed / (1024**3):.2f}GB/s"
+        )
 
         # ── Step 5: pp_rank=0 unflattens received bytes ───────────────────────
         if pp_rank == 0:
@@ -1656,6 +1866,15 @@ class FSDPEngine(TrainEngine):
                 f"[FSDPEngine Rank {global_rank}] Step 5 done: "
                 f"merged state dict has {len(merged)} parameters"
             )
+
+            # --- [PP_DIAG] 完整性校验 ---
+            _n_unique = len(set(merged.keys()))
+            logger.info(
+                f"[PP_DIAG][Rank {global_rank}] gather Step 5: "
+                f"merged n_params={len(merged)}, n_unique={_n_unique}, "
+                f"duplicates={len(merged) - _n_unique}"
+            )
+
             return merged
 
         else:
@@ -1831,8 +2050,24 @@ class FSDPEngine(TrainEngine):
         # then rank 0 broadcasts the complete model to inference engine.
         # ================================================================
         if self._pp_model_parts is not None and self.pp_group is not None:
+            # --- [PP_DIAG] 权重同步 PP 路径 ---
+            self.logger.info(
+                f"[PP_DIAG] weight_update PP path: "
+                f"main_rank={main_rank}, "
+                f"n_model_parts={len(self._pp_model_parts)}, "
+                f"pp_size={self.parallel_helper.pp_size}"
+            )
+            import time as _time_wu
+            _wu_t0 = _time_wu.perf_counter()
+
             options = StateDictOptions(full_state_dict=True, cpu_offload=True)
             full_state_dict = self._gather_pp_full_state_dict(options)
+
+            _wu_elapsed = _time_wu.perf_counter() - _wu_t0
+            self.logger.info(
+                f"[PP_DIAG] weight_update: gather took {_wu_elapsed:.3f}s, "
+                f"state_dict_keys={len(full_state_dict)}"
+            )
 
             if main_rank:
                 # Apply name mapping and broadcast
@@ -1841,6 +2076,11 @@ class FSDPEngine(TrainEngine):
                     for name, tensor in full_state_dict.items()
                     if not self.config.use_lora or "lora" in name.lower()
                 ]
+                # --- [PP_DIAG] ---
+                self.logger.info(
+                    f"[PP_DIAG] weight_update: broadcasting "
+                    f"{len(mapped_params)} mapped params to inference engine"
+                )
                 try:
                     for name, tensor in mapped_params:
                         # _gather_pp_full_state_dict returns CPU tensors
