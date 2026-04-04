@@ -1671,7 +1671,12 @@ class FSDPEngine(TrainEngine):
 
         Args:
             options: StateDictOptions for get_model_state_dict. Defaults to
-                     full_state_dict=True, cpu_offload=True.
+                     full_state_dict=True, cpu_offload=False.
+                     NOTE: cpu_offload MUST be False here. When cpu_offload=True,
+                     PyTorch's _iterate_state_dict uses ranks_only=(0,) which only
+                     returns results on global rank 0 and discards results on all
+                     other ranks. This causes PP ranks != global rank 0 to lose
+                     their local parameters.
 
         Returns:
             On pp_rank=0: complete merged state dict (CPU tensors).
@@ -1683,7 +1688,13 @@ class FSDPEngine(TrainEngine):
         logger = logging.getLogger("FSDPEngine")
 
         if options is None:
-            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+            # CRITICAL: cpu_offload must be False!
+            # When cpu_offload=True, PyTorch internally sets ranks_only=(0,) in
+            # _maybe_full_or_cpu_state_dict(), which means only global rank 0
+            # receives the state dict; all other ranks get an empty dict {}.
+            # In a PP setup, this causes non-global-rank-0 PP ranks to contribute
+            # 0 parameters, resulting in an incomplete merged state dict.
+            options = StateDictOptions(full_state_dict=True, cpu_offload=False)
 
         pp_rank = self.parallel_helper.pp_rank
         pp_size = self.parallel_helper.pp_size
@@ -1862,6 +1873,13 @@ class FSDPEngine(TrainEngine):
                 )
 
             del gathered_buffers
+
+            # CPU offload the merged state dict (since we disabled cpu_offload
+            # in StateDictOptions, tensors are still on GPU at this point)
+            for key in merged:
+                if merged[key].device.type != "cpu":
+                    merged[key] = merged[key].cpu()
+
             logger.info(
                 f"[FSDPEngine Rank {global_rank}] Step 5 done: "
                 f"merged state dict has {len(merged)} parameters"
@@ -1879,6 +1897,10 @@ class FSDPEngine(TrainEngine):
 
         else:
             del gathered_buffers
+            # CPU offload local state dict
+            for key in local_state_dict:
+                if local_state_dict[key].device.type != "cpu":
+                    local_state_dict[key] = local_state_dict[key].cpu()
             return local_state_dict
 
     def _get_full_tensor(self, param: nn.Parameter) -> torch.Tensor:
@@ -2060,7 +2082,7 @@ class FSDPEngine(TrainEngine):
             import time as _time_wu
             _wu_t0 = _time_wu.perf_counter()
 
-            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+            options = StateDictOptions(full_state_dict=True, cpu_offload=False)
             full_state_dict = self._gather_pp_full_state_dict(options)
 
             _wu_elapsed = _time_wu.perf_counter() - _wu_t0
@@ -2211,19 +2233,20 @@ class FSDPEngine(TrainEngine):
             raise RuntimeError("Model not initialized")
         os.makedirs(path, exist_ok=True)
 
-        options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-
         if self._pp_model_parts is not None and self.pp_group is not None:
             # PP mode: gather from ALL PP ranks
+            options = StateDictOptions(full_state_dict=True, cpu_offload=False)
             state_dict = self._gather_pp_full_state_dict(options)
         elif self._pp_model_parts is not None:
             # PP model parts on single rank (pp_size=1 edge case)
+            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
             state_dict = {}
             for part in self._pp_model_parts:
                 inner = part.model if hasattr(part, "model") else part
                 part_state = get_model_state_dict(inner, options=options)
                 state_dict.update(part_state)
         else:
+            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
             state_dict = get_model_state_dict(self.model, options=options)
 
         if dist.get_rank() == 0:
