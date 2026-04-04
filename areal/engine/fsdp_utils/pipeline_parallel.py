@@ -624,14 +624,6 @@ class _EagerProcessingOutputChunks(list):
             f"input_shape={tuple(output.shape)}, dtype={output.dtype}"
         )
 
-        # Compute lm_head if skip_output_head was used
-        if self._output_head is not None:
-            output = _chunked_lm_head_forward(self._output_head, output)
-            _get_logger().info(
-                f"[PP_DIAG] EagerChunks[{idx}]: "
-                f"after_lm_head shape={tuple(output.shape)}"
-            )
-
         # Squeeze batch dim: [1, seq, X] -> [seq, X]
         if output.ndim == 3:
             output = output.squeeze(0)
