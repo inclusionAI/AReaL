@@ -1383,22 +1383,62 @@ class FSDPEngine(TrainEngine):
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
+    def _map_weight_update_name(
+        self, name: str, meta: WeightUpdateMeta
+    ) -> str:
+        """Map HF parameter name to inference engine parameter name."""
+        if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
+            if meta.gen_allocation.backend == "sglang":
+                new_name = name.replace("language_model.", "", 1)
+                if new_name.startswith("model.visual."):
+                    new_name = new_name.replace("model.", "", 1)
+                return new_name
+            new_name = name.replace("model.", "", 1)
+            if new_name.startswith("language_model."):
+                new_name = new_name.replace(
+                    "language_model.", "language_model.model.", 1
+                )
+            elif new_name.startswith("lm_head."):
+                new_name = f"language_model.{new_name}"
+            return new_name
+        elif self.is_vision_model and is_gemma3_model(self.model_config.model_type):
+            new_name = name.replace("model.", "", 1)
+            if new_name.startswith("language_model."):
+                new_name = new_name.replace(
+                    "language_model.", "language_model.model.", 1
+                )
+            elif new_name.startswith("lm_head."):
+                new_name = new_name.replace(
+                    "lm_head.", "language_model.lm_head.", 1
+                )
+            return new_name
+        return name
+
     def _get_model_name_parameters(
         self, meta: WeightUpdateMeta
     ) -> Iterator[tuple[str, nn.Parameter]]:
+        # ---- PP-aware: iterate ALL local model parts ----
+        if self._pp_model_parts is not None and len(self._pp_model_parts) > 1:
+            seen_names: set[str] = set()
+            for model_part in self._pp_model_parts:
+                inner = model_part.model if hasattr(model_part, "model") else model_part
+                for name, param in inner.named_parameters():
+                    if name in seen_names:
+                        continue
+                    seen_names.add(name)
+                    yield self._map_weight_update_name(name, meta), param
+            return
+
+        # ---- Original non-PP path (unchanged) ----
         name_params_iterator = self.model.named_parameters()
         if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
             for name, value in name_params_iterator:
                 if meta.gen_allocation.backend == "sglang":
-                    # SGLang 0.5.9 branch
-                    # LLM part: "model.language_model.norm.weight" -> "model.norm.weight"
-                    # Vision part: "model.visual.blocks.5.mlp.gate_proj.weight" -> "visual.blocks.5.mlp.gate_proj.weight"
                     new_name = name.replace("language_model.", "", 1)
                     if new_name.startswith("model.visual."):
                         new_name = new_name.replace("model.", "", 1)
                     yield new_name, value
                     continue
-                # vLLM 0.17.0 branch
                 new_name = name.replace("model.", "", 1)
                 if new_name.startswith("language_model."):
                     new_name = new_name.replace(
@@ -1421,6 +1461,75 @@ class FSDPEngine(TrainEngine):
                 yield new_name, value
         else:
             yield from name_params_iterator
+
+    def _gather_pp_full_state_dict(
+        self,
+        options: StateDictOptions | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Gather full state dict from ALL PP ranks via filesystem exchange.
+
+        Each PP rank:
+          1. Collects its local model parts' full state dicts (FSDP all-gather)
+          2. dp_head saves to a temporary file
+        Then rank 0 loads and merges all parts into a complete state dict.
+
+        Returns:
+            On rank 0: the complete merged state dict.
+            On other ranks: the local (partial) state dict.
+        """
+        import tempfile
+        import shutil
+
+        if options is None:
+            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+
+        pp_rank = self.parallel_helper.pp_rank
+        pp_size = self.parallel_helper.pp_size
+
+        # Step 1: Gather full state dict for local model parts
+        local_state_dict: dict[str, torch.Tensor] = {}
+        for part in self._pp_model_parts:
+            inner = part.model if hasattr(part, "model") else part
+            part_state = get_model_state_dict(inner, options=options)
+            local_state_dict.update(part_state)
+
+        # Step 2: dp_head of each PP rank saves to temp file
+        tmp_dir = os.path.join(
+            tempfile.gettempdir(),
+            f"_areal_pp_gather_{self.config.experiment_name}_{self.config.trial_name}",
+        )
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        dp_sp_group = self.world_mesh["dp_sp"].get_group()
+        dp_sp_ranks = dist.get_process_group_ranks(dp_sp_group)
+        is_dp_head = dist.get_rank() == min(dp_sp_ranks)
+
+        tmp_path = os.path.join(tmp_dir, f"pp_rank_{pp_rank}.pt")
+        if is_dp_head:
+            torch.save(local_state_dict, tmp_path)
+
+        dist.barrier(group=self.cpu_group)
+
+        # Step 3: Rank 0 loads and merges all PP ranks' state dicts
+        result = local_state_dict
+        if dist.get_rank() == 0:
+            merged: dict[str, torch.Tensor] = {}
+            for r in range(pp_size):
+                fpath = os.path.join(tmp_dir, f"pp_rank_{r}.pt")
+                part = torch.load(fpath, weights_only=True, map_location="cpu")
+                merged.update(part)
+            result = merged
+
+        # Cleanup
+        dist.barrier(group=self.cpu_group)
+        if is_dp_head:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        dist.barrier(group=self.cpu_group)
+        if dist.get_rank() == 0:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        return result
 
     def _get_full_tensor(self, param: nn.Parameter) -> torch.Tensor:
         """Get full tensor from a parameter, handling DTensor and CPU offloaded tensors."""
@@ -1558,9 +1667,11 @@ class FSDPEngine(TrainEngine):
 
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
-        """Broadcast parameters with single-pending-bucket pipelining."""
+        """Broadcast parameters with single-pending-bucket pipelining.
 
-        # Reset weight weight meta with local info
+        PP-aware: when PP is enabled, gathers parameters from all PP ranks
+        via _gather_pp_full_state_dict before broadcasting to inference engine.
+        """
         meta.nccl_master_address = self.weight_update_master_addr
         meta.nccl_master_port = self.weight_update_master_port
         meta.nccl_group_name = self.weight_update_group_name
@@ -1573,7 +1684,6 @@ class FSDPEngine(TrainEngine):
 
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
         broadcast_stream = None
-
         if (
             main_rank
             and current_platform.device_type == "cuda"
@@ -1585,58 +1695,99 @@ class FSDPEngine(TrainEngine):
         named_tensors: list[tuple[str, torch.Tensor]] = []
         pending_bucket: _PendingWeightUpdateBucket | None = None
 
-        if self.config.use_lora:
-            # For LoRA, only iterate over trainable LoRA parameters
-            param_iterator = (
-                (name, param)
-                for name, param in self._get_model_name_parameters(meta)
-                if param.requires_grad
-            )
-        else:
-            # For full model, iterate over all parameters
-            param_iterator = self._get_model_name_parameters(meta)
+        # ================================================================
+        # PP-aware path: gather full state_dict from all PP ranks first,
+        # then rank 0 broadcasts the complete model to inference engine.
+        # ================================================================
+        if self._pp_model_parts is not None and self.pp_group is not None:
+            options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+            full_state_dict = self._gather_pp_full_state_dict(options)
 
-        try:
-            for name, param in param_iterator:
-                # Ranks other than 0 only help to get the full tensor
-                tensor = self._get_full_tensor(param)
-                if not main_rank:
-                    continue
+            if main_rank:
+                # Apply name mapping and broadcast
+                mapped_params = [
+                    (self._map_weight_update_name(name, meta), tensor)
+                    for name, tensor in full_state_dict.items()
+                    if not self.config.use_lora or tensor.requires_grad
+                ]
+                try:
+                    for name, tensor in mapped_params:
+                        tensor_size = tensor.numel() * tensor.element_size()
+                        bucket_overflow = (
+                            buffer_size > 0
+                            and tensor_size + buffer_size > weight_chunked_mem_size
+                        )
+                        if bucket_overflow:
+                            if pending_bucket is not None:
+                                self._wait_pending_weight_update_bucket(pending_bucket)
+                                pending_bucket = None
+                            pending_bucket = (
+                                self._update_bucket_weights_from_distributed_async(
+                                    meta, named_tensors, stream=broadcast_stream,
+                                )
+                            )
+                            named_tensors = []
+                            buffer_size = 0
 
-                tensor_size = tensor.numel() * tensor.element_size()
-                bucket_overflow = (
-                    buffer_size > 0
-                    and tensor_size + buffer_size > weight_chunked_mem_size
-                )
-                if bucket_overflow:
-                    # Only middle buckets need drain+align before the next all-gather.
-                    if pending_bucket is not None:
+                        buffer_size += tensor_size
+                        named_tensors.append((name, tensor))
+
+                    if pending_bucket:
                         self._wait_pending_weight_update_bucket(pending_bucket)
                         pending_bucket = None
+                    if buffer_size > 0:
+                        self._update_bucket_weights_from_distributed(meta, named_tensors)
+                finally:
+                    if pending_bucket is not None:
+                        self._wait_pending_weight_update_bucket(pending_bucket)
 
-                    pending_bucket = self._update_bucket_weights_from_distributed_async(
-                        meta,
-                        named_tensors,
-                        stream=broadcast_stream,
+        # ================================================================
+        # Original non-PP path (unchanged)
+        # ================================================================
+        else:
+            if self.config.use_lora:
+                param_iterator = (
+                    (name, param)
+                    for name, param in self._get_model_name_parameters(meta)
+                    if param.requires_grad
+                )
+            else:
+                param_iterator = self._get_model_name_parameters(meta)
+
+            try:
+                for name, param in param_iterator:
+                    tensor = self._get_full_tensor(param)
+                    if not main_rank:
+                        continue
+
+                    tensor_size = tensor.numel() * tensor.element_size()
+                    bucket_overflow = (
+                        buffer_size > 0
+                        and tensor_size + buffer_size > weight_chunked_mem_size
                     )
+                    if bucket_overflow:
+                        if pending_bucket is not None:
+                            self._wait_pending_weight_update_bucket(pending_bucket)
+                            pending_bucket = None
+                        pending_bucket = (
+                            self._update_bucket_weights_from_distributed_async(
+                                meta, named_tensors, stream=broadcast_stream,
+                            )
+                        )
+                        named_tensors = []
+                        buffer_size = 0
 
-                    named_tensors = []
-                    buffer_size = 0
+                    buffer_size += tensor_size
+                    named_tensors.append((name, tensor))
 
-                buffer_size += tensor_size
-                named_tensors.append((name, tensor))
-
-            if pending_bucket:
-                self._wait_pending_weight_update_bucket(pending_bucket)
-                pending_bucket = None
-
-            # Process remaining parameters
-            if buffer_size > 0:
-                self._update_bucket_weights_from_distributed(meta, named_tensors)
-        finally:
-            if main_rank and pending_bucket is not None:
-                self._wait_pending_weight_update_bucket(pending_bucket)
-                pending_bucket = None
+                if pending_bucket:
+                    self._wait_pending_weight_update_bucket(pending_bucket)
+                    pending_bucket = None
+                if buffer_size > 0:
+                    self._update_bucket_weights_from_distributed(meta, named_tensors)
+            finally:
+                if main_rank and pending_bucket is not None:
+                    self._wait_pending_weight_update_bucket(pending_bucket)
 
         dist.barrier(group=self.cpu_group)
         if main_rank:
@@ -1677,28 +1828,28 @@ class FSDPEngine(TrainEngine):
         tokenizer: PreTrainedTokenizerFast | None,
         processor: ProcessorMixin | None,
     ):
-        """Save model in HuggingFace format."""
+        """Save model in HuggingFace format. PP-aware."""
         if self.model is None:
             raise RuntimeError("Model not initialized")
         os.makedirs(path, exist_ok=True)
 
-        # FSDP2 checkpoint saving
-        # Get full state dict with FSDP2
         options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-        if self._pp_model_parts is not None:
-            # PP: gather state dicts from all model parts' inner HF models
+
+        if self._pp_model_parts is not None and self.pp_group is not None:
+            # PP mode: gather from ALL PP ranks
+            state_dict = self._gather_pp_full_state_dict(options)
+        elif self._pp_model_parts is not None:
+            # PP model parts on single rank (pp_size=1 edge case)
             state_dict = {}
             for part in self._pp_model_parts:
-                inner_model = part.model if hasattr(part, "model") else part
-                part_state = get_model_state_dict(inner_model, options=options)
+                inner = part.model if hasattr(part, "model") else part
+                part_state = get_model_state_dict(inner, options=options)
                 state_dict.update(part_state)
         else:
             state_dict = get_model_state_dict(self.model, options=options)
 
-        # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
-            # For PP, use the first model part's inner model for save_pretrained
             save_model = self.model
             if self._pp_model_parts is not None and hasattr(
                 self._pp_model_parts[0], "model"
@@ -1710,6 +1861,7 @@ class FSDPEngine(TrainEngine):
                 tokenizer.save_pretrained(path)
             if processor is not None and not self.config.use_lora:
                 processor.save_pretrained(path)
+
         dist.barrier(group=self.cpu_group)
 
     def _load_model_from_hf(self, path: str):
