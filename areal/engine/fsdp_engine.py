@@ -808,7 +808,7 @@ class FSDPEngine(TrainEngine):
                 torch.zeros(batch_size, device=self.device, dtype=torch.long)
             )
 
-        # --- Fix 14: Pad all microbatch input_ids to uniform sequence length ---
+        # --- Pad all microbatch input_ids to uniform sequence length ---
         # PP schedule's step()/eval() calls torch.tensor_split on a single batched
         # tensor, which requires all chunks to have the same shape on non-batch dims.
         # Since pad_mb_list pads each microbatch to its nearest bucket (not global max),
@@ -1466,29 +1466,29 @@ class FSDPEngine(TrainEngine):
         self,
         options: StateDictOptions | None = None,
     ) -> dict[str, torch.Tensor]:
-        """Gather full state dict from ALL PP ranks via NCCL communication.
+        """Gather full state dict from ALL PP ranks via NCCL collective.
 
         Protocol:
           1. Each PP rank does FSDP all-gather for its local model parts.
           2. Metadata exchange via dist.gather_object (param names, shapes, dtypes).
-          3. Buffer size exchange via dist.all_gather.
-          4. Data exchange: non-zero pp_ranks flatten their tensors into a contiguous
-             byte buffer and send to pp_rank=0 via dist.send/recv.
+          3. Each rank flattens local tensors into a contiguous byte buffer.
+          4. Size exchange via dist.all_gather, then data exchange via dist.all_gather
+             (collective, avoids NCCL P2P communicator initialization issues).
           5. pp_rank=0 unflattens received bytes into tensors using the metadata.
 
-        Communication cost:
-          - 1 gather_object call (CPU, lightweight metadata only)
-          - 1 all_gather call (8 bytes per rank, GPU)
-          - 1 send + 1 recv per non-zero PP rank (~model_size/pp_size bytes each)
-
         Args:
-            options: StateDictOptions for get_model_state_dict.
-                     Defaults to full_state_dict=True, cpu_offload=True.
+            options: StateDictOptions for get_model_state_dict. Defaults to
+                     full_state_dict=True, cpu_offload=True.
 
         Returns:
-            On pp_rank=0 (within each PP group): complete merged state dict (CPU).
-            On other pp_ranks: local (partial) state dict (CPU).
+            On pp_rank=0: complete merged state dict (CPU tensors).
+            On other pp_ranks: local (partial) state dict (CPU tensors).
         """
+        from torch.distributed.checkpoint.state_dict import StateDictOptions
+        import logging
+
+        logger = logging.getLogger("FSDPEngine")
+
         if options is None:
             options = StateDictOptions(full_state_dict=True, cpu_offload=True)
 
@@ -1496,74 +1496,138 @@ class FSDPEngine(TrainEngine):
         pp_size = self.parallel_helper.pp_size
         pp_group = self.pp_group
         device = self.device
+        global_rank = dist.get_rank()
 
-        # ── Step 1: FSDP all-gather for local model parts ──────────────────
+        # ── Step 1: FSDP all-gather for local model parts ──────────────────────
+        logger.info(
+            f"[FSDPEngine Rank {global_rank}] _gather_pp_full_state_dict: "
+            f"Step 1 start (pp_rank={pp_rank}, pp_size={pp_size})"
+        )
         local_state_dict: dict[str, torch.Tensor] = {}
-        for part in self._pp_model_parts:
+        for i, part in enumerate(self._pp_model_parts):
             inner = part.model if hasattr(part, "model") else part
             part_state = get_model_state_dict(inner, options=options)
+            logger.info(
+                f"[FSDPEngine Rank {global_rank}] Part {i}: "
+                f"got {len(part_state)} parameters from get_model_state_dict"
+            )
             local_state_dict.update(part_state)
+
+        logger.info(
+            f"[FSDPEngine Rank {global_rank}] Step 1 done: "
+            f"local_state_dict has {len(local_state_dict)} parameters"
+        )
 
         if pp_size <= 1:
             return local_state_dict
 
-        # ── Step 2: Metadata exchange ──────────────────────────────────────
-        # Ordered list of (name, shape, dtype_str) -- order determines flatten layout
+        # ── Step 2: Metadata exchange ──────────────────────────────────────────
         param_names = list(local_state_dict.keys())
-        local_meta: list[tuple[str, tuple[int, ...], str]] = [
+        local_meta = [
             (name, tuple(local_state_dict[name].shape), str(local_state_dict[name].dtype))
             for name in param_names
         ]
 
+        # gather_object dst uses global rank; get the global rank of pp_rank=0
+        pp_global_ranks = dist.get_process_group_ranks(pp_group)
+        pp_rank0_global = pp_global_ranks[0]
+
         gathered_meta: list[list[tuple] | None] | None
         if pp_rank == 0:
             gathered_meta = [None] * pp_size
-            dist.gather_object(local_meta, gathered_meta, dst=0, group=pp_group)
+            dist.gather_object(local_meta, gathered_meta, dst=pp_rank0_global, group=pp_group)
         else:
-            dist.gather_object(local_meta, None, dst=0, group=pp_group)
+            dist.gather_object(local_meta, None, dst=pp_rank0_global, group=pp_group)
             gathered_meta = None
 
-        # ── Step 3: Flatten local tensors into a contiguous byte buffer ────
-        # Concatenate all tensors as raw bytes (uint8), preserving original dtypes.
+        logger.info(f"[FSDPEngine Rank {global_rank}] Step 2 done: metadata exchanged")
+
+        # ── Step 3: Flatten local tensors into a contiguous byte buffer ────────
         byte_chunks: list[torch.Tensor] = []
         for name in param_names:
             t = local_state_dict[name]
             if t.device.type == "cpu":
                 t = t.to(device, non_blocking=True)
+            # reshape(-1) first to flatten to 1D, then view as uint8.
+            # Without reshape(-1), a 2D weight [768,768] becomes 2D uint8 [768,1536]
+            # while a 1D bias [768] becomes 1D uint8 [1536], and torch.cat fails.
             byte_chunks.append(t.contiguous().reshape(-1).view(torch.uint8))
 
         if byte_chunks:
-            current_platform.synchronize()  # Ensure non_blocking transfers complete
             flat_bytes = torch.cat(byte_chunks)
         else:
             flat_bytes = torch.empty(0, dtype=torch.uint8, device=device)
 
         local_nbytes = flat_bytes.numel()
+        logger.info(
+            f"[FSDPEngine Rank {global_rank}] Step 3 done: "
+            f"flat_bytes = {local_nbytes} bytes ({local_nbytes / 1024 / 1024:.2f} MB)"
+        )
 
-        # Exchange buffer sizes so pp_rank=0 can allocate recv buffers
+        # ── Step 3.5: Exchange buffer sizes ────────────────────────────────────
         size_tensor = torch.tensor([local_nbytes], dtype=torch.long, device=device)
         all_sizes = [
             torch.zeros(1, dtype=torch.long, device=device) for _ in range(pp_size)
         ]
         dist.all_gather(all_sizes, size_tensor, group=pp_group)
 
-        # ── Step 4: NCCL tensor exchange ───────────────────────────────────
+        size_list = [s.item() for s in all_sizes]
+        logger.info(
+            f"[FSDPEngine Rank {global_rank}] Step 3.5 done: "
+            f"all_sizes = {size_list}"
+        )
+
+        # ── Step 4: Collective data exchange via all_gather ────────────────────
+        # Using all_gather (collective) instead of send/recv (P2P) to avoid
+        # NCCL P2P communicator lazy initialization deadlock.
+        max_nbytes = max(size_list)
+
+        if max_nbytes == 0:
+            logger.warning(
+                f"[FSDPEngine Rank {global_rank}] "
+                "All PP ranks have empty state dicts, skipping gather"
+            )
+            return local_state_dict
+
+        # Pad local buffer to uniform max size (required by all_gather)
+        padded = torch.zeros(max_nbytes, dtype=torch.uint8, device=device)
+        if local_nbytes > 0:
+            padded[:local_nbytes] = flat_bytes
+        del flat_bytes  # Free GPU memory
+
+        # all_gather: every rank gets all padded buffers
+        gathered_buffers = [
+            torch.empty(max_nbytes, dtype=torch.uint8, device=device)
+            for _ in range(pp_size)
+        ]
+
+        logger.info(
+            f"[FSDPEngine Rank {global_rank}] Step 4: all_gather start, "
+            f"buffer_size={max_nbytes} bytes ({max_nbytes / 1024 / 1024:.2f} MB)"
+        )
+        dist.all_gather(gathered_buffers, padded, group=pp_group)
+        del padded  # Free GPU memory
+
+        logger.info(f"[FSDPEngine Rank {global_rank}] Step 4 done: all_gather complete")
+
+        # ── Step 5: pp_rank=0 unflattens received bytes ───────────────────────
         if pp_rank == 0:
             merged = dict(local_state_dict)
 
             for src_pp in range(1, pp_size):
-                remote_nbytes = all_sizes[src_pp].item()
+                remote_nbytes = size_list[src_pp]
                 if remote_nbytes == 0:
+                    logger.warning(
+                        f"[FSDPEngine Rank {global_rank}] "
+                        f"pp_rank {src_pp} has 0 bytes, skipping unflatten"
+                    )
                     continue
 
-                # Single NCCL recv for the entire flat byte buffer from src_pp
-                recv_buffer = torch.empty(
-                    remote_nbytes, dtype=torch.uint8, device=device
-                )
-                dist.recv(recv_buffer, src=src_pp, group=pp_group)
+                recv_data = gathered_buffers[src_pp][:remote_nbytes]
 
-                # Unflatten: walk through metadata and slice the byte buffer
+                # Walk through metadata and slice the byte buffer
                 offset = 0
+                param_count = 0
                 for name, shape, dtype_str in gathered_meta[src_pp]:
                     dtype = getattr(torch, dtype_str.replace("torch.", ""))
                     elem_size = torch.tensor([], dtype=dtype).element_size()
@@ -1573,21 +1637,29 @@ class FSDPEngine(TrainEngine):
                     nbytes = numel * elem_size
 
                     tensor = (
-                        recv_buffer[offset : offset + nbytes]
+                        recv_data[offset : offset + nbytes]
                         .view(dtype)
                         .reshape(shape)
                         .cpu()
                     )
                     offset += nbytes
                     merged[name] = tensor
+                    param_count += 1
 
-                del recv_buffer  # Release GPU memory immediately
+                logger.info(
+                    f"[FSDPEngine Rank {global_rank}] "
+                    f"Unflattened {param_count} params from pp_rank {src_pp}"
+                )
 
+            del gathered_buffers
+            logger.info(
+                f"[FSDPEngine Rank {global_rank}] Step 5 done: "
+                f"merged state dict has {len(merged)} parameters"
+            )
             return merged
 
         else:
-            # Non-zero pp_ranks send their flat byte buffer to pp_rank=0
-            dist.send(flat_bytes, dst=0, group=pp_group)
+            del gathered_buffers
             return local_state_dict
 
     def _get_full_tensor(self, param: nn.Parameter) -> torch.Tensor:
@@ -1755,7 +1827,7 @@ class FSDPEngine(TrainEngine):
         pending_bucket: _PendingWeightUpdateBucket | None = None
 
         # ================================================================
-        # PP-aware path: gather full state_dict from all PP ranks first,
+        # PP-aware path: gather full state_dict from all PP ranks via NCCL,
         # then rank 0 broadcasts the complete model to inference engine.
         # ================================================================
         if self._pp_model_parts is not None and self.pp_group is not None:
@@ -1763,6 +1835,7 @@ class FSDPEngine(TrainEngine):
             full_state_dict = self._gather_pp_full_state_dict(options)
 
             if main_rank:
+                # Apply name mapping and broadcast
                 mapped_params = [
                     (self._map_weight_update_name(name, meta), tensor)
                     for name, tensor in full_state_dict.items()
@@ -1770,9 +1843,10 @@ class FSDPEngine(TrainEngine):
                 ]
                 try:
                     for name, tensor in mapped_params:
-                        # ★ FIX: _gather_pp_full_state_dict returns CPU tensors
-                        # (cpu_offload=True), but _update_bucket_weights_from_distributed_async
-                        # uses dist.broadcast which requires GPU tensors for NCCL backend.
+                        # _gather_pp_full_state_dict returns CPU tensors
+                        # (cpu_offload=True), but downstream dist.broadcast
+                        # in _update_bucket_weights_from_distributed_async
+                        # requires GPU tensors for the NCCL backend.
                         if tensor.device.type == "cpu":
                             tensor = tensor.to(self.device)
 
