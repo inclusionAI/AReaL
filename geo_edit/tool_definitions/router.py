@@ -44,8 +44,6 @@ TOOL_CATEGORIES = {
     "chart": ["chart_reasoning", "chart_data_extract", "chart_trend_analysis", "chart_text_ocr", "chartr1"],
     "map": ["text_spotting", "map_text_ocr"],
     "document": ["seal_ocr"],
-    "ocr": ["text_ocr", "table_ocr", "formula_ocr", "chart_text_ocr", "text_spotting", "seal_ocr", "map_text_ocr"],
-    "segment": ["auto_segment", "bbox_segment", "text_segment", "exemplar_segment", "concept_count", "presence_check"],
     "reasoning": ["visual_reasoning"],
 }
 

@@ -23,6 +23,7 @@ from geo_edit.datasets.input_template import (
     FIGUREQA_NOTOOL_INPUT_TEMPLATE,
     REASONMAP_INPUT_TEMPLATE,
     REASONMAP_NOTOOL_INPUT_TEMPLATE,
+    REASONMAP_SEPARATED_TEMPLATE,
     MAPEVAL_VISUAL_ANSWER_FORMAT,
     MAPEVAL_VISUAL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE,
@@ -358,8 +359,8 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
     # Merged from FSCCS/ReasonMap-Plus (test) and FSCCS/ReasonMap-Train (train).
     # Planning tasks are excluded during preprocessing; only Counting1/2/3 and
     # TorF1/2 question types are kept.
-    "reasonmap": DatasetSpec(
-        name="reasonmap",
+    "reason_map_plus": DatasetSpec(
+        name="reason_map_plus",
         id_key="id",
         answer_key=_get_reasonmap_answer,
         image_key="image",
@@ -377,6 +378,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
                 "country": item.get("country", ""),
             },
         },
+        separated_prompt_template=REASONMAP_SEPARATED_TEMPLATE,
     ),
     "figureqa": DatasetSpec(
         name="figureqa",
