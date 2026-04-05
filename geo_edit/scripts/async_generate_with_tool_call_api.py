@@ -22,7 +22,9 @@ from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter, format_tool_declarations_text
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
-from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
+from geo_edit.environment.task.openai_compatible_vision_qa_task import (
+    OpenAICompatibleVisionQATask,
+)
 from geo_edit.utils.logger import setup_logger
 from geo_edit.utils.stats import save_global_meta_info
 
@@ -53,8 +55,19 @@ def _init_worker(
     use_tools: str,  # "auto", "force", or "direct"
 ):
     from typing import cast, Literal
+
     tool_mode = cast(Literal["auto", "force", "direct"], use_tools)
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_API_MODE, _WORKER_TOOL_ROUTER, _WORKER_ACTION_TAG_MODE
+    global \
+        _WORKER_AGENT, \
+        _WORKER_AGENT_CONFIGS, \
+        _WORKER_OUTPUT_PATH, \
+        _WORKER_MAX_TOOL_CALLS, \
+        _WORKER_TASK_CLASS, \
+        _WORKER_MODEL_TYPE, \
+        _WORKER_SYSTEM_PROMPT, \
+        _WORKER_API_MODE, \
+        _WORKER_TOOL_ROUTER, \
+        _WORKER_ACTION_TAG_MODE
 
     # Initialize tool router with tool_mode
     # ToolRouter reads config.yaml to determine which tools are enabled
@@ -85,9 +98,7 @@ def _init_worker(
             f"{TOOL_CALL_SYSTEM_PROMPT.strip()}\n\n"
             f"Available tools:\n{tool_defs_text}\n\n"
             f"Use this format for tool calls:\n"
-            f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>\n\n'
-            f"When you have the final answer:\n"
-            f"<answer>your answer here</answer>"
+            f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>'
         )
         # Build config WITHOUT tools in API params (use a direct-mode router)
         no_tool_router = ToolRouter(tool_mode="direct", skip_agent_init=True)
@@ -169,7 +180,12 @@ def _run_one_task(task_payload: dict):
         return True, meta_info
 
     # Map model_type to lowercase for VisionQATask
-    model_type_map = {"Google": "google", "OpenAI": "openai", "vLLM": "vllm", "SGLang": "sglang"}
+    model_type_map = {
+        "Google": "google",
+        "OpenAI": "openai",
+        "vLLM": "vllm",
+        "SGLang": "sglang",
+    }
     model_type = model_type_map.get(_WORKER_MODEL_TYPE, "openai")
 
     task_kwargs = {"model_type": model_type}
@@ -205,21 +221,33 @@ def _run_one_task(task_payload: dict):
     try:
         for i in range(_WORKER_MAX_TOOL_CALLS):
             action, extra_info = _WORKER_AGENT.act(task.contents)
-            function_call_part_list = task.parse_action(step=i + 1, action=action, extra_info=extra_info)
+            function_call_part_list = task.parse_action(
+                step=i + 1, action=action, extra_info=extra_info
+            )
 
             if not function_call_part_list:
                 break
 
             task.update_observation_from_action(function_call_part_list)
 
-        if task.state and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS and _WORKER_TOOL_ROUTER.tool_mode != "direct":
-            logger.info(f"[{task_id}] reached max tool calls {_WORKER_MAX_TOOL_CALLS}, forcing final answer.")
+        if (
+            task.state
+            and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS
+            and _WORKER_TOOL_ROUTER.tool_mode != "direct"
+        ):
+            logger.info(
+                f"[{task_id}] reached max tool calls {_WORKER_MAX_TOOL_CALLS}, forcing final answer."
+            )
             force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
             task.append_prompt(force_prompt)
-            _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_final_generate_config
+            _WORKER_AGENT.config.generate_config = (
+                _WORKER_AGENT_CONFIGS.force_final_generate_config
+            )
             action, extra_info = _WORKER_AGENT.act(task.contents)
             _WORKER_AGENT.config.generate_config = original_generate_config
-            task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
+            task.parse_action(
+                step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info
+            )
 
         if task.state:
             meta_info = task.save_trajectory()
@@ -235,20 +263,78 @@ def _run_one_task(task_payload: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate content with tool calls using API models (multiprocess).")
-    parser.add_argument("--api_key", type=str, default=None, help="API key for the selected provider.")
-    parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
-    parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()), help="Dataset adapter name.")
-    parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
-    parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
-    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM", "SGLang"], help="Model provider.")
-    parser.add_argument("--use_tools", type=str, default="auto", choices=["direct", "auto", "force"], help="Tool mode: 'auto' = optional tool use, 'force' = require tool call, 'direct' = no tools")
-    parser.add_argument("--api_base", type=str, default=None, help="Base URL for OpenAI/vLLM/SGLang OpenAI-compatible server.")
-    parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
-    parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
-    parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
-    parser.add_argument("--n_trajectories", type=int, default=1, help="Number of trajectories to generate per task.")
-    parser.add_argument("--node_resource", type=str, default=None, help="Ray custom resource name to schedule Tool Agents on specific nodes (e.g., 'tool_agent').")
+    parser = argparse.ArgumentParser(
+        description="Generate content with tool calls using API models (multiprocess)."
+    )
+    parser.add_argument(
+        "--api_key", type=str, default=None, help="API key for the selected provider."
+    )
+    parser.add_argument(
+        "--dataset_path", type=str, required=True, help="Path to the dataset file."
+    )
+    parser.add_argument(
+        "--dataset_name",
+        type=str,
+        required=True,
+        choices=sorted(DATASET_SPECS.keys()),
+        help="Dataset adapter name.",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        required=True,
+        help="Path to save the output JSONL file.",
+    )
+    parser.add_argument(
+        "--model_name_or_path",
+        type=str,
+        default="gemini-3-pro-preview",
+        help="Model name or path.",
+    )
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="Google",
+        choices=["Google", "OpenAI", "vLLM", "SGLang"],
+        help="Model provider.",
+    )
+    parser.add_argument(
+        "--use_tools",
+        type=str,
+        default="auto",
+        choices=["direct", "auto", "force"],
+        help="Tool mode: 'auto' = optional tool use, 'force' = require tool call, 'direct' = no tools",
+    )
+    parser.add_argument(
+        "--api_base",
+        type=str,
+        default=None,
+        help="Base URL for OpenAI/vLLM/SGLang OpenAI-compatible server.",
+    )
+    parser.add_argument(
+        "--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server."
+    )
+    parser.add_argument(
+        "--max_concurrent_requests",
+        type=int,
+        default=8,
+        help="Number of worker processes (agent pool).",
+    )
+    parser.add_argument(
+        "--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset."
+    )
+    parser.add_argument(
+        "--n_trajectories",
+        type=int,
+        default=1,
+        help="Number of trajectories to generate per task.",
+    )
+    parser.add_argument(
+        "--node_resource",
+        type=str,
+        default=None,
+        help="Ray custom resource name to schedule Tool Agents on specific nodes (e.g., 'tool_agent').",
+    )
     args = parser.parse_args()
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
@@ -268,7 +354,10 @@ def main():
     dataset_spec = get_dataset_spec(args.dataset_name)
     tool_mode = args.use_tools
     if tool_mode == "direct" and dataset_spec.notool_prompt_template is None:
-        logger.warning("Dataset %s has no no-tool template; using tool template.", dataset_spec.name)
+        logger.warning(
+            "Dataset %s has no no-tool template; using tool template.",
+            dataset_spec.name,
+        )
 
     # 1 main process scan: collect done meta_info + pending (task, traj_id) pairs
     n_trajectories = args.n_trajectories
@@ -355,12 +444,22 @@ def main():
                 text_only = dataset_spec.image_key is None
                 if dataset_spec.image_key:
                     raw_image = item.get(dataset_spec.image_key)
-                    images = raw_image if isinstance(raw_image, list) else [raw_image] if raw_image is not None else []
+                    images = (
+                        raw_image
+                        if isinstance(raw_image, list)
+                        else [raw_image]
+                        if raw_image is not None
+                        else []
+                    )
 
                     def _save_one(img, path):
                         if isinstance(img, Image.Image):
                             img.save(path)
-                        elif isinstance(img, dict) and "bytes" in img and isinstance(img["bytes"], (bytes, bytearray)):
+                        elif (
+                            isinstance(img, dict)
+                            and "bytes" in img
+                            and isinstance(img["bytes"], (bytes, bytearray))
+                        ):
                             Image.open(BytesIO(img["bytes"])).save(path)
                         elif isinstance(img, bytes):
                             Image.open(BytesIO(img)).save(path)
@@ -374,7 +473,9 @@ def main():
                     elif len(images) > 1:
                         image_path = []
                         for img_idx, img in enumerate(images):
-                            p = os.path.join(task_base_dir, f"input_image_{img_idx}.png")
+                            p = os.path.join(
+                                task_base_dir, f"input_image_{img_idx}.png"
+                            )
                             if not os.path.exists(p):
                                 _save_one(img, p)
                             image_path.append(p)

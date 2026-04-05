@@ -78,6 +78,8 @@ def convert_trajectory(
         shutil.copy2(input_src, os.path.join(dst_images_dir, dst_name))
         images.append(f"images/{dst_name}")
 
+    observation_counter = len(input_image_paths)
+
     i = 0
     n = len(trajectory)
 
@@ -87,19 +89,17 @@ def convert_trajectory(
 
     first_user = trajectory[i]
     question_text = get_text_from_content(first_user["content"])
-    # Remove "Observation 0:" prefix
-    question_text = re.sub(r"^Observation\s+\d+:\s*\n?", "", question_text).strip()
+    # Strip all "Observation N:" prefixes from the extracted text
+    question_text_clean = re.sub(r"Observation\s+\d+:\s*\n?", "", question_text).strip()
     # Remove duplicate "Question:" prefix (original dataset may already contain it)
-    question_text = re.sub(r"^(Question:\s*)+", "Question: ", question_text)
+    question_text_clean = re.sub(r"^(Question:\s*)+", "Question: ", question_text_clean)
 
-    first_user_value = (
-        f"Available tools:\n{tool_definitions_text}\n\n"
-        f"Use this format for tool calls:\n"
-        f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>\n\n'
-        f"{question_text}"
-    )
-    for _ in input_image_paths:
-        first_user_value += "\n<image>"
+    # Build first user message: Observation 0: <image> ... then question
+    # This matches the inference format in async_generate_with_tool_call_api.py
+    first_user_value = ""
+    for idx in range(len(input_image_paths)):
+        first_user_value += f"Observation {idx}:\n<image>\n"
+    first_user_value += question_text_clean
     conversations.append({"from": "human", "value": first_user_value})
     i += 1
 
@@ -233,7 +233,8 @@ def convert_trajectory(
                     images.append(f"images/{dst_name}")
 
                     feedback = "\n".join(user_texts).strip()
-                    value = "Tool executed successfully. New image produced.\n<image>"
+                    value = f"Tool executed successfully. New image produced.\nObservation {observation_counter}:\n<image>"
+                    observation_counter += 1
                     if feedback:
                         value += f"\n{feedback}"
                     conversations.append({"from": "human", "value": value})
@@ -295,15 +296,17 @@ def convert_trajectory(
 
     results = []
     for gpt_idx in gpt_indices:
-        sub_conv = copy.deepcopy(conversations[:gpt_idx + 1])
+        sub_conv = copy.deepcopy(conversations[: gpt_idx + 1])
         # Count <image> tags in truncated conversation to determine needed images
         image_count = sum(turn["value"].count("<image>") for turn in sub_conv)
         sub_images = images[:image_count]
-        results.append({
-            "conversations": sub_conv,
-            "images": sub_images,
-            "system": system_prompt,
-        })
+        results.append(
+            {
+                "conversations": sub_conv,
+                "images": sub_images,
+                "system": system_prompt,
+            }
+        )
 
     return results
 
@@ -383,7 +386,12 @@ def main():
     )
     declarations = tool_router.get_available_declarations()
     tool_definitions_text = format_tool_declarations_text(declarations)
-    system_prompt = TOOL_CALL_SYSTEM_PROMPT.strip()
+    system_prompt = (
+        f"{TOOL_CALL_SYSTEM_PROMPT.strip()}\n\n"
+        f"Available tools:\n{tool_definitions_text}\n\n"
+        f"Use this format for tool calls:\n"
+        f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>'
+    )
 
     print(f"Enabled tools: {[d['name'] for d in declarations]}")
 

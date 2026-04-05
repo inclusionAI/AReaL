@@ -13,8 +13,8 @@ if [ -z "${API_KEY:-}" ]; then
 fi
 
 DATASET_ROOT="/storage/openpsi/data/lcy_image_edit/VisWorld-Eval"
-OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/visworld_iterative_gpt5_0331"
-# SUBSETS=(ballgame cube maze )
+OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/visworld_iterative_gpt5_0403"
+#DONE SUBSETS=(ballgame multihop)
 # SUBSETS=(mmsi multihop paperfolding sokoban)
 SUBSETS=(ballgame)
 echo "============================================"
