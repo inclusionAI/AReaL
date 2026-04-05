@@ -23,11 +23,11 @@ import sys
 import time
 from io import BytesIO
 from typing import Optional, Tuple
-
+import PIL
 from datasets import load_dataset
 from PIL import Image
 from tqdm import tqdm
-
+PIL.IMAGE_MAX_IMAGE_PIXELS = None  # Disable PIL DecompressionBombError for large images
 from geo_edit.prompts.system_prompts import (
     SEPARATED_USER_PROMPT,
     ITERATIVE_EXTENDED_REASONING_PROMPT,

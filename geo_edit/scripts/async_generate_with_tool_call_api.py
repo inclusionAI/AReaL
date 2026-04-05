@@ -18,7 +18,7 @@ from geo_edit.config import (
 )
 from geo_edit.constants import MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
-from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
+from geo_edit.prompts.system_prompts import build_tool_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.tool_definitions import ToolRouter, format_tool_declarations_text
 from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
@@ -94,12 +94,7 @@ def _init_worker(
         # Build system prompt with tool definitions matching RL template
         declarations = _WORKER_TOOL_ROUTER.get_available_declarations()
         tool_defs_text = format_tool_declarations_text(declarations)
-        system_prompt = (
-            f"{TOOL_CALL_SYSTEM_PROMPT.strip()}\n\n"
-            f"Available tools:\n{tool_defs_text}\n\n"
-            f"Use this format for tool calls:\n"
-            f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>'
-        )
+        system_prompt = build_tool_system_prompt(tool_defs_text)
         # Build config WITHOUT tools in API params (use a direct-mode router)
         no_tool_router = ToolRouter(tool_mode="direct", skip_agent_init=True)
         agent_configs = build_api_agent_configs(

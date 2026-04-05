@@ -33,26 +33,13 @@ from geo_edit.config import build_api_agent_configs
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.environment.task.openai_compatible_vision_qa_task import OpenAICompatibleVisionQATask
 from geo_edit.tool_definitions import ToolRouter
+from geo_edit.prompts.system_prompts import VLLM_NO_TOOL_SYSTEM_PROMPT
 from geo_edit.utils.logger import setup_logger
 from geo_edit.utils.stats import save_global_meta_info
 
 logger = setup_logger(__name__)
 
-
-# =============================================================================
-# System Prompt - Edit directly
-# =============================================================================
-
-SYSTEM_PROMPT = """
-You are an advanced AI assistant capable of complex reasoning.
-You must strictly adhere to the following protocol:
-
-1. Reasoning Process: Before providing your answer, analyze the
-problem step by step. Output your reasoning inside <think> and </think> tags.
-
-2. Final Output: When you have formulated your conclusion,
-wrap your final answer in <answer> and </answer> tags.
-"""
+SYSTEM_PROMPT = VLLM_NO_TOOL_SYSTEM_PROMPT
 
 # Fixed parameters
 TEMPERATURE = 1.0

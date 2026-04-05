@@ -20,7 +20,7 @@ import shutil
 from collections import Counter
 
 from geo_edit.data_preprocess.trajectory_utils import get_text_from_content
-from geo_edit.prompts.system_prompts import TOOL_CALL_SYSTEM_PROMPT
+from geo_edit.prompts.system_prompts import build_tool_system_prompt
 from geo_edit.tool_definitions import ToolRouter, format_tool_declarations_text
 
 
@@ -386,12 +386,7 @@ def main():
     )
     declarations = tool_router.get_available_declarations()
     tool_definitions_text = format_tool_declarations_text(declarations)
-    system_prompt = (
-        f"{TOOL_CALL_SYSTEM_PROMPT.strip()}\n\n"
-        f"Available tools:\n{tool_definitions_text}\n\n"
-        f"Use this format for tool calls:\n"
-        f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>'
-    )
+    system_prompt = build_tool_system_prompt(tool_definitions_text)
 
     print(f"Enabled tools: {[d['name'] for d in declarations]}")
 

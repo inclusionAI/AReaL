@@ -297,3 +297,18 @@ def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
             return FORCE_TOOL_CALL_SYSTEM_PROMPT
         else:
             return TOOL_CALL_SYSTEM_PROMPT
+
+
+def build_tool_system_prompt(tool_definitions_text: str) -> str:
+    """Build the canonical tool system prompt with tool definitions.
+
+    This is the single source of truth for the system prompt used in both
+    SFT training data (convert_trajectory_to_sft) and inference
+    (async_generate_with_tool_call_api action_tag_mode).
+    """
+    return (
+        f"{TOOL_CALL_SYSTEM_PROMPT.strip()}\n\n"
+        f"Available tools:\n{tool_definitions_text}\n\n"
+        f"Use this format for tool calls:\n"
+        f'<action>{{"name": "tool_name", "arguments": {{"param1": "value1"}}}}</action>'
+    )
