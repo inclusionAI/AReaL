@@ -16,7 +16,7 @@ from geo_edit.config import (
     build_google_agent_configs,
     build_api_agent_configs,
 )
-from geo_edit.constants import MAX_TOOL_CALLS
+from geo_edit.constants import MAX_TOOL_CALLS as DEFAULT_MAX_TOOL_CALLS
 from geo_edit.prompts import get_system_prompt
 from geo_edit.prompts.system_prompts import build_tool_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
@@ -339,6 +339,12 @@ def main():
         help="Override enabled tools. Accepts tool names or categories. "
         "Examples: --enable_tools map text_ocr, --enable_tools image_highlight bounding_box",
     )
+    parser.add_argument(
+        "--max_tool_calls",
+        type=int,
+        default=DEFAULT_MAX_TOOL_CALLS,
+        help=f"Maximum number of tool calls per task (default: {DEFAULT_MAX_TOOL_CALLS}).",
+    )
     args = parser.parse_args()
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
@@ -410,7 +416,7 @@ def main():
             args.api_base,
             args.port,
             output_path,
-            MAX_TOOL_CALLS,
+            args.max_tool_calls,
             tool_mode,
             args.enable_tools,
         ),
