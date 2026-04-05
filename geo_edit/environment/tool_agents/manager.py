@@ -2,6 +2,7 @@
 
 import base64
 import inspect
+import itertools
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Type
 
@@ -18,19 +19,26 @@ _MANAGER: Optional["ToolAgentManager"] = None
 
 
 def get_manager() -> "ToolAgentManager":
-    """Get the singleton ToolAgentManager instance."""
     global _MANAGER
     if _MANAGER is None:
         _MANAGER = ToolAgentManager()
     return _MANAGER
 
 
+def _replica_names(base_name: str, num_replicas: int) -> List[str]:
+    if num_replicas <= 1:
+        return [base_name]
+    return [f"{base_name}_replica_{i}" for i in range(num_replicas)]
+
+
 class ToolAgentManager:
-    """Manages Tool Agent lifecycle: creation, calling, and shutdown."""
 
     def __init__(self):
         self._actors: Dict[str, ray.actor.ActorHandle] = {}
         self._configs: Dict[str, Dict[str, Any]] = {}
+        # base_name -> list of replica actor names (for round-robin dispatch)
+        self._replica_map: Dict[str, List[str]] = {}
+        self._robin: Dict[str, itertools.cycle] = {}
 
     def connect_to_existing_agents(
         self,
@@ -38,42 +46,38 @@ class ToolAgentManager:
         configs: Optional[Dict[str, Dict[str, Any]]] = None,
         ray_address: str = "auto",
     ) -> Dict[str, ray.actor.ActorHandle]:
-        """Connect to existing Ray actors by name.
-
-        This is useful for worker processes that need to access actors
-        created in the main process.
-
-        Args:
-            agent_names: List of agent names to connect to.
-            configs: Optional dict mapping agent names to their configs.
-                     If not provided, will use default configs from agents module.
-            ray_address: Ray cluster address.
-
-        Returns:
-            Dict mapping tool names to their actor handles.
-        """
         if not ray.is_initialized():
             ray.init(address=ray_address, namespace="tool_agent", ignore_reinit_error=True)
 
-        # Import AGENT_CONFIGS if configs not provided
         if configs is None:
             from geo_edit.tool_definitions.agents import AGENT_CONFIGS
             configs = AGENT_CONFIGS
 
-        for name in agent_names:
-            if name in self._actors:
+        for actor_name in agent_names:
+            if actor_name in self._actors:
                 continue
-
             try:
-                # Get actor by name from Ray namespace
-                actor = ray.get_actor(name, namespace="tool_agent")
-                self._actors[name] = actor
-                # Store config for this agent (needed for call() method)
-                if name in configs:
-                    self._configs[name] = configs[name]
-                logger.debug(f"Connected to existing actor: {name}")
+                actor = ray.get_actor(actor_name, namespace="tool_agent")
+                self._actors[actor_name] = actor
+
+                base_name = actor_name
+                for suffix_check in configs:
+                    if actor_name == suffix_check or actor_name.startswith(f"{suffix_check}_replica_"):
+                        base_name = suffix_check
+                        break
+
+                if base_name in configs:
+                    self._configs[base_name] = configs[base_name]
+                if base_name not in self._replica_map:
+                    self._replica_map[base_name] = []
+                self._replica_map[base_name].append(actor_name)
+
+                logger.debug(f"Connected to existing actor: {actor_name}")
             except ValueError:
-                logger.warning(f"Actor {name} not found in Ray cluster")
+                logger.warning(f"Actor {actor_name} not found in Ray cluster")
+
+        for base_name, replicas in self._replica_map.items():
+            self._robin[base_name] = itertools.cycle(replicas)
 
         return self._actors
 
@@ -83,58 +87,33 @@ class ToolAgentManager:
         ray_address: str = "auto",
         wait_for_ready: bool = True,
     ) -> Dict[str, ray.actor.ActorHandle]:
-        """Create Tool Agents from configuration dict.
-
-        Args:
-            configs: Dict mapping tool names to their configurations.
-                Each config must contain:
-                - model_name_or_path: str
-                - max_model_len: int
-                - gpu_memory_utilization: float
-                - temperature: float
-                - max_tokens: int
-                Optional:
-                - num_gpus: int (default 1)
-                - resources: Dict[str, float] for Ray scheduling
-            ray_address: Ray cluster address.
-            wait_for_ready: If True, wait for all agents to finish loading models.
-
-        Returns:
-            Dict mapping tool names to their actor handles.
-        """
         if not ray.is_initialized():
             ray.init(address=ray_address, namespace="tool_agent", ignore_reinit_error=True)
 
         new_actors = []
         for name, cfg in configs.items():
-            if name in self._actors:
+            if name in self._replica_map:
                 logger.info("Agent %s already exists, skipping", name)
                 continue
 
             self._configs[name] = cfg
 
-            # Build actor options
             num_gpus = cfg.get("num_gpus", 1)
+            num_replicas = cfg.get("num_replicas", 1)
             resources = cfg.get("resources")
 
             actor_options = {}
             if resources:
                 actor_options["resources"] = resources
 
-            # Get the Actor class for this agent
             ActorClass = get_actor_class(name)
 
-            # Inspect __init__ signature to determine required parameters
             init_sig = inspect.signature(ActorClass.__init__)
             init_params = set(init_sig.parameters.keys()) - {'self', 'kwargs'}
 
-            # Get system prompt from registry
             system_prompt = get_tool_agent_prompt(name)
 
-            # Build kwargs based on what the actor actually accepts
             actor_kwargs = {}
-
-            # Map config keys to parameter names
             param_mapping = {
                 'model_name': cfg.get("model_name_or_path"),
                 'max_model_len': cfg.get("max_model_len"),
@@ -144,37 +123,49 @@ class ToolAgentManager:
                 'system_prompt': system_prompt,
             }
 
-            # Only include parameters that the actor expects
             for param_name, param_value in param_mapping.items():
                 if param_name in init_params and param_value is not None:
                     actor_kwargs[param_name] = param_value
 
-            # Create Ray remote actor with the specific Actor class
-            # Use name= to make it discoverable via ray.get_actor()
             RemoteActorClass = ray.remote(num_gpus=num_gpus)(ActorClass)
-            actor = RemoteActorClass.options(name=name, **actor_options).remote(**actor_kwargs)
 
-            self._actors[name] = actor
-            new_actors.append((name, actor))
-            logger.info("Created tool agent: %s -> %s", name, cfg["model_name_or_path"])
+            replica_names = _replica_names(name, num_replicas)
+            self._replica_map[name] = replica_names
 
-        # Wait for all new agents to finish initialization
+            for replica_name in replica_names:
+                actor = RemoteActorClass.options(name=replica_name, **actor_options).remote(**actor_kwargs)
+                self._actors[replica_name] = actor
+                new_actors.append((replica_name, actor))
+
+            logger.info(
+                "Created tool agent: %s -> %s (x%d replicas)",
+                name, cfg["model_name_or_path"], num_replicas,
+            )
+
         if wait_for_ready and new_actors:
             logger.info("Waiting for %d tool agents to load models...", len(new_actors))
-            health_refs = [(name, actor.health_check.remote()) for name, actor in new_actors]
-            for name, ref in health_refs:
+            health_refs = [(n, a.health_check.remote()) for n, a in new_actors]
+            for n, ref in health_refs:
                 try:
                     ray.get(ref)
-                    logger.info("Tool agent %s is ready", name)
+                    logger.info("Tool agent %s is ready", n)
                 except Exception as e:
-                    logger.error("Tool agent %s failed to initialize: %s", name, e)
+                    logger.error("Tool agent %s failed to initialize: %s", n, e)
             logger.info("All tool agents are ready")
+
+        for base_name, replicas in self._replica_map.items():
+            self._robin[base_name] = itertools.cycle(replicas)
 
         return self._actors
 
     def get_actor(self, tool_name: str) -> Optional[ray.actor.ActorHandle]:
-        """Get actor handle by tool name."""
+        if tool_name in self._robin:
+            replica_name = next(self._robin[tool_name])
+            return self._actors.get(replica_name)
         return self._actors.get(tool_name)
+
+    def get_all_actor_names(self) -> List[str]:
+        return list(self._actors.keys())
 
     def call(
         self,
@@ -183,17 +174,6 @@ class ToolAgentManager:
         image_index: int,
         **kwargs,
     ) -> str:
-        """Call a Tool Agent to analyze an image.
-
-        Args:
-            tool_name: Name of the tool agent to call.
-            image_list: List of PIL images.
-            image_index: Index of the image to analyze.
-            **kwargs: Tool-specific parameters (e.g., question, text_prompt, mode, etc.).
-
-        Returns:
-            Analysis result as string.
-        """
         actor = self.get_actor(tool_name)
         if actor is None:
             return f"Error: Tool agent '{tool_name}' not found"
@@ -201,18 +181,14 @@ class ToolAgentManager:
         if image_index < 0 or image_index >= len(image_list):
             return f"Error: Invalid image index {image_index}"
 
-        # Convert image to base64
         image = image_list[image_index]
         buffer = BytesIO()
         image.save(buffer, format="JPEG")
         image_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-        # Get config for this agent
-        cfg = self._configs[tool_name]
+        cfg = self._configs.get(tool_name, {})
 
         try:
-            # Only pass temperature/max_tokens if they exist in config
-            # (some tools like grounding_dino and sam3 don't use them)
             if "temperature" in cfg and "max_tokens" in cfg:
                 result = ray.get(
                     actor.analyze.remote(
@@ -235,33 +211,33 @@ class ToolAgentManager:
             return f"Error: {e}"
 
     def shutdown(self, tool_names: Optional[List[str]] = None):
-        """Shutdown Tool Agents.
+        names_to_kill = []
+        if tool_names:
+            for name in tool_names:
+                names_to_kill.extend(self._replica_map.pop(name, [name]))
+                self._configs.pop(name, None)
+                self._robin.pop(name, None)
+        else:
+            names_to_kill = list(self._actors.keys())
+            self._replica_map.clear()
+            self._configs.clear()
+            self._robin.clear()
 
-        Args:
-            tool_names: List of tool names to shutdown. If None, shutdown all.
-        """
-        names = tool_names or list(self._actors.keys())
-        for name in names:
-            actor = self._actors.pop(name, None)
-            self._configs.pop(name, None)
+        for actor_name in names_to_kill:
+            actor = self._actors.pop(actor_name, None)
             if actor:
                 try:
                     ray.kill(actor)
-                    logger.info("Killed tool agent: %s", name)
+                    logger.info("Killed tool agent: %s", actor_name)
                 except Exception as e:
-                    logger.warning("Failed to kill %s: %s", name, e)
+                    logger.warning("Failed to kill %s: %s", actor_name, e)
 
     def status(self) -> Dict[str, Dict[str, Any]]:
-        """Get health status of all Tool Agents.
-
-        Returns:
-            Dict mapping tool names to their status.
-        """
-        status = {}
+        result = {}
         for name, actor in self._actors.items():
             try:
                 health = ray.get(actor.health_check.remote())
-                status[name] = {"status": "healthy", **health}
+                result[name] = {"status": "healthy", **health}
             except Exception as e:
-                status[name] = {"status": "error", "error": str(e)}
-        return status
+                result[name] = {"status": "error", "error": str(e)}
+        return result

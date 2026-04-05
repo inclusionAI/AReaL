@@ -235,9 +235,14 @@ def _run_one_task(task_payload: dict):
             if not function_call_part_list:
                 break
 
-            tool_names = [tc.name for tc in function_call_part_list]
-            logger.warning(f"[{task_id}] Step {i+1} tool calls: {tool_names}")
+            contents_before = len(task.contents) if isinstance(task.contents, list) else 0
             task.update_observation_from_action(function_call_part_list)
+            if isinstance(task.contents, list):
+                for msg in task.contents[contents_before:]:
+                    role = msg.get("role", "")
+                    text = msg.get("content", "") if isinstance(msg.get("content"), str) else ""
+                    if role == "tool" and text:
+                        logger.warning(f"[{task_id}] Step {i+1} tool result:\n{text[:500]}")
 
         if (
             task.state
@@ -382,11 +387,14 @@ def main():
         enable_tools=args.enable_tools,
         node_resource=args.node_resource or "tool_agent",
     )
-    enabled_agent_names = (
-        tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
-    )
+    if tool_router.is_agent_enabled():
+        from geo_edit.environment.tool_agents import get_manager
+        manager = get_manager()
+        enabled_agent_names = manager.get_all_actor_names()
+    else:
+        enabled_agent_names = []
     if enabled_agent_names:
-        logger.info(f"Initialized {len(enabled_agent_names)} shared Ray tool agents")
+        logger.info(f"Initialized {len(enabled_agent_names)} Ray tool actors")
 
     n_trajectories = args.n_trajectories
     meta_info_list = []

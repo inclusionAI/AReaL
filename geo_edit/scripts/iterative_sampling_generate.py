@@ -532,9 +532,12 @@ def main():
         enable_tools=args.enable_tools,
         node_resource=args.node_resource or "tool_agent",
     )
-    enabled_agent_names = (
-        tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
-    )
+    if tool_router.is_agent_enabled():
+        from geo_edit.environment.tool_agents import get_manager
+        manager = get_manager()
+        enabled_agent_names = manager.get_all_actor_names()
+    else:
+        enabled_agent_names = []
 
     if enabled_agent_names:
         logger.info(f"Initialized {len(enabled_agent_names)} shared Ray tool agents")

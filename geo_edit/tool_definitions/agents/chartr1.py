@@ -25,6 +25,7 @@ agent_config = {
     "temperature": 0.01,  # Chart-R1 recommendation
     "max_tokens": 2048,   # Chart-R1 recommendation
     "num_gpus": 1,
+    "num_replicas": 3, 
 }
 
 # Fixed prompts for different chart analysis modes
