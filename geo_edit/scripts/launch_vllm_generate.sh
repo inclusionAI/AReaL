@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-model_path="/storage/openpsi/models/GLM-4.1V-9B-Thinking"
+model_path="/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-chartqa/"
 echo "model: $model_path"
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=600
 mkdir -p /tmp/log/
