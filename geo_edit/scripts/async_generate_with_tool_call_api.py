@@ -53,6 +53,7 @@ def _init_worker(
     output_path: str,
     max_tool_calls: int,
     use_tools: str,  # "auto", "force", or "direct"
+    enable_tools: "list | None" = None,
 ):
     from typing import cast, Literal
 
@@ -72,7 +73,7 @@ def _init_worker(
     # Initialize tool router with tool_mode
     # ToolRouter reads config.yaml to determine which tools are enabled
     # use_tools controls: "auto"/"force" = use tools, "direct" = no tools
-    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode=tool_mode)
+    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode=tool_mode, enable_tools=enable_tools)
 
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
@@ -330,6 +331,14 @@ def main():
         default=None,
         help="Ray custom resource name to schedule Tool Agents on specific nodes (e.g., 'tool_agent').",
     )
+    parser.add_argument(
+        "--enable_tools",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Override enabled tools. Accepts tool names or categories. "
+        "Examples: --enable_tools map text_ocr, --enable_tools image_highlight bounding_box",
+    )
     args = parser.parse_args()
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
@@ -403,6 +412,7 @@ def main():
             output_path,
             MAX_TOOL_CALLS,
             tool_mode,
+            args.enable_tools,
         ),
     ) as pool:
         inflight = []  # list[(task_id, AsyncResult)]
