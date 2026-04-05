@@ -238,5 +238,5 @@ Please provide your final answer in <answer></answer> tags. For multiple choice 
 REASONMAP_SEPARATED_TEMPLATE = """\
 {question}
 
-For multiple choice questions, map the letter to a number: A=0, B=1, C=2, D=3, and provide only the number. For yes/no questions, answer 0 for No and 1 for Yes. For counting questions, provide the number directly.
+For multiple choice questions, provide only the letter (A, B, C, or D). For yes/no questions, answer Yes or No. For counting questions, provide the number.
 """
