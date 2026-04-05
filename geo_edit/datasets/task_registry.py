@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from geo_edit.datasets.input_template import (
     BABYVISION_INPUT_TEMPLATE,
@@ -50,8 +51,55 @@ class DatasetSpec:
     # Per-dataset tool usage guidance (injected in Phase 1 reasoning)
     # Can be a static string or a callable(item) -> Optional[str] for per-item guidance
     tool_guidance: "Optional[str | Callable[[Mapping[str, Any]], Optional[str]]]" = None
+    # Column to deduplicate images by (e.g. "city" for ReasonMap-Plus where
+    # 30 unique maps are shared across 2570 items). When set, prepare_images()
+    # saves each unique image once and drops the image column from the dataset.
+    image_dedup_key: Optional[str] = None
 
-    def get_tool_guidance(self, item: Optional[Mapping[str, Any]] = None) -> Optional[str]:
+    def prepare_images(self, dataset, output_dir: str) -> Tuple:
+        """Pre-save deduplicated images to disk, return (dataset, image_map).
+
+        When image_dedup_key is set, saves one copy per unique key value and
+        returns a mapping {item_id: image_path}. The image column is removed
+        so items in pending lists stay lightweight.
+
+        Returns (dataset, {}) unchanged when dedup is not applicable.
+        """
+        if (
+            not self.image_dedup_key
+            or not self.image_key
+            or self.image_key not in dataset.column_names
+            or self.image_dedup_key not in dataset.column_names
+        ):
+            return dataset, {}
+
+        from datasets import Image as HFImage
+
+        dataset = dataset.cast_column(self.image_key, HFImage(decode=False))
+        shared_dir = os.path.join(output_dir, "_shared_images")
+        os.makedirs(shared_dir, exist_ok=True)
+
+        image_map: Dict[str, str] = {}
+        saved_keys: set = set()
+        for item in dataset:
+            dedup_val = item[self.image_dedup_key]
+            item_id = str(item[self.id_key])
+            if dedup_val not in saved_keys:
+                raw = item[self.image_key]
+                if raw and isinstance(raw, dict) and raw.get("bytes"):
+                    path = os.path.join(shared_dir, f"{dedup_val}.png")
+                    if not os.path.exists(path):
+                        with open(path, "wb") as f:
+                            f.write(raw["bytes"])
+                    saved_keys.add(dedup_val)
+            image_map[item_id] = os.path.join(shared_dir, f"{dedup_val}.png")
+
+        dataset = dataset.remove_columns([self.image_key])
+        return dataset, image_map
+
+    def get_tool_guidance(
+        self, item: Optional[Mapping[str, Any]] = None
+    ) -> Optional[str]:
         """Get tool guidance string, resolving callable if needed."""
         if self.tool_guidance is None:
             return None
@@ -59,7 +107,9 @@ class DatasetSpec:
             return self.tool_guidance(item) if item is not None else None
         return self.tool_guidance
 
-    def build_prompt(self, item: Mapping[str, Any], use_tools: bool, separated: bool = False) -> str:
+    def build_prompt(
+        self, item: Mapping[str, Any], use_tools: bool, separated: bool = False
+    ) -> str:
         values: Dict[str, Any] = {}
         for template_key, source in self.template_fields.items():
             if callable(source):
@@ -119,7 +169,7 @@ def _format_babyvision_options(item: Mapping[str, Any]) -> str:
     options = item.get("options", [])
     if not options:
         return ""
-    option_lines = [f"{chr(65+i)}. {opt}" for i, opt in enumerate(options)]
+    option_lines = [f"{chr(65 + i)}. {opt}" for i, opt in enumerate(options)]
     return "Options:\n" + "\n".join(option_lines)
 
 
@@ -258,7 +308,9 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             "prompt": "prompt",
         },
         task_kwargs_fields={
-            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])} if "level_nodes" in item else {},
+            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])}
+            if "level_nodes" in item
+            else {},
         },
     ),
     "shortest_path_image": DatasetSpec(
@@ -272,7 +324,9 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             "prompt": "prompt",
         },
         task_kwargs_fields={
-            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])} if "level_nodes" in item else {},
+            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])}
+            if "level_nodes" in item
+            else {},
         },
     ),
     "shortest_path_image_text": DatasetSpec(
@@ -286,7 +340,9 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             "prompt": "prompt",
         },
         task_kwargs_fields={
-            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])} if "level_nodes" in item else {},
+            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])}
+            if "level_nodes" in item
+            else {},
         },
     ),
     "visworld_eval": DatasetSpec(
@@ -406,6 +462,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             },
         },
         separated_prompt_template=REASONMAP_SEPARATED_TEMPLATE,
+        image_dedup_key="city",
     ),
     "figureqa": DatasetSpec(
         name="figureqa",

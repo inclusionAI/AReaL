@@ -13,6 +13,7 @@ Sampling strategy:
 - If model outputs <answer>, validate with judge; if wrong, inject reflection and continue
 - Maximum rounds controlled by --max_iterative_rounds
 """
+
 import argparse
 import copy
 import json
@@ -25,7 +26,10 @@ from io import BytesIO
 from typing import Optional, Tuple
 import PIL
 from datasets import load_dataset
+import PIL
 from PIL import Image
+
+PIL.Image.MAX_IMAGE_PIXELS = None
 from tqdm import tqdm
 PIL.IMAGE_MAX_IMAGE_PIXELS = None  # Disable PIL DecompressionBombError for large images
 from geo_edit.prompts.system_prompts import (
@@ -125,6 +129,7 @@ def _validate_trajectory(
     # Maze tasks: use algorithmic wall-collision verification instead of LLM judge
     if task_category == "maze" and image_path and check_correctness:
         from geo_edit.evaluation.maze_verifier import maze_judge
+
         return maze_judge(
             question=question,
             ground_truth=ground_truth,
@@ -142,7 +147,10 @@ def _validate_trajectory(
         )
         if is_correct:
             return True, "valid"
-        return False, f"wrong_answer (gt={ground_truth}, pred={prediction}) reason={reason}"
+        return (
+            False,
+            f"wrong_answer (gt={ground_truth}, pred={prediction}) reason={reason}",
+        )
 
     is_valid, reason = _WORKER_JUDGE.validate_trajectory(
         question=question,
@@ -185,9 +193,11 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     text_only = task_payload.get("text_only", False)
     answer_format = task_payload.get("answer_format")
     tool_guidance = task_payload.get("tool_guidance")
-    task_category = task_payload.get("task_kwargs", {}).get(
-        "meta_info_extra", {}
-    ).get("category", "")
+    task_category = (
+        task_payload.get("task_kwargs", {})
+        .get("meta_info_extra", {})
+        .get("category", "")
+    )
 
     # Check if already completed
     meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
@@ -225,7 +235,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     agent.reset()
     original_generate_config = agent.config.generate_config
     answer_pattern = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
-    think_pattern = re.compile(r"<think>.*?Tool:\s*(\w+).*?</think>", re.DOTALL | re.IGNORECASE)
+    think_pattern = re.compile(
+        r"<think>.*?Tool:\s*(\w+).*?</think>", re.DOTALL | re.IGNORECASE
+    )
 
     all_thinking_text = []
     all_actual_tools = set()
@@ -260,9 +272,13 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 contents_before_prompt = None
                 if judge_failed and current_round > 1:
                     contents_before_prompt = copy.deepcopy(task.contents)
-                    task.append_system_prompt(ITERATIVE_EXTENDED_REASONING_PROMPT.format(
-                        used_tools=", ".join(all_actual_tools) if all_actual_tools else "None"
-                    ))
+                    task.append_system_prompt(
+                        ITERATIVE_EXTENDED_REASONING_PROMPT.format(
+                            used_tools=", ".join(all_actual_tools)
+                            if all_actual_tools
+                            else "None"
+                        )
+                    )
                 elif tool_guidance:
                     # Inject per-dataset tool guidance as temporary prompt
                     contents_before_prompt = copy.deepcopy(task.contents)
@@ -284,10 +300,14 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 if answer_match and current_round > 1:
                     if judge_failed:
                         # After wrong answer, must call tool first — reject answer attempt
-                        raise ValueError("Model tried to answer immediately after wrong answer; forcing tool call")
+                        raise ValueError(
+                            "Model tried to answer immediately after wrong answer; forcing tool call"
+                        )
                     # ===== Answer path =====
                     answer_text = answer_match.group(1).strip()
-                    logger.info(f"[{task_id}] Round {current_round}: Model produced answer: {answer_text}")
+                    logger.info(
+                        f"[{task_id}] Round {current_round}: Model produced answer: {answer_text}"
+                    )
 
                     # Validate with judge BEFORE committing to contents/history
                     # Model self-terminated with <answer>: only check correctness
@@ -303,8 +323,12 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     if is_valid:
                         # Commit answer to contents and history, then save
                         task.append_assistant_message(reasoning_text)
-                        think_match = re.search(r"<think>(.*?)</think>", reasoning_text, re.DOTALL)
-                        thinking_process = think_match.group(1).strip() if think_match else ""
+                        think_match = re.search(
+                            r"<think>(.*?)</think>", reasoning_text, re.DOTALL
+                        )
+                        thinking_process = (
+                            think_match.group(1).strip() if think_match else ""
+                        )
                         task._record_conversation_history(
                             step=current_round,
                             contents_for_save=[],
@@ -315,12 +339,16 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                             extra_info=reasoning_extra,
                         )
                         meta_info = task.save_trajectory()
-                        logger.info(f"[{task_id}] Valid trajectory at Round {current_round}")
+                        logger.info(
+                            f"[{task_id}] Valid trajectory at Round {current_round}"
+                        )
                         return True, meta_info
 
                     # Judge rejected: do NOT append to contents/history
                     # Wrong answer does NOT consume a round — immediately force tool call
-                    logger.warning(f"[{task_id}] Round {current_round} answer rejected: {reason}")
+                    logger.warning(
+                        f"[{task_id}] Round {current_round} answer rejected: {reason}"
+                    )
                     judge_failed = True
                     has_answered = True
                     # Reset state to before this attempt, then retry within same round
@@ -334,7 +362,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 # ===== Tool call path =====
                 # Validate Phase 1 format (must have Tool: in think tags)
                 if not think_pattern.search(reasoning_text):
-                    raise ValueError(f"Invalid Phase 1 format - missing <think>Tool: ...</think>")
+                    raise ValueError(
+                        f"Invalid Phase 1 format - missing <think>Tool: ...</think>"
+                    )
 
                 judge_failed = False  # Reset judge flag on tool call rounds
                 task.append_assistant_message(reasoning_text)
@@ -352,7 +382,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 )
 
                 if not function_call_part_list:
-                    logger.warning(f"[{task_id}] Round {current_round}: No tool calls generated")
+                    logger.warning(
+                        f"[{task_id}] Round {current_round}: No tool calls generated"
+                    )
                     round_success = True
                     break
 
@@ -368,7 +400,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     check_correctness=False,
                 )
                 if not is_valid:
-                    logger.warning(f"[{task_id}] Round {current_round} tool-call rejected: {reason}")
+                    logger.warning(
+                        f"[{task_id}] Round {current_round} tool-call rejected: {reason}"
+                    )
                     raise ValueError(f"Tool-call validation failed: {reason}")
 
                 all_actual_tools.update(round_tool_names)
@@ -378,7 +412,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                 break  # Phase 1+2 completed successfully
 
             except Exception as e:
-                logger.warning(f"[{task_id}] Round {current_round} failed (retry {retry_count}): {e}")
+                logger.warning(
+                    f"[{task_id}] Round {current_round} failed (retry {retry_count}): {e}"
+                )
                 task.restore_state(task_state_before_round)
                 agent.restore_state(agent_state_before_round)
                 all_thinking_text = thinking_text_before_round
@@ -418,15 +454,30 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
 # Main function
 # =============================================================================
 def main():
-    parser = argparse.ArgumentParser(description="Iterative sampling for valid trajectory generation.")
+    parser = argparse.ArgumentParser(
+        description="Iterative sampling for valid trajectory generation."
+    )
     # Original params
     parser.add_argument("--api_key", type=str, default=None, help="API key for model.")
-    parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset.")
-    parser.add_argument("--dataset_split", type=str, default=None, help="Dataset split name.")
-    parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()))
-    parser.add_argument("--output_dir", type=str, required=True, help="Output directory.")
+    parser.add_argument(
+        "--dataset_path", type=str, required=True, help="Path to the dataset."
+    )
+    parser.add_argument(
+        "--dataset_split", type=str, default=None, help="Dataset split name."
+    )
+    parser.add_argument(
+        "--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys())
+    )
+    parser.add_argument(
+        "--output_dir", type=str, required=True, help="Output directory."
+    )
     parser.add_argument("--model_name_or_path", type=str, default="gpt-5-2025-08-07")
-    parser.add_argument("--model_type", type=str, default="OpenAI", choices=["Google", "SGLang", "OpenAI"])
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="OpenAI",
+        choices=["Google", "SGLang", "OpenAI"],
+    )
     parser.add_argument("--api_base", type=str, default=None, help="Base URL for API.")
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--max_concurrent_requests", type=int, default=16)
@@ -436,16 +487,32 @@ def main():
     parser.add_argument("--enable_tools", type=str, nargs="+", default=None)
 
     # New params for iterative sampling
-    parser.add_argument("--max_iterative_rounds", type=int, default=5,
-                        help="Maximum tool call rounds for iterative sampling")
-    parser.add_argument("--judge_model", type=str, default="gpt-4o-mini",
-                        help="Model for trajectory validation")
-    parser.add_argument("--judge_api_key", type=str, default=None,
-                        help="API key for judge (defaults to OPENAI_API_KEY)")
-    parser.add_argument("--judge_api_base", type=str, default=None,
-                        help="API base URL for judge model")
-    parser.add_argument("--skip_leakage_check", action="store_true",
-                        help="Skip answer leakage detection")
+    parser.add_argument(
+        "--max_iterative_rounds",
+        type=int,
+        default=5,
+        help="Maximum tool call rounds for iterative sampling",
+    )
+    parser.add_argument(
+        "--judge_model",
+        type=str,
+        default="gpt-4o-mini",
+        help="Model for trajectory validation",
+    )
+    parser.add_argument(
+        "--judge_api_key",
+        type=str,
+        default=None,
+        help="API key for judge (defaults to OPENAI_API_KEY)",
+    )
+    parser.add_argument(
+        "--judge_api_base", type=str, default=None, help="API base URL for judge model"
+    )
+    parser.add_argument(
+        "--skip_leakage_check",
+        action="store_true",
+        help="Skip answer leakage detection",
+    )
 
     args = parser.parse_args()
 
@@ -455,15 +522,19 @@ def main():
     # Use OPENAI_API_KEY if judge_api_key not provided
     judge_api_key = args.judge_api_key or os.environ.get("OPENAI_API_KEY")
     if not judge_api_key:
-        raise ValueError("Judge API key must be provided via --judge_api_key or OPENAI_API_KEY env")
+        raise ValueError(
+            "Judge API key must be provided via --judge_api_key or OPENAI_API_KEY env"
+        )
 
     # Initialize Ray tool agents
     tool_router = ToolRouter(
         tool_mode="force",
         enable_tools=args.enable_tools,
-        node_resource=args.node_resource or "tool_agent"
+        node_resource=args.node_resource or "tool_agent",
     )
-    enabled_agent_names = tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
+    enabled_agent_names = (
+        tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
+    )
 
     if enabled_agent_names:
         logger.info(f"Initialized {len(enabled_agent_names)} shared Ray tool agents")
@@ -472,7 +543,11 @@ def main():
     os.makedirs(output_path, exist_ok=True)
 
     # Load dataset
-    if args.dataset_path.startswith("thuml/") or "/" in args.dataset_path and not os.path.exists(args.dataset_path):
+    if (
+        args.dataset_path.startswith("thuml/")
+        or "/" in args.dataset_path
+        and not os.path.exists(args.dataset_path)
+    ):
         split = args.dataset_split or "ballgame"
         dataset = load_dataset(args.dataset_path, split=split)
     else:
@@ -486,6 +561,7 @@ def main():
         logger.info(f"Sampled {sample_size} examples")
 
     dataset_spec = get_dataset_spec(args.dataset_name)
+    dataset, _pre_saved_images = dataset_spec.prepare_images(dataset, output_path)
     n_trajectories = args.n_trajectories
     meta_info_list = []
     pending_items = []
@@ -495,7 +571,11 @@ def main():
         task_base_dir = os.path.join(output_path, task_id)
 
         for traj_id in range(n_trajectories):
-            traj_save_dir = task_base_dir if n_trajectories == 1 else os.path.join(task_base_dir, f"traj_{traj_id}")
+            traj_save_dir = (
+                task_base_dir
+                if n_trajectories == 1
+                else os.path.join(task_base_dir, f"traj_{traj_id}")
+            )
             meta_path = os.path.join(traj_save_dir, "meta_info.jsonl")
 
             if os.path.exists(meta_path):
@@ -543,7 +623,11 @@ def main():
 
                 task_id = str(item[dataset_spec.id_key])
                 task_base_dir = os.path.join(output_path, task_id)
-                traj_save_dir = task_base_dir if n_trajectories == 1 else os.path.join(task_base_dir, f"traj_{traj_id}")
+                traj_save_dir = (
+                    task_base_dir
+                    if n_trajectories == 1
+                    else os.path.join(task_base_dir, f"traj_{traj_id}")
+                )
                 meta_path = os.path.join(traj_save_dir, "meta_info.jsonl")
 
                 if os.path.exists(meta_path):
@@ -556,9 +640,17 @@ def main():
 
                 image_path = None
                 text_only = dataset_spec.image_key is None
-                if dataset_spec.image_key:
+                if _pre_saved_images:
+                    image_path = _pre_saved_images.get(task_id)
+                elif dataset_spec.image_key:
                     raw_image = item.get(dataset_spec.image_key)
-                    images = raw_image if isinstance(raw_image, list) else [raw_image] if raw_image is not None else []
+                    images = (
+                        raw_image
+                        if isinstance(raw_image, list)
+                        else [raw_image]
+                        if raw_image is not None
+                        else []
+                    )
 
                     def _save_one(img, path):
                         if isinstance(img, Image.Image):
@@ -575,7 +667,9 @@ def main():
                     elif len(images) > 1:
                         image_path = []
                         for img_idx, img in enumerate(images):
-                            p = os.path.join(task_base_dir, f"input_image_{img_idx}.png")
+                            p = os.path.join(
+                                task_base_dir, f"input_image_{img_idx}.png"
+                            )
                             if not os.path.exists(p):
                                 _save_one(img, p)
                             image_path.append(p)

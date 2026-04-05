@@ -7,6 +7,7 @@ Phase 1: Generate reasoning (can see tools, but cannot execute)
 Phase 2: Generate tool call based on reasoning (no additional reasoning)
 Phase 3: Generate final answer (no tool execution)
 """
+
 import argparse
 import json
 import multiprocessing as mp
@@ -18,7 +19,10 @@ import time
 from io import BytesIO
 
 from datasets import load_dataset
+import PIL
 from PIL import Image
+
+PIL.Image.MAX_IMAGE_PIXELS = None
 from tqdm import tqdm
 
 from geo_edit.constants import MAX_TOOL_CALLS
@@ -90,7 +94,9 @@ def _run_one_task(task_payload: dict):
     image_path = task_payload["image_path"]
     text_prompt = task_payload["prompt"]
     text_only = task_payload.get("text_only", False)
-    answer_format = task_payload.get("answer_format")  # Answer format instruction for Phase 3
+    answer_format = task_payload.get(
+        "answer_format"
+    )  # Answer format instruction for Phase 3
 
     formatted_text_prompt = SEPARATED_USER_PROMPT.format(Question=text_prompt)
 
@@ -128,7 +134,9 @@ def _run_one_task(task_payload: dict):
     agent.reset()
     original_generate_config = agent.config.generate_config
     answer_pattern = re.compile(r"<answer>", re.IGNORECASE)
-    think_pattern = re.compile(r"<think>.*?Tool:\s*(\w+).*?</think>", re.DOTALL | re.IGNORECASE)
+    think_pattern = re.compile(
+        r"<think>.*?Tool:\s*(\w+).*?</think>", re.DOTALL | re.IGNORECASE
+    )
 
     try:
         for i in range(_WORKER_MAX_TOOL_CALLS):
@@ -146,20 +154,37 @@ def _run_one_task(task_payload: dict):
             # Extract reasoning text from action
             reasoning_text = extract_response_text(reasoning_action, api_mode)
 
-            logger.info(f"[{task_id}] Step {step} Phase 1: Reasoning generated ({len(reasoning_text)} chars)")
+            logger.info(
+                f"[{task_id}] Step {step} Phase 1: Reasoning generated ({len(reasoning_text)} chars)"
+            )
 
             # For step > 1: check if model wants to provide final answer (contains <answer>)
             if step > 1 and answer_pattern.search(reasoning_text):
-                logger.info(f"[{task_id}] Step {step} Phase 1: Model chose to provide final answer directly")
+                logger.info(
+                    f"[{task_id}] Step {step} Phase 1: Model chose to provide final answer directly"
+                )
                 # Parse answer from reasoning_text
-                answer_match = re.search(r"<answer>(.*?)</answer>", reasoning_text, re.DOTALL | re.IGNORECASE)
-                output_text = answer_match.group(1).strip() if answer_match else reasoning_text
-                think_match = re.search(r"<think>(.*?)</think>", reasoning_text, re.DOTALL | re.IGNORECASE)
+                answer_match = re.search(
+                    r"<answer>(.*?)</answer>", reasoning_text, re.DOTALL | re.IGNORECASE
+                )
+                output_text = (
+                    answer_match.group(1).strip() if answer_match else reasoning_text
+                )
+                think_match = re.search(
+                    r"<think>(.*?)</think>", reasoning_text, re.DOTALL | re.IGNORECASE
+                )
                 thinking = think_match.group(1).strip() if think_match else ""
                 # Append assistant's final response to contents first
                 task.append_assistant_message(reasoning_text)
                 # Stringify contents for saving (now includes the final response)
-                contents_for_save = [task._stringify_observation_item(item) for item in (task.contents if isinstance(task.contents, list) else task.contents.get("input", []))]
+                contents_for_save = [
+                    task._stringify_observation_item(item)
+                    for item in (
+                        task.contents
+                        if isinstance(task.contents, list)
+                        else task.contents.get("input", [])
+                    )
+                ]
                 # Record final step
                 task._record_conversation_history(
                     step=step,
@@ -171,19 +196,27 @@ def _run_one_task(task_payload: dict):
                     extra_info=reasoning_extra,
                 )
                 meta_info = task.save_trajectory()
-                logger.info(f"[{task_id}] Task completed (early answer) - Total steps: {meta_info.get('total_steps', 'N/A')}")
+                logger.info(
+                    f"[{task_id}] Task completed (early answer) - Total steps: {meta_info.get('total_steps', 'N/A')}"
+                )
                 return True, meta_info
 
             # Check for <answer> in step 1 - error if found
             if step == 1 and answer_pattern.search(reasoning_text):
                 logger.warning(reasoning_text)
-                raise ValueError("First round reasoning phase should not generate <answer>. Model violated the protocol.")
+                raise ValueError(
+                    "First round reasoning phase should not generate <answer>. Model violated the protocol."
+                )
 
             # Validate format: must contain <think>Tool: [name]</think>
             if not think_pattern.search(reasoning_text):
-                logger.warning(f"[{task_id}] Step {step} Phase 1: Invalid format - missing <think>Tool: ...</think>")
+                logger.warning(
+                    f"[{task_id}] Step {step} Phase 1: Invalid format - missing <think>Tool: ...</think>"
+                )
                 logger.warning(f"Raw output: {reasoning_text}")
-                raise ValueError(f"Reasoning phase must output <think>Tool: [name]\\nReason: ...</think> format. Got: {reasoning_text[:200]}")
+                raise ValueError(
+                    f"Reasoning phase must output <think>Tool: [name]\\nReason: ...</think> format. Got: {reasoning_text[:200]}"
+                )
 
             # ===== Phase 2: Generate tool call =====
             logger.info(f"[{task_id}] Step {step} Phase 2: Generating tool call...")
@@ -195,25 +228,25 @@ def _run_one_task(task_payload: dict):
             agent.config.generate_config = original_generate_config
 
             # Merge reasoning_extra into tool_extra for recording
-            merged_extra = {
-                "reasoning_" + k: v for k, v in reasoning_extra.items()
-            }
+            merged_extra = {"reasoning_" + k: v for k, v in reasoning_extra.items()}
             merged_extra.update(tool_extra)
 
             # Task parses tool call or answer
             function_call_part_list = task.parse_action(
-                step=step,
-                action=tool_action,
-                extra_info=merged_extra
+                step=step, action=tool_action, extra_info=merged_extra
             )
 
             if not function_call_part_list:
-                logger.error(f"[{task_id}] Step {step} Phase 2: No tool calls, final answer detected")
+                logger.error(
+                    f"[{task_id}] Step {step} Phase 2: No tool calls, final answer detected"
+                )
                 break
 
             # Log tool calls
             tool_names = [tc.name for tc in function_call_part_list]
-            logger.info(f"[{task_id}] Step {step} Phase 2: Tool calls generated: {tool_names}")
+            logger.info(
+                f"[{task_id}] Step {step} Phase 2: Tool calls generated: {tool_names}"
+            )
 
             task.update_observation_from_action(function_call_part_list)
 
@@ -226,12 +259,16 @@ def _run_one_task(task_payload: dict):
             agent.config.generate_config = phase_configs.final_answer
             action, extra_info = agent.act(task.contents)
             agent.config.generate_config = original_generate_config
-            task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
+            task.parse_action(
+                step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info
+            )
 
         if task.state:
             meta_info = task.save_trajectory()
-            logger.info(f"[{task_id}] Task completed successfully - Total steps: {meta_info.get('total_steps', 'N/A')}, "
-                       f"Total tokens: {meta_info.get('tokens_used_total', 'N/A')}")
+            logger.info(
+                f"[{task_id}] Task completed successfully - Total steps: {meta_info.get('total_steps', 'N/A')}, "
+                f"Total tokens: {meta_info.get('tokens_used_total', 'N/A')}"
+            )
             return True, meta_info
 
         logger.warning(f"[{task_id}] Task failed - no valid trajectory")
@@ -245,26 +282,81 @@ def _run_one_task(task_payload: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Separated reasoning generation for Gemini/GPT models.")
-    parser.add_argument("--api_key", type=str, default=None, help="API key for Google API.")
-    parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
-    parser.add_argument("--dataset_split", type=str, default=None, help="Dataset split name (for HuggingFace datasets with named splits).")
-    parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()), help="Dataset adapter name.")
-    parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output.")
-    parser.add_argument("--model_name_or_path", type=str, default="gemini-2.5-pro-preview-05-06", help="Model name.")
-    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "SGLang", "OpenAI"], help="Model provider.")
-    parser.add_argument("--api_base", type=str, default=None, help="Base URL for matrixllm server.")
+    parser = argparse.ArgumentParser(
+        description="Separated reasoning generation for Gemini/GPT models."
+    )
+    parser.add_argument(
+        "--api_key", type=str, default=None, help="API key for Google API."
+    )
+    parser.add_argument(
+        "--dataset_path", type=str, required=True, help="Path to the dataset file."
+    )
+    parser.add_argument(
+        "--dataset_split",
+        type=str,
+        default=None,
+        help="Dataset split name (for HuggingFace datasets with named splits).",
+    )
+    parser.add_argument(
+        "--dataset_name",
+        type=str,
+        required=True,
+        choices=sorted(DATASET_SPECS.keys()),
+        help="Dataset adapter name.",
+    )
+    parser.add_argument(
+        "--output_dir", type=str, required=True, help="Path to save the output."
+    )
+    parser.add_argument(
+        "--model_name_or_path",
+        type=str,
+        default="gemini-2.5-pro-preview-05-06",
+        help="Model name.",
+    )
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="Google",
+        choices=["Google", "SGLang", "OpenAI"],
+        help="Model provider.",
+    )
+    parser.add_argument(
+        "--api_base", type=str, default=None, help="Base URL for matrixllm server."
+    )
     parser.add_argument("--port", type=int, default=None, help="Port for server.")
-    parser.add_argument("--max_concurrent_requests", type=int, default=16, help="Number of worker processes.")
-    parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
-    parser.add_argument("--n_trajectories", type=int, default=1, help="Number of trajectories per task.")
-    parser.add_argument("--node_resource", type=str, default=None, help="Ray custom resource name (default: 'tool_agent').")
-    parser.add_argument("--enable_tools", type=str, nargs="+", default=None,
-                        help="Tool names or categories to enable (overrides config.yaml). "
-                             "Categories: general, math, table, chart, map, document, ocr, segment. "
-                             "Examples: --enable_tools math chart, --enable_tools text_ocr formula_ocr")
-    parser.add_argument("--max_tool_calls", type=int, default=None,
-                        help="Max tool calls per task (default: constants.MAX_TOOL_CALLS)")
+    parser.add_argument(
+        "--max_concurrent_requests",
+        type=int,
+        default=16,
+        help="Number of worker processes.",
+    )
+    parser.add_argument(
+        "--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset."
+    )
+    parser.add_argument(
+        "--n_trajectories", type=int, default=1, help="Number of trajectories per task."
+    )
+    parser.add_argument(
+        "--node_resource",
+        type=str,
+        default=None,
+        help="Ray custom resource name (default: 'tool_agent').",
+    )
+    parser.add_argument(
+        "--enable_tools",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Tool names or categories to enable (overrides config.yaml). "
+        "Categories: general, math, table, chart, map, document, ocr, segment. "
+        "Examples: --enable_tools math chart, --enable_tools text_ocr formula_ocr",
+    )
+    parser.add_argument(
+        "--max_tool_calls",
+        type=int,
+        default=None,
+        help="Max tool calls per task (default: constants.MAX_TOOL_CALLS)",
+    )
     args = parser.parse_args()
 
     if args.model_type == "Google" and not args.api_key:
@@ -275,15 +367,19 @@ def main():
     tool_router = ToolRouter(
         tool_mode="force",
         enable_tools=args.enable_tools,
-        node_resource=args.node_resource or "tool_agent"
+        node_resource=args.node_resource or "tool_agent",
     )
-    enabled_agent_names = tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
+    enabled_agent_names = (
+        tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
+    )
 
     if args.enable_tools:
         logger.info(f"Tool override from command line: {args.enable_tools}")
 
     if enabled_agent_names:
-        logger.info(f"Initialized {len(enabled_agent_names)} shared Ray tool agents in main process: {enabled_agent_names}")
+        logger.info(
+            f"Initialized {len(enabled_agent_names)} shared Ray tool agents in main process: {enabled_agent_names}"
+        )
     else:
         logger.info("No tool agents enabled (check config.yaml)")
 
@@ -291,9 +387,15 @@ def main():
     os.makedirs(output_path, exist_ok=True)
 
     # Load dataset - support both HuggingFace datasets and local parquet files
-    if args.dataset_path.startswith("thuml/") or "/" in args.dataset_path and not os.path.exists(args.dataset_path):
+    if (
+        args.dataset_path.startswith("thuml/")
+        or "/" in args.dataset_path
+        and not os.path.exists(args.dataset_path)
+    ):
         # HuggingFace dataset
-        split = args.dataset_split or "ballgame"  # Default to first split for VisWorld-Eval
+        split = (
+            args.dataset_split or "ballgame"
+        )  # Default to first split for VisWorld-Eval
         dataset = load_dataset(args.dataset_path, split=split)
         logger.info(f"Loaded HuggingFace dataset {args.dataset_path} (split: {split})")
     else:
@@ -318,7 +420,11 @@ def main():
         task_base_dir = os.path.join(output_path, task_id)
 
         for traj_id in range(n_trajectories):
-            traj_save_dir = task_base_dir if n_trajectories == 1 else os.path.join(task_base_dir, f"traj_{traj_id}")
+            traj_save_dir = (
+                task_base_dir
+                if n_trajectories == 1
+                else os.path.join(task_base_dir, f"traj_{traj_id}")
+            )
             meta_path = os.path.join(traj_save_dir, "meta_info.jsonl")
 
             if os.path.exists(meta_path):
@@ -331,7 +437,9 @@ def main():
 
     ctx = mp.get_context("spawn")
     n_workers = max(1, int(args.max_concurrent_requests))
-    logger.info(f"Starting {n_workers} worker processes (each reuses Agent for all tasks)")
+    logger.info(
+        f"Starting {n_workers} worker processes (each reuses Agent for all tasks)"
+    )
 
     pool = ctx.Pool(
         processes=n_workers,
@@ -362,7 +470,11 @@ def main():
 
                 task_id = str(item[dataset_spec.id_key])
                 task_base_dir = os.path.join(output_path, task_id)
-                traj_save_dir = task_base_dir if n_trajectories == 1 else os.path.join(task_base_dir, f"traj_{traj_id}")
+                traj_save_dir = (
+                    task_base_dir
+                    if n_trajectories == 1
+                    else os.path.join(task_base_dir, f"traj_{traj_id}")
+                )
                 meta_path = os.path.join(traj_save_dir, "meta_info.jsonl")
 
                 if os.path.exists(meta_path):
@@ -401,7 +513,9 @@ def main():
                     "id": task_id,
                     "traj_id": traj_id,
                     "task_save_dir": traj_save_dir,
-                    "prompt": dataset_spec.build_prompt(item, True, separated=True),  # Use separated prompt (no role/answer format)
+                    "prompt": dataset_spec.build_prompt(
+                        item, True, separated=True
+                    ),  # Use separated prompt (no role/answer format)
                     "answer": dataset_spec.get_answer(item),
                     "image_path": image_path,
                     "text_only": text_only,
