@@ -149,10 +149,6 @@ class TestDatasetSpecs:
             "cartomapqa_rle",
             "cartomapqa_mml",
             "cartomapqa_srn",
-            "mathvisionqa",
-            "shortest_path_text",
-            "shortest_path_image",
-            "shortest_path_image_text",
         ]
         for name in expected:
             assert name in DATASET_SPECS, f"Missing dataset: {name}"
@@ -165,22 +161,6 @@ class TestDatasetSpecs:
             assert spec.id_key is not None, f"Dataset {name} missing id_key"
             assert spec.answer_key is not None, f"Dataset {name} missing answer_key"
             assert spec.prompt_template is not None, f"Dataset {name} missing prompt_template"
-
-    def test_mathvisionqa_spec(self):
-        from geo_edit.datasets.task_registry import DATASET_SPECS
-
-        spec = DATASET_SPECS["mathvisionqa"]
-        assert spec.id_key == "id"
-        assert spec.answer_key == "answer"
-        assert spec.image_key == "decoded_image"
-        assert "question" in spec.template_fields
-
-    def test_shortest_path_specs_have_task_kwargs(self):
-        from geo_edit.datasets.task_registry import DATASET_SPECS
-
-        for name in ["shortest_path_text", "shortest_path_image", "shortest_path_image_text"]:
-            spec = DATASET_SPECS[name]
-            assert "meta_info_extra" in spec.task_kwargs_fields
 
 
     def test_cartomapqa_unified_specs(self):
@@ -210,8 +190,8 @@ class TestGetDatasetSpec:
     def test_get_existing_dataset(self):
         from geo_edit.datasets.task_registry import get_dataset_spec
 
-        spec = get_dataset_spec("mathvisionqa")
-        assert spec.name == "mathvisionqa"
+        spec = get_dataset_spec("cartomapqa_mfs")
+        assert spec.name == "cartomapqa_mfs"
 
     def test_get_nonexistent_dataset_raises_error(self):
         from geo_edit.datasets.task_registry import get_dataset_spec

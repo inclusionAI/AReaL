@@ -1,6 +1,3 @@
-MATHVISION_INPUT_TEMPLATE = """
-Please solve the problem with provided tools. After you confirm the final answer, put your answer in one '<answer>\\boxed{{}}</answer>'. If it is a multiple choice question, only one letter is allowed in the '<answer>\\boxed{{}}</answer>'.\n{question}\n{options}
-"""
 
 MATHVISION_NOTOOL_INPUT_TEMPLATE = """
 Please solve the problem step by step. After you confirm the final answer, put your answer in one '<answer>\\boxed{{}}</answer>'. If it is a multiple choice question, only one letter is allowed in the '<answer>\\boxed{{}}</answer>'.\n{question}\n{options}
@@ -153,28 +150,6 @@ Provide a precise and concise answer based on the chart. For multiple choice que
 """
 
 CHARTQAPRO_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."
-
-FIGUREQA_INPUT_TEMPLATE = """\
-You are a chart understanding assistant specialized in analyzing figures and charts.
-
-Look at the figure image and answer the following Yes/No question about the data shown in the chart.
-
-Question: {question}
-
-If you need to analyze the image in detail, you can use the available tools.
-
-Please provide your final answer (Yes or No) in <answer></answer> tags.
-"""
-
-FIGUREQA_NOTOOL_INPUT_TEMPLATE = """\
-You are a chart understanding assistant specialized in analyzing figures and charts.
-
-Look at the figure image carefully and answer the following Yes/No question about the data shown in the chart.
-
-Question: {question}
-
-Please analyze the chart and provide your final answer (Yes or No) in <answer></answer> tags.
-"""
 
 REASONMAP_INPUT_TEMPLATE = """\
 Look at the subway map image and answer the following question.

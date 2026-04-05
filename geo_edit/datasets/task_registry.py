@@ -16,8 +16,6 @@ from geo_edit.datasets.input_template import (
     CHARTQAPRO_INPUT_TEMPLATE,
     CHARTQAPRO_NOTOOL_INPUT_TEMPLATE,
     CHARTQAPRO_SEPARATED_TEMPLATE,
-    FIGUREQA_INPUT_TEMPLATE,
-    FIGUREQA_NOTOOL_INPUT_TEMPLATE,
     REASONMAP_INPUT_TEMPLATE,
     REASONMAP_NOTOOL_INPUT_TEMPLATE,
     REASONMAP_SEPARATED_TEMPLATE,
@@ -25,8 +23,6 @@ from geo_edit.datasets.input_template import (
     MAPEVAL_VISUAL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_NOTOOL_INPUT_TEMPLATE,
     MAPEVAL_VISUAL_SEPARATED_TEMPLATE,
-    MATHVISION_INPUT_TEMPLATE,
-    MATHVISION_NOTOOL_INPUT_TEMPLATE,
     VISWORLD_EVAL_INPUT_TEMPLATE,
     VISWORLD_EVAL_NOTOOL_INPUT_TEMPLATE,
 )
@@ -285,66 +281,6 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
     ),
-    "mathvisionqa": DatasetSpec(
-        name="mathvisionqa",
-        id_key="id",
-        answer_key="answer",
-        image_key="decoded_image",
-        prompt_template=MATHVISION_INPUT_TEMPLATE,
-        notool_prompt_template=MATHVISION_NOTOOL_INPUT_TEMPLATE,
-        template_fields={
-            "question": "question",
-            "options": "options",
-        },
-    ),
-    "shortest_path_text": DatasetSpec(
-        name="shortest_path_text",
-        id_key="case_id",
-        answer_key="answer",
-        image_key="image",
-        prompt_template="{prompt}",
-        notool_prompt_template="{prompt}",
-        template_fields={
-            "prompt": "prompt",
-        },
-        task_kwargs_fields={
-            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])}
-            if "level_nodes" in item
-            else {},
-        },
-    ),
-    "shortest_path_image": DatasetSpec(
-        name="shortest_path_image",
-        id_key="case_id",
-        answer_key="answer",
-        image_key="image",
-        prompt_template="{prompt}",
-        notool_prompt_template="{prompt}",
-        template_fields={
-            "prompt": "prompt",
-        },
-        task_kwargs_fields={
-            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])}
-            if "level_nodes" in item
-            else {},
-        },
-    ),
-    "shortest_path_image_text": DatasetSpec(
-        name="shortest_path_image_text",
-        id_key="case_id",
-        answer_key="answer",
-        image_key="image",
-        prompt_template="{prompt}",
-        notool_prompt_template="{prompt}",
-        template_fields={
-            "prompt": "prompt",
-        },
-        task_kwargs_fields={
-            "meta_info_extra": lambda item: {"level_nodes": int(item["level_nodes"])}
-            if "level_nodes" in item
-            else {},
-        },
-    ),
     "visworld_eval": DatasetSpec(
         name="visworld_eval",
         id_key="index",
@@ -463,17 +399,6 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
         separated_prompt_template=REASONMAP_SEPARATED_TEMPLATE,
         image_dedup_key="city",
-    ),
-    "figureqa": DatasetSpec(
-        name="figureqa",
-        id_key="id",
-        answer_key="answer",
-        image_key="image",
-        prompt_template=FIGUREQA_INPUT_TEMPLATE,
-        notool_prompt_template=FIGUREQA_NOTOOL_INPUT_TEMPLATE,
-        template_fields={
-            "question": "question",
-        },
     ),
 }
 
