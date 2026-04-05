@@ -1766,7 +1766,7 @@ class FSDPEngine(TrainEngine):
         for name in param_names:
             t = local_state_dict[name]
             if t.device.type == "cpu":
-                t = t.to(device, non_blocking=True)
+                t = t.to(device, non_blocking=False)
             # reshape(-1) first to flatten to 1D, then view as uint8.
             # Without reshape(-1), a 2D weight [768,768] becomes 2D uint8 [768,1536]
             # while a 1D bias [768] becomes 1D uint8 [1536], and torch.cat fails.
