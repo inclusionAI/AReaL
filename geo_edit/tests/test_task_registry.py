@@ -141,11 +141,15 @@ class TestDatasetSpecs:
         from geo_edit.datasets.task_registry import DATASET_SPECS
 
         expected = [
-            "cartomapqa_srn",
-            "mathvisionqa",
+            "cartomapqa_mfs",
             "cartomapqa_stmf_presence",
             "cartomapqa_stmf_counting",
             "cartomapqa_stmf_name_listing",
+            "cartomapqa_mtmf",
+            "cartomapqa_rle",
+            "cartomapqa_mml",
+            "cartomapqa_srn",
+            "mathvisionqa",
             "shortest_path_text",
             "shortest_path_image",
             "shortest_path_image_text",
@@ -177,6 +181,27 @@ class TestDatasetSpecs:
         for name in ["shortest_path_text", "shortest_path_image", "shortest_path_image_text"]:
             spec = DATASET_SPECS[name]
             assert "meta_info_extra" in spec.task_kwargs_fields
+
+
+    def test_cartomapqa_unified_specs(self):
+        from geo_edit.datasets.task_registry import DATASET_SPECS
+
+        cartomapqa_tasks = [
+            "cartomapqa_mfs",
+            "cartomapqa_stmf_presence",
+            "cartomapqa_stmf_counting",
+            "cartomapqa_stmf_name_listing",
+            "cartomapqa_mtmf",
+            "cartomapqa_rle",
+            "cartomapqa_mml",
+            "cartomapqa_srn",
+        ]
+        for name in cartomapqa_tasks:
+            spec = DATASET_SPECS[name]
+            assert spec.id_key == "id"
+            assert spec.answer_key == "answer"
+            assert spec.image_key == "image"
+            assert "question" in spec.template_fields
 
 
 class TestGetDatasetSpec:
