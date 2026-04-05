@@ -86,7 +86,7 @@ def _init_worker(
     # Determine api_mode based on model_type
     if model_type == "Google":
         api_mode = "google"
-    elif model_type == "SGLang" or (api_base is not None and "matrixllm" in api_base):
+    elif model_type in {"SGLang", "vLLM"} or (api_base is not None and "matrixllm" in api_base):
         api_mode = "chat_completions"
     else:
         api_mode = "responses"
@@ -198,7 +198,7 @@ def _run_one_task(task_payload: dict):
     if isinstance(extra_kwargs, dict):
         task_kwargs.update(extra_kwargs)
     if text_only:
-        logger.info(f"[{task_id}] running text-only task.")
+        logger.info(f"[{task_id}] text-only")
         task_kwargs["text_only"] = True
 
     # Get available tools from router (controlled by config.yaml and use_tools mode)
@@ -221,6 +221,13 @@ def _run_one_task(task_payload: dict):
     try:
         for i in range(_WORKER_MAX_TOOL_CALLS):
             action, extra_info = _WORKER_AGENT.act(task.contents)
+
+            if hasattr(action, "choices") and action.choices:
+                model_text = action.choices[0].message.content or ""
+            else:
+                model_text = getattr(action, "output_text", "") or ""
+            logger.warning(f"[{task_id}] Step {i+1} model output:\n{model_text}")
+
             function_call_part_list = task.parse_action(
                 step=i + 1, action=action, extra_info=extra_info
             )
@@ -228,6 +235,8 @@ def _run_one_task(task_payload: dict):
             if not function_call_part_list:
                 break
 
+            tool_names = [tc.name for tc in function_call_part_list]
+            logger.warning(f"[{task_id}] Step {i+1} tool calls: {tool_names}")
             task.update_observation_from_action(function_call_part_list)
 
         if (
@@ -235,9 +244,7 @@ def _run_one_task(task_payload: dict):
             and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS
             and _WORKER_TOOL_ROUTER.tool_mode != "direct"
         ):
-            logger.info(
-                f"[{task_id}] reached max tool calls {_WORKER_MAX_TOOL_CALLS}, forcing final answer."
-            )
+            logger.info(f"[{task_id}] Max tool calls ({_WORKER_MAX_TOOL_CALLS}), forcing final answer")
             force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
             task.append_prompt(force_prompt)
             _WORKER_AGENT.config.generate_config = (
@@ -257,7 +264,7 @@ def _run_one_task(task_payload: dict):
         return False, None
 
     except Exception as e:
-        logging.error(f"[{task_id}] worker failed: {e}")
+        logging.error(f"[{task_id}] failed: {e}")
         shutil.rmtree(task_save_dir, ignore_errors=True)
         return False, None
 
@@ -358,20 +365,17 @@ def main():
     os.makedirs(output_path, exist_ok=True)
 
     dataset = load_dataset("parquet", data_files=args.dataset_path)["train"]
-    logger.info(f"Dataset size after filtering: {len(dataset)}")
+    logger.info(f"Dataset size: {len(dataset)}")
 
     if args.sample_rate < 1.0:
         sample_size = int(len(dataset) * args.sample_rate)
         dataset = dataset.shuffle(seed=seed).select(range(sample_size))
-        logger.info(f"Sampled {sample_size} examples from the dataset.")
+        logger.info(f"Sampled {sample_size} examples")
 
     dataset_spec = get_dataset_spec(args.dataset_name)
     tool_mode = args.use_tools
     if tool_mode == "direct" and dataset_spec.notool_prompt_template is None:
-        logger.warning(
-            "Dataset %s has no no-tool template; using tool template.",
-            dataset_spec.name,
-        )
+        logger.warning(f"Dataset {dataset_spec.name}: no notool template, using tool template")
 
     tool_router = ToolRouter(
         tool_mode=tool_mode,
@@ -382,9 +386,8 @@ def main():
         tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
     )
     if enabled_agent_names:
-        logger.info(f"Initialized {len(enabled_agent_names)} shared Ray tool agents: {enabled_agent_names}")
+        logger.info(f"Initialized {len(enabled_agent_names)} shared Ray tool agents")
 
-    # 1 main process scan: collect done meta_info + pending (task, traj_id) pairs
     n_trajectories = args.n_trajectories
     meta_info_list = []
     pending_items = []  # list of (item, traj_id)
@@ -408,19 +411,12 @@ def main():
             else:
                 pending_items.append((item, traj_id))
 
-    logger.info(f"Already done: {len(meta_info_list)}")
-    logger.info(f"Pending: {len(pending_items)} (tasks x trajectories)")
+    logger.info(f"Already done: {len(meta_info_list)}, Pending: {len(pending_items)}")
 
-    # Initialize ToolRouter - automatically creates Ray Tool Agents if enabled
-    tool_router = ToolRouter(
-        tool_mode=tool_mode,
-        node_resource=args.node_resource,
-    )
-
-    # 2 multiprocessing pool, create folder+save image ONLY when submitting task
-    ctx = mp.get_context("spawn")
     n_workers = max(1, int(args.max_concurrent_requests))
+    logger.info(f"Starting {n_workers} worker processes")
 
+    ctx = mp.get_context("spawn")
     with ctx.Pool(
         processes=n_workers,
         initializer=_init_worker,
@@ -545,8 +541,8 @@ def main():
         pbar.close()
 
     save_global_meta_info(output_path, meta_info_list)
+    logger.info(f"Completed. Total valid: {len(meta_info_list)}")
 
-    # Shutdown Ray Tool Agents
     tool_router.shutdown_agents()
 
 
