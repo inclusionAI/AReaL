@@ -1731,6 +1731,12 @@ class FSDPEngine(TrainEngine):
             f"dtypes={set(str(v.dtype) for v in list(local_state_dict.values())[:5])}"
         )
 
+        # Synchronize CUDA after get_model_state_dict ─────────────────
+        # get_model_state_dict may use internal NCCL streams (for FSDP unshard).
+        # Without synchronization, subsequent default-stream operations might read
+        # stale tensor data. This is critical when DP > 1.
+        current_platform.synchronize()
+
         if pp_size <= 1:
             return local_state_dict
 
@@ -1822,13 +1828,22 @@ class FSDPEngine(TrainEngine):
             f"all_sizes_MB=[{', '.join(f'{s/(1024**2):.1f}' for s in size_list)}]"
         )
         dist.all_gather(gathered_buffers, padded, group=pp_group)
-        del padded  # Free GPU memory
+
+        # Synchronize CUDA streams before reading buffers ─
+        # dist.all_gather enqueues the NCCL kernel on the NCCL stream but
+        # returns to the CPU before the GPU-side transfer finishes.
+        # Without synchronization, subsequent .view()/.cpu() on the default
+        # CUDA stream may read stale/partially-written gathered_buffers,
+        # causing intermittent weight corruption in the inference engine.
+        current_platform.synchronize()
+
+        del padded
         _s4_elapsed = _time_s4.perf_counter() - _s4_t0
 
         logger.info(
             f"[PP_DIAG][Rank {global_rank}] gather Step 4 done: "
             f"all_gather took {_s4_elapsed:.3f}s, "
-            f"effective_bw={max_nbytes * pp_size / _s4_elapsed / (1024**3):.2f}GB/s"
+            f"effective_bw={max_nbytes * pp_size / max(_s4_elapsed, 1e-9) / (1024**3):.2f}GB/s"
         )
 
         # ── Step 5: pp_rank=0 unflattens received bytes ───────────────────────
