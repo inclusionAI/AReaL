@@ -54,6 +54,7 @@ def _init_worker(
     max_tool_calls: int,
     use_tools: str,  # "auto", "force", or "direct"
     enable_tools: "list | None" = None,
+    enabled_agent_names: "list | None" = None,
 ):
     from typing import cast, Literal
 
@@ -70,10 +71,13 @@ def _init_worker(
         _WORKER_TOOL_ROUTER, \
         _WORKER_ACTION_TAG_MODE
 
-    # Initialize tool router with tool_mode
-    # ToolRouter reads config.yaml to determine which tools are enabled
-    # use_tools controls: "auto"/"force" = use tools, "direct" = no tools
-    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode=tool_mode, enable_tools=enable_tools)
+    # Create ToolRouter WITHOUT initializing Ray actors (main process already did that)
+    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode=tool_mode, enable_tools=enable_tools, skip_agent_init=True)
+
+    # Connect to existing Ray actors created by main process
+    if enabled_agent_names:
+        from geo_edit.utils.worker_utils import connect_to_ray_agents
+        connect_to_ray_agents(_WORKER_TOOL_ROUTER, enabled_agent_names)
 
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
@@ -369,6 +373,17 @@ def main():
             dataset_spec.name,
         )
 
+    tool_router = ToolRouter(
+        tool_mode=tool_mode,
+        enable_tools=args.enable_tools,
+        node_resource=args.node_resource or "tool_agent",
+    )
+    enabled_agent_names = (
+        tool_router.get_enabled_agents() if tool_router.is_agent_enabled() else []
+    )
+    if enabled_agent_names:
+        logger.info(f"Initialized {len(enabled_agent_names)} shared Ray tool agents: {enabled_agent_names}")
+
     # 1 main process scan: collect done meta_info + pending (task, traj_id) pairs
     n_trajectories = args.n_trajectories
     meta_info_list = []
@@ -419,6 +434,7 @@ def main():
             args.max_tool_calls,
             tool_mode,
             args.enable_tools,
+            enabled_agent_names,
         ),
     ) as pool:
         inflight = []  # list[(task_id, AsyncResult)]
