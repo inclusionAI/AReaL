@@ -16,6 +16,15 @@ from areal.engine.megatron_utils.fp8 import (
     quantize_params,
 )
 
+# Pre-compiled regex patterns used across conversion functions
+_RE_DECODER_LAYERS = re.compile(r"module\.module\.decoder\.layers\.(\d+)\.(.+)")
+_RE_EXPERT_WEIGHT = re.compile(r"mlp.experts\.(.+)\.weight(\d+)")
+_RE_SHARED_EXPERT = re.compile(r"mlp.shared_experts\.(.+)")
+_RE_MTP_LAYERS = re.compile(r"module\.module\.mtp\.layers\.(\d+)\.(.+)")
+_RE_TE_EXPERT_WEIGHT = re.compile(
+    r"transformer_layer.mlp.experts\.(.+)\.weight(\d+)"
+)
+
 
 def _all_gather_and_concat(
     tensor: torch.Tensor,
@@ -126,6 +135,12 @@ def all_gather_param(
     else:
         tp_size = mpu.get_tensor_model_parallel_world_size()
         tp_group = mpu.get_tensor_model_parallel_group()
+
+    # Short-circuit: no all-gather needed when tensor parallel size is 1
+    if tp_size == 1:
+        if param_is_fp8 and fp8_direct_convert:
+            return param
+        return param.data
 
     partition_dim = param.partition_dim
     partition_stride = param.partition_stride
@@ -841,19 +856,16 @@ def get_named_parameters(model_module, num_experts):
             if not name.startswith("module.module."):
                 name = "module." + name
 
-            decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
-            match = re.match(decoder_layers_pattern, name)
+            match = _RE_DECODER_LAYERS.match(name)
             if not match:
-                mtp_layers_pattern = r"module\.module\.mtp\.layers\.(\d+)\.(.+)"
-                match = re.match(mtp_layers_pattern, name)
+                match = _RE_MTP_LAYERS.match(name)
                 if not match:
                     yield name, param
                     continue
 
                 # mtp layer starts from layer 0
                 layer_idx, rest = match.groups()
-                expert_pattern = r"transformer_layer.mlp.experts\.(.+)\.weight(\d+)"
-                match = re.match(expert_pattern, rest)
+                match = _RE_TE_EXPERT_WEIGHT.match(rest)
                 if not match:
                     yield name, param
                     continue
@@ -870,8 +882,7 @@ def get_named_parameters(model_module, num_experts):
             layer_idx = int(layer_idx) + layer_offset
 
             # this is hardcoded for te grouped matmul
-            expert_pattern = r"mlp.experts\.(.+)\.weight(\d+)"
-            match = re.match(expert_pattern, rest)
+            match = _RE_EXPERT_WEIGHT.match(rest)
             if match:
                 rest, expert_idx = match.groups()
                 expert_idx = int(expert_idx) + expert_offset
@@ -890,8 +901,7 @@ def get_named_parameters(model_module, num_experts):
             if not name.startswith("module.module."):
                 name = "module." + name
 
-            decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
-            match = re.match(decoder_layers_pattern, name)
+            match = _RE_DECODER_LAYERS.match(name)
             if not match:
                 yield name, buffer
             else:
