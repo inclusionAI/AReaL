@@ -52,7 +52,7 @@ from areal.api import (
     WeightUpdateMeta,
     WorkflowLike,
 )
-from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
+from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig, OptimizerConfig
 from areal.api.io_struct import DeviceRuntimeInfo
 from areal.engine.core import (
     aggregate_eval_losses,
@@ -207,6 +207,51 @@ class FSDPEngine(TrainEngine):
         self.is_offload: bool = False
         self._per_layer_optim_wrapper: PerLayerOptimWrapper | None = None
         self.enable_tree_training: bool = self.config.enable_tree_training
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        model: str,
+        dp_size: int = 1,
+        tp_size: int = 1,
+        dtype: str = "bfloat16",
+        learning_rate: float | None = None,
+        use_lora: bool = False,
+        lora_rank: int = 32,
+        lora_alpha: int = 16,
+        **kwargs,
+    ) -> "FSDPEngine":
+        """Construct an FSDPEngine directly without assembling a TrainEngineConfig.
+        
+        Parameters
+        ----------
+        model : str
+            Path to HuggingFace checkpoint or model.
+        dp_size: int
+            Data parallel size, default 1.
+        tp_size: int
+            Tensor parallel size, default 1.
+        dtype : str
+            Parameter data type, default 'bfloat16'.
+        learning_rate : float | None
+            Learning rate. If None, no optimizer is created (inference-only).
+        use_lora : bool
+            Whether to use LoRA.
+        """
+        optimizer_config = (
+            OptimizerConfig(lr=learning_rate) if learning_rate is not None else None
+        )
+        config = TrainEngineConfig(
+            path=model,
+            backend=f"fsdp:d{dp_size}t{tp_size}",
+            dtype=dtype,
+            optimizer=optimizer_config,
+            use_lora=use_lora,
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            **kwargs,
+        )
+        return cls(config)
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
