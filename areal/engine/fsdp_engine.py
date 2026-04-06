@@ -782,11 +782,168 @@ class FSDPEngine(TrainEngine):
                 self.optimizer.step()
             update_successful = True
 
+        # ── Sync tied weights across PP ranks after successful optimizer step ──
+        # When tie_word_embeddings=True and PP splits embed_tokens and lm_head
+        # onto different ranks, the deepcopy breaks Python-level weight tying.
+        # Without this sync, the two copies diverge every step, eventually
+        # corrupting generation quality (SGLang uses embed_tokens as lm_head
+        # when PP=1 + tied, so embed_tokens must carry output projection grads).
+        if update_successful:
+            self._sync_tied_weights_pp()
+
         current_lr = self.lr_scheduler.get_last_lr()[0]
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
             lr=current_lr,
+        )
+
+    def _sync_tied_weights_pp(self):
+        """Synchronize tied weights (embed_tokens ↔ lm_head) across PP ranks.
+
+        When tie_word_embeddings=True and PP is enabled, the deepcopy-based
+        pipeline split breaks Python-level weight tying. After each optimizer
+        step, embed_tokens.weight (on first PP rank) and lm_head.weight (on
+        last PP rank) diverge because they receive different gradients:
+          - embed_tokens gets input embedding gradients only
+          - lm_head gets output projection gradients only
+
+        Strategy A (weight sync after optimizer.step()):
+          We broadcast lm_head.weight from the last PP rank to the first PP
+          rank's embed_tokens.weight. lm_head is canonical because:
+          1. Output projection gradients are more critical for generation quality
+          2. SGLang (PP=1) uses embed_tokens as lm_head, skipping lm_head.weight
+             during load_weights — so embed_tokens must carry the output gradients
+
+        FSDP2 DTensor handling:
+          In FSDP2, each parameter is a DTensor. The actual local shard data
+          lives in param._local_tensor. We broadcast the local shards directly
+          (avoiding full_tensor() which would trigger expensive all-gather).
+          This is safe because FSDP2 shards tied weights identically when the
+          shapes match (same DTensor spec across PP ranks for same-shaped params).
+        """
+        # Guard: only needed when PP + tie_word_embeddings
+        if self._pp_model_parts is None or self.pp_group is None:
+            return
+        if not getattr(self.model_config, "tie_word_embeddings", False):
+            return
+
+        pp_group = self.pp_group
+        pp_global_ranks = dist.get_process_group_ranks(pp_group)
+        first_pp_global = pp_global_ranks[0]   # rank owning embed_tokens
+        last_pp_global = pp_global_ranks[-1]    # rank owning lm_head
+        global_rank = dist.get_rank()
+
+        # If first and last PP rank are the same, no sync needed
+        if first_pp_global == last_pp_global:
+            return
+
+        import time as _time_sync
+        _sync_t0 = _time_sync.perf_counter()
+
+        # ── Locate parameters on this rank ──
+        embed_param = None  # embed_tokens.weight on first PP rank
+        lm_head_param = None  # lm_head.weight on last PP rank
+
+        if self._pp_has_first_stage:
+            # First PP rank: find embed_tokens.weight
+            for part in self._pp_model_parts:
+                inner = part.model if hasattr(part, "model") else part
+                for name, param in inner.named_parameters():
+                    if "embed_tokens.weight" in name:
+                        embed_param = param
+                        break
+                if embed_param is not None:
+                        break
+
+        if self._pp_has_last_stage:
+            # Last PP rank: find lm_head.weight
+            for part in self._pp_model_parts:
+                inner = part.model if hasattr(part, "model") else part
+                for name, param in inner.named_parameters():
+                    if "lm_head.weight" in name:
+                        lm_head_param = param
+                        break
+                if lm_head_param is not None:
+                        break
+
+        # ── Extract local shard from DTensor ──
+        # In FSDP2, parameters are DTensors. _local_tensor gives the actual
+        # local shard without triggering an all-gather.
+        def _get_local_tensor(param):
+            if param is None:
+                return None
+            if isinstance(param, DTensor):
+                return param._local_tensor
+            if isinstance(param.data, DTensor):
+                return param.data._local_tensor
+            return param.data
+
+        embed_local = _get_local_tensor(embed_param)
+        lm_head_local = _get_local_tensor(lm_head_param)
+
+        # ── Determine buffer shape for broadcast ──
+        # Both ranks need to agree on the buffer shape. Since FSDP2 shards
+        # identically for same-shaped params, local shards have the same shape.
+        if lm_head_local is not None:
+            # Last PP rank: use lm_head's local shard shape
+            local_shape = lm_head_local.shape
+            local_dtype = lm_head_local.dtype
+            local_device = lm_head_local.device
+        elif embed_local is not None:
+            # First PP rank: use embed_tokens's local shard shape
+            local_shape = embed_local.shape
+            local_dtype = embed_local.dtype
+            local_device = embed_local.device
+        else:
+            # This rank has neither param (middle PP rank) — still participate
+            # in broadcast but with a dummy buffer. For PP=2, this won't happen.
+            self.logger.info(
+                f"[TIED_SYNC] Rank {global_rank}: neither embed_tokens nor "
+                f"lm_head found, skipping sync (middle PP rank)"
+            )
+            return
+
+        # ── Pre-sync diagnostics ──
+        if lm_head_local is not None:
+            _lm_norm = lm_head_local.float().norm().item()
+            self.logger.info(
+                f"[TIED_SYNC] Rank {global_rank} (last PP): "
+                f"lm_head local_shard shape={list(local_shape)}, "
+                f"norm={_lm_norm:.6f}"
+            )
+        if embed_local is not None:
+            _embed_norm_before = embed_local.float().norm().item()
+            self.logger.info(
+                f"[TIED_SYNC] Rank {global_rank} (first PP): "
+                f"embed_tokens local_shard shape={list(embed_local.shape)}, "
+                f"norm_before={_embed_norm_before:.6f}"
+            )
+
+        # ── Broadcast lm_head local shard from last PP rank → all PP ranks ──
+        sync_buffer = torch.empty(
+            local_shape, dtype=local_dtype, device=local_device
+        )
+        if lm_head_local is not None:
+            sync_buffer.copy_(lm_head_local)
+
+        dist.broadcast(sync_buffer, src=last_pp_global, group=pp_group)
+
+        # ── Copy received data into embed_tokens's local shard ──
+        if embed_local is not None:
+            embed_local.copy_(sync_buffer)
+            _embed_norm_after = embed_local.float().norm().item()
+            self.logger.info(
+                f"[TIED_SYNC] Rank {global_rank} (first PP): "
+                f"embed_tokens updated, norm_after={_embed_norm_after:.6f}, "
+                f"delta_norm={abs(_embed_norm_after - _embed_norm_before):.6f}"
+            )
+
+        del sync_buffer
+        _sync_elapsed = _time_sync.perf_counter() - _sync_t0
+        self.logger.info(
+            f"[TIED_SYNC] Rank {global_rank}: "
+            f"tied weight sync completed in {_sync_elapsed:.4f}s"
         )
 
     def lr_scheduler_step(self):
@@ -1894,6 +2051,91 @@ class FSDPEngine(TrainEngine):
             for key in merged:
                 if merged[key].device.type != "cpu":
                     merged[key] = merged[key].cpu()
+
+            # ── Reconcile tied weights (safety net for weight update path) ──
+            # Even though _sync_tied_weights_pp() keeps weights aligned during
+            # training, this provides a second line of defense: ensure the
+            # merged state dict sent to SGLang has consistent tied weights.
+            #
+            # SGLang behavior:
+            #   PP=1 + tied: lm_head = embed_tokens (same object), load_weights
+            #     skips "lm_head.weight" → only embed_tokens.weight is loaded.
+            #   PP>1: lm_head = ParallelLMHead (separate), both weights loaded
+            #     independently.
+            #
+            # Strategy: copy lm_head.weight → embed_tokens.weight (lm_head is
+            # canonical because it carries output projection gradients).
+            # Also ensure lm_head.weight exists for SGLang PP>1 compatibility.
+            _tie_word_embeddings = getattr(self.model_config, "tie_word_embeddings", False)
+            if _tie_word_embeddings:
+                _embed_key = None
+                _lm_head_key = None
+                for k in merged:
+                    if "embed_tokens.weight" in k and _embed_key is None:
+                        _embed_key = k
+                    if "lm_head.weight" in k and _lm_head_key is None:
+                        _lm_head_key = k
+
+                if _embed_key and _lm_head_key:
+                    # Both exist: check divergence and reconcile
+                    _embed_w = merged[_embed_key]
+                    _lm_head_w = merged[_lm_head_key]
+                    _divergence_norm = (_embed_w - _lm_head_w).float().norm().item()
+                    _embed_norm = _embed_w.float().norm().item()
+                    _lm_head_norm = _lm_head_w.float().norm().item()
+                    _cos_sim = (
+                        torch.nn.functional.cosine_similarity(
+                            _embed_w.float().reshape(1, -1),
+                            _lm_head_w.float().reshape(1, -1),
+                        ).item()
+                    )
+                    logger.info(
+                        f"[TIED_RECONCILE][Rank {global_rank}] "
+                        f"embed_key={_embed_key}, lm_head_key={_lm_head_key}, "
+                        f"embed_norm={_embed_norm:.6f}, lm_head_norm={_lm_head_norm:.6f}, "
+                        f"divergence_norm={_divergence_norm:.6f}, "
+                        f"cosine_sim={_cos_sim:.6f}"
+                    )
+                    if _divergence_norm > 1e-6:
+                        logger.warning(
+                            f"[TIED_RECONCILE][Rank {global_rank}] "
+                            f"Tied weights diverged (norm={_divergence_norm:.6f})! "
+                            f"Overwriting embed_tokens with lm_head (canonical)."
+                        )
+                    # Always reconcile: lm_head → embed_tokens
+                    merged[_embed_key] = _lm_head_w.clone()
+                    logger.info(
+                        f"[TIED_RECONCILE][Rank {global_rank}] "
+                        f"Reconciled: {_embed_key} = {_lm_head_key}"
+                    )
+
+                elif _lm_head_key and not _embed_key:
+                    # Only lm_head exists (unusual): create embed_tokens entry
+                    _expected_embed_key = "model.embed_tokens.weight"
+                    merged[_expected_embed_key] = merged[_lm_head_key].clone()
+                    logger.info(
+                        f"[TIED_RECONCILE][Rank {global_rank}] "
+                        f"Created {_expected_embed_key} from {_lm_head_key} "
+                        f"(lm_head only, embed missing)"
+                    )
+
+                elif _embed_key and not _lm_head_key:
+                    # Only embed_tokens exists: create lm_head entry
+                    # This ensures SGLang PP>1 can load lm_head.weight
+                    _expected_lm_key = "lm_head.weight"
+                    merged[_expected_lm_key] = merged[_embed_key].clone()
+                    logger.info(
+                        f"[TIED_RECONCILE][Rank {global_rank}] "
+                        f"Created {_expected_lm_key} from {_embed_key} "
+                        f"(embed only, lm_head missing)"
+                    )
+                else:
+                    logger.warning(
+                        f"[TIED_RECONCILE][Rank {global_rank}] "
+                        f"tie_word_embeddings=True but neither embed_tokens.weight "
+                        f"nor lm_head.weight found in merged state dict! "
+                        f"Keys sample: {list(merged.keys())[:10]}"
+                    )
 
             logger.info(
                 f"[FSDPEngine Rank {global_rank}] Step 5 done: "
