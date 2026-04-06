@@ -13,7 +13,9 @@ from .base import BaseTool, register_tool
 logger = logging.getLogger(__name__)
 
 # Ensure geo_edit is importable (AReaL root)
-_AREAL_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+_AREAL_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
+)
 if _AREAL_ROOT not in sys.path:
     sys.path.insert(0, _AREAL_ROOT)
 
@@ -38,9 +40,9 @@ def _decode_image_url(url: str) -> Image.Image:
 
 
 def _load_function_tools():
-    # Load each function tool module directly via importlib to bypass
-    # geo_edit.tool_definitions.__init__ → router → agents → ray dependency chain
+    """Load local function tools only (no Ray dependency)."""
     import importlib.util
+
     tools_dir = os.path.join(_AREAL_ROOT, "geo_edit", "tool_definitions", "functions")
     modules = {
         "image_crop": "crop.py",
@@ -60,6 +62,47 @@ def _load_function_tools():
     return result
 
 
+def _load_all_tools_via_router(enable_tools=None):
+    """Load function + agent tools via ToolRouter. Returns (tools_dict, router) or (None, None)."""
+    if enable_tools is None:
+        enable_tools_str = os.environ.get("GEOEDIT_ENABLE_TOOLS", "general,chart")
+        enable_tools = [t.strip() for t in enable_tools_str.split(",") if t.strip()]
+
+    try:
+        import ray
+
+        if not ray.is_initialized():
+            ray.init(address="auto", ignore_reinit_error=True)
+            logger.info(f"Ray initialized: {ray.cluster_resources()}")
+
+        from geo_edit.tool_definitions.router import ToolRouter
+
+        router = ToolRouter(
+            tool_mode="auto",
+            enable_tools=enable_tools,
+            skip_agent_init=False,
+            ray_address="auto",
+        )
+
+        tools = router.get_available_tools()
+        declarations = {d["name"]: d for d in router.get_available_declarations()}
+        return_types = router.get_tool_return_types()
+
+        result = {}
+        for name, fn in tools.items():
+            decl = declarations.get(name, {"name": name})
+            ret_type = return_types.get(name, "text")
+            result[name] = (decl, fn, "router", ret_type)
+
+        return result, router
+
+    except Exception as e:
+        logger.warning(
+            f"Failed to load ToolRouter ({e}). Falling back to function-only mode."
+        )
+        return None, None
+
+
 @register_tool
 class GeoEditTool(BaseTool):
     tool_type = "geo_edit_tool"
@@ -67,8 +110,21 @@ class GeoEditTool(BaseTool):
 
     def __init__(self, num_workers=1):
         super().__init__(num_workers)
-        self.function_tools = _load_function_tools()
-        logger.info(f"GeoEditTool loaded {len(self.function_tools)} function tools: {list(self.function_tools.keys())}")
+        all_tools, self._router = _load_all_tools_via_router()
+        if all_tools:
+            self.function_tools = all_tools
+            self._has_router = True
+            logger.info(
+                f"GeoEditTool loaded {len(self.function_tools)} tools via ToolRouter: "
+                f"{sorted(self.function_tools.keys())}"
+            )
+        else:
+            self.function_tools = _load_function_tools()
+            self._has_router = False
+            logger.info(
+                f"GeoEditTool loaded {len(self.function_tools)} function tools (fallback): "
+                f"{sorted(self.function_tools.keys())}"
+            )
 
     def get_usage_inst(self):
         return "Vision tool agent supporting crop, draw_line, draw_path, label, highlight, bbox and more."
@@ -113,7 +169,10 @@ class GeoEditTool(BaseTool):
             env["images_initialized"] = True
 
         if not valid:
-            observation = "Error: Could not parse action. Expected format: <action>{\"name\": \"tool_name\", \"arguments\": {...}}</action>"
+            observation = (
+                "Error: Could not parse action. Expected format: "
+                '<action>{"name": "tool_name", "arguments": {...}}</action>'
+            )
             self.update_env(trajectory_id, env, parsed, False, extra_field, observation)
             self.save_env(trajectory_id, env)
             return observation, False, False
@@ -122,7 +181,7 @@ class GeoEditTool(BaseTool):
         tool_args = parsed.get("arguments", {})
 
         if tool_name not in self.function_tools:
-            observation = f"Error: Unknown tool '{tool_name}'. Available: {list(self.function_tools.keys())}"
+            observation = f"Error: Unknown tool '{tool_name}'. Available: {sorted(self.function_tools.keys())}"
             self.update_env(trajectory_id, env, parsed, False, extra_field, observation)
             self.save_env(trajectory_id, env)
             return observation, False, False
@@ -143,14 +202,18 @@ class GeoEditTool(BaseTool):
             env["images"].append(result.copy())
             idx = len(env["images"]) - 1
             encoded = _encode_image_url(result)
+            # Observation format aligned with SFT training data:
+            # "Observation N:\n<image>" (colon + newline before <image>)
             observation = {
-                "obs": f"Tool executed successfully.\nObservation {idx}: <image>",
+                "obs": f"Tool executed successfully.\nObservation {idx}:\n<image>",
                 "image": encoded,
             }
         elif isinstance(result, str):
             if result.startswith("Error"):
                 observation = result
-                self.update_env(trajectory_id, env, parsed, False, extra_field, observation)
+                self.update_env(
+                    trajectory_id, env, parsed, False, extra_field, observation
+                )
                 self.save_env(trajectory_id, env)
                 return observation, False, False
             else:
