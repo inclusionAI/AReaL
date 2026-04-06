@@ -51,6 +51,9 @@ class DatasetSpec:
     # 30 unique maps are shared across 2570 items). When set, prepare_images()
     # saves each unique image once and drops the image column from the dataset.
     image_dedup_key: Optional[str] = None
+    # Additional prompt appended to LLM judge query for task-specific evaluation hints.
+    # Can be a static string or a callable(item) -> Optional[str] for per-item hints.
+    judge_prompt: "Optional[str | Callable[[Mapping[str, Any]], Optional[str]]]" = None
 
     def prepare_images(self, dataset, output_dir: str) -> Tuple:
         """Pre-save deduplicated images to disk, return (dataset, image_map).
@@ -102,6 +105,16 @@ class DatasetSpec:
         if callable(self.tool_guidance):
             return self.tool_guidance(item) if item is not None else None
         return self.tool_guidance
+
+    def get_judge_prompt(
+        self, item: Optional[Mapping[str, Any]] = None
+    ) -> Optional[str]:
+        """Get judge additional prompt string, resolving callable if needed."""
+        if self.judge_prompt is None:
+            return None
+        if callable(self.judge_prompt):
+            return self.judge_prompt(item) if item is not None else None
+        return self.judge_prompt
 
     def build_prompt(
         self, item: Mapping[str, Any], use_tools: bool, separated: bool = False
@@ -207,6 +220,41 @@ def _get_reasonmap_answer(item: Mapping[str, Any]) -> str:
     return str(answer)
 
 
+# =============================================================================
+# Per-dataset judge prompts (additional hints for LLM-as-judge evaluation)
+# =============================================================================
+CARTOMAPQA_SRN_JUDGE_PROMPT = (
+    "Additional evaluation rules for route navigation answers:\n"
+    "- 'road_1, continue straight, road_1' is equivalent to 'road_1' only. "
+    "Redundant straight continuations on the same road should be ignored.\n"
+    "- The direction sequence matters: compare step by step.\n"
+    "- Road name synonyms or abbreviations (e.g. 'St' vs 'Street') are acceptable."
+)
+
+CARTOMAPQA_MML_JUDGE_PROMPT = (
+    "Additional evaluation rules for map marker localization answers:\n"
+    "- The answer is a JSON with 'road_1' and 'road_2' fields.\n"
+    "- The order of road_1 and road_2 does NOT matter: "
+    "{road_1: A, road_2: B} is equivalent to {road_1: B, road_2: A}.\n"
+    "- Road name abbreviations (e.g. 'Rd' vs 'Road', 'St' vs 'Street') are acceptable."
+)
+
+CARTOMAPQA_RLE_JUDGE_PROMPT = (
+    "Additional evaluation rules for route length estimation answers:\n"
+    "- The answer is a numeric value with unit (e.g. '1194.497 m' or '3918.95 ft').\n"
+    "- Allow a relative tolerance of 10%: if the predicted value is within 10% "
+    "of the ground truth, consider it correct.\n"
+    "- Unit must match (meters vs feet)."
+)
+
+CARTOMAPQA_STMF_NAME_LISTING_JUDGE_PROMPT = (
+    "Additional evaluation rules for name listing answers:\n"
+    "- The answer is a list of POI names separated by newlines.\n"
+    "- The order of names does NOT matter.\n"
+    "- Minor spelling variations or abbreviations are acceptable."
+)
+
+
 DATASET_SPECS: Dict[str, DatasetSpec] = {
     # -- CartoMapQA tasks (unified: HF dataset `question` contains full prompt) --
     "cartomapqa_mfs": DatasetSpec(
@@ -244,6 +292,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
+        judge_prompt=CARTOMAPQA_STMF_NAME_LISTING_JUDGE_PROMPT,
     ),
     "cartomapqa_mtmf": DatasetSpec(
         name="cartomapqa_mtmf",
@@ -262,6 +311,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
+        judge_prompt=CARTOMAPQA_RLE_JUDGE_PROMPT,
     ),
     "cartomapqa_mml": DatasetSpec(
         name="cartomapqa_mml",
@@ -271,6 +321,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
+        judge_prompt=CARTOMAPQA_MML_JUDGE_PROMPT,
     ),
     "cartomapqa_srn": DatasetSpec(
         name="cartomapqa_srn",
@@ -280,6 +331,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
+        judge_prompt=CARTOMAPQA_SRN_JUDGE_PROMPT,
     ),
     "visworld_eval": DatasetSpec(
         name="visworld_eval",

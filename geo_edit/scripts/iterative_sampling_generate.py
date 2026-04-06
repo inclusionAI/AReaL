@@ -116,6 +116,7 @@ def _validate_trajectory(
     check_correctness: bool = True,
     task_category: str = "",
     image_path: str = None,
+    judge_prompt: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """Validate trajectory using judge.
 
@@ -125,11 +126,13 @@ def _validate_trajectory(
             where no answer exists yet).
         task_category: Task category string. When "maze", uses algorithmic verification.
         image_path: Path to task image, required for maze verification.
+        judge_prompt: Optional additional prompt for LLM judge (task-specific hints).
     """
     # Maze tasks: use algorithmic wall-collision verification instead of LLM judge
     if task_category == "maze" and image_path and check_correctness:
         from geo_edit.evaluation.maze_verifier import maze_judge
 
+        logger.warning(f"Using maze algorithmic verifier instead of LLM judge (category={task_category})")
         return maze_judge(
             question=question,
             ground_truth=ground_truth,
@@ -144,6 +147,7 @@ def _validate_trajectory(
             question=question,
             ground_truth=ground_truth,
             prediction=prediction,
+            additional_prompt=judge_prompt,
         )
         if is_correct:
             return True, "valid"
@@ -193,6 +197,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     text_only = task_payload.get("text_only", False)
     answer_format = task_payload.get("answer_format")
     tool_guidance = task_payload.get("tool_guidance")
+    judge_prompt = task_payload.get("judge_prompt")
     task_category = (
         task_payload.get("task_kwargs", {})
         .get("meta_info_extra", {})
@@ -318,6 +323,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                         check_correctness=True,
                         task_category=task_category,
                         image_path=image_path,
+                        judge_prompt=judge_prompt,
                     )
 
                     if is_valid:
@@ -689,6 +695,7 @@ def main():
                     "task_kwargs": dataset_spec.build_task_kwargs(item),
                     "answer_format": dataset_spec.answer_format,
                     "tool_guidance": dataset_spec.get_tool_guidance(item),
+                    "judge_prompt": dataset_spec.get_judge_prompt(item),
                 }
 
                 ar = pool.apply_async(_run_one_task_iterative, (payload,))

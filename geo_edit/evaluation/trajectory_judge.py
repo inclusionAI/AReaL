@@ -159,6 +159,7 @@ class TrajectoryJudge:
         question: str,
         ground_truth: str,
         prediction: str,
+        additional_prompt: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """Judge if the prediction is correct.
 
@@ -166,6 +167,8 @@ class TrajectoryJudge:
             question: The question being answered.
             ground_truth: The ground truth answer.
             prediction: The model's predicted answer.
+            additional_prompt: Optional task-specific evaluation hints appended
+                to the query prompt (e.g. equivalence rules for SRN).
 
         Returns:
             Tuple of (is_correct, raw_response).
@@ -176,6 +179,8 @@ class TrajectoryJudge:
             ground_truth=ground_truth,
             prediction=prediction,
         )
+        if additional_prompt:
+            prompt += "\n\n" + additional_prompt
         response = self._call_api(EVAL_SYSTEM_PROMPT, prompt)
         score = parse_score(response)
         is_correct = score == "1"
