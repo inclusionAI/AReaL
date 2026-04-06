@@ -21,6 +21,7 @@ from PIL import Image
 
 try:
     from skimage.draw import line as skimage_line
+
     HAS_SKIMAGE = True
 except ImportError:
     HAS_SKIMAGE = False
@@ -30,7 +31,10 @@ except ImportError:
 # Bresenham fallback (used when scikit-image is unavailable)
 # ---------------------------------------------------------------------------
 
-def _bresenham_line(y0: int, x0: int, y1: int, x1: int) -> Tuple[np.ndarray, np.ndarray]:
+
+def _bresenham_line(
+    y0: int, x0: int, y1: int, x1: int
+) -> Tuple[np.ndarray, np.ndarray]:
     """Pure-Python Bresenham line algorithm.
 
     Matches skimage.draw.line signature: (r0, c0, r1, c1) -> (rr, cc).
@@ -67,6 +71,7 @@ def _draw_line(r0: int, c0: int, r1: int, c1: int) -> Tuple[np.ndarray, np.ndarr
 # Image loading helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_image(image: Union[str, Image.Image, np.ndarray]) -> Image.Image:
     """Load image from various sources: file path, base64 string, PIL Image, or numpy array."""
     if isinstance(image, Image.Image):
@@ -93,11 +98,15 @@ def _load_image(image: Union[str, Image.Image, np.ndarray]) -> Image.Image:
 # Core verification functions
 # ---------------------------------------------------------------------------
 
+
 def extract_maze_answer(pred_str: str) -> List[Tuple[int, int]]:
     """Extract maze path from model response.
 
-    Parses <point>X Y</point> tags and converts from [0, 1000] to [0, 512] pixel coords.
+    Parses <point>X Y</point> tags and returns pixel coordinates directly.
     Takes the last sequence of consecutive <point> tags found in the string.
+
+    The VisWorld-Eval maze dataset uses pixel coordinates (matching the image
+    dimensions, typically 512x512), so no coordinate scaling is applied.
 
     Returns:
         List of (x, y) tuples in pixel coordinates, or empty list if parsing fails.
@@ -109,13 +118,11 @@ def extract_maze_answer(pred_str: str) -> List[Tuple[int, int]]:
 
     # Take the last sequence
     last_seq = sequences[-1]
-    line_pattern = re.compile(r'<point>(.*?)</point>', re.DOTALL)
+    line_pattern = re.compile(r"<point>(.*?)</point>", re.DOTALL)
     line_contents = line_pattern.findall(last_seq)
 
     try:
         coords = [(int(p.split()[0]), int(p.split()[1])) for p in line_contents]
-        # Scale from [0, 1000] to [0, 512]
-        coords = [(int(x / 1000 * 512), int(y / 1000 * 512)) for x, y in coords]
     except (ValueError, IndexError):
         return []
 
@@ -188,14 +195,16 @@ def is_valid_step(
     x2, y2 = int(point2[0]), int(point2[1])
 
     # Check image bounds
-    if not (0 <= x1 < width and 0 <= y1 < height and 0 <= x2 < width and 0 <= y2 < height):
+    if not (
+        0 <= x1 < width and 0 <= y1 < height and 0 <= x2 < width and 0 <= y2 < height
+    ):
         return False, "Endpoints outside image bounds"
 
     # Get maze region bounds
     x_min, x_max, y_min, y_max = get_maze_bounds(gray_array)
 
     # Check endpoints are within maze region and not on walls
-    for (x, y) in [(x1, y1), (x2, y2)]:
+    for x, y in [(x1, y1), (x2, y2)]:
         if not (x_min <= x <= x_max and y_min <= y <= y_max):
             return False, "Endpoint in outer white border"
         if gray_array[y, x] < threshold:
@@ -241,7 +250,7 @@ def wall_judge(
 
     # Load image and convert to grayscale
     pil_image = _load_image(image)
-    gray_array = np.array(pil_image.convert('RGB')).max(-1)
+    gray_array = np.array(pil_image.convert("RGB")).max(-1)
     drawn_array = copy.deepcopy(gray_array)
 
     if len(pred_path) <= 1:
@@ -249,7 +258,9 @@ def wall_judge(
 
     # Draw predicted path on visualization
     for i in range(1, len(pred_path)):
-        drawn_array = cv2.line(drawn_array, pred_path[i - 1], pred_path[i], (0, 0, 0), 2)
+        drawn_array = cv2.line(
+            drawn_array, pred_path[i - 1], pred_path[i], (0, 0, 0), 2
+        )
 
     # Compute min_delta based on maze size
     if maze_size == "5":
@@ -294,6 +305,7 @@ def wall_judge(
 # ---------------------------------------------------------------------------
 # TrajectoryJudge-compatible interface
 # ---------------------------------------------------------------------------
+
 
 def maze_judge(
     question: str,

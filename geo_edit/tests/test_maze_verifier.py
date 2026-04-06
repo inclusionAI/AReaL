@@ -19,13 +19,14 @@ from geo_edit.evaluation.maze_verifier import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_open_maze(size=512) -> np.ndarray:
     """Create a simple open maze: white interior with a thin black border."""
     gray = np.full((size, size), 200, dtype=np.uint8)  # gray interior (passable)
-    gray[0, :] = 0    # top wall
-    gray[-1, :] = 0   # bottom wall
-    gray[:, 0] = 0    # left wall
-    gray[:, -1] = 0   # right wall
+    gray[0, :] = 0  # top wall
+    gray[-1, :] = 0  # bottom wall
+    gray[:, 0] = 0  # left wall
+    gray[:, -1] = 0  # right wall
     return gray
 
 
@@ -47,15 +48,14 @@ def _save_temp_maze(tmp_path, gray_array: np.ndarray, name="maze.png") -> str:
 # extract_maze_answer
 # ---------------------------------------------------------------------------
 
+
 class TestExtractMazeAnswer:
     def test_valid_single_sequence(self):
         text = "<point>500 500</point><point>600 600</point>"
         result = extract_maze_answer(text)
         assert len(result) == 2
-        # 500/1000*512 = 256
-        assert result[0] == (256, 256)
-        # 600/1000*512 = 307
-        assert result[1] == (307, 307)
+        assert result[0] == (500, 500)
+        assert result[1] == (600, 600)
 
     def test_takes_last_sequence(self):
         text = "<point>100 100</point> some text <point>500 500</point><point>600 600</point>"
@@ -80,7 +80,7 @@ class TestExtractMazeAnswer:
     def test_coordinates_at_boundary(self):
         result = extract_maze_answer("<point>1000 1000</point>")
         assert len(result) == 1
-        assert result[0] == (512, 512)
+        assert result[0] == (1000, 1000)
 
     def test_zero_coordinates(self):
         result = extract_maze_answer("<point>0 0</point>")
@@ -90,6 +90,7 @@ class TestExtractMazeAnswer:
 # ---------------------------------------------------------------------------
 # parse_gt_path
 # ---------------------------------------------------------------------------
+
 
 class TestParseGtPath:
     def test_basic(self):
@@ -109,6 +110,7 @@ class TestParseGtPath:
 # ---------------------------------------------------------------------------
 # get_maze_bounds
 # ---------------------------------------------------------------------------
+
 
 class TestGetMazeBounds:
     def test_detects_border(self):
@@ -138,6 +140,7 @@ class TestGetMazeBounds:
 # bresenham_line
 # ---------------------------------------------------------------------------
 
+
 class TestBresenhamLine:
     def test_horizontal(self):
         rr, cc = _bresenham_line(5, 0, 5, 10)
@@ -160,6 +163,7 @@ class TestBresenhamLine:
 # ---------------------------------------------------------------------------
 # is_valid_step
 # ---------------------------------------------------------------------------
+
 
 class TestIsValidStep:
     def test_open_path(self):
@@ -190,6 +194,7 @@ class TestIsValidStep:
 # wall_judge
 # ---------------------------------------------------------------------------
 
+
 class TestWallJudge:
     def test_empty_prediction(self, tmp_path):
         gray = _make_open_maze(512)
@@ -207,13 +212,10 @@ class TestWallJudge:
         """A predicted path that matches GT waypoints should score 1.0."""
         gray = _make_open_maze(512)
         path = _save_temp_maze(tmp_path, gray)
-        # GT path: two points within the open area
         gt = "100 100 400 100"
-        # Predicted path: same points in [0,1000] scale
-        # 100 pixel = 100/512*1000 ~= 195
-        pred = "<point>195 195</point><point>781 195</point>"
+        pred = "<point>100 100</point><point>400 100</point>"
         score, _ = wall_judge(pred, path, gt)
-        assert score >= 0.5  # Should get meaningful progress
+        assert score >= 0.5
 
     def test_start_too_far_returns_zero(self, tmp_path):
         gray = _make_open_maze(512)
@@ -228,6 +230,7 @@ class TestWallJudge:
 # ---------------------------------------------------------------------------
 # maze_judge (TrajectoryJudge-compatible interface)
 # ---------------------------------------------------------------------------
+
 
 class TestMazeJudge:
     def test_returns_tuple(self, tmp_path):
@@ -248,6 +251,8 @@ class TestMazeJudge:
         assert "no_path" in reason or "insufficient" in reason
 
     def test_missing_image_returns_false(self):
-        is_correct, reason = maze_judge("q", "100 100", "<point>100 100</point>", "/nonexistent.png")
+        is_correct, reason = maze_judge(
+            "q", "100 100", "<point>100 100</point>", "/nonexistent.png"
+        )
         assert is_correct is False
         assert "error" in reason
