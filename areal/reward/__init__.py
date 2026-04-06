@@ -130,7 +130,7 @@ def _canon_pred_mc(resp: str) -> str:
 
     # Common patterns: "Answer: E", "(E)", "E.", "The answer is (E)", "choice E"
     # Prefer an explicit letter if present.
-    m = re.search(r"(?i)\b(?:answer|final|choice)\b[^A-E]*\(?\s*([A-E])\s*\)?", resp)
+    m = re.search(r"(?i)\b(?:answer|final|choice)\b.*?\b([A-E])\b", resp)
     if m:
         return f"\\boxed{{{m.group(1).upper()}}}"
 
@@ -184,15 +184,22 @@ class MathMultipleChoiceVerifyWorker:
 
     def _normalize_gold(self, ground_truth: str) -> str:
         gt = _canon_gold_mc(ground_truth)
-        # If gt isn't in choices, try to recover
-        m = re.search(r"\b([A-E])\b", gt.upper())
+                
+        choice_set = "".join(self.choices) if self.choices else "A-E"
+        pattern = rf"\b([{choice_set}])\b"
+        
+        m = re.search(pattern, gt.upper())
         if m and m.group(1) in self.choices:
             return f"\\boxed{{{m.group(1)}}}"
         return gt
 
     def _normalize_pred(self, response: str) -> str:
         resp = _canon_pred_mc(response)
-        m = re.search(r"\\BOXED\{([A-E])\}", resp.upper())
+        
+        choice_set = "".join(self.choices) if self.choices else "A-E"
+        pattern = rf"\\boxed\{{([{choice_set}])\}}"
+        
+        m = re.search(pattern, resp.upper())
         if m and m.group(1) in self.choices:
             return f"\\boxed{{{m.group(1)}}}"
         return resp

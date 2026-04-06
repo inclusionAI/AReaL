@@ -18,7 +18,7 @@ def extract_mc_answer(text: str) -> str:
     text = str(text).upper()
 
     # Pattern 1: "Answer: E", "Final answer is D", etc.
-    m = re.search(r"\b(?:ANSWER|FINAL|CHOICE)\b[^A-E]*\(?\s*([A-E])\s*\)?", text)
+    m = re.search(r"\b(?:ANSWER|FINAL|CHOICE)\b\s*[:=]?\s*\(?\s*([A-E])\s*\)?", text)
     if m:
         return m.group(1)
 
