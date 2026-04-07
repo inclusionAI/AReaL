@@ -103,6 +103,8 @@ def launch_server():
     if not status["running"]:
         print("DIED! Logs:")
         print(ray.get(srv.tail_log.remote()))
+        ray.kill(srv)
+        print("Killed dead ToolServer actor, resources released.")
         sys.exit(1)
 
 
