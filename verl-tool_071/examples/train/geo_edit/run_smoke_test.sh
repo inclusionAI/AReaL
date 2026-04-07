@@ -70,6 +70,8 @@ for n in ray.nodes():
 tool_server_url=http://$WORKER_IP:30888/get_observation
 echo "Using tool server on worker at $tool_server_url"
 
+unset ROCR_VISIBLE_DEVICES
+
 PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     algorithm.adv_estimator=$rl_alg \
     data.train_files=$train_data \
