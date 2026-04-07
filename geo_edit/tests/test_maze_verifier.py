@@ -209,11 +209,14 @@ class TestWallJudge:
         assert score == 0
 
     def test_perfect_path(self, tmp_path):
-        """A predicted path that matches GT waypoints should score 1.0."""
+        """Pred in 0-1000 space that maps to GT pixel coords should score > 0.
+
+        GT pixel (100,100)->(400,100) on 512px ≈ 0-1000 coords (195,195)->(781,195).
+        """
         gray = _make_open_maze(512)
         path = _save_temp_maze(tmp_path, gray)
         gt = "100 100 400 100"
-        pred = "<point>100 100</point><point>400 100</point>"
+        pred = "<point>195 195</point><point>781 195</point>"
         score, _ = wall_judge(pred, path, gt)
         assert score >= 0.5
 

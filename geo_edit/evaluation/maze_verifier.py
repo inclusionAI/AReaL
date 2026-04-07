@@ -256,6 +256,13 @@ def wall_judge(
     if len(pred_path) <= 1:
         return 0, drawn_array
 
+    # The draw_path tool uses a 0-1000 normalized coordinate space, so models
+    # output waypoints in that space.  Ground-truth paths are stored in pixel
+    # coordinates.  Rescale predicted coordinates to pixel space so that
+    # wall-collision checks and distance comparisons are meaningful.
+    img_w, img_h = pil_image.size
+    pred_path = [(int(x * img_w / 1000), int(y * img_h / 1000)) for x, y in pred_path]
+
     # Draw predicted path on visualization
     for i in range(1, len(pred_path)):
         drawn_array = cv2.line(

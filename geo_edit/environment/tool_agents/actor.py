@@ -54,6 +54,13 @@ class BaseToolModelActor(ABC):
         # Set CUDA_VISIBLE_DEVICES for vLLM and other frameworks
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in self.gpu_ids)
 
+        # Assign unique port to each vLLM instance to prevent V1 EngineCore port conflicts
+        import random
+
+        base_port = 29500 + self.gpu_ids[0] * 100 + random.randint(0, 99)
+        os.environ["MASTER_PORT"] = str(base_port)
+        os.environ["VLLM_PORT"] = str(base_port + 1)
+
         # For transformers: after setting CUDA_VISIBLE_DEVICES, device 0 maps to first visible GPU
         self.device = "cuda:0"
         self.device_map = "cuda:0"

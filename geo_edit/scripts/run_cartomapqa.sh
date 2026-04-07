@@ -12,19 +12,19 @@ if [ -z "${API_KEY:-}" ]; then
     exit 1
 fi
 
-DATASET_ROOT="C:/Users/Antoine/code/CartoMapQA/CartoMapQA_parquet"
-OUTPUT_ROOT="C:/Users/Antoine/code/CartoMapQA/output_iterative"
+DATASET_ROOT="/storage/openpsi/data/lcy_image_edit/CartoMapQA_parquet"
+OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/CartoMapQA_iterative_gpt5_0406"
 
 # Each entry: "parquet_filename:dataset_name"
 SUBSETS=(
-    "MFS:cartomapqa_mfs"
+    # "MFS:cartomapqa_mfs"
     "MML:cartomapqa_mml"
-    "MTMF:cartomapqa_mtmf"
-    "RLE:cartomapqa_rle"
-    "SRN:cartomapqa_srn"
-    "STMF_counting:cartomapqa_stmf_counting"
-    "STMF_name_listing:cartomapqa_stmf_name_listing"
-    "STMF_presence:cartomapqa_stmf_presence"
+    # "MTMF:cartomapqa_mtmf"
+    # "RLE:cartomapqa_rle"
+    # "SRN:cartomapqa_srn"
+    # "STMF_counting:cartomapqa_stmf_counting"
+    # "STMF_name_listing:cartomapqa_stmf_name_listing"
+    # "STMF_presence:cartomapqa_stmf_presence"
 )
 
 echo "============================================"
