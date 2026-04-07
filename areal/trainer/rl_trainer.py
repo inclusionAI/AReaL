@@ -243,27 +243,30 @@ class PPOTrainer:
             self.weight_update_meta = WeightUpdateMeta.from_disk(**disk_kwargs)
         elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
+            xccl_kwargs: dict[str, Any] = {
+                "gen_allocation": self.rollout_alloc,
+            }
+
+            if config.actor.use_lora:
+                xccl_kwargs.update(
+                    {
+                        "use_lora": config.actor.use_lora,
+                        "lora_name": config.gconfig.lora_name,
+                        "base_model_name": config.actor.path,
+                    }
+                )
+
             if self.actor_alloc.backend == "megatron":
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
-                    gen_allocation=self.rollout_alloc,
+                    **xccl_kwargs
                 )
             else:
-                xccl_kwargs: dict[str, Any] = {
-                    "gen_allocation": self.rollout_alloc,
-                }
-                if config.actor.use_lora:
-                    xccl_kwargs.update(
-                        {
-                            "use_lora": config.actor.use_lora,
-                            "lora_name": config.gconfig.lora_name,
-                            "base_model_name": config.actor.path,
-                        }
-                    )
                 self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(**xccl_kwargs)
         else:
             raise ValueError(
                 f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
             )
+
         self.actor.connect_engine(self.rollout, self.weight_update_meta)
 
         # Set up evaluation (skip in online mode)
@@ -900,10 +903,21 @@ class PPOTrainer:
     def _validate_cfg(self):
         """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
         rollout_backend = self.rollout_alloc.backend
+        actor_backend = self.actor_alloc.backend
         if rollout_backend == "vllm" and self.config.rollout.return_routed_experts:
             raise ValueError(
                 "return_routed_experts is only supported with SGLang backend. "
                 "Please disable return_routed_experts or switch to SGLang backend."
+            )
+        if (
+            actor_backend == "megatron"
+            and self.config.actor.use_lora
+            and rollout_backend == "sglang"
+        ):
+            raise ValueError(
+                "Megatron actor with LoRA is not supported with SGLang rollout in "
+                "RL trainer. Please use vLLM rollout backend, or disable LoRA, or "
+                "switch actor backend from Megatron."
             )
 
     def _requires_proxy_workflow(self, workflow: WorkflowLike | None) -> bool:

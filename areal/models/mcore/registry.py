@@ -161,6 +161,7 @@ def make_mcore_model(
     bridge: Bridge | Any | None = None,
     bridge_type: str = "mbridge",
     is_critic: bool = False,
+    use_lora: bool = False,
 ) -> list[GPTModel | DDP]:
     if bridge is not None and bridge_type == "mbridge":
         models = bridge.get_model(
@@ -214,6 +215,11 @@ def make_mcore_model(
         provider.account_for_embedding_in_pipeline_split = False
         provider.account_for_loss_in_pipeline_split = False
 
+        # LoRA params are injected after model materialization and do not carry
+        # Megatron main_grad buffers required by fused grad accumulation kernels.
+        if use_lora:
+            provider.gradient_accumulation_fusion = False
+
         # Keep these four flags aligned with mbridge base defaults.
         provider.variable_seq_lengths = True
         logger.warning(
@@ -235,8 +241,14 @@ def make_mcore_model(
 
         provider.finalize()
 
+        ddp_config = MCoreDDPConfig(**dataclasses.asdict(mcore_config.ddp))
+        if use_lora:
+            ddp_config.use_distributed_optimizer = False
+            ddp_config.overlap_grad_reduce = False
+            ddp_config.overlap_param_gather = False
+
         models = provider.provide_distributed_model(
-            ddp_config=MCoreDDPConfig(**dataclasses.asdict(mcore_config.ddp)),
+            ddp_config=ddp_config,
             fp16=tf_config.fp16,
             bf16=tf_config.bf16,
             use_megatron_fsdp=mcore_config.use_custom_fsdp,

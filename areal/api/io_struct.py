@@ -230,11 +230,19 @@ class WeightUpdateMeta:
         cls,
         gen_allocation: ModelAllocation,
         weight_chunked_mem_mb: int = 1024,
+        use_lora: bool = False,
+        lora_name: str = "",
+        lora_int_id: int = 1,
+        base_model_name: str = "",
     ):
         return cls(
             type="xccl",
             gen_allocation=gen_allocation,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
+            use_lora=use_lora,
+            lora_name=lora_name,
+            lora_int_id=lora_int_id,
+            base_model_name=base_model_name,
         )
 
     @classmethod

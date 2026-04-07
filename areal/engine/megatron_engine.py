@@ -15,6 +15,7 @@ import mbridge
 import torch
 import torch.distributed as dist
 from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
+from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
@@ -59,6 +60,7 @@ from areal.engine.megatron_utils.megatron import (
     get_named_parameters,
     remove_padding,
 )
+from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
 from areal.engine.megatron_utils.packed_context_parallel import (
     packed_context_parallel_forward,
 )
@@ -169,6 +171,7 @@ class MegatronEngine(TrainEngine):
         )
         self.quantization_config: dict[str, int | str | list[str]] | None = None
         self.bridge_cls: str = getattr(self.mcore_config, "bridge_type", "mbridge")
+        self.bridge_lora: MegatronBridgeLoRA | None = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -210,6 +213,42 @@ class MegatronEngine(TrainEngine):
         )
         self.process_group_initialized = True
 
+    def _apply_megatron_bridge_lora(self) -> None:
+        assert self.model is not None, "Model must be initialized before applying LoRA."
+        assert self.bridge_cls == "megatron-bridge"
+
+        target_modules = list(self.config.target_modules or [])
+        if not target_modules or "all-linear" in target_modules:
+            # Expand all-linear to explicit Megatron-Bridge linear module targets.
+            target_modules = [
+                "linear_qkv",
+                "linear_proj",
+                "linear_fc1",
+                "linear_fc2",
+            ]
+        self.bridge_lora = MegatronBridgeLoRA(
+            target_modules=target_modules,
+            dim=self.config.lora_rank,
+            alpha=self.config.lora_alpha,
+            dropout=0.0,
+        )
+        self.model = _MegatronModelList(self.bridge_lora(self.model, training=True))
+        self.bridge_lora.set_params_to_save(self.model)
+
+        total_params = sum(param.numel() for param in self.model.parameters())
+        trainable_params = sum(
+            param.numel() for param in self.model.parameters() if param.requires_grad
+        )
+        self.logger.info(
+            "Applied Megatron Bridge LoRA: target_modules=%s, rank=%s, alpha=%s, trainable=%s/%s (%.4f%%)",
+            target_modules,
+            self.config.lora_rank,
+            self.config.lora_alpha,
+            trainable_params,
+            total_params,
+            100.0 * trainable_params / max(total_params, 1),
+        )
+
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
         try:
             self.seed = get_seed()
@@ -237,6 +276,12 @@ class MegatronEngine(TrainEngine):
             f"update_weight_group_{mpu.get_pipeline_model_parallel_rank()}"
         )
         self.engine_lock = DistributedLock("train_engine_lock")
+
+        if self.config.use_lora and self.bridge_cls != "megatron-bridge":
+            raise NotImplementedError(
+                "MegatronEngine LoRA POC currently only supports bridge_type='megatron-bridge'. "
+                "mbridge does not support LoRA in this path."
+            )
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
@@ -270,9 +315,13 @@ class MegatronEngine(TrainEngine):
                     bridge=self.bridge,
                     bridge_type=self.bridge_cls,
                     is_critic=self.config.is_critic,
+                    use_lora=self.config.use_lora,
                 )
 
         self.model = _MegatronModelList(models)
+
+        if self.config.use_lora:
+            self._apply_megatron_bridge_lora()
 
         with self.device:
             self._load_model_from_hf(self.config.path)
@@ -552,6 +601,12 @@ class MegatronEngine(TrainEngine):
                 base_model_path=meta.base_model_path,
             )
         elif meta.weight_format == "dcp":
+            if self.checkpointer is None:
+                raise NotImplementedError(
+                    "DCP checkpoint save is not available for this Megatron configuration "
+                    "(e.g., LoRA path without distributed optimizer support). "
+                    "Please use weight_format='hf' for adapter/full-model export."
+                )
             self.checkpointer.save_checkpoint(meta.path, with_optimizer=meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
@@ -564,6 +619,12 @@ class MegatronEngine(TrainEngine):
                 )
             self._load_model_from_hf(meta.path)
         elif meta.weight_format == "dcp":
+            if self.checkpointer is None:
+                raise NotImplementedError(
+                    "DCP checkpoint load is not available for this Megatron configuration "
+                    "(e.g., LoRA path without distributed optimizer support). "
+                    "Please use weight_format='hf' for adapter/full-model load."
+                )
             self.checkpointer.load_checkpoint(meta.path, with_optimizer=meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
@@ -967,6 +1028,12 @@ class MegatronEngine(TrainEngine):
             return
         assert self.model is not None and len(self.model) > 0
 
+        use_distributed_optimizer = (
+            False
+            if self.config.use_lora
+            else self.mcore_config.ddp.use_distributed_optimizer
+        )
+
         assert self.optimizer_config.type in [
             "adam",
             "sgd",
@@ -987,7 +1054,7 @@ class MegatronEngine(TrainEngine):
             adam_beta1=self.optimizer_config.beta1,
             adam_beta2=self.optimizer_config.beta2,
             adam_eps=self.optimizer_config.eps,
-            use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
+            use_distributed_optimizer=use_distributed_optimizer,
             params_dtype=self.dtype,
             clip_grad=self.optimizer_config.gradient_clipping,
             fp8_recipe=(self.fp8_config.recipe if self.enable_fp8 else None),
@@ -1028,14 +1095,16 @@ class MegatronEngine(TrainEngine):
         )
         self.lr_scheduler = lr_scheduler
 
-        self.checkpointer = MegatronCheckpointManager(
-            model=self.model,
-            optimizer=self.optimizer,
-            lr_scheduler=self.lr_scheduler,
-            use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
-            use_checkpoint_opt_param_scheduler=self.mcore_config.use_checkpoint_opt_param_scheduler,
-            async_save=self.mcore_config.async_save,
-        )
+        # MegatronCheckpointManager now only support distributed optimizer which lora does not support
+        if not self.config.use_lora:
+            self.checkpointer = MegatronCheckpointManager(
+                model=self.model,
+                optimizer=self.optimizer,
+                lr_scheduler=self.lr_scheduler,
+                use_distributed_optimizer=use_distributed_optimizer,
+                use_checkpoint_opt_param_scheduler=self.mcore_config.use_checkpoint_opt_param_scheduler,
+                async_save=self.mcore_config.async_save,
+            )
 
     def _check_rollout_engine_connected(self) -> None:
         """Validate that rollout engine has been connected via connect_engine()."""
@@ -1071,6 +1140,16 @@ class MegatronEngine(TrainEngine):
             )
             for name, tensor in converted_named_tensors
         ]
+
+        if self.config.use_lora:
+            meta.peft_config = {
+                "r": self.config.lora_rank,
+                "lora_alpha": self.config.lora_alpha,
+                "target_modules": get_vllm_lora_target_modules(
+                    list(self.config.target_modules or [])
+                ),
+                "bias": "none",
+            }
 
         fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
 
@@ -1160,10 +1239,14 @@ class MegatronEngine(TrainEngine):
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             buffer_size = 0
 
+        model_name = self.hf_config.model_type
+        if self.config.use_lora:
+            model_name = f"{model_name}_lora"
+
         converted_named_tensors.extend(
             convert_to_hf(
                 self.tf_config,
-                self.hf_config.model_type,
+                model_name,
                 name,
                 param,
                 quantization_config=self.quantization_config,
@@ -1324,6 +1407,10 @@ class MegatronEngine(TrainEngine):
         for name, param in get_named_parameters(self.model, num_moe_experts):
             if ".experts." in name:
                 continue
+            if self.config.use_lora and (
+                ".adapter." not in name or not getattr(param, "requires_grad", False)
+            ):
+                continue
             buffer_size = self._impl_update_weight_from_distributed(
                 meta,
                 name,
@@ -1336,6 +1423,11 @@ class MegatronEngine(TrainEngine):
         # Only pipeline parallel heads CAN contain named tensors here
         if converted_named_tensors:
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
+        elif self.is_pipeline_parallel_head() and not self.config.use_lora:
+            self.logger.warning(
+                "No tensors were collected for distributed update at version %s.",
+                meta.version,
+            )
 
         dist.barrier(group=self.cpu_group)
 
@@ -1343,7 +1435,7 @@ class MegatronEngine(TrainEngine):
         named_tensors = []
 
         for name, param in get_named_parameters(self.model, num_moe_experts):
-            if ".experts." not in name:
+            if ".experts." not in name or self.config.use_lora:
                 continue
             buffer_size = self._impl_update_expert_weight_from_distributed(
                 meta,
@@ -1406,11 +1498,19 @@ class MegatronEngine(TrainEngine):
                 raise ValueError(
                     "Saving critic model is not supported with megatron-bridge."
                 )
-            self.bridge.save_hf_pretrained(
-                self.model,
-                path,
-                source_path=base_model_path,
-            )
+            if self.config.use_lora:
+                self.bridge.save_hf_adapter(
+                    self.model,
+                    path=path,
+                    peft_config=self.bridge_lora,
+                    base_model_name_or_path=base_model_path or self.config.path,
+                )
+            else:
+                self.bridge.save_hf_pretrained(
+                    self.model,
+                    path,
+                    source_path=base_model_path,
+                )
         else:
             save_weights_to_hf_with_mbridge_fast(
                 bridge=self.bridge,

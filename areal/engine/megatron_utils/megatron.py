@@ -15,6 +15,7 @@ from areal.engine.megatron_utils.fp8 import (
     get_block_size_from_config,
     quantize_params,
 )
+from areal.engine.megatron_utils.megatron_lora import convert_qwen3_lora_to_hf
 
 
 def _all_gather_and_concat(
@@ -96,10 +97,12 @@ def all_gather_param(
     if "expert_bias" in name:
         return param
 
-    if not hasattr(param, "tensor_model_parallel"):
-        raise ValueError(f"{name} does not have tensor_model_parallel attribute")
-
     param_is_fp8 = is_float8tensor(param)
+
+    if not hasattr(param, "tensor_model_parallel"):
+        if param_is_fp8 and fp8_direct_convert:
+            return param
+        return param.data
 
     # Check if this param is truly NOT TP-sharded.
     # NOTE: TE unconditionally sets tensor_model_parallel=True on all Linear
@@ -756,6 +759,8 @@ def convert_bailingmoe_to_hf(
 # Adapted from slime
 # A registry for conversion functions is more extensible.
 _CONVERSION_FN_REGISTRY = {
+    "qwen3_lora": convert_qwen3_lora_to_hf,
+    "qwen2_lora": convert_qwen3_lora_to_hf,
     "qwen3_moe": convert_qwen3moe_to_hf,
     "qwen2": convert_qwen2_to_hf,
     "qwen3": convert_qwen2_to_hf,
