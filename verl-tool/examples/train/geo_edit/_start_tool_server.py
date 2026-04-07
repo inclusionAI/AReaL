@@ -147,13 +147,22 @@ def verify_gpu():
     tool_used = t["tool_agent"] - a.get("tool_agent", 0)
     print(f"GPU used: {gpu_used:.0f}/{t['GPU']:.0f}")
     print(f"tool_agent used: {tool_used:.0f}/{t['tool_agent']:.0f}")
+
+    # Always print recent logs for diagnosis
+    try:
+        srv = ray.get_actor("tool_srv", namespace="tool")
+        logs = ray.get(srv.tail_log.remote(50))
+    except Exception:
+        logs = "(could not retrieve logs)"
+
     if gpu_used >= 6:
         print("SUCCESS: All 6 tool agents loaded!")
     elif gpu_used > 0:
-        print(f"PARTIAL: {gpu_used:.0f} agents loaded. Check:")
-        print(f"  tail -100 {LOG_DIR}/tool_server_backend_0.log")
+        print(f"PARTIAL: {gpu_used:.0f} agents loaded.")
+        print(f"\n--- Tool server logs ---\n{logs}")
     else:
         print("FAIL: No agents loaded.")
+        print(f"\n--- Tool server logs ---\n{logs}")
 
 
 def main():
