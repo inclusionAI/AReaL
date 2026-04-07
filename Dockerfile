@@ -222,7 +222,7 @@ RUN uv pip install nanobot-ai
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=pyproject.vllm.toml,target=pyproject.vllm.toml \
-    && if [ "$VARIANT" = "vllm" ]; then cp pyproject.vllm.toml pyproject.toml; fi \
+    if [ "$VARIANT" = "vllm" ]; then cp pyproject.vllm.toml pyproject.toml; fi \
     && uv pip install --no-build-isolation -r pyproject.toml --extra cuda --group dev
 
 ##############################################################
