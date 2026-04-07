@@ -35,7 +35,15 @@ def cleanup_worker(port: str):
 
         subprocess.run("pkill -9 -f verl_tool.servers", shell=True)
         _time.sleep(1)
-        subprocess.run(f"fuser -k {port}/tcp", shell=True)
+        # Kill any process holding the port (fuser not always available)
+        r = subprocess.run(
+            f"ss -tlnp | grep :{port}",
+            shell=True, capture_output=True, text=True,
+        )
+        for line in r.stdout.strip().splitlines():
+            import re
+            for pid in re.findall(r"pid=(\d+)", line):
+                subprocess.run(f"kill -9 {pid}", shell=True)
         _time.sleep(2)
 
     ray.get(_cleanup.remote(port))
