@@ -13,6 +13,44 @@ You respond clearly, accurately, and concisely, following the specific output fo
 # The <answer> tag instruction comes from the pipeline system prompt, not here.
 CARTOMAPQA_UNIFIED_TEMPLATE = CARTOMAPQA_INPUT_TEMPLATE + "\n\n{question}"
 
+# --- CartoMapQA per-task answer_format (injected in final answer phase) ---
+CARTOMAPQA_MFS_ANSWER_FORMAT = (
+    "Provide your final answer in <answer></answer> tags as a single letter, e.g. <answer>A</answer>"
+)
+
+CARTOMAPQA_MML_ANSWER_FORMAT = (
+    'Provide your final answer in <answer></answer> tags as a JSON object, e.g. '
+    '<answer>{"road_1": "First Street", "road_2": "Main Avenue"}</answer>'
+)
+
+CARTOMAPQA_MTMF_ANSWER_FORMAT = (
+    'Provide your final answer in <answer></answer> tags as a JSON object with POI types as keys, '
+    'e.g. <answer>{"Convenience store": {"count": 2, "names": ["name1", "name2"]}, ...}</answer>'
+)
+
+CARTOMAPQA_RLE_ANSWER_FORMAT = (
+    "Provide your final answer in <answer></answer> tags with the estimated length value and unit, "
+    "e.g. <answer>625 ft</answer>"
+)
+
+CARTOMAPQA_SRN_ANSWER_FORMAT = (
+    "Provide your final answer in <answer></answer> tags using the route format, e.g. "
+    "<answer>[blue, continue straight, Main Street, turn left, 2nd Avenue, red]</answer>"
+)
+
+CARTOMAPQA_STMF_COUNTING_ANSWER_FORMAT = (
+    "Provide your final answer in <answer></answer> tags as the count number, e.g. <answer>5</answer>"
+)
+
+CARTOMAPQA_STMF_NAME_LISTING_ANSWER_FORMAT = (
+    'Provide your final answer in <answer></answer> tags with one name per line. '
+    'Use "" for unnamed elements, e.g. <answer>Name_1\nName_2</answer>'
+)
+
+CARTOMAPQA_STMF_PRESENCE_ANSWER_FORMAT = (
+    "Provide your final answer in <answer></answer> tags as Yes or No, e.g. <answer>Yes</answer>"
+)
+
 VISWORLD_EVAL_INPUT_TEMPLATE = """\
 You are a visual reasoning AI assistant capable of understanding complex visual scenarios and dynamics.
 
