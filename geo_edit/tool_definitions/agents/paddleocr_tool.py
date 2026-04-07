@@ -50,8 +50,9 @@ class PaddleOCRActor(BaseToolModelActor):
         from geo_edit.tool_definitions.agents._vllm_compat import LLM
 
         # PaddleOCR-VL uses custom modules (mlp_AR) unsupported by vllm v1 engine
+        from packaging.version import Version as _V
         from importlib.metadata import version as _pkg_version
-        if _pkg_version("vllm") == "0.11.0":
+        if _V(_pkg_version("vllm")) >= _V("0.11.0") and _V(_pkg_version("vllm")) < _V("0.12.0"):
             os.environ["VLLM_USE_V1"] = "0"
 
         self.setup_gpu()  # Configure GPU based on Ray assignment

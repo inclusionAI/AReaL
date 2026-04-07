@@ -60,6 +60,12 @@ class ChartR1Actor(BaseToolModelActor):
         """
         from geo_edit.tool_definitions.agents._vllm_compat import LLM
 
+        # Qwen2_5_VL architecture fails inspection under vllm v1 engine
+        from packaging.version import Version as _V
+        from importlib.metadata import version as _pkg_version
+        if _V(_pkg_version("vllm")) >= _V("0.11.0") and _V(_pkg_version("vllm")) < _V("0.12.0"):
+            os.environ["VLLM_USE_V1"] = "0"
+
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
         self.model_name = model_name

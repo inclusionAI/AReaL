@@ -5,7 +5,7 @@ from packaging.version import Version as _V
 
 _vllm_version = _V(_pkg_version("vllm"))
 
-if _vllm_version == _V("0.11.0"):
+if _vllm_version >= _V("0.11.0") and _vllm_version < _V("0.12.0"):
     from vllm.entrypoints.llm import LLM
 else:
     from vllm import LLM
