@@ -41,10 +41,11 @@ def compute_score(prediction: str, ground_truth) -> float:
 class GeoVisionQARewardManager:
     name = "geo_vision_qa"
 
-    def __init__(self, tokenizer, num_examine, compute_score=None, reward_fn_key="data_source", **kwargs):
+    def __init__(self, config=None, tokenizer=None, num_examine=3, compute_score=None, reward_fn_key="data_source", **kwargs):
         self.tokenizer = tokenizer
         self.num_examine = num_examine
         self.reward_fn_key = reward_fn_key
+        self.config = config
 
     def __call__(self, data: DataProto, return_dict=False):
         if "rm_scores" in data.batch.keys():
