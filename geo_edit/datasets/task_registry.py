@@ -7,6 +7,14 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 from geo_edit.datasets.input_template import (
     BABYVISION_INPUT_TEMPLATE,
     BABYVISION_NOTOOL_INPUT_TEMPLATE,
+    CARTOMAPQA_MFS_ANSWER_FORMAT,
+    CARTOMAPQA_MML_ANSWER_FORMAT,
+    CARTOMAPQA_MTMF_ANSWER_FORMAT,
+    CARTOMAPQA_RLE_ANSWER_FORMAT,
+    CARTOMAPQA_SRN_ANSWER_FORMAT,
+    CARTOMAPQA_STMF_COUNTING_ANSWER_FORMAT,
+    CARTOMAPQA_STMF_NAME_LISTING_ANSWER_FORMAT,
+    CARTOMAPQA_STMF_PRESENCE_ANSWER_FORMAT,
     CARTOMAPQA_UNIFIED_TEMPLATE,
     CHARTQA_ANSWER_FORMAT,
     CHARTQA_INPUT_TEMPLATE,
@@ -265,6 +273,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
+        answer_format=CARTOMAPQA_MFS_ANSWER_FORMAT,
     ),
     "cartomapqa_stmf_presence": DatasetSpec(
         name="cartomapqa_stmf_presence",
@@ -274,6 +283,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
+        answer_format=CARTOMAPQA_STMF_PRESENCE_ANSWER_FORMAT,
     ),
     "cartomapqa_stmf_counting": DatasetSpec(
         name="cartomapqa_stmf_counting",
@@ -283,6 +293,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
+        answer_format=CARTOMAPQA_STMF_COUNTING_ANSWER_FORMAT,
     ),
     "cartomapqa_stmf_name_listing": DatasetSpec(
         name="cartomapqa_stmf_name_listing",
@@ -293,6 +304,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
         judge_prompt=CARTOMAPQA_STMF_NAME_LISTING_JUDGE_PROMPT,
+        answer_format=CARTOMAPQA_STMF_NAME_LISTING_ANSWER_FORMAT,
     ),
     "cartomapqa_mtmf": DatasetSpec(
         name="cartomapqa_mtmf",
@@ -302,6 +314,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
+        answer_format=CARTOMAPQA_MTMF_ANSWER_FORMAT,
     ),
     "cartomapqa_rle": DatasetSpec(
         name="cartomapqa_rle",
@@ -312,6 +325,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
         judge_prompt=CARTOMAPQA_RLE_JUDGE_PROMPT,
+        answer_format=CARTOMAPQA_RLE_ANSWER_FORMAT,
     ),
     "cartomapqa_mml": DatasetSpec(
         name="cartomapqa_mml",
@@ -322,6 +336,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
         judge_prompt=CARTOMAPQA_MML_JUDGE_PROMPT,
+        answer_format=CARTOMAPQA_MML_ANSWER_FORMAT,
     ),
     "cartomapqa_srn": DatasetSpec(
         name="cartomapqa_srn",
@@ -332,6 +347,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
         judge_prompt=CARTOMAPQA_SRN_JUDGE_PROMPT,
+        answer_format=CARTOMAPQA_SRN_ANSWER_FORMAT,
     ),
     "visworld_eval": DatasetSpec(
         name="visworld_eval",
