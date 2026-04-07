@@ -1,0 +1,158 @@
+diff --git a/verl/models/transformers/monkey_patch.py b/verl/models/transformers/monkey_patch.py
+index 59b342f8..672d95fc 100644
+--- a/verl/models/transformers/monkey_patch.py
++++ b/verl/models/transformers/monkey_patch.py
+@@ -265,11 +265,17 @@ def apply_monkey_patch(
+     try:
+         num_attention_heads, num_key_value_heads = model.config.num_attention_heads, model.config.num_key_value_heads
+     except AttributeError:
+-        num_attention_heads, num_key_value_heads = (
+-            model.config.text_config.num_attention_heads,
+-            model.config.text_config.num_key_value_heads,
+-        )
+-
++        try:
++            num_attention_heads, num_key_value_heads = (
++                model.config.text_config.num_attention_heads,
++                model.config.text_config.num_key_value_heads,
++            )
++        except AttributeError:
++            num_attention_heads, num_key_value_heads = (
++                model.config.thinker_config.text_config.num_attention_heads,
++                model.config.thinker_config.text_config.num_key_value_heads,
++            )
++            
+     assert num_attention_heads % ulysses_sp_size == 0, (
+         f"num_attention_heads {num_attention_heads} must be divisible by ulysses_sp_size {ulysses_sp_size}"
+     )
+diff --git a/verl/utils/checkpoint/fsdp_checkpoint_manager.py b/verl/utils/checkpoint/fsdp_checkpoint_manager.py
+index 4b3d7a8e..f7d8ac35 100644
+--- a/verl/utils/checkpoint/fsdp_checkpoint_manager.py
++++ b/verl/utils/checkpoint/fsdp_checkpoint_manager.py
+@@ -316,10 +316,17 @@ class FSDPCheckpointManager(BaseCheckpointManager):
+                     from transformers import AutoModelForTokenClassification
+ 
+                     auto_model_cls = AutoModelForTokenClassification
++                    use_from_config = True
+                 elif "ForCausalLM" in model_config.architectures[0]:
+                     from transformers import AutoModelForCausalLM
+ 
+                     auto_model_cls = AutoModelForCausalLM
++                    use_from_config = True
++                elif "Qwen2_5OmniModel" in model_config.architectures[0]:
++                    from transformers import Qwen2_5OmniForConditionalGeneration
++
++                    auto_model_cls = Qwen2_5OmniForConditionalGeneration
++                    use_from_config = False  # Qwen2.5-Omni doesn't have from_config method
+                 elif "ForConditionalGeneration" in model_config.architectures[0]:
+                     # Handle different transformers versions for Vision2Seq models
+                     import transformers
+@@ -335,11 +342,17 @@ class FSDPCheckpointManager(BaseCheckpointManager):
+                         from transformers import AutoModelForVision2Seq
+ 
+                         auto_model_cls = AutoModelForVision2Seq
++                    use_from_config = True
+                 else:
+                     raise NotImplementedError(f"Unknown architecture {model_config['architectures']}")
+ 
+                 with init_empty_weights():
+-                    save_model = auto_model_cls.from_config(model_config, torch_dtype=torch.bfloat16)
++                    if use_from_config:
++                        save_model = auto_model_cls.from_config(model_config, torch_dtype=torch.bfloat16)
++                    else:
++                        # For models without from_config (e.g., Qwen2.5-Omni), instantiate directly
++                        # The dtype will be preserved from the state_dict when loading
++                        save_model = auto_model_cls(config=model_config)
+                 save_model.to_empty(device="cpu")
+ 
+                 if save_model.can_generate():
+diff --git a/verl/utils/dataset/rl_dataset.py b/verl/utils/dataset/rl_dataset.py
+index 870c4751..17bae6c6 100644
+--- a/verl/utils/dataset/rl_dataset.py
++++ b/verl/utils/dataset/rl_dataset.py
+@@ -105,6 +105,7 @@ class RLHFDataset(Dataset):
+         self.prompt_key = config.get("prompt_key", "prompt")
+         self.image_key = config.get("image_key", "images")
+         self.video_key = config.get("video_key", "videos")
++        self.audio_key = config.get("audio_key", "audios")
+         self.image_patch_size = config.get("image_patch_size", 14)
+         self.max_prompt_length = config.get("max_prompt_length", 1024)
+         self.return_raw_chat = config.get("return_raw_chat", False)
+@@ -269,17 +270,19 @@ class RLHFDataset(Dataset):
+     def _build_messages(self, example: dict):
+         messages: list = example.pop(self.prompt_key)
+ 
+-        if self.image_key in example or self.video_key in example:
++        if self.image_key in example or self.video_key in example or self.audio_key in example:
+             for message in messages:
+                 content = message["content"]
+                 content_list = []
+-                segments = re.split("(<image>|<video>)", content)
++                segments = re.split("(<image>|<video>|<audio>)", content)
+                 segments = [item for item in segments if item != ""]
+                 for segment in segments:
+                     if segment == "<image>":
+                         content_list.append({"type": "image"})
+                     elif segment == "<video>":
+                         content_list.append({"type": "video"})
++                    elif segment == "<audio>":
++                        content_list.append({"type": "audio"})
+                     else:
+                         content_list.append({"type": "text", "text": segment})
+ 
+@@ -297,10 +300,12 @@ class RLHFDataset(Dataset):
+ 
+         if self.processor is not None:
+             from verl.utils.dataset.vision_utils import process_image, process_video
+-
++            from verl_tool.utils.dataset.audio_utils import process_audio
+             raw_prompt = self.processor.apply_chat_template(
+                 messages, add_generation_prompt=True, tokenize=False, **self.apply_chat_template_kwargs
+             )
++            if isinstance(raw_prompt, list):
++                raw_prompt = raw_prompt[0]
+             multi_modal_data = {}
+ 
+             images = None
+@@ -312,6 +317,12 @@ class RLHFDataset(Dataset):
+                 # link: https://github.com/vllm-project/vllm/blob/3c545c0c3b98ee642373a308197d750d0e449403/vllm/multimodal/parse.py#L205
+                 multi_modal_data["image"] = images
+ 
++            audios = None
++            row_dict_audios = row_dict.pop(self.audio_key, None)
++            if row_dict_audios:
++                audios = [process_audio(audio) for audio in row_dict_audios]
++                multi_modal_data["audio"] = audios
++
+             videos = None
+             videos_kwargs = {}
+             row_dict_videos = row_dict.pop(self.video_key, None)
+@@ -334,7 +345,7 @@ class RLHFDataset(Dataset):
+                 ]
+ 
+             model_inputs = self.processor(
+-                text=[raw_prompt], images=images, videos=videos, videos_kwargs=videos_kwargs, return_tensors="pt"
++                text=[raw_prompt], audio=audios, images=images, videos=videos, videos_kwargs=videos_kwargs, return_tensors="pt"
+             )
+ 
+             input_ids = model_inputs.pop("input_ids")
+diff --git a/verl/workers/fsdp_workers.py b/verl/workers/fsdp_workers.py
+index a457925f..8f441447 100644
+--- a/verl/workers/fsdp_workers.py
++++ b/verl/workers/fsdp_workers.py
+@@ -371,6 +371,15 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+                     actor_module_class = AutoModelForCausalLM
+                 elif type(actor_model_config) in AutoModelForImageTextToText._model_mapping.keys():
+                     actor_module_class = AutoModelForImageTextToText
++                elif getattr(actor_model_config, "architectures", None) == ["Qwen2_5OmniModel"]:
++                    # qwen2.5-omni is not supported by all previous AutoModels...
++                    from transformers import Qwen2_5OmniForConditionalGeneration
++                    # patch the Qwen2_5OmniForConditionalGeneration 
++                    # to use thinker as the forward function
++                    class Qwen2_5Omni(Qwen2_5OmniForConditionalGeneration):
++                        def forward(self, *args, **kwargs):
++                            return self.thinker(*args, **kwargs)
++                    actor_module_class = Qwen2_5Omni
+                 else:
+                     actor_module_class = AutoModel
+ 

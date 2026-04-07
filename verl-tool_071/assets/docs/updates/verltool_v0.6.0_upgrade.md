@@ -1,0 +1,11 @@
+## Upgrade Notes for v0.6.0
+
+To support the latest open-source models and verl features, VerlTool has re-organized its codebase to accommodate the updates in verl `0.6.0` and vllm `0.11.0`. Below are the key changes and instructions for upgrading your existing VerlTool setup to be compatible with these new versions.
+
+- `verl-tool`'s codebase has been completely re-organized. Thanks to the verl's agent loop abstraction design, we are able to put all the `verl-tool`'s agentic logic in a single file [`verl_tool/agent_loop/verltool_agent_loop.py`](/verl_tool/agent_loop/verltool_agent_loop.py), with the main agent loop logic less than 200 lines of code. This greatly improves the modularity and maintainability of the codebase. Please refer to the new code structure when making any custom modifications.
+- `verl-tool` keeps its support for both text-only LLMs and multi-modal models training, with [`math_tir`](/examples/train/math_tir) and [`pixel_reasoner`](/examples/train/pixel_reasoner) as examples correspondingly.
+- We strictly force the "tokens-in" and "tokes-out" design to avoid potential off-policy issues brought by tokenization.
+- We put all the reference `verl-tool`'s custom replacement of classes and functions in [`verl_tool/trainer/ppo/ray_trainer.py`](/verl_tool/trainer/ppo/ray_trainer.py) for better maintainability. If you are trying to understand how `verl-tool` replaces verl's default implementations, please refer to this file.
+- The step records are saved via verl's native `trainer.rollout_data_dir` argument. (e.g. `trainer.rollout_data_dir=$(pwd)/verl_step_records/$run_name `). You need to set it in your training scripts to save the rollout data.
+- The verl-tool now supports hybrid training with tool and without tool. When preparing the data, simply set the `use_tool` field in the data samples to indicate whether the sample requires tool usage. The agent loop will automatically decide whether to call the tool server based on this field.
+- The old `verl_tool` with verl `0.4.1.dev` is archived in the [`verl-0.4.1`](https://github.com/TIGER-AI-Lab/verl-tool/tree/verl-0.4.1) branch for backward compatibility.

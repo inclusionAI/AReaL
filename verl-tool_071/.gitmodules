@@ -1,0 +1,15 @@
+[submodule "benchmarks/math-evaluation-harness"]
+	path = benchmarks/math-evaluation-harness
+	url = https://github.com/Zhuofeng-Li/math-evaluation-harness.git
+[submodule "benchmarks/LiveCodeBench"]
+	path = benchmarks/LiveCodeBench
+	url = https://github.com/jdf-prog/LiveCodeBench.git
+[submodule "benchmarks/bigcodebench"]
+	path = benchmarks/bigcodebench
+	url = https://github.com/jdf-prog/bigcodebench.git
+[submodule "benchmarks/evalplus"]
+	path = benchmarks/evalplus
+	url = https://github.com/jdf-prog/evalplus.git
+[submodule "benchmarks/MCP-Universe"]
+	path = benchmarks/MCP-Universe
+	url = https://github.com/ShenzheZhu/MCP-Universe

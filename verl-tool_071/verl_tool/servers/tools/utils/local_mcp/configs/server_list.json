@@ -1,0 +1,206 @@
+{
+  "date": {
+    "stdio": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.date"
+      ]
+    },
+    "sse": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.date",
+        "--transport", "sse",
+        "--port", "{{PORT}}"
+      ]
+    }
+  },
+
+  "weather": {
+    "stdio": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.weather"
+      ]
+    },
+    "sse": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.weather",
+        "--transport", "sse",
+        "--port", "{{PORT}}"
+      ]
+    }
+  },
+
+  "echo": {
+    "stdio": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.echo"
+      ]
+    },
+    "sse": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.echo",
+        "--transport", "sse",
+        "--port", "{{PORT}}"
+      ]
+    }
+  },
+
+  "google-search": {
+    "stdio": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.google_search"
+      ]
+    },
+    "sse": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.google_search",
+        "--transport", "sse",
+        "--port", "{{PORT}}"
+      ]
+    },
+    "env": {
+      "SERP_API_KEY": "{{SERP_API_KEY}}"
+    }
+  },
+
+  "wikipedia": {
+    "stdio": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.wikipedia"
+      ]
+    },
+    "sse": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.wikipedia",
+        "--transport", "sse",
+        "--port", "{{PORT}}"
+      ]
+    }
+  },
+
+  "google-maps": {
+    "stdio": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-google-maps"
+      ]
+    },
+    "env": {
+      "GOOGLE_MAPS_API_KEY": "{{GOOGLE_MAPS_API_KEY}}"
+    }
+  },
+
+  
+  "google-sheets": {
+    "stdio": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.google_sheets"
+      ]
+    },
+    "sse": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.google_sheets",
+        "--transport", "sse",
+        "--port", "{{PORT}}"
+      ]
+    },
+    "env": {
+      "SERVICE_ACCOUNT_PATH": "{{GOOGLE_SERVICE_ACCOUNT_PATH}}",
+      "DRIVE_FOLDER_ID": "{{GOOGLE_DRIVE_FOLDER_ID}}"
+    }
+  },
+
+  "filesystem": {
+    "stdio": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "{{FILESYSTEM_DIRECTORY}}"
+      ]
+    }
+  },
+
+  "postgres": {
+    "stdio": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "{{POSTGRES_ADDRESS}}"
+      ]
+    }
+  },
+
+  "calculator": {
+    "stdio": {
+      "command": "python3",
+      "args": [
+        "-m", "mcp_server_calculator"
+      ]
+    }
+  },
+
+  "yfinance": {
+    "stdio": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.yahoo_finance"
+      ]
+    },
+    "sse": {
+      "command": "python3",
+      "args": [
+        "-m", "mcpuniverse.mcp.servers.yahoo_finance",
+        "--transport", "sse",
+        "--port", "{{PORT}}"
+      ]
+    }
+  },
+
+  "notion": {
+    "stdio": {
+      "command": "npx",
+      "args": [
+        "-y", "@notionhq/notion-mcp-server"
+      ]
+    },
+    "env": {
+      "OPENAPI_MCP_HEADERS": "{\"Authorization\": \"Bearer {{NOTION_API_KEY}}\", \"Notion-Version\": \"2022-06-28\" }"
+    }
+  },
+
+  "chrome": {
+    "stdio": {
+      "command": "npx",
+      "args": [
+        "-y", "chrome-devtools-mcp@latest",
+        "--headless=true",
+        "--isolated=true"            
+      ]
+    }
+  },
+
+  "playwright": {
+    "stdio": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--headless",
+        "--isolated"
+      ]
+    }
+  }
+}
