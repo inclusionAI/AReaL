@@ -31,19 +31,18 @@ def cleanup_worker(port: str):
 
     @ray.remote(resources={"tool_agent": 0.001})
     def _cleanup(port):
-        import subprocess, time as _time
+        import subprocess, re, time as _time
 
         subprocess.run("pkill -9 -f verl_tool.servers", shell=True)
         _time.sleep(1)
-        # Kill any process holding the port (fuser not always available)
+        # Kill any process holding the port
         r = subprocess.run(
-            f"ss -tlnp | grep :{port}",
+            f"lsof -ti tcp:{port}",
             shell=True, capture_output=True, text=True,
         )
-        for line in r.stdout.strip().splitlines():
-            import re
-            for pid in re.findall(r"pid=(\d+)", line):
-                subprocess.run(f"kill -9 {pid}", shell=True)
+        for pid in r.stdout.strip().splitlines():
+            if pid.strip():
+                subprocess.run(f"kill -9 {pid.strip()}", shell=True)
         _time.sleep(2)
 
     ray.get(_cleanup.remote(port))
