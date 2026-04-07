@@ -759,14 +759,14 @@ Configuration for experiment statistics logging and tracking services.
 
 Configuration for SwanLab experiment tracking and monitoring.
 
-| Parameter | Type           | Default      | Description |
-| --------- | -------------- | ------------ | ----------- |
-| `project` | string \| None | `None`       | -           |
-| `name`    | string \| None | `None`       | -           |
-| `config`  | `dict` \| None | `None`       | -           |
-| `logdir`  | string \| None | `None`       | -           |
-| `mode`    | string \| None | `"disabled"` | -           |
-| `api_key` | string \| None | `None`       | -           |
+| Parameter | Type           | Default      | Description                                                                                                            |
+| --------- | -------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `project` | string \| None | `None`       | -                                                                                                                      |
+| `name`    | string \| None | `None`       | -                                                                                                                      |
+| `config`  | `dict` \| None | `None`       | -                                                                                                                      |
+| `logdir`  | string \| None | `None`       | -                                                                                                                      |
+| `mode`    | string         | `"disabled"` | Tracking mode. One of 'cloud', 'local', 'disabled', or 'offline'. **Choices:** `cloud`, `local`, `disabled`, `offline` |
+| `api_key` | string \| None | `None`       | -                                                                                                                      |
 
 (section-tensor-board)=
 
@@ -805,20 +805,20 @@ See: https://github.com/gradio-app/trackio
 
 Configuration for Weights & Biases experiment tracking.
 
-| Parameter        | Type                   | Default      | Description |
-| ---------------- | ---------------------- | ------------ | ----------- |
-| `mode`           | string                 | `"disabled"` | -           |
-| `wandb_base_url` | string                 | `""`         | -           |
-| `wandb_api_key`  | string                 | `""`         | -           |
-| `entity`         | string \| None         | `None`       | -           |
-| `project`        | string \| None         | `None`       | -           |
-| `name`           | string \| None         | `None`       | -           |
-| `job_type`       | string \| None         | `None`       | -           |
-| `group`          | string \| None         | `None`       | -           |
-| `notes`          | string \| None         | `None`       | -           |
-| `tags`           | list of string \| None | `None`       | -           |
-| `config`         | `dict` \| None         | `None`       | -           |
-| `id_suffix`      | string \| None         | `"train"`    | -           |
+| Parameter        | Type                   | Default      | Description                                                                                                                |
+| ---------------- | ---------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `mode`           | string                 | `"disabled"` | Tracking mode. One of 'online', 'offline', 'disabled', or 'shared'. **Choices:** `online`, `offline`, `disabled`, `shared` |
+| `wandb_base_url` | string                 | `""`         | -                                                                                                                          |
+| `wandb_api_key`  | string                 | `""`         | -                                                                                                                          |
+| `entity`         | string \| None         | `None`       | -                                                                                                                          |
+| `project`        | string \| None         | `None`       | -                                                                                                                          |
+| `name`           | string \| None         | `None`       | -                                                                                                                          |
+| `job_type`       | string \| None         | `None`       | -                                                                                                                          |
+| `group`          | string \| None         | `None`       | -                                                                                                                          |
+| `notes`          | string \| None         | `None`       | -                                                                                                                          |
+| `tags`           | list of string \| None | `None`       | -                                                                                                                          |
+| `config`         | `dict` \| None         | `None`       | -                                                                                                                          |
+| `id_suffix`      | string \| None         | `"train"`    | -                                                                                                                          |
 
 (section-archon-engine)=
 
