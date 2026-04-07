@@ -749,6 +749,11 @@ class FSDPEngine(TrainEngine):
                 f"grad-requiring params have gradients."
             )
 
+        # ================================================================
+        # [DIAG-1] tied weight 梯度: grad clipping 前
+        # ================================================================
+        self._diag_tied_weight_grads("BEFORE_CLIP")
+
         grad_norm = fsdp2_clip_grad_norm(
             all_params,
             max_norm=self.optimizer_config.gradient_clipping,
@@ -757,6 +762,16 @@ class FSDPEngine(TrainEngine):
             pp_group=self.pp_group,
             offload_params=self.config.fsdp.offload_params,
         )
+
+        # ================================================================
+        # [DIAG-1] tied weight 梯度: grad clipping 后
+        # ================================================================
+        self._diag_tied_weight_grads("AFTER_CLIP")
+
+        # ================================================================
+        # [DIAG-3] grad_norm 分解
+        # ================================================================
+        self._diag_grad_norm_breakdown(all_params, grad_norm)
 
         # --- [PP_DIAG] grad_norm ---
         self.logger.info(
@@ -768,6 +783,11 @@ class FSDPEngine(TrainEngine):
                 f"[PP_DIAG] WARNING: grad_norm is {grad_norm}! "
                 "Check for NaN/Inf in gradients."
             )
+
+        # ================================================================
+        # [DIAG-2] tied weight 权重快照: optimizer.step() 前
+        # ================================================================
+        self._diag_snapshot_tied_weights("BEFORE_STEP")
 
         if not math.isfinite(grad_norm):
             self.optimizer_zero_grad()
@@ -782,6 +802,17 @@ class FSDPEngine(TrainEngine):
                 self.optimizer.step()
             update_successful = True
 
+        # ================================================================
+        # [DIAG-2] tied weight 权重快照: optimizer.step() 后、sync 前
+        # ================================================================
+        self._diag_snapshot_tied_weights("AFTER_STEP_BEFORE_SYNC")
+
+        # ================================================================
+        # [DIAG-2] Adam 优化器状态
+        # ================================================================
+        if update_successful:
+            self._diag_adam_state()
+
         # ── Sync tied weights across PP ranks after successful optimizer step ──
         # When tie_word_embeddings=True and PP splits embed_tokens and lm_head
         # onto different ranks, the deepcopy breaks Python-level weight tying.
@@ -790,6 +821,11 @@ class FSDPEngine(TrainEngine):
         # when PP=1 + tied, so embed_tokens must carry output projection grads).
         if update_successful:
             self._sync_tied_weights_pp()
+
+        # ================================================================
+        # [DIAG-2] tied weight 权重快照: sync 后
+        # ================================================================
+        self._diag_snapshot_tied_weights("AFTER_SYNC")
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
         return dict(
@@ -946,6 +982,95 @@ class FSDPEngine(TrainEngine):
             f"tied weight sync completed in {_sync_elapsed:.4f}s"
         )
 
+    def _diag_tied_weight_grads(self, tag: str):
+        """Diagnose gradients of tied weights (embed_tokens and lm_head)."""
+        if self._pp_model_parts is None or self.pp_group is None:
+            return
+        if not getattr(self.model_config, "tie_word_embeddings", False):
+            return
+
+        for part in self._pp_model_parts:
+            inner = part.model if hasattr(part, "model") else part
+            for name, param in inner.named_parameters():
+                if "embed_tokens.weight" in name or "lm_head.weight" in name:
+                    if param.grad is not None:
+                        _grad_norm = param.grad.float().norm().item()
+                        self.logger.info(
+                            f"[DIAG-1] {tag} | Rank {self.rank}: {name} grad_norm={_grad_norm:.6f}"
+                        )
+                    else:
+                        self.logger.info(
+                            f"[DIAG-1] {tag} | Rank {self.rank}: {name} grad is NONE"
+                        )
+
+    def _diag_snapshot_tied_weights(self, tag: str):
+        """Snapshot the norms of tied weights."""
+        if self._pp_model_parts is None or self.pp_group is None:
+            return
+        if not getattr(self.model_config, "tie_word_embeddings", False):
+            return
+
+        for part in self._pp_model_parts:
+            inner = part.model if hasattr(part, "model") else part
+            for name, param in inner.named_parameters():
+                if "embed_tokens.weight" in name or "lm_head.weight" in name:
+                    _local_tensor = (
+                        param._local_tensor if hasattr(param, "_local_tensor") else param.data
+                    )
+                    _weight_norm = _local_tensor.float().norm().item()
+                    self.logger.info(
+                        f"[DIAG-2] {tag} | Rank {self.rank}: {name} weight_norm={_weight_norm:.6f}"
+                    )
+
+    def _diag_adam_state(self):
+        """Diagnose Adam optimizer state norms for tied weights."""
+        if self._pp_model_parts is None or self.pp_group is None:
+            return
+        if not getattr(self.model_config, "tie_word_embeddings", False):
+            return
+        if self.optimizer is None:
+            return
+
+        for part in self._pp_model_parts:
+            inner = part.model if hasattr(part, "model") else part
+            for name, param in inner.named_parameters():
+                if "embed_tokens.weight" in name or "lm_head.weight" in name:
+                    state = self.optimizer.state.get(param)
+                    if state:
+                        exp_avg = state.get("exp_avg")
+                        exp_avg_sq = state.get("exp_avg_sq")
+                        if exp_avg is not None and exp_avg_sq is not None:
+                            self.logger.info(
+                                f"[DIAG-2] ADAM_STATE | Rank {self.rank}: {name} "
+                                f"exp_avg_norm={exp_avg.float().norm().item():.6f}, "
+                                f"exp_avg_sq_norm={exp_avg_sq.float().norm().item():.6f}"
+                            )
+                    else:
+                        self.logger.info(
+                            f"[DIAG-2] ADAM_STATE | Rank {self.rank}: {name} state is empty"
+                        )
+
+    def _diag_grad_norm_breakdown(self, all_params, total_grad_norm):
+        """Break down the contribution to total grad_norm by module parts."""
+        if self._pp_model_parts is None:
+            return
+
+        _sq_norms = {}
+        for part in self._pp_model_parts:
+            inner = part.model if hasattr(part, "model") else part
+            for name, param in inner.named_parameters():
+                if param.grad is not None:
+                    _local_sq_norm = param.grad.float().norm().item() ** 2
+                    # simplified breakdown: group by top-level module name
+                    _prefix = name.split(".")[0] if "." in name else name
+                    _sq_norms[_prefix] = _sq_norms.get(_prefix, 0.0) + _local_sq_norm
+
+        _breakdown_str = ", ".join([f"{k}: {math.sqrt(v):.4f}" for k, v in _sq_norms.items()])
+        self.logger.info(
+            f"[DIAG-3] GRAD_BREAKDOWN | Rank {self.rank}: "
+            f"total_grad_norm={total_grad_norm:.6f}, components: [{_breakdown_str}]"
+        )
+
     def lr_scheduler_step(self):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
@@ -1046,6 +1171,28 @@ class FSDPEngine(TrainEngine):
             target_chunks.append(
                 torch.zeros(batch_size, device=self.device, dtype=torch.long)
             )
+
+        # ================================================================
+        # [DIAG-4] PP uniform padding 诊断
+        # ================================================================
+        _original_seqlens = [ids.shape[-1] for ids in input_ids_chunks]
+        _max_seqlen = max(_original_seqlens) if _original_seqlens else 0
+        _has_attn_mask = any(
+            ctx.get("model_inputs", {}).get("attention_mask") is not None
+            for ctx in contexts
+        )
+        _has_cu_seqlens = any(
+            ctx.get("model_inputs", {}).get("cu_seqlens") is not None
+            for ctx in contexts
+        )
+        self.logger.info(
+            f"[DIAG-4] PP padding: n_mb={n_microbatches}, "
+            f"seqlens={_original_seqlens}, "
+            f"max={_max_seqlen}, "
+            f"waste={(_max_seqlen * n_microbatches - sum(_original_seqlens)) / max(1, _max_seqlen * n_microbatches):.1%}, "
+            f"has_attn_mask={_has_attn_mask}, "
+            f"has_cu_seqlens={_has_cu_seqlens}"
+        )
 
         # --- Pad all microbatch input_ids to uniform sequence length ---
         # PP schedule's step()/eval() calls torch.tensor_split on a single batched
@@ -2355,6 +2502,49 @@ class FSDPEngine(TrainEngine):
                     for name, tensor in full_state_dict.items()
                     if not self.config.use_lora or "lora" in name.lower()
                 ]
+
+                # ================================================================
+                # [DIAG-5] 推理权重一致性诊断
+                # ================================================================
+                if main_rank:
+                    _d5_embed = None
+                    _d5_lmhead = None
+                    for _d5_name, _d5_tensor in mapped_params:
+                        if "embed_tokens.weight" in _d5_name:
+                            _d5_embed = _d5_tensor
+                        elif "lm_head.weight" in _d5_name:
+                            _d5_lmhead = _d5_tensor
+
+                    if _d5_embed is not None and _d5_lmhead is not None:
+                        _d5_diff = (_d5_embed.float() - _d5_lmhead.float()).norm().item()
+                        _d5_cosine = torch.nn.functional.cosine_similarity(
+                            _d5_embed.float().flatten().unsqueeze(0),
+                            _d5_lmhead.float().flatten().unsqueeze(0),
+                        ).item()
+                        self.logger.info(
+                            f"[DIAG-5] Weight→SGLang: "
+                            f"embed_norm={_d5_embed.float().norm().item():.6f}, "
+                            f"lm_head_norm={_d5_lmhead.float().norm().item():.6f}, "
+                            f"diff_norm={_d5_diff:.6f}, "
+                            f"cosine={_d5_cosine:.8f}, "
+                            f"match={'YES' if _d5_diff < 1e-6 else 'NO ⚠️'}"
+                        )
+                        # SGLang (PP=1, tie_word_embeddings=True) 只使用 embed_tokens.weight
+                        # lm_head.weight 会被 load_weights 中的 continue 跳过
+                        if _d5_diff >= 1e-6:
+                            self.logger.warning(
+                                f"[DIAG-5] ⚠️ DIVERGENCE: SGLang will use embed_tokens "
+                                f"(norm={_d5_embed.float().norm().item():.6f}) and SKIP "
+                                f"lm_head (norm={_d5_lmhead.float().norm().item():.6f}). "
+                                f"The model's output projection uses STALE weights!"
+                            )
+                    else:
+                        self.logger.info(
+                            f"[DIAG-5] Weight→SGLang: "
+                            f"embed={'found' if _d5_embed is not None else 'MISSING'}, "
+                            f"lm_head={'found' if _d5_lmhead is not None else 'MISSING'}"
+                        )
+
                 # --- [PP_DIAG] ---
                 self.logger.info(
                     f"[PP_DIAG] weight_update: broadcasting "
