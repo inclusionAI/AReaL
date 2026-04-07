@@ -67,6 +67,9 @@ def run_ppo(config) -> None:
         default_runtime_env.setdefault("env_vars", {})
         default_runtime_env["env_vars"]["ROCR_VISIBLE_DEVICES"] = ""
         os.environ.pop("ROCR_VISIBLE_DEVICES", None)
+        # Propagate PYTORCH_CUDA_ALLOC_CONF to all Ray workers (needed for vLLM sleep mode)
+        if os.environ.get("PYTORCH_CUDA_ALLOC_CONF"):
+            default_runtime_env["env_vars"].setdefault("PYTORCH_CUDA_ALLOC_CONF", os.environ["PYTORCH_CUDA_ALLOC_CONF"])
         ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
         runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
         runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
