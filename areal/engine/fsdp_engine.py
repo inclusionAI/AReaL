@@ -52,7 +52,7 @@ from areal.api import (
     WeightUpdateMeta,
     WorkflowLike,
 )
-from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig, OptimizerConfig
+from areal.api.cli_args import OptimizerConfig, PerfTracerConfig, TrainEngineConfig
 from areal.api.io_struct import DeviceRuntimeInfo
 from areal.engine.core import (
     aggregate_eval_losses,
@@ -220,9 +220,9 @@ class FSDPEngine(TrainEngine):
         lora_rank: int = 32,
         lora_alpha: int = 16,
         **kwargs,
-    ) -> "FSDPEngine":
+    ) -> FSDPEngine:
         """Construct an FSDPEngine directly without assembling a TrainEngineConfig.
-        
+
         Parameters
         ----------
         model : str

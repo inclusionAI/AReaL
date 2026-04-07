@@ -102,10 +102,12 @@ def mock_loss_fn(
     return torch.mean(logprobs)
 
 
-@pytest.fixture(params=[
+@pytest.fixture(
+    params=[
         {"type": "fsdp", "construction": "config"},
         {"type": "fsdp", "construction": "from_pretrained"},
-])
+    ]
+)
 def engine(request):
     os.environ.update(
         {
@@ -125,15 +127,18 @@ def engine(request):
     else:
         # Create the engine using from_pretrained method, without TrainEngineConfig
         from areal.engine import FSDPEngine
+
         engine = FSDPEngine.from_pretrained(
             model=MODEL_PATH,
             dp_size=1,
             tp_size=1,
-            learning_rate=1e-5,  
+            learning_rate=1e-5,
         )
-        
+
         engine.create_process_group()
-        ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
+        ft_spec = FinetuneSpec(
+            total_train_epochs=1, dataset_size=100, train_batch_size=2
+        )
         engine.initialize(None, ft_spec)
 
     print(f"✓ {engine_type.upper()} Engine created successfully")
@@ -377,6 +382,7 @@ def test_create_device_model_applies_use_kernels(monkeypatch, memory_efficient_l
     assert engine.model.gradient_checkpointing_calls == [
         {"gradient_checkpointing_kwargs": {"use_reentrant": False}}
     ]
+
 
 def test_fsdp_engine_config_construction():
     """Test that FSDPEngine.from_pretrained builds a valid config."""
