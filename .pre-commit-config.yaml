@@ -64,6 +64,18 @@ repos:
         name: nbstripout - Strip notebook output
         description: Strip output from Jupyter notebooks
 
+  # Check consistency between pyproject.toml variants (sglang vs vllm)
+  - repo: local
+    hooks:
+      - id: check-pyproject-consistency
+        name: Check pyproject.toml consistency
+        entry: python3 areal/tools/check_pyproject_consistency.py
+        language: system
+        files: ^pyproject(\.vllm)?\.toml$
+        pass_filenames: false
+        always_run: false
+        require_serial: true
+
   # Generate CLI documentation
   - repo: local
     hooks:

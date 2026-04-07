@@ -40,6 +40,7 @@ uv --version                  # Install: https://docs.astral.sh/uv/
 
 # Sync dependencies
 uv sync --extra cuda          # CUDA + SGLang inference (default)
+# For vLLM: cp pyproject.vllm.toml pyproject.toml && uv sync --extra cuda
 uv sync --group dev           # Include dev/test packages
 uv run python3 areal/tools/validate_installation.py  # Validate installation
 

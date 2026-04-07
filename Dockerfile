@@ -218,10 +218,12 @@ RUN uv pip install nanobot-ai
 
 # Install the project's dependencies (not the project itself)
 # This adds packages without removing unlisted ones (like our C++ packages)
-# VARIANT selects the inference backend (sglang or vllm)
+# VARIANT selects the inference backend (sglang or vllm) via separate pyproject files
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv pip install --no-build-isolation -r pyproject.toml --extra cuda-train --extra ${VARIANT} --group dev
+    --mount=type=bind,source=pyproject.vllm.toml,target=pyproject.vllm.toml \
+    PROJ=$([ "$VARIANT" = "vllm" ] && echo "pyproject.vllm.toml" || echo "pyproject.toml") \
+    && uv pip install --no-build-isolation -r "$PROJ" --extra cuda --group dev
 
 ##############################################################
 # STAGE 4: Misc fixes and final setup
