@@ -175,8 +175,21 @@ def wait_healthy(worker_ip: str, timeout_s: int = 180):
     print(f"WARNING: health check timed out after {timeout_s}s")
 
 
+EXPECTED_AGENTS = int(os.environ.get("EXPECTED_AGENTS", "6"))
+
+
+def kill_tool_server():
+    """Kill the ToolServer actor and clean up all resources."""
+    try:
+        srv = ray.get_actor("tool_srv", namespace="tool")
+        ray.kill(srv)
+        print("Killed ToolServer actor, all resources released.")
+    except Exception:
+        pass
+
+
 def verify_gpu():
-    """Check that tool agents have claimed GPUs."""
+    """Check that all expected agents loaded. Kill everything if not."""
     time.sleep(15)
     a = ray.available_resources()
     t = ray.cluster_resources()
@@ -192,14 +205,15 @@ def verify_gpu():
     except Exception:
         logs = "(could not retrieve logs)"
 
-    if gpu_used >= 6:
-        print("SUCCESS: All 6 tool agents loaded!")
-    elif gpu_used > 0:
-        print(f"PARTIAL: {gpu_used:.0f} agents loaded.")
-        print(f"\n--- Tool server logs ---\n{logs}")
+    if gpu_used >= EXPECTED_AGENTS:
+        print(f"SUCCESS: All {EXPECTED_AGENTS} tool agents loaded!")
     else:
-        print("FAIL: No agents loaded.")
+        print(f"FAIL: Only {gpu_used:.0f}/{EXPECTED_AGENTS} agents loaded.")
         print(f"\n--- Tool server logs ---\n{logs}")
+        print("\nKilling all agents...")
+        kill_tool_server()
+        cleanup_worker(PORT)
+        sys.exit(1)
 
 
 def main():
