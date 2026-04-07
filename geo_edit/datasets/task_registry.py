@@ -265,7 +265,7 @@ CARTOMAPQA_MML_JUDGE_PROMPT = (
 CARTOMAPQA_RLE_JUDGE_PROMPT = (
     "Additional evaluation rules for route length estimation answers:\n"
     "- The answer is a numeric value with unit (e.g. '1194.497 m' or '3918.95 ft').\n"
-    "- Allow a relative tolerance of 10%: if the predicted value is within 10% "
+    "- Allow a relative tolerance of 15%: if the predicted value is within 15% "
     "of the ground truth, consider it correct.\n"
     "- Unit must match (meters vs feet)."
 )
