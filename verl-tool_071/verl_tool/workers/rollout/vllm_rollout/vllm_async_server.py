@@ -20,7 +20,6 @@ from vllm.outputs import RequestOutput
 from ..replica import VerlToolTokenOutput
 
 
-@ray.remote(num_cpus=1)
 class VerlToolvLLMHttpServer(vLLMHttpServer):
     """vLLM http server in single node, this is equivalent to launch server with command line:
     ```
