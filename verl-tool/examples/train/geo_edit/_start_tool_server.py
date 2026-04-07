@@ -49,6 +49,34 @@ def cleanup_worker(port: str):
     print("Cleanup done")
 
 
+def ensure_pth_on_worker():
+    """Create .pth on worker so all Ray actors there can import verl_tool/geo_edit."""
+
+    pth_content = f"{VERL_ROOT}/verl\n{VERL_ROOT}\n{AREAL_ROOT}\n"
+
+    @ray.remote(resources={"tool_agent": 0.001})
+    def _create_pth(content):
+        import site, pathlib, socket, subprocess, signal, os
+        # Write .pth
+        pth_path = pathlib.Path(site.getsitepackages()[0]) / "verl_tool_paths.pth"
+        pth_path.write_text(content)
+        # Kill idle Ray workers so new ones pick up the .pth
+        r = subprocess.run(
+            "ps aux | grep 'ray::IDLE' | grep -v grep | awk '{print $2}'",
+            shell=True, capture_output=True, text=True,
+        )
+        pids = [p for p in r.stdout.strip().split("\n") if p]
+        for pid in pids:
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except Exception:
+                pass
+        return f"{pth_path} on {socket.gethostname()} (killed {len(pids)} idle workers)"
+
+    result = ray.get(_create_pth.remote(pth_content))
+    print(f"  Created {result}")
+
+
 def launch_server():
     """Launch tool server as a detached Ray actor on the worker node."""
 
@@ -179,6 +207,9 @@ def main():
 
     print("=== Step 1: Cleanup ===")
     cleanup_worker(PORT)
+
+    print("\n=== Step 1.5: Ensure .pth on worker ===")
+    ensure_pth_on_worker()
 
     print("\n=== Step 2: Launch tool server on worker ===")
     launch_server()
