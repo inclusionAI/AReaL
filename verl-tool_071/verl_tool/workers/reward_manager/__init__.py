@@ -33,3 +33,12 @@ for file in current_dir.glob("*.py"):
 
 import verl.workers.reward_manager.registry
 verl.workers.reward_manager.registry.get_reward_manager_cls = get_reward_manager_cls
+
+# v0.7.1 also uses experimental reward_loop registry
+try:
+    import verl.experimental.reward_loop.reward_manager.registry as _exp_registry
+    _exp_registry.get_reward_manager_cls = get_reward_manager_cls
+    # Also merge verl-tool's registered managers into the experimental registry
+    _exp_registry.REWARD_MANAGER_REGISTRY.update(REWARD_MANAGER_REGISTRY)
+except ImportError:
+    pass
