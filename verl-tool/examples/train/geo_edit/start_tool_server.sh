@@ -2,7 +2,7 @@
 set -e
 
 # Only VERL_ROOT needed; everything else is derived.
-# Override: export VERL_ROOT=/your/path/to/verl-tool
+# Override: export VERL_ROOT=/storage/openpsi/users/lichangye.lcy/antoinegg1/AReaL/verl-tool
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export VERL_ROOT="${VERL_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 export AREAL_ROOT="$(cd "$VERL_ROOT/.." && pwd)"

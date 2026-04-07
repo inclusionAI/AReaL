@@ -18,8 +18,8 @@ OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/CartoMapQA_iterative_gpt5_0406
 # Each entry: "parquet_filename:dataset_name"
 SUBSETS=(
     # "MFS:cartomapqa_mfs"
-    "MML:cartomapqa_mml"
-    # "MTMF:cartomapqa_mtmf"
+    # "MML:cartomapqa_mml"
+    # "MTMF:cartomapqa_mtmf" #需要结构化judge
     # "RLE:cartomapqa_rle"
     # "SRN:cartomapqa_srn"
     # "STMF_counting:cartomapqa_stmf_counting"
