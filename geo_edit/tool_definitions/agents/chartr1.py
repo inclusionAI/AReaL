@@ -58,13 +58,7 @@ class ChartR1Actor(BaseToolModelActor):
             gpu_memory_utilization: Fraction of GPU memory to use.
             system_prompt: Optional system prompt override.
         """
-        from geo_edit.tool_definitions.agents._vllm_compat import LLM
-
-        # Qwen2_5_VL architecture fails inspection under vllm v1 engine
-        from packaging.version import Version as _V
-        from importlib.metadata import version as _pkg_version
-        if _V(_pkg_version("vllm")) >= _V("0.11.0") and _V(_pkg_version("vllm")) < _V("0.12.0"):
-            os.environ["VLLM_USE_V1"] = "0"
+        from vllm import LLM
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
@@ -105,7 +99,7 @@ class ChartR1Actor(BaseToolModelActor):
         Returns:
             Analysis result (only <answer> content, <think> is not exposed).
         """
-        from geo_edit.tool_definitions.agents._vllm_compat import SamplingParams
+        from vllm import SamplingParams
 
         # Extract question from kwargs
         question = kwargs.get("question", "")
