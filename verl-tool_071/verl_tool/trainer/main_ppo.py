@@ -63,6 +63,10 @@ def run_ppo(config) -> None:
         if os.environ.get("PYTHONPATH"):
             default_runtime_env.setdefault("env_vars", {})
             default_runtime_env["env_vars"].setdefault("PYTHONPATH", os.environ["PYTHONPATH"])
+        # Unset ROCR_VISIBLE_DEVICES on all nodes to avoid conflict with CUDA_VISIBLE_DEVICES
+        default_runtime_env.setdefault("env_vars", {})
+        default_runtime_env["env_vars"]["ROCR_VISIBLE_DEVICES"] = ""
+        os.environ.pop("ROCR_VISIBLE_DEVICES", None)
         ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
         runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
         runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
