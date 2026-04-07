@@ -58,7 +58,7 @@ class ChartR1Actor(BaseToolModelActor):
             gpu_memory_utilization: Fraction of GPU memory to use.
             system_prompt: Optional system prompt override.
         """
-        from vllm import LLM
+        from geo_edit.tool_definitions.agents._vllm_compat import LLM
 
         self.setup_gpu()  # Configure GPU based on Ray assignment
 
@@ -99,7 +99,7 @@ class ChartR1Actor(BaseToolModelActor):
         Returns:
             Analysis result (only <answer> content, <think> is not exposed).
         """
-        from vllm import SamplingParams
+        from geo_edit.tool_definitions.agents._vllm_compat import SamplingParams
 
         # Extract question from kwargs
         question = kwargs.get("question", "")

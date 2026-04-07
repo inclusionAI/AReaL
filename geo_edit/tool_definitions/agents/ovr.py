@@ -35,7 +35,7 @@ class OVRActor(BaseToolModelActor):
         gpu_memory_utilization: float = 0.8,
         system_prompt: Optional[str] = None,
     ):
-        from vllm import LLM
+        from geo_edit.tool_definitions.agents._vllm_compat import LLM
 
         self.setup_gpu()  # Configure GPU based on Ray assignment (sets CUDA_VISIBLE_DEVICES)
 
@@ -63,7 +63,7 @@ class OVRActor(BaseToolModelActor):
     ) -> str:
         """Analyze an image and answer the question using vLLM."""
         from PIL import Image
-        from vllm import SamplingParams
+        from geo_edit.tool_definitions.agents._vllm_compat import SamplingParams
 
         # Extract question from kwargs
         question = kwargs.get("question", "")
