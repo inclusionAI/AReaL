@@ -59,13 +59,14 @@ def launch_server():
         def __init__(self):
             import socket
             import subprocess
+            import sys
 
             self.ip = socket.gethostbyname(socket.gethostname())
             os.makedirs(LOG_DIR, exist_ok=True)
             self.log_path = f"{LOG_DIR}/serve.log"
             log_file = open(self.log_path, "w")
             cmd = [
-                "python3", "-m", "verl_tool.servers.serve",
+                sys.executable, "-m", "verl_tool.servers.serve",
                 "--host", self.ip, "--port", PORT,
                 "--tool_type", "geo_edit_tool",
                 "--workers_per_tool", "1", "--uvi_workers", "1",
