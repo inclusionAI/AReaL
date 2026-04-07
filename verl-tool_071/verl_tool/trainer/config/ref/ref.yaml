@@ -78,13 +78,6 @@ profiler:
       # Required when using verl.utils.omega_conf_to_dataclass to instantiate dataclass configs
       _target_: verl.utils.profiler.config.TorchProfilerToolConfig
 
-      # start profile mini-batch in training
-      # NOTICE: different with global steps config which refers to iteration
-      # This field only related with mini-batch
-      step_start: 0
-
-      # stop profile mini-batch in training
-      step_end: null
 
     # torch memory profiler config
     torch_memory:
