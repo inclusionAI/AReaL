@@ -376,6 +376,19 @@ def load_model_from_hf(engine: ArchonEngine, path: str) -> None:
     # Convert to HF format to match checkpoint keys
     hf_state_dict = engine.state_dict_adapter.to_hf(state_dict)
 
+    # LoRA adapter parameters don't exist in the base HF checkpoint.
+    # Strip them before calling dcp.load() so it won't raise on missing keys.
+    lora_archon_keys: set[str] = set()
+    if engine.lora_config is not None:
+        lora_hf_keys = {
+            k for k in hf_state_dict if ".lora_A." in k or ".lora_B." in k
+        }
+        lora_archon_keys = {
+            k for k in state_dict if ".lora_a." in k or ".lora_b." in k
+        }
+        for k in lora_hf_keys:
+            del hf_state_dict[k]
+
     # PP mode + weight tying fix: last stage needs embed_tokens weight for output layer
     # When tie_word_embeddings=True, HF checkpoint only stores embed_tokens.weight,
     # not lm_head.weight. In PP mode, last stage has output.weight but no tok_embeddings,
@@ -428,10 +441,11 @@ def load_model_from_hf(engine: ArchonEngine, path: str) -> None:
     # Filter known expected missing keys
     expected_missing = set()
     for key in list(missing_keys):
-        # rotary_emb is computed at runtime, not stored in checkpoint
         if "rotary_emb" in key:
             expected_missing.add(key)
     missing_keys -= expected_missing
+    # LoRA adapter keys are initialised separately, not loaded from base ckpt
+    missing_keys -= lora_archon_keys
 
     if dist.get_rank() == 0:
         if missing_keys:

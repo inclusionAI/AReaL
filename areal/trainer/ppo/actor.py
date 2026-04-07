@@ -329,8 +329,9 @@ class PPOActor:
         with stats_tracker.scope("update"):
             # Get current version for proximal approximation metrics
             current_version = self.engine.get_version()
+            _n_mbs = len(mb_inputs.mbs)
 
-            for mb in mb_inputs.mbs:
+            for _mb_idx, mb in enumerate(mb_inputs.mbs):
                 train_stat = self.engine.train_batch(
                     mb,
                     loss_fn=functools.partial(

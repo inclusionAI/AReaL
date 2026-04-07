@@ -63,6 +63,37 @@ if TYPE_CHECKING:
 RID_CACHE_SIZE = 128
 
 logger = logging.getLogger("RemoteInfEngine")
+WEIGHT_UPDATE_READY_FILE = ".areal_weight_update_ready"
+
+
+def _wait_for_disk_weight_update_ready(
+    meta: WeightUpdateMeta, update_name: str, timeout: float
+) -> float:
+    """Wait until the checkpoint directory is ready for remote loading.
+
+    Prefer a ready file in the checkpoint directory, which lives on the same
+    shared storage as the actual weights. Fall back to the legacy name_resolve
+    key so older training workers still work.
+    """
+    ready_path = None if meta.path is None else os.path.join(meta.path, WEIGHT_UPDATE_READY_FILE)
+    deadline = time.monotonic() + timeout
+
+    while True:
+        if ready_path is not None and os.path.isfile(ready_path):
+            with open(ready_path) as f:
+                return float(f.read().strip())
+
+        try:
+            return float(name_resolve.get(update_name))
+        except Exception:
+            pass
+
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f"Timeout waiting for checkpoint ready signal at "
+                f"'{ready_path}' or key '{update_name}'"
+            )
+        time.sleep(1.0)
 
 
 class GroupedRolloutWorkflow(RolloutWorkflow):
@@ -1316,7 +1347,9 @@ def _update_weights_from_disk(
         update_name = names.update_weights_from_disk(
             experiment_name, trial_name, model_version
         )
-        save_timestamp = float(name_resolve.wait(update_name, timeout=120))
+        save_timestamp = _wait_for_disk_weight_update_ready(
+            meta, update_name, timeout=600
+        )
         load_timestamp = datetime.now().timestamp()
 
         # Get requests from backend with version for LoRA name

@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     from areal.experimental.engine.archon_engine import ArchonEngine
 
 
+WEIGHT_UPDATE_READY_FILE = ".areal_weight_update_ready"
+
+
 class WeightSyncState:
     """State container for weight synchronization.
 
@@ -222,16 +225,32 @@ def update_weights_from_disk(
         fut = engine.rollout_engine.update_weights_from_disk(meta)
 
     assert meta.path is not None
-    save_model_to_hf(engine, meta.path, engine.tokenizer, None)
+    if engine.lora_config is not None:
+        from areal.experimental.engine.archon_lora_checkpoint import save_lora_adapter
+
+        save_lora_adapter(
+            engine,
+            meta.path,
+            meta.base_model_name or engine.config.path,
+        )
+    else:
+        save_model_to_hf(engine, meta.path, engine.tokenizer, None)
 
     if dist.get_rank() == 0:
+        ready_path = os.path.join(meta.path, WEIGHT_UPDATE_READY_FILE)
+        ready_tmp_path = ready_path + ".tmp"
+        ready_timestamp = str(datetime.now().timestamp())
+        with open(ready_tmp_path, "w") as f:
+            f.write(ready_timestamp)
+        os.replace(ready_tmp_path, ready_path)
+
         update_name = names.update_weights_from_disk(
             engine.config.experiment_name,
             engine.config.trial_name,
             engine.get_version(),
         )
         name_resolve.add(
-            update_name, str(datetime.now().timestamp()), keepalive_ttl=120
+            update_name, ready_timestamp, keepalive_ttl=600
         )
 
         assert fut is not None
