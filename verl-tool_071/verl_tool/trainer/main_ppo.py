@@ -43,14 +43,6 @@ def main(config):
     run_ppo(config)
 
 
-def _verl_tool_ray_worker_setup():
-    """Import verl_tool reward managers so they are registered on all Ray worker/actor processes."""
-    try:
-        import verl_tool.workers.reward_manager
-    except ImportError:
-        pass
-
-
 # Define a function to run the PPO-like training process
 def run_ppo(config) -> None:
     """Initialize Ray cluster and run distributed PPO training process.
@@ -78,14 +70,9 @@ def run_ppo(config) -> None:
         ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
         runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
         runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
-        runtime_env = OmegaConf.to_container(runtime_env)
-        # Ensure verl_tool reward managers are registered on all Ray worker/actor processes
-        runtime_env["worker_process_setup_hook"] = _verl_tool_ray_worker_setup
-        # Build final ray init kwargs — keep runtime_env as plain dict (contains callable)
-        ray_init_kwargs = OmegaConf.to_container(ray_init_kwargs)
-        ray_init_kwargs["runtime_env"] = runtime_env
+        ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})
         print(f"ray init kwargs: {ray_init_kwargs}")
-        ray.init(**ray_init_kwargs)
+        ray.init(**OmegaConf.to_container(ray_init_kwargs))
 
     # Create a remote instance of the TaskRunner class, and
     # Execute the `run` method of the TaskRunner instance remotely and wait for it to complete
