@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.distributed as dist
-from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import FinetuneSpec, Scheduler, StepInfo
@@ -22,6 +21,9 @@ from areal.infra import (
     SlurmScheduler,
     current_platform,
 )
+from areal.infra.data_service import DataController
+from areal.infra.data_service.controller.config import DataServiceConfig
+from areal.infra.data_service.rdataset import RDataset
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -38,6 +40,8 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 if TYPE_CHECKING:
+    from datasets import Dataset
+
     from areal.engine import FSDPRWEngine, MegatronRWEngine
     from areal.experimental.engine.archon_engine import ArchonRWEngine
     from areal.trainer.rw.rw_engine import RWController
@@ -86,6 +90,9 @@ class RWTrainer:
         self.scheduler = None
         if is_single_controller():
             self.scheduler = self._init_scheduler()
+        self.data_controller: DataController | None = None
+        self._train_rdataset: RDataset | None = None
+        self._valid_rdataset: RDataset | None = None
 
         # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
@@ -93,26 +100,30 @@ class RWTrainer:
         # Parse per-engine allocation.
         self.actor_alloc = ModelAllocation.from_str(config.actor.backend, name="actor")
 
-        # Create models.
         self.actor = self._create_actor(config.actor)
 
-        # Create dataloaders
-        self.train_dataset = train_dataset
-        self.valid_dataset = valid_dataset
+        if is_single_controller() and isinstance(train_dataset, RDataset):
+            ds_cfg = DataServiceConfig.from_dataset_config(config.train_dataset)
+            controller = DataController(ds_cfg, self.scheduler)
+            controller.initialize(role="data", num_dataset_workers=ds_cfg.num_workers)
+            self.data_controller = controller
+
+            train_dataset.connect(
+                controller,
+                dataset_id=f"{config.experiment_name}_{config.trial_name}_train",
+                tokenizer_or_processor_path=config.tokenizer_path,
+                seed=config.seed,
+                shuffle=config.train_dataset.shuffle,
+                drop_last=config.train_dataset.drop_last,
+            )
+            self._train_rdataset = train_dataset
+
         self.train_dataloader = self._create_dataloader(
             train_dataset,
             dataset_config=self.config.train_dataset,
             rank=self.actor.data_parallel_rank,
             world_size=self.actor.data_parallel_world_size,
         )
-        self.valid_dataloader = None
-        if self.config.valid_dataset is not None and valid_dataset is not None:
-            self.valid_dataloader = self._create_dataloader(
-                valid_dataset,
-                dataset_config=self.config.valid_dataset,
-                rank=self.actor.data_parallel_rank,
-                world_size=self.actor.data_parallel_world_size,
-            )
 
         ft_spec = FinetuneSpec(
             total_train_epochs=config.total_train_epochs,
@@ -120,8 +131,29 @@ class RWTrainer:
             train_batch_size=config.train_dataset.batch_size,
         )
 
-        # Initialize models
         self.actor.initialize(addr=None, ft_spec=ft_spec, role="actor")
+
+        self.valid_dataloader: StatefulDataLoader | None = None
+        if config.valid_dataset is not None and valid_dataset is not None:
+            assert config.valid_dataset is not None
+            if is_single_controller() and isinstance(valid_dataset, RDataset):
+                assert self.data_controller is not None
+                valid_dataset.connect(
+                    self.data_controller,
+                    dataset_id=f"{config.experiment_name}_{config.trial_name}_valid",
+                    tokenizer_or_processor_path=config.tokenizer_path,
+                    seed=config.seed,
+                    shuffle=config.valid_dataset.shuffle,
+                    drop_last=config.valid_dataset.drop_last,
+                )
+                self._valid_rdataset = valid_dataset
+
+            self.valid_dataloader = self._create_dataloader(
+                valid_dataset,
+                dataset_config=self.config.valid_dataset,
+                rank=self.actor.data_parallel_rank,
+                world_size=self.actor.data_parallel_world_size,
+            )
 
         # Set up evaluation
         self.evaluator = Evaluator(config.evaluator, ft_spec)
@@ -239,6 +271,8 @@ class RWTrainer:
                 ),
             ):
                 self.actor.clear_batches(batch)
+                if self.data_controller is not None:
+                    self.data_controller.clear_batches()
 
             with perf_tracer.trace_scope(
                 "train.log_stats",
@@ -253,6 +287,12 @@ class RWTrainer:
 
     def close(self):
         self.saver.finalize()
+        if hasattr(self, "_train_rdataset") and self._train_rdataset is not None:
+            self._train_rdataset.close()
+        if hasattr(self, "_valid_rdataset") and self._valid_rdataset is not None:
+            self._valid_rdataset.close()
+        if hasattr(self, "data_controller") and self.data_controller is not None:
+            self.data_controller.destroy()
         self.stats_logger.close()
         self.actor.destroy()
         perf_tracer.save(force=True)

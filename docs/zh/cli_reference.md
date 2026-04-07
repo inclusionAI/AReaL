@@ -627,16 +627,20 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 
 Configuration for training dataset loading and preprocessing.
 
-| Parameter     | Type            | Default      | Description                                                                      |
-| ------------- | --------------- | ------------ | -------------------------------------------------------------------------------- |
-| `path`        | string          | **Required** | Path to the dataset. Can be a local path or a HuggingFace dataset name.          |
-| `type`        | string          | **Required** | Type of training method, e.g., 'sft', 'rl', etc.                                 |
-| `batch_size`  | integer         | `1`          | Batch size for the dataloader                                                    |
-| `shuffle`     | boolean         | `True`       | Whether to shuffle the dataset                                                   |
-| `pin_memory`  | boolean         | `False`      | Pin memory for faster data loading (set True for GPU training)                   |
-| `num_workers` | integer         | `0`          | Number of worker processes for data loading                                      |
-| `drop_last`   | boolean         | `True`       | Drop the last incomplete batch                                                   |
-| `max_length`  | integer \| None | `None`       | Maximum token length of sequences in dataset. Longer sequences are filtered out. |
+| Parameter             | Type                                           | Default      | Description                                                                                                                       |
+| --------------------- | ---------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `split`               | string                                         | `"train"`    | Dataset split to use, e.g., 'train', 'test'.                                                                                      |
+| `path`                | string                                         | **Required** | Path to the dataset. Can be a local path or a HuggingFace dataset name.                                                           |
+| `type`                | string                                         | **Required** | Type of training method, e.g., 'sft', 'rl', etc.                                                                                  |
+| `batch_size`          | integer                                        | `1`          | Batch size for the dataloader                                                                                                     |
+| `shuffle`             | boolean                                        | `True`       | Whether to shuffle the dataset                                                                                                    |
+| `pin_memory`          | boolean                                        | `False`      | Pin memory for faster data loading (set True for GPU training)                                                                    |
+| `num_workers`         | integer                                        | `0`          | Number of worker processes for data loading                                                                                       |
+| `num_dataset_workers` | integer                                        | `1`          | Number of remote data-service worker processes to launch when using scheduling_spec.                                              |
+| `drop_last`           | boolean                                        | `True`       | Drop the last incomplete batch                                                                                                    |
+| `max_length`          | integer \| None                                | `None`       | Maximum token length of sequences in dataset. Longer sequences are filtered out.                                                  |
+| `dataset_kwargs`      | `dict`                                         | **Required** | Additional keyword arguments for dataset loading. These are passed to the dataset loading function `get_custom_dataset`.          |
+| `scheduling_spec`     | [`SchedulingSpec`](section-scheduling) \| None | **Required** | Scheduling spec for remote data loading workers. If set, dataset loading will be offloaded to a data service with remote workers. |
 
 (section-valid-dataset)=
 
@@ -647,16 +651,20 @@ Configuration for validation dataset loading and preprocessing.
 It has different default values with `TrainDatasetConfig`. `shuffle` and `drop_last`
 default to False.
 
-| Parameter     | Type            | Default      | Description                                                                      |
-| ------------- | --------------- | ------------ | -------------------------------------------------------------------------------- |
-| `path`        | string          | **Required** | Path to the dataset. Can be a local path or a HuggingFace dataset name.          |
-| `type`        | string          | **Required** | Type of training method, e.g., 'sft', 'rl', etc.                                 |
-| `batch_size`  | integer         | `1`          | Batch size for the dataloader                                                    |
-| `shuffle`     | boolean         | `False`      | Whether to shuffle the dataset                                                   |
-| `pin_memory`  | boolean         | `False`      | Pin memory for faster data loading (set True for GPU training)                   |
-| `num_workers` | integer         | `0`          | Number of worker processes for data loading                                      |
-| `drop_last`   | boolean         | `False`      | Drop the last incomplete batch                                                   |
-| `max_length`  | integer \| None | `None`       | Maximum token length of sequences in dataset. Longer sequences are filtered out. |
+| Parameter             | Type                                           | Default      | Description                                                                                                                       |
+| --------------------- | ---------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `split`               | string                                         | `"test"`     | Dataset split to use, e.g., 'train', 'test'.                                                                                      |
+| `path`                | string                                         | **Required** | Path to the dataset. Can be a local path or a HuggingFace dataset name.                                                           |
+| `type`                | string                                         | **Required** | Type of training method, e.g., 'sft', 'rl', etc.                                                                                  |
+| `batch_size`          | integer                                        | `1`          | Batch size for the dataloader                                                                                                     |
+| `shuffle`             | boolean                                        | `False`      | Whether to shuffle the dataset                                                                                                    |
+| `pin_memory`          | boolean                                        | `False`      | Pin memory for faster data loading (set True for GPU training)                                                                    |
+| `num_workers`         | integer                                        | `0`          | Number of worker processes for data loading                                                                                       |
+| `num_dataset_workers` | integer                                        | `1`          | Number of remote data-service worker processes to launch when using scheduling_spec.                                              |
+| `drop_last`           | boolean                                        | `False`      | Drop the last incomplete batch                                                                                                    |
+| `max_length`          | integer \| None                                | `None`       | Maximum token length of sequences in dataset. Longer sequences are filtered out.                                                  |
+| `dataset_kwargs`      | `dict`                                         | **Required** | Additional keyword arguments for dataset loading. These are passed to the dataset loading function `get_custom_dataset`.          |
+| `scheduling_spec`     | [`SchedulingSpec`](section-scheduling) \| None | **Required** | Scheduling spec for remote data loading workers. If set, dataset loading will be offloaded to a data service with remote workers. |
 
 (section-cluster)=
 

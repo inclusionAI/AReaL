@@ -322,7 +322,7 @@ jobs:
           VIRTUAL_ENV: /AReaL/.venv
         run: |
           export PATH="/AReaL/.venv/bin:$PATH"
-          pytest -m "(not slow or ci) and not ${EXCLUDE_BACKEND}" --durations=20 -s -vv tests/test_*.py tests/experimental/
+          pytest -m "(not slow or ci) and not ${EXCLUDE_BACKEND}" --durations=20 -s -vv tests/test_*.py tests/experimental/ tests/infra/
 
       - name: Run SFT integration tests
         env:

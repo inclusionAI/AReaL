@@ -11,7 +11,6 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange
-from torch.utils.data import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import MicroBatchSpec, NormConfig
@@ -1350,9 +1349,7 @@ def cycle_dataloader(dataloader: StatefulDataLoader, num_cycles: int = -1):
     """Cycle through a dataloader indefinitely."""
     epoch = 0
     while True:
-        if hasattr(dataloader, "sampler") and isinstance(
-            dataloader.sampler, DistributedSampler
-        ):
+        if hasattr(dataloader, "sampler") and hasattr(dataloader.sampler, "set_epoch"):
             dataloader.sampler.set_epoch(epoch)
         yield from dataloader
         epoch += 1
