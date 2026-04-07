@@ -231,6 +231,13 @@ def _get_reasonmap_answer(item: Mapping[str, Any]) -> str:
 # =============================================================================
 # Per-dataset judge prompts (additional hints for LLM-as-judge evaluation)
 # =============================================================================
+CARTOMAPQA_STMF_COUNTING_JUDGE_PROMPT = (
+    "Additional evaluation rules for counting answers:\n"
+    "- Allow an absolute tolerance of 1: if the predicted count differs from the "
+    "ground truth by at most 1, consider it correct.\n"
+    "- For example, if the ground truth is 2, then 1, 2, or 3 are all correct."
+)
+
 CARTOMAPQA_SRN_JUDGE_PROMPT = (
     "Additional evaluation rules for route navigation answers:\n"
     "- 'road_1, continue straight, road_1' is equivalent to 'road_1' only. "
@@ -294,6 +301,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template=CARTOMAPQA_UNIFIED_TEMPLATE,
         template_fields={"question": "question"},
         answer_format=CARTOMAPQA_STMF_COUNTING_ANSWER_FORMAT,
+        judge_prompt=CARTOMAPQA_STMF_COUNTING_JUDGE_PROMPT,
     ),
     "cartomapqa_stmf_name_listing": DatasetSpec(
         name="cartomapqa_stmf_name_listing",

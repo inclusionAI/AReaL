@@ -22,7 +22,7 @@ SUBSETS=(
     # "MTMF:cartomapqa_mtmf" #需要结构化judge
     # "RLE:cartomapqa_rle"
     # "SRN:cartomapqa_srn"
-    # "STMF_counting:cartomapqa_stmf_counting"
+    "STMF_counting:cartomapqa_stmf_counting"
     # "STMF_name_listing:cartomapqa_stmf_name_listing"
     # "STMF_presence:cartomapqa_stmf_presence"
 )
