@@ -127,7 +127,10 @@ class ToolAgentManager:
                 if param_name in init_params and param_value is not None:
                     actor_kwargs[param_name] = param_value
 
-            RemoteActorClass = ray.remote(num_gpus=num_gpus)(ActorClass)
+            RemoteActorClass = ray.remote(
+                num_gpus=num_gpus,
+                resources={"tool_agent": 1},
+            )(ActorClass)
 
             replica_names = _replica_names(name, num_replicas)
             self._replica_map[name] = replica_names

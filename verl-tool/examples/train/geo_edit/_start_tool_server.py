@@ -94,11 +94,20 @@ def launch_server():
 
         def tail_log(self, n=30):
             import subprocess as sp
+            import glob
 
-            return sp.run(
-                ["tail", "-n", str(n), self.log_path],
-                capture_output=True, text=True,
-            ).stdout
+            # Collect serve.log + all backend logs
+            logs = [self.log_path]
+            logs.extend(sorted(glob.glob(f"{LOG_DIR}/tool_server_backend_*.log")))
+            parts = []
+            for path in logs:
+                out = sp.run(
+                    ["tail", "-n", str(n), path],
+                    capture_output=True, text=True,
+                ).stdout
+                if out.strip():
+                    parts.append(f"--- {path} ---\n{out}")
+            return "\n".join(parts)
 
     srv = ToolServer.options(
         name="tool_srv", lifetime="detached", namespace="tool"

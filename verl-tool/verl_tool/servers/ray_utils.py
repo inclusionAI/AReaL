@@ -81,7 +81,10 @@ class RayToolManager:
             try:
                 tool_cls = get_tool_cls(tool_type)
 
-                tool_instance = ray.remote(max_concurrency=self.config.workers_per_tool)(tool_cls).remote()
+                remote_kwargs = dict(max_concurrency=self.config.workers_per_tool)
+                if tool_type == "geo_edit_tool":
+                    remote_kwargs["resources"] = {"tool_agent": 0.001}
+                tool_instance = ray.remote(**remote_kwargs)(tool_cls).remote()
                 self.tools[tool_type] = tool_instance
                 initialized_tools.append(tool_type)
                 logger.info(f"✓ Initialized Ray tool: {tool_type}")
