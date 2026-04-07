@@ -35,14 +35,21 @@ def cleanup_worker(port: str):
 
         subprocess.run("pkill -9 -f verl_tool.servers", shell=True)
         _time.sleep(1)
-        # Kill any process holding the port
+        # Kill any process holding the port (try lsof first, fall back to ss)
         r = subprocess.run(
             f"lsof -ti tcp:{port}",
             shell=True, capture_output=True, text=True,
         )
-        for pid in r.stdout.strip().splitlines():
-            if pid.strip():
-                subprocess.run(f"kill -9 {pid.strip()}", shell=True)
+        pids = [p.strip() for p in r.stdout.strip().splitlines() if p.strip()]
+        if not pids:
+            # Fallback: use ss + awk to extract PIDs
+            r2 = subprocess.run(
+                f"ss -tlnp sport = :{port} | awk -F'pid=' '{{print $2}}' | awk -F',' '{{print $1}}'",
+                shell=True, capture_output=True, text=True,
+            )
+            pids = [p.strip() for p in r2.stdout.strip().splitlines() if p.strip()]
+        for pid in pids:
+            subprocess.run(f"kill -9 {pid}", shell=True)
         _time.sleep(2)
 
     ray.get(_cleanup.remote(port))
