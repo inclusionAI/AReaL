@@ -65,7 +65,7 @@ class AgentRayPPOTrainer(RayPPOTrainer):
             )
 
             # we only do validation on rule-based rm
-            if self.config.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
+            if self.config.reward.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
                 return {}
 
             ground_truths = [
