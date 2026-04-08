@@ -43,7 +43,6 @@ model_pretty_name=$(echo $model_name | tr '/' '_' | tr '[:upper:]' '[:lower:]')
 run_name="geo_edit-${strategy}-agent-${model_pretty_name}-${rl_alg}-n${n}-b${batch_size}-t${temperature}-lr${lr}"
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=INFO
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
 export VLLM_USE_V1=1
 rollout_mode='async'
 

@@ -48,7 +48,6 @@ test_freq=10
 
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=INFO
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERL_TOOL_ROOT="${VERL_TOOL_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 export PYTHONPATH=$VERL_TOOL_ROOT/verl:$VERL_TOOL_ROOT:${PYTHONPATH:-}
