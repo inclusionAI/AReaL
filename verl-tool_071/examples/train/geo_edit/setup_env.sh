@@ -4,8 +4,8 @@
 #   or:  . setup_env.sh
 set -e
 
-export VERL_TOOL_ROOT="/storage/openpsi/users/lichangye.lcy/antoinegg1/AReaL/verl-tool_071"
-export AREAL_ROOT="/storage/openpsi/users/lichangye.lcy/antoinegg1/AReaL"
+export VERL_TOOL_ROOT="/storage/openpsi/users/lichangye.lcy/antoinegg1/AReaL/verl-tool_071/"
+export AREAL_ROOT="/storage/openpsi/users/lichangye.lcy/antoinegg1/AReaL/"
 export PYTHONPATH="$VERL_TOOL_ROOT:$AREAL_ROOT:${PYTHONPATH:-}"
 
 # Install dependencies
