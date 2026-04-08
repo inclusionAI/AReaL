@@ -14,7 +14,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RolloutCallback:
-    """Callback interface for train workers to coordinate with TrainController."""
+    """Callback interface for train workers to coordinate with TrainController.
+
+    This class acts as a proxy that train engines use to trigger operations on
+    the inference side via HTTP callbacks to the TrainController. The controller
+    then forwards these to the RolloutController.
+
+    IMPORTANT: Methods that involve NCCL collective operations MUST be non-blocking
+    (return Future). NCCL operations are collective - both train and inference sides
+    must participate concurrently. If these methods blocked, the train side couldn't
+    start its NCCL operations while waiting for the inference side, causing a deadlock.
+    """
 
     controller_addr: str
     request_timeout: float = 600.0
@@ -83,10 +93,23 @@ class RolloutCallback:
         logger.info("[RolloutCallback] >>> continue_generation")
         return self._post("/callback/continue_generation")
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> dict:
+    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[dict]:
+        """Initialize the NCCL weight-update process group on the rollout side.
+
+        MUST be non-blocking (returns Future). The calling code in
+        megatron_engine._init_weight_update_from_distributed() does:
+
+            fut = self.rollout_engine.init_weights_update_group(meta)  # non-blocking
+            init_custom_process_group(rank=0, ...)   # Megatron joins as rank 0
+            fut.result()                             # wait for rollout side
+
+        If this were synchronous, it would deadlock: Megatron blocks waiting for
+        the HTTP response, but the SGLang workers block in init_custom_process_group
+        waiting for rank 0 (Megatron) to join, which can never happen.
+        """
         payload = {"meta": serialize_value(meta)}
         logger.info(
-            "[RolloutCallback] >>> init_weights_update_group  "
+            "[RolloutCallback] >>> init_weights_update_group (async)  "
             "nccl_master=%s:%s  group=%s  world_size=%s",
             getattr(meta, "nccl_master_address", "?"),
             getattr(meta, "nccl_master_port", "?"),
@@ -94,11 +117,12 @@ class RolloutCallback:
             getattr(getattr(meta, "gen_allocation", None), "parallel", None)
             and meta.gen_allocation.parallel.world_size + 1,
         )
-        return self._post("/callback/init_weights_group", payload)
+        return self._post_nowait("/callback/init_weights_group", payload)
 
     def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> Future[None]:
+        """Update weights via NCCL broadcast. Must be non-blocking (returns Future)."""
         payload = {
             "meta": serialize_value(meta),
             "param_specs": serialize_value(param_specs),
