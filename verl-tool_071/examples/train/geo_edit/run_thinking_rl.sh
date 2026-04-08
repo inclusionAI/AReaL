@@ -48,9 +48,7 @@ test_freq=10
 
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=INFO
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VERL_TOOL_ROOT="${VERL_TOOL_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
-export PYTHONPATH=$VERL_TOOL_ROOT/verl:$VERL_TOOL_ROOT:${PYTHONPATH:-}
+
 mkdir -p $WORKSPACE/logs/$run_name
 
 action_stop_tokens_file="$(mktemp)"

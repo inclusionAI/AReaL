@@ -3,7 +3,9 @@
 # Usage: source setup_env.sh
 #   or:  . setup_env.sh
 set -e
-
+cd verl-tool_071/verl
+pip install -e .
+cd ..
 pip install vllm==0.17.0
 # Install dependencies
 pip install timm fire iopath ftfy tensordict codetiming qwen_omni_utils nvitop httptools colorlog
