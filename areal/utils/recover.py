@@ -2,10 +2,9 @@ import dataclasses
 import json
 import os
 import pickle
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
-from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api import (
@@ -177,7 +176,7 @@ class RecoverHandler:
         saver: Saver,
         evaluator: Evaluator,
         stats_logger: "StatsLogger",
-        dataloader: StatefulDataLoader,
+        dataloader: Any,
         tokenizer: PreTrainedTokenizerFast | None = None,
         processor: AutoProcessor | None = None,
         base_model_path: str | None = None,
@@ -224,7 +223,7 @@ class RecoverHandler:
         saver: Saver,
         evaluator: Evaluator,
         stats_logger: "StatsLogger",
-        dataloader: StatefulDataLoader,
+        dataloader: Any,
         inference_engine: InferenceEngine | None = None,
         weight_update_meta: WeightUpdateMeta | None = None,
         inference_engine_update_from: str = "default",

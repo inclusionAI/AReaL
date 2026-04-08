@@ -337,7 +337,7 @@ class LocalInfServerInfo:
 
     host: str
     port: int
-    process: subprocess.Popen
+    process: subprocess.Popen | None
 
 
 @dataclass
