@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # project (PEP 621 metadata)
 # -------------------------------
 [project]
-name = "verl"
+name = "verl-tool"
 # We'll mark the version as "dynamic" because it's read from the file "verl/version/version" 
 # (PEP 621 calls this "dynamic version"). 
 # The actual version is specified in the [tool.setuptools.dynamic] section below.
@@ -97,7 +97,7 @@ include-package-data = true
 
 # We read the version from a file in 'verl/version/version'
 [tool.setuptools.dynamic]
-version = {file = "verl/version/version"}
+version = {file = "verl/verl/version/version"}
 
 # If you need to mimic `package_dir={'': '.'}`:
 [tool.setuptools.package-dir]
