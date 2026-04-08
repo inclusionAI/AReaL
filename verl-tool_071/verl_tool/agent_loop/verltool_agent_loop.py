@@ -449,17 +449,35 @@ class VerlToolAgentLoop(AgentLoopBase):
         
         
     async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
-        prompt_ids = list(kwargs["raw_prompt_ids"])
-        multi_modal_data = kwargs.get("multi_modal_data") or {}
-        image_data = multi_modal_data.get("image")
+        # v0.7.1: dataset provides raw_prompt (messages list) instead of raw_prompt_ids
+        messages = list(kwargs["raw_prompt"])
+
+        # Apply chat template to get prompt text
+        raw_prompt_text = self.tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            **self.apply_chat_template_kwargs,
+        )
+
+        # Extract multimodal data from messages
+        image_data = None
+        audio_data = None
+        if self.processor is not None:
+            try:
+                from qwen_vl_utils import process_vision_info
+                images, videos = process_vision_info(messages)
+                image_data = images if images else None
+            except ImportError:
+                pass
+
         encoded_image_data = [encode_image_url(img) for img in image_data] if image_data is not None else None
-        audio_data = multi_modal_data.get("audio")
-        encoded_audio_data = [encode_audio_data(audio) for audio in audio_data] if audio_data is not None else None
+        encoded_audio_data = None
         use_tool = kwargs.get("use_tool", self.agent_config.enable_agent)
-        
+
         metrics = {}
         request_id = str(uuid4().hex)
-        
+
         stats_dict = {
             "num_turns": 0,
             "empty_responses": 0,
@@ -473,16 +491,15 @@ class VerlToolAgentLoop(AgentLoopBase):
             "valid_traj": 1,
             "retokenization_diff": []
         }
-        
-        if image_data or audio_data:
-            raw_prompt_text = self.tokenizer.decode(prompt_ids, skip_special_tokens=False)
+
+        # Tokenize with processor (multimodal) or tokenizer (text-only)
+        if self.processor is not None and image_data:
             processor_kwargs = {"text": [raw_prompt_text], "return_tensors": "pt"}
-            if image_data:
-                processor_kwargs["images"] = image_data
-            if audio_data:
-                processor_kwargs["audio"] = audio_data
+            processor_kwargs["images"] = image_data
             model_inputs = self.processor(**processor_kwargs)
             prompt_ids = model_inputs["input_ids"].squeeze(0).tolist()
+        else:
+            prompt_ids = self.tokenizer.encode(raw_prompt_text)
         
         max_turns = self.max_turns if not kwargs.get("validate", False) else self.val_max_turns
         max_response_length = self.train_max_response_length if not kwargs.get("validate", False) else self.val_max_response_length
