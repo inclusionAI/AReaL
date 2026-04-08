@@ -146,8 +146,8 @@ def _get_input_embeds(
     inputs_embeds = model.get_input_embeddings()(input_ids)
     image_mask, video_mask = None, None
     if pixel_values is not None:
-        pixel_values = pixel_values.type(model.visual.dtype)
-        image_grid_thw = image_grid_thw.to(pixel_values.device)
+        pixel_values = pixel_values.to(device=inputs_embeds.device, dtype=model.visual.dtype)
+        image_grid_thw = image_grid_thw.to(device=inputs_embeds.device)
         image_embeds, deepstack_image_embeds = model.visual(pixel_values, grid_thw=image_grid_thw)
         n_image_tokens = (input_ids == model.config.image_token_id).sum().item()
         n_image_features = image_embeds.shape[0]
@@ -165,7 +165,8 @@ def _get_input_embeds(
         inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
     if pixel_values_videos is not None:
-        pixel_values_videos = pixel_values_videos.type(model.visual.dtype)
+        pixel_values_videos = pixel_values_videos.to(device=inputs_embeds.device, dtype=model.visual.dtype)
+        video_grid_thw = video_grid_thw.to(device=inputs_embeds.device)
         video_embeds, deepstack_video_embeds = model.visual(pixel_values_videos, grid_thw=video_grid_thw)
         n_video_tokens = (input_ids == model.config.video_token_id).sum().item()
         n_video_features = video_embeds.shape[0]
