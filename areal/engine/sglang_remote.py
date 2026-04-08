@@ -364,18 +364,28 @@ class RemoteSGLangEngine(InferenceEngine):
         return await self._engine.agenerate(req)
 
     def init_weights_update_group(
-        self, meta: WeightUpdateMeta, xccl_group_ranks: list[int] | None = None
+        self,
+        meta: WeightUpdateMeta,
+        pp_rank: int | None = None,
     ) -> Future[None]:
         """Initialize the weight update process group."""
         return self._engine.init_weights_update_group(
-            meta, xccl_group_ranks=xccl_group_ranks
+            meta,
+            pp_rank=pp_rank,
         )
 
     def update_weights_from_distributed(
-        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
+        self,
+        meta: WeightUpdateMeta,
+        param_specs: list[ParamSpec],
+        pp_rank: int | None = None,
     ) -> Future[None]:
         """Update weights from distributed memory."""
-        return self._engine.update_weights_from_distributed(meta, param_specs)
+        return self._engine.update_weights_from_distributed(
+            meta,
+            param_specs,
+            pp_rank=pp_rank,
+        )
 
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""
