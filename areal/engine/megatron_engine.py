@@ -1121,63 +1121,6 @@ class MegatronEngine(TrainEngine):
         if self.model is None:
             raise RuntimeError("Model is not initialized.")
 
-    def _update_bucket_weights_from_distributed(
-        self,
-        meta: WeightUpdateMeta,
-        converted_named_tensors: list,
-    ) -> None:
-        """Broadcast a bucket of converted weight tensors to inference engines."""
-        if not converted_named_tensors:
-            return
-
-        self.engine_lock.acquire()
-
-        try:
-            param_specs = [
-                ParamSpec(
-                    name=name,
-                    shape=tuple(tensor.shape),
-                    dtype=str(tensor.dtype).split("torch.")[1],
-                )
-                for name, tensor in converted_named_tensors
-            ]
-
-            if self.config.use_lora:
-                meta.peft_config = {
-                    "r": self.config.lora_rank,
-                    "lora_alpha": self.config.lora_alpha,
-                    "target_modules": get_vllm_lora_target_modules(
-                        list(self.config.target_modules or [])
-                    ),
-                    "bias": "none",
-                }
-
-            pp_rank = meta.pp_rank  # None for PP=1, int for PP>1
-            fut = self.rollout_engine.update_weights_from_distributed(
-                meta,
-                param_specs,
-                pp_rank=pp_rank,
-            )
-
-            handles = []
-            for _, param in converted_named_tensors:
-                handles.append(
-                    dist.broadcast(
-                        param.data, 0, group=self.weight_update_group, async_op=True
-                    )
-                )
-            for handle in handles:
-                handle.wait()
-
-            fut.result()
-
-            converted_named_tensors.clear()
-
-        finally:
-            self.engine_lock.release()
-
-        self.engine_lock.release()
-
     @property
     def _duplicated_param_names(self) -> set[str]:
         """Parameter names whose parent module has parallel_mode='duplicated'.
@@ -1451,22 +1394,6 @@ class MegatronEngine(TrainEngine):
 
         finally:
             self.engine_lock.release()  # FIX: 恢复锁释放（用 try/finally 确保异常安全）
-
-    # ============================================================
-    # 修复 3: 删除 _create_custom_process_group
-    # ============================================================
-    # 完全删除这个方法。它有以下问题：
-    # a) import 路径错误 (areal.utils.distributed 应为 areal.engine.core.distributed)
-    # b) 函数签名不匹配 (传 master_addr/port 但实际需要 init_method)
-    # c) fallback 创建的 raw ProcessGroup 无法正常工作
-    #
-    # 直接使用已有的 init_custom_process_group 即可。
-
-    # ============================================================
-    # 修复 4: _update_bucket_weights_from_distributed 支持 PP
-    # ============================================================
-    # 原有方法调用 self.rollout_engine.update_weights_from_distributed(meta, param_specs)
-    # 需要增加 pp_rank 参数透传。
 
     def _update_bucket_weights_from_distributed(
         self,
