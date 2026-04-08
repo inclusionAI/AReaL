@@ -260,10 +260,7 @@ def validate_config_for_distributed_launcher(config):
         )
     if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
-        if allocation_mode.gen.pp_size > 1:
-            raise NotImplementedError(
-                "Pipeline generation in SGLang is not supported for now."
-            )
+        pass
     elif allocation_mode.gen_backend == "vllm":
         # Launcher should launch vLLM servers according to allocation mode.
         if allocation_mode.gen.pp_size > 1:
