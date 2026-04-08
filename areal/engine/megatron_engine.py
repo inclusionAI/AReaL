@@ -466,6 +466,27 @@ class MegatronEngine(TrainEngine):
         return self
 
     def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
+
+        # ------ Per-PP-rank weight update auto-detection ------
+        # If the rollout side uses PP > 1, install per-PP-rank NCCL groups
+        # to avoid rank collisions and deadlocks in the single-group approach.
+        if (
+            meta.type == "xccl"
+            and not self.weight_update_group_initialized
+            and meta.gen_allocation is not None
+            and meta.gen_allocation.parallel.pp_size > 1
+        ):
+            from areal.engine.pp_weight_update import install_pp_weight_update
+            from areal.engine.sglang_pp_patches import apply_all_sglang_pp_patches
+
+            self.logger.info(
+                "[connect_engine] Detected rollout PP size = %d > 1, "
+                "installing per-PP-rank weight update patches.",
+                meta.gen_allocation.parallel.pp_size,
+            )
+            install_pp_weight_update(type(self))
+            apply_all_sglang_pp_patches()
+        # ------ End per-PP-rank weight update ------
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
