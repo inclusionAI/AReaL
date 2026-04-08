@@ -65,33 +65,58 @@ class RayToolManager:
         else:
             logger.info("Ray already initialized")
     
+    def _build_runtime_env(self):
+        """Build runtime_env so Ray actors can import verl_tool on worker nodes."""
+        env_vars = {}
+        # Propagate PYTHONPATH so workers can find verl_tool and geo_edit
+        pythonpath = os.environ.get("PYTHONPATH", "")
+        if pythonpath:
+            env_vars["PYTHONPATH"] = pythonpath
+        # Propagate AREAL_ROOT for geo_edit agent tools
+        areal_root = os.environ.get("AREAL_ROOT", "")
+        if areal_root:
+            env_vars["AREAL_ROOT"] = areal_root
+        if env_vars:
+            return {"env_vars": env_vars}
+        return {}
+
     def _initialize_tools(self):
         """Initialize tools with proper error handling and dependency management"""
         # Ensure finish tool is processed last for dependencies
         ordered_tools = [t for t in self.tool_types if t != "finish"]
-        
+
         initialized_tools = []
         failed_tools = []
-        
+
         logger.info(f"Initializing Ray tools: {ordered_tools}")
         if self.config.workers_per_tool <= os.cpu_count() * 2:
             logger.warning(f"You are using ray with workers_per_tool={self.config.workers_per_tool} which is less than or equal to the 2 times of CPU cores  ({os.cpu_count() * 4}). This may lead to suboptimal performance due to resource contention. Consider increasing workers_per_tool if you see low gpu utilization during rollouts.")
-        
+
+        runtime_env = self._build_runtime_env()
+
         for tool_type in ordered_tools:
             try:
                 tool_cls = get_tool_cls(tool_type)
 
-                tool_instance = ray.remote(max_concurrency=self.config.workers_per_tool)(tool_cls).remote()
+                remote_cls = ray.remote(
+                    max_concurrency=self.config.workers_per_tool,
+                    runtime_env=runtime_env,
+                )(tool_cls)
+                tool_instance = remote_cls.remote()
                 self.tools[tool_type] = tool_instance
                 initialized_tools.append(tool_type)
                 logger.info(f"✓ Initialized Ray tool: {tool_type}")
-                
+
             except Exception as e:
                 failed_tools.append((tool_type, str(e)))
                 logger.error(f"✗ Failed to initialize Ray tool {tool_type}: {e}")
-                
+
         if "finish" not in self.tools:
-            tool_instance = ray.remote(max_concurrency=self.config.workers_per_tool)(get_tool_cls("finish")).remote(
+            remote_cls = ray.remote(
+                max_concurrency=self.config.workers_per_tool,
+                runtime_env=runtime_env,
+            )(get_tool_cls("finish"))
+            tool_instance = remote_cls.remote(
                 num_workers=1,
                 other_tools={t: self.tools[t] for t in initialized_tools if t in self.tools}
             )
