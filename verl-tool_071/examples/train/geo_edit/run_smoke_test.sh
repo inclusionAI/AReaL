@@ -54,7 +54,7 @@ VERL_TOOL_ROOT="${VERL_TOOL_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 export PYTHONPATH=$VERL_TOOL_ROOT/verl:$VERL_TOOL_ROOT:${PYTHONPATH:-}
 mkdir -p $WORKSPACE/logs/$run_name
 
-action_stop_tokens_file="$(mktemp)"
+action_stop_tokens_file="$WORKSPACE/logs/$run_name/action_stop_tokens.txt"
 echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 
 WORKER_IP=${TOOL_SERVER_IP:-$(python3 -c "
