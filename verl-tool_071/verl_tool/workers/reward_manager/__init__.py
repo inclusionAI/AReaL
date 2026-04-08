@@ -27,7 +27,7 @@ for file in current_dir.glob("*.py"):
     try:
         # import
         module = __import__(f"verl_tool.workers.reward_manager.{file.stem}", fromlist=[file.stem])
-    except ImportError as e:
+    except Exception as e:
         error_loaded_reward_manager[file.stem] = e
         pass
 

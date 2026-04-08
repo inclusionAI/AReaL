@@ -35,6 +35,21 @@ verl.trainer.ppo.reward.extract_reward = _verl_tool_extract_reward
 verl.trainer.ppo.ray_trainer.compute_data_metrics = compute_data_metrics
 verl.trainer.ppo.ray_trainer.process_validation_metrics = process_validation_metrics
 verl.workers.rollout.vllm_rollout.vllm_async_server.vLLMHttpServer = VerlToolvLLMHttpServer
+
+# verl-tool computes rewards in its own AgentLoopWorker (RewardManagerWorker),
+# not via verl's RewardLoopWorker. Stub out RewardLoopManager to avoid
+# creating RewardLoopWorker actors that would fail to find verl-tool reward managers.
+import verl.experimental.reward_loop.reward_loop as _reward_loop_module
+
+class _NoOpRewardLoopManager:
+    """Lightweight stand-in: no RewardLoopWorker actors, no registry lookups."""
+    def __init__(self, config, rm_resource_pool=None):
+        self.config = config
+        self.reward_loop_workers = []   # AgentLoopManager expects this attribute
+    def compute_rm_score(self, data):
+        raise RuntimeError("verl-tool does not use RewardLoopManager for reward computation")
+
+_reward_loop_module.RewardLoopManager = _NoOpRewardLoopManager
 ##############################################################################
 
 class AgentRayPPOTrainer(RayPPOTrainer):
