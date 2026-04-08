@@ -14,167 +14,109 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RolloutCallback:
-    """Callback interface for train workers to coordinate with TrainController.
-
-    This class acts as a proxy that train engines use to trigger operations on
-    the inference side via HTTP callbacks to the TrainController. The controller
-    then forwards these to the RolloutController.
-
-    IMPORTANT: Methods that return Future must be non-blocking to avoid deadlocks.
-    NCCL operations are collective - both train and inference sides must participate
-    concurrently. If these methods blocked, the train side couldn't start its NCCL
-    operations while waiting for the inference side, causing a deadlock.
-    """
+    """Callback interface for train workers to coordinate with TrainController."""
 
     controller_addr: str
     request_timeout: float = 600.0
 
     def _post(self, endpoint: str, payload: dict[str, Any] | None = None) -> dict:
-        """Make synchronous HTTP POST to controller callback endpoint.
-
-        Parameters
-        ----------
-        endpoint : str
-            The callback endpoint (e.g., "/callback/init_weights_group")
-        payload : dict, optional
-            JSON payload to send
-
-        Returns
-        -------
-        dict
-            Response JSON from controller
-        """
         url = f"http://{self.controller_addr}{endpoint}"
         try:
+            logger.info(
+                "[RolloutCallback] POST %s  timeout=%.1fs  payload_keys=%s",
+                url,
+                self.request_timeout,
+                list((payload or {}).keys()),
+            )
+            import time as _time
+
+            _t0 = _time.monotonic()
             resp = requests.post(
                 url,
                 json=payload or {},
                 timeout=self.request_timeout,
             )
+            _elapsed = _time.monotonic() - _t0
             resp.raise_for_status()
+            logger.info(
+                "[RolloutCallback] POST %s completed in %.2fs  status=%d",
+                endpoint,
+                _elapsed,
+                resp.status_code,
+            )
             return resp.json()
-        except requests.RequestException as e:
-            logger.error(f"Callback to {url} failed: {e}")
+        except requests.exceptions.Timeout:
+            logger.error(
+                "[RolloutCallback] TIMEOUT on POST %s after %.1fs. "
+                "This usually indicates NCCL group init or weight broadcast is hanging. "
+                "Check SGLang worker logs for rank collision or NCCL errors.",
+                url,
+                self.request_timeout,
+            )
+            raise
+        except Exception as e:
+            logger.error("[RolloutCallback] POST %s FAILED: %s", url, repr(e))
             raise
 
     def _post_nowait(
         self, endpoint: str, payload: dict[str, Any] | None = None
     ) -> Future[dict]:
-        """Make asynchronous HTTP POST to controller callback endpoint.
-
-        This method submits the HTTP request to a background thread and returns
-        immediately with a Future. This is critical for NCCL coordination where
-        both train and inference sides must participate in collective operations
-        concurrently.
-
-        Parameters
-        ----------
-        endpoint : str
-            The callback endpoint
-        payload : dict, optional
-            JSON payload to send
-
-        Returns
-        -------
-        Future[dict]
-            Future that completes when the HTTP response is received
-        """
+        logger.info(
+            "[RolloutCallback] Submitting async POST %s (non-blocking for NCCL collective)",
+            endpoint,
+        )
         return get_executor().submit(self._post, endpoint, payload)
 
     def _post_nowait_void(
         self, endpoint: str, payload: dict[str, Any] | None = None
     ) -> Future[None]:
-        """Make an async POST request and return a Future that resolves to None."""
-        http_future = self._post_nowait(endpoint, payload)
-        result_future: Future[None] = Future()
+        def _fn():
+            self._post(endpoint, payload)
 
-        def on_done(f: Future[dict]):
-            try:
-                f.result()  # Raise any exception from the HTTP request
-                result_future.set_result(None)
-            except Exception as e:
-                result_future.set_exception(e)
+        return get_executor().submit(_fn)
 
-        http_future.add_done_callback(on_done)
-        return result_future
+    def pause_generation(self) -> dict:
+        logger.info("[RolloutCallback] >>> pause_generation")
+        return self._post("/callback/pause_generation")
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
-        """Callback to controller to initialize weight update group on inference side.
+    def continue_generation(self) -> dict:
+        logger.info("[RolloutCallback] >>> continue_generation")
+        return self._post("/callback/continue_generation")
 
-        This method is NON-BLOCKING. It starts the HTTP request in a background
-        thread and returns immediately. This allows the train engine to proceed
-        with creating its side of the NCCL group concurrently.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Weight update metadata
-
-        Returns
-        -------
-        Future[None]
-            Future that completes when controller finishes initialization
-        """
+    def init_weights_update_group(self, meta: WeightUpdateMeta) -> dict:
         payload = {"meta": serialize_value(meta)}
-        return self._post_nowait_void("/callback/init_weights_group", payload)
+        logger.info(
+            "[RolloutCallback] >>> init_weights_update_group  "
+            "nccl_master=%s:%s  group=%s  world_size=%s",
+            getattr(meta, "nccl_master_address", "?"),
+            getattr(meta, "nccl_master_port", "?"),
+            getattr(meta, "nccl_group_name", "?"),
+            getattr(getattr(meta, "gen_allocation", None), "parallel", None)
+            and meta.gen_allocation.parallel.world_size + 1,
+        )
+        return self._post("/callback/init_weights_group", payload)
 
     def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> Future[None]:
-        """Callback to controller to receive weights on inference side.
-
-        This method is NON-BLOCKING. The train engine calls this to notify the
-        inference side to start receiving NCCL broadcasts, then immediately
-        starts broadcasting. Both sides participate in the NCCL collective
-        concurrently.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Weight update metadata
-        param_specs : list[ParamSpec]
-            List of parameter specifications for this update batch
-
-        Returns
-        -------
-        Future[None]
-            Future that completes when controller finishes receiving weights
-        """
         payload = {
             "meta": serialize_value(meta),
             "param_specs": serialize_value(param_specs),
         }
+        logger.info(
+            "[RolloutCallback] >>> update_weights_from_distributed (async)  "
+            "group=%s  n_params=%d",
+            getattr(meta, "nccl_group_name", "?"),
+            len(param_specs),
+        )
         return self._post_nowait_void("/callback/update_weights_xccl", payload)
 
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
-        """Callback to controller to load weights from disk on inference side.
-
-        This method is NON-BLOCKING for consistency, though disk-based updates
-        don't have the same NCCL coordination requirements.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Weight update metadata with path information
-
-        Returns
-        -------
-        Future[None]
-            Future that completes when controller finishes loading weights
-        """
         payload = {"meta": serialize_value(meta)}
+        logger.info("[RolloutCallback] >>> update_weights_from_disk (async)")
         return self._post_nowait_void("/callback/update_weights_disk", payload)
 
-    def pause_generation(self) -> None:
-        """Callback to controller to pause inference generation.
-
-        This is synchronous as it must complete before weight updates begin.
-        """
-        self._post("/callback/pause_generation")
-
-    def continue_generation(self) -> None:
-        """Callback to controller to resume inference generation.
-
-        This is synchronous as it should complete before returning control.
-        """
-        self._post("/callback/continue_generation")
+    def set_version(self, version: int) -> dict:
+        payload = {"version": version}
+        logger.info("[RolloutCallback] >>> set_version(%d)", version)
+        return self._post("/callback/set_version", payload)
