@@ -53,7 +53,7 @@ echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 host=$(hostname -i | awk '{print $1}')
 port=$(shuf -i 30000-31000 -n 1)
 tool_server_url=http://$host:$port/get_observation
-python -m verl_tool.servers.serve --host $host --port $port --tool_type "geo_edit_tool" --workers_per_tool 8 &
+python -m verl_tool.servers.serve --host $host --port $port --tool_type "geo_edit_function,geo_paddleocr,geo_sam3,geo_multimath,geo_chartr1,geo_grounding_dino,geo_gllava" --workers_per_tool 8 --use_ray True &
 server_pid=$!
 echo "Tool server (pid=$server_pid) started at $tool_server_url"
 sleep 10

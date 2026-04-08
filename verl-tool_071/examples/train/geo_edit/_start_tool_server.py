@@ -94,7 +94,6 @@ def launch_server():
     runtime_env = {
         "env_vars": {
             "PYTHONPATH": ":".join(filter(None, [VERL_ROOT, AREAL_ROOT])),
-            "GEOEDIT_ENABLE_TOOLS": "general,chart",
             "RAY_ADDRESS": f"{head_ip}:6379",
         }
     }
@@ -113,7 +112,7 @@ def launch_server():
             cmd = [
                 sys.executable, "-m", "verl_tool.servers.serve",
                 "--host", self.ip, "--port", PORT,
-                "--tool_type", "geo_edit_tool",
+                "--tool_type", "geo_edit_function,geo_chartr1",
                 "--workers_per_tool", "1", "--uvi_workers", "1",
                 "--router_workers", "1",
                 "--max_concurrent_requests", "128", "--use_ray", "True",

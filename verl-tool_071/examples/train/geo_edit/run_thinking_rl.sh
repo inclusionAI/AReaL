@@ -57,7 +57,6 @@ mkdir -p $WORKSPACE/logs/$run_name
 action_stop_tokens_file="$(mktemp)"
 echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 
-export GEOEDIT_ENABLE_TOOLS="general,chart"
 WORKER_IP=${TOOL_SERVER_IP:-$(python3 -c "
 import ray; ray.init(address='auto',ignore_reinit_error=True)
 for n in ray.nodes():

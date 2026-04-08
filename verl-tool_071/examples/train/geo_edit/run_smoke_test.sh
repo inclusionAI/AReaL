@@ -32,7 +32,7 @@ lr=1e-6
 reward_manager=geo_vision_qa
 ppo_micro_batch_size_per_gpu=1
 log_prob_micro_batch_size_per_gpu=1
-tensor_model_parallel_size=1
+tensor_model_parallel_size=2
 gpu_memory_utilization=0.6
 do_offload=False
 use_dynamic_bsz=True
@@ -49,18 +49,15 @@ test_freq=100
 
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=WARN
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERL_TOOL_ROOT="${VERL_TOOL_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 export PYTHONPATH=$VERL_TOOL_ROOT:${PYTHONPATH:-}
-echo "VERL_TOOL_ROOT=$VERL_TOOL_ROOT"
-echo "PYTHONPATH=$PYTHONPATH"
 
 mkdir -p $WORKSPACE/logs/$run_name
 
 action_stop_tokens_file="$(mktemp)"
 echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 
-export GEOEDIT_ENABLE_TOOLS="general,chart"
 WORKER_IP=${TOOL_SERVER_IP:-$(python3 -c "
 import ray; ray.init(address='auto',ignore_reinit_error=True)
 for n in ray.nodes():
@@ -69,8 +66,6 @@ for n in ray.nodes():
 ")}
 tool_server_url=http://$WORKER_IP:30888/get_observation
 echo "Using tool server on worker at $tool_server_url"
-
-unset ROCR_VISIBLE_DEVICES
 
 PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     algorithm.adv_estimator=$rl_alg \
