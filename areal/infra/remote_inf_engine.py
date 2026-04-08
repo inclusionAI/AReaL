@@ -883,71 +883,76 @@ class RemoteInfEngine(InferenceEngine):
 
     def init_weights_update_group(
         self,
-        meta,         # type: WeightUpdateMeta
-        pp_rank=None, # type: Optional[int]
-    ):
-        """Public entry-point called from MegatronEngine to initialise the
-        weight-update NCCL group on the inference side.
-    
-        Returns a ``concurrent.futures.Future`` whose ``.result()`` blocks
-        until every SGLang server has finished joining the group.
-    
+        meta: WeightUpdateMeta,
+        pp_rank: int | None = None,
+    ) -> Future[None]:
+        """Initialize the weight update process group for distributed weight updates.
+
         Parameters
         ----------
         meta : WeightUpdateMeta
-            Carries NCCL master addr/port, group name, and allocation metadata.
-        pp_rank : int or None
-            If provided (pp_size > 1), create a per-PP-rank NCCL group that
-            covers only the workers of the given PP stage.
+            Metadata containing information about the weight update
+        pp_rank : int | None
+            If provided (pp_size > 1), create a per-PP-rank NCCL group.
         """
-        import concurrent.futures
-    
-        loop = self._get_or_create_event_loop()
-    
-        fut = concurrent.futures.Future()
-    
-        async def _run():
-            try:
-                await _init_weights_update_group_remote(
-                    addresses=self.server_addresses,
-                    backend=self.backend,
-                    meta=meta,
-                    pp_rank=pp_rank,
+        assert meta.type == "xccl"
+
+        fut = get_executor().submit(
+            _init_weights_update_group_remote,
+            self.backend,
+            meta,
+            self.addresses,  # FIX: 恢复 self.addresses
+            self.config.request_timeout,  # FIX: 恢复 timeout
+            pp_rank,  # NEW: 传入 pp_rank
+        )
+
+        def callback(fut):
+            if fut.cancelled():
+                return
+            if fut.exception() is not None:
+                self.logger.error(
+                    "Failed to initialize %s group for distributed weight update for %s: %s",
+                    current_platform.communication_backend.upper(),
+                    meta.nccl_group_name,
+                    repr(fut.exception()),
                 )
-                fut.set_result(None)
-            except Exception as e:
-                fut.set_exception(e)
-    
-        asyncio.run_coroutine_threadsafe(_run(), loop)
+                return
+            self.logger.info(
+                f"Initialized {current_platform.communication_backend.upper()} group "
+                f"for distributed weight update for {meta.nccl_group_name}."
+            )
+
+        fut.add_done_callback(callback)  # FIX: 恢复 callback
         return fut
 
     def update_weights_from_distributed(
         self,
-        meta,         # type: WeightUpdateMeta
-        pp_rank=None, # type: Optional[int]
-    ):
-        """Trigger weight broadcast over the NCCL group on all inference servers.
-    
-        Returns a ``concurrent.futures.Future``.
+        meta: WeightUpdateMeta,
+        param_specs: list,
+        pp_rank: int | None = None,  # NEW: 增加 pp_rank
+    ) -> Future[None]:
+        """Update weights in the inference engine from distributed memory.
+
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+        param_specs : list[ParamSpec]
+            Parameter specifications (names, shapes, dtypes) for weight update.
+        pp_rank : int | None
+            If provided, targets the per-PP-rank NCCL group.
         """
-        import concurrent.futures
-    
-        loop = self._get_or_create_event_loop()
-        fut = concurrent.futures.Future()
-    
-        async def _run():
-            try:
-                await _update_weights_from_distributed_remote(
-                    addresses=self.server_addresses,
-                    backend=self.backend,
-                    meta=meta,
-                    pp_rank=pp_rank,
-                )
-                fut.set_result(None)
-            except Exception as e:
-                fut.set_exception(e)
-    
-        asyncio.run_coroutine_threadsafe(_run(), loop)
+        assert meta.type == "xccl"
+
+        fut = get_executor().submit(
+            _update_weights_from_distributed,
+            self.backend,
+            meta,
+            param_specs,  # FIX: 恢复 param_specs
+            self.addresses,  # FIX: 恢复 self.addresses
+            self.config.request_timeout,  # FIX: 恢复 timeout
+            pp_rank,  # NEW: 传入 pp_rank
+        )
+
         return fut
 
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
@@ -1334,89 +1339,107 @@ def _update_weights_from_disk(
     return uvloop.run(_fn())
 
 
-async def _init_weights_update_group_remote(
-    addresses,    # type: List[str]
-    backend,      # SGLangRemoteBackend or similar
-    meta,         # type: WeightUpdateMeta
-    pp_rank=None, # type: Optional[int]
+def _init_weights_update_group_remote(
+    backend: RemoteInfBackendProtocol,
+    meta: WeightUpdateMeta,
+    addresses: list,
+    request_timeout: float,
+    pp_rank: int | None = None,  # NEW: 增加 pp_rank
 ):
-    """Initialise the NCCL weight-update group on all remote SGLang servers.
+    """Helper to initialize weight update group in a separate process."""
 
-    Parameters
-    ----------
-    addresses : list of str
-        HTTP base URLs of all SGLang servers that participate in this group.
-    backend :
-        The inference backend object (e.g. ``SGLangRemoteBackend``) that
-        provides ``build_init_weights_group_request()``.
-    meta : WeightUpdateMeta
-        Contains NCCL master address/port, group name, allocation info, etc.
-    pp_rank : int or None
-        When not *None*, instructs each server to create a **per-PP-rank**
-        NCCL group instead of the single whole-model group.
-    """
-    tasks = []
-    for server_idx, addr in enumerate(addresses):
-        # Build the request -- pp_rank flows through to the backend method.
-        server_addr, request = backend.build_init_weights_group_request(
-            addr, server_idx, meta, pp_rank=pp_rank,
-        )
-        tasks.append(_post_init_weights_update_group(server_addr, request))
+    async def _fn():
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=request_timeout),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        ) as session:
+            jobs = []
+            for i, addr in enumerate(addresses):
+                # 原有 xccl_group_ranks 逻辑可保留兼容性
+                # 但 PP 场景下用 server_idx + pp_rank 构建请求
+                http_req = backend.build_init_weights_group_request(
+                    addr,
+                    i,
+                    meta,
+                    pp_rank=pp_rank,  # NEW: 传入 pp_rank
+                )
+                jobs.append(
+                    arequest_with_retry(
+                        session=session,
+                        addr=addr,
+                        endpoint=http_req.endpoint,
+                        payload=http_req.payload,
+                        method=http_req.method,
+                        max_retries=1,
+                        timeout=request_timeout,
+                    )
+                )
+            await asyncio.gather(*jobs)
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for r in results:
-        if isinstance(r, Exception):
-            raise r
-
-
-async def _post_init_weights_update_group(server_address, request):
-    # type: (str, dict) -> dict
-    """Send the /init_weights_update_group POST to a single SGLang server.
-
-    This is a thin wrapper kept separate so that each server call can be
-    awaited concurrently via ``asyncio.gather``.
-    """
-    import aiohttp
-
-    url = "{}/init_weights_update_group".format(server_address)
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=request) as resp:
-            resp.raise_for_status()
-            return await resp.json()
+    return uvloop.run(_fn())
 
 
-
-async def _update_weights_from_distributed_remote(
-    addresses,    # type: List[str]
-    backend,
-    meta,         # type: WeightUpdateMeta
-    pp_rank=None, # type: Optional[int]
+def _update_weights_from_distributed(
+    backend: RemoteInfBackendProtocol,
+    meta: WeightUpdateMeta,
+    param_specs: list,
+    addresses: list,
+    request_timeout: float,
+    pp_rank: int | None = None,  # NEW: 增加 pp_rank
 ):
-    """Tell every SGLang server to pull weights via the NCCL group.
+    """Helper to update weights from distributed memory in a separate process."""
 
-    In per-PP-rank mode, the request targets only the sub-group for the
-    given PP stage.
-    """
-    tasks = []
-    for addr in addresses:
-        server_addr, request = backend.build_update_weights_from_distributed_request(
-            addr, meta, pp_rank=pp_rank,
-        )
-        tasks.append(_post_update_weights(server_addr, request))
+    async def _fn():
+        # 使用新方法（如果有 pp_rank）或原有方法
+        if pp_rank is not None:
+            # Per-PP-rank mode: 用新方法构建请求
+            weight_req = backend.build_update_weights_from_distributed_request(
+                meta,
+                param_specs,
+                pp_rank=pp_rank,
+            )
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=request_timeout),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            ) as session:
+                jobs = [
+                    arequest_with_retry(
+                        session=session,
+                        addr=addr,
+                        endpoint=weight_req.endpoint,
+                        payload=weight_req.payload,
+                        method=weight_req.method,
+                        max_retries=1,
+                        timeout=request_timeout,
+                    )
+                    for addr in addresses
+                ]
+                await asyncio.gather(*jobs)
+        else:
+            # Original PP=1 path: 用原有 build_distributed_weight_update_requests
+            weight_reqs = backend.build_distributed_weight_update_requests(
+                meta, param_specs
+            )
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=request_timeout),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            ) as session:
+                for http_req in weight_reqs.requests:
+                    jobs = [
+                        arequest_with_retry(
+                            session=session,
+                            addr=addr,
+                            endpoint=http_req.endpoint,
+                            payload=http_req.payload,
+                            method=http_req.method,
+                            max_retries=1,
+                            timeout=request_timeout,
+                        )
+                        for addr in addresses
+                    ]
+                    await asyncio.gather(*jobs)
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for r in results:
-        if isinstance(r, Exception):
-            raise r
-
-
-async def _post_update_weights(server_address, request):
-    # type: (str, dict) -> dict
-    import aiohttp
-
-    url = "{}/update_weights_from_distributed".format(server_address)
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=request) as resp:
-            resp.raise_for_status()
-            return await resp.json()
-
+    return uvloop.run(_fn())

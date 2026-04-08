@@ -185,108 +185,87 @@ class SGLangBackend:
 
     def build_init_weights_group_request(
         self,
-        server_address,       # type: str
-        server_idx,           # type: int
-        meta,                 # type: WeightUpdateMeta
-        pp_rank=None,         # type: Optional[int]
-    ):
-        """Build the HTTP request body for /init_weights_update_group on one
-        SGLang server.
-    
-        When ``pp_rank`` is *None* (the default, pp_size == 1 case), behaviour
-        is identical to the original implementation -- one NCCL group spans the
-        entire inference fleet.
-    
-        When ``pp_rank`` is an integer (pp_size > 1), a **per-PP-rank** NCCL
-        group is created.  Each group covers only the TP workers that belong to
-        the given PP stage on every inference server, plus a single training-side
-        source rank (rank 0 in the group).
-    
+        addr: str,
+        server_idx: int,
+        meta: "WeightUpdateMeta",
+        pp_rank: int | None = None,
+    ) -> "HttpRequest":
+        """Build SGLang init weights group request.
+
+        When ``pp_rank`` is None (pp_size == 1), behaviour is identical to
+        the original: one NCCL group spans the entire inference fleet.
+
+        When ``pp_rank`` is an integer (pp_size > 1), a per-PP-rank NCCL
+        group is created covering only the TP workers of the given PP stage.
+
         Rank layout inside one per-PP-rank NCCL group
-        ----------------------------------------------
+        -----------------------------------------------
         rank 0              : training-side source (dp=0, tp=0, pp=pp_rank)
         rank 1 .. tp_size   : server 0, PP stage pp_rank workers
         rank tp_size+1 .. 2*tp_size : server 1, PP stage pp_rank workers
         ...
         """
+        assert meta.gen_allocation is not None
         gen_parallel = meta.gen_allocation.parallel
         tp_size = gen_parallel.tp_size
         pp_size = gen_parallel.pp_size
-    
+
         if pp_size > 1:
             # -- Per-PP-rank mode ------------------------------------------
-            assert pp_rank is not None, (
-                "pp_rank must be specified when pp_size > 1"
-            )
-            # In the per-PP NCCL group the training rank is rank 0.
-            # Each server contributes tp_size workers for this PP stage.
-            # rank_offset for server_idx inside this group:
+            assert pp_rank is not None, "pp_rank must be specified when pp_size > 1"
             rank_offset = 1 + server_idx * tp_size
-    
-            # Total world_size of this NCCL group:
-            #   1 (training src) + num_servers * tp_size
-            num_servers = meta.gen_allocation.num_servers  # total SGLang servers
+
+            num_servers = meta.gen_allocation.num_servers
             world_size = 1 + num_servers * tp_size
-    
-            group_name = "update_weight_group_{}".format(pp_rank)
-    
-            # Backend ranks inside one server: the workers of PP stage pp_rank
-            # are at local ranks [pp_rank * tp_size, (pp_rank + 1) * tp_size).
-            # We need to tell the server which local workers should join, and
-            # what their ranks in the NCCL group are.
-            backend_ranks = list(range(rank_offset, rank_offset + tp_size))
-    
+
+            group_name = f"update_weight_group_{pp_rank}"
         else:
             # -- Original single-group mode (pp_size == 1) -----------------
             rank_offset = 1 + server_idx * tp_size
-            world_size = gen_parallel.world_size + 1  # gen_world_size + 1 src
+            world_size = gen_parallel.world_size + 1
             group_name = meta.nccl_group_name
-            backend_ranks = list(range(rank_offset, rank_offset + tp_size))
-    
-        # Build the request payload understood by SGLang's
-        # /init_weights_update_group endpoint.
-        request = {
-            "master_address": meta.nccl_master_address,
-            "master_port": meta.nccl_master_port,
+
+        payload = {
+            "master_address": format_host_for_url(
+                meta.nccl_master_address
+            ),  # FIX: 恢复 IPv6 处理
+            "master_port": str(meta.nccl_master_port),  # FIX: 恢复 str 转换
             "rank_offset": rank_offset,
             "world_size": world_size,
+            "backend": current_platform.communication_backend,  # FIX: 恢复平台感知
             "group_name": group_name,
-            "backend": "nccl",
         }
-    
-        # If the SGLang server supports per-PP-rank init, also send pp_rank so
-        # the server knows which local workers to enlist.
+
+        # 在 PP>1 模式下，附带 pp_rank 信息告知 SGLang 哪些 worker 加入
         if pp_rank is not None:
-            request["pp_rank"] = pp_rank
-    
-        return server_address, request
+            payload["pp_rank"] = pp_rank
+
+        return HttpRequest(endpoint="/init_weights_update_group", payload=payload)
 
     def build_update_weights_from_distributed_request(
         self,
-        server_address,       # type: str
-        meta,                 # type: WeightUpdateMeta
-        pp_rank=None,         # type: Optional[int]
-    ):
+        meta: "WeightUpdateMeta",
+        param_specs: list,
+        pp_rank: int | None = None,
+    ) -> "HttpRequest":
         """Build the HTTP request for /update_weights_from_distributed.
-    
+
         When ``pp_rank`` is provided, the request targets only the corresponding
-        per-PP-rank NCCL group so that only the layers belonging to that PP
-        stage are broadcast.
+        per-PP-rank NCCL group.
         """
         group_name = meta.nccl_group_name
         if pp_rank is not None:
-            group_name = "update_weight_group_{}".format(pp_rank)
-    
-        request = {
+            group_name = f"update_weight_group_{pp_rank}"
+
+        payload = {
+            "names": [pspec.name for pspec in param_specs],
+            "dtypes": [pspec.dtype for pspec in param_specs],
+            "shapes": [pspec.shape for pspec in param_specs],
             "group_name": group_name,
+            "abort_all_requests": True,
         }
-    
-        # Include the name filter if the meta carries one (only the param names
-        # owned by this PP stage).
-        if hasattr(meta, "param_names") and meta.param_names is not None:
-            request["param_names"] = meta.param_names
-    
-        return server_address, request
+
+        return HttpRequest(endpoint="/update_weights_from_distributed", payload=payload)
 
     def get_pause_request(self) -> HttpRequest:
         """Get SGLang pause request."""

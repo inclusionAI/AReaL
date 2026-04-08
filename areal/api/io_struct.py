@@ -182,8 +182,8 @@ class WeightUpdateMeta:
 
     version: int | None = None
 
-    # -- NEW field -----------------------------------------------------
-    pp_rank: Optional[int] = None
+    # -- NEW field: per-PP-rank NCCL group support ---------------------
+    pp_rank: int | None = None
     """Pipeline-parallel rank for per-PP-rank NCCL group mode.
 
     * ``None`` -- PP=1 (or legacy) mode; a single NCCL group covers the
@@ -195,13 +195,10 @@ class WeightUpdateMeta:
     """
 
     # -- Optional: parameter name filter -------------------------------
-    param_names: Optional[list[str]] = None
+    param_names: list[str] | None = None
     """When set, only the listed parameter names are broadcast in this
     weight-update round.  Used in per-PP-rank mode so that each NCCL
     group transmits only the layers owned by its PP stage."""
-
-    pp_rank: int | None = None
-    param_names: list[str] | None = None
 
     def with_version(self, version: int) -> "WeightUpdateMeta":
         """Return a copy of this meta with versioned path.
