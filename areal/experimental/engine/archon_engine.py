@@ -1154,10 +1154,14 @@ class ArchonEngine(TrainEngine):
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
+        local_weight = loss_weight_fn(ctx.mb_input)
+        if local_weight == 0:
+            return logits.mean() * 0.0
+
         if not self.config.is_critic:
             result = self._gather_actor_train_outputs(logits, ctx)
             if result is None:
-                return logits.sum() * 0.0
+                return logits.mean() * 0.0
             logprobs, entropy, vocab_min_logits, vocab_max_logits = result
             loss = loss_fn(
                 logprobs,
@@ -1170,7 +1174,7 @@ class ArchonEngine(TrainEngine):
             values = self._gather_critic_output(logits, ctx)
             loss = loss_fn(values, ctx.mb_input)
 
-        loss_scale = loss_weight_fn(ctx.mb_input) / total_loss_weight * loss_multiplier
+        loss_scale = local_weight / total_loss_weight * loss_multiplier
         return loss * loss_scale
 
     def _compute_forward_result(

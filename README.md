@@ -106,6 +106,7 @@ pip install uv
 # (pick the wheel matching your Python version; see https://github.com/mjun0812/flash-attention-prebuild-wheels/releases)
 uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
 uv sync --extra cuda  # installs training packages + SGLang (default inference backend)
+# For vLLM instead: cp pyproject.vllm.toml pyproject.toml && cp uv.vllm.lock uv.lock && uv sync --extra cuda
 ```
 
 Our training scripts automatically download the required dataset (openai/gsm8k) and
@@ -277,8 +278,8 @@ pip install uv
 uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
 # Use `--extra cuda` on Linux with CUDA (installs training packages + SGLang)
 uv sync --extra cuda --group dev
-# For vLLM instead (note: use torch2.10 flash-attn wheel):
-# uv sync --extra cuda-vllm --group dev
+# For vLLM instead:
+# cp pyproject.vllm.toml pyproject.toml && cp uv.vllm.lock uv.lock && uv sync --extra cuda --group dev
 # Or without CUDA support
 # uv sync --group dev
 
