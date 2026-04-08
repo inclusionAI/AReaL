@@ -171,6 +171,13 @@ class RolloutController:
         )
         dp_size = self.rollout_alloc.parallel.dp_size
 
+        logger.info(
+            f"RolloutController initialize: backend={self.config.backend}, "
+            f"tp_size={self.rollout_alloc.parallel.tp_size}, "
+            f"pp_size={self.rollout_alloc.parallel.pp_size}, "
+            f"instance_size={instance_size}, dp_size={dp_size}"
+        )
+
         # The first element of `self.config.scheduling_spec` is the resource spec
         # of workers, aka the RPC server process. Since a worker exactly matches
         # to a single engine instance in the local environment, we can dirrectly
@@ -545,51 +552,137 @@ class RolloutController:
             logger.warning("Callback server already running")
             return
 
+        logger.info(
+            f"Starting callback server: PP/TP configs="
+            f"(tp={self.rollout_alloc.parallel.tp_size}, "
+            f"pp={self.rollout_alloc.parallel.pp_size}), "
+            f"threaded=False"
+        )
+
         app = Flask(__name__)
         app.logger.disabled = True
 
         @app.route("/callback/init_weights_group", methods=["POST"])
         def init_weights_group():
-            payload = request.get_json() or {}
-            meta = deserialize_value(payload.get("meta"))
-            self._callback_loop.run_until_complete(self.init_weights_update_group(meta))
-            return jsonify({"status": "ok"})
+            import time
+
+            t0 = time.monotonic()
+            logger.info("[Callback] START /callback/init_weights_group")
+            try:
+                payload = request.get_json() or {}
+                meta = deserialize_value(payload.get("meta"))
+                self._callback_loop.run_until_complete(
+                    self.init_weights_update_group(meta)
+                )
+                logger.info(
+                    f"[Callback] DONE /callback/init_weights_group - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                logger.error(
+                    f"[Callback] FAILED /callback/init_weights_group - {e} - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"error": str(e)}), 500
 
         @app.route("/callback/update_weights_xccl", methods=["POST"])
         def update_weights():
-            payload = request.get_json() or {}
-            meta = deserialize_value(payload.get("meta"))
-            param_specs = deserialize_value(payload.get("param_specs"))
-            self._callback_loop.run_until_complete(
-                self.update_weights_from_distributed(meta, param_specs)
-            )
-            return jsonify({"status": "ok"})
+            import time
+
+            t0 = time.monotonic()
+            logger.info("[Callback] START /callback/update_weights_xccl")
+            try:
+                payload = request.get_json() or {}
+                meta = deserialize_value(payload.get("meta"))
+                param_specs = deserialize_value(payload.get("param_specs"))
+                self._callback_loop.run_until_complete(
+                    self.update_weights_from_distributed(meta, param_specs)
+                )
+                logger.info(
+                    f"[Callback] DONE /callback/update_weights_xccl - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                logger.error(
+                    f"[Callback] FAILED /callback/update_weights_xccl - {e} - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"error": str(e)}), 500
 
         @app.route("/callback/update_weights_disk", methods=["POST"])
         def update_weights_disk():
-            payload = request.get_json() or {}
-            meta = deserialize_value(payload.get("meta"))
-            self._callback_loop.run_until_complete(self.update_weights_from_disk(meta))
-            return jsonify({"status": "ok"})
+            import time
+
+            t0 = time.monotonic()
+            logger.info("[Callback] START /callback/update_weights_disk")
+            try:
+                payload = request.get_json() or {}
+                meta = deserialize_value(payload.get("meta"))
+                self._callback_loop.run_until_complete(
+                    self.update_weights_from_disk(meta)
+                )
+                logger.info(
+                    f"[Callback] DONE /callback/update_weights_disk - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                logger.error(
+                    f"[Callback] FAILED /callback/update_weights_disk - {e} - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"error": str(e)}), 500
 
         @app.route("/callback/pause_generation", methods=["POST"])
         def pause_generation():
-            self._callback_loop.run_until_complete(self.pause_generation())
-            return jsonify({"status": "ok"})
+            import time
+
+            t0 = time.monotonic()
+            logger.info("[Callback] START /callback/pause_generation")
+            try:
+                self._callback_loop.run_until_complete(self.pause_generation())
+                logger.info(
+                    f"[Callback] DONE /callback/pause_generation - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                logger.error(
+                    f"[Callback] FAILED /callback/pause_generation - {e} - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"error": str(e)}), 500
 
         @app.route("/callback/continue_generation", methods=["POST"])
         def continue_generation():
-            self._callback_loop.run_until_complete(self.continue_generation())
-            return jsonify({"status": "ok"})
+            import time
+
+            t0 = time.monotonic()
+            logger.info("[Callback] START /callback/continue_generation")
+            try:
+                self._callback_loop.run_until_complete(self.continue_generation())
+                logger.info(
+                    f"[Callback] DONE /callback/continue_generation - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                logger.error(
+                    f"[Callback] FAILED /callback/continue_generation - {e} - elapsed: {time.monotonic() - t0:.3f}s"
+                )
+                return jsonify({"error": str(e)}), 500
 
         @app.route("/callback/rollout_complete", methods=["POST"])
         def rollout_complete():
+            import time
+
+            t0 = time.monotonic()
+            logger.info("[Callback] START /callback/rollout_complete")
             payload = request.get_json() or {}
             task_id = payload.get("task_id")
             try:
                 self._resolve_task_future(task_id)
+                logger.info(
+                    f"[Callback] DONE /callback/rollout_complete - elapsed: {time.monotonic() - t0:.3f}s"
+                )
                 return jsonify({"status": "ok"})
             except Exception as e:
+                logger.error(
+                    f"[Callback] FAILED /callback/rollout_complete - {e} - elapsed: {time.monotonic() - t0:.3f}s"
+                )
                 return jsonify({"error": str(e)}), 500
 
         @app.errorhandler(Exception)
@@ -1007,6 +1100,12 @@ class RolloutController:
         )
 
     async def init_weights_update_group(self, meta: WeightUpdateMeta) -> None:
+        for rank, worker in enumerate(self.workers):
+            logger.info(
+                f"[init_weights_update_group] worker_id={worker.id}, "
+                f"rank={rank}, engine_name={self._engine_name(rank)}, "
+                f"xccl_group_ranks={[rank]}"
+            )
         tasks = [
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
@@ -1022,8 +1121,18 @@ class RolloutController:
     async def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ):
+        import time
+
+        t0 = time.monotonic()
+        logger.info(
+            f"[update_weights_from_distributed] START: n_workers={len(self.workers)}, "
+            f"n_params={len(param_specs)}, group_name={meta.nccl_group_name}"
+        )
         await self._collective_rpc_async(
             "update_weights_from_distributed", meta=meta, param_specs=param_specs
+        )
+        logger.info(
+            f"[update_weights_from_distributed] DONE: elapsed={time.monotonic() - t0:.3f}s"
         )
 
     async def update_weights_from_disk(self, meta: WeightUpdateMeta):

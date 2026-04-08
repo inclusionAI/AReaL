@@ -190,6 +190,23 @@ class SGLangBackend:
         assert meta.gen_allocation is not None
         gen_parallel = meta.gen_allocation.parallel
         rank_offset = 1 + server_idx * (gen_parallel.tp_size * gen_parallel.pp_size)
+
+        import logging
+
+        logger = logging.getLogger("areal.engine.sglang_remote")
+        logger.info(
+            f"[build_init_weights_group_request] addr={addr}, server_idx={server_idx}, "
+            f"tp_size={gen_parallel.tp_size}, pp_size={gen_parallel.pp_size}, "
+            f"instance_size={gen_parallel.tp_size * gen_parallel.pp_size}, "
+            f"rank_offset={rank_offset}, world_size={gen_parallel.world_size + 1}"
+        )
+        for pp in range(gen_parallel.pp_size):
+            for tp in range(gen_parallel.tp_size):
+                expected_rank = rank_offset + pp * gen_parallel.tp_size + tp
+                logger.info(
+                    f"  Expected NCCL rank for PP-{pp} TP-{tp}: {expected_rank}"
+                )
+
         payload = {
             "master_address": format_host_for_url(meta.nccl_master_address),
             "master_port": str(meta.nccl_master_port),
@@ -233,6 +250,11 @@ class SGLangBackend:
         _env = os.environ.copy()
         triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
         _env["TRITON_CACHE_PATH"] = os.path.join(triton_cache_path, str(uuid.uuid4()))
+
+        import logging
+
+        logger = logging.getLogger("areal.engine.sglang_remote")
+        logger.info(f"[launch_server] Full launch command: {' '.join(cmd)}")
 
         return subprocess.Popen(
             cmd,
