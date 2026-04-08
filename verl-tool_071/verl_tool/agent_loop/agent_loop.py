@@ -633,6 +633,11 @@ class AgentLoopWorker:
                 video_grid_thw = multi_modal_inputs.get("video_grid_thw")
                 second_per_grid_ts = multi_modal_inputs.get("second_per_grid_ts")
 
+                # Compute images_seqlens from image_grid_thw (required by ray_trainer)
+                if image_grid_thw is not None:
+                    images_seqlens = torch.repeat_interleave(image_grid_thw[:, 1] * image_grid_thw[:, 2], image_grid_thw[:, 0])
+                    multi_modal_inputs["images_seqlens"] = images_seqlens
+
                 vision_position_ids = get_rope_index(
                     self.processor,
                     input_ids=input_ids.squeeze(0),
