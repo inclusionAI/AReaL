@@ -222,7 +222,11 @@ RUN uv pip install nanobot-ai
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=pyproject.vllm.toml,target=pyproject.vllm.toml \
-    if [ "$VARIANT" = "vllm" ]; then cp pyproject.vllm.toml /tmp/pyproject.toml; else cp pyproject.toml /tmp/pyproject.toml; fi \
+    case "$VARIANT" in \
+      sglang) cp pyproject.toml /tmp/pyproject.toml ;; \
+      vllm) cp pyproject.vllm.toml /tmp/pyproject.toml ;; \
+      *) echo "Invalid VARIANT=$VARIANT (expected: sglang|vllm)" >&2; exit 1 ;; \
+    esac \
     && uv pip install --no-build-isolation -r /tmp/pyproject.toml --extra cuda --group dev
 
 ##############################################################

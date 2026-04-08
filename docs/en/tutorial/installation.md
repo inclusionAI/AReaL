@@ -113,6 +113,7 @@ separate pyproject files. The default `pyproject.toml` uses SGLang; for vLLM, us
 
 ```bash
 cp pyproject.vllm.toml pyproject.toml
+cp uv.vllm.lock uv.lock
 uv sync --extra cuda
 ```
 
@@ -148,6 +149,7 @@ uv sync --extra cuda
 
 ```bash
 cp pyproject.vllm.toml pyproject.toml
+cp uv.vllm.lock uv.lock
 # Python 3.12
 uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp312-cp312-linux_x86_64.whl"
 # Python 3.11
