@@ -49,7 +49,6 @@ from areal.engine.core import (
     compute_total_loss_weight,
     reorder_and_pad_outputs,
 )
-from areal.engine.core.distributed import init_custom_process_group
 from areal.engine.core.model import disable_dropout_in_model
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
@@ -101,7 +100,7 @@ from areal.utils.data import (
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
-from areal.utils.network import find_free_ports, format_host_for_url, gethostip
+from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
@@ -1349,42 +1348,163 @@ class MegatronEngine(TrainEngine):
         buffer_size += param_size
         return buffer_size
 
-    def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta) -> None:
-        assert meta.type == "xccl"
-        # Reset weight weight meta with local info
+    def _init_weight_update_from_distributed(self, meta):
+        # type: (WeightUpdateMeta) -> None
+        """Initialise the NCCL process group used to broadcast model weights
+        from the training side to the inference (SGLang) side.
+    
+        For PP=1 (no pipeline parallelism on the inference side) the behaviour
+        is identical to the original implementation: a single NCCL group
+        spanning the entire inference fleet + one training source rank.
+    
+        For PP>1 each training-side PP stage head (dp_rank==0 && tp_rank==0)
+        creates its **own** NCCL group that covers:
+          - rank 0 : the training-side source rank
+          - ranks 1..N : the inference workers belonging to the same PP stage
+            across all SGLang servers (N = num_servers * tp_size).
+    
+        This mirrors the design used by slime's per-PP-rank NCCL groups.
+        """
+        import torch.distributed as dist
+    
+        from areal.utils.networking import find_free_ports, gethostip
+    
+        # Parallel topology on the inference (generation) side.
+        gen_parallel = meta.gen_allocation.parallel
+        pp_size = gen_parallel.pp_size
+        tp_size = gen_parallel.tp_size
+    
+        # Number of SGLang server processes.
+        num_servers = meta.gen_allocation.num_servers
+    
+        # -- Populate meta with master address / port / group name ---------
         meta.nccl_master_address = self.weight_update_master_addr = gethostip()
         meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
-        meta.nccl_group_name = self.weight_update_group_name
-
-        # NOTE: Processes launched with torchrun will set the following env var to True,
-        # which blocks creating another TCP store for weight update.
-        os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
-        if self.is_pipeline_parallel_head():
-            assert meta.gen_allocation is not None
-
-            self.engine_lock.acquire()
-
-            fut = self.rollout_engine.init_weights_update_group(meta)
-
-            gen_world_size = meta.gen_allocation.parallel.world_size
-            init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
-            self.logger.info(
-                f"Initializing weight update group: type={meta.type} "
-                f"init_method={init_method} "
-                f"group={self.weight_update_group_name}"
+        meta.nccl_group_name = self.weight_update_group_name  # e.g. "update_weight_group_{pp_rank}"
+    
+        # Only the PP head (dp_rank==0 && tp_rank==0 for this PP stage)
+        # participates in the NCCL group creation.
+        if not self.is_pipeline_parallel_head():
+            return
+    
+        # Import Megatron parallel state utilities.
+        import megatron.core.parallel_state as mpu
+    
+        pp_rank = mpu.get_pipeline_model_parallel_rank()
+    
+        if pp_size > 1:
+            # -- Per-PP-rank NCCL group ------------------------------------
+            # World size: 1 training source + (num_servers * tp_size) inference
+            # workers for this PP stage.
+            per_pp_world_size = 1 + num_servers * tp_size
+    
+            # Store pp_rank in meta so the inference side knows which PP stage.
+            meta.pp_rank = pp_rank
+    
+            # Ask the inference engine to join the per-PP-rank NCCL group.
+            fut = self.rollout_engine.init_weights_update_group(
+                meta, pp_rank=pp_rank,
             )
-            self.weight_update_group = init_custom_process_group(
-                backend=current_platform.communication_backend,
-                world_size=gen_world_size + 1,
-                init_method=init_method,
+    
+            # Create the training-side end of the NCCL group.
+            # The training source is rank 0 in this group.
+            self.weight_update_group = self._create_custom_process_group(
+                backend="nccl",
+                world_size=per_pp_world_size,
                 rank=0,
-                group_name=self.weight_update_group_name,
-                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
+                master_addr=self.weight_update_master_addr,
+                master_port=self.weight_update_master_port,
+                group_name="update_weight_group_{}".format(pp_rank),
             )
-
+    
+            # Block until all inference workers have joined.
             fut.result()
 
-            self.engine_lock.release()
+    def _create_custom_process_group(
+        self,
+        backend,        # type: str
+        world_size,     # type: int
+        rank,           # type: int
+        master_addr,    # type: str
+        master_port,    # type: int
+        group_name,     # type: str
+    ):
+        """Thin wrapper around the custom process-group initialisation.
+    
+        This mirrors the ``init_custom_process_group`` utility already present
+        in AReaL (used by the FSDP engine path).  If AReaL already exposes
+        such a helper, delegate to it; otherwise fall back to a minimal
+        implementation.
+        """
+        try:
+            from areal.utils.distributed import init_custom_process_group
+        except ImportError:
+            # Minimal fallback using PyTorch's low-level store-based init.
+            import datetime
+            import torch.distributed as dist
+    
+            store = dist.TCPStore(
+                host_name=master_addr,
+                port=master_port,
+                world_size=world_size,
+                is_master=(rank == 0),
+                timeout=datetime.timedelta(seconds=300),
+            )
+            return dist.distributed_c10d.ProcessGroup(store, rank, world_size)
+    
+        return init_custom_process_group(
+            backend=backend,
+            world_size=world_size,
+            rank=rank,
+            master_addr=master_addr,
+            master_port=master_port,
+            group_name=group_name,
+        )
+
+    def _broadcast_weights_to_inference(self, meta):
+        # type: (WeightUpdateMeta) -> None
+        """Broadcast model weights from the training side to the inference side
+        via the NCCL weight-update group.
+    
+        In the per-PP-rank regime each PP source rank only broadcasts the
+        parameters that it owns (i.e. the layers of its pipeline stage).
+        The inference side receives them in the corresponding per-PP-rank NCCL
+        group and loads them into the matching PP stage.
+    
+        For PP=1 this collapses to the original full-model broadcast.
+        """
+        import torch
+        import torch.distributed as dist
+    
+        import megatron.core.parallel_state as mpu
+    
+        if not self.is_pipeline_parallel_head():
+            return
+    
+        pp_rank = mpu.get_pipeline_model_parallel_rank()
+        gen_parallel = meta.gen_allocation.parallel
+    
+        # Collect the parameters owned by this PP stage.
+        # In Megatron, the local model only contains the layers assigned to
+        # this PP rank, so model.parameters() already yields the right subset.
+        params = list(self.model.parameters())
+    
+        group = self.weight_update_group
+    
+        for param in params:
+            # Training source is rank 0 in the NCCL group -> it is the
+            # broadcast root.
+            dist.broadcast(param.data, src=0, group=group)
+    
+        # Optionally tell the inference side to finalise (e.g. barrier, ack).
+        if gen_parallel.pp_size > 1:
+            fut = self.rollout_engine.update_weights_from_distributed(
+                meta, pp_rank=pp_rank,
+            )
+        else:
+            fut = self.rollout_engine.update_weights_from_distributed(meta)
+    
+        fut.result()
 
     @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:

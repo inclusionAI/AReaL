@@ -182,6 +182,27 @@ class WeightUpdateMeta:
 
     version: int | None = None
 
+    # -- NEW field -----------------------------------------------------
+    pp_rank: Optional[int] = None
+    """Pipeline-parallel rank for per-PP-rank NCCL group mode.
+
+    * ``None`` -- PP=1 (or legacy) mode; a single NCCL group covers the
+      entire inference fleet.
+    * ``int``  -- PP>1 mode; indicates which pipeline stage this meta
+      corresponds to.  Each PP rank has its own NCCL group
+      (``update_weight_group_{pp_rank}``) that includes only the
+      inference workers of that stage plus the training-side source.
+    """
+
+    # -- Optional: parameter name filter -------------------------------
+    param_names: Optional[list[str]] = None
+    """When set, only the listed parameter names are broadcast in this
+    weight-update round.  Used in per-PP-rank mode so that each NCCL
+    group transmits only the layers owned by its PP stage."""
+
+    pp_rank: int | None = None
+    param_names: list[str] | None = None
+
     def with_version(self, version: int) -> "WeightUpdateMeta":
         """Return a copy of this meta with versioned path.
 
