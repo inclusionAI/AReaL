@@ -1667,6 +1667,8 @@ class SGLangConfig:
             raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
         if is_version_less("sglang", "0.4.10.post2"):
             args.pop("max_loaded_loras", None)
+        if pp_size > 1:
+            args["disable_custom_all_reduce"] = True
         return args
 
 
