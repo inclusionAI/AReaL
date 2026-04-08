@@ -164,6 +164,7 @@ async def areal_update_weight(request: UpdateWeightsRequest, raw_request: Reques
     logger.info(f"API server starts areal_update_weight, {request.model_path}")
     llm = raw_request.app.state.engine_client
     await llm.pause_generation(wait_for_inflight_requests=False, clear_cache=True)
+    await llm.reset_mm_cache()
     try:
         ret_list = await llm.collective_rpc(
             "areal_update_weights",
@@ -183,6 +184,7 @@ async def areal_update_weight_lora(
     )
     llm = raw_request.app.state.engine_client
     await llm.pause_generation(wait_for_inflight_requests=False, clear_cache=True)
+    await llm.reset_mm_cache()
 
     try:
         ret_list = await llm.collective_rpc(
@@ -205,6 +207,7 @@ async def areal_update_weight_xccl(raw_request: Request):
     logger.info("API server starts areal_update_weight_xccl")
     llm = raw_request.app.state.engine_client
     await llm.pause_generation(wait_for_inflight_requests=False, clear_cache=True)
+    await llm.reset_mm_cache()
     try:
         ret_list = await llm.collective_rpc("areal_update_weight_xccl")
     finally:
@@ -219,6 +222,7 @@ async def areal_update_weight_lora_xccl(
     logger.info("API server starts areal_update_weight_lora_xccl")
     llm = raw_request.app.state.engine_client
     await llm.pause_generation(wait_for_inflight_requests=False, clear_cache=True)
+    await llm.reset_mm_cache()
 
     try:
         ret_list = await llm.collective_rpc("areal_update_weight_lora_xccl")
@@ -310,6 +314,7 @@ async def areal_pause_generation(raw_request: Request):
         wait_for_inflight_requests=False,
         clear_cache=True,
     )
+    await llm.reset_mm_cache()
 
     return to_json_response(True, "Generation paused and all requests aborted")
 
