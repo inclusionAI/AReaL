@@ -20,7 +20,7 @@ from setuptools import find_packages, setup
 
 version_folder = os.path.dirname(os.path.join(os.path.abspath(__file__)))
 
-with open(os.path.join(version_folder, "verl/version/version")) as f:
+with open(os.path.join(version_folder, "verl/verl/version/version")) as f:
     __version__ = f.read().strip()
 
 install_requires = [
