@@ -59,7 +59,7 @@ def cleanup_worker(port: str):
 def ensure_pth_on_worker():
     """Create .pth on worker so all Ray actors there can import verl_tool/geo_edit."""
 
-    pth_parts = [f"{VERL_ROOT}/verl", VERL_ROOT]
+    pth_parts = [VERL_ROOT]
     if AREAL_ROOT:
         pth_parts.append(AREAL_ROOT)
     pth_content = "\n".join(pth_parts) + "\n"
@@ -93,7 +93,7 @@ def launch_server():
     head_ip = ray.util.get_node_ip_address()
     runtime_env = {
         "env_vars": {
-            "PYTHONPATH": ":".join(filter(None, [f"{VERL_ROOT}/verl", VERL_ROOT, AREAL_ROOT])),
+            "PYTHONPATH": ":".join(filter(None, [VERL_ROOT, AREAL_ROOT])),
             "GEOEDIT_ENABLE_TOOLS": "general,chart",
             "RAY_ADDRESS": f"{head_ip}:6379",
         }
