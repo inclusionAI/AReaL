@@ -617,10 +617,8 @@ class vLLMHttpServer:
             return
 
         if self.rollout_mode == RolloutMode.HYBRID:
-            # In hybrid mode, update_weights writes new weights via IPC which implicitly restores the engine.
-            # No separate wake_up needed.
-            logger.info("skip wake_up in hybrid mode")
-            return
+            # In hybrid mode, rollout is wake up in `update_weights`
+            raise ValueError(f"wake_up not support rollout_mode {self.rollout_mode}")
         elif self.rollout_mode == RolloutMode.COLOCATED:
             # Directly call engine to wake up without sync weights.
             await self.engine.wake_up(tags=["kv_cache", "weights"])
