@@ -46,6 +46,7 @@ class LMController(TrainController):
         self._custom_function_call("train_lm", *args, **kwargs)
 
     def evaluate_lm(self, *args, **kwargs):
+        args, kwargs = self._pad_eval_dispatch_args(args, kwargs, group_size=1)
         self._custom_function_call("evaluate_lm", *args, **kwargs)
 
 

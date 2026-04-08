@@ -1658,6 +1658,10 @@ class FSDPEngine(TrainEngine):
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
+        local_weight = loss_weight_fn(ctx.mb_input)
+        if local_weight == 0:
+            return logits.mean() * 0.0
+
         if self.config.is_critic and self.enable_tree_training:
             raise NotImplementedError(
                 "Tree training with critic model is not supported yet."
@@ -1669,7 +1673,7 @@ class FSDPEngine(TrainEngine):
                 if ctx.trie_node is None or not ctx.trie_node.all_sequence_ids:
                     # Return zero loss that maintains gradient connection to logits
                     # This ensures backward() works correctly for FSDP synchronization
-                    return logits.sum() * 0.0
+                    return logits.mean() * 0.0
 
                 # For tree training, use gather_packed_tree_vocab_stats to properly
                 # unpack vocab stats from tree structure back to per-sequence format.
@@ -1712,7 +1716,7 @@ class FSDPEngine(TrainEngine):
                 values = values[: -ctx.pad_length]
             loss = loss_fn(values, ctx.mb_input)
 
-        loss_scale = loss_weight_fn(ctx.mb_input) / total_loss_weight * loss_multiplier
+        loss_scale = local_weight / total_loss_weight * loss_multiplier
         return loss * loss_scale
 
     def _compute_forward_result(
