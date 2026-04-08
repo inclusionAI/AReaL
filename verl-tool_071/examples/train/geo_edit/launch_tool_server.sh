@@ -17,8 +17,6 @@ HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-30888}"
 LOG_DIR="${LOG_DIR:-$VERL_TOOL_ROOT/tool-server-logs}"
 
-export PYTHONPATH=$VERL_TOOL_ROOT:${PYTHONPATH:-}
-
 # Which agents to load.
 # geo_edit_function = CPU-only function tools (no GPU needed)
 # geo_paddleocr, geo_sam3, geo_multimath, geo_chartr1, geo_grounding_dino, geo_gllava = GPU agents
