@@ -11,6 +11,9 @@ Currently patched targets
 1. ``GroupCoordinator.send / .recv``  (PP weight-tying rank fix)
 2. ``Qwen2ForCausalLM / Qwen3ForCausalLM``  (PP vocab-size fix)
 3. ``ModelRunner.init_weights_update_group``  (PP NCCL rank collision fix)
+4. ``TpModelWorker._init_model_runner``  (safety net for ModelRunner patch)
+5. ``Scheduler.process_input_requests`` + ``SchedulerPPMixin._pp_send_pyobj_to_next_stage``
+   (PP event-loop deadlock fix for NCCL weight update)
 
 The hook is intentionally minimal: it chains to any pre-existing
 ``sitecustomize.py`` via ``importlib`` so that third-party hooks are
@@ -29,16 +32,13 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
 
     # ================================================================
     # Pre-import all stdlib/third-party modules used by patch helpers
-    # BEFORE installing the __import__ hook.  This prevents infinite
-    # recursion: patch_fn() -> import logging -> _import_hook() ->
-    # patch_fn() -> import logging -> ...
+    # BEFORE installing the __import__ hook.
     # ================================================================
     import logging as _logging
 
     _real_import = _builtins.__import__
 
-    # Re-entrancy guard: prevents recursive patch application even if
-    # the pre-import strategy is insufficient for some edge case.
+    # Re-entrancy guard
     _hook_applying_patches = False
 
     def _import_hook(name, *args, **kwargs):
@@ -46,8 +46,6 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
 
         result = _real_import(name, *args, **kwargs)
 
-        # Skip all patch checks if we are already inside a patch function.
-        # This is the ultimate safeguard against recursion.
         if _hook_applying_patches:
             return result
 
@@ -58,7 +56,6 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
             and hasattr(ps, "GroupCoordinator")
             and not getattr(ps, "_areal_pp_fixed", False)
         ):
-            # Set guard BEFORE calling patch function to prevent re-entrancy
             ps._areal_pp_fixed = True
             _hook_applying_patches = True
             try:
@@ -94,24 +91,91 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
                 _hook_applying_patches = False
 
         # --- 3. Patch ModelRunner (PP NCCL rank collision fix) ---
+        _try_apply_model_runner_patch()
+
+        # --- 4. Patch TpModelWorker (safety net for ModelRunner) ---
+        _try_apply_tp_worker_patch()
+
+        # --- 5. Patch Scheduler PP event-loop deadlock ---
+        _try_apply_scheduler_pp_deadlock_fix()
+
+        return result
+
+    # ================================================================
+    # Targeted patch attempts (called on every import hook invocation)
+    # ================================================================
+
+    def _try_apply_model_runner_patch():
+        global _hook_applying_patches
         mr = _sys.modules.get("sglang.srt.model_executor.model_runner")
         if (
             mr is not None
             and hasattr(mr, "ModelRunner")
             and not getattr(mr.ModelRunner, "_areal_pp_rank_fixed", False)
         ):
-            # Set guard BEFORE calling patch function
             mr.ModelRunner._areal_pp_rank_fixed = True
             _hook_applying_patches = True
             try:
                 _apply_pp_rank_fix(mr.ModelRunner)
+            except Exception as _e:
+                _logging.getLogger("areal.patches.sitecustomize").error(
+                    "Failed to apply PP rank fix: %s", _e, exc_info=True
+                )
+                mr.ModelRunner._areal_pp_rank_fixed = False
             finally:
                 _hook_applying_patches = False
 
-        return result
+    def _try_apply_tp_worker_patch():
+        global _hook_applying_patches
+        for mod_name in (
+            "sglang.srt.managers.tp_model_worker",
+            "sglang.srt.managers.tp_worker",
+        ):
+            tp_mod = _sys.modules.get(mod_name)
+            if tp_mod is not None and not getattr(
+                tp_mod, "_areal_tp_worker_patched", False
+            ):
+                TpCls = getattr(tp_mod, "TpModelWorker", None)
+                if TpCls is not None and hasattr(TpCls, "_init_model_runner"):
+                    tp_mod._areal_tp_worker_patched = True
+                    _hook_applying_patches = True
+                    try:
+                        _apply_tp_worker_patch(TpCls)
+                    finally:
+                        _hook_applying_patches = False
 
-    # ---- Patch helpers ----
-    # These use module-level _logging to avoid triggering __import__ hook.
+    def _try_apply_scheduler_pp_deadlock_fix():
+        global _hook_applying_patches
+        # We need BOTH the scheduler module (for process_input_requests)
+        # and the PP mixin (for _pp_send_pyobj_to_next_stage).
+        # Patch when the scheduler module is loaded (it inherits from PP mixin).
+        for sched_mod_name in (
+            "sglang.srt.managers.scheduler",
+            "sglang.srt.entrypoints.engine.scheduler",
+        ):
+            sched_mod = _sys.modules.get(sched_mod_name)
+            if sched_mod is None:
+                continue
+            Scheduler = getattr(sched_mod, "Scheduler", None)
+            if Scheduler is None:
+                continue
+            if getattr(Scheduler, "_areal_pp_deadlock_fixed", False):
+                continue
+            # Also need the PP mixin for _pp_send_pyobj_to_next_stage
+            if not hasattr(Scheduler, "_pp_send_pyobj_to_next_stage"):
+                continue
+            if not hasattr(Scheduler, "process_input_requests"):
+                continue
+            Scheduler._areal_pp_deadlock_fixed = True
+            _hook_applying_patches = True
+            try:
+                _apply_scheduler_pp_deadlock_fix(Scheduler)
+            finally:
+                _hook_applying_patches = False
+
+    # ================================================================
+    # Patch implementation helpers
+    # ================================================================
 
     def _apply_pp_fix(GroupCoordinator):
         """Fix GroupCoordinator.send/recv: use local group index, not global rank."""
@@ -211,7 +275,12 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
 
     def _apply_pp_rank_fix(ModelRunner):
         """Fix ModelRunner.init_weights_update_group: include pp_rank in the
-        NCCL rank computation to avoid rank collisions when PP > 1."""
+        NCCL rank computation to avoid rank collisions when PP > 1.
+
+        Without this fix, rank = rank_offset + tp_rank, ignoring pp_rank.
+        With PP=2, TP=2: PP0-TP0=1, PP0-TP1=2, PP1-TP0=1(dup!), PP1-TP1=2(dup!).
+        Fixed: rank = rank_offset + pp_rank * tp_size + tp_rank.
+        """
         _log = _logging.getLogger("areal.patches.sitecustomize.pp_rank_fix")
 
         _orig_init_group = ModelRunner.init_weights_update_group
@@ -262,11 +331,155 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
                 self.tp_rank = saved_tp_rank
 
         ModelRunner.init_weights_update_group = _patched_init_weights_update_group
-        # Note: _areal_pp_rank_fixed is already set by _import_hook before
-        # calling this function, so we don't set it here again.
         _log.info("Patched ModelRunner.init_weights_update_group for PP rank fix")
 
+    def _apply_tp_worker_patch(TpModelWorker):
+        """Safety net: ensure ModelRunner PP rank fix is applied after
+        ModelRunner is fully imported and instantiated."""
+        _log = _logging.getLogger("areal.patches.sitecustomize.tp_worker_patch")
+
+        _orig_init_mr = TpModelWorker._init_model_runner
+
+        def _patched_init_model_runner(self, *a, **kw):
+            result = _orig_init_mr(self, *a, **kw)
+            try:
+                mr_mod = _sys.modules.get("sglang.srt.model_executor.model_runner")
+                if mr_mod is not None and hasattr(mr_mod, "ModelRunner"):
+                    MR = mr_mod.ModelRunner
+                    if not getattr(MR, "_areal_pp_rank_fixed", False):
+                        MR._areal_pp_rank_fixed = True
+                        _apply_pp_rank_fix(MR)
+                        _log.info(
+                            "[Safety Net] Applied PP rank fix via TpModelWorker hook"
+                        )
+            except Exception as e:
+                _log.error("TpModelWorker safety-net failed: %s", e, exc_info=True)
+            return result
+
+        TpModelWorker._init_model_runner = _patched_init_model_runner
+        _log.info(
+            "Patched TpModelWorker._init_model_runner (safety net for PP rank fix)"
+        )
+
+    def _apply_scheduler_pp_deadlock_fix(Scheduler):
+        """Fix the PP event-loop deadlock for NCCL weight update operations.
+
+        ROOT CAUSE:
+        In event_loop_pp(), the execution order is:
+          1. recv_reqs = recv_requests()
+          2. process_input_requests(recv_reqs)   ← BLOCKS on NCCL broadcast
+          3. _pp_send_pyobj_to_next_stage(recv_reqs)  ← never reached!
+
+        When a weight update request arrives at PP rank 0, step 2 calls
+        update_weights_from_distributed() → ModelRunner.update_weights_from_distributed()
+        → torch.distributed.broadcast() with handle.wait(). This NCCL collective
+        needs ALL PP stages to participate. But PP rank 1 hasn't received the
+        request yet (step 3 hasn't executed). Classic NCCL deadlock.
+
+        FIX:
+        Wrap process_input_requests to detect NCCL-blocking requests
+        (UpdateWeightsFromDistributedReqInput, InitWeightsUpdateGroupReqInput).
+        When found on a non-last PP rank, pre-forward recv_reqs to the next
+        PP stage BEFORE processing. Set a flag so the normal forwarding step
+        in event_loop_pp skips the duplicate send.
+        """
+        _log = _logging.getLogger("areal.patches.sitecustomize.pp_deadlock_fix")
+
+        # Lazily resolve NCCL-blocking request types
+        _nccl_req_types = None
+
+        def _get_nccl_req_types():
+            nonlocal _nccl_req_types
+            if _nccl_req_types is not None:
+                return _nccl_req_types
+            try:
+                io_mod = _sys.modules.get("sglang.srt.managers.io_struct")
+                if io_mod is None:
+                    io_mod = _real_import(
+                        "sglang.srt.managers.io_struct", fromlist=["*"]
+                    )
+                types = []
+                for attr in (
+                    "UpdateWeightsFromDistributedReqInput",
+                    "InitWeightsUpdateGroupReqInput",
+                ):
+                    t = getattr(io_mod, attr, None)
+                    if t is not None:
+                        types.append(t)
+                _nccl_req_types = tuple(types) if types else ()
+            except Exception:
+                _nccl_req_types = ()
+            return _nccl_req_types
+
+        # ------ Patch process_input_requests ------
+        _orig_process = Scheduler.process_input_requests
+
+        def _patched_process_input_requests(self, recv_reqs):
+            nccl_types = _get_nccl_req_types()
+            has_nccl_req = False
+            if nccl_types and recv_reqs:
+                has_nccl_req = any(isinstance(r, nccl_types) for r in recv_reqs)
+
+            # Pre-forward on non-last PP ranks when NCCL-blocking ops are present
+            pp_group = getattr(self, "pp_group", None)
+            if (
+                has_nccl_req
+                and pp_group is not None
+                and hasattr(pp_group, "is_last_rank")
+                and not pp_group.is_last_rank
+            ):
+                _log.info(
+                    "[PP Deadlock Fix] Pre-forwarding %d reqs to next PP stage "
+                    "before NCCL-blocking processing",
+                    len(recv_reqs),
+                )
+                # Commit any previously pending async send
+                send_work = getattr(self, "send_req_work", [])
+                if send_work:
+                    for p2p in send_work:
+                        p2p.work.wait()
+                    send_work.clear()
+
+                # Forward ALL recv_reqs to next PP stage NOW
+                self.send_req_work = self._pp_send_pyobj_to_next_stage(
+                    recv_reqs, async_send=True
+                )
+
+                # Set flag so event_loop_pp skips its duplicate forwarding
+                self._areal_pp_already_forwarded = True
+
+            # Process all requests (may block on NCCL for weight updates,
+            # but that's OK because next PP stage already has the requests)
+            return _orig_process(self, recv_reqs)
+
+        Scheduler.process_input_requests = _patched_process_input_requests
+
+        # ------ Patch _pp_send_pyobj_to_next_stage ------
+        _orig_pp_send = Scheduler._pp_send_pyobj_to_next_stage
+
+        def _patched_pp_send(self, data, async_send=False):
+            if getattr(self, "_areal_pp_already_forwarded", False):
+                self._areal_pp_already_forwarded = False
+                _log.debug(
+                    "[PP Deadlock Fix] Skipping duplicate PP send "
+                    "(already pre-forwarded)"
+                )
+                # Return existing send_req_work — it holds the pre-forwarded
+                # work handle. The event loop will store it back and commit
+                # it in the next iteration, which is correct.
+                return getattr(self, "send_req_work", [])
+            return _orig_pp_send(self, data, async_send=async_send)
+
+        Scheduler._pp_send_pyobj_to_next_stage = _patched_pp_send
+
+        _log.info(
+            "Patched Scheduler.process_input_requests + "
+            "_pp_send_pyobj_to_next_stage for PP event-loop deadlock fix"
+        )
+
+    # ================================================================
     # Install the hook
+    # ================================================================
     _builtins.__import__ = _import_hook
 
 # Chain to any pre-existing sitecustomize.py
