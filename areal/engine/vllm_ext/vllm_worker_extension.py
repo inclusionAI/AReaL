@@ -224,8 +224,9 @@ class VLLMWorkerExtension:
             group_shards[self.areal_weight_meta_group_name] = normalized_weights
             buffered_count = len(group_shards)
 
+            # Assumes that every registered weight update group contributes to the update cycle
             if buffered_count < len(self.weight_update_groups):
-                print(
+                logger.info(
                     "Buffered LoRA shard for "
                     f"{self.areal_lora_name}: group={self.areal_weight_meta_group_name}, "
                     f"buffered={buffered_count}/{len(self.weight_update_groups)} PP stages."
