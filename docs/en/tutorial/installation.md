@@ -105,15 +105,34 @@ This installs CUDA-dependent training packages (Megatron, Torch Memory Saver) pl
 **SGLang** as the default inference backend. These packages require Linux x86_64 with
 CUDA 12.x and compatible NVIDIA drivers.
 
+#### Using vLLM Instead of SGLang
+
+SGLang and vLLM pin mutually-incompatible `torch` / `torchao` versions, so they live in
+separate pyproject files. The default `pyproject.toml` uses SGLang; for vLLM, use
+`pyproject.vllm.toml`:
+
+```bash
+cp pyproject.vllm.toml pyproject.toml
+cp uv.vllm.lock uv.lock
+uv sync --extra cuda
+```
+
+Alternatively, without replacing `pyproject.toml`:
+
+```bash
+uv pip install -r pyproject.vllm.toml --extra cuda
+```
+
 #### Flash Attention Pre-built Wheels
 
-Flash Attention v2 is included in `--extra cuda` and `--extra cuda-vllm`, but PyPI only
-ships source distributions that require CUDA compilation (~30 min). To skip compilation,
-install a **pre-built wheel** before running `uv sync`.
+Flash Attention v2 is included in `--extra cuda`, but PyPI only ships source
+distributions that require CUDA compilation (~30 min). To skip compilation, install a
+**pre-built wheel** before running `uv sync`.
 
 Flash Attention wheels are linked against a specific PyTorch version at compile time.
-SGLang uses **torch 2.9** and vLLM uses **torch 2.10**, so you must pick the matching
-wheel. Replace `cpXYZ` with your Python version (`cp311` for 3.11, `cp312` for 3.12).
+SGLang (the default `pyproject.toml`) uses **torch 2.9** and vLLM
+(`pyproject.vllm.toml`) uses **torch 2.10**, so you must pick the matching wheel.
+Replace `cpXYZ` with your Python version (`cp311` for 3.11, `cp312` for 3.12).
 
 **SGLang** (default, torch 2.9):
 
@@ -126,15 +145,17 @@ uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/rele
 uv sync --extra cuda
 ```
 
-**vLLM** (torch 2.10):
+**vLLM** (torch 2.10, requires `pyproject.vllm.toml`):
 
 ```bash
+cp pyproject.vllm.toml pyproject.toml
+cp uv.vllm.lock uv.lock
 # Python 3.12
 uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp312-cp312-linux_x86_64.whl"
 # Python 3.11
 # uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.10-cp311-cp311-linux_x86_64.whl"
 
-uv sync --extra cuda-vllm
+uv sync --extra cuda
 ```
 
 Browse all available wheels at
@@ -147,25 +168,14 @@ is suitable only for development, testing, and non-GPU workflows.
 
 You can also install individual extras instead of the full `cuda` bundle:
 
-- `sglang`: SGLang inference engine
-- `vllm`: vLLM inference engine
+- `sglang`: SGLang inference engine (in `pyproject.toml`)
+- `vllm`: vLLM inference engine (in `pyproject.vllm.toml`)
 - `megatron`: Megatron training backend
 - `tms`: Torch Memory Saver
 - `flash-attn`: Flash Attention v2
 - `kernels`: Hugging Face Kernels runtime
-- `cuda-train`: Training packages only (megatron + tms, no inference backend)
-- `cuda-sglang`: cuda-train + sglang + flash-attn
-- `cuda-vllm`: cuda-train + vllm + flash-attn
-- `cuda`: alias for cuda-sglang (default, backward-compatible)
-
-**Note**: You can mix and match individual extras:
-
-```bash
-# vLLM with Hugging Face Kernels and flash-attn (no megatron, no tms)
-uv sync --extra vllm --extra flash-attn --extra kernels
-# vLLM with all training packages
-uv sync --extra cuda-train --extra vllm
-```
+- `cuda-train`: Training packages only (megatron + tms + kernels, no inference backend)
+- `cuda`: cuda-train + inference backend + flash-attn
 
 ### Using Hugging Face Kernels in Training
 

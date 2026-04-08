@@ -8,7 +8,7 @@
 
 ```bash
 # Environment
-uv sync --extra cuda            # CUDA + SGLang inference (default); for vLLM: --extra cuda-vllm
+uv sync --extra cuda            # CUDA + SGLang inference (default); for vLLM: cp pyproject.vllm.toml pyproject.toml && cp uv.vllm.lock uv.lock && uv sync --extra cuda
 source .venv/bin/activate        # activate venv BEFORE pre-commit or git commit if venv exists
 pre-commit install --install-hooks  # hooks: Ruff, clang-format, mdformat, nbstripout, conventional-commits
 pre-commit run --all-files       # lint + format everything
