@@ -23,7 +23,7 @@ export PYTHONPATH=$VERL_TOOL_ROOT:${PYTHONPATH:-}
 # geo_edit_function = CPU-only function tools (no GPU needed)
 # geo_paddleocr, geo_sam3, geo_multimath, geo_chartr1, geo_grounding_dino, geo_gllava = GPU agents
 #
-# For ChartQA training, typically only need: geo_edit_function + geo_chartr1
+# For ChartQA training: geo_edit_function + geo_paddleocr + geo_sam3 + geo_chartr1 + geo_grounding_dino
 # To override: AGENTS="geo_edit_function,geo_chartr1" bash launch_tool_server.sh
 DEFAULT_AGENTS="geo_edit_function,geo_paddleocr,geo_sam3,geo_multimath,geo_chartr1,geo_grounding_dino,geo_gllava"
 AGENTS="${AGENTS:-$DEFAULT_AGENTS}"

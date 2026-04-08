@@ -112,7 +112,7 @@ def launch_server():
             cmd = [
                 sys.executable, "-m", "verl_tool.servers.serve",
                 "--host", self.ip, "--port", PORT,
-                "--tool_type", "geo_edit_function,geo_chartr1",
+                "--tool_type", "geo_edit_function,geo_paddleocr,geo_sam3,geo_chartr1,geo_grounding_dino",
                 "--workers_per_tool", "1", "--uvi_workers", "1",
                 "--router_workers", "1",
                 "--max_concurrent_requests", "128", "--use_ray", "True",
