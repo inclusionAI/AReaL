@@ -633,6 +633,11 @@ class AgentLoopWorker:
                 video_grid_thw = multi_modal_inputs.get("video_grid_thw")
                 second_per_grid_ts = multi_modal_inputs.get("second_per_grid_ts")
 
+                # Compute images_seqlens from image_grid_thw (required by ray_trainer)
+                if image_grid_thw is not None:
+                    images_seqlens = torch.repeat_interleave(image_grid_thw[:, 1] * image_grid_thw[:, 2], image_grid_thw[:, 0])
+                    multi_modal_inputs["images_seqlens"] = images_seqlens
+
                 vision_position_ids = get_rope_index(
                     self.processor,
                     input_ids=input_ids.squeeze(0),
@@ -791,45 +796,36 @@ async def get_trajectory_info(step, index, validate):
 class AgentLoopManager:
     """Agent loop manager that manages a group of agent loop workers."""
 
-    def __init__(self, config: DictConfig, worker_group: RayWorkerGroup = None, rm_wg: RayWorkerGroup = None):
+    def __init__(self, config: DictConfig, worker_group: RayWorkerGroup = None,
+                 rollout_resource_pool=None, reward_loop_worker_handles=None):
         """Initialize agent loop manager.
 
         Args:
             config (DictConfig): trainer config.
             worker_group (RayWorkerGroup): ActorRolloutRef worker group for hybrid mode; None for standalone mode.
+            rollout_resource_pool: Resource pool for hybrid mode (unused by verl-tool, kept for API compat).
+            reward_loop_worker_handles: Actor handles for streaming reward (unused by verl-tool).
         """
         self.config = config
         self.worker_group = worker_group
-        self.rm_executor = None
-        self.rm_micro_batch_size = None
-        if rm_wg:
 
-            def batch_fn(data_list: list[DataProto]) -> list[torch.Tensor]:
-                new_data_list = []
-                for data in data_list:
-                    temp_non_tensor_batch = {"__num_turns__": data.non_tensor_batch["__num_turns__"]}
-                    temp_data = DataProto(batch=data.batch, non_tensor_batch=temp_non_tensor_batch)
-                    new_data_list.append(temp_data)
-
-                new_batch = DataProto.concat(new_data_list)
-                out_data = rm_wg.compute_rm_score(new_batch)
-                return out_data.split(1)
-
-            self.rm_executor = BatchExecutor.options(
-                scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
-                    node_id=ray.get_runtime_context().get_node_id(),
-                    soft=False,
-                ),
-            ).remote(batch_fn, rm_wg.world_size)
-
-            self.rm_micro_batch_size = rm_wg.world_size
-
-        self._initialize_llm_servers()
-        self._init_agent_loop_workers()
+    @classmethod
+    def create(cls, config: DictConfig, worker_group: RayWorkerGroup = None,
+               rollout_resource_pool=None, reward_loop_worker_handles=None):
+        """Factory method compatible with verl v0.7.1 API."""
+        instance = cls(config, worker_group, rollout_resource_pool, reward_loop_worker_handles)
+        instance._initialize_llm_servers()
+        instance._init_global_load_balancer()
+        instance._init_agent_loop_workers()
 
         # Initially we're in sleep mode.
-        if self.config.actor_rollout_ref.rollout.free_cache_engine:
-            self.sleep()
+        if instance.config.actor_rollout_ref.rollout.free_cache_engine:
+            instance.sleep()
+        return instance
+
+    def _init_global_load_balancer(self):
+        """No-op for verl-tool (upstream uses this for load balancing across replicas)."""
+        pass
 
     def _initialize_llm_servers(self):
         rollout_world_size = (
@@ -888,7 +884,7 @@ class AgentLoopManager:
                     scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
                         node_id=node_id, soft=True
                     ),
-                ).remote(self.config, self.server_handles, self.rm_executor)
+                ).remote(self.config, self.server_handles, None)
             )
 
     def generate_sequences(self, prompts: DataProto) -> DataProto:
@@ -901,10 +897,6 @@ class AgentLoopManager:
             DataProto: Output batch.
         """
 
-        if self.rm_micro_batch_size and len(prompts) % self.rm_micro_batch_size != 0:
-            raise ValueError(
-                f"The length of prompts {len(prompts)} cannot divide the world size of rm_wg {self.rm_micro_batch_size}"
-            )
         if self.config.actor_rollout_ref.rollout.free_cache_engine:
             self.wake_up()
         print(f"Dispatching {len(prompts)} prompts to {len(self.agent_loop_workers)} agent loop workers...")

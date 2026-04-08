@@ -13,10 +13,10 @@ n_nodes=1
 n=2
 batch_size=16
 ppo_mini_batch_size=16
-max_prompt_length=4096
-max_response_length=4096
-max_action_length=2048
-max_obs_length=4096
+max_prompt_length=16384
+max_response_length=16384
+max_action_length=4096
+max_obs_length=16384
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 temperature=1.0
 top_p=1.0
@@ -49,15 +49,14 @@ test_freq=100
 
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=WARN
-VERL_TOOL_ROOT=/storage/openpsi/users/lichangye.lcy/antoinegg1/AReaL/verl-tool
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VERL_TOOL_ROOT="${VERL_TOOL_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 export PYTHONPATH=$VERL_TOOL_ROOT/verl:$VERL_TOOL_ROOT:${PYTHONPATH:-}
-
 mkdir -p $WORKSPACE/logs/$run_name
 
-action_stop_tokens_file="$(mktemp)"
+action_stop_tokens_file="$WORKSPACE/logs/$run_name/action_stop_tokens.txt"
 echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 
-export GEOEDIT_ENABLE_TOOLS="general,chart"
 WORKER_IP=${TOOL_SERVER_IP:-$(python3 -c "
 import ray; ray.init(address='auto',ignore_reinit_error=True)
 for n in ray.nodes():
@@ -78,8 +77,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=False \
     data.truncation='right' \
-    reward_model.reward_manager=$reward_manager \
-    reward_model.launch_reward_fn_async=True \
+    reward.reward_manager.name=geo_vision_qa \
     actor_rollout_ref.model.path=$model_name \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=$lr \
@@ -116,7 +114,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$tensor_model_parallel_size \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$log_prob_micro_batch_size_per_gpu \
     actor_rollout_ref.rollout.enforce_eager=True \
-    actor_rollout_ref.rollout.free_cache_engine=True \
+    actor_rollout_ref.rollout.free_cache_engine=False \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.gpu_memory_utilization=$gpu_memory_utilization \
     actor_rollout_ref.rollout.temperature=$temperature \
@@ -127,6 +125,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.rollout.max_num_seqs=64 \
     actor_rollout_ref.rollout.mode=$rollout_mode \
     actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
+    actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes=4096 \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.ref.fsdp_config.param_offload=$do_offload \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$log_prob_micro_batch_size_per_gpu \
@@ -143,6 +142,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     trainer.experiment_name=$run_name \
     trainer.val_before_train=False \
     trainer.default_hdfs_dir=null \
+    trainer.default_local_dir=$WORKSPACE/checkpoints/$run_name \
     trainer.n_gpus_per_node=$n_gpus_per_node \
     trainer.rollout_data_dir=$WORKSPACE/logs/$run_name/step_records \
     trainer.nnodes=$n_nodes \

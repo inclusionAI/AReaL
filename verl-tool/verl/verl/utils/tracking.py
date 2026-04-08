@@ -17,11 +17,19 @@ A unified tracking interface that supports logging data to different backend
 
 import dataclasses
 import json
+import logging
 import os
 from enum import Enum
 from functools import partial
 from pathlib import Path
 from typing import Any
+
+import orjson
+
+logger = logging.getLogger(__name__)
+
+MLFLOW_MAX_ATTEMPTS = 3
+MLFLOW_SLEEP_SECONDS = 5
 
 
 class Tracking:
@@ -80,18 +88,38 @@ class Tracking:
 
         if "mlflow" in default_backend:
             import os
+            import time
 
             import mlflow
 
-            MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:////tmp/mlruns.db")
-            mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+            for _mlflow_attempt in range(1, MLFLOW_MAX_ATTEMPTS + 1):
+                try:
+                    MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:////tmp/mlruns.db")
+                    logger.info("Using MLFlow tracking URI: %s", MLFLOW_TRACKING_URI)
+                    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
-            # Project_name is actually experiment_name in MLFlow
-            # If experiment does not exist, will create a new experiment
-            experiment = mlflow.set_experiment(project_name)
-            mlflow.start_run(experiment_id=experiment.experiment_id, run_name=experiment_name)
-            mlflow.log_params(_compute_mlflow_params_from_objects(config))
-            self.logger["mlflow"] = _MlflowLoggingAdapter()
+                    # Some cloud providers like Azure ML or Databricks automatically set MLFLOW_RUN_ID
+                    # If set, attach to the existing run instead of creating a new one
+                    run_id = os.environ.get("MLFLOW_RUN_ID")
+                    if run_id:
+                        mlflow.start_run(run_id=run_id)
+                    else:
+                        # Project_name is actually experiment_name in MLFlow
+                        # If experiment does not exist, will create a new experiment
+                        experiment = mlflow.set_experiment(project_name)
+                        mlflow.start_run(experiment_id=experiment.experiment_id, run_name=experiment_name)
+
+                    mlflow.log_params(_compute_mlflow_params_from_objects(config))
+                    self.logger["mlflow"] = _MlflowLoggingAdapter()
+                    break  # Success
+                except Exception as e:
+                    logger.warning(
+                        "MLflow initialization attempt %d/%d failed: %s", _mlflow_attempt, MLFLOW_MAX_ATTEMPTS, e
+                    )
+                    if _mlflow_attempt < MLFLOW_MAX_ATTEMPTS:
+                        time.sleep(MLFLOW_SLEEP_SECONDS)
+                    else:
+                        logger.warning("All MLflow initialization attempts failed. Proceeding without MLflow tracking.")
 
         if "swanlab" in default_backend:
             import os
@@ -236,11 +264,11 @@ class FileLogger:
             os.makedirs(directory, exist_ok=True)
             self.filepath = os.path.join(directory, f"{self.experiment_name}.jsonl")
             print(f"Creating file logger at {self.filepath}")
-        self.fp = open(self.filepath, "w")
+        self.fp = open(self.filepath, "wb", buffering=0)
 
     def log(self, data, step):
         data = {"step": step, "data": data}
-        self.fp.write(json.dumps(data) + "\n")
+        self.fp.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY) + b"\n")
 
     def finish(self):
         self.fp.close()
@@ -271,6 +299,8 @@ class _MlflowLoggingAdapter:
         import re
 
         self.logger = logging.getLogger(__name__)
+        # Suppress noisy "Found credentials from IAM Role" on every MLflow request
+        logging.getLogger("botocore.credentials").setLevel(logging.WARNING)
         # MLflow metric key validation logic:
         # https://github.com/mlflow/mlflow/blob/master/mlflow/utils/validation.py#L157C12-L157C44
         # Only characters allowed: slashes, alphanumerics, underscores, periods, dashes, colons,
@@ -278,22 +308,29 @@ class _MlflowLoggingAdapter:
         self._invalid_chars_pattern = re.compile(
             r"[^/\w.\- :]"
         )  # Allowed: slashes, alphanumerics, underscores, periods, dashes, colons, and spaces.
+        self._consecutive_slashes_pattern = re.compile(r"/+")
+        self._sanitized_key_cache = {}
+
+    def _sanitize_key(self, key):
+        if key in self._sanitized_key_cache:
+            return self._sanitized_key_cache[key] or key
+        # First replace @ with _at_ for backward compatibility
+        sanitized = key.replace("@", "_at_")
+        # Replace consecutive slashes with a single slash (MLflow treats them as file paths)
+        sanitized = self._consecutive_slashes_pattern.sub("/", sanitized)
+        # Then replace any other invalid characters with _
+        sanitized = self._invalid_chars_pattern.sub("_", sanitized)
+        if sanitized == key:
+            self._sanitized_key_cache[key] = None
+        else:
+            self.logger.warning("[MLflow] Metric key '%s' sanitized to '%s' due to invalid characters.", key, sanitized)
+            self._sanitized_key_cache[key] = sanitized
+        return sanitized
 
     def log(self, data, step):
         import mlflow
 
-        def sanitize_key(key):
-            # First replace @ with _at_ for backward compatibility
-            sanitized = key.replace("@", "_at_")
-            # Then replace any other invalid characters with _
-            sanitized = self._invalid_chars_pattern.sub("_", sanitized)
-            if sanitized != key:
-                self.logger.warning(
-                    "[MLflow] Metric key '%s' sanitized to '%s' due to invalid characters.", key, sanitized
-                )
-            return sanitized
-
-        results = {sanitize_key(k): v for k, v in data.items()}
+        results = {self._sanitize_key(k): v for k, v in data.items()}
         mlflow.log_metrics(metrics=results, step=step)
 
 
@@ -388,7 +425,8 @@ class ValidationGenerationsLogger:
         new_table.add_data(*row_data)
 
         # Update reference and log
-        wandb.log({"val/generations": new_table}, step=step)
+        if wandb.run is not None:
+            wandb.log({"val/generations": new_table}, step=step)
         self.validation_table = new_table
 
     def log_generations_to_swanlab(self, samples, step):
@@ -410,7 +448,6 @@ class ValidationGenerationsLogger:
         """Log validation generation to mlflow as artifacts"""
         # https://mlflow.org/docs/latest/api_reference/python_api/mlflow.html?highlight=log_artifact#mlflow.log_artifact
 
-        import json
         import tempfile
 
         import mlflow

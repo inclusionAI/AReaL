@@ -30,7 +30,7 @@ train_prompt_mini_bsz=128
 train_ppo_micro_batch_size_per_gpu=2
 infer_ppo_micro_batch_size_per_gpu=2
 # Paths
-MODEL_PATH=Qwen/Qwen3-30B-A3B
+MODEL_PATH=Qwen/Qwen3-30B-A3B-Base
 
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 TRAIN_FILE=$RAY_DATA_HOME/dataset/dapo-math-17k.parquet
@@ -176,12 +176,12 @@ python3 -m verl.trainer.main_ppo --config-path=./config --config-name='ppo_megat
     actor_rollout_ref.ref.megatron.context_parallel_size=${REF_CP} \
     actor_rollout_ref.ref.megatron.expert_model_parallel_size=${REF_EP} \
     actor_rollout_ref.ref.megatron.expert_tensor_parallel_size=${REF_ETP} \
-    reward_model.reward_manager=dapo \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.enable=${enable_overlong_buffer} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.len=${overlong_buffer_len} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.penalty_factor=${overlong_penalty_factor} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.log=False \
-    +reward_model.reward_kwargs.max_resp_len=${max_response_length} \
+    reward.reward_manager.name=dapo \
+    +reward.reward_kwargs.overlong_buffer_cfg.enable=${enable_overlong_buffer} \
+    +reward.reward_kwargs.overlong_buffer_cfg.len=${overlong_buffer_len} \
+    +reward.reward_kwargs.overlong_buffer_cfg.penalty_factor=${overlong_penalty_factor} \
+    +reward.reward_kwargs.overlong_buffer_cfg.log=False \
+    +reward.reward_kwargs.max_resp_len=${max_response_length} \
     trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \

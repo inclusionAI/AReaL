@@ -128,13 +128,12 @@ Actor/Rollout/Reference Policy
       clip_ratio: 0.2
       entropy_coeff: 0.0
       use_kl_loss: False # True for GRPO
-      # Rollout Importance Sampling (corrects distribution mismatch between rollout and training)
-      rollout_is: False # Enable IS correction
-      rollout_is_threshold: null # Upper threshold for IS weights (null to disable)
-      rollout_is_threshold_lower: null # Lower threshold (null = auto 1/upper)
-      rollout_is_level: token # Aggregation: token/sequence/geometric
-      rollout_is_mode: truncate # Bounding: truncate/mask
-      rollout_is_veto_threshold: null # Catastrophic outlier threshold (null to disable)
+      # Rollout Correction (corrects distribution mismatch between rollout and training)
+      rollout_correction:
+        rollout_is: token # IS weights
+        rollout_is_threshold: 2.0 # Upper threshold for IS weights
+        rollout_rs: null # Rejection sampling
+        rollout_rs_threshold: null # RS upper threshold
       use_torch_compile: True # False to disable torch compile
       kl_loss_coef: 0.001 # for grpo
       kl_loss_type: low_var_kl # for grpo
@@ -253,6 +252,16 @@ Actor/Rollout/Reference Policy
 - ``actor_rollout_ref.model.use_remove_padding``: Whether to use remove
   padding in the model. If set to True, the model will remove padding
   tokens in the input_ids and response_ids. This helps a lot in improving model running efficiency.
+
+- ``actor_rollout_ref.model.tiled_mlp``: TiledMLP configuration for memory-efficient
+  MLP computation. Reduces peak memory by processing MLP forward/backward in tiles.
+  Only compatible with FSDP2 (requires ``actor_rollout_ref.actor.strategy=fsdp2``).
+
+  - ``actor_rollout_ref.model.tiled_mlp.enabled``: Whether to enable TiledMLP.
+    Default is False.
+  - ``actor_rollout_ref.model.tiled_mlp.num_shards``: Number of shards to split
+    the input. Higher values reduce peak memory but may slightly impact performance.
+    Default is 4.
 
 **Actor model**
 
@@ -521,13 +530,12 @@ Algorithm
        kl_coef: 0.005
        horizon: 10000
        target_kl: 0.1
-     # Rollout Importance Sampling
-     rollout_is: False
-     rollout_is_threshold: null
-     rollout_is_threshold_lower: null
-     rollout_is_level: token
-     rollout_is_mode: truncate
-     rollout_is_veto_threshold: null  # Disabled by default
+     # Rollout Correction
+     rollout_correction:
+       rollout_is: null  # IS weights
+       rollout_is_threshold: 2.0  # Upper threshold for IS weights
+       rollout_rs: null  # Rejection sampling
+       rollout_rs_threshold: null  # RS upper threshold
 
 - ``gamma``: discount factor
 - ``lam``: Trade-off between bias and variance in the GAE estimator
@@ -542,13 +550,15 @@ Algorithm
   - ``type``: 'fixed' for FixedKLController and 'adaptive' for AdaptiveKLController.
   - ``horizon`` and ``target_kl``: See source code of AdaptiveKLController for details.
 
-- ``rollout_is``: Whether to enable rollout importance sampling correction. Default is False.
-- ``rollout_is_threshold``: Upper threshold for IS weights. Set to ``null`` to disable IS completely.
-- ``rollout_is_threshold_lower``: Lower threshold for IS weights. If ``null``, defaults to reciprocal of upper (1/upper).
-- ``rollout_is_level``: Aggregation level: ``token`` (biased), ``sequence`` (unbiased), or ``geometric`` (experimental).
-- ``rollout_is_mode``: Bounding mode: ``truncate`` (cap upper only) or ``mask`` (zero outside bounds).
-- ``rollout_is_veto_threshold``: Per-token veto threshold for catastrophic outliers. Default is null (disabled).
-  Note: Rollout IS requires setting ``actor_rollout_ref.rollout.calculate_log_probs=True``.
+- ``rollout_correction``: Rollout Correction configuration (nested dict). Set to ``null`` to disable.
+  When enabled, contains:
+
+  - ``rollout_is``: IS weights aggregation level, ``null`` to disable IS weights.
+  - ``rollout_is_threshold``: Upper threshold for IS weights (e.g., 2.0).
+  - ``rollout_rs``: Rejection sampling mode, ``null`` to disable RS.
+  - ``rollout_rs_threshold``: RS upper threshold.
+
+  Note: Rollout Correction requires setting ``actor_rollout_ref.rollout.calculate_log_probs=True``.
 
 Trainer
 ~~~~~~~

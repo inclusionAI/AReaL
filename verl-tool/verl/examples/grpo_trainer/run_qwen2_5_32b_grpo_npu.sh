@@ -26,6 +26,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
     actor_rollout_ref.rollout.n=5 \
+    actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes=4096 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
@@ -37,5 +38,4 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes=2 \
     trainer.save_freq=-1 \
     trainer.test_freq=10 \
-    trainer.total_epochs=15 \
-    trainer.device=npu $@
+    trainer.total_epochs=15 $@

@@ -47,12 +47,12 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.default_local_dir=${CKPTS_DIR} \
-    trainer.device=npu \
     trainer.resume_mode=auto \
     actor_rollout_ref.actor.fsdp_config.forward_prefetch=True \
     actor_rollout_ref.ref.fsdp_config.forward_prefetch=True \
     ++actor_rollout_ref.actor.entropy_from_logits_with_chunking=True \
     ++actor_rollout_ref.ref.entropy_from_logits_with_chunking=True \
+    ++actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes=4096 \
     trainer.val_before_train=True \
     trainer.save_freq=5 \
     trainer.test_freq=5 \

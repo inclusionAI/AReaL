@@ -9,7 +9,7 @@ Post-train a LLM using GSM8K dataset.
 Introduction
 ------------
 
-.. _hf_dataset_gsm8k: https://huggingface.co/datasets/gsm8k
+.. _hf_dataset_gsm8k: https://huggingface.co/datasets/openai/gsm8k
 
 In this example, we train an LLM to tackle the `GSM8k <hf_dataset_gsm8k>`_ task with function-based rewards. [1]_
 
@@ -53,7 +53,7 @@ Step 2: Download a model for post-training
 
 In this example, we start with the ``Qwen2.5-0.5B-Instruct`` model.
 
-If you want to perform SFT before RL, refer to the :doc:`Complete GSM8K Example<../examples/gsm8k_example>`, the `sft directory <https://github.com/volcengine/verl/blob/main/examples/sft/gsm8k>`_ and `SFT Trainer <https://github.com/volcengine/verl/blob/main/verl/trainer/fsdp_sft_trainer.py>`_ for further details.
+If you want to perform SFT before RL, refer to the :doc:`Complete GSM8K Example<../examples/gsm8k_example>`, the `sft directory <https://github.com/volcengine/verl/blob/main/examples/sft/gsm8k>`_ and `SFT Trainer <https://github.com/volcengine/verl/blob/main/verl/trainer/sft_trainer.py>`_ for further details.
 
 .. code-block:: bash
 
@@ -87,7 +87,7 @@ You may set ``VERL_USE_MODELSCOPE=True`` to download models from `modelscope <ht
     data.val_files=$HOME/data/gsm8k/test.parquet \
     data.train_batch_size=256 \
     data.max_prompt_length=512 \
-    data.max_response_length=256 \
+    data.max_response_length=512 \
     actor_rollout_ref.model.path=Qwen/Qwen2.5-0.5B-Instruct \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \

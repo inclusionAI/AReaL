@@ -16,11 +16,9 @@ import importlib.util
 import multiprocessing
 import os
 import sys
-import warnings
 from functools import partial
 from typing import Any, Optional
 
-import ray
 import torch
 from omegaconf import DictConfig
 
@@ -122,13 +120,16 @@ def load_reward_manager(
     # Note(haibin.lin): For custom reward managers, please make sure they are imported and
     # registered via `verl.workers.reward_manager.register`
     # By default reward_manager is set to naive (NaiveRewardManager)
-    reward_manager_name = config.reward_model.get("reward_manager", "naive")
+    # Try new config path (reward.reward_manager.name) first, fall back to legacy (reward_model.reward_manager)
+    reward_manager_name = config.get("reward", {}).get("reward_manager", {}).get("name", None)
+    if reward_manager_name is None:
+        reward_manager_name = config.reward_model.get("reward_manager", "naive")
     reward_manager_cls = get_reward_manager_cls(reward_manager_name)
 
     if compute_score is None:
         sandbox_config = config.reward_model.get("sandbox_fusion")
         sandbox_url = sandbox_config.get("url") if sandbox_config else None
-        memory_limit_mb = sandbox_config.get("memory_limit_mb", 1024)
+        memory_limit_mb = sandbox_config.get("memory_limit_mb", 1024) if sandbox_config else 1024
         if sandbox_url:
             sandbox_manager = multiprocessing.Manager()
             # Create a semaphore to control concurrent access to the sandbox
@@ -152,41 +153,13 @@ def load_reward_manager(
     )
 
 
-def compute_reward(data: DataProto, reward_fn: AbstractRewardManager) -> tuple[torch.Tensor, dict[str, Any]]:
-    """
-    Compute reward for a batch of data.
-    Args:
-        data: DataProto object containing the input data.
-        reward_fn: Reward function to compute the reward.
-    Returns:
-        Tuple of reward tensor and extra info dictionary.
-    """
-    try:
-        reward_result = reward_fn(data, return_dict=True)
-        reward_tensor = reward_result["reward_tensor"]
-        reward_extra_infos_dict = reward_result.get("reward_extra_info", {})
-    except Exception as e:
-        print(f"Error in reward_fn: {e}")
-        reward_tensor = reward_fn(data)
-        reward_extra_infos_dict = {}
+def extract_reward(batch: DataProto) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Extract reward tensor and extra info from batch data.
 
+    Compatible with verl v0.7.1 API. The reward scores are expected to be
+    pre-computed (e.g., by agent loop workers) and stored in batch.batch["rm_scores"].
+    """
+    reward_tensor = batch.batch["rm_scores"]
+    reward_extra_keys = batch.meta_info.get("reward_extra_keys", [])
+    reward_extra_infos_dict = {key: batch.non_tensor_batch[key] for key in reward_extra_keys}
     return reward_tensor, reward_extra_infos_dict
-
-
-@ray.remote(num_cpus=1)
-def compute_reward_async(data: DataProto, config=None, tokenizer=None, reward_fn=None):
-    """
-    Load the reward manager and compute the reward for a batch of data.
-    This is meant to be run in a separate Ray worker.
-    """
-    if reward_fn is None:
-        assert config is not None and tokenizer is not None, (
-            "config and tokenizer must not be None when reward_fn is None"
-        )
-
-        warnings.warn("using config and tokenizer with compute_reward_async is deprecated", stacklevel=2)
-        reward_fn = load_reward_manager(
-            config, tokenizer, num_examine=0, **config.reward_model.get("reward_kwargs", {})
-        )
-
-    return compute_reward(data, reward_fn)

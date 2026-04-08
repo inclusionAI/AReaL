@@ -24,21 +24,37 @@ from verl.utils.debug import marked_timer
 import verl.experimental.agent_loop
 from verl_tool.agent_loop import AgentLoopManager
 import verl.trainer.ppo.ray_trainer
-from .reward import compute_reward, compute_reward_async
+import verl.trainer.ppo.reward
+from .reward import extract_reward as _verl_tool_extract_reward
 from verl_tool.workers.rollout.vllm_rollout.vllm_async_server import VerlToolvLLMHttpServer
 import verl.workers.rollout.vllm_rollout.vllm_async_server
 from .metric_util import compute_data_metrics, process_validation_metrics
 verl.experimental.agent_loop.AgentLoopManager = AgentLoopManager
-verl.trainer.ppo.ray_trainer.compute_reward = compute_reward
-verl.trainer.ppo.ray_trainer.compute_reward_async = compute_reward_async
+verl.trainer.ppo.ray_trainer.extract_reward = _verl_tool_extract_reward
+verl.trainer.ppo.reward.extract_reward = _verl_tool_extract_reward
 verl.trainer.ppo.ray_trainer.compute_data_metrics = compute_data_metrics
 verl.trainer.ppo.ray_trainer.process_validation_metrics = process_validation_metrics
 verl.workers.rollout.vllm_rollout.vllm_async_server.vLLMHttpServer = VerlToolvLLMHttpServer
+
+# verl-tool computes rewards in its own AgentLoopWorker (RewardManagerWorker),
+# not via verl's RewardLoopWorker. Stub out RewardLoopManager to avoid
+# creating RewardLoopWorker actors that would fail to find verl-tool reward managers.
+import verl.experimental.reward_loop.reward_loop as _reward_loop_module
+
+class _NoOpRewardLoopManager:
+    """Lightweight stand-in: no RewardLoopWorker actors, no registry lookups."""
+    def __init__(self, config, rm_resource_pool=None):
+        self.config = config
+        self.reward_loop_workers = []   # AgentLoopManager expects this attribute
+    def compute_rm_score(self, data):
+        raise RuntimeError("verl-tool does not use RewardLoopManager for reward computation")
+
+_reward_loop_module.RewardLoopManager = _NoOpRewardLoopManager
 ##############################################################################
 
 class AgentRayPPOTrainer(RayPPOTrainer):
     
-    def _validate(self):
+    def _validate(self, merged: bool = False):
         data_source_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 
@@ -64,15 +80,8 @@ class AgentRayPPOTrainer(RayPPOTrainer):
             )
 
             # we only do validation on rule-based rm
-            if self.config.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
+            if self.config.reward.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
                 return {}
-
-            # Store original inputs
-            input_ids = test_batch.batch["input_ids"]
-            # TODO: Can we keep special tokens except for padding tokens?
-            input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
-            sample_inputs.extend(input_texts)
-            sample_uids.extend(test_batch.non_tensor_batch["uid"])
 
             ground_truths = [
                 item.non_tensor_batch.get("reward_model", {}).get("ground_truth", None) for item in test_batch
@@ -91,16 +100,9 @@ class AgentRayPPOTrainer(RayPPOTrainer):
             print(f"test_gen_batch meta info: {test_gen_batch.meta_info}")
 
             # pad to be divisible by dp_size
-            size_divisor = (
-                self.actor_rollout_wg.world_size
-                if not self.async_rollout_mode
-                else self.config.actor_rollout_ref.rollout.agent.num_workers
-            )
+            size_divisor = self.config.actor_rollout_ref.rollout.agent.num_workers
             test_gen_batch_padded, pad_size = pad_dataproto_to_divisor(test_gen_batch, size_divisor)
-            if not self.async_rollout_mode:
-                test_output_gen_batch_padded = self.actor_rollout_wg.generate_sequences(test_gen_batch_padded)
-            else:
-                test_output_gen_batch_padded = self.async_rollout_manager.generate_sequences(test_gen_batch_padded)
+            test_output_gen_batch_padded = self.async_rollout_manager.generate_sequences(test_gen_batch_padded)
 
             # unpad
             test_output_gen_batch = unpad_dataproto(test_output_gen_batch_padded, pad_size=pad_size)
@@ -113,21 +115,28 @@ class AgentRayPPOTrainer(RayPPOTrainer):
             output_texts = [self.tokenizer.decode(ids[output_attention_mask[i]==1], skip_special_tokens=False) for i, ids in enumerate(output_ids)]
             sample_outputs.extend(output_texts)
 
+            # Store original inputs (v0.7.1: raw_prompt in non_tensor_batch, no input_ids in batch)
+            if "raw_prompt" in test_batch.non_tensor_batch:
+                input_texts = [str(prompt) for prompt in test_batch.non_tensor_batch["raw_prompt"]]
+            elif "input_ids" in test_batch.batch.keys():
+                input_ids = test_batch.batch["input_ids"]
+                input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
+            else:
+                input_texts = [""] * len(test_batch)
+            sample_inputs.extend(input_texts)
+            sample_uids.extend(test_batch.non_tensor_batch["uid"])
+
             test_batch = test_batch.union(test_output_gen_batch)
             test_batch.meta_info["validate"] = True
 
-            # evaluate using reward_function
-            if self.val_reward_fn is None:
-                raise ValueError("val_reward_fn must be provided for validation.")
-            result = self.val_reward_fn(test_batch, return_dict=True)
-            reward_tensor = result["reward_tensor"]
+            # extract reward (already computed by agent loop)
+            reward_tensor, reward_extra_info = _verl_tool_extract_reward(test_batch)
             scores = reward_tensor.sum(-1).cpu().tolist()
             sample_scores.extend(scores)
 
             reward_extra_infos_dict["reward"].extend(scores)
-            if "reward_extra_info" in result:
-                for key, lst in result["reward_extra_info"].items():
-                    reward_extra_infos_dict[key].extend(lst)
+            for key, lst in reward_extra_info.items():
+                reward_extra_infos_dict[key].extend(lst if isinstance(lst, list) else lst.tolist())
                     
             tool_interact_info = test_batch.non_tensor_batch.get('tool_interact_info', None)
             if isinstance(tool_interact_info, np.ndarray):

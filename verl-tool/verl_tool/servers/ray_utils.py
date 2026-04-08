@@ -69,30 +69,27 @@ class RayToolManager:
         """Initialize tools with proper error handling and dependency management"""
         # Ensure finish tool is processed last for dependencies
         ordered_tools = [t for t in self.tool_types if t != "finish"]
-        
+
         initialized_tools = []
         failed_tools = []
-        
+
         logger.info(f"Initializing Ray tools: {ordered_tools}")
         if self.config.workers_per_tool <= os.cpu_count() * 2:
             logger.warning(f"You are using ray with workers_per_tool={self.config.workers_per_tool} which is less than or equal to the 2 times of CPU cores  ({os.cpu_count() * 4}). This may lead to suboptimal performance due to resource contention. Consider increasing workers_per_tool if you see low gpu utilization during rollouts.")
-        
+
         for tool_type in ordered_tools:
             try:
                 tool_cls = get_tool_cls(tool_type)
 
-                remote_kwargs = dict(max_concurrency=self.config.workers_per_tool)
-                if tool_type == "geo_edit_tool":
-                    remote_kwargs["resources"] = {"tool_agent": 0.001}
-                tool_instance = ray.remote(**remote_kwargs)(tool_cls).remote()
+                tool_instance = ray.remote(max_concurrency=self.config.workers_per_tool)(tool_cls).remote()
                 self.tools[tool_type] = tool_instance
                 initialized_tools.append(tool_type)
                 logger.info(f"✓ Initialized Ray tool: {tool_type}")
-                
+
             except Exception as e:
                 failed_tools.append((tool_type, str(e)))
                 logger.error(f"✗ Failed to initialize Ray tool {tool_type}: {e}")
-                
+
         if "finish" not in self.tools:
             tool_instance = ray.remote(max_concurrency=self.config.workers_per_tool)(get_tool_cls("finish")).remote(
                 num_workers=1,

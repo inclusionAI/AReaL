@@ -53,7 +53,7 @@ echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 host=$(hostname -i | awk '{print $1}')
 port=$(shuf -i 30000-31000 -n 1)
 tool_server_url=http://$host:$port/get_observation
-python -m verl_tool.servers.serve --host $host --port $port --tool_type "geo_edit_tool" --workers_per_tool 8 &
+python -m verl_tool.servers.serve --host $host --port $port --tool_type "geo_edit_function,geo_paddleocr,geo_sam3,geo_multimath,geo_chartr1,geo_grounding_dino,geo_gllava" --workers_per_tool 8 --use_ray True &
 server_pid=$!
 echo "Tool server (pid=$server_pid) started at $tool_server_url"
 sleep 10
@@ -69,8 +69,9 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=False \
     data.truncation='right' \
-    reward_model.reward_manager=$reward_manager \
-    reward_model.launch_reward_fn_async=True \
+    reward.reward_manager.source=importlib \
+    reward.reward_manager.name=GeoVisionQARewardManager \
+    reward.reward_manager.module.path=pkg://verl_tool.workers.reward_manager.geo_vision_qa \
     actor_rollout_ref.model.path=$model_name \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=$lr \
@@ -118,6 +119,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.rollout.max_num_seqs=512 \
     actor_rollout_ref.rollout.mode=$rollout_mode \
     actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
+    actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes=4096 \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.ref.fsdp_config.param_offload=$do_offload \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$log_prob_micro_batch_size_per_gpu \

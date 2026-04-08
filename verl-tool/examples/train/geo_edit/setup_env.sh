@@ -1,3 +1,14 @@
-python -m ensurepip --upgrade  
-python -m pip install vllm==0.11.2
-python -m pip install "pyzmq==26.*" fire iopath ftfy tensordict codetiming qwen_omni_utils nvitop httptools colorlog
+#!/usr/bin/env bash
+# Run this script on EACH node to set up the environment.
+# Usage: source setup_env.sh
+#   or:  . setup_env.sh
+set -e
+cd verl-tool
+pip install -e verl/ --no-deps
+pip install -e . --no-deps
+pip install vllm==0.17.0
+# Install dependencies
+pip install timm fire iopath ftfy tensordict codetiming qwen_omni_utils nvitop httptools colorlog
+pip install --upgrade numpy
+pip uninstall -y transformers
+pip install "git+https://github.com/huggingface/transformers.git@b3e3c3d"

@@ -628,6 +628,10 @@ def main(
             f"max_concurrent_requests={max_concurrent_requests}"
         )
 
+    # Normalize tool_type: fire.Fire may parse "a,b" as a tuple
+    if isinstance(tool_type, (tuple, list)):
+        tool_type = ",".join(tool_type)
+
     # Export configuration via environment variables for worker processes
     os.environ["VT_TOOL_TYPE"] = tool_type
     os.environ["VT_HOST"] = host

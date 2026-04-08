@@ -1,83 +1,114 @@
+# -------------------------------
+# build-system
+# -------------------------------
+[build-system]
+requires = [
+    "setuptools>=61.0",
+    "wheel"
+]
+build-backend = "setuptools.build_meta"
+
+# -------------------------------
+# project (PEP 621 metadata)
+# -------------------------------
 [project]
 name = "verl-tool"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
+# We'll mark the version as "dynamic" because it's read from the file "verl/version/version" 
+# (PEP 621 calls this "dynamic version"). 
+# The actual version is specified in the [tool.setuptools.dynamic] section below.
+dynamic = ["version", "dependencies", "optional-dependencies", "authors", "urls"]
+
+description = "verl: Volcano Engine Reinforcement Learning for LLM"
+license = {text = "Apache-2.0"}  # Changed from file to text format
+readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
-dependencies = [
-    "fire>=0.7.0",
-    "psutils>=3.3.9",
-    "timeout-decorator>=0.5.0",
-    "pyext",
-    "qwen_vl_utils>=0.0.14",
-    "qwen_omni_utils",
-    "transformers",
-    "tensorboard",
-    "ipython",
-    "func_timeout",
-    "aiofiles",
-    "click==8.2.1",
+
+# -------------------------------
+# tool.ruff - Linting configuration
+# -------------------------------
+[tool.ruff]
+# Note: While the formatter will attempt to format lines such that they remain within the line-length,
+# it isn't a hard upper bound, and formatted lines may exceed the line-length.
+line-length = 120
+exclude = ["scripts/legacy_model_merger.py"]
+
+[tool.ruff.lint]
+isort = {known-first-party = ["verl"]}
+# c.f. https://github.com/vllm-project/vllm/blob/ce8d6b75fc0586045df75ee1568a5b5f9957251b/pyproject.toml
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # isort
+    "I",
+    "G",
+]
+ignore = [
+    # star imports
+    "F405", "F403",
+    # lambda expression assignment
+    "E731",
+    # Loop control variable not used within loop body
+    "B007",
+    # f-string format
+    "UP032",
+    # `.log()` statement uses f-string
+    "G004",
+    # X | None for type annotations
+    "UP045",
+    # deprecated import
+    "UP035",
 ]
 
+# -------------------------------
+# tool.mypy - typechecking config
+# -------------------------------
+[tool.mypy]
+pretty            = true
+ignore_missing_imports = true
+explicit_package_bases = true
+follow_imports = "skip"
+
+# Blanket silence
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+"verl.trainer.config.algorithm",
+"verl.trainer.ppo.core_algos",
+"verl.trainer.ppo.reward",
+"verl.workers.reward_manager",
+"verl.workers.reward_manager.*",
+]
+ignore_errors = false
+
+# -------------------------------
+# tool.setuptools - Additional config
+# -------------------------------
 [tool.setuptools]
-packages = ["verl_tool"]  # Explicitly specify only the verl_tool package
+# True means `setuptools` will attempt to include all relevant files in package_data automatically.
+# This corresponds to `include_package_data=True` in setup.py.
+include-package-data = true
 
-[project.optional-dependencies]
-vllm = [
-    "vllm<=0.11.0",
-]
-tool_browser = [
-    "mini_webarena @ git+https://github.com/cogito233/mini_webarena.git",
-]
-acecoder = [
-    "AceCoder @ git+https://github.com/TIGER-AI-Lab/AceCoder.git@dev",
-]
-torl = [
-    "math-verify",
-]
-search_tool = [
-    "google-api-python-client",
-    "chardet",
-    "bs4",
-    "langid",
-    "pdfplumber",
-    "nltk",
-]
-sql_tool = [
-    "sqlparse",
-]
-mcp_tool = [
-    "mcp[cli]",
-    "PyYAML>=6.0",
-    "regex>=2024.0.0",
-    "psutil>=5.9.0",
-    "requests>=2.31.0",
-    "datasets",
-    "pyarrow",
-    "mcp-server-fetch",
-]
-python_code_dep = [
-    "matplotlib",
-    "pycosat",
-    "gmpy2",
-    "cvxpy",
-    "cvxopt",
-    "statsmodels",
-    "datauri",
-    "pytesseract",
-    "igraph",
-    "num2words",
-    "mpmath",
-    "annotated-types>=0.7.0",
-    "h5py",
-    "ipython",
-    "numpy",
-    "pandas",
-    "psutil",
-    "scipy",
-    "sympy",
-    "tqdm",
-    "pulp",
-    "shapely",
-    "ortools",
+# We read the version from a file in 'verl/version/version'
+[tool.setuptools.dynamic]
+version = {file = "verl/verl/version/version"}
+
+# If you need to mimic `package_dir={'': '.'}`:
+[tool.setuptools.package-dir]
+"" = "."
+
+# If you need to include specific non-Python data (like YAML files or version file):
+# This is the rough equivalent of package_data={'': ['version/*'], 'verl': ['trainer/config/*.yaml']}
+[tool.setuptools.package-data]
+verl = [
+  "version/*",
+  "trainer/config/*.yaml",
+  "trainer/config/*/*.yaml",
+  "experimental/*/config/*.yaml",
 ]

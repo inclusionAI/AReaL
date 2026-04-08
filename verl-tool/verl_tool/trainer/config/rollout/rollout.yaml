@@ -237,15 +237,6 @@ agent:
 # This parameter controls the maximum payload size for a single weight update request.
 # Reference: https://github.com/volcengine/verl/pull/2418
 # Currently only supported in SGLang rollout implementations
-# Larger values may improve throughput but increase memory overhead
-# Detailed performance comparison:
-# https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/issues/169#issuecomment-3070686720
-# Default value (512MB) is optimized for typical GPU memory configurations
-# For the best performance of `rebuild_cuda_tensor`, it is recommended to:
-# 1. Enable `RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES`
-# 2. Manually set `CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7`
-# when using Tensor Parallelism (TP) >= 8.
-update_weights_bucket_megabytes: 512
 
 # trace rollout data
 trace:
@@ -258,6 +249,15 @@ trace:
 
   # whether translate token id to text in output
   token2text: False
+
+  # Project name for experiment tracking
+  project_name: ${oc.select:trainer.project_name,null}
+
+  # Experiment name for run identification
+  experiment_name: ${oc.select:trainer.experiment_name,null}
+
+  # Maximum number of unique samples to trace per agent worker per training step
+  max_samples_per_step_per_worker: null
 
 # When enabled (True), the trainer will attempt to load previously generated rollout data from the specified directory instead of computing new rollouts.
 # If no cached data is found or loading fails, new rollouts will be generated and automatically saved.
@@ -296,3 +296,47 @@ profiler:
 
   # specific tool config
   tool_config: ${oc.select:actor_rollout_ref.actor.profiler.tool_config,null}
+
+# --- v0.7.1 fields below ---
+
+# Number of nodes for standalone rollout server
+nnodes: 0
+
+# Number of GPUs per node for rollout server
+n_gpus_per_node: ${oc.select:trainer.n_gpus_per_node,8}
+
+# logprobs mode for rollout logprobs
+logprobs_mode: processed_logprobs
+
+# scheduling policy for vllm rollout
+scheduling_policy: fcfs
+
+# Checkpoint Engine config for update weights from trainer to rollout
+checkpoint_engine:
+  _target_: verl.workers.config.CheckpointEngineConfig
+  backend: naive
+  update_weights_bucket_megabytes: 2048
+  engine_kwargs: {}
+
+# Whether to enable rollout routing replay for MoE models
+enable_rollout_routing_replay: False
+
+# Prometheus metrics config
+prometheus:
+  _target_: verl.workers.config.PrometheusConfig
+  enable: false
+  port: 9090
+  file: /tmp/ray/session_latest/metrics/prometheus/prometheus.yml
+  served_model_name: ${oc.select:actor_rollout_ref.model.path,null}
+
+# type of quantization in vllm
+quantization: null
+
+# extra quantization information serialized in a config file
+quantization_config_file: null
+
+# MTP configuration
+mtp: ${oc.select:actor_rollout_ref.model.mtp, null}
+
+# QAT configuration
+qat: ${oc.select:actor_rollout_ref.actor.fsdp_config.qat,null}
