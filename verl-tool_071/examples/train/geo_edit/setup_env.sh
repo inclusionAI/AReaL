@@ -10,3 +10,5 @@ pip install vllm==0.17.0
 # Install dependencies
 pip install timm fire iopath ftfy tensordict codetiming qwen_omni_utils nvitop httptools colorlog
 pip install --upgrade numpy
+pip uninstall -y transformers
+pip install "git+https://github.com/huggingface/transformers.git@b3e3c3d"
