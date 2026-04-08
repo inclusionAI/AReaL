@@ -142,6 +142,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     trainer.experiment_name=$run_name \
     trainer.val_before_train=False \
     trainer.default_hdfs_dir=null \
+    trainer.default_local_dir=$WORKSPACE/checkpoints/$run_name \
     trainer.n_gpus_per_node=$n_gpus_per_node \
     trainer.rollout_data_dir=$WORKSPACE/logs/$run_name/step_records \
     trainer.nnodes=$n_nodes \

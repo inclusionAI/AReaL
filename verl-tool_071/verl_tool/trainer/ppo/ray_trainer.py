@@ -115,9 +115,14 @@ class AgentRayPPOTrainer(RayPPOTrainer):
             output_texts = [self.tokenizer.decode(ids[output_attention_mask[i]==1], skip_special_tokens=False) for i, ids in enumerate(output_ids)]
             sample_outputs.extend(output_texts)
 
-            # Store original inputs
-            input_ids = test_batch.batch["input_ids"]
-            input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
+            # Store original inputs (v0.7.1: raw_prompt in non_tensor_batch, no input_ids in batch)
+            if "raw_prompt" in test_batch.non_tensor_batch:
+                input_texts = [str(prompt) for prompt in test_batch.non_tensor_batch["raw_prompt"]]
+            elif "input_ids" in test_batch.batch.keys():
+                input_ids = test_batch.batch["input_ids"]
+                input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
+            else:
+                input_texts = [""] * len(test_batch)
             sample_inputs.extend(input_texts)
             sample_uids.extend(test_batch.non_tensor_batch["uid"])
 
