@@ -66,5 +66,3 @@ echo ""
 echo "tool_server_url=http://$HOST:$PORT/get_observation"
 echo "Logs: tail -f $LOG_DIR/*.log"
 echo "Stop: pkill -f 'verl_tool.servers'"
-
-wait
