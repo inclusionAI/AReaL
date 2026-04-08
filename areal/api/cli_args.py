@@ -1611,11 +1611,11 @@ class SGLangConfig:
         # When PP > 1, use wrapper module that monkey-patches SGLang's 
         # GroupCoordinator.send/recv to fix the global-rank vs local-index bug 
         # in PP weight tying. See areal/patches/sglang_pp_fix.py for details. 
-        pp_size = args.get("pp_size", 1) 
-        if pp_size is not None and int(pp_size) > 1: 
-            module = "areal.patches.sglang_launch_wrapper" 
-        else: 
-            module = "sglang.launch_server" 
+        # pp_size = args.get("pp_size", 1) 
+        # if pp_size is not None and int(pp_size) > 1: 
+        #     module = "areal.patches.sglang_launch_wrapper" 
+        # else: 
+        module = "sglang.launch_server" 
         return get_py_cmd(module, args)
 
     @staticmethod
