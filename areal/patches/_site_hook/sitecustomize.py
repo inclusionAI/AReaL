@@ -15,6 +15,10 @@ Currently patched targets
 The hook is intentionally minimal: it chains to any pre-existing
 ``sitecustomize.py`` via ``importlib`` so that third-party hooks are
 preserved.
+
+IMPORTANT: All stdlib imports used by patch helpers (logging, torch, etc.)
+MUST be imported at module level BEFORE the __import__ hook is installed,
+to prevent infinite recursion when the hook intercepts those imports.
 """
 
 import os as _os
@@ -23,10 +27,29 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
     import builtins as _builtins
     import sys as _sys
 
+    # ================================================================
+    # Pre-import all stdlib/third-party modules used by patch helpers
+    # BEFORE installing the __import__ hook.  This prevents infinite
+    # recursion: patch_fn() -> import logging -> _import_hook() ->
+    # patch_fn() -> import logging -> ...
+    # ================================================================
+    import logging as _logging
+
     _real_import = _builtins.__import__
 
+    # Re-entrancy guard: prevents recursive patch application even if
+    # the pre-import strategy is insufficient for some edge case.
+    _hook_applying_patches = False
+
     def _import_hook(name, *args, **kwargs):
+        global _hook_applying_patches
+
         result = _real_import(name, *args, **kwargs)
+
+        # Skip all patch checks if we are already inside a patch function.
+        # This is the ultimate safeguard against recursion.
+        if _hook_applying_patches:
+            return result
 
         # --- 1. Patch GroupCoordinator (PP weight-tying send/recv fix) ---
         ps = _sys.modules.get("sglang.srt.distributed.parallel_state")
@@ -35,8 +58,13 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
             and hasattr(ps, "GroupCoordinator")
             and not getattr(ps, "_areal_pp_fixed", False)
         ):
+            # Set guard BEFORE calling patch function to prevent re-entrancy
             ps._areal_pp_fixed = True
-            _apply_pp_fix(ps.GroupCoordinator)
+            _hook_applying_patches = True
+            try:
+                _apply_pp_fix(ps.GroupCoordinator)
+            finally:
+                _hook_applying_patches = False
 
         # --- 2. Patch Qwen models (PP vocab-size fix) ---
         qwen2 = _sys.modules.get("sglang.srt.models.qwen2")
@@ -46,7 +74,11 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
             and not getattr(qwen2, "_areal_vocab_fixed", False)
         ):
             qwen2._areal_vocab_fixed = True
-            _apply_vocab_fix(qwen2.Qwen2ForCausalLM)
+            _hook_applying_patches = True
+            try:
+                _apply_vocab_fix(qwen2.Qwen2ForCausalLM)
+            finally:
+                _hook_applying_patches = False
 
         qwen3 = _sys.modules.get("sglang.srt.models.qwen3")
         if (
@@ -55,7 +87,11 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
             and not getattr(qwen3, "_areal_vocab_fixed", False)
         ):
             qwen3._areal_vocab_fixed = True
-            _apply_vocab_fix(qwen3.Qwen3ForCausalLM)
+            _hook_applying_patches = True
+            try:
+                _apply_vocab_fix(qwen3.Qwen3ForCausalLM)
+            finally:
+                _hook_applying_patches = False
 
         # --- 3. Patch ModelRunner (PP NCCL rank collision fix) ---
         mr = _sys.modules.get("sglang.srt.model_executor.model_runner")
@@ -64,20 +100,25 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
             and hasattr(mr, "ModelRunner")
             and not getattr(mr.ModelRunner, "_areal_pp_rank_fixed", False)
         ):
-            _apply_pp_rank_fix(mr.ModelRunner)
+            # Set guard BEFORE calling patch function
+            mr.ModelRunner._areal_pp_rank_fixed = True
+            _hook_applying_patches = True
+            try:
+                _apply_pp_rank_fix(mr.ModelRunner)
+            finally:
+                _hook_applying_patches = False
 
         return result
 
     # ---- Patch helpers ----
+    # These use module-level _logging to avoid triggering __import__ hook.
 
     def _apply_pp_fix(GroupCoordinator):
         """Fix GroupCoordinator.send/recv: use local group index, not global rank."""
-        import logging
-
         import torch
         import torch.distributed as dist
 
-        _log = logging.getLogger("areal.patches.sitecustomize.pp_fix")
+        _log = _logging.getLogger("areal.patches.sitecustomize.pp_fix")
 
         _orig_send = GroupCoordinator.send
         _orig_recv = GroupCoordinator.recv
@@ -94,7 +135,7 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
                 else:
                     dst_idx = self.rank_in_group + 1
             _log.debug(
-                "Patched send: global_dst=%s → local_idx=%s (group_size=%s)",
+                "Patched send: global_dst=%s -> local_idx=%s (group_size=%s)",
                 dst,
                 dst_idx,
                 self.world_size,
@@ -113,7 +154,7 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
                 else:
                     src_idx = self.rank_in_group - 1
             _log.debug(
-                "Patched recv: global_src=%s → local_idx=%s (group_size=%s)",
+                "Patched recv: global_src=%s -> local_idx=%s (group_size=%s)",
                 src,
                 src_idx,
                 self.world_size,
@@ -126,9 +167,7 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
 
     def _apply_vocab_fix(ModelCls):
         """Fix tie_word_embeddings handling for PP."""
-        import logging
-
-        _log = logging.getLogger("areal.patches.sitecustomize.vocab_fix")
+        _log = _logging.getLogger("areal.patches.sitecustomize.vocab_fix")
         _orig_init = ModelCls.__init__
         _orig_load = ModelCls.load_weights
 
@@ -161,7 +200,7 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
                     if embed is not None and lm_head is not None:
                         lm_head.data.copy_(embed.data)
                         _log.info(
-                            "Copied embed_tokens.weight → lm_head.weight on last PP rank"
+                            "Copied embed_tokens.weight -> lm_head.weight on last PP rank"
                         )
             except Exception as e:
                 _log.warning("vocab fix load_weights post-hook failed: %s", e)
@@ -173,9 +212,7 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
     def _apply_pp_rank_fix(ModelRunner):
         """Fix ModelRunner.init_weights_update_group: include pp_rank in the
         NCCL rank computation to avoid rank collisions when PP > 1."""
-        import logging
-
-        _log = logging.getLogger("areal.patches.sitecustomize.pp_rank_fix")
+        _log = _logging.getLogger("areal.patches.sitecustomize.pp_rank_fix")
 
         _orig_init_group = ModelRunner.init_weights_update_group
 
@@ -225,7 +262,8 @@ if _os.environ.get("AREAL_SGLANG_PP_FIX") == "1":
                 self.tp_rank = saved_tp_rank
 
         ModelRunner.init_weights_update_group = _patched_init_weights_update_group
-        ModelRunner._areal_pp_rank_fixed = True
+        # Note: _areal_pp_rank_fixed is already set by _import_hook before
+        # calling this function, so we don't set it here again.
         _log.info("Patched ModelRunner.init_weights_update_group for PP rank fix")
 
     # Install the hook
@@ -247,9 +285,9 @@ if not _prev_path:
 
 for _p in _prev_path:
     _candidate = _os.path.join(_p, "sitecustomize.py")
-    if _os.path.isfile(_candidate) and _os.path.abspath(_candidate) != _os.path.abspath(
-        __file__
-    ):
+    if _os.path.isfile(_candidate) and _os.path.abspath(
+        _candidate
+    ) != _os.path.abspath(__file__):
         _spec = _importlib_util.spec_from_file_location(
             "_prev_sitecustomize", _candidate
         )
