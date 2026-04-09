@@ -210,18 +210,100 @@ def _wait_for_workers_ready(
     return True
 
 
-def create_router_app(worker_base_urls: List[str]) -> FastAPI:
+import re as _re
+
+# Regex to extract tool name from <action>{"name": "xxx", ...}</action>
+_ACTION_TAG_RE = _re.compile(r'<action>(.*?)</action>', _re.DOTALL | _re.IGNORECASE)
+_TOOL_NAME_RE = _re.compile(r'"name"\s*:\s*"([^"]+)"')
+
+
+# =============================================================================
+# Static tool_type → function_name mapping
+# Mirrors enable_tools in verl_tool/servers/tools/geo_*.py
+# and TOOL_CATEGORIES in geo_edit/tool_definitions/router.py
+# =============================================================================
+TOOL_TYPE_FUNCTIONS = {
+    "geo_edit_function": [
+        "image_crop", "image_label", "draw_line",
+        "draw_path", "bounding_box", "image_highlight",
+    ],
+    "geo_paddleocr": [
+        "text_ocr", "table_ocr", "formula_ocr", "chart_text_ocr",
+        "text_spotting", "seal_ocr", "map_text_ocr",
+    ],
+    "geo_chartr1": [
+        "chart_reasoning", "chart_data_extract", "chart_trend_analysis",
+    ],
+    "geo_sam3": [
+        "auto_segment", "bbox_segment", "text_segment",
+        "exemplar_segment", "concept_count", "presence_check",
+    ],
+    "geo_grounding_dino": ["grounding_dino"],
+    "geo_multimath": ["math_latex_ocr", "math_image_describe"],
+    "geo_gllava": ["gllava"],
+}
+
+
+def _build_function_routing_table(
+    worker_base_urls: List[str],
+    worker_tool_types: List[str],
+) -> dict:
+    """
+    Build function_name → [backend_indices] mapping from static table.
+
+    Args:
+        worker_base_urls: backend URLs (for logging only)
+        worker_tool_types: tool_type per backend, same order as URLs
+    
+    Returns:
+        {"function_to_backends": {name: [indices]}, "finish_backends": [indices]}
+    """
+    function_to_backends = {}
+    finish_backends = []
+
+    for idx, tool_type in enumerate(worker_tool_types):
+        # Every backend has a finish tool
+        finish_backends.append(idx)
+
+        func_names = TOOL_TYPE_FUNCTIONS.get(tool_type, [])
+        if not func_names:
+            logger.warning(
+                f"[ROUTING] tool_type '{tool_type}' not in TOOL_TYPE_FUNCTIONS, "
+                f"backend {idx} ({worker_base_urls[idx]}) won't receive routed requests"
+            )
+        for fn in func_names:
+            function_to_backends.setdefault(fn, []).append(idx)
+
+    # Sort for deterministic hashing
+    for fn in function_to_backends:
+        function_to_backends[fn] = sorted(set(function_to_backends[fn]))
+
+    logger.info(f"[ROUTING] function → backends: {json.dumps(function_to_backends)}")
+    logger.info(f"[ROUTING] finish backends: {finish_backends}")
+
+    return {
+        "function_to_backends": function_to_backends,
+        "finish_backends": sorted(set(finish_backends)),
+    }
+
+
+def create_router_app(
+    worker_base_urls: List[str],
+    worker_tool_types: Optional[List[str]] = None,
+) -> FastAPI:
     """
     Create the router FastAPI application.
     
     The router:
     - Accepts all HTTP requests
-    - Routes requests using consistent hashing based on trajectory_ids in the body
-    - Falls back to round-robin when trajectory_ids is not available
+    - For /get_observation: routes by tool function name to the correct backend
+    - Falls back to consistent hashing on trajectory_ids when tool name is unknown
     
     Args:
         worker_base_urls: List of backend worker URLs
-        
+        worker_tool_types: List of tool_type per backend (same order as URLs).
+            If provided, enables tool-aware routing.
+    
     Returns:
         FastAPI application instance
     """
@@ -245,15 +327,29 @@ def create_router_app(worker_base_urls: List[str]) -> FastAPI:
             for base_url in worker_base_urls
         ]
         app.state.counter = itertools.count()
+        
+        # Build tool-aware routing table from static mapping
+        if worker_tool_types:
+            caps = _build_function_routing_table(worker_base_urls, worker_tool_types)
+            app.state.function_to_backends = caps["function_to_backends"]
+            app.state.finish_backends = caps["finish_backends"]
+            logger.info(
+                f"[ROUTER] Tool-aware routing enabled: "
+                f"{len(app.state.function_to_backends)} function names mapped "
+                f"across {num_workers} backends"
+            )
+        else:
+            app.state.function_to_backends = {}
+            app.state.finish_backends = list(range(num_workers))
+            logger.info("[ROUTER] No tool types provided, using hash routing only")
+        
         logger.info(
             f"[ROUTER] Started with {num_workers} workers: {', '.join(worker_base_urls)}"
         )
 
         try:
-            # Application is running
             yield
         finally:
-            # Shutdown logic
             logger.info("[ROUTER] Shutting down, closing client connections...")
             for client in getattr(app.state, "clients", []):
                 try:
@@ -264,18 +360,9 @@ def create_router_app(worker_base_urls: List[str]) -> FastAPI:
     # Attach lifespan instead of using @app.on_event
     app = FastAPI(title="Tool Server Router", lifespan=lifespan)
 
-    def _pick_worker_index(body_bytes: bytes) -> int:
+    def _pick_worker_index_by_hash(body_bytes: bytes) -> int:
         """
-        Select a worker index based on request body.
-        
-        Uses consistent hashing on trajectory_ids[0] if available,
-        otherwise falls back to round-robin.
-        
-        Args:
-            body_bytes: Raw request body
-            
-        Returns:
-            Worker index (0 to num_workers-1)
+        Legacy fallback: select a worker index using trajectory_id hash or round-robin.
         """
         if not body_bytes:
             return next(app.state.counter) % num_workers
@@ -288,12 +375,72 @@ def create_router_app(worker_base_urls: List[str]) -> FastAPI:
         if isinstance(data, dict):
             trajectory_ids = data.get("trajectory_ids")
             if isinstance(trajectory_ids, list) and len(trajectory_ids) > 0:
-                # Use CRC32 for consistent hashing
                 tid_str = str(trajectory_ids[0])
                 hash_value = zlib.crc32(tid_str.encode("utf-8")) & 0xFFFFFFFF
                 return hash_value % num_workers
 
         return next(app.state.counter) % num_workers
+
+    def _parse_tool_request(body_bytes: bytes):
+        """
+        Parse the request body to extract routing-relevant fields.
+        
+        Returns:
+            (data_dict, trajectory_id, tool_name, is_finish) or
+            (None, None, None, False) on parse failure.
+        """
+        if not body_bytes:
+            return None, None, None, False
+        try:
+            data = json.loads(body_bytes)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None, None, None, False
+        
+        if not isinstance(data, dict):
+            return None, None, None, False
+        
+        # Extract trajectory_id
+        trajectory_ids = data.get("trajectory_ids")
+        tid = str(trajectory_ids[0]) if isinstance(trajectory_ids, list) and trajectory_ids else None
+        
+        # Check finish flag
+        finish_flags = data.get("finish")
+        is_finish = (
+            isinstance(finish_flags, list) 
+            and len(finish_flags) > 0 
+            and finish_flags[0]
+        )
+        
+        # Extract tool name from action
+        tool_name = None
+        actions = data.get("actions")
+        if isinstance(actions, list) and actions:
+            action_match = _ACTION_TAG_RE.search(actions[0])
+            if action_match:
+                name_match = _TOOL_NAME_RE.search(action_match.group(1))
+                if name_match:
+                    tool_name = name_match.group(1)
+        
+        return data, tid, tool_name, is_finish
+
+    def _pick_worker_for_tool(tool_name: str, trajectory_id: str) -> int:
+        """
+        Pick backend index by tool function name.
+        
+        Uses the function_to_backends mapping built at startup.
+        Hashes trajectory_id within the candidate set for stickiness.
+        
+        Returns:
+            Backend index, or -1 if no mapping found.
+        """
+        candidates = getattr(app.state, 'function_to_backends', {}).get(tool_name)
+        if not candidates:
+            return -1
+        if len(candidates) == 1:
+            return candidates[0]
+        # Hash trajectory_id within candidate set for sticky routing
+        hash_value = zlib.crc32(trajectory_id.encode("utf-8")) & 0xFFFFFFFF
+        return candidates[hash_value % len(candidates)]
 
     # Headers that should not be forwarded
     HOP_BY_HOP_HEADERS = frozenset({
@@ -316,13 +463,18 @@ def create_router_app(worker_base_urls: List[str]) -> FastAPI:
     async def proxy(full_path: str, request: Request):
         """
         Proxy handler that forwards requests to backend workers.
+        
+        For /get_observation POST requests:
+        - Finish requests are fan-out to all backends with finish capability
+        - Tool calls are routed by function name to the correct backend
+        - Unknown tools fall back to trajectory-hash routing
+        
+        Other requests use trajectory-hash routing.
         """
         method = request.method
         query_params = dict(request.query_params)
         body_bytes = await request.body()
-
-        worker_idx = _pick_worker_index(body_bytes)
-        client: httpx.AsyncClient = app.state.clients[worker_idx]
+        target_path = f"/{full_path}" if full_path else "/"
 
         # Filter out hop-by-hop headers
         headers = {
@@ -330,9 +482,71 @@ def create_router_app(worker_base_urls: List[str]) -> FastAPI:
             if k.lower() not in HOP_BY_HOP_HEADERS
         }
 
-        target_path = f"/{full_path}" if full_path else "/"
+        # --- Tool-aware routing for /get_observation ---
+        if full_path == "get_observation" and method == "POST":
+            _, tid, tool_name, is_finish = _parse_tool_request(body_bytes)
+            
+            # Case 1: Finish — fan-out to all backends that have finish tool
+            if is_finish:
+                finish_indices = getattr(app.state, 'finish_backends', [])
+                if finish_indices:
+                    return await _fan_out_finish(
+                        app, finish_indices, target_path,
+                        body_bytes, headers, query_params,
+                    )
+                # No finish backends known, fall through to hash routing
+            
+            # Case 2: Known tool name — route to correct backend
+            if tool_name and tid:
+                worker_idx = _pick_worker_for_tool(tool_name, tid)
+                if worker_idx >= 0:
+                    return await _forward_to_worker(
+                        app, worker_idx, target_path,
+                        body_bytes, headers, query_params,
+                    )
+                else:
+                    logger.warning(
+                        f"[ROUTER] Tool name '{tool_name}' not in routing table, "
+                        f"falling back to hash routing. "
+                        f"Known tools: {list(getattr(app.state, 'function_to_backends', {}).keys())}"
+                    )
+        
+        # --- Fallback: trajectory-hash routing ---
+        worker_idx = _pick_worker_index_by_hash(body_bytes)
+        return await _forward_to_worker(
+            app, worker_idx, target_path,
+            body_bytes, headers, query_params,
+            method=method,
+        )
 
-        for attempt in range(3):  # Retry up to 3 times on failure
+    @app.get("/health")
+    async def health():
+        """Router health check endpoint."""
+        return {
+            "status": "ok",
+            "workers": num_workers,
+            "routing_mode": "tool-aware" if getattr(app.state, 'function_to_backends', {}) else "hash-only",
+            "known_function_tools": list(getattr(app.state, 'function_to_backends', {}).keys()),
+        }
+    
+    @app.get("/")
+    async def root():
+        """Root endpoint with basic info."""
+        return {
+            "service": "tool-server-router",
+            "workers": num_workers,
+            "status": "running",
+        }
+
+    async def _forward_to_worker(
+        app_instance, worker_idx: int, target_path: str,
+        body_bytes: bytes, headers: dict, query_params: dict,
+        method: str = "POST",
+    ) -> Response:
+        """Forward a request to a specific backend worker with retries."""
+        client: httpx.AsyncClient = app_instance.state.clients[worker_idx]
+        
+        for attempt in range(3):
             try:
                 response = await client.request(
                     method=method,
@@ -341,7 +555,16 @@ def create_router_app(worker_base_urls: List[str]) -> FastAPI:
                     headers=headers,
                     params=query_params,
                 )
-                break
+                response_headers = {
+                    k: v for k, v in response.headers.items()
+                    if k.lower() not in HOP_BY_HOP_HEADERS
+                }
+                return Response(
+                    status_code=response.status_code,
+                    content=response.content,
+                    headers=response_headers,
+                    media_type=response.headers.get("content-type"),
+                )
             except httpx.TimeoutException as e:
                 logger.warning(f"[ROUTER] Timeout forwarding to worker {worker_idx}: {e}")
                 return Response(
@@ -350,29 +573,13 @@ def create_router_app(worker_base_urls: List[str]) -> FastAPI:
                     media_type="application/json",
                 )
             except httpx.ReadError as e:
-                # retry on read errors
                 logger.warning(
-                    f"[ROUTER] ReadError when forwarding to worker {worker_idx} "
+                    f"[ROUTER] ReadError forwarding to worker {worker_idx} "
                     f"({worker_base_urls[worker_idx]}), attempt={attempt+1}: {e}"
-                    # f"({worker_base_urls[worker_idx]}), attempt={attempt+1}: {e!r}"
                 )
-                # try:
-                #     await client.aclose()
-                # except Exception:
-                #     pass
-                # app.state.clients[worker_idx] = httpx.AsyncClient(
-                #     base_url=worker_base_urls[worker_idx],
-                #     timeout=None,
-                #     limits=httpx.Limits(
-                #         max_keepalive_connections=MAX_CONNECTIONS_PER_UVI_WORKER,
-                #         max_connections=MAX_CONNECTIONS_PER_UVI_WORKER,
-                #         keepalive_expiry=KEEPALIVE_EXPIRY_PER_UVI_WORKER,
-                #     )
-                # )
-                # client = app.state.clients[worker_idx]
                 if attempt == 2:
                     logger.error(
-                        f"[ROUTER] ReadError persists after retry for worker {worker_idx}",
+                        f"[ROUTER] ReadError persists after retries for worker {worker_idx}",
                         exc_info=True,
                     )
                     return Response(
@@ -392,39 +599,82 @@ def create_router_app(worker_base_urls: List[str]) -> FastAPI:
                     media_type="application/json",
                 )
             except Exception as e:
-                logger.exception(f"[ROUTER] Unexpected error forwarding to worker {worker_idx}: {e}")
+                logger.exception(
+                    f"[ROUTER] Unexpected error forwarding to worker {worker_idx}: {e}"
+                )
                 return Response(
                     status_code=502,
                     content=b'{"detail": "router internal error"}',
                     media_type="application/json",
                 )
-
-        # Filter response headers
-        response_headers = {
-            k: v for k, v in response.headers.items()
-            if k.lower() not in HOP_BY_HOP_HEADERS
-        }
-
+        # Should not reach here, but just in case
         return Response(
-            status_code=response.status_code,
-            content=response.content,
-            headers=response_headers,
-            media_type=response.headers.get("content-type"),
+            status_code=502,
+            content=b'{"detail": "all retries exhausted"}',
+            media_type="application/json",
         )
 
-    @app.get("/health")
-    async def health():
-        """Router health check endpoint."""
-        return {"status": "ok", "workers": num_workers}
-    
-    @app.get("/")
-    async def root():
-        """Root endpoint with basic info."""
-        return {
-            "service": "tool-server-router",
-            "workers": num_workers,
-            "status": "running",
-        }
+    async def _fan_out_finish(
+        app_instance, backend_indices: List[int], target_path: str,
+        body_bytes: bytes, headers: dict, query_params: dict,
+    ) -> Response:
+        """
+        Fan-out finish request to all backends that have the finish tool.
+        
+        FinishTool cleans up env_cache per trajectory; each backend that 
+        may hold state for this trajectory needs to receive the finish signal.
+        Returns the first successful response.
+        """
+        import asyncio
+        
+        async def _send_one(idx: int):
+            client = app_instance.state.clients[idx]
+            try:
+                return await client.request(
+                    method="POST",
+                    url=target_path,
+                    content=body_bytes,
+                    headers=headers,
+                    params=query_params,
+                )
+            except Exception as e:
+                logger.debug(f"[ROUTER] Finish fan-out to backend {idx} failed: {e}")
+                return None
+        
+        results = await asyncio.gather(
+            *[_send_one(idx) for idx in backend_indices],
+            return_exceptions=True,
+        )
+        
+        # Return first successful response
+        for r in results:
+            if isinstance(r, httpx.Response) and r.status_code == 200:
+                response_headers = {
+                    k: v for k, v in r.headers.items()
+                    if k.lower() not in HOP_BY_HOP_HEADERS
+                }
+                return Response(
+                    status_code=r.status_code,
+                    content=r.content,
+                    headers=response_headers,
+                    media_type=r.headers.get("content-type"),
+                )
+        
+        # All failed — return a synthetic success (finish is best-effort cleanup)
+        logger.warning(
+            f"[ROUTER] Finish fan-out: none of {len(backend_indices)} backends "
+            f"returned 200, returning synthetic success"
+        )
+        return Response(
+            status_code=200,
+            content=json.dumps({
+                "observations": [""],
+                "dones": [True],
+                "valids": [True],
+                "processing_time_ms": 0.0,
+            }).encode(),
+            media_type="application/json",
+        )
 
     return app
 
@@ -551,7 +801,12 @@ def router_factory() -> FastAPI:
     if not urls_str:
         raise RuntimeError("VT_WORKER_BASE_URLS not set")
     worker_base_urls = json.loads(urls_str)
-    return create_router_app(worker_base_urls)
+    
+    # Optional: tool_type per backend for tool-aware routing
+    types_str = os.environ.get("VT_WORKER_TOOL_TYPES")
+    worker_tool_types = json.loads(types_str) if types_str else None
+    
+    return create_router_app(worker_base_urls, worker_tool_types)
 
 def main(
     tool_type: str = "base",
