@@ -121,6 +121,103 @@ def convert_qwen3_lora_to_hf(
     return []
 
 
+def convert_qwen3_moe_lora_to_hf(
+    tf_config,
+    name: str,
+    tensor: torch.Tensor,
+) -> list[tuple[str, torch.Tensor]]:
+    # Reuse non-MoE conversion for attention and dense MLP paths.
+    converted = convert_qwen3_lora_to_hf(tf_config, name, tensor)
+    if converted:
+        return converted
+
+    grouped_expert_pattern = (
+        r"(?:^|.*\.)decoder\.layers\.(\d+)\.mlp\.experts\."
+        r"(linear_fc1|linear_fc2)\.adapter\.(linear_in|linear_out)\.weight$"
+    )
+    match = re.match(grouped_expert_pattern, name)
+    if match is not None:
+        layer_idx, module_name, adapter_part = match.groups()
+        num_experts = getattr(tf_config, "num_moe_experts", None)
+        if num_experts is None:
+            num_experts = getattr(tf_config, "num_experts", None)
+        if num_experts is None:
+            return []
+
+        outputs: list[tuple[str, torch.Tensor]] = []
+        for expert_idx in range(num_experts):
+            base_prefix = (
+                f"base_model.model.model.layers.{layer_idx}.mlp.experts.{expert_idx}"
+            )
+
+            if module_name == "linear_fc2":
+                hf_base = f"{base_prefix}.down_proj"
+                suffix = (
+                    "lora_A.default.weight"
+                    if adapter_part == "linear_in"
+                    else "lora_B.default.weight"
+                )
+                outputs.append((f"{hf_base}.{suffix}", tensor))
+                continue
+
+            gate_base = f"{base_prefix}.gate_proj"
+            up_base = f"{base_prefix}.up_proj"
+            if adapter_part == "linear_in":
+                outputs.extend(
+                    [
+                        (f"{gate_base}.lora_A.default.weight", tensor),
+                        (f"{up_base}.lora_A.default.weight", tensor),
+                    ]
+                )
+                continue
+
+            gate_b, up_b = tensor.chunk(2, dim=0)
+            outputs.extend(
+                [
+                    (f"{gate_base}.lora_B.default.weight", gate_b.contiguous()),
+                    (f"{up_base}.lora_B.default.weight", up_b.contiguous()),
+                ]
+            )
+
+        return outputs
+
+    expert_pattern = (
+        r"(?:^|.*\.)decoder\.layers\.(\d+)\.mlp\.experts\."
+        r"(linear_fc1|linear_fc2)\.adapter\.(linear_in|linear_out)\.weight(\d+)$"
+    )
+    match = re.match(expert_pattern, name)
+    if match is None:
+        return []
+
+    layer_idx, module_name, adapter_part, expert_idx = match.groups()
+    base_prefix = f"base_model.model.model.layers.{layer_idx}.mlp.experts.{expert_idx}"
+
+    if module_name == "linear_fc2":
+        hf_base = f"{base_prefix}.down_proj"
+        suffix = (
+            "lora_A.default.weight"
+            if adapter_part == "linear_in"
+            else "lora_B.default.weight"
+        )
+        return [(f"{hf_base}.{suffix}", tensor)]
+
+    if module_name == "linear_fc1":
+        gate_base = f"{base_prefix}.gate_proj"
+        up_base = f"{base_prefix}.up_proj"
+        if adapter_part == "linear_in":
+            return [
+                (f"{gate_base}.lora_A.default.weight", tensor),
+                (f"{up_base}.lora_A.default.weight", tensor),
+            ]
+        gate_b, up_b = tensor.chunk(2, dim=0)
+        return [
+            (f"{gate_base}.lora_B.default.weight", gate_b.contiguous()),
+            (f"{up_base}.lora_B.default.weight", up_b.contiguous()),
+        ]
+
+    return []
+
+
 def _infer_target_modules_from_adapter_weights(weight_keys: Iterable[str]) -> list[str]:
     """
     Infer PEFT target_modules from adapter weight parameter names.
@@ -235,7 +332,10 @@ def _monkey_patch_save_hf_adapter():
         # Export adapter weights
         adapter_state: dict[str, torch.Tensor] = {}
         for name, tensor in self.export_adapter_weights(
-            model, cpu=True, show_progress=show_progress
+            # cpu=True may reduce memory pressure but hangs for MoE models using slurm
+            model,
+            cpu=False,
+            show_progress=False,
         ):
             adapter_state[f"base_model.model.{name}"] = tensor.clone().float()
 

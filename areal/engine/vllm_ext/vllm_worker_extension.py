@@ -4,6 +4,7 @@ import traceback
 
 import torch
 import torch.distributed as dist
+
 from vllm.logger import init_logger
 from vllm.lora.lora_model import LoRAModel
 from vllm.lora.peft_helper import PEFTHelper
@@ -209,7 +210,7 @@ class VLLMWorkerExtension:
                     async_op=False,
                 )
 
-                received_weights[name] = tensor
+                received_weights[name] = tensor.cpu()
 
             logger.info(f"Received {len(received_weights)} LoRA parameters via XCCL")
 
@@ -259,7 +260,7 @@ class VLLMWorkerExtension:
                 lora_model_id=self.areal_lora_int_id,
                 tensors=merged_weights,
                 peft_helper=peft_helper,
-                device=self.model_runner.device,
+                device="cpu",
                 dtype=self.model_runner.lora_manager.lora_config.lora_dtype,
                 model_vocab_size=model_vocab_size,
                 weights_mapper=getattr(

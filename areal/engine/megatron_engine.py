@@ -1456,7 +1456,7 @@ class MegatronEngine(TrainEngine):
         converted_named_tensors = []
 
         for name, param in get_named_parameters(self.model, num_moe_experts):
-            if ".experts." in name:
+            if ".experts." in name and not self.config.use_lora:
                 continue
             if self.config.use_lora and (
                 ".adapter." not in name or not getattr(param, "requires_grad", False)
@@ -1474,7 +1474,7 @@ class MegatronEngine(TrainEngine):
         # Only pipeline parallel heads CAN contain named tensors here
         if converted_named_tensors:
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
-        elif self.is_pipeline_parallel_head() and not self.config.use_lora:
+        elif self.config.use_lora and self.is_pipeline_parallel_head():
             self.logger.warning(
                 "No tensors were collected for distributed update at version %s.",
                 meta.version,
