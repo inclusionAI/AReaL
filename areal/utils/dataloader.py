@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import Any
 
 from datasets import Dataset
 from torch.utils.data import DistributedSampler
@@ -28,11 +29,20 @@ def create_dataloader(
             f"batch size({dataset_config.batch_size}) must be divisible by world_size({world_size})!"
         )
 
-    sampler_cls = DistributedSampler
+    from areal.infra.data_service.rdataset import RDataset, _PrefetchAwareSampler
+
     drop_sampler_last = True
     if isinstance(dataset_config, ValidDatasetConfig):
-        sampler_cls = EvalDistributedSampler
         drop_sampler_last = False
+
+    if isinstance(dataset, RDataset) and isinstance(dataset_config, ValidDatasetConfig):
+        sampler_cls = _PrefetchAwareEvalSampler
+    elif isinstance(dataset, RDataset):
+        sampler_cls = _PrefetchAwareSampler
+    elif isinstance(dataset_config, ValidDatasetConfig):
+        sampler_cls = EvalDistributedSampler
+    else:
+        sampler_cls = DistributedSampler
 
     return StatefulDataLoader(
         dataset,
@@ -85,3 +95,17 @@ class EvalDistributedSampler(DistributedSampler):
 
         if self.rank + (self.num_samples - 1) * self.num_replicas >= self.total_size:
             self.num_samples -= 1
+
+
+class _PrefetchAwareEvalSampler(EvalDistributedSampler):
+    def __init__(self, dataset: Any, *args: Any, **kwargs: Any) -> None:
+        super().__init__(dataset, *args, **kwargs)
+        self._rdataset = dataset
+        self._trigger_prefetch()
+
+    def set_epoch(self, epoch: int) -> None:
+        super().set_epoch(epoch)
+        self._trigger_prefetch()
+
+    def _trigger_prefetch(self) -> None:
+        self._rdataset._start_prefetch(list(super().__iter__()))

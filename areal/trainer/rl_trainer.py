@@ -7,7 +7,6 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
-from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
@@ -41,6 +40,9 @@ from areal.infra import (
     SlurmScheduler,
     current_platform,
 )
+from areal.infra.data_service import DataController
+from areal.infra.data_service.controller.config import DataServiceConfig
+from areal.infra.data_service.rdataset import RDataset
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
@@ -52,6 +54,8 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 if TYPE_CHECKING:
+    from datasets import Dataset
+
     from areal.engine import (
         FSDPPPOActor,
         FSDPPPOCritic,
@@ -111,6 +115,9 @@ class PPOTrainer:
         self.scheduler = None
         if is_single_controller():
             self.scheduler = self._init_scheduler()
+        self.data_controller: DataController | None = None
+        self._train_rdataset: RDataset | None = None
+        self._valid_rdataset: RDataset | None = None
 
         # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
@@ -126,6 +133,23 @@ class PPOTrainer:
 
         self._amend_xccl_weight_update_envvar()
 
+        openai_cfg = config.rollout.openai
+        self._online_mode = openai_cfg is not None and openai_cfg.mode == "online"
+
+        if self._online_mode and config.valid_dataset is not None:
+            raise ValueError(
+                "valid_dataset must not be set when using online RL mode "
+                "(openai.mode='online'). Online mode does not support "
+                "validation datasets."
+            )
+
+        # -- Dataset loading --------------------------------------------------
+        if not self._online_mode and train_dataset is None:
+            raise ValueError(
+                "train_dataset must be provided unless using online RL mode "
+                "(openai.mode='online')."
+            )
+
         # Create models: actor, critic, ref — each with its own allocation.
         self.actor = self._create_train_engine(config.actor, self.actor_alloc)
         self.critic = None
@@ -139,19 +163,21 @@ class PPOTrainer:
             ref_alloc = ModelAllocation.from_str(config.ref.backend, name="ref")
             self.ref = self._create_train_engine(config.ref, ref_alloc)
 
-        # Create dataloaders
-        self.train_dataset = train_dataset
-        self.valid_dataset = valid_dataset
-        if train_dataset is None:
-            # Online mode: require total_train_steps to compute steps_per_epoch.
-            # Without this, __len__()=1 causes every step to be treated as an
-            # epoch boundary, making Saver/RecoverHandler fire every step and
-            # corrupting the LR schedule.
+        self.teacher = None
+        if config.teacher is not None:
+            teacher_alloc = ModelAllocation.from_str(
+                config.teacher.backend, name="teacher"
+            )
+            self.teacher = self._create_train_engine(config.teacher, teacher_alloc)
+
+        steps_per_epoch: int | None = None
+        self.train_dataloader: StatefulDataLoader | _EmptyDataLoader
+        if self._online_mode:
             if config.total_train_steps is None:
                 raise ValueError(
-                    "total_train_steps must be set for online mode "
-                    "(train_dataset is None). Both total_train_epochs and "
-                    "total_train_steps are needed to compute steps_per_epoch."
+                    "total_train_steps must be set for online mode. "
+                    "Both total_train_epochs and total_train_steps are needed "
+                    "to compute steps_per_epoch."
                 )
             steps_per_epoch = config.total_train_steps // config.total_train_epochs
             if steps_per_epoch < 1:
@@ -165,14 +191,47 @@ class PPOTrainer:
                 steps_per_epoch=steps_per_epoch,
             )
         else:
+            assert train_dataset is not None
+            if is_single_controller() and isinstance(train_dataset, RDataset):
+                ds_cfg = DataServiceConfig.from_dataset_config(config.train_dataset)
+                assert self.scheduler is not None
+                controller = DataController(ds_cfg, self.scheduler)
+                controller.initialize(
+                    role="data", num_dataset_workers=ds_cfg.num_workers
+                )
+                self.data_controller = controller
+                train_dataset.connect(
+                    controller,
+                    dataset_id=f"{config.experiment_name}_{config.trial_name}_train",
+                    tokenizer_or_processor_path=config.tokenizer_path,
+                    seed=config.seed,
+                    shuffle=config.train_dataset.shuffle,
+                    drop_last=config.train_dataset.drop_last,
+                )
+                self._train_rdataset = train_dataset
+
             self.train_dataloader = self._create_dataloader(
                 train_dataset,
                 dataset_config=self.config.train_dataset,
                 rank=self.actor.data_parallel_rank,
                 world_size=self.actor.data_parallel_world_size,
             )
-        self.valid_dataloader = None
+
+        self.valid_dataloader: StatefulDataLoader | None = None
         if self.config.valid_dataset is not None and valid_dataset is not None:
+            assert self.config.valid_dataset is not None
+            if is_single_controller() and isinstance(valid_dataset, RDataset):
+                assert self.data_controller is not None
+                valid_dataset.connect(
+                    self.data_controller,
+                    dataset_id=f"{config.experiment_name}_{config.trial_name}_valid",
+                    tokenizer_or_processor_path=config.tokenizer_path,
+                    seed=config.seed,
+                    shuffle=self.config.valid_dataset.shuffle,
+                    drop_last=self.config.valid_dataset.drop_last,
+                )
+                self._valid_rdataset = valid_dataset
+
             self.valid_dataloader = self._create_dataloader(
                 valid_dataset,
                 dataset_config=self.config.valid_dataset,
@@ -180,12 +239,24 @@ class PPOTrainer:
                 world_size=self.actor.data_parallel_world_size,
             )
 
-        ft_spec = FinetuneSpec(
-            total_train_epochs=config.total_train_epochs,
-            dataset_size=len(self.train_dataloader) * config.train_dataset.batch_size,
-            train_batch_size=config.train_dataset.batch_size,
-        )
+        # -- FinetuneSpec -----------------------------------------------------
+        if self._online_mode:
+            assert steps_per_epoch is not None
+            ft_spec = FinetuneSpec(
+                total_train_epochs=config.total_train_epochs,
+                dataset_size=steps_per_epoch * config.train_dataset.batch_size,
+                train_batch_size=config.train_dataset.batch_size,
+            )
+        else:
+            ft_spec = FinetuneSpec(
+                total_train_epochs=config.total_train_epochs,
+                dataset_size=len(self.train_dataloader)
+                * config.train_dataset.batch_size,
+                train_batch_size=config.train_dataset.batch_size,
+            )
 
+        # Initialize engines first — the scheduler must know about roles
+        # before the data controller can colocate with them.
         engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
         self.actor.initialize(**engine_init_kwargs, role="actor")
         if self.critic is not None:
@@ -193,12 +264,7 @@ class PPOTrainer:
         if self.ref is not None:
             self.ref.initialize(**engine_init_kwargs, role="ref")
 
-        self.teacher = None
-        if config.teacher is not None:
-            teacher_alloc = ModelAllocation.from_str(
-                config.teacher.backend, name="teacher"
-            )
-            self.teacher = self._create_train_engine(config.teacher, teacher_alloc)
+        if self.teacher is not None:
             self.teacher.initialize(**engine_init_kwargs, role="teacher")
 
         # Save initial LoRA weights if enabled (for inference server pre-loading)
@@ -207,11 +273,6 @@ class PPOTrainer:
         # Initialize inference with LoRA path
         self.rollout = self._init_rollout(
             config.rollout, is_eval=False, lora_path=initial_lora_path
-        )
-        # Online mode detection: skip eval rollout for efficiency.
-        openai_cfg = config.rollout.openai
-        self._online_mode = train_dataset is None or (
-            openai_cfg is not None and openai_cfg.mode == "online"
         )
 
         self.eval_rollout = None
@@ -529,6 +590,8 @@ class PPOTrainer:
                 # Since all RTensor objects are affiliated IPs,
                 # calling `clear_batches` once should be sufficient.
                 self.actor.clear_batches(rollout_batch, adv_batch)
+                if self.data_controller is not None:
+                    self.data_controller.clear_batches()
 
             with perf_tracer.trace_scope(
                 "train.log_stats",
@@ -546,6 +609,12 @@ class PPOTrainer:
 
     def close(self):
         self.saver.finalize()
+        if hasattr(self, "_train_rdataset") and self._train_rdataset is not None:
+            self._train_rdataset.close()
+        if hasattr(self, "_valid_rdataset") and self._valid_rdataset is not None:
+            self._valid_rdataset.close()
+        if hasattr(self, "data_controller") and self.data_controller is not None:
+            self.data_controller.destroy()
         self.stats_logger.close()
         if self.eval_rollout is not None:
             self.eval_rollout.destroy()

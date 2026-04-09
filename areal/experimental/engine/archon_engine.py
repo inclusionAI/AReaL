@@ -91,8 +91,10 @@ from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
     broadcast_tensor,
+    concat_batch,
     pack_tensor_dict,
     pad_mb_list,
+    split_batch,
     split_padded_tensor_dict_into_mb_list,
     unsqueeze_mb_list,
 )
@@ -489,7 +491,7 @@ class ArchonEngine(TrainEngine):
 
     def train_batch(
         self,
-        input_: dict[str, Any],
+        input_: list[dict[str, Any]] | dict[str, Any],
         loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
@@ -497,7 +499,9 @@ class ArchonEngine(TrainEngine):
         assert self._initialized
         self.optimizer_zero_grad()
 
-        mb_list = self._prepare_mb_list(input_).to(self.device)
+        input_batched, _ = self._normalize_batch_input(input_)
+
+        mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
         total_loss_weight = compute_total_loss_weight(
             mb_list, loss_weight_fn, self.data_parallel_group
@@ -523,14 +527,16 @@ class ArchonEngine(TrainEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: dict[str, Any],
+        input_: list[dict[str, Any]] | dict[str, Any],
         loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch of data."""
         assert self._initialized
 
-        mb_list = self._prepare_mb_list(input_).to(self.device)
+        input_batched, _ = self._normalize_batch_input(input_)
+
+        mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
         total_loss_weight = compute_total_loss_weight(
             mb_list, loss_weight_fn, self.data_parallel_group
@@ -563,20 +569,32 @@ class ArchonEngine(TrainEngine):
     @torch.no_grad()
     def forward_batch(
         self,
-        input_: dict[str, Any],
+        input_: list[dict[str, Any]] | dict[str, Any],
         output_seqlens: list[int] | None = None,
-        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
-    ) -> torch.Tensor:
+        aggregate_fn: Callable[[list[torch.Tensor]], torch.Tensor] = torch.cat,
+    ) -> torch.Tensor | list[torch.Tensor]:
         """Forward pass without gradient computation."""
         assert self._initialized
 
-        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
+        input_batched, meta = self._normalize_batch_input(input_)
+
+        if meta is not None:
+            assert isinstance(input_, list)
+            inferred_seqlens = [d["attention_mask"].shape[-1] for d in input_]
+            if output_seqlens is not None and output_seqlens != inferred_seqlens:
+                raise ValueError(
+                    f"output_seqlens mismatch for list input: "
+                    f"given {output_seqlens}, "
+                    f"inferred {inferred_seqlens} from attention_mask shapes."
+                )
+            output_seqlens = inferred_seqlens
+        cu_seqlens = pack_tensor_dict(input_batched)["cu_seqlens"]
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
         assert output_seqlens is not None
         batch_size = len(output_seqlens)
 
-        mb_list = self._prepare_mb_list(input_).to(self.device)
+        mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
         def process_output(
             logits: torch.Tensor, ctx_dict: dict[str, Any]
@@ -606,7 +624,9 @@ class ArchonEngine(TrainEngine):
                 group=self.parallel_dims.get_group("pp"),
             )
         assert res is not None
-        return res
+        if meta is None:
+            return res
+        return split_batch(res, meta)
 
     def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
         """Connect to an inference engine for rollout."""
@@ -1066,6 +1086,14 @@ class ArchonEngine(TrainEngine):
         )
 
         self.logger.info(f"Created optimizer in {time.perf_counter() - tik:.2f}s")
+
+    @staticmethod
+    def _normalize_batch_input(
+        input_: list[dict[str, Any]] | dict[str, Any],
+    ) -> tuple[dict[str, Any], Any | None]:
+        if isinstance(input_, list):
+            return concat_batch(input_)
+        return input_, None
 
     def _prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_

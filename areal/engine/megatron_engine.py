@@ -92,8 +92,10 @@ from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
     broadcast_tensor,
+    concat_batch,
     pack_tensor_dict,
     pad_mb_list,
+    split_batch,
     split_padded_tensor_dict_into_mb_list,
     unpad_logits,
 )
@@ -731,15 +733,17 @@ class MegatronEngine(TrainEngine):
 
     def train_batch(
         self,
-        input_: dict[str, Any],
+        input_: list[dict[str, Any]] | dict[str, Any],
         loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         self._ensure_ready()
         self.optimizer_zero_grad()
 
+        input_batched, _ = self._normalize_batch_input(input_)
+
         # Step 1: Prepare micro-batches
-        mb_list = self._prepare_mb_list(input_).to(self.device)
+        mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
         # Step 2: Compute total loss weight
         total_loss_weight = compute_total_loss_weight(
@@ -771,14 +775,16 @@ class MegatronEngine(TrainEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: dict[str, Any],
+        input_: list[dict[str, Any]] | dict[str, Any],
         loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         self._ensure_ready()
 
+        input_batched, _ = self._normalize_batch_input(input_)
+
         # Step 1: Prepare micro-batches
-        mb_list = self._prepare_mb_list(input_).to(self.device)
+        mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
         # Step 2: Compute total loss weight
         total_loss_weight = compute_total_loss_weight(
@@ -807,21 +813,33 @@ class MegatronEngine(TrainEngine):
     @torch.no_grad()
     def forward_batch(
         self,
-        input_: dict[str, Any],
+        input_: list[dict[str, Any]] | dict[str, Any],
         output_seqlens: list[int] | None = None,
-        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
-    ) -> torch.Tensor:
+        aggregate_fn: Callable[[list[torch.Tensor]], torch.Tensor] = torch.cat,
+    ) -> torch.Tensor | list[torch.Tensor]:
         self._ensure_ready()
 
+        input_batched, meta = self._normalize_batch_input(input_)
+
         # Step 1: Prepare sequence lengths
-        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
+        if meta is not None:
+            assert isinstance(input_, list)
+            inferred_seqlens = [d["attention_mask"].shape[-1] for d in input_]
+            if output_seqlens is not None and output_seqlens != inferred_seqlens:
+                raise ValueError(
+                    f"output_seqlens mismatch for list input: "
+                    f"given {output_seqlens}, "
+                    f"inferred {inferred_seqlens} from attention_mask shapes."
+                )
+            output_seqlens = inferred_seqlens
+        cu_seqlens = pack_tensor_dict(input_batched)["cu_seqlens"]
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
         assert output_seqlens is not None
         batch_size = len(output_seqlens)
 
         # Step 2: Prepare micro-batches
-        mb_list = self._prepare_mb_list(input_).to(self.device)
+        mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
         # Step 3: Forward using Megatron's pipeline function, collecting results
         outputs: list[torch.Tensor] = []
@@ -847,7 +865,9 @@ class MegatronEngine(TrainEngine):
             src_rank=mpu.get_pipeline_model_parallel_last_rank(),
             group=mpu.get_pipeline_model_parallel_group(),
         )
-        return res
+        if meta is None:
+            return res
+        return split_batch(res, meta)
 
     def export_stats(self) -> dict[str, float]:
         data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
@@ -1115,6 +1135,14 @@ class MegatronEngine(TrainEngine):
                 "Rollout engine not connected. Call connect_engine()"
                 " before using rollout/update_weight methods."
             )
+
+    @staticmethod
+    def _normalize_batch_input(
+        input_: list[dict[str, Any]] | dict[str, Any],
+    ) -> tuple[dict[str, Any], Any | None]:
+        if isinstance(input_, list):
+            return concat_batch(input_)
+        return input_, None
 
     def _ensure_ready(self) -> None:
         if self.is_offload:
