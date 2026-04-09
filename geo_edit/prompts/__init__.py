@@ -14,6 +14,11 @@ from geo_edit.prompts.system_prompts import (
     TOOL_EXECUTION_FAILURE_PROMPT,
     get_system_prompt,
     build_tool_system_prompt,
+    # Unified user prompt
+    USER_PROMPT,
+    DATASET_TASK_TYPES,
+    DEFAULT_OUTPUT_FORMAT,
+    build_user_message,
     # Iterative sampling prompts
     TRANSITION_PHRASES,
     ITERATIVE_EXTENDED_REASONING_PROMPT,
@@ -47,6 +52,11 @@ __all__ = [
     "ITERATIVE_EXTENDED_REASONING_PROMPT",
     "ITERATIVE_FINAL_ANSWER_PROMPT",
     "contains_transition_phrase",
+    # Unified user prompt
+    "USER_PROMPT",
+    "DATASET_TASK_TYPES",
+    "DEFAULT_OUTPUT_FORMAT",
+    "build_user_message",
     # Eval prompts
     "EVAL_SYSTEM_PROMPT",
     "EVAL_QUERY_PROMPT",

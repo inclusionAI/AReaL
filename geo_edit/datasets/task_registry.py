@@ -4,6 +4,11 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
+from geo_edit.prompts.system_prompts import (
+    DATASET_TASK_TYPES,
+    DEFAULT_OUTPUT_FORMAT,
+    build_user_message,
+)
 from geo_edit.datasets.input_template import (
     BABYVISION_INPUT_TEMPLATE,
     BABYVISION_NOTOOL_INPUT_TEMPLATE,
@@ -125,7 +130,8 @@ class DatasetSpec:
         return self.judge_prompt
 
     def build_prompt(
-        self, item: Mapping[str, Any], use_tools: bool, separated: bool = False
+        self, item: Mapping[str, Any], use_tools: bool, separated: bool = False,
+        unified: bool = False,
     ) -> str:
         values: Dict[str, Any] = {}
         for template_key, source in self.template_fields.items():
@@ -133,6 +139,18 @@ class DatasetSpec:
                 values[template_key] = source(item)
             else:
                 values[template_key] = item[source] if source in item else ""
+
+        if unified:
+            question = values.get("question", values.get("prompt", ""))
+            task_type = DATASET_TASK_TYPES.get(self.name, "visual question answering")
+            output_format = self.answer_format or DEFAULT_OUTPUT_FORMAT
+            return build_user_message(
+                question=question,
+                num_images=0,  # image prefix handled separately by caller
+                task_type=task_type,
+                output_format=output_format,
+            )
+
         # Choose template based on mode
         if separated and self.separated_prompt_template:
             template = self.separated_prompt_template

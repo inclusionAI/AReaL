@@ -1,6 +1,8 @@
 """System prompts for main agents."""
 
 from __future__ import annotations
+import re
+
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -59,10 +61,56 @@ this problem. Your reasoning should:
 3. If there are errors, explain what went wrong and
 provide the correct reasoning
 4. Provide the final answer
+Use natural expressions like 'let me think' or 'hmm'
+when helpful, but keep it concise. It's encouraged
+to use self-reflection or verification especially in the
+verifying tool output in the reasoning process.
 Provide your detailed reasoning between <think>
-and </think> tags, then give your final answer 
+and </think> tags, then give your final answer
 between <answer> and </answer> tags.
+Output format: {output_format}
 '''
+
+
+# data_source -> human-readable task type
+DATASET_TASK_TYPES = {
+    "chartqa": "chart comprehension",
+    "chartqa_rl": "chart comprehension",
+    "chartqapro": "chart comprehension",
+    "cartomapqa_mfs": "map feature selection",
+    "cartomapqa_stmf_presence": "map feature presence",
+    "cartomapqa_stmf_counting": "map feature counting",
+    "cartomapqa_stmf_name_listing": "map feature name listing",
+    "cartomapqa_mtmf": "map type and feature identification",
+    "cartomapqa_rle": "route length estimation",
+    "cartomapqa_mml": "map marker localization",
+    "cartomapqa_srn": "sequential route navigation",
+    "mapeval_visual": "map visual question answering",
+    "reason_map_plus": "map reasoning",
+}
+
+DEFAULT_OUTPUT_FORMAT = "Provide the final answer inside <answer> and </answer> tags."
+
+
+def build_user_message(
+    question: str,
+    num_images: int = 1,
+    task_type: str = "visual question answering",
+    output_format: str = DEFAULT_OUTPUT_FORMAT,
+) -> str:
+    """Build the canonical user message for SFT/RL/inference.
+
+    Prepends image observation placeholders, then formats USER_PROMPT.
+    Single source of truth for user messages across all pipelines.
+    """
+    cleaned_q = re.sub(r"^(Question:\s*)+", "", question.strip()).strip()
+    image_prefix = "".join(f"Observation {idx}:\n<image>\n" for idx in range(num_images))
+    formatted = USER_PROMPT.strip().format(
+        task_type=task_type,
+        Question=cleaned_q,
+        output_format=output_format,
+    )
+    return image_prefix + formatted
 
 
 VLLM_FORCE_TOOL_CALL_PROMPT = """
