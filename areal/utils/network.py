@@ -173,6 +173,7 @@ def find_free_ports(
 def is_port_free(port: int) -> bool:
     """
     Check if a port is free by attempting to bind to it.
+    Checks both IPv4 and IPv6 to avoid conflicts on dual-stack hosts.
 
     Args:
         port: Port number to check
@@ -180,21 +181,16 @@ def is_port_free(port: int) -> bool:
     Returns:
         True if port is free, False otherwise
     """
-    # Check TCP
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("", port))
-    except OSError:
-        return False
-    finally:
-        sock.close()
-
-    # Check UDP
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.bind(("", port))
-        return True
-    except OSError:
-        return False
-    finally:
-        sock.close()
+    for family, bind_addr in ((socket.AF_INET, ""), (socket.AF_INET6, "::")):
+        for sock_type in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
+            try:
+                sock = socket.socket(family, sock_type)
+                if family == socket.AF_INET6:
+                    # Only check IPv6, don't inherit IPv4 dual-stack binding
+                    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                sock.bind((bind_addr, port))
+            except OSError:
+                return False
+            finally:
+                sock.close()
+    return True

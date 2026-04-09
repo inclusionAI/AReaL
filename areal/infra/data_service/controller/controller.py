@@ -20,7 +20,7 @@ import aiohttp
 from areal.api.scheduler_api import Job
 from areal.infra.data_service.controller.config import DataServiceConfig
 from areal.utils import logging
-from areal.utils.network import format_hostport
+from areal.utils.network import format_hostport, get_loopback_ip
 
 if TYPE_CHECKING:
     from areal.api.scheduler_api import Scheduler, Worker
@@ -159,14 +159,21 @@ class DataController:
 
                 results = await asyncio.gather(*worker_tasks, router_task)
 
+                # FIX: Use loopback for same-node inter-service communication.
+                # Router and Gateway are always on guard_addr_0 (same node).
+                # Worker addrs keep external IP for potential cross-node access.
+                loopback = get_loopback_ip()
+
                 for host, port in results[:-1]:
                     self._worker_addrs.append(f"http://{format_hostport(host, port)}")
                 router_host, router_port = results[-1]
-                self._router_addr = (
-                    f"http://{format_hostport(router_host, router_port)}"
-                )
+                self._router_addr = f"http://{format_hostport(loopback, router_port)}"
                 logger.info("DataWorkers: %s", self._worker_addrs)
-                logger.info("Router: %s", self._router_addr)
+                logger.info(
+                    "Router: %s (external: %s)",
+                    self._router_addr,
+                    f"http://{format_hostport(router_host, router_port)}",
+                )
 
                 # Wave 2: Fork Gateway + Register workers with Router
                 async def _register_workers() -> None:
@@ -201,7 +208,8 @@ class DataController:
                     _register_workers(),
                 )
                 gw_host, gw_port = gw_result
-                self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
+                # FIX: Gateway also on same node, use loopback
+                self._gateway_addr = f"http://{format_hostport(loopback, gw_port)}"
                 logger.info("Gateway: %s", self._gateway_addr)
         except Exception:
             # Rollback: kill forked services and delete scheduler workers
@@ -408,7 +416,11 @@ class DataController:
         host = alloc_data["host"]
         port = alloc_data["ports"][0]
 
-        cmd = list(raw_cmd) + ["--host", host, "--port", str(port)]
+        # FIX: Bind to all interfaces so both loopback and external connections work.
+        # Previously passed the specific external IPv6 (e.g., fdbd:dc05:13::28),
+        # which caused same-node traffic to traverse the external interface
+        # where an infrastructure proxy would intercept and reject requests.
+        cmd = list(raw_cmd) + ["--host", "0.0.0.0", "--port", str(port)]
 
         async with session.post(
             f"{guard_addr}/fork",
@@ -423,8 +435,10 @@ class DataController:
 
         self._forked_services.append((guard_addr, role, worker_index))
 
-        addr = f"http://{format_hostport(host, port)}"
-        await self._async_wait_for_service(session, f"{addr}{health_path}", role)
+        # FIX: Health check via loopback to bypass proxy
+        loopback = get_loopback_ip()
+        health_addr = f"http://{format_hostport(loopback, port)}"
+        await self._async_wait_for_service(session, f"{health_addr}{health_path}", role)
 
         return host, port
 
