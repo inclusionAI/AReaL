@@ -1661,6 +1661,8 @@ class SGLangConfig:
             args.pop("max_loaded_loras", None)
         if pp_size > 1:
             args["disable_custom_all_reduce"] = True
+            logger.info(f"SGLangConfig - PP>1 detected, setting disable_custom_all_reduce=True") 
+            logger.info(f"SGLangConfig - pp_size={pp_size}, tp_size={tp_size}") 
         return args
 
 

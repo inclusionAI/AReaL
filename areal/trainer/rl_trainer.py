@@ -193,6 +193,7 @@ class PPOTrainer:
         else:
             assert train_dataset is not None
             if is_single_controller() and isinstance(train_dataset, RDataset):
+                logger.info("PPOTrainer.__init__ - Starting DataController initialization")
                 ds_cfg = DataServiceConfig.from_dataset_config(config.train_dataset)
                 assert self.scheduler is not None
                 controller = DataController(ds_cfg, self.scheduler)
@@ -209,6 +210,7 @@ class PPOTrainer:
                     drop_last=config.train_dataset.drop_last,
                 )
                 self._train_rdataset = train_dataset
+                logger.info("PPOTrainer.__init__ - DataController initialized, proceeding to actor initialization")
 
             self.train_dataloader = self._create_dataloader(
                 train_dataset,
@@ -258,7 +260,9 @@ class PPOTrainer:
         # Initialize engines first — the scheduler must know about roles
         # before the data controller can colocate with them.
         engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
+        logger.info("PPOTrainer.__init__ - Starting actor.initialize()")
         self.actor.initialize(**engine_init_kwargs, role="actor")
+        logger.info("PPOTrainer.__init__ - actor.initialize() completed")
         if self.critic is not None:
             self.critic.initialize(**engine_init_kwargs, role="critic")
         if self.ref is not None:

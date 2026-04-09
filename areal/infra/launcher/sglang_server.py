@@ -187,6 +187,9 @@ class SGLangServerWrapper:
                 node_rank=node_rank,
                 pp_size=self.allocation_mode.gen.pp_size,
             )
+            logger.info(f"SGLang Server Launch - cmd={cmd}") 
+            logger.info(f"PP config - pp_size={self.allocation_mode.gen.pp_size}, tp_size={self.allocation_mode.gen.tp_size}") 
+            logger.info(f"disable_custom_all_reduce={config.disable_custom_all_reduce}") 
             launch_server_args.append((cmd, host_ip, server_port, node_rank))
             server_addresses.append(f"http://{format_hostport(host_ip, server_port)}")
 

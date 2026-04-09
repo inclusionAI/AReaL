@@ -895,6 +895,17 @@ class RemoteInfEngine(InferenceEngine):
         pp_rank : int | None
             If provided (pp_size > 1), create a per-PP-rank NCCL group.
         """
+        world_size = os.environ.get("WORLD_SIZE", "unknown")
+        try:
+            import torch.distributed as dist
+            if dist.is_initialized():
+                world_size = dist.get_world_size()
+        except Exception:
+            pass
+
+        logger.info(f"RemoteInfEngine.init_weights_update_group - meta.pp_rank={meta.pp_rank}, meta.param_names={meta.param_names}") 
+        logger.info(f"pp_rank={pp_rank}, world_size={world_size}") 
+
         assert meta.type == "xccl"
 
         fut = get_executor().submit(

@@ -1344,6 +1344,25 @@ class MegatronEngine(TrainEngine):
           - ranks 1..N : the inference workers belonging to the same PP stage
             across all SGLang servers (N = num_servers * tp_size).
         """
+        pp_rank = os.environ.get("RANK", "unknown")
+        pp_size = os.environ.get("WORLD_SIZE", "unknown")
+        world_size = os.environ.get("WORLD_SIZE", "unknown")
+        try:
+            from areal.engine.megatron_core.utils import mpu
+            if mpu.is_pipeline_model_parallel_initialized():
+                pp_rank = mpu.get_pipeline_model_parallel_rank()
+                pp_size = mpu.get_pipeline_model_parallel_world_size()
+            import torch.distributed as dist
+            if dist.is_initialized():
+                world_size = dist.get_world_size()
+        except Exception:
+            pass
+
+        logger = getattr(self, "logger", logging.getLogger(__name__))
+        logger.info(f"PP NCCL Group Init - pp_rank={pp_rank}, pp_size={pp_size}, world_size={world_size}") 
+        logger.info(f"Env vars - MASTER_ADDR={os.environ.get('MASTER_ADDR')}, MASTER_PORT={os.environ.get('MASTER_PORT')}") 
+        logger.info(f"Env vars - TORCHELASTIC_USE_AGENT_STORE={os.environ.get('TORCHELASTIC_USE_AGENT_STORE')}") 
+
         assert meta.type == "xccl"
 
         # Reset weight meta with local info
