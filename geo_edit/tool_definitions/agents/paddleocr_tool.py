@@ -1,10 +1,15 @@
 """PaddleOCR Tool Agent - Optical Character Recognition using PaddleOCR-VL-1.5."""
+
 import os
 import base64
 import re
 import json
 from io import BytesIO
 from typing import Optional
+
+import PIL
+
+PIL.Image.MAX_IMAGE_PIXELS = None  # Disable DecompressionBombError for large images
 
 from geo_edit.environment.tool_agents.actor import BaseToolModelActor
 from geo_edit.utils.logger import setup_logger
@@ -55,21 +60,25 @@ class PaddleOCRActor(BaseToolModelActor):
         model_path = agent_config["model_name_or_path"]
 
         logger.info("Loading PaddleOCR-VL model with vLLM: %s", model_path)
-        os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"]="True"
+        os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
         # Initialize vLLM with PaddleOCR-VL model
         self.llm = LLM(
             model=model_path,
             trust_remote_code=True,
             tensor_parallel_size=agent_config.get("tensor_parallel_size", 1),
             max_model_len=agent_config.get("max_model_len", max_model_len),
-            gpu_memory_utilization=agent_config.get("gpu_memory_utilization", gpu_memory_utilization),
+            gpu_memory_utilization=agent_config.get(
+                "gpu_memory_utilization", gpu_memory_utilization
+            ),
             limit_mm_per_prompt={"image": 10},  # Allow up to 10 images per prompt
         )
 
         self.max_new_tokens = agent_config.get("max_tokens", 4096)
         self._initialized = True
 
-        logger.info("PaddleOCR-VL (vLLM) initialized on GPU %s: %s", self.gpu_ids, model_path)
+        logger.info(
+            "PaddleOCR-VL (vLLM) initialized on GPU %s: %s", self.gpu_ids, model_path
+        )
 
     def analyze(
         self,
@@ -93,13 +102,18 @@ class PaddleOCRActor(BaseToolModelActor):
         from PIL import Image
 
         # Extract parameters
-        task = kwargs.get("task", "ocr").strip().lower()  # ocr, table, formula, chart, spotting, seal
+        task = (
+            kwargs.get("task", "ocr").strip().lower()
+        )  # ocr, table, formula, chart, spotting, seal
 
         if task not in TASK_PROMPTS:
-            return json.dumps({
-                "error": f"Invalid task: {task}. Must be one of: {list(TASK_PROMPTS.keys())}",
-                "task": task
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "error": f"Invalid task: {task}. Must be one of: {list(TASK_PROMPTS.keys())}",
+                    "task": task,
+                },
+                ensure_ascii=False,
+            )
 
         # Decode image
         image_bytes = base64.b64decode(image_b64)
@@ -109,7 +123,11 @@ class PaddleOCRActor(BaseToolModelActor):
         orig_w, orig_h = image.size
         spotting_upscale_threshold = 1500
 
-        if task == "spotting" and orig_w < spotting_upscale_threshold and orig_h < spotting_upscale_threshold:
+        if (
+            task == "spotting"
+            and orig_w < spotting_upscale_threshold
+            and orig_h < spotting_upscale_threshold
+        ):
             process_w, process_h = orig_w * 2, orig_h * 2
             try:
                 resample_filter = Image.Resampling.LANCZOS
@@ -124,9 +142,12 @@ class PaddleOCRActor(BaseToolModelActor):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{image_b64}"},
+                        },
                         {"type": "text", "text": TASK_PROMPTS[task]},
-                    ]
+                    ],
                 }
             ]
 
@@ -167,29 +188,40 @@ class PaddleOCRActor(BaseToolModelActor):
                     ys = [locs[1], locs[3], locs[5], locs[7]]
                     x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
 
-                    lines.append({
-                        "text": text,
-                        "bbox": [x1, y1, x2, y2],
-                    })
+                    lines.append(
+                        {
+                            "text": text,
+                            "bbox": [x1, y1, x2, y2],
+                        }
+                    )
 
-                return json.dumps({
-                    "task": task,
-                    "text": lines,
-                }, ensure_ascii=False)
+                return json.dumps(
+                    {
+                        "task": task,
+                        "text": lines,
+                    },
+                    ensure_ascii=False,
+                )
 
             # Return formatted result
-            return json.dumps({
-                "task": task,
-                "text": result.strip(),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "task": task,
+                    "text": result.strip(),
+                },
+                ensure_ascii=False,
+            )
 
         except Exception as e:
             logger.error("PaddleOCR-VL failed: %s", e)
-            return json.dumps({
-                "error": str(e),
-                "task": task,
-                "text": "",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "error": str(e),
+                    "task": task,
+                    "text": "",
+                },
+                ensure_ascii=False,
+            )
 
     def health_check(self) -> dict:
         """Return health status of the actor."""
@@ -204,6 +236,7 @@ RETURN_TYPE = "text"
 
 
 # ============ Map OCR Post-processing Functions ============
+
 
 def filter_map_text(text_results: list) -> list:
     """Filter map OCR results to keep meaningful text only.
@@ -220,13 +253,13 @@ def filter_map_text(text_results: list) -> list:
     for item in text_results:
         text = item["text"].strip()
         # 1. Filter pure numbers (including decimals)
-        if re.match(r'^[\d.,\s]+$', text):
+        if re.match(r"^[\d.,\s]+$", text):
             continue
         # 2. Filter single characters (usually noise)
         if len(text) <= 1:
             continue
         # 3. Filter pure symbols
-        if re.match(r'^[^\w\u4e00-\u9fff]+$', text):
+        if re.match(r"^[^\w\u4e00-\u9fff]+$", text):
             continue
         filtered.append(item)
     return filtered
@@ -266,7 +299,7 @@ def merge_nearby_text(text_results: list, distance_threshold: int = 50) -> list:
                 min(curr_bbox[0], next_bbox[0]),
                 min(curr_bbox[1], next_bbox[1]),
                 max(curr_bbox[2], next_bbox[2]),
-                max(curr_bbox[3], next_bbox[3])
+                max(curr_bbox[3], next_bbox[3]),
             ]
         else:
             merged.append(current)
@@ -303,13 +336,13 @@ def filter_map_text_string(text: str) -> str:
         if not line:
             continue
         # 1. Filter pure numbers (including decimals)
-        if re.match(r'^[\d.,\s]+$', line):
+        if re.match(r"^[\d.,\s]+$", line):
             continue
         # 2. Filter single characters (usually noise)
         if len(line) <= 1:
             continue
         # 3. Filter pure symbols
-        if re.match(r'^[^\w\u4e00-\u9fff]+$', line):
+        if re.match(r"^[^\w\u4e00-\u9fff]+$", line):
             continue
         filtered_lines.append(line)
     return "\n".join(filtered_lines)
@@ -325,13 +358,13 @@ DECLARATIONS = {
             "properties": {
                 "image_index": {
                     "type": "integer",
-                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0).",
                 }
             },
-            "required": ["image_index"]
+            "required": ["image_index"],
         },
         "fixed_task": "ocr",
-        "return_type": "text"
+        "return_type": "text",
     },
     "table_ocr": {
         "name": "table_ocr",
@@ -341,13 +374,13 @@ DECLARATIONS = {
             "properties": {
                 "image_index": {
                     "type": "integer",
-                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0).",
                 }
             },
-            "required": ["image_index"]
+            "required": ["image_index"],
         },
         "fixed_task": "table",
-        "return_type": "text"
+        "return_type": "text",
     },
     "formula_ocr": {
         "name": "formula_ocr",
@@ -357,13 +390,13 @@ DECLARATIONS = {
             "properties": {
                 "image_index": {
                     "type": "integer",
-                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0).",
                 }
             },
-            "required": ["image_index"]
+            "required": ["image_index"],
         },
         "fixed_task": "formula",
-        "return_type": "text"
+        "return_type": "text",
     },
     "chart_text_ocr": {
         "name": "chart_text_ocr",
@@ -373,13 +406,13 @@ DECLARATIONS = {
             "properties": {
                 "image_index": {
                     "type": "integer",
-                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0).",
                 }
             },
-            "required": ["image_index"]
+            "required": ["image_index"],
         },
         "fixed_task": "chart",
-        "return_type": "text"
+        "return_type": "text",
     },
     "text_spotting": {
         "name": "text_spotting",
@@ -389,13 +422,13 @@ DECLARATIONS = {
             "properties": {
                 "image_index": {
                     "type": "integer",
-                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0).",
                 }
             },
-            "required": ["image_index"]
+            "required": ["image_index"],
         },
         "fixed_task": "spotting",
-        "return_type": "text"
+        "return_type": "text",
     },
     "seal_ocr": {
         "name": "seal_ocr",
@@ -405,13 +438,13 @@ DECLARATIONS = {
             "properties": {
                 "image_index": {
                     "type": "integer",
-                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0).",
                 }
             },
-            "required": ["image_index"]
+            "required": ["image_index"],
         },
         "fixed_task": "seal",
-        "return_type": "text"
+        "return_type": "text",
     },
     "map_text_ocr": {
         "name": "map_text_ocr",
@@ -421,13 +454,13 @@ DECLARATIONS = {
             "properties": {
                 "image_index": {
                     "type": "integer",
-                    "description": "The index of the image to analyze (e.g., 0 for Observation 0)."
+                    "description": "The index of the image to analyze (e.g., 0 for Observation 0).",
                 }
             },
-            "required": ["image_index"]
+            "required": ["image_index"],
         },
         "fixed_task": "ocr",
         "filter_map": True,
-        "return_type": "text"
-    }
+        "return_type": "text",
+    },
 }

@@ -39,6 +39,7 @@ echo "Launching ${#AGENT_LIST[@]} tool servers..."
 # Start each agent on its own port
 BACKEND_PORT=$((PORT + 1))
 BACKEND_URLS=""
+TOOL_TYPES=""
 
 for agent in "${AGENT_LIST[@]}"; do
     lsof -ti tcp:$BACKEND_PORT | xargs -r kill -9 2>/dev/null || true
@@ -49,12 +50,14 @@ for agent in "${AGENT_LIST[@]}"; do
         > "$LOG_DIR/${agent}.log" 2>&1 &
     echo "$agent  port=$BACKEND_PORT  pid=$!"
     BACKEND_URLS="${BACKEND_URLS:+$BACKEND_URLS,}\"http://127.0.0.1:$BACKEND_PORT\""
+    TOOL_TYPES="${TOOL_TYPES:+$TOOL_TYPES,}\"$agent\""
     BACKEND_PORT=$((BACKEND_PORT + 1))
 done
 
 # Start router on the main port, forwarding to all backends
 sleep 5
 export VT_WORKER_BASE_URLS="[$BACKEND_URLS]"
+export VT_WORKER_TOOL_TYPES="[$TOOL_TYPES]"
 python3 -c "
 import uvicorn
 from verl_tool.servers.serve import router_factory

@@ -83,6 +83,10 @@ class GeoEditToolBase(BaseTool):
             if "name" not in parsed:
                 return {}, False
             if parsed["name"] not in self.function_tools:
+                logger.warning(
+                    f"[{self.tool_type}] Tool name '{parsed['name']}' not in registered function_tools. "
+                    f"Available tools: {sorted(self.function_tools.keys())}"
+                )
                 return {}, False
             return parsed, True
         except (json.JSONDecodeError, KeyError):

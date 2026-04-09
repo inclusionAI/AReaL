@@ -222,6 +222,31 @@ class AsyncToolManager:
             except Exception as e:
                 logger.debug(f"MCP interface parse error: {e}")
 
+        # Extract attempted tool name for diagnostic logging
+        attempted_tool = None
+        try:
+            import re
+            action_match = re.search(r'<action>(.*?)</action>', action, re.DOTALL | re.IGNORECASE)
+            if action_match:
+                import json as _json
+                parsed = _json.loads(action_match.group(1).strip())
+                attempted_tool = parsed.get("name")
+        except Exception:
+            pass
+        
+        active_tools = [t for t in self.tools.keys() if t != "finish"]
+        all_function_tools = set()
+        for tool in self.tools.values():
+            if hasattr(tool, 'function_tools'):
+                all_function_tools.update(tool.function_tools.keys())
+        
+        logger.warning(
+            f"No tool matched for action. "
+            f"Attempted tool name: '{attempted_tool}', "
+            f"action preview: '{action[-200:]}'. "
+            f"Active tool types: {active_tools}, "
+            f"registered function names: {sorted(all_function_tools) if all_function_tools else 'N/A'}"
+        )
         return None
     
     async def identify_tool_types_batch(self, actions: List[str], extra_fields: List[Dict[str, Any]]) -> List[Optional[str]]:
@@ -336,6 +361,12 @@ class AsyncToolManager:
             "invalid_reason": "No valid tool found for action",
             "available_tools": usage_instructions
         }
+        
+        if indices:
+            logger.warning(
+                f"[INVALID_ACTIONS] {len(indices)} action(s) could not be matched to any tool. "
+                f"Available tool types: {[t for t in self.tools.keys() if t != 'finish']}"
+            )
         
         for idx in indices:
             observations[idx] = error_response

@@ -422,6 +422,23 @@ class VerlToolAgentLoop(AgentLoopBase):
         tool_interact_info['processing_time_ms'] = processing_time_ms
         tool_interact_info['success'] = success
         
+        if not is_valid_action:
+            # Extract attempted tool name from the action for diagnostics
+            attempted_tool = None
+            try:
+                action_match = re.search(r'"name"\s*:\s*"([^"]+)"', action)
+                if action_match:
+                    attempted_tool = action_match.group(1)
+            except Exception:
+                pass
+            invalid_reason = tool_interact_info.get('invalid_reason', 'unknown')
+            logger.warning(
+                f"[INVALID_TOOL_CALL] traj_id={traj_id}, "
+                f"attempted_tool='{attempted_tool}', "
+                f"invalid_reason='{invalid_reason}', "
+                f"action_preview='{action[-150:]}'"
+            )
+        
         for key in response.keys():
             if key not in ['observations', 'dones', 'valids', 'processing_time_ms', 'success'] and isinstance(response[key], float):
                 tool_interact_info[key] = response[key]
