@@ -66,6 +66,10 @@ def run_ppo(config) -> None:
         # Unset ROCR_VISIBLE_DEVICES on all nodes to avoid conflict with CUDA_VISIBLE_DEVICES
         default_runtime_env.setdefault("env_vars", {})
         default_runtime_env["env_vars"]["ROCR_VISIBLE_DEVICES"] = ""
+        # Propagate WANDB env vars to all Ray workers for logging
+        for wandb_var in ("WANDB_API_KEY", "WANDB_BASE_URL"):
+            if os.environ.get(wandb_var):
+                default_runtime_env["env_vars"][wandb_var] = os.environ[wandb_var]
         os.environ.pop("ROCR_VISIBLE_DEVICES", None)
         ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
         runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
