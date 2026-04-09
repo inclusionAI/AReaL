@@ -509,21 +509,31 @@ class DataController:
         payload: dict[str, Any],
         timeout: float = 60,
     ) -> dict[str, Any]:
+        import logging 
+        _ctrl_debug = logging.getLogger("DataController.DEBUG") 
         url = f"{self._gateway_addr}{endpoint}"
-        try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=timeout)
-            ) as session:
-                async with session.post(
-                    url,
-                    json=payload,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                ) as resp:
-                    if resp.status >= 400:
-                        text = await resp.text()
-                        raise RuntimeError(
-                            f"Gateway {endpoint} returned {resp.status}: {text}"
-                        )
-                    return await resp.json()
-        except aiohttp.ClientError as exc:
-            raise RuntimeError(f"Failed to POST {endpoint}: {exc}") from exc
+        _ctrl_debug.error(f"[CTRL-DEBUG] POST {url}, timeout={timeout}") 
+        async with aiohttp.ClientSession( 
+            timeout=aiohttp.ClientTimeout(total=timeout) 
+        ) as session: 
+            try: 
+                async with session.post( 
+                    url, json=payload, 
+                    headers={"Authorization": f"Bearer {api_key}"}, 
+                ) as resp: 
+                    text = await resp.text() 
+                    _ctrl_debug.error( 
+                        f"[CTRL-DEBUG] Response status={resp.status}, " 
+                        f"body={text[:500]}" 
+                    ) 
+                    if resp.status >= 400: 
+                        raise RuntimeError( 
+                            f"Gateway {endpoint} returned {resp.status}: {text}" 
+                        ) 
+                    return json.loads(text) 
+            except aiohttp.ClientError as e: 
+                _ctrl_debug.error( 
+                    f"[CTRL-DEBUG] Connection error to {url}: " 
+                    f"{type(e).__name__}: {e}" 
+                ) 
+                raise 

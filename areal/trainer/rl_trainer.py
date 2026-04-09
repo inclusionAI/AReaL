@@ -193,22 +193,45 @@ class PPOTrainer:
         else:
             assert train_dataset is not None
             if is_single_controller() and isinstance(train_dataset, RDataset):
-                logger.info("PPOTrainer.__init__ - Starting DataController initialization")
+                import logging 
+                _trainer_debug = logging.getLogger("PPOTrainer.DEBUG") 
+                
+                _trainer_debug.error("[DEBUG] Creating DataController...") 
                 ds_cfg = DataServiceConfig.from_dataset_config(config.train_dataset)
                 assert self.scheduler is not None
                 controller = DataController(ds_cfg, self.scheduler)
-                controller.initialize(
-                    role="data", num_dataset_workers=ds_cfg.num_workers
-                )
+                
+                _trainer_debug.error("[DEBUG] Calling controller.initialize()...") 
+                controller.initialize(role="data", num_dataset_workers=ds_cfg.num_workers)
+                _trainer_debug.error( 
+                    f"[DEBUG] controller.initialize() OK, " 
+                    f"gateway={controller._gateway_addr}, " 
+                    f"router={controller._router_addr}, " 
+                    f"workers={controller._worker_addrs}" 
+                ) 
                 self.data_controller = controller
-                train_dataset.connect(
-                    controller,
-                    dataset_id=f"{config.experiment_name}_{config.trial_name}_train",
-                    tokenizer_or_processor_path=config.tokenizer_path,
-                    seed=config.seed,
-                    shuffle=config.train_dataset.shuffle,
-                    drop_last=config.train_dataset.drop_last,
-                )
+                
+                dataset_id = f"{config.experiment_name}_{config.trial_name}_train" 
+                _trainer_debug.error( 
+                    f"[DEBUG] About to call train_dataset.connect(), " 
+                    f"dataset_id={dataset_id}" 
+                ) 
+                try: 
+                    train_dataset.connect( 
+                        controller, 
+                        dataset_id=dataset_id, 
+                        tokenizer_or_processor_path=config.tokenizer_path, 
+                        seed=config.seed, 
+                        shuffle=config.train_dataset.shuffle, 
+                        drop_last=config.train_dataset.drop_last, 
+                    ) 
+                    _trainer_debug.error("[DEBUG] train_dataset.connect() SUCCESS") 
+                except Exception as e: 
+                    _trainer_debug.error( 
+                        f"[DEBUG] train_dataset.connect() FAILED: " 
+                        f"{type(e).__name__}: {e}" 
+                    ) 
+                    raise 
                 self._train_rdataset = train_dataset
                 logger.info("PPOTrainer.__init__ - DataController initialized, proceeding to actor initialization")
 

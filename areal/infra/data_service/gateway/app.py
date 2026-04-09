@@ -32,14 +32,28 @@ async def _get_all_worker_addrs(
     router_addr: str, admin_key: str, timeout: float
 ) -> list[str]:
     """Get all worker addresses from the router."""
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(
-            f"{router_addr}/workers",
-            headers={"Authorization": f"Bearer {admin_key}"},
-        )
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Router error: {resp.text}")
-        return [w["addr"] for w in resp.json()["workers"]]
+    import logging 
+    _gw_debug = logging.getLogger("Gateway.DEBUG") 
+    url = f"{router_addr}/workers" 
+    _gw_debug.error(f"[GW-DEBUG] GET {url}") 
+    async with httpx.AsyncClient(timeout=timeout) as client: 
+        try: 
+            resp = await client.get( 
+                url, headers={"Authorization": f"Bearer {admin_key}"} 
+            ) 
+            _gw_debug.error( 
+                f"[GW-DEBUG] Router response: status={resp.status_code}, " 
+                f"body={resp.text[:500]}" 
+            ) 
+            if resp.status_code != 200: 
+                raise HTTPException( 
+                    status_code=502, 
+                    detail=f"Router error: {resp.text}" 
+                ) 
+            return [w["addr"] for w in resp.json()["workers"]] 
+        except httpx.ConnectError as e: 
+            _gw_debug.error(f"[GW-DEBUG] ConnectError to {url}: {e}") 
+            raise
 
 
 async def _broadcast_to_workers(
@@ -95,6 +109,12 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
     # ===== Admin: Register Dataset =====
     @app.post("/v1/datasets/register")
     async def register_dataset(request: Request):
+        import logging 
+        _gw_debug = logging.getLogger("Gateway.DEBUG") 
+        _gw_debug.error( 
+            f"[GW-DEBUG] /v1/datasets/register received, " 
+            f"client={request.client}" 
+        ) 
         require_admin_key(request, config.admin_api_key)
         body = await request.json()
 
