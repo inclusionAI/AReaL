@@ -20,7 +20,12 @@ import shutil
 from collections import Counter
 
 from geo_edit.data_preprocess.trajectory_utils import get_text_from_content
-from geo_edit.prompts.system_prompts import build_tool_system_prompt
+from geo_edit.prompts.system_prompts import (
+    build_tool_system_prompt,
+    build_user_message,
+    DATASET_TASK_TYPES,
+    DEFAULT_OUTPUT_FORMAT,
+)
 from geo_edit.tool_definitions import ToolRouter, format_tool_declarations_text
 
 
@@ -57,7 +62,8 @@ def _get_assistant_text(content) -> str:
 
 
 def convert_trajectory(
-    trajectory, src_dir, dst_images_dir, task_id, system_prompt, tool_definitions_text
+    trajectory, src_dir, dst_images_dir, task_id, system_prompt, tool_definitions_text,
+    data_source="chartqa",
 ):
     """Convert a single trajectory to step-level ShareGPT samples.
 
@@ -92,14 +98,16 @@ def convert_trajectory(
     # Strip all "Observation N:" prefixes from the extracted text
     question_text_clean = re.sub(r"Observation\s+\d+:\s*\n?", "", question_text).strip()
     # Remove duplicate "Question:" prefix (original dataset may already contain it)
-    question_text_clean = re.sub(r"^(Question:\s*)+", "Question: ", question_text_clean)
+    question_text_clean = re.sub(r"^(Question:\s*)+", "", question_text_clean).strip()
 
-    # Build first user message: Observation 0: <image> ... then question
-    # This matches the inference format in async_generate_with_tool_call_api.py
-    first_user_value = ""
-    for idx in range(len(input_image_paths)):
-        first_user_value += f"Observation {idx}:\n<image>\n"
-    first_user_value += question_text_clean
+    # Build first user message using unified prompt template
+    task_type = DATASET_TASK_TYPES.get(data_source, "visual question answering")
+    first_user_value = build_user_message(
+        question=question_text_clean,
+        num_images=len(input_image_paths),
+        task_type=task_type,
+        output_format=DEFAULT_OUTPUT_FORMAT,
+    )
     conversations.append({"from": "human", "value": first_user_value})
     i += 1
 
@@ -371,6 +379,12 @@ def main():
         default="trajectory_sft",
         help="Dataset name used in dataset_info.json (default: trajectory_sft)",
     )
+    parser.add_argument(
+        "--data_source",
+        type=str,
+        default="chartqa",
+        help="Data source name for task_type lookup (default: chartqa)",
+    )
     args = parser.parse_args()
 
     src_root = args.src_dir
@@ -420,6 +434,7 @@ def main():
             task_id,
             system_prompt,
             tool_definitions_text,
+            data_source=args.data_source,
         )
         if not entries:
             stats["conversion_failed"] += 1

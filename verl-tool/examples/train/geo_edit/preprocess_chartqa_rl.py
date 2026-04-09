@@ -11,6 +11,9 @@ import pandas as pd
 from datasets import Dataset, Features, Image as HFImage, Sequence, Value
 from PIL import Image
 
+from geo_edit.prompts.system_prompts import build_user_message, DATASET_TASK_TYPES, DEFAULT_OUTPUT_FORMAT
+from geo_edit.datasets.input_template import CHARTQA_ANSWER_FORMAT
+
 
 SPLIT_INFO_PATH = Path(
     "/storage/openpsi/data/lcy_image_edit/chartqa_sft_data_1third/split_info.json"
@@ -95,9 +98,14 @@ def build_record(task_id: str, system_prompt: str) -> dict[str, Any]:
         raise ValueError(f"empty meta_info.jsonl first line: {meta_info_path}")
 
     meta = json.loads(first_line)
-    question = clean_question(str(meta["question"]))
+    raw_question = str(meta["question"]).strip()
     answer = str(meta["answer"]).strip()
-    user_message = f"Observation 0:\n<image>\n{question}"
+    user_message = build_user_message(
+        question=raw_question,
+        num_images=1,
+        task_type=DATASET_TASK_TYPES.get("chartqa_rl", "chart comprehension"),
+        output_format=CHARTQA_ANSWER_FORMAT,
+    )
 
     return {
         "data_source": "chartqa_rl",
@@ -110,7 +118,7 @@ def build_record(task_id: str, system_prompt: str) -> dict[str, Any]:
         "extra_info": {
             "task_id": task_id,
             "answer": answer,
-            "question": question,
+            "question": raw_question,
         },
     }
 

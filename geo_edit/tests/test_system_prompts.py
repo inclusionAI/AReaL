@@ -157,6 +157,57 @@ class TestSystemPromptConstants:
 
         assert "{task_type}" in USER_PROMPT
         assert "{Question}" in USER_PROMPT
+        assert "{output_format}" in USER_PROMPT
+
+
+class TestBuildUserMessage:
+    """Test build_user_message helper function."""
+
+    def test_single_image_basic(self):
+        from geo_edit.prompts.system_prompts import build_user_message
+
+        result = build_user_message(
+            question="What is shown?",
+            num_images=1,
+            task_type="chart comprehension",
+            output_format="Answer in <answer> tags.",
+        )
+        assert result.startswith("Observation 0:\n<image>\n")
+        assert "What is shown?" in result
+        assert "chart comprehension" in result
+        assert "Answer in <answer> tags." in result
+
+    def test_multi_image(self):
+        from geo_edit.prompts.system_prompts import build_user_message
+
+        result = build_user_message(
+            question="Compare these.",
+            num_images=3,
+            task_type="visual question answering",
+        )
+        assert "Observation 0:\n<image>\n" in result
+        assert "Observation 1:\n<image>\n" in result
+        assert "Observation 2:\n<image>\n" in result
+
+    def test_zero_images(self):
+        from geo_edit.prompts.system_prompts import build_user_message
+
+        result = build_user_message(question="Text only", num_images=0)
+        assert not result.startswith("Observation")
+        assert "Text only" in result
+
+    def test_question_prefix_dedup(self):
+        from geo_edit.prompts.system_prompts import build_user_message
+
+        result = build_user_message(question="Question: What color?", num_images=0)
+        assert "Question: Question:" not in result
+        assert "Question: What color?" in result
+
+    def test_default_output_format(self):
+        from geo_edit.prompts.system_prompts import build_user_message, DEFAULT_OUTPUT_FORMAT
+
+        result = build_user_message(question="Test", num_images=0)
+        assert DEFAULT_OUTPUT_FORMAT in result
 
 
 class TestEvalPrompts:
