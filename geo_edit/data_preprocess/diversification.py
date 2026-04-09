@@ -17,9 +17,45 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from tqdm import tqdm
 
+from geo_edit.data_preprocess.trajectory_utils import get_text_from_content
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+def _format_message(msg: Dict[str, Any]) -> str:
+    """Format a single trajectory message as readable text for LLM context."""
+    role = msg.get("role", "unknown")
+    content = msg.get("content")
+
+    if role == "assistant" and msg.get("tool_calls"):
+        parts = []
+        for tc in msg["tool_calls"]:
+            func = tc.get("function", {})
+            name = func.get("name", "unknown")
+            args = func.get("arguments", "")
+            if isinstance(args, dict):
+                import json as _json
+
+                args = _json.dumps(args, ensure_ascii=False)
+            parts.append(f"[Tool Call] {name}({args})")
+        return "Assistant: " + " ".join(parts)
+
+    text = get_text_from_content(content) if content is not None else ""
+    if role == "tool":
+        return f"Tool Result: {text}"
+
+    label = role.capitalize()
+    return f"{label}: {text}"
+
+
+def _build_context(trajectory: List[Dict[str, Any]], up_to: int) -> str:
+    """Build formatted conversation context from trajectory[0:up_to]."""
+    parts = []
+    for msg in trajectory[:up_to]:
+        formatted = _format_message(msg)
+        if formatted:
+            parts.append(formatted)
+    return "\n\n".join(parts)
 
 
 class PromptType(Enum):
@@ -37,6 +73,7 @@ class ThinkBlock:
     text: str  # Inner text between the tags
     prompt_type: Optional[PromptType] = None
     tool_name: Optional[str] = None  # Extracted from "Tool: xxx"
+    context: str = ""  # Formatted conversation history preceding this block
 
 
 # ── Prompt Templates ─────────────────────────────────────────────────────────
@@ -63,35 +100,53 @@ Original text:
 {text}"""
 
 PROMPT_SUBSEQUENT_TOOL = """\
-Rephrase the following reasoning text where a model decides to call the tool \
-"{tool_name}" after analyzing previous results.
+Below is the conversation history of a geometric analysis model solving a problem, \
+followed by one of its intermediate reasoning blocks where it decides to call \
+the tool "{tool_name}" after analyzing previous results.
+
+Conversation so far:
+{context}
+
+Reasoning block to rewrite:
+{text}
 
 Requirements:
+- Start with a critical analysis of the previous tool call's result: \
+is it correct, reasonable, and useful for solving the problem?
+- If the result seems questionable, note what might be off and how to account for it
+- Then explain why the current information is insufficient and why \
+calling "{tool_name}" next is the right decision
 - Keep the tool name "{tool_name}" exactly as-is in the output
-- Diversify the opening transition phrase (avoid repetitive patterns like \
-"Wait, I think my previous analysis might be incomplete—")
-- Preserve the core logic: why previous results were insufficient and why \
-this new tool is needed
+- Use natural self-reflection phrases (e.g. "Wait, let me verify...", \
+"Hmm, this result suggests...", "I should double-check...")
+- Change sentence structure and word choice compared to the original
 - Maximum output length: {max_len} characters
 - Do NOT include any XML tags like <think>, </think>, <answer>, or <action>
-- Output ONLY the rephrased reasoning text, no explanations
-
-Original text:
-{text}"""
+- Output ONLY the rewritten reasoning text, no explanations"""
 
 PROMPT_FINAL_REASONING = """\
-Rephrase the following final reasoning text that synthesizes analysis results.
+Below is the full conversation history of a geometric analysis model solving \
+a problem, followed by its final reasoning block that synthesizes all results.
+
+Full conversation:
+{context}
+
+Final reasoning block to rewrite:
+{text}
 
 Requirements:
-- Preserve ALL factual data, numbers, measurements, and logical conclusions EXACTLY
-- Diversify transition words, sentence structure, and phrasing
-- Do NOT change any numerical values or the final conclusion
+- Review each tool call and its result: was it necessary? Was the result \
+correct and reliable? Did it contribute useful information?
+- If any tool result appears wrong or unhelpful, explicitly reason about \
+how to correct for it and derive the right answer despite the error
+- Use self-reflection to verify the logical chain from observations to conclusion
+- Preserve ALL factual data, numbers, measurements, and the final conclusion EXACTLY
+- Use natural self-reflection phrases (e.g. "Let me verify this makes sense...", \
+"Looking back at the results...", "I need to reconsider whether...")
+- Change sentence structure and word choice compared to the original
 - Maximum output length: {max_len} characters
 - Do NOT include any XML tags like <think>, </think>, <answer>, or <action>
-- Output ONLY the rephrased reasoning text, no explanations
-
-Original text:
-{text}"""
+- Output ONLY the rewritten reasoning text, no explanations"""
 
 
 # ── Block Extraction & Classification ────────────────────────────────────────
@@ -101,6 +156,7 @@ def extract_think_blocks(trajectory: List[Dict[str, Any]]) -> List[ThinkBlock]:
     """Extract all ``<think>...</think>`` blocks from assistant messages.
 
     Handles both string content and list-of-parts content formats.
+    Each block receives the formatted conversation history preceding it.
     """
     blocks: List[ThinkBlock] = []
     think_re = re.compile(r"<think>(.*?)</think>", re.DOTALL)
@@ -113,6 +169,8 @@ def extract_think_blocks(trajectory: List[Dict[str, Any]]) -> List[ThinkBlock]:
         if content is None:
             continue
 
+        ctx = _build_context(trajectory, msg_idx)
+
         if isinstance(content, str):
             for m in think_re.finditer(content):
                 blocks.append(
@@ -122,6 +180,7 @@ def extract_think_blocks(trajectory: List[Dict[str, Any]]) -> List[ThinkBlock]:
                         start_pos=m.start(),
                         end_pos=m.end(),
                         text=m.group(1),
+                        context=ctx,
                     )
                 )
 
@@ -142,6 +201,7 @@ def extract_think_blocks(trajectory: List[Dict[str, Any]]) -> List[ThinkBlock]:
                             start_pos=m.start(),
                             end_pos=m.end(),
                             text=m.group(1),
+                            context=ctx,
                         )
                     )
 
@@ -193,22 +253,27 @@ class DiversificationClient:
         self._rate_lock = threading.Lock()
 
     def _build_prompt(self, block: ThinkBlock) -> str:
-        max_len = len(block.text) + 100
+        max_len = len(block.text) * 3
         if block.prompt_type == PromptType.A:
             return PROMPT_FIRST_TOOL.format(
                 tool_name=block.tool_name, max_len=max_len, text=block.text
             )
         if block.prompt_type == PromptType.B:
             return PROMPT_SUBSEQUENT_TOOL.format(
-                tool_name=block.tool_name, max_len=max_len, text=block.text
+                tool_name=block.tool_name,
+                max_len=max_len,
+                text=block.text,
+                context=block.context,
             )
-        return PROMPT_FINAL_REASONING.format(max_len=max_len, text=block.text)
+        return PROMPT_FINAL_REASONING.format(
+            max_len=max_len, text=block.text, context=block.context
+        )
 
     @staticmethod
     def _validate_result(block: ThinkBlock, rephrased: str) -> bool:
         if not rephrased or len(rephrased) <= 10:
             return False
-        if len(rephrased) > len(block.text) + 100:
+        if len(rephrased) > len(block.text) * 3:
             return False
         if block.prompt_type in (PromptType.A, PromptType.B):
             if block.tool_name and block.tool_name not in rephrased:
