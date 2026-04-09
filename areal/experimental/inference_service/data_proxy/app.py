@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 import orjson
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.responses import Response as RawResponse
 from openai.types.chat.completion_create_params import CompletionCreateParams
@@ -533,7 +533,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             )
 
     @app.put("/data/{shard_id}")
-    async def store_data_shard(shard_id: str, data: Any):
+    async def store_data_shard(shard_id: str, data: Any = Body(...)):
         """Store a tensor shard in local RTensor storage."""
         # FastAPI already parsed the JSON into the 'data' variable
         deserialized_data = deserialize_value(data)
