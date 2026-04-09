@@ -61,6 +61,17 @@ class ExportTrajectoriesResponse(BaseModel):
 
     interactions: dict[str, Any]
 
+class BatchShardRequest(BaseModel):
+    """Request to retrieve multiple tensor shards."""
+
+    shard_ids: list[str]
+
+class ClearShardRequest(BaseModel):
+    """Request to clear a specific tensor shards."""
+
+    shard_ids: list[str]
+
+
 
 @dataclass(frozen=True)
 class RewardResult:

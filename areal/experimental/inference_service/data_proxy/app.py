@@ -29,6 +29,8 @@ from areal.experimental.inference_service.data_proxy.session import (
     SetRewardRequest,
     StartSessionRequest,
     StartSessionResponse,
+    BatchShardRequest,
+    ClearShardRequest
 )
 from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
     TokenizerProxy,
@@ -485,7 +487,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # =========================================================================
 
     @app.post("/data/batch")
-    async def retrieve_data_shard_batch(request: Request):
+    async def retrieve_data_shard_batch(payload: BatchShardRequest):
         """Retrieve multiple tensor shards in one request.
 
         Mirrors the ``POST /data/batch`` endpoint on the Flask RPC server
@@ -493,26 +495,10 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         works against data-proxy addresses.
         """
         try:
-            try:
-                payload = (await request.json()) or {}
-            except Exception:
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
-            shard_ids = payload.get("shard_ids", [])
-            if not isinstance(shard_ids, list) or not all(
-                isinstance(sid, str) for sid in shard_ids
-            ):
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "status": "error",
-                        "message": "Expected JSON body with string list field 'shard_ids'",
-                    },
-                )
-
+            shard_ids = payload.shard_ids
             data = []
             missing: list[str] = []
+
             for sid in shard_ids:
                 try:
                     data.append(rtensor_storage.fetch(sid))
@@ -547,16 +533,16 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             )
 
     @app.put("/data/{shard_id}")
-    async def store_data_shard(shard_id: str, request: Request):
+    async def store_data_shard(shard_id: str, data: Any):
         """Store a tensor shard in local RTensor storage."""
-        data_bytes = await request.body()
-        serialized_data = orjson.loads(data_bytes)
-        data = deserialize_value(serialized_data)
-        rtensor_storage.store(shard_id, data)
-        logger.debug(
-            "Stored RTensor shard %s (size=%d bytes)", shard_id, len(data_bytes)
-        )
+        # FastAPI already parsed the JSON into the 'data' variable
+        deserialized_data = deserialize_value(data)
+        rtensor_storage.store(shard_id, deserialized_data)
+
+        # We don't have 'data_bytes' anymore, but we can log that it's stored
+        logger.debug("Stored RTensor shard %s", shard_id)
         return {"status": "ok", "shard_id": shard_id}
+    
 
     @app.get("/data/{shard_id}")
     async def retrieve_data_shard(shard_id: str):
@@ -573,12 +559,9 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         return RawResponse(content=data_bytes, media_type="application/octet-stream")
 
     @app.delete("/data/clear")
-    async def clear_data_shards(request: Request):
+    async def clear_data_shards(payload: ClearShardRequest):
         """Clear specified tensor shards from local RTensor storage."""
-        body = await request.json()
-        shard_ids = body.get("shard_ids", [])
-        if not isinstance(shard_ids, list):
-            raise HTTPException(status_code=400, detail="'shard_ids' must be a list")
+        shard_ids = payload.shard_ids
         cleared_count = sum(rtensor_storage.remove(sid) for sid in shard_ids)
         stats = dict(cleared_count=cleared_count, **rtensor_storage.storage_stats())
         logger.info("Cleared %d RTensor shards. Stats: %s", cleared_count, stats)
