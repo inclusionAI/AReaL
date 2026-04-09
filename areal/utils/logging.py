@@ -89,6 +89,7 @@ LOGGER_COLORS_EXACT = {
     "Saver": "blue",
     "AsyncCheckpoint": "blue",
     "ArchonCheckpoint": "blue",
+    "LoRACheckpoint": "blue",
     # Platforms - cyan
     "Platform": "light_cyan",
     "PlatformInit": "light_cyan",
