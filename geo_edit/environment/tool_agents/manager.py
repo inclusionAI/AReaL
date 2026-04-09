@@ -6,6 +6,10 @@ import itertools
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Type
 
+import PIL
+
+PIL.Image.MAX_IMAGE_PIXELS = None
+
 import ray
 from PIL import Image
 
@@ -32,7 +36,6 @@ def _replica_names(base_name: str, num_replicas: int) -> List[str]:
 
 
 class ToolAgentManager:
-
     def __init__(self):
         self._actors: Dict[str, ray.actor.ActorHandle] = {}
         self._configs: Dict[str, Dict[str, Any]] = {}
@@ -47,10 +50,13 @@ class ToolAgentManager:
         ray_address: str = "auto",
     ) -> Dict[str, ray.actor.ActorHandle]:
         if not ray.is_initialized():
-            ray.init(address=ray_address, namespace="tool_agent", ignore_reinit_error=True)
+            ray.init(
+                address=ray_address, namespace="tool_agent", ignore_reinit_error=True
+            )
 
         if configs is None:
             from geo_edit.tool_definitions.agents import AGENT_CONFIGS
+
             configs = AGENT_CONFIGS
 
         for actor_name in agent_names:
@@ -62,7 +68,9 @@ class ToolAgentManager:
 
                 base_name = actor_name
                 for suffix_check in configs:
-                    if actor_name == suffix_check or actor_name.startswith(f"{suffix_check}_replica_"):
+                    if actor_name == suffix_check or actor_name.startswith(
+                        f"{suffix_check}_replica_"
+                    ):
                         base_name = suffix_check
                         break
 
@@ -88,7 +96,9 @@ class ToolAgentManager:
         wait_for_ready: bool = True,
     ) -> Dict[str, ray.actor.ActorHandle]:
         if not ray.is_initialized():
-            ray.init(address=ray_address, namespace="tool_agent", ignore_reinit_error=True)
+            ray.init(
+                address=ray_address, namespace="tool_agent", ignore_reinit_error=True
+            )
 
         new_actors = []
         for name, cfg in configs.items():
@@ -109,18 +119,18 @@ class ToolAgentManager:
             ActorClass = get_actor_class(name)
 
             init_sig = inspect.signature(ActorClass.__init__)
-            init_params = set(init_sig.parameters.keys()) - {'self', 'kwargs'}
+            init_params = set(init_sig.parameters.keys()) - {"self", "kwargs"}
 
             system_prompt = get_tool_agent_prompt(name)
 
             actor_kwargs = {}
             param_mapping = {
-                'model_name': cfg.get("model_name_or_path"),
-                'max_model_len': cfg.get("max_model_len"),
-                'gpu_memory_utilization': cfg.get("gpu_memory_utilization"),
-                'temperature': cfg.get("temperature"),
-                'max_tokens': cfg.get("max_tokens"),
-                'system_prompt': system_prompt,
+                "model_name": cfg.get("model_name_or_path"),
+                "max_model_len": cfg.get("max_model_len"),
+                "gpu_memory_utilization": cfg.get("gpu_memory_utilization"),
+                "temperature": cfg.get("temperature"),
+                "max_tokens": cfg.get("max_tokens"),
+                "system_prompt": system_prompt,
             }
 
             for param_name, param_value in param_mapping.items():
@@ -136,13 +146,17 @@ class ToolAgentManager:
             self._replica_map[name] = replica_names
 
             for replica_name in replica_names:
-                actor = RemoteActorClass.options(name=replica_name, **actor_options).remote(**actor_kwargs)
+                actor = RemoteActorClass.options(
+                    name=replica_name, **actor_options
+                ).remote(**actor_kwargs)
                 self._actors[replica_name] = actor
                 new_actors.append((replica_name, actor))
 
             logger.info(
                 "Created tool agent: %s -> %s (x%d replicas)",
-                name, cfg["model_name_or_path"], num_replicas,
+                name,
+                cfg["model_name_or_path"],
+                num_replicas,
             )
 
         if wait_for_ready and new_actors:

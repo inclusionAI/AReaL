@@ -7,10 +7,6 @@ import json
 from io import BytesIO
 from typing import Optional
 
-import PIL
-
-PIL.Image.MAX_IMAGE_PIXELS = None  # Disable DecompressionBombError for large images
-
 from geo_edit.environment.tool_agents.actor import BaseToolModelActor
 from geo_edit.utils.logger import setup_logger
 
