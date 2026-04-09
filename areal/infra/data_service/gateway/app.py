@@ -32,8 +32,8 @@ async def _get_all_worker_addrs(
     router_addr: str, admin_key: str, timeout: float
 ) -> list[str]:
     """Get all worker addresses from the router."""
-    import logging 
-    _gw_debug = logging.getLogger("Gateway.DEBUG") 
+    import logging as _stdlib_logging 
+    _gw_debug = _stdlib_logging.getLogger("Gateway.DEBUG") 
     url = f"{router_addr}/workers" 
     _gw_debug.error(f"[GW-DEBUG] GET {url}") 
     async with httpx.AsyncClient(timeout=timeout) as client: 
@@ -109,8 +109,8 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
     # ===== Admin: Register Dataset =====
     @app.post("/v1/datasets/register")
     async def register_dataset(request: Request):
-        import logging 
-        _gw_debug = logging.getLogger("Gateway.DEBUG") 
+        import logging as _stdlib_logging 
+        _gw_debug = _stdlib_logging.getLogger("Gateway.DEBUG") 
         _gw_debug.error( 
             f"[GW-DEBUG] /v1/datasets/register received, " 
             f"client={request.client}" 

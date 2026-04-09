@@ -128,8 +128,8 @@ def create_router_app(config: RouterConfig) -> FastAPI:
 
     @app.get("/workers")
     async def list_workers(request: Request):
-        import logging 
-        _rt_debug = logging.getLogger("Router.DEBUG") 
+        import logging as _stdlib_logging 
+        _rt_debug = _stdlib_logging.getLogger("Router.DEBUG") 
         _rt_debug.error( 
             f"[RT-DEBUG] GET /workers, client={request.client}, " 
             f"registered_workers={registered_workers}, " 

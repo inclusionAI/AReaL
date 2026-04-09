@@ -193,8 +193,8 @@ class PPOTrainer:
         else:
             assert train_dataset is not None
             if is_single_controller() and isinstance(train_dataset, RDataset):
-                import logging 
-                _trainer_debug = logging.getLogger("PPOTrainer.DEBUG") 
+                import logging as _stdlib_logging 
+                _trainer_debug = _stdlib_logging.getLogger("PPOTrainer.DEBUG") 
                 
                 _trainer_debug.error("[DEBUG] Creating DataController...") 
                 ds_cfg = DataServiceConfig.from_dataset_config(config.train_dataset)

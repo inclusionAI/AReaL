@@ -9,6 +9,7 @@ Follows the same patterns as ``GatewayInferenceController``.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -509,16 +510,17 @@ class DataController:
         payload: dict[str, Any],
         timeout: float = 60,
     ) -> dict[str, Any]:
-        import logging 
-        _ctrl_debug = logging.getLogger("DataController.DEBUG") 
-        url = f"{self._gateway_addr}{endpoint}"
+        import logging as _stdlib_logging 
+        _ctrl_debug = _stdlib_logging.getLogger("DataController.DEBUG") 
+        url = f"{self._gateway_addr}{endpoint}" 
         _ctrl_debug.error(f"[CTRL-DEBUG] POST {url}, timeout={timeout}") 
         async with aiohttp.ClientSession( 
             timeout=aiohttp.ClientTimeout(total=timeout) 
         ) as session: 
             try: 
                 async with session.post( 
-                    url, json=payload, 
+                    url, 
+                    json=payload, 
                     headers={"Authorization": f"Bearer {api_key}"}, 
                 ) as resp: 
                     text = await resp.text() 
@@ -536,4 +538,4 @@ class DataController:
                     f"[CTRL-DEBUG] Connection error to {url}: " 
                     f"{type(e).__name__}: {e}" 
                 ) 
-                raise 
+                raise
