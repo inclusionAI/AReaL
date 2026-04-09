@@ -21,6 +21,8 @@ from areal.experimental.inference_service.data_proxy.config import DataProxyConf
 from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
 from areal.experimental.inference_service.data_proxy.pause import PauseState
 from areal.experimental.inference_service.data_proxy.session import (
+    BatchShardRequest,
+    ClearShardRequest,
     ExportTrajectoriesRequest,
     ExportTrajectoriesResponse,
     ReadyNotification,
@@ -29,8 +31,6 @@ from areal.experimental.inference_service.data_proxy.session import (
     SetRewardRequest,
     StartSessionRequest,
     StartSessionResponse,
-    BatchShardRequest,
-    ClearShardRequest
 )
 from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
     TokenizerProxy,
@@ -542,7 +542,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         # We don't have 'data_bytes' anymore, but we can log that it's stored
         logger.debug("Stored RTensor shard %s", shard_id)
         return {"status": "ok", "shard_id": shard_id}
-    
+
 
     @app.get("/data/{shard_id}")
     async def retrieve_data_shard(shard_id: str):
