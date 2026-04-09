@@ -7,7 +7,7 @@ import os
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -485,20 +485,14 @@ class FSDPEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
-        if meta.type == "xccl":
-            assert self.weight_update_group_initialized
-            # In offload mode, wakes up parameters as needed to perform the update.
-            tms_context = (
-                torch_memory_saver.disable()
-                if self.is_offload and not torch.version.hip
-                else nullcontext()
-            )
-            with tms_context:
+        with self._offload_aware_context():
+            if meta.type == "xccl":
+                assert self.weight_update_group_initialized
                 self._update_weights_from_distributed(meta)
-        elif meta.type == "disk":
-            self._update_weights_from_disk(meta)
-        else:
-            raise ValueError(f"Unknown weight update type {meta.type}")
+            elif meta.type == "disk":
+                self._update_weights_from_disk(meta)
+            else:
+                raise ValueError(f"Unknown weight update type {meta.type}")
 
     def set_version(self, version: int):
         self._version = version
@@ -507,31 +501,47 @@ class FSDPEngine(TrainEngine):
         return self._version
 
     def save(self, meta: SaveLoadMeta):
-        if meta.weight_format == "hf":
-            self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
-        elif meta.weight_format == "dcp":
-            self._save_to_dcp(meta.path, meta.with_optim)
-        else:
-            raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+        with self._offload_aware_context():
+            if meta.weight_format == "hf":
+                self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
+            elif meta.weight_format == "dcp":
+                self._save_to_dcp(meta.path, meta.with_optim)
+            else:
+                raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
-        if meta.with_optim and meta.weight_format == "hf":
-            self._save_optimizer_state(meta.path)
+            if meta.with_optim and meta.weight_format == "hf":
+                self._save_optimizer_state(meta.path)
 
     def load(self, meta: SaveLoadMeta):
-        if meta.weight_format == "hf":
-            self._load_model_from_hf(meta.path)
-        elif meta.weight_format == "dcp":
-            self._load_from_dcp(meta.path, meta.with_optim)
-        else:
-            raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+        with self._offload_aware_context():
+            if meta.weight_format == "hf":
+                self._load_model_from_hf(meta.path)
+            elif meta.weight_format == "dcp":
+                self._load_from_dcp(meta.path, meta.with_optim)
+            else:
+                raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
-        if meta.with_optim and meta.weight_format == "hf":
-            self._load_optimizer_state(meta.path)
+            if meta.with_optim and meta.weight_format == "hf":
+                self._load_optimizer_state(meta.path)
 
-        # Checkpoint load replaces optimizer state tensor objects, losing
-        # pinning and normalization established by PerLayerOptimWrapper.__init__.
-        if meta.with_optim and self._per_layer_optim_wrapper is not None:
-            self._per_layer_optim_wrapper.refresh_states()
+            # Checkpoint load replaces optimizer state tensor objects, losing
+            # pinning and normalization established by PerLayerOptimWrapper.__init__.
+            if meta.with_optim and self._per_layer_optim_wrapper is not None:
+                self._per_layer_optim_wrapper.refresh_states()
+
+    @contextmanager
+    def _offload_aware_context(self):
+        """Temporarily onload parameters for offload-unsafe operations."""
+        if not self.is_offload:
+            with nullcontext():
+                yield
+            return
+
+        self.onload()
+        try:
+            yield
+        finally:
+            self.offload()
 
     def optimizer_zero_grad(self):
         assert self.optimizer is not None
@@ -749,13 +759,20 @@ class FSDPEngine(TrainEngine):
         return split_batch(result, meta)
 
     def export_stats(self) -> dict[str, float]:
-        return stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        with self._offload_aware_context():
+            return stats_tracker.export_all(
+                reduce_group=self.data_parallel_group,
+            )
 
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver.
 
         Ref: https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
         """
+        if not is_tms_enabled():
+            raise RuntimeError(
+                "torch_memory_saver requires `enable_offload=True` in yaml config."
+            )
 
         self.get_device_stats().log("before offload model")
 

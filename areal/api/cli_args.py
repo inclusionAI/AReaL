@@ -1081,6 +1081,14 @@ class TrainEngineConfig:
     archon: ArchonEngineConfig = field(default_factory=ArchonEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
 
+    # offload
+    offload: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to offload model parameters and optimizer states to CPU. "
+        },
+    )
+
     # Lora
     use_lora: bool = field(
         default=False,

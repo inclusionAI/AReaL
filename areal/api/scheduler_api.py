@@ -226,6 +226,7 @@ class Scheduler(abc.ABC):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         **kwargs,
     ) -> Any:
         """Call a method on an engine instance running on a worker (data plane operation).
@@ -243,6 +244,8 @@ class Scheduler(abc.ABC):
             Defaults to worker_id if not specified.
         *args
             Positional arguments to pass to the method
+        rpc_meta : dict[str, Any] | None, optional
+            RPC metadata, by default None
         **kwargs
             Keyword arguments to pass to the method
 
@@ -269,6 +272,7 @@ class Scheduler(abc.ABC):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         **kwargs,
     ) -> Any:
         """Async version of call_engine for calling engine methods asynchronously.
@@ -286,6 +290,8 @@ class Scheduler(abc.ABC):
             Defaults to worker_id if not specified.
         *args
             Positional arguments to pass to the method
+        rpc_meta : dict[str, Any] | None, optional
+            RPC metadata, by default None
         **kwargs
             Keyword arguments to pass to the method
 

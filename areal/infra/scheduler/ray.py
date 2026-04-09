@@ -632,6 +632,7 @@ class RayScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -647,7 +648,11 @@ class RayScheduler(Scheduler):
             try:
                 # Pass engine_name to support multiple engines per worker (colocation)
                 ref = wi.actor.call.remote(
-                    method, *args, engine_name=engine_name, **kwargs
+                    method,
+                    *args,
+                    engine_name=engine_name,
+                    rpc_meta=rpc_meta,
+                    **kwargs,
                 )
                 result = ray.get(ref, timeout=http_timeout)
                 if attempt > 1:
@@ -687,6 +692,7 @@ class RayScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -702,7 +708,11 @@ class RayScheduler(Scheduler):
             try:
                 # Pass engine_name to support multiple engines per worker (colocation)
                 ref = wi.actor.call.remote(
-                    method, *args, engine_name=engine_name, **kwargs
+                    method,
+                    *args,
+                    engine_name=engine_name,
+                    rpc_meta=rpc_meta,
+                    **kwargs,
                 )
                 result = await ref
                 if attempt > 1:
