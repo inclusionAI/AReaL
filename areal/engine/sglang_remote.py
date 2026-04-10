@@ -186,22 +186,60 @@ class SGLangBackend:
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
-        """Build SGLang init weights group request."""
+        """Build SGLang init weights group request.
+
+        Supports both PP=1 (original behavior) and PP>1 (per-PP-rank groups).
+
+        When PP>1, each training PP rank creates its own NCCL group. The group
+        name encodes the PP rank (e.g., ``update_weight_group_0``). Only the
+        sglang workers at that PP rank participate in the group, so:
+        - ``rank_offset`` is based on ``tp_size`` only (not ``tp_size * pp_size``)
+        - ``world_size`` = ``n_servers * tp_size + 1``
+        - The payload includes ``pp_rank`` so sglang knows which PP workers join
+        """
         assert meta.gen_allocation is not None
         gen_parallel = meta.gen_allocation.parallel
-        if gen_parallel.pp_size != 1:
-            raise NotImplementedError(
-                "NCCL weight update with PP size > 1 is not implemented yet."
-            )
-        rank_offset = 1 + server_idx * gen_parallel.tp_size
-        payload = {
-            "master_address": format_host_for_url(meta.nccl_master_address),
-            "master_port": str(meta.nccl_master_port),
-            "rank_offset": rank_offset,
-            "world_size": gen_parallel.world_size + 1,
-            "backend": current_platform.communication_backend,
-            "group_name": meta.nccl_group_name,
-        }
+
+        if gen_parallel.pp_size == 1:
+            # Original behavior: single group spanning all TP workers
+            rank_offset = 1 + server_idx * gen_parallel.tp_size
+            payload = {
+                "master_address": format_host_for_url(meta.nccl_master_address),
+                "master_port": str(meta.nccl_master_port),
+                "rank_offset": rank_offset,
+                "world_size": gen_parallel.world_size + 1,
+                "backend": current_platform.communication_backend,
+                "group_name": meta.nccl_group_name,
+            }
+        else:
+            # PP>1: per-PP-rank group approach.
+            # Extract pp_rank from the group name (format: "update_weight_group_{pp_rank}")
+            group_name = meta.nccl_group_name
+            pp_rank = int(group_name.rsplit("_", 1)[-1])
+
+            tp_size = gen_parallel.tp_size
+            # n_servers is the total number of DP instances (sglang server replicas).
+            # gen_parallel.world_size = tp_size * pp_size * n_servers, so:
+            n_servers = gen_parallel.world_size // (tp_size * gen_parallel.pp_size)
+
+            # rank_offset is based on tp_size only since only TP workers at one
+            # PP rank join each per-PP-rank group. Rank 0 is the training rank.
+            rank_offset = 1 + server_idx * tp_size
+
+            # world_size for this per-PP-rank group: all TP workers across all
+            # DP instances at this PP rank, plus the one training rank.
+            world_size = n_servers * tp_size + 1
+
+            payload = {
+                "master_address": format_host_for_url(meta.nccl_master_address),
+                "master_port": str(meta.nccl_master_port),
+                "rank_offset": rank_offset,
+                "world_size": world_size,
+                "backend": current_platform.communication_backend,
+                "group_name": group_name,
+                "pp_rank": pp_rank,
+            }
+
         return HttpRequest(endpoint="/init_weights_update_group", payload=payload)
 
     def get_pause_request(self) -> HttpRequest:
