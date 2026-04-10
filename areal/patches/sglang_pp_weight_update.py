@@ -135,6 +135,9 @@ def _patch_io_struct() -> None:
         bases=(OrigCls,),
     )
 
+    PatchedCls.__module__ = OrigCls.__module__
+    PatchedCls.__qualname__ = OrigCls.__qualname__
+
     # Overwrite in the module so that FastAPI picks up the new schema.
     io_struct.InitWeightsUpdateGroupReqInput = PatchedCls
 
