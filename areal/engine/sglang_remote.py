@@ -204,6 +204,28 @@ class SGLangBackend:
         }
         return HttpRequest(endpoint="/init_weights_update_group", payload=payload)
 
+    def build_tensor_weight_update_requests(
+        self,
+        serialized_named_tensors: list[str],
+        weight_version: str | None = None,
+    ) -> WeightUpdateRequests:
+        """Build SGLang tensor-based (CUDA IPC) weight update requests."""
+        payload: dict[str, Any] = {
+            "serialized_named_tensors": serialized_named_tensors,
+            "load_format": "flattened_bucket",
+            "flush_cache": False,
+        }
+        if weight_version is not None:
+            payload["weight_version"] = weight_version
+        return WeightUpdateRequests(
+            requests=[
+                HttpRequest(
+                    endpoint="/update_weights_from_tensor",
+                    payload=payload,
+                )
+            ]
+        )
+
     def get_pause_request(self) -> HttpRequest:
         """Get SGLang pause request."""
         return HttpRequest(endpoint="/pause_generation", payload={})
@@ -317,6 +339,19 @@ class RemoteSGLangEngine(InferenceEngine):
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""
         return self._engine.update_weights_from_disk(meta)
+
+    def update_weights_from_tensor(
+        self,
+        serialized_named_tensors: list[str],
+        addresses: list[str] | None = None,
+        weight_version: str | None = None,
+    ) -> None:
+        """Update weights via CUDA IPC tensor transfer."""
+        return self._engine.update_weights_from_tensor(
+            serialized_named_tensors,
+            addresses=addresses,
+            weight_version=weight_version,
+        )
 
     def submit(
         self,

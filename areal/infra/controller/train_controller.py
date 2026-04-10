@@ -571,7 +571,12 @@ class TrainController:
             return _merge_tensors(results, group_indices)
         return results[0]
 
-    def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
+    def connect_engine(
+        self,
+        rollout: RolloutController,
+        meta: WeightUpdateMeta,
+        tensor_server_addresses: list[str] | None = None,
+    ):
         if self.rollout is not None and self.rollout != rollout:
             logger.warning(
                 f"Connected rollout controller changed from {self.rollout} to {rollout}."
@@ -581,7 +586,12 @@ class TrainController:
         # Register a callback engine on train engines
         # RolloutCallback is a dataclass and can be serialized
         engine = RolloutCallback(controller_addr=rollout.callback_addr)
-        self._custom_function_call("connect_engine", engine=engine, meta=meta)
+        self._custom_function_call(
+            "connect_engine",
+            engine=engine,
+            meta=meta,
+            tensor_server_addresses=tensor_server_addresses,
+        )
 
     def export_stats(self):
         """Export training statistics from all workers.

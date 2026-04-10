@@ -628,7 +628,12 @@ class ArchonEngine(TrainEngine):
             return res
         return split_batch(res, meta)
 
-    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
+    def connect_engine(
+        self,
+        engine: InferenceEngine,
+        meta: WeightUpdateMeta,
+        tensor_server_addresses: list[str] | None = None,
+    ):
         """Connect to an inference engine for rollout."""
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(
@@ -703,6 +708,11 @@ class ArchonEngine(TrainEngine):
                 update_weights_from_disk(
                     meta=meta,
                     engine=self,
+                )
+            elif meta.type == "tensor":
+                raise NotImplementedError(
+                    "Tensor-based colocated weight update is not yet supported "
+                    "for ArchonEngine. Use weight_update_mode='disk' or 'xccl'."
                 )
             else:
                 raise ValueError(f"Unknown weight update type {meta.type}")

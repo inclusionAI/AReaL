@@ -181,13 +181,22 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
+    def connect_engine(
+        self,
+        engine: InferenceEngine,
+        meta: WeightUpdateMeta,
+        tensor_server_addresses: list[str] | None = None,
+    ):
         """Connect to an inference engine for online training.
 
         Parameters
         ----------
         engine : InferenceEngine
             The inference engine to connect to
+        meta : WeightUpdateMeta
+            Metadata containing information about the weight update
+        tensor_server_addresses : list[str] | None
+            Server addresses for tensor-based IPC weight updates
         """
         raise NotImplementedError()
 

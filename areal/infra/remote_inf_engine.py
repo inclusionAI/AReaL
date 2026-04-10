@@ -1012,6 +1012,32 @@ class RemoteInfEngine(InferenceEngine):
         fut.add_done_callback(callback)
         return fut
 
+    def update_weights_from_tensor(
+        self,
+        serialized_named_tensors: list[str],
+        addresses: list[str] | None = None,
+        weight_version: str | None = None,
+    ) -> None:
+        """Update weights via CUDA IPC tensor transfer (synchronous).
+
+        Parameters
+        ----------
+        serialized_named_tensors : list[str]
+            Serialized tensor data with CUDA IPC handles
+        addresses : list[str] | None
+            Target server addresses. If None, uses all addresses.
+        weight_version : str | None
+            Optional weight version string
+        """
+        target_addrs = addresses if addresses is not None else self.addresses
+        _update_weights_from_tensor(
+            self.backend,
+            serialized_named_tensors,
+            target_addrs,
+            self.config.request_timeout,
+            weight_version=weight_version,
+        )
+
     def submit(
         self,
         data: dict[str, Any],
@@ -1414,6 +1440,44 @@ def _update_weights_from_distributed(
         )
 
         # Execute all requests sequentially (they may have dependencies)
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=request_timeout),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        ) as session:
+            for http_req in weight_reqs.requests:
+                jobs = [
+                    arequest_with_retry(
+                        session=session,
+                        addr=addr,
+                        endpoint=http_req.endpoint,
+                        payload=http_req.payload,
+                        method=http_req.method,
+                        max_retries=1,
+                        timeout=request_timeout,
+                    )
+                    for addr in addresses
+                ]
+                await asyncio.gather(*jobs)
+
+    return uvloop.run(_fn())
+
+
+def _update_weights_from_tensor(
+    backend: RemoteInfBackendProtocol,
+    serialized_named_tensors: list[str],
+    addresses: list[str],
+    request_timeout: float,
+    weight_version: str | None = None,
+):
+    """Helper to update weights from tensor (CUDA IPC) in a separate process."""
+
+    async def _fn():
+        weight_reqs = backend.build_tensor_weight_update_requests(
+            serialized_named_tensors,
+            weight_version=weight_version,
+        )
+
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=request_timeout),
             read_bufsize=1024 * 1024 * 10,

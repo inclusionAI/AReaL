@@ -265,6 +265,25 @@ class WeightUpdateMeta:
             base_model_name=base_model_name,
         )
 
+    @classmethod
+    def from_tensor(
+        cls,
+        weight_chunked_mem_mb: int = 512,
+        use_lora: bool = False,
+        lora_name: str = "",
+        lora_int_id: int = 1,
+        base_model_name: str = "",
+    ):
+        """Create meta for tensor-based colocated weight update via CUDA IPC."""
+        return cls(
+            type="tensor",
+            weight_chunked_mem_mb=weight_chunked_mem_mb,
+            use_lora=use_lora,
+            lora_name=lora_name,
+            lora_int_id=lora_int_id,
+            base_model_name=base_model_name,
+        )
+
 
 @dataclass
 class HttpRequest:

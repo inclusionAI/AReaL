@@ -202,6 +202,11 @@ class FSDPEngine(TrainEngine):
         self.rollout_engine: InferenceEngine | None = None
         self.rollout_coordinator: DistRolloutCoordinator | None = None
 
+        # Tensor colocated weight sync state
+        self._tensor_server_addresses: list[str] | None = None
+        self._staged_cpu_weights: list[tuple[str, torch.Tensor]] | None = None
+        self._staged_weight_meta: WeightUpdateMeta | None = None
+
         self.parallel_helper: ParallelHelper
         self.world_mesh: DeviceMesh
 
@@ -432,7 +437,12 @@ class FSDPEngine(TrainEngine):
         self.model.train(mode=mode)
         return self
 
-    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
+    def connect_engine(
+        self,
+        engine: InferenceEngine,
+        meta: WeightUpdateMeta,
+        tensor_server_addresses: list[str] | None = None,
+    ):
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
@@ -445,6 +455,12 @@ class FSDPEngine(TrainEngine):
         if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
+        elif meta.type == "tensor" and tensor_server_addresses is not None:
+            self._tensor_server_addresses = tensor_server_addresses
+            self.logger.info(
+                f"Tensor colocated weight sync configured with "
+                f"{len(tensor_server_addresses)} server(s): {tensor_server_addresses}"
+            )
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
@@ -485,14 +501,17 @@ class FSDPEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
-        with self._offload_aware_context():
-            if meta.type == "xccl":
-                assert self.weight_update_group_initialized
-                self._update_weights_from_distributed(meta)
-            elif meta.type == "disk":
-                self._update_weights_from_disk(meta)
-            else:
-                raise ValueError(f"Unknown weight update type {meta.type}")
+        if meta.type == "tensor":
+            self._update_weights_from_tensor_colocated(meta)
+        else:
+            with self._offload_aware_context():
+                if meta.type == "xccl":
+                    assert self.weight_update_group_initialized
+                    self._update_weights_from_distributed(meta)
+                elif meta.type == "disk":
+                    self._update_weights_from_disk(meta)
+                else:
+                    raise ValueError(f"Unknown weight update type {meta.type}")
 
     def set_version(self, version: int):
         self._version = version
@@ -1335,6 +1354,213 @@ class FSDPEngine(TrainEngine):
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
+
+    @trace_perf("fsdp_engine.update_weights_from_tensor", category="comm")
+    def _update_weights_from_tensor_colocated(self, meta: WeightUpdateMeta):
+        """Two-phase tensor weight update for colocated mode.
+
+        Phase 1 (train on GPU): Gather FSDP params → copy to CPU pinned memory.
+        Phase 2 (inference on GPU): CPU → GPU → IPC serialize → send → cleanup.
+        """
+        assert meta.type == "tensor"
+        assert self._tensor_server_addresses is not None, (
+            "Tensor server addresses not set. Call connect_engine with "
+            "tensor_server_addresses first."
+        )
+
+        # Phase 1: CPU staging (requires train params on GPU)
+        with self._offload_aware_context():
+            self._stage_weight_update_from_tensor(meta)
+
+        # Phase 2: IPC apply (requires inference on GPU for shared-GPU mode)
+        main_rank = dist.get_rank() == 0
+        if main_rank:
+            self.rollout_engine.pause_generation()
+
+        dist.barrier(group=self.cpu_group)
+
+        try:
+            if main_rank:
+                self._apply_colocated_tensor_weights()
+        finally:
+            if main_rank:
+                self.rollout_engine.continue_generation()
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+
+    def _stage_weight_update_from_tensor(self, meta: WeightUpdateMeta) -> None:
+        """Gather FSDP params to CPU pinned memory (Phase 1 of colocated tensor sync)."""
+        staged: list[tuple[str, torch.Tensor]] = []
+        main_rank = dist.get_rank() == 0
+
+        if self.config.use_lora:
+            param_iterator = (
+                (name, param)
+                for name, param in self._get_model_name_parameters(meta)
+                if param.requires_grad
+            )
+        else:
+            param_iterator = self._get_model_name_parameters(meta)
+
+        for name, param in param_iterator:
+            full_tensor = self._get_full_tensor(param)
+            if main_rank:
+                cpu_tensor = full_tensor.to("cpu", non_blocking=False)
+                staged.append((name, cpu_tensor))
+            del full_tensor
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+
+        if main_rank:
+            self._staged_cpu_weights = staged
+            self._staged_weight_meta = meta
+            self.logger.info(
+                f"CPU staging complete: {len(staged)} params, "
+                f"~{sum(t.numel() * t.element_size() for _, t in staged) / 1024 / 1024:.1f}MB"
+            )
+
+    def _apply_colocated_tensor_weights(self) -> None:
+        """Transfer staged CPU weights to inference engine via IPC (Phase 2)."""
+        staged = self._staged_cpu_weights
+        if staged is None:
+            return
+        self._staged_cpu_weights = None
+
+        meta = self._staged_weight_meta
+        if meta is None:
+            staged.clear()
+            return
+        self._staged_weight_meta = None
+
+        tms_context = (
+            torch_memory_saver.disable()
+            if is_tms_enabled() and not torch.version.hip
+            else nullcontext()
+        )
+        weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
+
+        try:
+            with tms_context:
+                if current_platform.device_type == "cuda" and torch.cuda.is_available():
+                    current_platform.set_device(int(os.environ.get("LOCAL_RANK", 0)))
+
+                bucket: list[tuple[str, torch.Tensor]] = []
+                bucket_bytes = 0
+
+                for name, cpu_tensor in staged:
+                    tensor_bytes = cpu_tensor.numel() * cpu_tensor.element_size()
+
+                    if bucket_bytes + tensor_bytes > weight_chunked_mem_size and bucket:
+                        self._flush_colocated_tensor_bucket(bucket, meta)
+                        bucket = []
+                        bucket_bytes = 0
+
+                    gpu_tensor = cpu_tensor.to(
+                        current_platform.current_device(), non_blocking=False
+                    )
+                    bucket.append((name, gpu_tensor))
+                    bucket_bytes += tensor_bytes
+
+                if bucket:
+                    self._flush_colocated_tensor_bucket(bucket, meta)
+        finally:
+            staged.clear()
+
+    def _flush_colocated_tensor_bucket(
+        self,
+        bucket: list[tuple[str, torch.Tensor]],
+        meta: WeightUpdateMeta,
+    ) -> None:
+        """Serialize one bucket of GPU tensors via IPC and send to inference engine."""
+        from sglang.srt.utils import MultiprocessingSerializer
+        from sglang.srt.weight_utils import FlattenedTensorBucket
+
+        assert self._tensor_server_addresses is not None
+
+        serialized_tensors: list[str] = []
+        long_lived_tensors: list[dict] = []
+
+        try:
+            dtypes_groups: dict[str, list[tuple[str, torch.Tensor]]] = {}
+            for name, tensor in bucket:
+                dtype_key = str(tensor.dtype)
+                dtypes_groups.setdefault(dtype_key, []).append((name, tensor))
+
+            for _dtype, named_tensors in dtypes_groups.items():
+                flattened = FlattenedTensorBucket(named_tensors=named_tensors)
+                metadata = flattened.get_metadata()
+                flattened_data = {
+                    "flattened_tensor": flattened.get_flattened_tensor(),
+                    "metadata": metadata,
+                }
+                long_lived_tensors.append(flattened_data)
+                serialized_tensors.append(
+                    MultiprocessingSerializer.serialize(flattened_data, output_str=True)
+                )
+
+            weight_version = str(meta.version) if meta.version is not None else None
+            self._send_tensor_to_servers(
+                serialized_tensors,
+                self._tensor_server_addresses,
+                weight_version=weight_version,
+            )
+        finally:
+            # Cleanup: release IPC handles and GPU memory
+            del serialized_tensors
+            del long_lived_tensors
+            for _, tensor in bucket:
+                del tensor
+            bucket.clear()
+            gc.collect()
+            if current_platform.device_type == "cuda" and torch.cuda.is_available():
+                torch.cuda.ipc_collect()
+                torch.cuda.empty_cache()
+
+    def _send_tensor_to_servers(
+        self,
+        serialized_named_tensors: list[str],
+        addresses: list[str],
+        weight_version: str | None = None,
+    ) -> None:
+        """Send serialized tensor data to SGLang servers via HTTP."""
+        import asyncio
+
+        import aiohttp
+        import uvloop
+
+        from areal.infra.utils.http import arequest_with_retry, get_default_connector
+
+        payload: dict[str, Any] = {
+            "serialized_named_tensors": serialized_named_tensors,
+            "load_format": "flattened_bucket",
+            "flush_cache": False,
+        }
+        if weight_version is not None:
+            payload["weight_version"] = weight_version
+
+        async def _fn():
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=600),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            ) as session:
+                jobs = [
+                    arequest_with_retry(
+                        session=session,
+                        addr=addr,
+                        endpoint="/update_weights_from_tensor",
+                        payload=payload,
+                        method="POST",
+                        max_retries=1,
+                        timeout=600,
+                    )
+                    for addr in addresses
+                ]
+                await asyncio.gather(*jobs)
+
+        uvloop.run(_fn())
 
     def _save_model_to_hf(
         self,
