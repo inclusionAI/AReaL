@@ -21,7 +21,7 @@ import aiohttp
 from areal.api.scheduler_api import Job
 from areal.infra.data_service.controller.config import DataServiceConfig
 from areal.utils import logging
-from areal.utils.network import format_hostport
+from areal.utils.network import format_hostport, get_loopback_ip
 
 if TYPE_CHECKING:
     from areal.api.scheduler_api import Scheduler, Worker
@@ -160,11 +160,16 @@ class DataController:
 
                 results = await asyncio.gather(*worker_tasks, router_task)
 
+                loopback = get_loopback_ip()
+
+                # Worker addrs 保留外部地址（可能跨节点） 
                 for host, port in results[:-1]:
                     self._worker_addrs.append(f"http://{format_hostport(host, port)}")
+
+                # Router 和 Gateway 在同一节点(guard_addr_0)，用 loopback 
                 router_host, router_port = results[-1]
                 self._router_addr = (
-                    f"http://{format_hostport(router_host, router_port)}"
+                    f"http://{format_hostport(loopback, router_port)}"
                 )
                 logger.info("DataWorkers: %s", self._worker_addrs)
                 logger.info("Router: %s", self._router_addr)
@@ -202,7 +207,7 @@ class DataController:
                     _register_workers(),
                 )
                 gw_host, gw_port = gw_result
-                self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
+                self._gateway_addr = f"http://{format_hostport(loopback, gw_port)}"
                 logger.info("Gateway: %s", self._gateway_addr)
         except Exception:
             # Rollback: kill forked services and delete scheduler workers
@@ -409,7 +414,9 @@ class DataController:
         host = alloc_data["host"]
         port = alloc_data["ports"][0]
 
-        cmd = list(raw_cmd) + ["--host", host, "--port", str(port)]
+        # FIX: 绑定到 0.0.0.0 / :: 而不是特定外部 IP 
+        # 这样 loopback 和外部地址都能访问 
+        cmd = list(raw_cmd) + ["--host", "0.0.0.0", "--port", str(port)]
 
         async with session.post(
             f"{guard_addr}/fork",
@@ -424,10 +431,12 @@ class DataController:
 
         self._forked_services.append((guard_addr, role, worker_index))
 
-        addr = f"http://{format_hostport(host, port)}"
-        await self._async_wait_for_service(session, f"{addr}{health_path}", role)
+        # FIX: 健康检查走 loopback，避免经过 nginx 
+        loopback = get_loopback_ip() 
+        health_addr = f"http://{format_hostport(loopback, port)}" 
+        await self._async_wait_for_service(session, f"{health_addr}{health_path}", role)
 
-        return host, port
+        return host, port  # 仍返回外部 host，供跨节点通信使用
 
     async def _async_wait_for_service(
         self,

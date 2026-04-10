@@ -171,21 +171,18 @@ def find_free_ports(
 
 
 def is_port_free(port: int) -> bool:
-    """
-    Check if a port is free by attempting to bind to it.
-
-    Args:
-        port: Port number to check
-
-    Returns:
-        True if port is free, False otherwise
-    """
+    """Check if a port is free on all available address families."""
     for family in (socket.AF_INET, socket.AF_INET6): 
         for sock_type in (socket.SOCK_STREAM, socket.SOCK_DGRAM): 
             try: 
                 sock = socket.socket(family, sock_type) 
-                sock.bind(("", port)) 
-                sock.close() 
             except OSError: 
+                # Address family not supported on this host (e.g., no IPv6 stack) 
+                continue 
+            try: 
+                sock.bind(("", port)) 
+            except OSError: 
+                sock.close() 
                 return False 
+            sock.close() 
     return True
