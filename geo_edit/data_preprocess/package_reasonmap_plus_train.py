@@ -19,11 +19,10 @@ from datasets import Dataset, Features, Value, load_dataset, Image as HFImage
 KEEP_TYPES = {"Counting1", "Counting2", "Counting3", "TorF1", "TorF2"}
 
 
-def package_reasonmap_plus_train(data_dir: Path, out_dir: Path) -> Path:
-    """Package ReasonMap-Plus train split from local parquet into packaged parquet."""
-    out_parquet = out_dir / "reasonmap_plus_train.parquet"
+def package_reasonmap_plus(data_dir: Path, out_dir: Path, split: str = "train") -> Path:
+    out_parquet = out_dir / f"reasonmap_plus_{split}.parquet"
 
-    parquet_path = data_dir / "data" / "train.parquet"
+    parquet_path = data_dir / "data" / f"{split}.parquet"
     print(f"Loading local parquet: {parquet_path}")
     ds = load_dataset("parquet", data_files=str(parquet_path))["train"]
 
@@ -107,13 +106,19 @@ def main() -> None:
         default=None,
         help="Output directory. Defaults to data_dir.",
     )
+    parser.add_argument(
+        "--split",
+        type=str,
+        default="train",
+        help="Split to package: train or test (default: train).",
+    )
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir).resolve()
     out_dir = Path(args.out_dir).resolve() if args.out_dir else data_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    package_reasonmap_plus_train(data_dir, out_dir)
+    package_reasonmap_plus(data_dir, out_dir, split=args.split)
 
 
 if __name__ == "__main__":

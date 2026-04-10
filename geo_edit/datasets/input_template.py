@@ -266,24 +266,26 @@ REASONMAP_BASE_SEPARATED_TEMPLATE = """\
 {question}
 """
 
-REASONMAP_BASE_INPUT_TEMPLATE = """\
-Look at the subway map image and answer the following route planning question.
+MAPTRACE_INPUT_TEMPLATE = """\
+Look at the map image and trace the route described in the following question.
 
 {question}
 
 If you need to analyze the image in detail, you can use the available tools.
 
-Please provide your final answer in <answer></answer> tags, following the format specified in the question.
+Provide your answer as a sequence of normalized (0-1) coordinate pairs in <answer></answer> tags, e.g. <answer>[(0.1234, 0.5678), (0.2345, 0.6789), ...]</answer>
 """
 
-REASONMAP_BASE_NOTOOL_INPUT_TEMPLATE = """\
-Look at the subway map image carefully and answer the following route planning question.
+MAPTRACE_NOTOOL_INPUT_TEMPLATE = """\
+Look at the map image carefully and trace the route described in the following question.
 
 {question}
 
-Please provide your final answer in <answer></answer> tags, following the format specified in the question.
+Provide your answer as a sequence of normalized (0-1) coordinate pairs in <answer></answer> tags, e.g. <answer>[(0.1234, 0.5678), (0.2345, 0.6789), ...]</answer>
 """
 
-REASONMAP_BASE_SEPARATED_TEMPLATE = """\
+MAPTRACE_SEPARATED_TEMPLATE = """\
 {question}
+
+Provide your answer as a sequence of normalized (0-1) coordinate pairs.
 """

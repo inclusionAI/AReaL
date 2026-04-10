@@ -170,6 +170,19 @@ def _validate_trajectory(
 
         return False, f"reason_map_rejected: {rule_reason}"
 
+    # MapTrace tasks: NDTW-based verification
+    if task_category == "map_trace" and check_correctness:
+        from geo_edit.evaluation.map_trace_verifier import map_trace_judge
+
+        is_valid, reason = map_trace_judge(
+            question=question,
+            ground_truth=ground_truth,
+            prediction=prediction,
+            image_path=image_path or "",
+            meta_info_extra=meta_info_extra or {},
+        )
+        return is_valid, reason
+
     assert _WORKER_JUDGE is not None, "Judge not initialized"
 
     if check_correctness:
@@ -359,6 +372,16 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                     )
 
                     if is_valid:
+                        # MapTrace: substitute model's approximate coordinates with exact GT
+                        if task_category == "map_trace":
+                            answer_text = ground_truth
+                            reasoning_text = re.sub(
+                                r"<answer>.*?</answer>",
+                                f"<answer>{ground_truth}</answer>",
+                                reasoning_text,
+                                flags=re.DOTALL,
+                            )
+
                         # Commit answer to contents and history, then save
                         task.append_assistant_message(reasoning_text)
                         think_match = re.search(

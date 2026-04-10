@@ -21,6 +21,9 @@ from geo_edit.datasets.input_template import (
     CARTOMAPQA_STMF_COUNTING_ANSWER_FORMAT,
     CARTOMAPQA_STMF_NAME_LISTING_ANSWER_FORMAT,
     CARTOMAPQA_STMF_PRESENCE_ANSWER_FORMAT,
+    MAPTRACE_INPUT_TEMPLATE,
+    MAPTRACE_NOTOOL_INPUT_TEMPLATE,
+    MAPTRACE_SEPARATED_TEMPLATE,
     CARTOMAPQA_UNIFIED_TEMPLATE,
     CHARTQA_ANSWER_FORMAT,
     CHARTQA_INPUT_TEMPLATE,
@@ -577,6 +580,23 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template=MM_MAPQA_NOTOOL_INPUT_TEMPLATE,
         template_fields={"question": "question"},
         answer_format=MM_MAPQA_ANSWER_FORMAT,
+    ),
+    "map_trace": DatasetSpec(
+        name="map_trace",
+        id_key="id",
+        answer_key="label",
+        image_key="image",
+        prompt_template=MAPTRACE_INPUT_TEMPLATE,
+        notool_prompt_template=MAPTRACE_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "input",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": "map_trace",
+            },
+        },
+        separated_prompt_template=MAPTRACE_SEPARATED_TEMPLATE,
     ),
 }
 
