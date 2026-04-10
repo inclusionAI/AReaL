@@ -1143,6 +1143,21 @@ class PPOTrainer:
         """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
         rollout_backend = self.rollout_alloc.backend
         actor_backend = self.actor_alloc.backend
+        requires_train_engine_offload = any(
+            (
+                self._should_offload_rollout,
+                self._should_offload_actor,
+                self._should_offload_critic,
+                self._should_offload_ref,
+                self._should_offload_teacher,
+            )
+        )
+
+        if requires_train_engine_offload and not self.config.enable_offload:
+            raise ValueError(
+                "enable_offload must be True when colocation scheduling or train-engine "
+                "offload is enabled. Please set enable_offload=True."
+            )
 
         if (
             self._is_actor_rollout_colocated(self.config)
