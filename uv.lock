@@ -391,7 +391,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+awex = [
+    { name = "awex", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
+]
 cuda = [
+    { name = "awex", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "flash-attn", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "kernels", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "mbridge", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
@@ -458,12 +462,14 @@ requires-dist = [
     { name = "aiofiles" },
     { name = "aiohttp", specifier = ">=3.13.3,<4" },
     { name = "anthropic" },
+    { name = "areal", extras = ["awex"], marker = "extra == 'cuda'" },
     { name = "areal", extras = ["cuda-train"], marker = "extra == 'cuda'" },
     { name = "areal", extras = ["flash-attn"], marker = "extra == 'cuda'" },
     { name = "areal", extras = ["kernels"], marker = "extra == 'cuda-train'" },
     { name = "areal", extras = ["megatron"], marker = "extra == 'cuda-train'" },
     { name = "areal", extras = ["sglang"], marker = "extra == 'cuda'" },
     { name = "areal", extras = ["tms"], marker = "extra == 'cuda-train'" },
+    { name = "awex", marker = "extra == 'awex'", specifier = ">=0.1.0" },
     { name = "blosc" },
     { name = "build", specifier = ">=1.2.1" },
     { name = "claude-agent-sdk" },
@@ -556,7 +562,7 @@ requires-dist = [
     { name = "word2number" },
     { name = "zstandard" },
 ]
-provides-extras = ["sglang", "tms", "flash-attn", "kernels", "megatron", "cuda-train", "cuda"]
+provides-extras = ["sglang", "tms", "flash-attn", "kernels", "megatron", "awex", "cuda-train", "cuda"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -625,6 +631,14 @@ sdist = { url = "https://files.pythonhosted.org/packages/b2/eb/abca886df3a091bc4
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/59/d19bc3257dd985d55337d7f0414c019414b97e16cd3690ebf9941a847543/av-17.0.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:1060cba85f97f4a337311169d92c0b5e143452cfa5ca0e65fa499d7955e8592e", size = 36358757, upload-time = "2026-03-14T14:38:13.092Z" },
     { url = "https://files.pythonhosted.org/packages/90/ea/52b0fc6f69432c7bf3f5fbe6f707113650aa40a1a05b9096ffc2bba4f77d/av-17.0.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:ffaf266a1a9c2148072de0a4b5ae98061465178d2cfaa69ee089761149342974", size = 37444817, upload-time = "2026-03-14T14:38:18.563Z" },
+]
+
+[[package]]
+name = "awex"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/23/fe79b4e5ca86dda7f2f7bf3c96b8498cdbc907a7facde20f36a9b6da35f6/awex-0.3.0-py3-none-any.whl", hash = "sha256:62d4f2863f318ede2d1e1afed42dafad695646c95394525806a88b733a74cd58", size = 222100, upload-time = "2026-03-23T06:56:02.803Z" },
 ]
 
 [[package]]
@@ -6207,8 +6221,8 @@ dependencies = [
     { name = "typing-extensions", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 wheels = [
-    { url = "https://download.pytorch.org/whl/cu129/torch-2.9.1%2Bcu129-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:a070a0c3d357b44a239810767f7509c3fce3146e051751410b50630b12486cc2" },
-    { url = "https://download.pytorch.org/whl/cu129/torch-2.9.1%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:9968834a95e4b09f702549285f6210eade0d268b3b7e52b35aff1c6529fb8022" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.9.1%2Bcu129-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:a070a0c3d357b44a239810767f7509c3fce3146e051751410b50630b12486cc2" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.9.1%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:9968834a95e4b09f702549285f6210eade0d268b3b7e52b35aff1c6529fb8022" },
 ]
 
 [[package]]

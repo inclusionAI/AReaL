@@ -227,6 +227,7 @@ class TestGatewayInferenceControllerAPISurface:
             "dispatcher",
             "runner",
             "proxy_gateway_addr",
+            "inference_worker_addrs",
             "worker_ids",
         ]
         for p in properties:
@@ -296,6 +297,86 @@ class TestGatewayInferenceControllerConstruction:
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         # Before initialize, proxy_gateway_addr returns the empty _gateway_addr
         assert controller.proxy_gateway_addr == ""
+
+    def test_inference_worker_addrs_returns_copy(self):
+        cfg = GatewayControllerConfig()
+        scheduler = MagicMock()
+        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller._inf_addrs = ["http://127.0.0.1:30000"]
+
+        result = controller.inference_worker_addrs
+        assert result == ["http://127.0.0.1:30000"]
+        result.append("http://127.0.0.1:30001")
+        assert controller.inference_worker_addrs == ["http://127.0.0.1:30000"]
+
+
+class TestGatewayInferenceControllerSGLangLaunch:
+    @pytest.mark.asyncio
+    async def test_async_initialize_uses_areal_sglang_server_module(self):
+        from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
+
+        worker = MagicMock()
+        worker.ip = "127.0.0.1"
+        worker.worker_ports = [18000]
+        worker.id = "w0"
+
+        scheduler = MagicMock()
+        scheduler.get_workers.return_value = [worker]
+
+        cfg = GatewayControllerConfig(
+            tokenizer_path="mock-tokenizer",
+            model_path="mock-model",
+            backend="sglang:d1",
+            scheduling_spec=(
+                SchedulingSpec(
+                    gpu=0,
+                    cpu=1,
+                    mem=1,
+                    cmd="python -m areal.experimental.inference_service.guard",
+                ),
+            ),
+            openai=OpenAIProxyConfig(admin_api_key="test-admin-key"),
+            setup_timeout=1.0,
+        )
+        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller._callback_host = "127.0.0.1"
+        controller._callback_port = 19000
+
+        def _mock_resp(status_code=200, payload=None):
+            r = MagicMock()
+            r.status_code = status_code
+            r.json.return_value = payload or {}
+            r.raise_for_status.return_value = None
+            return r
+
+        with (
+            patch.object(controller, "_wait_for_service") as mock_wait,
+            patch.object(controller, "_fork_on_guard") as mock_fork,
+            patch("requests.post") as mock_post,
+            patch(
+                "areal.api.cli_args.pkg_version.is_version_greater_or_equal",
+                return_value=True,
+            ),
+            patch("areal.api.cli_args.is_version_less", return_value=False),
+        ):
+            mock_wait.return_value = None
+            mock_fork.side_effect = [
+                ("127.0.0.1", 18081),
+                ("127.0.0.1", 18082),
+                ("127.0.0.1", 18080),
+            ]
+
+            mock_post.side_effect = [
+                _mock_resp(payload={"host": "127.0.0.1", "ports": [30000]}),
+                _mock_resp(payload={"status": "success"}),
+            ]
+
+            await controller._async_initialize(server_args=None, server_infos=None)
+
+        fork_payload = mock_post.call_args_list[1].kwargs["json"]
+        raw_cmd = fork_payload["raw_cmd"]
+        assert "-m" in raw_cmd
+        assert "areal.engine.sglang_ext.areal_sglang_server" in raw_cmd
 
     def test_callback_addr_formats_ipv6_hostport(self):
         cfg = GatewayControllerConfig()

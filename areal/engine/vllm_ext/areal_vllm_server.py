@@ -385,6 +385,14 @@ if __name__ == "__main__":
     # Patch build_app so run_server uses our version
     _api_server_module.build_app = _areal_build_app
 
+    # Register awex routes if available.
+    try:
+        from awex.vllm_plugin import register_awex_routes
+
+        register_awex_routes()
+    except ImportError:
+        logger.info("awex is not installed; skip awex vLLM route registration")
+
     cli_env_setup()
     parser = FlexibleArgumentParser(
         description="vLLM OpenAI-Compatible RESTful API server."

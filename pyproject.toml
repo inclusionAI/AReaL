@@ -164,6 +164,9 @@ megatron = [
     "mbridge==0.15.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "megatron-bridge==0.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+awex = [
+    "awex==0.3.0",
+]
 # Convenience extra for CUDA training packages (no inference backend)
 cuda-train = [
     "areal[tms]",
@@ -174,6 +177,7 @@ cuda-train = [
 cuda = [
     "areal[cuda-train]",
     "areal[sglang]",
+    "areal[awex]",
     "areal[flash-attn]",
     "torch; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",

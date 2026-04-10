@@ -272,7 +272,7 @@ class GatewayInferenceController:
 
             # Build backend-specific launch command builder
             if inf_backend == "sglang":
-                from areal.api.cli_args import SGLangConfig
+                from areal.api.cli_args import SGLangConfig, get_py_cmd
 
                 sglang_config = SGLangConfig(
                     model_path=cfg.model_path or cfg.tokenizer_path,
@@ -290,12 +290,15 @@ class GatewayInferenceController:
                             )
 
                 def _build_launch_cmd(host: str, port: int) -> list[str]:
-                    return SGLangConfig.build_cmd(
+                    args = SGLangConfig.build_args(
                         sglang_config=sglang_config,
                         tp_size=tp_size,
                         base_gpu_id=0,
                         host=host,
                         port=port,
+                    )
+                    return get_py_cmd(
+                        "areal.engine.sglang_ext.areal_sglang_server", args
                     )
 
             elif inf_backend == "vllm":
@@ -1113,6 +1116,11 @@ class GatewayInferenceController:
     @property
     def proxy_gateway_addr(self) -> str:
         return self._gateway_addr
+
+    @property
+    def inference_worker_addrs(self) -> list[str]:
+        """Direct inference worker addresses for bypass flows (e.g. weight update)."""
+        return list(self._inf_addrs)
 
     # -- Properties --------------------------------------------------------
 
