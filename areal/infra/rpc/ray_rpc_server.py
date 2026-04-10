@@ -305,7 +305,7 @@ class RayHTTPLauncher(RayServer):
             "init_kwargs": serialize_value(init_kwargs),
         }
         try:
-            return self._post_request("create_engine", payload)
+            self._post_request("create_engine", payload)
         except Exception as e:
             self.logger.error(
                 f"RayHTTPLauncher failed to create engine '{engine}' : {e}\n"
@@ -328,6 +328,7 @@ class RayHTTPLauncher(RayServer):
         payload = {
             "method": method,
             "engine_name": engine_name,
+            "rpc_meta": rpc_meta,
             "args": serialize_value(list(args)),
             "kwargs": serialize_value(kwargs),
         }
@@ -342,17 +343,6 @@ class RayHTTPLauncher(RayServer):
     def destroy(self) -> None:
         if self.worker_process and self.worker_process.poll() is None:
             kill_process_tree(self.worker_process.pid, timeout=3, graceful=True)
-
-        # Destroy all engines
-        for engine_name, engine in list(self._engines.items()):
-            try:
-                engine.destroy()
-                self.logger.info(f"RayRPCServer Engine '{engine_name}' destroyed")
-            except Exception as e:
-                self.logger.error(
-                    f"RayRPCServer error destroying engine '{engine_name}': {e}"
-                )
-        self._engines.clear()
         self._default_engine_name = None
         ray.actor.exit_actor()
 
@@ -403,31 +393,41 @@ class RayHTTPLauncher(RayServer):
         retry_delay: float = 1.0,
     ):
         url = f"{self.url}/{endpoint}"
+        last_error = ""
         # adapted from local scheduler
         for attempt in range(1, max_retries + 1):
             if self.worker_process and self.worker_process.poll() is not None:
                 raise RuntimeError("Worker has terminated")
 
-            response = requests.post(url, json=payload, timeout=http_timeout)
+            try:
+                response = requests.post(url, json=payload, timeout=http_timeout)
+                if response.status_code == 200:
+                    result = response.json().get("result")
+                    deserialized_result = deserialize_value(result)
+                    return deserialized_result
+                elif response.status_code in [400, 404, 500]:
+                    error_detail = response.json().get("detail", "unknown error")
+                    raise RuntimeError(error_detail)
 
-            if response.status_code == 200:
-                result = response.json().get("result")
-                deserialized_result = deserialize_value(result)
-                return deserialized_result
-            elif response.status_code in [400, 500]:
-                error_detail = response.json().get("detail", "unknown error")
-                raise RuntimeError(error_detail)
+                last_error = f"HTTP {response.status_code}: {response.text}"
+            except Exception as e:
+                last_error = str(e)
+                self.logger.warning(
+                    f"Post failed when calling url {url} on actor '{self.actor_name}': {e}"
+                )
 
             # otherwise retry
             if attempt < max_retries:
                 delay = retry_delay * (2 ** (attempt - 1))
                 self.logger.warning(
-                    f"Calling url {url} failed on actor '{ray.runtime_context.get_runtime_context().current_actor}' "
-                    f"(attempt {attempt}/{max_retries}): {response.json()}. "
+                    f"Calling url {url} failed on actor '{self.actor_name}' "
+                    f"(attempt {attempt}/{max_retries}): {last_error}. "
                     f"Retrying in {delay:.1f}s..."
                 )
                 time.sleep(delay)
-        raise RuntimeError(f"Max retries exceeded trying to call url {url}")
+        raise RuntimeError(
+            f"Max retries exceeded trying to call url {url}: {last_error or 'unknown error'}"
+        )
 
     @property
     def url(self):
