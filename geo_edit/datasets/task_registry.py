@@ -137,7 +137,10 @@ class DatasetSpec:
         return self.judge_prompt
 
     def build_prompt(
-        self, item: Mapping[str, Any], use_tools: bool, separated: bool = False,
+        self,
+        item: Mapping[str, Any],
+        use_tools: bool,
+        separated: bool = False,
         unified: bool = False,
     ) -> str:
         values: Dict[str, Any] = {}
@@ -545,6 +548,25 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
         separated_prompt_template=REASONMAP_BASE_SEPARATED_TEMPLATE,
         image_dedup_key="city",
+        answer_format=(
+            "Provide your final answer in <answer></answer> tags using this EXACT format "
+            "(multiple route sections separated by a line containing only --):\n\n"
+            "Route Name: [line name exactly as shown on the map]\n"
+            "Departure Stop: [station name]\n"
+            "Arrival Stop: [station name]\n"
+            "Number of Via Stops: [number of intermediate stops]\n"
+            "--\n"
+            "Route Name: [next line name]\n"
+            "Departure Stop: [transfer station name]\n"
+            "Arrival Stop: [destination station name]\n"
+            "Number of Via Stops: [number]\n\n"
+            "Rules:\n"
+            "- The first section's Departure Stop must be the origin station.\n"
+            "- The last section's Arrival Stop must be the destination station.\n"
+            "- Adjacent sections must share a transfer station "
+            "(section N's Arrival Stop = section N+1's Departure Stop).\n"
+            "- Every station must exist on the specified route."
+        ),
     ),
     "mm_mapqa": DatasetSpec(
         name="mm_mapqa",

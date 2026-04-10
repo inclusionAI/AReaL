@@ -29,7 +29,7 @@ conclusion, you must wrap your final answer in
 <answer> and </answer> tags.
 """
 
-FORCE_TOOL_CALL_SYSTEM_PROMPT =  """
+FORCE_TOOL_CALL_SYSTEM_PROMPT = """
 You are an advanced AI agent capable of complex
 reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
@@ -51,7 +51,7 @@ conclusion, you must wrap your final answer in
 <answer> and </answer> tags.
 """
 
-USER_PROMPT='''
+USER_PROMPT = """
 Please answer the following {task_type} question:
 Question: {Question}
 Please provide a complete step-by-step solution to
@@ -69,7 +69,7 @@ Provide your detailed reasoning between <think>
 and </think> tags, then give your final answer
 between <answer> and </answer> tags.
 Output format: {output_format}
-'''
+"""
 
 
 # data_source -> human-readable task type
@@ -104,7 +104,9 @@ def build_user_message(
     Single source of truth for user messages across all pipelines.
     """
     cleaned_q = re.sub(r"^(Question:\s*)+", "", question.strip()).strip()
-    image_prefix = "".join(f"Observation {idx}:\n<image>\n" for idx in range(num_images))
+    image_prefix = "".join(
+        f"Observation {idx}:\n<image>\n" for idx in range(num_images)
+    )
     formatted = USER_PROMPT.strip().format(
         task_type=task_type,
         Question=cleaned_q,
@@ -224,14 +226,18 @@ Tool: [tool_name]
 Reason: [what NEW information this tool will provide]
 </think>
 
-If you have enough information to answer:
+If you have gathered CONCRETE evidence and are confident in your answer:
 <think>[Your reflection and final reasoning]</think>
 <answer>[your answer]</answer>
 
-PREFER using tools to verify conclusions before answering.
+CRITICAL RULES:
+- NEVER respond with "I cannot determine", "I'm unable to verify", or ask the user for clarification. You must work with the image and tools available.
+- If previous tool results were unclear or insufficient, select a DIFFERENT tool or use the same tool with different parameters to gather more information.
+- Only provide an answer when you have specific, concrete findings from tool results — not when you are uncertain or giving up.
+- PREFER using tools to verify conclusions before answering.
 """
 
-SEPARATED_USER_PROMPT="""
+SEPARATED_USER_PROMPT = """
 Question: {Question}
 """
 
