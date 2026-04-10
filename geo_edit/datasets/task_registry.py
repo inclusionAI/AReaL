@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as _json
 import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
@@ -29,6 +30,9 @@ from geo_edit.datasets.input_template import (
     CHARTQAPRO_INPUT_TEMPLATE,
     CHARTQAPRO_NOTOOL_INPUT_TEMPLATE,
     CHARTQAPRO_SEPARATED_TEMPLATE,
+    REASONMAP_BASE_INPUT_TEMPLATE,
+    REASONMAP_BASE_NOTOOL_INPUT_TEMPLATE,
+    REASONMAP_BASE_SEPARATED_TEMPLATE,
     REASONMAP_INPUT_TEMPLATE,
     REASONMAP_NOTOOL_INPUT_TEMPLATE,
     REASONMAP_SEPARATED_TEMPLATE,
@@ -244,6 +248,14 @@ def _get_reasonmap_answer(item: Mapping[str, Any]) -> str:
     if qtype in ("TorF1", "TorF2"):
         return "Yes" if int(answer) == 1 else "No"
     return str(answer)
+
+
+def _get_reasonmap_base_answer(item: Mapping[str, Any]) -> str:
+    """Serialise the ``routes`` ground truth for ReasonMap base (route planning)."""
+    routes = item.get("routes", {})
+    if isinstance(routes, str):
+        return routes
+    return _json.dumps(routes, ensure_ascii=False)
 
 
 # =============================================================================
@@ -501,6 +513,34 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             },
         },
         separated_prompt_template=REASONMAP_SEPARATED_TEMPLATE,
+        image_dedup_key="city",
+    ),
+    "reason_map": DatasetSpec(
+        name="reason_map",
+        id_key="id",
+        answer_key=_get_reasonmap_base_answer,
+        image_key="image",
+        prompt_template=REASONMAP_BASE_INPUT_TEMPLATE,
+        notool_prompt_template=REASONMAP_BASE_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question_long",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": "reason_map",
+                "country": item.get("country", ""),
+                "city": item.get("city", ""),
+                "station_1": item.get("station_1", ""),
+                "station_2": item.get("station_2", ""),
+                "difficulty_question": item.get("difficulty_question", ""),
+                "difficulty_city": item.get("difficulty_city", ""),
+                "city_line_count": item.get("city_line_count", 0),
+                "city_transfer_count": item.get("city_transfer_count", 0),
+                "question_transfer_count": item.get("question_transfer_count", 0),
+                "metro_data": item.get("json", ""),
+            },
+        },
+        separated_prompt_template=REASONMAP_BASE_SEPARATED_TEMPLATE,
         image_dedup_key="city",
     ),
 }

@@ -117,6 +117,7 @@ def _validate_trajectory(
     task_category: str = "",
     image_path: str = None,
     judge_prompt: Optional[str] = None,
+    meta_info_extra: Optional[dict] = None,
 ) -> Tuple[bool, str]:
     """Validate trajectory using judge.
 
@@ -125,8 +126,10 @@ def _validate_trajectory(
             If False, only checks leakage + tool consistency (for tool call rounds
             where no answer exists yet).
         task_category: Task category string. When "maze", uses algorithmic verification.
+            When "reason_map", uses route topology verification.
         image_path: Path to task image, required for maze verification.
         judge_prompt: Optional additional prompt for LLM judge (task-specific hints).
+        meta_info_extra: Optional extra metadata (needed by reason_map verifier).
     """
     # Maze tasks: use algorithmic wall-collision verification instead of LLM judge
     if task_category == "maze" and image_path and check_correctness:
@@ -138,6 +141,18 @@ def _validate_trajectory(
             ground_truth=ground_truth,
             prediction=prediction,
             image_path=image_path,
+        )
+
+    # ReasonMap tasks: use route topology verification instead of LLM judge
+    if task_category == "reason_map" and check_correctness:
+        from geo_edit.evaluation.reason_map_verifier import reason_map_judge
+
+        return reason_map_judge(
+            question=question,
+            ground_truth=ground_truth,
+            prediction=prediction,
+            image_path=image_path or "",
+            meta_info_extra=meta_info_extra or {},
         )
 
     assert _WORKER_JUDGE is not None, "Judge not initialized"
@@ -203,6 +218,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
         .get("meta_info_extra", {})
         .get("category", "")
     )
+    task_meta_info_extra = task_payload.get("task_kwargs", {}).get("meta_info_extra")
 
     # Check if already completed
     meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
@@ -324,6 +340,7 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                         task_category=task_category,
                         image_path=image_path,
                         judge_prompt=judge_prompt,
+                        meta_info_extra=task_meta_info_extra,
                     )
 
                     if is_valid:
