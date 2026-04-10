@@ -356,13 +356,19 @@ class PPOActor:
 
 class PPOActorController(TrainController):
     def compute_logp(self, *args, **kwargs):
-        return self._custom_function_call("compute_logp", *args, **kwargs)
+        return self._custom_function_call(
+            "compute_logp", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
     def compute_advantages(self, *args, **kwargs):
-        return self._custom_function_call("compute_advantages", *args, **kwargs)
+        return self._custom_function_call(
+            "compute_advantages", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
     def ppo_update(self, *args, **kwargs) -> None:
-        self._custom_function_call("ppo_update", *args, **kwargs)
+        self._custom_function_call(
+            "ppo_update", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
 
 def grpo_loss_fn(

@@ -385,6 +385,52 @@ def test_gsm8k_ppo(tmp_path_factory):
     assert success, "GSM8K PPO example failed"
 
 
+@pytest.mark.sglang
+@pytest.mark.gpu
+def test_gsm8k_ppo_colocate(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B"
+    )
+    dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
+
+    example_file = "examples/math/gsm8k_rl.py"
+    config_name = "examples/math/gsm8k_ppo.yaml"
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "rollout.backend=sglang:d2",
+        "actor.backend=fsdp:d2",
+        "+actor.weight_update_mode=disk",
+        "+rollout.scheduling_strategy.type=colocation",
+        "+rollout.scheduling_strategy.target=actor",
+        "critic.scheduling_strategy.type=colocation",
+        "critic.scheduling_strategy.target=actor",
+        "ref.scheduling_strategy.type=colocation",
+        "ref.scheduling_strategy.target=actor",
+        "enable_offload=True",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=256",
+        "sglang.mem_fraction_static=0.3",
+        "vllm.gpu_memory_utilization=0.3",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "critic.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=1",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        f"critic.path={model_path}",
+        "scheduler.type=local",
+    )
+    assert success, "GSM8K PPO colocated example failed"
+
+
 @pytest.mark.ci
 @pytest.mark.parametrize(
     "rollout_backend,actor_backend",

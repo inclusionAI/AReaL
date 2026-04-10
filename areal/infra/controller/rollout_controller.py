@@ -1037,6 +1037,14 @@ class RolloutController:
     async def continue_generation(self):
         await self._collective_rpc_async("continue_generation")
 
+    def offload(self) -> None:
+        """Offload rollout model memory on all inference workers."""
+        self._collective_rpc("offload")
+
+    def onload(self, tags: list[str] | None = None) -> None:
+        """Onload rollout model memory on all inference workers."""
+        self._collective_rpc("onload", tags=tags)
+
     def set_version(self, version: int) -> None:
         with self._version_lock:
             self._version = version
