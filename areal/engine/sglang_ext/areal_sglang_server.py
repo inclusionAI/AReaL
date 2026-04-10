@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import threading
 from typing import Any
 
 import uvicorn
@@ -353,23 +352,10 @@ def _build_engine(server_args):
 
 def main() -> None:
     server_args, host, port = _parse_args()
-    app = create_app(engine=None)
-
-    def _init_engine() -> None:
-        logger.info("Starting SGLang engine initialization")
-        try:
-            engine = _build_engine(server_args)
-            app.state.engine = engine
-            app.state.engine_ready = True
-            app.state.engine_init_error = None
-            logger.info("SGLang engine initialization completed")
-        except Exception as exc:
-            app.state.engine = None
-            app.state.engine_ready = False
-            app.state.engine_init_error = exc
-            logger.exception("SGLang engine initialization failed")
-
-    threading.Thread(target=_init_engine, daemon=True).start()
+    logger.info("Starting SGLang engine initialization")
+    engine = _build_engine(server_args)
+    logger.info("SGLang engine initialization completed")
+    app = create_app(engine=engine)
     logger.info("Starting uvicorn server at %s:%s", host, port)
     uvicorn.run(app, host=host, port=port)
 

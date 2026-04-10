@@ -273,6 +273,11 @@ def main(args: argparse.Namespace) -> None:
                     elapsed = int(now - (deadline - args.health_timeout))
                     _log(rank, f"health probe pending (elapsed={elapsed}s): {detail}")
                     last_log_ts = now
+                if detail.startswith("500 "):
+                    health_gate[1] = (
+                        f"AReaL SGLang server reported fatal health error: {detail}"
+                    )
+                    break
                 if ok:
                     _log(rank, "sglang server is healthy")
                     health_gate[0] = True
