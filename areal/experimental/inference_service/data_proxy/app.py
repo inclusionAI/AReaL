@@ -543,7 +543,6 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         logger.debug("Stored RTensor shard %s", shard_id)
         return {"status": "ok", "shard_id": shard_id}
 
-
     @app.get("/data/{shard_id}")
     async def retrieve_data_shard(shard_id: str):
         """Retrieve a tensor shard from local RTensor storage."""
