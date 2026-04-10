@@ -21,8 +21,6 @@ from areal.experimental.inference_service.data_proxy.config import DataProxyConf
 from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
 from areal.experimental.inference_service.data_proxy.pause import PauseState
 from areal.experimental.inference_service.data_proxy.session import (
-    BatchShardRequest,
-    ClearShardRequest,
     ExportTrajectoriesRequest,
     ExportTrajectoriesResponse,
     ReadyNotification,
@@ -38,6 +36,10 @@ from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
 from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.proxy.server import serialize_interactions
 from areal.infra.rpc import rtensor as rtensor_storage
+from areal.infra.rpc.guard.data_blueprint import (
+    BatchShardRequest,
+    ClearShardRequest,
+)
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging
 
