@@ -6,8 +6,8 @@ diversifies) and converts each trajectory into step-level ShareGPT samples.
 
 Usage:
     python -m geo_edit.data_preprocess.convert_trajectory_to_sft \
-        --src_dir /storage/openpsi/data/lcy_image_edit/chartqa_augmented_data \
-        --dst_dir /storage/openpsi/data/lcy_image_edit/chartqa_sft_data 
+        --src_dir /storage/openpsi/data/lcy_image_edit/reasonmap_plus_sft_selected \
+        --dst_dir /storage/openpsi/data/lcy_image_edit/reasonmap_plus_sft_selected_data 
 """
 
 import argparse
@@ -77,12 +77,24 @@ def convert_trajectory(
     images = []  # relative paths for the output
     output_image_counter = 0
 
-    input_image_paths = sorted(glob.glob(os.path.join(src_dir, "input_image*.png")))
+    # Extract input images from the first user message in the trajectory.
+    # Supports both file:// URLs (shared images) and inline image_url references.
+    input_image_paths = []
+    first_msg = trajectory[0] if trajectory else {}
+    if first_msg.get("role") == "user":
+        urls = get_image_url_from_content(first_msg.get("content", []))
+        for url in urls:
+            path = url.replace("file://", "") if url.startswith("file://") else url
+            if os.path.exists(path):
+                input_image_paths.append(path)
+
     for idx, input_src in enumerate(input_image_paths):
         basename = os.path.basename(input_src)
-        dst_name = f"{task_id}_{basename}"
-        shutil.copy2(input_src, os.path.join(dst_images_dir, dst_name))
-        images.append(f"images/{dst_name}")
+        dst_path = os.path.join(dst_images_dir, basename)
+        # Deduplicate: only copy if not already present (shared images like dubai.png)
+        if not os.path.exists(dst_path):
+            shutil.copy2(input_src, dst_path)
+        images.append(f"images/{basename}")
 
     observation_counter = len(input_image_paths)
 
