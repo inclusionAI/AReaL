@@ -143,17 +143,32 @@ def _validate_trajectory(
             image_path=image_path,
         )
 
-    # ReasonMap tasks: use route topology verification instead of LLM judge
+    # ReasonMap tasks: rule-based first, LLM judge fallback if rule-based rejects
     if task_category == "reason_map" and check_correctness:
         from geo_edit.evaluation.reason_map_verifier import reason_map_judge
 
-        return reason_map_judge(
+        is_valid, rule_reason = reason_map_judge(
             question=question,
             ground_truth=ground_truth,
             prediction=prediction,
             image_path=image_path or "",
             meta_info_extra=meta_info_extra or {},
         )
+        if is_valid:
+            return True, "valid"
+
+        if _WORKER_JUDGE is not None:
+            is_correct, llm_reason = _WORKER_JUDGE.judge_correctness(
+                question=question,
+                ground_truth=ground_truth,
+                prediction=prediction,
+                additional_prompt=judge_prompt,
+            )
+            if is_correct:
+                logger.info("reason_map rule-based rejected (%s) but LLM judge accepted", rule_reason)
+                return True, "valid (llm_fallback)"
+
+        return False, f"reason_map_rejected: {rule_reason}"
 
     assert _WORKER_JUDGE is not None, "Judge not initialized"
 
