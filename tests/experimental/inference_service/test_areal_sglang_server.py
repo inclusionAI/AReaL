@@ -179,7 +179,11 @@ def test_awex_scheduler_launcher_is_pickle_safe():
 def test_awex_adapter_exposes_hf_config_from_engine_model_config():
     pytest.importorskip("awex")
 
-    marker = object()
+    class _FakeHFConfig:
+        def to_dict(self):
+            return {"model_type": "qwen3"}
+
+    marker = _FakeHFConfig()
 
     class _FakeServerArgs:
         tp_size = 1
@@ -202,7 +206,84 @@ def test_awex_adapter_exposes_hf_config_from_engine_model_config():
         comm_backend="file",
     )
     assert adapter.hf_config is marker
+    assert callable(getattr(adapter.hf_config, "to_dict", None))
     assert adapter.engine_name == "sglang"
+
+
+def test_awex_adapter_unwraps_tokenizer_model_config_wrapper():
+    pytest.importorskip("awex")
+
+    class _FakeHFConfig:
+        def to_dict(self):
+            return {"model_type": "qwen3"}
+
+    class _Wrapper:
+        def __init__(self):
+            self.hf_config = _FakeHFConfig()
+
+    class _FakeTokenizerManager:
+        model_config = _Wrapper()
+
+    class _FakeServerArgs:
+        tp_size = 1
+        dp_size = 1
+        pp_size = 1
+        nnodes = 1
+        node_rank = 0
+        model_path = "unused-model"
+
+    class _FakeSglEngine:
+        server_args = _FakeServerArgs()
+        tokenizer_manager = _FakeTokenizerManager()
+
+    adapter = AwexSGLangServerAdapter(
+        sgl_engine=_FakeSglEngine(),
+        meta_server_addr="127.0.0.1:7081",
+        comm_backend="file",
+    )
+    assert callable(getattr(adapter.hf_config, "to_dict", None))
+
+
+def test_awex_adapter_prefers_nested_hf_config_over_wrapper_to_dict():
+    pytest.importorskip("awex")
+
+    class _FakeHFConfig:
+        def to_dict(self):
+            return {
+                "architectures": ["Qwen3ForCausalLM"],
+                "num_hidden_layers": 28,
+            }
+
+    class _WrapperWithToDict:
+        def __init__(self):
+            self.hf_config = _FakeHFConfig()
+
+        def to_dict(self):
+            return {"wrapper_only": True}
+
+    class _FakeTokenizerManager:
+        model_config = _WrapperWithToDict()
+
+    class _FakeServerArgs:
+        tp_size = 1
+        dp_size = 1
+        pp_size = 1
+        nnodes = 1
+        node_rank = 0
+        model_path = "unused-model"
+
+    class _FakeSglEngine:
+        server_args = _FakeServerArgs()
+        tokenizer_manager = _FakeTokenizerManager()
+
+    adapter = AwexSGLangServerAdapter(
+        sgl_engine=_FakeSglEngine(),
+        meta_server_addr="127.0.0.1:7081",
+        comm_backend="file",
+    )
+    cfg = adapter.hf_config.to_dict()
+    assert cfg.get("architectures") == ["Qwen3ForCausalLM"]
+    assert "wrapper_only" not in cfg
 
 
 def test_worker_patch_handles_qnorm_name(monkeypatch):

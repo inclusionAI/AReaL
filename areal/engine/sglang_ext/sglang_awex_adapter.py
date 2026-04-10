@@ -98,22 +98,49 @@ class AwexSGLangServerAdapter:
         self.weights_exchange_reader = None
 
     def _resolve_hf_config(self, server_args):
-        """Resolve HF config object expected by awex readers."""
+        """Resolve HF config object expected by awex readers.
+
+        awex calls ``simple_hf_config(self.hf_config)`` and requires a config-like
+        object with ``to_dict()`` (e.g., ``transformers.PretrainedConfig``).
+        SGLang wrappers (e.g., ModelConfig) may contain nested HF config but are not
+        themselves accepted by awex.
+        """
+
+        def _has_to_dict(obj: Any) -> bool:
+            return hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict"))
+
+        def _unwrap_to_hf_config(candidate: Any, *, depth: int = 0) -> Any | None:
+            if candidate is None or depth > 5:
+                return None
+            # Prefer nested canonical HF config when wrappers expose both wrapper
+            # attrs and nested hf_config/config.
+            for attr in ("hf_config", "config", "model_config"):
+                nested = getattr(candidate, attr, None)
+                if nested is None or nested is candidate:
+                    continue
+                resolved = _unwrap_to_hf_config(nested, depth=depth + 1)
+                if resolved is not None:
+                    return resolved
+            if _has_to_dict(candidate):
+                return candidate
+            return None
+
         # Preferred: use already-built config from the live SGLang engine.
         tokenizer_manager = getattr(self._sgl_engine, "tokenizer_manager", None)
         tm_model_config = getattr(tokenizer_manager, "model_config", None)
-        if tm_model_config is not None:
-            return tm_model_config
+        resolved = _unwrap_to_hf_config(tm_model_config)
+        if resolved is not None:
+            return resolved
 
         model_config = getattr(self._sgl_engine, "model_config", None)
-        for attr in ("hf_config", "model_config", "config"):
-            cfg = getattr(model_config, attr, None)
-            if cfg is not None:
-                return cfg
+        resolved = _unwrap_to_hf_config(model_config)
+        if resolved is not None:
+            return resolved
 
         direct_cfg = getattr(self._sgl_engine, "hf_config", None)
-        if direct_cfg is not None:
-            return direct_cfg
+        resolved = _unwrap_to_hf_config(direct_cfg)
+        if resolved is not None:
+            return resolved
 
         model_path = getattr(server_args, "model_path", None)
         if not model_path:
@@ -129,7 +156,13 @@ class AwexSGLangServerAdapter:
             ) from exc
 
         logger.info("Loading hf_config from model_path for awex adapter")
-        return AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+        loaded = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+        if _has_to_dict(loaded):
+            return loaded
+        raise RuntimeError(
+            "Cannot resolve awex-compatible hf_config with to_dict(); "
+            f"loaded type={type(loaded).__name__}"
+        )
 
     @property
     def config(self):

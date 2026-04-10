@@ -338,7 +338,24 @@ def main(args: argparse.Namespace) -> None:
                 target=_call_awex_update, kwargs={"step_id": step_id}, daemon=True
             )
             update_thread.start()
-            time.sleep(1)
+            # Give update path a short grace window to surface immediate failures
+            # (e.g., awex reader init/update validation errors) before writer
+            # enters long infer_conf wait paths.
+            prewrite_deadline = time.time() + 5
+            while time.time() < prewrite_deadline:
+                if update_result["error"]:
+                    raise RuntimeError(
+                        f"Reader update failed early: {update_result['error']}"
+                    )
+                if update_result["ok"]:
+                    break
+                if not update_thread.is_alive():
+                    break
+                time.sleep(0.1)
+            if update_result["error"]:
+                raise RuntimeError(
+                    f"Reader update failed early: {update_result['error']}"
+                )
         else:
             update_thread = None
 
