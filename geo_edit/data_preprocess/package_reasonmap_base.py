@@ -20,11 +20,12 @@ from datasets import Dataset, Features, Image as HFImage, Value, load_dataset
 
 
 def package_reasonmap_base(input_dir: str | None, out_dir: Path, split: str = "validation") -> Path:
-    out_parquet = out_dir / "reasonmap_base_dataset.parquet"
+    out_parquet = out_dir / f"reasonmap_base_{split}_dataset.parquet"
 
     if input_dir:
-        print(f"Loading from local path: {input_dir}")
-        ds = load_dataset("parquet", data_files=str(Path(input_dir) / "*.parquet"), split="train")
+        pattern = str(Path(input_dir) / f"*{split}*.parquet")
+        print(f"Loading from local path: {pattern}")
+        ds = load_dataset("parquet", data_files=pattern, split="train")
     else:
         print(f"Loading FSCCS/ReasonMap ({split} split)...")
         ds = load_dataset("FSCCS/ReasonMap", split=split)
