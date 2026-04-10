@@ -389,7 +389,7 @@ class TestExplicitEvalDispatchControllers:
         assert captured["method"] == "evaluate_lm"
         padded_items = cast(list[dict[str, object]], captured["args"][0])
         assert len(padded_items) == 8
-        assert captured["kwargs"] == {}
+        assert captured["kwargs"] == {"rpc_meta": {"broadcast": True}}
 
     def test_rw_controller_evaluate_rw_explicitly_pads_pairs(self):
         controller = RWController.__new__(RWController)

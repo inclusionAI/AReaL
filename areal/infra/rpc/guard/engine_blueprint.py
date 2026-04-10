@@ -37,6 +37,25 @@ from areal.utils.dynamic_import import import_from_string
 
 logger = logging.getLogger("EngineBP")
 
+
+def _should_broadcast_payload(
+    engine: TrainEngine | InferenceEngine, rpc_meta: dict[str, Any] | None
+) -> bool:
+    default_broadcast = isinstance(engine, TrainEngine) and engine.initialized
+    if rpc_meta is None:
+        return default_broadcast
+    if not isinstance(rpc_meta, dict):
+        raise ValueError(
+            f"Invalid rpc_meta: expected dict or None, got {type(rpc_meta)}"
+        )
+    broadcast = rpc_meta.get("broadcast", default_broadcast)
+    if not isinstance(broadcast, bool):
+        raise ValueError(
+            f"Invalid rpc_meta.broadcast: expected bool, got {type(broadcast)}"
+        )
+    return broadcast
+
+
 engine_bp = Blueprint("engine", __name__)
 
 # ---------------------------------------------------------------------------
@@ -405,6 +424,7 @@ def call_engine_method():
         engine_name = data.get("engine_name")
         raw_args = data.get("args", [])
         raw_kwargs = data.get("kwargs", {})
+        rpc_meta = data.get("rpc_meta")
 
         if not method_name:
             return (
@@ -441,28 +461,13 @@ def call_engine_method():
 
         def execute_in_engine_thread():
             try:
-                # Broadcast args when engine is a TrainEngine and initialized
-                if isinstance(engine, TrainEngine) and engine.initialized:
-                    logger.debug(
-                        f"Broadcasting data for TrainEngine method: {method_name}"
-                    )
-
-                    nonlocal raw_args, raw_kwargs
-                    raw_args = broadcast_tensor_container(
-                        tensor_container_to(
-                            raw_args, current_platform.current_device()
-                        ),
-                        src_rank=engine.current_data_parallel_head(),
-                        group=engine.context_and_model_parallel_group,
-                    )
-                    raw_kwargs = broadcast_tensor_container(
-                        tensor_container_to(
-                            raw_kwargs, current_platform.current_device()
-                        ),
-                        src_rank=engine.current_data_parallel_head(),
-                        group=engine.context_and_model_parallel_group,
-                    )
-
+                args_bcast = args
+                kwargs_bcast = kwargs
+                should_broadcast = _should_broadcast_payload(
+                    engine=engine, rpc_meta=rpc_meta
+                )
+                if should_broadcast:
+                    logger.debug(f"Broadcasting RPC payload for method: {method_name}")
                     args_bcast = tensor_container_to(
                         args, current_platform.current_device()
                     )
@@ -479,12 +484,18 @@ def call_engine_method():
                         src_rank=engine.current_data_parallel_head(),
                         group=engine.context_and_model_parallel_group,
                     )
-                    logger.debug("Broadcasting data done.")
-                else:
-                    args_bcast = args
-                    kwargs_bcast = kwargs
+                    logger.debug("Broadcasting RPC payload done.")
 
                 logger.debug(f"Calling engine '{engine_name}' method: {method_name}")
+
+                # Re-establish current device in RPC execution context before
+                # calling engine methods that may issue object collectives.
+                if (
+                    isinstance(engine, TrainEngine)
+                    and engine.initialized
+                    and current_platform.device_type != "cpu"
+                ):
+                    current_platform.set_device(current_platform.current_device())
 
                 # Determine trace category based on method name
                 category = "misc"  # Default category

@@ -70,10 +70,14 @@ class PPOCritic:
 
 class PPOCriticController(TrainController):
     def compute_values(self, *args, **kwargs):
-        return self._custom_function_call("compute_values", *args, **kwargs)
+        return self._custom_function_call(
+            "compute_values", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
     def ppo_update(self, *args, **kwargs):
-        self._custom_function_call("ppo_update", *args, **kwargs)
+        self._custom_function_call(
+            "ppo_update", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
 
 def ppo_loss_fn(

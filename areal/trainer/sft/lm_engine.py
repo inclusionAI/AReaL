@@ -43,11 +43,15 @@ class LMEngine:
 
 class LMController(TrainController):
     def train_lm(self, *args, **kwargs):
-        self._custom_function_call("train_lm", *args, **kwargs)
+        self._custom_function_call(
+            "train_lm", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
     def evaluate_lm(self, *args, **kwargs):
         args, kwargs = self._pad_eval_dispatch_args(args, kwargs, group_size=1)
-        self._custom_function_call("evaluate_lm", *args, **kwargs)
+        self._custom_function_call(
+            "evaluate_lm", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
 
 def compute_packed_sft_loss(

@@ -37,6 +37,7 @@ from areal.infra.utils.ray_placement_group import (
     ray_resource_type,
 )
 from areal.utils import logging
+from areal.utils.offload import get_tms_env_vars
 
 logger = logging.getLogger("RayScheduler")
 
@@ -61,6 +62,9 @@ class RayScheduler(Scheduler):
     ):
         self.exp_config = exp_config
         self.startup_timeout = startup_timeout
+        self.enable_tms_offload = False
+        if exp_config is not None:
+            self.enable_tms_offload = exp_config.enable_offload
 
         self._workers: dict[str, list[RayWorkerInfo]] = defaultdict(list)
         self._worker_info_by_id: dict[str, RayWorkerInfo] = {}
@@ -120,6 +124,8 @@ class RayScheduler(Scheduler):
         if spec.env_vars:
             additional_envs_str = ",".join(f"{k}={v}" for k, v in spec.env_vars.items())
         env = get_env_vars(additional_envs_str)
+        if self.enable_tms_offload:
+            env.update(get_tms_env_vars())
         thread_env = get_thread_env_vars(
             cpus_per_task=spec.cpu,
             existing_env_vars=spec.env_vars,
@@ -632,6 +638,7 @@ class RayScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -647,7 +654,11 @@ class RayScheduler(Scheduler):
             try:
                 # Pass engine_name to support multiple engines per worker (colocation)
                 ref = wi.actor.call.remote(
-                    method, *args, engine_name=engine_name, **kwargs
+                    method,
+                    *args,
+                    engine_name=engine_name,
+                    rpc_meta=rpc_meta,
+                    **kwargs,
                 )
                 result = ray.get(ref, timeout=http_timeout)
                 if attempt > 1:
@@ -687,6 +698,7 @@ class RayScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -702,7 +714,11 @@ class RayScheduler(Scheduler):
             try:
                 # Pass engine_name to support multiple engines per worker (colocation)
                 ref = wi.actor.call.remote(
-                    method, *args, engine_name=engine_name, **kwargs
+                    method,
+                    *args,
+                    engine_name=engine_name,
+                    rpc_meta=rpc_meta,
+                    **kwargs,
                 )
                 result = await ref
                 if attempt > 1:
