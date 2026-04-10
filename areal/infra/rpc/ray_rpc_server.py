@@ -304,9 +304,23 @@ class RayHTTPLauncher(RayServer):
             "init_args": serialize_value(list(init_args)),
             "init_kwargs": serialize_value(init_kwargs),
         }
-        return self._post_request("create_engine", payload)
+        try:
+            return self._post_request("create_engine", payload)
+        except Exception as e:
+            self.logger.error(
+                f"RayHTTPLauncher failed to create engine '{engine}' : {e}\n"
+                f"{traceback.format_exc()}"
+            )
+            raise
 
-    def call(self, method: str, *args, engine_name: str | None = None, **kwargs) -> Any:
+    def call(
+        self,
+        method: str,
+        *args,
+        engine_name: str | None = None,
+        rpc_meta: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> Any:
         self.logger.debug(
             f"Calling {method} on engine '{engine_name}' with arguments {args=} {kwargs=}"
         )
@@ -317,7 +331,13 @@ class RayHTTPLauncher(RayServer):
             "args": serialize_value(list(args)),
             "kwargs": serialize_value(kwargs),
         }
-        return self._post_request("call", payload)
+        try:
+            return self._post_request("call", payload)
+        except Exception as e:
+            self.logger.error(
+                f"RayHTTPLauncher failed for '{method}': {e}\n{traceback.format_exc()}"
+            )
+            raise
 
     def destroy(self) -> None:
         if self.worker_process and self.worker_process.poll() is None:
@@ -396,7 +416,7 @@ class RayHTTPLauncher(RayServer):
                 return deserialized_result
             elif response.status_code in [400, 500]:
                 error_detail = response.json().get("detail", "unknown error")
-                return error_detail
+                raise RuntimeError(error_detail)
 
             # otherwise retry
             if attempt < max_retries:
@@ -407,6 +427,7 @@ class RayHTTPLauncher(RayServer):
                     f"Retrying in {delay:.1f}s..."
                 )
                 time.sleep(delay)
+        raise RuntimeError(f"Max retries exceeded trying to call url {url}")
 
     @property
     def url(self):

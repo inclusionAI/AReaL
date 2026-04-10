@@ -320,7 +320,12 @@ class RayScheduler(Scheduler):
             worker_info_list.append(wi)
             worker_ids.append(worker_id)
 
-        ray.get(post_init_tasks)
+        try:
+            ray.get(post_init_tasks)
+        except Exception:
+            self._cleanup_forked_workers(worker_info_list)
+            raise
+
         # Register forked workers
         self._workers.setdefault(role, []).extend(worker_info_list)
         for wi in worker_info_list:
