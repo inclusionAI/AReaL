@@ -38,14 +38,17 @@ from areal.utils.dynamic_import import import_from_string
 logger = logging.getLogger("EngineBP")
 
 
-def _should_broadcast_payload(rpc_meta: dict[str, Any] | None) -> bool:
+def _should_broadcast_payload(
+    engine: TrainEngine | InferenceEngine, rpc_meta: dict[str, Any] | None
+) -> bool:
+    default_broadcast = isinstance(engine, TrainEngine) and engine.initialized
     if rpc_meta is None:
-        return False
+        return default_broadcast
     if not isinstance(rpc_meta, dict):
         raise ValueError(
             f"Invalid rpc_meta: expected dict or None, got {type(rpc_meta)}"
         )
-    broadcast = rpc_meta.get("broadcast", False)
+    broadcast = rpc_meta.get("broadcast", default_broadcast)
     if not isinstance(broadcast, bool):
         raise ValueError(
             f"Invalid rpc_meta.broadcast: expected bool, got {type(broadcast)}"
@@ -460,7 +463,9 @@ def call_engine_method():
             try:
                 args_bcast = args
                 kwargs_bcast = kwargs
-                should_broadcast = _should_broadcast_payload(rpc_meta=rpc_meta)
+                should_broadcast = _should_broadcast_payload(
+                    engine=engine, rpc_meta=rpc_meta
+                )
                 if should_broadcast:
                     logger.debug(f"Broadcasting RPC payload for method: {method_name}")
                     args_bcast = tensor_container_to(

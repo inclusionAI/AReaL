@@ -45,15 +45,17 @@ class RayRPCServer:
 
     def _should_broadcast_payload(
         self,
+        engine: TrainEngine | InferenceEngine,
         rpc_meta: dict[str, Any] | None,
     ) -> bool:
+        default_broadcast = isinstance(engine, TrainEngine) and engine.initialized
         if rpc_meta is None:
-            return False
+            return default_broadcast
         if not isinstance(rpc_meta, dict):
             raise ValueError(
                 f"Invalid rpc_meta: expected dict or None, got {type(rpc_meta)}"
             )
-        broadcast = rpc_meta.get("broadcast", False)
+        broadcast = rpc_meta.get("broadcast", default_broadcast)
         if not isinstance(broadcast, bool):
             raise ValueError(
                 f"Invalid rpc_meta.broadcast: expected bool, got {type(broadcast)}"
@@ -146,7 +148,9 @@ class RayRPCServer:
         kwargs = RTensor.localize(raw_kwargs)
 
         try:
-            should_broadcast = self._should_broadcast_payload(rpc_meta=rpc_meta)
+            should_broadcast = self._should_broadcast_payload(
+                engine=engine, rpc_meta=rpc_meta
+            )
             if should_broadcast:
                 device = self._get_device()
                 args = tensor_container_to(args, device)
