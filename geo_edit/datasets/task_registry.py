@@ -33,6 +33,9 @@ from geo_edit.datasets.input_template import (
     REASONMAP_BASE_INPUT_TEMPLATE,
     REASONMAP_BASE_NOTOOL_INPUT_TEMPLATE,
     REASONMAP_BASE_SEPARATED_TEMPLATE,
+    MM_MAPQA_ANSWER_FORMAT,
+    MM_MAPQA_INPUT_TEMPLATE,
+    MM_MAPQA_NOTOOL_INPUT_TEMPLATE,
     REASONMAP_INPUT_TEMPLATE,
     REASONMAP_NOTOOL_INPUT_TEMPLATE,
     REASONMAP_SEPARATED_TEMPLATE,
@@ -542,6 +545,16 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
         separated_prompt_template=REASONMAP_BASE_SEPARATED_TEMPLATE,
         image_dedup_key="city",
+    ),
+    "mm_mapqa": DatasetSpec(
+        name="mm_mapqa",
+        id_key="id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=MM_MAPQA_INPUT_TEMPLATE,
+        notool_prompt_template=MM_MAPQA_NOTOOL_INPUT_TEMPLATE,
+        template_fields={"question": "question"},
+        answer_format=MM_MAPQA_ANSWER_FORMAT,
     ),
 }
 

@@ -19,11 +19,15 @@ from tqdm import tqdm
 from datasets import Dataset, Features, Image as HFImage, Value, load_dataset
 
 
-def package_reasonmap_base(out_dir: Path, split: str = "validation") -> Path:
+def package_reasonmap_base(input_dir: str | None, out_dir: Path, split: str = "validation") -> Path:
     out_parquet = out_dir / "reasonmap_base_dataset.parquet"
 
-    print(f"Loading FSCCS/ReasonMap ({split} split)...")
-    ds = load_dataset("FSCCS/ReasonMap", split=split)
+    if input_dir:
+        print(f"Loading from local path: {input_dir}")
+        ds = load_dataset("parquet", data_files=str(Path(input_dir) / "*.parquet"), split="train")
+    else:
+        print(f"Loading FSCCS/ReasonMap ({split} split)...")
+        ds = load_dataset("FSCCS/ReasonMap", split=split)
     print(f"  total items: {len(ds)}")
 
     examples = []
@@ -99,6 +103,12 @@ def main() -> None:
         description="Package FSCCS/ReasonMap (base) dataset to parquet.",
     )
     parser.add_argument(
+        "--input_dir",
+        type=str,
+        default=None,
+        help="Local directory containing dataset files. If not set, downloads from HuggingFace.",
+    )
+    parser.add_argument(
         "--out_dir",
         type=str,
         default=None,
@@ -115,7 +125,7 @@ def main() -> None:
     out_dir = Path(args.out_dir).resolve() if args.out_dir else Path.cwd()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    package_reasonmap_base(out_dir, split=args.split)
+    package_reasonmap_base(args.input_dir, out_dir, split=args.split)
 
 
 if __name__ == "__main__":
