@@ -369,6 +369,8 @@ class RemoteSGLangEngine(InferenceEngine):
         pp_rank: int | None = None,
     ) -> Future[None]:
         """Initialize the weight update process group."""
+        if pp_rank is None:
+            pp_rank = getattr(meta, 'pp_rank', None)
         return self._engine.init_weights_update_group(
             meta,
             pp_rank=pp_rank,
@@ -381,6 +383,8 @@ class RemoteSGLangEngine(InferenceEngine):
         pp_rank: int | None = None,
     ) -> Future[None]:
         """Update weights from distributed memory."""
+        if pp_rank is None:
+            pp_rank = getattr(meta, 'pp_rank', None)
         return self._engine.update_weights_from_distributed(
             meta,
             param_specs,

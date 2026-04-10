@@ -1394,11 +1394,7 @@ class MegatronEngine(TrainEngine):
 
                 meta.pp_rank = pp_rank
 
-                # Ask the inference engine to join the per-PP-rank NCCL group
-                fut = self.rollout_engine.init_weights_update_group(
-                    meta,
-                    pp_rank=pp_rank,
-                )
+                fut = self.rollout_engine.init_weights_update_group(meta)
 
                 init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
                 self.logger.info(
@@ -1475,13 +1471,8 @@ class MegatronEngine(TrainEngine):
                     "bias": "none",
                 }
 
-            # FIX: 增加 pp_rank 透传
             pp_rank = meta.pp_rank  # None for PP=1, int for PP>1
-            fut = self.rollout_engine.update_weights_from_distributed(
-                meta,
-                param_specs,
-                pp_rank=pp_rank,
-            )
+            fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
 
             handles = []
             for _, param in converted_named_tensors:
