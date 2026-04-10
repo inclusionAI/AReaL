@@ -180,21 +180,12 @@ def is_port_free(port: int) -> bool:
     Returns:
         True if port is free, False otherwise
     """
-    # Check TCP
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("", port))
-    except OSError:
-        return False
-    finally:
-        sock.close()
-
-    # Check UDP
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.bind(("", port))
-        return True
-    except OSError:
-        return False
-    finally:
-        sock.close()
+    for family in (socket.AF_INET, socket.AF_INET6): 
+        for sock_type in (socket.SOCK_STREAM, socket.SOCK_DGRAM): 
+            try: 
+                sock = socket.socket(family, sock_type) 
+                sock.bind(("", port)) 
+                sock.close() 
+            except OSError: 
+                return False 
+    return True
