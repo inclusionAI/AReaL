@@ -259,7 +259,15 @@ def _parse_args() -> tuple[Any, str, int]:
             "sglang is required for areal.engine.sglang_ext.areal_sglang_server"
         ) from exc
 
-    server_args = ServerArgs.from_cli_args(remaining)
+    server_parser = argparse.ArgumentParser(add_help=False)
+    ServerArgs.add_cli_args(server_parser)
+    server_namespace, unknown = server_parser.parse_known_args(remaining)
+    if unknown:
+        logger.warning("Ignoring unknown SGLang server args: %s", unknown)
+
+    # SGLang ServerArgs.from_cli_args expects argparse.Namespace in current
+    # versions (not raw argv list).
+    server_args = ServerArgs.from_cli_args(server_namespace)
     # Keep host/port from the outer parser so behavior matches old launcher.
     setattr(server_args, "host", known.host)
     setattr(server_args, "port", known.port)

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 
 import httpx
 import pytest
@@ -18,7 +19,7 @@ from tests.experimental.inference_service.integration_utils import (
     has_gpu,
 )
 
-from areal.engine.sglang_ext.areal_sglang_server import create_app
+from areal.engine.sglang_ext.areal_sglang_server import _parse_args, create_app
 
 
 class _FakeTokenizerManager:
@@ -101,6 +102,53 @@ def test_awex_routes_use_adapter(monkeypatch):
     update_resp = client.post("/areal_awex_update", json={"step_id": 7})
     assert update_resp.status_code == 200
     assert update_resp.json()["success"] is True
+
+
+def test_parse_args_passes_namespace_to_server_args(monkeypatch):
+    class _FakeServerArgs:
+        @staticmethod
+        def add_cli_args(parser):
+            parser.add_argument("--tensor-parallel-size", type=int, default=1)
+            parser.add_argument("--model-path", type=str, default="fake-model")
+
+        @classmethod
+        def from_cli_args(cls, args):
+            assert hasattr(args, "tensor_parallel_size")
+            return types.SimpleNamespace(
+                model_path=args.model_path,
+                tp_size=args.tensor_parallel_size,
+            )
+
+    fake_sglang = types.ModuleType("sglang")
+    fake_srt = types.ModuleType("sglang.srt")
+    fake_server_args_mod = types.ModuleType("sglang.srt.server_args")
+    setattr(fake_server_args_mod, "ServerArgs", _FakeServerArgs)
+
+    monkeypatch.setitem(sys.modules, "sglang", fake_sglang)
+    monkeypatch.setitem(sys.modules, "sglang.srt", fake_srt)
+    monkeypatch.setitem(sys.modules, "sglang.srt.server_args", fake_server_args_mod)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "areal_sglang_server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "31001",
+            "--tensor-parallel-size",
+            "2",
+            "--model-path",
+            "stub-model",
+        ],
+    )
+
+    server_args, host, port = _parse_args()
+    assert host == "127.0.0.1"
+    assert port == 31001
+    assert server_args.tp_size == 2
+    assert server_args.model_path == "stub-model"
 
 
 class _MockMegatronEngineForAwexFileWriter:
