@@ -401,15 +401,26 @@ class RayHTTPLauncher(RayServer):
 
             try:
                 response = requests.post(url, json=payload, timeout=http_timeout)
-                if response.status_code == 200:
-                    result = response.json().get("result")
-                    deserialized_result = deserialize_value(result)
-                    return deserialized_result
-                elif response.status_code in [400, 404, 500]:
-                    error_detail = response.json().get("detail", "unknown error")
+                response.raise_for_status()
+                result = response.json().get("result")
+                deserialized_result = deserialize_value(result)
+                return deserialized_result
+
+            except requests.exceptions.HTTPError as e:
+                resp = e.response
+
+                if resp is not None and resp.status_code in [400, 404, 500]:
+                    try:
+                        error_detail = resp.json().get("detail", "unknown error")
+                    except Exception:
+                        error_detail = resp.text or "unknown error"
                     raise RuntimeError(error_detail)
 
-                last_error = f"HTTP {response.status_code}: {response.text}"
+                last_error = (
+                    f"HTTP {resp.status_code}: {resp.text}"
+                    if resp is not None
+                    else str(e)
+                )
             except Exception as e:
                 last_error = str(e)
                 self.logger.warning(
