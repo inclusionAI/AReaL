@@ -93,7 +93,43 @@ class AwexSGLangServerAdapter:
             dump_weights_list_for_validation=dump_weights_list_for_validation or [],
             dump_weights_dir_for_validation=dump_weights_dir_for_validation,
         )
+        self.hf_config = self._resolve_hf_config(server_args)
+        self.engine_name = "sglang"
         self.weights_exchange_reader = None
+
+    def _resolve_hf_config(self, server_args):
+        """Resolve HF config object expected by awex readers."""
+        # Preferred: use already-built config from the live SGLang engine.
+        tokenizer_manager = getattr(self._sgl_engine, "tokenizer_manager", None)
+        tm_model_config = getattr(tokenizer_manager, "model_config", None)
+        if tm_model_config is not None:
+            return tm_model_config
+
+        model_config = getattr(self._sgl_engine, "model_config", None)
+        for attr in ("hf_config", "model_config", "config"):
+            cfg = getattr(model_config, attr, None)
+            if cfg is not None:
+                return cfg
+
+        direct_cfg = getattr(self._sgl_engine, "hf_config", None)
+        if direct_cfg is not None:
+            return direct_cfg
+
+        model_path = getattr(server_args, "model_path", None)
+        if not model_path:
+            raise RuntimeError(
+                "Cannot resolve hf_config for awex adapter: model_path missing"
+            )
+
+        try:
+            from transformers import AutoConfig
+        except ImportError as exc:  # pragma: no cover - runtime dependency
+            raise RuntimeError(
+                "transformers is required to resolve hf_config for awex adapter"
+            ) from exc
+
+        logger.info("Loading hf_config from model_path for awex adapter")
+        return AutoConfig.from_pretrained(model_path, trust_remote_code=True)
 
     @property
     def config(self):

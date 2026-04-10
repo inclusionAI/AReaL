@@ -25,6 +25,7 @@ from areal.engine.sglang_ext.areal_sglang_server import (
     _parse_args,
     create_app,
 )
+from areal.engine.sglang_ext.sglang_awex_adapter import AwexSGLangServerAdapter
 
 
 class _FakeTokenizerManager:
@@ -172,6 +173,35 @@ def test_awex_scheduler_launcher_is_pickle_safe():
     dumped = pickle.dumps(_AWEX_SCHEDULER_LAUNCHER)
     loaded = pickle.loads(dumped)
     assert callable(loaded)
+
+
+def test_awex_adapter_exposes_hf_config_from_engine_model_config():
+    pytest.importorskip("awex")
+
+    marker = object()
+
+    class _FakeServerArgs:
+        tp_size = 1
+        dp_size = 1
+        pp_size = 1
+        nnodes = 1
+        node_rank = 0
+        model_path = "unused-model"
+
+    class _FakeModelConfig:
+        hf_config = marker
+
+    class _FakeSglEngine:
+        server_args = _FakeServerArgs()
+        model_config = _FakeModelConfig()
+
+    adapter = AwexSGLangServerAdapter(
+        sgl_engine=_FakeSglEngine(),
+        meta_server_addr="127.0.0.1:7081",
+        comm_backend="file",
+    )
+    assert adapter.hf_config is marker
+    assert adapter.engine_name == "sglang"
 
 
 class _MockMegatronEngineForAwexFileWriter:
