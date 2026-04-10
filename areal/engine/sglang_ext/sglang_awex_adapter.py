@@ -150,12 +150,39 @@ class AwexSGLangServerAdapter:
         try:
             from awex.reader.weights_reader import get_weights_exchange_reader
 
+            self._patch_awex_sglang_converter()
             logger.info("Initializing Awex weights reader in SGLang server process")
             self.weights_exchange_reader = get_weights_exchange_reader(self)
             self.weights_exchange_reader.initialize()
             self._initialized = True
         finally:
             self._initializing = False
+
+    def _patch_awex_sglang_converter(self) -> None:
+        """Patch awex SGLang converter for q_norm/k_norm naming variants."""
+
+        try:
+            from awex.converter.sglang_converter import SGlangToHFWeightConverter
+        except ImportError:
+            return
+
+        if getattr(SGlangToHFWeightConverter, "_areal_qnorm_patch", False):
+            return
+
+        original = SGlangToHFWeightConverter._convert_layer_norm_param
+
+        def _patched_convert_layer_norm_param(this, name, parameter, layer_number):
+            if "self_attn.q_norm" in name:
+                name = name.replace("self_attn.q_norm", "self_attn.query_layernorm")
+            if "self_attn.k_norm" in name:
+                name = name.replace("self_attn.k_norm", "self_attn.key_layernorm")
+            return original(this, name, parameter, layer_number)
+
+        SGlangToHFWeightConverter._convert_layer_norm_param = (
+            _patched_convert_layer_norm_param
+        )
+        SGlangToHFWeightConverter._areal_qnorm_patch = True
+        logger.info("Patched awex SGlangToHFWeightConverter for q_norm/k_norm")
 
     def update_weights(self, step_id: int, **kwargs):
         if not self._initialized:

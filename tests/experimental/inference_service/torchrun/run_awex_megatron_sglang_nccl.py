@@ -320,9 +320,15 @@ def main(args: argparse.Namespace) -> None:
 
         if rank == 0 and init_thread is not None:
             init_thread.join(timeout=args.rpc_timeout)
-            if not init_result["ok"]:
-                raise RuntimeError(f"Reader init failed: {init_result['error']}")
-            _log(rank, "awex reader init done")
+            init_gate = [bool(init_result["ok"]), str(init_result["error"] or "")]
+            if init_gate[0]:
+                _log(rank, "awex reader init done")
+        else:
+            init_gate = [False, ""]
+
+        dist.broadcast_object_list(init_gate, src=0)
+        if not bool(init_gate[0]):
+            raise RuntimeError(f"Reader init failed: {init_gate[1]}")
 
         dist.barrier()
 
@@ -343,9 +349,18 @@ def main(args: argparse.Namespace) -> None:
 
         if rank == 0 and update_thread is not None:
             update_thread.join(timeout=args.rpc_timeout)
-            if not update_result["ok"]:
-                raise RuntimeError(f"Reader update failed: {update_result['error']}")
-            _log(rank, "awex reader update done")
+            update_gate = [
+                bool(update_result["ok"]),
+                str(update_result["error"] or ""),
+            ]
+            if update_gate[0]:
+                _log(rank, "awex reader update done")
+        else:
+            update_gate = [False, ""]
+
+        dist.broadcast_object_list(update_gate, src=0)
+        if not bool(update_gate[0]):
+            raise RuntimeError(f"Reader update failed: {update_gate[1]}")
 
         dist.barrier()
         _write_result(args.output, True)
