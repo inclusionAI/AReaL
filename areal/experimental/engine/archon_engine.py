@@ -6,7 +6,7 @@ import math
 import os
 import time
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -691,51 +691,69 @@ class ArchonEngine(TrainEngine):
     def update_weights(self, meta: WeightUpdateMeta):
         """Update weights to inference engine."""
         self._check_rollout_engine_connected()
-        if meta.type == "xccl":
-            assert self._weight_sync_state.group_initialized
-            tms_context = (
-                torch_memory_saver.disable()
-                if self.is_offload and not torch.version.hip
-                else nullcontext()
-            )
-            with tms_context:
+        with self._offload_aware_context():
+            if meta.type == "xccl":
+                assert self._weight_sync_state.group_initialized
                 update_weights_from_distributed(
                     state=self._weight_sync_state,
                     meta=meta,
                     engine=self,
                 )
-        elif meta.type == "disk":
-            update_weights_from_disk(
-                meta=meta,
-                engine=self,
-            )
+            elif meta.type == "disk":
+                update_weights_from_disk(
+                    meta=meta,
+                    engine=self,
+                )
+            else:
+                raise ValueError(f"Unknown weight update type {meta.type}")
 
     def save(self, meta: SaveLoadMeta):
         """Save model in HuggingFace or DCP format."""
-        if meta.weight_format == "hf":
-            save_model_to_hf(self, meta.path, meta.tokenizer, meta.processor)
-        elif meta.weight_format == "dcp":
-            save_to_dcp(self, meta.path, meta.with_optim)
-        else:
-            raise ValueError(f"Unknown weight format {meta.weight_format}.")
+        with self._offload_aware_context():
+            if meta.weight_format == "hf":
+                save_model_to_hf(self, meta.path, meta.tokenizer, meta.processor)
+            elif meta.weight_format == "dcp":
+                save_to_dcp(self, meta.path, meta.with_optim)
+            else:
+                raise ValueError(f"Unknown weight format {meta.weight_format}.")
 
-        if meta.with_optim and meta.weight_format == "hf":
-            save_optimizer_state(self, meta.path)
+            if meta.with_optim and meta.weight_format == "hf":
+                save_optimizer_state(self, meta.path)
 
     def load(self, meta: SaveLoadMeta):
         """Load model from HuggingFace or DCP format."""
-        if meta.weight_format == "hf":
-            load_model_from_hf(self, meta.path)
-        elif meta.weight_format == "dcp":
-            load_from_dcp(self, meta.path, meta.with_optim)
-        else:
-            raise ValueError(f"Unknown weight format {meta.weight_format}.")
+        with self._offload_aware_context():
+            if meta.weight_format == "hf":
+                load_model_from_hf(self, meta.path)
+            elif meta.weight_format == "dcp":
+                load_from_dcp(self, meta.path, meta.with_optim)
+            else:
+                raise ValueError(f"Unknown weight format {meta.weight_format}.")
 
-        if meta.with_optim and meta.weight_format == "hf":
-            load_optimizer_state(self, meta.path)
+            if meta.with_optim and meta.weight_format == "hf":
+                load_optimizer_state(self, meta.path)
+
+    @contextmanager
+    def _offload_aware_context(self):
+        """Temporarily onload parameters for offload-unsafe operations."""
+        if not self.is_offload:
+            with nullcontext():
+                yield
+            return
+
+        self.onload()
+        try:
+            yield
+        finally:
+            self.offload()
 
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver."""
+        if not is_tms_enabled():
+            raise RuntimeError(
+                "torch_memory_saver requires `enable_offload=True` in yaml config."
+            )
+
         self.get_device_stats().log("before offload model")
 
         current_platform.clear_memory()
@@ -759,7 +777,10 @@ class ArchonEngine(TrainEngine):
 
     def export_stats(self) -> dict[str, float]:
         assert self._initialized
-        data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        with self._offload_aware_context():
+            data = stats_tracker.export_all(
+                reduce_group=self.data_parallel_group,
+            )
         if self.parallel_dims.pp_enabled:
             data_list = [data]
             dist.broadcast_object_list(

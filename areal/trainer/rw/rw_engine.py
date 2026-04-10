@@ -71,13 +71,21 @@ class RWEngine:
 
 class RWController(TrainController):
     def train_rw(self, *args, **kwargs):
-        self._custom_function_call("train_rw", *args, **kwargs)
+        self._custom_function_call(
+            "train_rw", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
     def evaluate_rw(self, *args, **kwargs):
         # rw_modeling_collate_fn produces 2 sequences (chosen + rejected) per
         # example; group_size=2 keeps each pair on the same DP rank.
         args, kwargs = self._pad_eval_dispatch_args(args, kwargs, group_size=2)
-        self._custom_function_call("evaluate_rw", *args, group_size=2, **kwargs)
+        self._custom_function_call(
+            "evaluate_rw",
+            *args,
+            group_size=2,
+            rpc_meta={"broadcast": True},
+            **kwargs,
+        )
 
 
 def compute_rw_loss(scores: torch.Tensor, input_: dict[str, Any]) -> torch.Tensor:

@@ -7,7 +7,7 @@ import math
 import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -569,20 +569,14 @@ class MegatronEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
-        if meta.type == "xccl":
-            assert self.weight_update_group_initialized
-            # In offload mode, wakes up parameters as needed to perform the update.
-            tms_context = (
-                torch_memory_saver.disable()
-                if self.is_offload and not torch.version.hip
-                else nullcontext()
-            )
-            with tms_context:
+        with self._offload_aware_context():
+            if meta.type == "xccl":
+                assert self.weight_update_group_initialized
                 self._update_weights_from_distributed(meta)
-        elif meta.type == "disk":
-            self._update_weights_from_disk(meta)
-        else:
-            raise ValueError(f"Unknown weight update type {meta.type}")
+            elif meta.type == "disk":
+                self._update_weights_from_disk(meta)
+            else:
+                raise ValueError(f"Unknown weight update type {meta.type}")
 
     def set_version(self, version: int):
         self._version = version
@@ -591,45 +585,65 @@ class MegatronEngine(TrainEngine):
         return self._version
 
     def save(self, meta: SaveLoadMeta):
-        if meta.weight_format == "hf":
-            if meta.with_optim:
-                raise ValueError(
-                    "HF format does not support optimizer state saving, please use DCP format instead."
+        with self._offload_aware_context():
+            if meta.weight_format == "hf":
+                if meta.with_optim:
+                    raise ValueError(
+                        "HF format does not support optimizer state saving, please use DCP format instead."
+                    )
+                self._save_model_to_hf(
+                    meta.path,
+                    tokenizer=meta.tokenizer,
+                    processor=meta.processor,
+                    base_model_path=meta.base_model_path,
                 )
-            self._save_model_to_hf(
-                meta.path,
-                tokenizer=meta.tokenizer,
-                processor=meta.processor,
-                base_model_path=meta.base_model_path,
-            )
-        elif meta.weight_format == "dcp":
-            if self.checkpointer is None:
-                raise NotImplementedError(
-                    "DCP checkpoint save is not available for this Megatron configuration "
-                    "(e.g., LoRA path without distributed optimizer support). "
-                    "Please use weight_format='hf' for adapter/full-model export."
+            elif meta.weight_format == "dcp":
+                if self.checkpointer is None:
+                    raise NotImplementedError(
+                        "DCP checkpoint save is not available for this Megatron configuration "
+                        "(e.g., LoRA path without distributed optimizer support). "
+                        "Please use weight_format='hf' for adapter/full-model export."
+                    )
+                self.checkpointer.save_checkpoint(
+                    meta.path, with_optimizer=meta.with_optim
                 )
-            self.checkpointer.save_checkpoint(meta.path, with_optimizer=meta.with_optim)
-        else:
-            raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+            else:
+                raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
     def load(self, meta: SaveLoadMeta):
-        if meta.weight_format == "hf":
-            if meta.with_optim:
-                raise ValueError(
-                    "HF format does not support optimizer state loading, please use DCP format instead."
+        with self._offload_aware_context():
+            if meta.weight_format == "hf":
+                if meta.with_optim:
+                    raise ValueError(
+                        "HF format does not support optimizer state loading, please use DCP format instead."
+                    )
+                self._load_model_from_hf(meta.path)
+            elif meta.weight_format == "dcp":
+                if self.checkpointer is None:
+                    raise NotImplementedError(
+                        "DCP checkpoint load is not available for this Megatron configuration "
+                        "(e.g., LoRA path without distributed optimizer support). "
+                        "Please use weight_format='hf' for adapter/full-model load."
+                    )
+                self.checkpointer.load_checkpoint(
+                    meta.path, with_optimizer=meta.with_optim
                 )
-            self._load_model_from_hf(meta.path)
-        elif meta.weight_format == "dcp":
-            if self.checkpointer is None:
-                raise NotImplementedError(
-                    "DCP checkpoint load is not available for this Megatron configuration "
-                    "(e.g., LoRA path without distributed optimizer support). "
-                    "Please use weight_format='hf' for adapter/full-model load."
-                )
-            self.checkpointer.load_checkpoint(meta.path, with_optimizer=meta.with_optim)
-        else:
-            raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+            else:
+                raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+
+    @contextmanager
+    def _offload_aware_context(self):
+        """Temporarily onload parameters for offload-unsafe operations."""
+        if not self.is_offload:
+            with nullcontext():
+                yield
+            return
+
+        self.onload()
+        try:
+            yield
+        finally:
+            self.offload()
 
     def optimizer_zero_grad(self):
         assert self.optimizer is not None, "Optimizer is not initialized."
@@ -868,7 +882,10 @@ class MegatronEngine(TrainEngine):
         return split_batch(res, meta)
 
     def export_stats(self) -> dict[str, float]:
-        data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        with self._offload_aware_context():
+            data = stats_tracker.export_all(
+                reduce_group=self.data_parallel_group,
+            )
         if mpu.get_pipeline_model_parallel_world_size() > 1:
             # Some log info only exist in last pipeline rank
             data_list = [data]
@@ -885,6 +902,10 @@ class MegatronEngine(TrainEngine):
 
         Ref: https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
         """
+        if not is_tms_enabled():
+            raise RuntimeError(
+                "torch_memory_saver requires `enable_offload=True` in yaml config."
+            )
 
         self.get_device_stats().log("before offload model")
         current_platform.clear_memory()

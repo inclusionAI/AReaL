@@ -442,16 +442,32 @@ class TrainController:
             dist.destroy_process_group()
         logger.info("TrainController destroyed")
 
-    def _custom_function_call(self, method: str, *args, **kwargs):
+    def _custom_function_call(
+        self,
+        method: str,
+        *args,
+        rpc_meta: dict[str, Any] | None = None,
+        **kwargs,
+    ):
         """Dispatch method call to workers via the appropriate path."""
         dp_args, dp_kwargs, group_indices = self._prepare_dispatch(*args, **kwargs)
-        results = run_async_task(self._call_workers, method, dp_args, dp_kwargs)
+        results = run_async_task(
+            self._call_workers, method, dp_args, dp_kwargs, rpc_meta=rpc_meta
+        )
         return self._collect_results(results, group_indices)
 
-    async def _async_custom_function_call(self, method: str, *args, **kwargs):
+    async def _async_custom_function_call(
+        self,
+        method: str,
+        *args,
+        rpc_meta: dict[str, Any] | None = None,
+        **kwargs,
+    ):
         """Async version of _custom_function_call."""
         dp_args, dp_kwargs, group_indices = self._prepare_dispatch(*args, **kwargs)
-        results = await self._call_workers(method, dp_args, dp_kwargs)
+        results = await self._call_workers(
+            method, dp_args, dp_kwargs, rpc_meta=rpc_meta
+        )
         return self._collect_results(results, group_indices)
 
     def _pad_eval_dispatch_args(
@@ -518,6 +534,7 @@ class TrainController:
         method: str,
         dp_split_args: list[list[Any]],
         dp_split_kwargs: dict[str, list[Any]],
+        rpc_meta: dict[str, Any] | None = None,
     ):
         """Send dispatched inputs to workers. DP heads get slices, others empty."""
         tasks = []
@@ -539,6 +556,7 @@ class TrainController:
                     method,
                     self._engine_name(idx),
                     *worker_args,
+                    rpc_meta=rpc_meta,
                     **worker_kwargs,
                 )
             )
@@ -668,6 +686,14 @@ class TrainController:
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
         self._custom_function_call("update_weights", meta=meta)
+
+    def offload(self) -> None:
+        """Offload model parameters to CPU across all train workers."""
+        self._custom_function_call("offload")
+
+    def onload(self) -> None:
+        """Onload model parameters to GPU across all train workers."""
+        self._custom_function_call("onload")
 
     def get_device_stats(self):
         return self._custom_function_call("get_device_stats")

@@ -50,6 +50,7 @@ from areal.utils.network import (
     format_hostport,
     gethostip,
 )
+from areal.utils.offload import get_tms_env_vars
 
 logger = logging.getLogger("LocalScheduler")
 
@@ -102,6 +103,7 @@ class LocalScheduler(Scheduler):
         experiment_name: str | None = None,
         trial_name: str | None = None,
         fileroot: str | None = None,
+        enable_tms_offload: bool | None = None,
         name_resolve_type: str = "nfs",
         nfs_record_root: str = "/tmp/areal/name_resolve",
         etcd3_addr: str = "localhost:2379",
@@ -113,10 +115,12 @@ class LocalScheduler(Scheduler):
         self.experiment_name = experiment_name
         self.trial_name = trial_name
         self.fileroot = fileroot
+        self.enable_tms_offload = bool(enable_tms_offload)
         if exp_config is not None:
             self.experiment_name = exp_config.experiment_name
             self.trial_name = exp_config.trial_name
             self.fileroot = exp_config.cluster.fileroot
+            self.enable_tms_offload = exp_config.enable_offload
 
         # name_resolve config (exp_config overwrites direct params)
         self.name_resolve_config = NameResolveConfig(
@@ -727,6 +731,9 @@ class LocalScheduler(Scheduler):
                 )
                 env.update(thread_env)
 
+                if self.enable_tms_offload:
+                    env.update(get_tms_env_vars())
+
                 if scheduling.env_vars:
                     env.update(scheduling.env_vars)
 
@@ -1251,6 +1258,7 @@ class LocalScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -1308,6 +1316,7 @@ class LocalScheduler(Scheduler):
             "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
+            "rpc_meta": rpc_meta,
         }
 
         # Retry logic with exponential backoff
@@ -1378,6 +1387,7 @@ class LocalScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -1437,6 +1447,7 @@ class LocalScheduler(Scheduler):
             "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
+            "rpc_meta": rpc_meta,
         }
 
         last_error = None
