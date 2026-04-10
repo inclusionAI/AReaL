@@ -9,6 +9,7 @@ Pattern follows Archon distributed tests:
 from __future__ import annotations
 
 import subprocess
+import sys
 
 import pytest
 import torch
@@ -32,27 +33,39 @@ def _run_awex_sglang_torchrun(
 ):
     port = find_free_ports(1)[0]
     model_path = get_test_model_path()
+    cmd = [
+        "torchrun",
+        f"--nproc_per_node={n_gpus}",
+        "--nnodes=1",
+        "--master-addr=localhost",
+        f"--master_port={port}",
+        "tests/experimental/inference_service/torchrun/run_awex_megatron_sglang_nccl.py",
+        f"--dp-size={dp_size}",
+        f"--tp-size={tp_size}",
+        f"--pp-size={pp_size}",
+        f"--model-path={model_path}",
+        f"--output={output}",
+        "--health-timeout=240",
+        "--rpc-timeout=240",
+    ]
+
+    print(f"[controller] launching: {' '.join(cmd)}", flush=True)
     try:
         subprocess.run(
-            [
-                "torchrun",
-                f"--nproc_per_node={n_gpus}",
-                "--nnodes=1",
-                "--master-addr=localhost",
-                f"--master_port={port}",
-                "tests/experimental/inference_service/torchrun/run_awex_megatron_sglang_nccl.py",
-                f"--dp-size={dp_size}",
-                f"--tp-size={tp_size}",
-                f"--pp-size={pp_size}",
-                f"--model-path={model_path}",
-                f"--output={output}",
-            ],
+            cmd,
             check=True,
-            capture_output=True,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
             text=True,
+            timeout=1200,
         )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"Torchrun timed out after {exc.timeout}s: {' '.join(cmd)}")
     except subprocess.CalledProcessError as exc:
-        pytest.fail(f"Torchrun failed:\nSTDOUT:\n{exc.stdout}\nSTDERR:\n{exc.stderr}")
+        pytest.fail(
+            f"Torchrun failed with exit code {exc.returncode}. "
+            f"See streamed logs above. Command: {' '.join(cmd)}"
+        )
 
     with open(output, encoding="utf-8") as f:
         result = f.read().strip()

@@ -14,12 +14,17 @@ import sys
 import threading
 import time
 import traceback
+from datetime import timedelta
 
 import requests
 import torch
 import torch.distributed as dist
 
 from tests.experimental.inference_service.integration_utils import check_server_health
+
+
+def _log(rank: int, message: str) -> None:
+    print(f"[awex-sglang-nccl][rank{rank}] {message}", flush=True)
 
 
 def _write_result(path: str, ok: bool, message: str = "") -> None:
@@ -119,25 +124,37 @@ def main(args: argparse.Namespace) -> None:
     os.environ["DEVICE"] = str(local_rank)
     device_util.set_device(local_rank)
 
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    dist.init_process_group(
+        "nccl",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=args.dist_timeout),
+    )
 
     server_proc: subprocess.Popen | None = None
     meta_started = False
     try:
         if rank == 0:
+            _log(rank, "starting awex meta server")
             meta_ip, meta_port = start_meta_server()
             meta_started = True
             os.environ["AWEX_META_ADDR_BCAST"] = f"{meta_ip}:{meta_port}"
-            host = network.gethostip()
+            host = "127.0.0.1"
             sglang_port, sglang_dist_port = network.find_free_ports(2)
             os.environ["AWEX_SGLANG_HOST_BCAST"] = host
             os.environ["AWEX_SGLANG_PORT_BCAST"] = str(sglang_port)
 
             cmd = _server_command(args.model_path, host, sglang_port, sglang_dist_port)
             server_env = os.environ.copy()
+            server_env["PYTHONUNBUFFERED"] = "1"
             # Prefer a non-overlapping GPU when available; otherwise colocate.
             server_gpu_idx = world_size if world_size < len(visible) else 0
             server_env["CUDA_VISIBLE_DEVICES"] = visible[server_gpu_idx]
+            _log(
+                rank,
+                f"launching sglang server host={host} port={sglang_port} "
+                f"gpu={server_env['CUDA_VISIBLE_DEVICES']}",
+            )
             server_proc = subprocess.Popen(
                 cmd,
                 env=server_env,
@@ -155,6 +172,7 @@ def main(args: argparse.Namespace) -> None:
         meta_addr, sglang_host, sglang_port_str = shared
         sglang_port = int(sglang_port_str)
         base_url = f"http://{sglang_host}:{sglang_port}"
+        _log(rank, f"received endpoints: meta={meta_addr} sglang={base_url}")
 
         init_result: dict[str, object] = {"ok": False, "error": None}
         update_result: dict[str, object] = {"ok": False, "error": None}
@@ -199,19 +217,31 @@ def main(args: argparse.Namespace) -> None:
                 update_result["error"] = str(exc)
 
         if rank == 0:
-            deadline = time.time() + 300
+            deadline = time.time() + args.health_timeout
+            _log(
+                rank,
+                f"waiting for sglang health at {base_url} (timeout={args.health_timeout}s)",
+            )
             while time.time() < deadline:
+                if server_proc is not None and server_proc.poll() is not None:
+                    raise RuntimeError(
+                        f"AReaL SGLang server exited early with code {server_proc.returncode}"
+                    )
                 if check_server_health(base_url):
+                    _log(rank, "sglang server is healthy")
                     break
                 time.sleep(1)
             else:
-                raise RuntimeError("AReaL SGLang server did not become healthy")
+                raise RuntimeError(
+                    f"AReaL SGLang server did not become healthy within {args.health_timeout}s"
+                )
 
             init_thread = threading.Thread(target=_call_awex_init, daemon=True)
             init_thread.start()
         else:
             init_thread = None
 
+        _log(rank, "initializing megatron parallel + model")
         _init_megatron_parallel(tp_size=args.tp_size, pp_size=args.pp_size)
         model, hf_config = megatron_model_from_hf(
             model_path=args.model_path, use_mbridge=True
@@ -227,11 +257,13 @@ def main(args: argparse.Namespace) -> None:
         }
         megatron_engine = MegatronEngine(train_config, hf_config, megatron_model)
         megatron_engine.initialize()
+        _log(rank, "megatron engine initialized")
 
         if rank == 0 and init_thread is not None:
-            init_thread.join(timeout=900)
+            init_thread.join(timeout=args.rpc_timeout)
             if not init_result["ok"]:
                 raise RuntimeError(f"Reader init failed: {init_result['error']}")
+            _log(rank, "awex reader init done")
 
         dist.barrier()
 
@@ -245,23 +277,31 @@ def main(args: argparse.Namespace) -> None:
         else:
             update_thread = None
 
+        _log(rank, "writing weights from megatron engine")
         megatron_engine.set_global_step(step_id)
         megatron_engine.write_weights()
+        _log(rank, "weights write completed")
 
         if rank == 0 and update_thread is not None:
-            update_thread.join(timeout=900)
+            update_thread.join(timeout=args.rpc_timeout)
             if not update_result["ok"]:
                 raise RuntimeError(f"Reader update failed: {update_result['error']}")
+            _log(rank, "awex reader update done")
 
         dist.barrier()
         _write_result(args.output, True)
+        _log(rank, "test run passed")
     except Exception as exc:
         tb = traceback.format_exc(limit=5)
+        _log(rank, f"FAILED: {exc}\n{tb}")
         _write_result(args.output, False, f"{exc}\n{tb}")
         raise
     finally:
         if dist.is_initialized():
-            dist.barrier()
+            try:
+                dist.barrier()
+            except Exception:
+                pass
             dist.destroy_process_group()
         if rank == 0:
             if server_proc is not None:
@@ -277,5 +317,8 @@ if __name__ == "__main__":
     parser.add_argument("--pp-size", type=int, required=True)
     parser.add_argument("--model-path", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
+    parser.add_argument("--health-timeout", type=int, default=300)
+    parser.add_argument("--rpc-timeout", type=int, default=300)
+    parser.add_argument("--dist-timeout", type=int, default=600)
     args = parser.parse_args()
     main(args)
