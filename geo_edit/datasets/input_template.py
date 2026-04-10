@@ -213,3 +213,18 @@ REASONMAP_SEPARATED_TEMPLATE = """\
 
 For multiple choice questions, provide only the letter (A, B, C, or D). For yes/no questions, answer Yes or No. For counting questions, provide the number.
 """
+
+MM_MAPQA_INPUT_TEMPLATE = """\
+Look at the map image and answer the following question concisely.
+
+{question}
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+MM_MAPQA_NOTOOL_INPUT_TEMPLATE = MM_MAPQA_INPUT_TEMPLATE
+
+MM_MAPQA_ANSWER_FORMAT = (
+    "Provide your final answer in <answer></answer> tags. "
+    "Keep it concise (e.g. <answer>Yes</answer>, <answer>Ohio</answer>)."
+)

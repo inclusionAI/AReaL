@@ -223,19 +223,22 @@ def main():
                 image_path = None
                 text_only = dataset_spec.image_key is None
                 if dataset_spec.image_key:
-                    image_path = os.path.join(task_save_dir, "input_image.png")
-                    if not os.path.exists(image_path):
-                        image = item.get(dataset_spec.image_key)
-                        if isinstance(image, Image.Image):
-                            image.save(image_path)
-                        elif isinstance(image, dict) and "bytes" in image:
-                            image = Image.open(BytesIO(image["bytes"]))
-                            image.save(image_path)
-                        elif isinstance(image, bytes):
-                            image = Image.open(BytesIO(image))
-                            image.save(image_path)
-                        else:
-                            raise ValueError(f"Invalid image type: {type(image)}")
+                    image = item.get(dataset_spec.image_key)
+                    if isinstance(image, str) and os.path.isfile(image):
+                        image_path = image
+                    else:
+                        image_path = os.path.join(task_save_dir, "input_image.png")
+                        if not os.path.exists(image_path):
+                            if isinstance(image, Image.Image):
+                                image.save(image_path)
+                            elif isinstance(image, dict) and "bytes" in image:
+                                image = Image.open(BytesIO(image["bytes"]))
+                                image.save(image_path)
+                            elif isinstance(image, bytes):
+                                image = Image.open(BytesIO(image))
+                                image.save(image_path)
+                            else:
+                                raise ValueError(f"Invalid image type: {type(image)}")
                 else:
                     text_only = True
 
