@@ -1401,6 +1401,12 @@ class MegatronEngine(TrainEngine):
                 fut.result()
 
                 self.engine_lock.release()
+            else:
+                # Non-PP-head ranks do not create NCCL groups.  Set placeholder values so
+                # the attributes exist; they are never used for network I/O
+                # on non-PP-head ranks.
+                self.weight_update_master_addr = ""
+                self.weight_update_master_port = 0
         else:
             # PP==1: original behaviour – only the pp_rank=0 head creates
             # a single group spanning all inference workers.
