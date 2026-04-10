@@ -1348,13 +1348,13 @@ class MegatronEngine(TrainEngine):
         pp_size = os.environ.get("WORLD_SIZE", "unknown")
         world_size = os.environ.get("WORLD_SIZE", "unknown")
         try:
-            from areal.engine.megatron_core.utils import mpu
-            if mpu.is_pipeline_model_parallel_initialized():
-                pp_rank = mpu.get_pipeline_model_parallel_rank()
-                pp_size = mpu.get_pipeline_model_parallel_world_size()
-            import torch.distributed as dist
-            if dist.is_initialized():
-                world_size = dist.get_world_size()
+            from areal.engine.megatron_core.utils import mpu as _local_mpu
+            if _local_mpu.is_pipeline_model_parallel_initialized():
+                pp_rank = _local_mpu.get_pipeline_model_parallel_rank()
+                pp_size = _local_mpu.get_pipeline_model_parallel_world_size()
+            import torch.distributed as _local_dist
+            if _local_dist.is_initialized():
+                world_size = _local_dist.get_world_size()
         except Exception:
             pass
 
