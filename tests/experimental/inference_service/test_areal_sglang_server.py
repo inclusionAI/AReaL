@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pickle
 import shutil
 import subprocess
 import sys
@@ -19,7 +20,11 @@ from tests.experimental.inference_service.integration_utils import (
     has_gpu,
 )
 
-from areal.engine.sglang_ext.areal_sglang_server import _parse_args, create_app
+from areal.engine.sglang_ext.areal_sglang_server import (
+    _AWEX_SCHEDULER_LAUNCHER,
+    _parse_args,
+    create_app,
+)
 
 
 class _FakeTokenizerManager:
@@ -149,6 +154,12 @@ def test_parse_args_passes_namespace_to_server_args(monkeypatch):
     assert port == 31001
     assert server_args.tp_size == 2
     assert server_args.model_path == "stub-model"
+
+
+def test_awex_scheduler_launcher_is_pickle_safe():
+    dumped = pickle.dumps(_AWEX_SCHEDULER_LAUNCHER)
+    loaded = pickle.loads(dumped)
+    assert callable(loaded)
 
 
 class _MockMegatronEngineForAwexFileWriter:

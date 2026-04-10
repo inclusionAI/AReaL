@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from areal.engine.sglang_ext._scheduler_patch import _AWEX_SCHEDULER_LAUNCHER
 from areal.utils import logging
 
 logger = logging.getLogger("ARealSGLangServer")
@@ -276,19 +277,9 @@ def _parse_args() -> tuple[Any, str, int]:
 
 def _build_engine(server_args):
     from sglang.srt.entrypoints.engine import Engine
-    from sglang.srt.managers.scheduler import run_scheduler_process
 
     class AwexEngine(Engine):
-        @staticmethod
-        def _patched_run_scheduler(*args, **kwargs):
-            from areal.engine.sglang_ext.sglang_worker_extension import (
-                patch_scheduler_for_awex,
-            )
-
-            patch_scheduler_for_awex()
-            return run_scheduler_process(*args, **kwargs)
-
-        run_scheduler_process_func = staticmethod(_patched_run_scheduler)
+        run_scheduler_process_func = _AWEX_SCHEDULER_LAUNCHER
 
     return AwexEngine(server_args=server_args)
 
