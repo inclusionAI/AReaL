@@ -149,6 +149,15 @@ def patch_scheduler_for_awex() -> None:
             self, infer_engine_config
         )
         result = target(**task_kwargs)
+
+        # awex InferParamMetaResolver expects execute_task_in_model_worker() to
+        # return List[Dict[str, Any]] for _get_model_param_info, even with one
+        # worker/rank.
+        if task_qualname.endswith("._get_model_param_info") and isinstance(
+            result, dict
+        ):
+            result = [result]
+
         return _sanitize_for_ipc(result)
 
     def _make_awex_worker_method(task_module: str, task_qualname: str):
