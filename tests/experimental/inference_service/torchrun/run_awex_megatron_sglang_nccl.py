@@ -14,17 +14,61 @@ import sys
 import threading
 import time
 import traceback
+from collections.abc import Mapping
 from datetime import timedelta
 
 import requests
 import torch
 import torch.distributed as dist
 
-from tests.experimental.inference_service.integration_utils import check_server_health
-
 
 def _log(rank: int, message: str) -> None:
     print(f"[awex-sglang-nccl][rank{rank}] {message}", flush=True)
+
+
+def _probe_health(base_url: str, timeout_s: float = 2.0) -> tuple[bool, str]:
+    try:
+        resp = requests.get(f"{base_url}/health", timeout=timeout_s)
+        text = resp.text.strip().replace("\n", " ")
+        if len(text) > 300:
+            text = text[:300] + "..."
+        if resp.status_code == 200:
+            return True, f"200 {text}"
+        return False, f"{resp.status_code} {text}"
+    except requests.exceptions.RequestException as exc:
+        return False, f"request_error: {exc}"
+
+
+def _sanitize_server_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Remove parent torchrun distributed env vars for child SGLang server.
+
+    The child server runs its own distributed bootstrap and must not inherit the
+    controller torchrun rendezvous variables.
+    """
+
+    blocked_prefixes = (
+        "TORCHELASTIC_",
+        "GROUP_",
+        "ROLE_",
+    )
+    blocked_exact = {
+        "RANK",
+        "WORLD_SIZE",
+        "LOCAL_RANK",
+        "LOCAL_WORLD_SIZE",
+        "MASTER_ADDR",
+        "MASTER_PORT",
+        "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+        "PMI_RANK",
+        "PMI_SIZE",
+        "PMI_FD",
+    }
+
+    sanitized = dict(env)
+    for key in list(sanitized.keys()):
+        if key in blocked_exact or any(key.startswith(p) for p in blocked_prefixes):
+            sanitized.pop(key, None)
+    return sanitized
 
 
 def _write_result(path: str, ok: bool, message: str = "") -> None:
@@ -45,7 +89,7 @@ def _visible_devices() -> list[str]:
 
 
 def _server_command(model_path: str, host: str, port: int, dist_port: int) -> list[str]:
-    from areal.api.cli_args import SGLangConfig
+    from areal.api.cli_args import SGLangConfig, get_py_cmd
 
     args = SGLangConfig.build_args(
         sglang_config=SGLangConfig(
@@ -59,16 +103,8 @@ def _server_command(model_path: str, host: str, port: int, dist_port: int) -> li
         base_gpu_id=0,
         dist_init_addr=f"{host}:{dist_port}",
     )
-    cmd = [sys.executable, "-m", "areal.engine.sglang_ext.areal_sglang_server"]
-    for key, value in args.items():
-        if value is None:
-            continue
-        flag = f"--{key.replace('_', '-')}"
-        if isinstance(value, bool):
-            if value:
-                cmd.append(flag)
-        else:
-            cmd.extend([flag, str(value)])
+    cmd = get_py_cmd("areal.engine.sglang_ext.areal_sglang_server", args)
+    cmd[0] = sys.executable
     return cmd
 
 
@@ -139,13 +175,13 @@ def main(args: argparse.Namespace) -> None:
             meta_ip, meta_port = start_meta_server()
             meta_started = True
             os.environ["AWEX_META_ADDR_BCAST"] = f"{meta_ip}:{meta_port}"
-            host = "127.0.0.1"
+            host = network.gethostip()
             sglang_port, sglang_dist_port = network.find_free_ports(2)
             os.environ["AWEX_SGLANG_HOST_BCAST"] = host
             os.environ["AWEX_SGLANG_PORT_BCAST"] = str(sglang_port)
 
             cmd = _server_command(args.model_path, host, sglang_port, sglang_dist_port)
-            server_env = os.environ.copy()
+            server_env = _sanitize_server_env(os.environ)
             server_env["PYTHONUNBUFFERED"] = "1"
             # Prefer a non-overlapping GPU when available; otherwise colocate.
             server_gpu_idx = world_size if world_size < len(visible) else 0
@@ -216,26 +252,44 @@ def main(args: argparse.Namespace) -> None:
             except Exception as exc:  # pragma: no cover
                 update_result["error"] = str(exc)
 
+        health_gate = [False, ""]
         if rank == 0:
             deadline = time.time() + args.health_timeout
             _log(
                 rank,
                 f"waiting for sglang health at {base_url} (timeout={args.health_timeout}s)",
             )
+            last_detail = ""
+            last_log_ts = 0.0
             while time.time() < deadline:
                 if server_proc is not None and server_proc.poll() is not None:
                     raise RuntimeError(
                         f"AReaL SGLang server exited early with code {server_proc.returncode}"
                     )
-                if check_server_health(base_url):
+                ok, detail = _probe_health(base_url, timeout_s=2.0)
+                last_detail = detail
+                now = time.time()
+                if now - last_log_ts >= 10:
+                    elapsed = int(now - (deadline - args.health_timeout))
+                    _log(rank, f"health probe pending (elapsed={elapsed}s): {detail}")
+                    last_log_ts = now
+                if ok:
                     _log(rank, "sglang server is healthy")
+                    health_gate[0] = True
                     break
                 time.sleep(1)
             else:
-                raise RuntimeError(
-                    f"AReaL SGLang server did not become healthy within {args.health_timeout}s"
+                health_gate[1] = (
+                    "AReaL SGLang server did not become healthy within "
+                    f"{args.health_timeout}s; last health probe: {last_detail}"
                 )
 
+        dist.broadcast_object_list(health_gate, src=0)
+        health_ok, health_err = bool(health_gate[0]), str(health_gate[1])
+        if not health_ok:
+            raise RuntimeError(health_err)
+
+        if rank == 0:
             init_thread = threading.Thread(target=_call_awex_init, daemon=True)
             init_thread.start()
         else:

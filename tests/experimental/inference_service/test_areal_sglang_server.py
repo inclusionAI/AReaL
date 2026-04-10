@@ -78,6 +78,18 @@ def test_create_app_exposes_basic_routes():
     assert resume.json()["success"] is True
 
 
+def test_create_app_reports_starting_when_engine_not_ready():
+    app = create_app(None)
+    client = TestClient(app)
+
+    health = client.get("/health")
+    assert health.status_code == 503
+    assert health.json()["status"] == "starting"
+
+    generate = client.post("/generate", json={"input_ids": [1]})
+    assert generate.status_code == 503
+
+
 def test_awex_routes_use_adapter(monkeypatch):
     class _FakeAdapter:
         def __init__(self, **_kwargs):

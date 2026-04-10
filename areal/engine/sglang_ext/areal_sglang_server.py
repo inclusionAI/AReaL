@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import threading
 from typing import Any
 
 import uvicorn
@@ -70,14 +71,50 @@ class _MockAwexAdapter:
 def create_app(engine) -> FastAPI:
     app = FastAPI(title="AReaL SGLang Server")
     app.state.engine = engine
+    app.state.engine_ready = engine is not None
+    app.state.engine_init_error = None
     app.state.awex_adapter = None
+
+    def _engine_unavailable_response() -> JSONResponse | None:
+        if app.state.engine_init_error is not None:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": f"engine init failed: {app.state.engine_init_error}",
+                },
+                status_code=500,
+            )
+        if not app.state.engine_ready:
+            return JSONResponse(
+                {"success": False, "error": "engine is still initializing"},
+                status_code=503,
+            )
+        return None
 
     @app.get("/health")
     async def health():
+        if app.state.engine_init_error is not None:
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "phase": "engine_init",
+                    "error": str(app.state.engine_init_error),
+                },
+                status_code=500,
+            )
+        if not app.state.engine_ready:
+            return JSONResponse(
+                {"status": "starting", "phase": "engine_init"}, status_code=503
+            )
         return {"status": "ok"}
 
     @app.get("/v1/models")
     async def list_models():
+        unavailable = _engine_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        engine = app.state.engine
         model_path = (
             getattr(getattr(engine, "server_args", None), "model_path", None)
             or "unknown"
@@ -86,6 +123,11 @@ def create_app(engine) -> FastAPI:
 
     @app.post("/generate")
     async def generate(request: Request):
+        unavailable = _engine_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        engine = app.state.engine
         payload = await request.json()
         fn = getattr(engine, "async_generate", None)
         if fn is None:
@@ -112,6 +154,11 @@ def create_app(engine) -> FastAPI:
 
     @app.post("/encode")
     async def encode(request: Request):
+        unavailable = _engine_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        engine = app.state.engine
         payload = await request.json()
         fn = getattr(engine, "encode", None)
         if fn is None:
@@ -125,6 +172,11 @@ def create_app(engine) -> FastAPI:
 
     @app.post("/flush_cache")
     async def flush_cache():
+        unavailable = _engine_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        engine = app.state.engine
         fn = getattr(engine, "flush_cache", None)
         if fn is None:
             return {"success": True, "message": "flush_cache unsupported"}
@@ -136,6 +188,11 @@ def create_app(engine) -> FastAPI:
 
     @app.post("/pause_generation")
     async def pause_generation():
+        unavailable = _engine_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        engine = app.state.engine
         tm = getattr(engine, "tokenizer_manager", None)
         if tm is None or not hasattr(tm, "pause_generation"):
             return _to_json_response(
@@ -156,6 +213,11 @@ def create_app(engine) -> FastAPI:
 
     @app.post("/continue_generation")
     async def continue_generation():
+        unavailable = _engine_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        engine = app.state.engine
         tm = getattr(engine, "tokenizer_manager", None)
         if tm is None or not hasattr(tm, "continue_generation"):
             return _to_json_response(
@@ -184,6 +246,11 @@ def create_app(engine) -> FastAPI:
 
     @app.post("/areal_awex_init")
     async def awex_init(request: AwexInitRequest):
+        unavailable = _engine_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        engine = app.state.engine
         try:
             if os.environ.get("AREAL_AWEX_USE_MOCK_ADAPTER", "0") == "1":
                 adapter = _MockAwexAdapter()
@@ -286,9 +353,24 @@ def _build_engine(server_args):
 
 def main() -> None:
     server_args, host, port = _parse_args()
-    engine = _build_engine(server_args)
+    app = create_app(engine=None)
 
-    app = create_app(engine)
+    def _init_engine() -> None:
+        logger.info("Starting SGLang engine initialization")
+        try:
+            engine = _build_engine(server_args)
+            app.state.engine = engine
+            app.state.engine_ready = True
+            app.state.engine_init_error = None
+            logger.info("SGLang engine initialization completed")
+        except Exception as exc:
+            app.state.engine = None
+            app.state.engine_ready = False
+            app.state.engine_init_error = exc
+            logger.exception("SGLang engine initialization failed")
+
+    threading.Thread(target=_init_engine, daemon=True).start()
+    logger.info("Starting uvicorn server at %s:%s", host, port)
     uvicorn.run(app, host=host, port=port)
 
 
