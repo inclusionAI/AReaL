@@ -414,9 +414,7 @@ class DataController:
         host = alloc_data["host"]
         port = alloc_data["ports"][0]
 
-        # FIX: 绑定到 0.0.0.0 / :: 而不是特定外部 IP 
-        # 这样 loopback 和外部地址都能访问 
-        cmd = list(raw_cmd) + ["--host", "0.0.0.0", "--port", str(port)]
+        cmd = list(raw_cmd) + ["--host", "::", "--port", str(port)]
 
         async with session.post(
             f"{guard_addr}/fork",

@@ -2,18 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import importlib
 from contextlib import asynccontextmanager
+
 import aiohttp
+from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel
 
 from areal.infra.data_service.router.config import RouterConfig
 from areal.utils import logging
-
-_fastapi = importlib.import_module("fastapi")
-FastAPI = _fastapi.FastAPI
-HTTPException = _fastapi.HTTPException
-Request = _fastapi.Request
-BaseModel = importlib.import_module("pydantic").BaseModel
 
 logger = logging.getLogger("DataRouter")
 
@@ -128,13 +124,13 @@ def create_router_app(config: RouterConfig) -> FastAPI:
 
     @app.get("/workers")
     async def list_workers(request: Request):
-        import logging as _stdlib_logging 
-        _rt_debug = _stdlib_logging.getLogger("Router.DEBUG") 
-        _rt_debug.error( 
-            f"[RT-DEBUG] GET /workers, client={request.client}, " 
-            f"registered_workers={registered_workers}, " 
-            f"worker_healthy={worker_healthy}" 
-        ) 
+        import logging as _stdlib_logging
+        _rt_debug = _stdlib_logging.getLogger("Router.DEBUG")
+        _rt_debug.error(
+            f"[RT-DEBUG] GET /workers, client={request.client}, "
+            f"registered_workers={registered_workers}, "
+            f"worker_healthy={worker_healthy}"
+        )
         _require_admin_key(request, config.admin_api_key)
         return {
             "workers": [
