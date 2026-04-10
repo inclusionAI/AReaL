@@ -353,6 +353,15 @@ class ModelAllocation:
             return 0
         return self.parallel.world_size
 
+    @property
+    def num_servers(self) -> int:
+        """Number of inference servers (one per data-parallel replica).
+
+        In SGLang PP>1 mode, each per-PP-rank NCCL group has world_size =
+        1 (training source) + num_servers * tp_size (inference workers).
+        """
+        return self.parallel.data_parallel_size
+
     def __str__(self):
         dims = []
         if self.parallel.data_parallel_size != 1:
