@@ -1013,7 +1013,6 @@ class RolloutController:
                 method="init_weights_update_group",
                 engine_name=self._engine_name(rank),
                 meta=meta,
-                xccl_group_ranks=[rank],
             )
             for rank, worker in enumerate(self.workers)
         ]
