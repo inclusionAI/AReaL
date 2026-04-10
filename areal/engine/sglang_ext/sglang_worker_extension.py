@@ -30,6 +30,33 @@ _AWEX_WORKER_METHODS = {
 }
 
 
+def _patch_awex_sglang_converter() -> None:
+    """Patch awex SGLang converter in worker process."""
+
+    try:
+        from awex.converter.sglang_converter import SGlangToHFWeightConverter
+    except ImportError:
+        return
+
+    if getattr(SGlangToHFWeightConverter, "_areal_qnorm_patch", False):
+        return
+
+    original = SGlangToHFWeightConverter._convert_layer_norm_param
+
+    def _patched_convert_layer_norm_param(this, name, parameter, layer_number):
+        if "self_attn.q_norm" in name:
+            name = name.replace("self_attn.q_norm", "self_attn.query_layernorm")
+        if "self_attn.k_norm" in name:
+            name = name.replace("self_attn.k_norm", "self_attn.key_layernorm")
+        return original(this, name, parameter, layer_number)
+
+    SGlangToHFWeightConverter._convert_layer_norm_param = (
+        _patched_convert_layer_norm_param
+    )
+    SGlangToHFWeightConverter._areal_qnorm_patch = True
+    logger.info("Patched awex SGlangToHFWeightConverter in worker")
+
+
 def _sanitize_for_ipc(obj: Any) -> Any:
     try:
         import torch
@@ -102,6 +129,8 @@ def patch_scheduler_for_awex() -> None:
         return
 
     def awex_execute(self, task_module: str, task_qualname: str, task_kwargs=None):
+        _patch_awex_sglang_converter()
+
         module = __import__(task_module, fromlist=["__dummy__"])
         target = module
         for attr in task_qualname.split("."):

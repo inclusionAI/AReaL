@@ -26,6 +26,7 @@ from areal.engine.sglang_ext.areal_sglang_server import (
     create_app,
 )
 from areal.engine.sglang_ext.sglang_awex_adapter import AwexSGLangServerAdapter
+from areal.engine.sglang_ext.sglang_worker_extension import _patch_awex_sglang_converter
 
 
 class _FakeTokenizerManager:
@@ -202,6 +203,33 @@ def test_awex_adapter_exposes_hf_config_from_engine_model_config():
     )
     assert adapter.hf_config is marker
     assert adapter.engine_name == "sglang"
+
+
+def test_worker_patch_handles_qnorm_name(monkeypatch):
+    pytest.importorskip("awex")
+
+    import types
+
+    class _FakeConverter:
+        @staticmethod
+        def _convert_layer_norm_param(converter, name, parameter, layer_number):
+            if "query_layernorm" in name or "key_layernorm" in name:
+                return [(name, parameter)]
+            raise NotImplementedError(f"Unsupported layer norm parameter name: {name}")
+
+    fake_module = types.ModuleType("awex.converter.sglang_converter")
+    setattr(fake_module, "SGlangToHFWeightConverter", _FakeConverter)
+    monkeypatch.setitem(sys.modules, "awex.converter.sglang_converter", fake_module)
+
+    _patch_awex_sglang_converter()
+
+    out = _FakeConverter._convert_layer_norm_param(
+        _FakeConverter,
+        "self_attn.q_norm.weight",
+        object(),
+        "0",
+    )
+    assert out[0][0] == "self_attn.query_layernorm.weight"
 
 
 class _MockMegatronEngineForAwexFileWriter:
