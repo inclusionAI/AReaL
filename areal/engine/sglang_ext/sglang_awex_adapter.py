@@ -16,6 +16,33 @@ logger = logging.getLogger("SGLangAwexAdapter")
 _PICKLE_PREFIX = "__awex_pickle_base64__:"
 
 
+class _AwexHFConfigProxy:
+    """Proxy HF config for awex strategy compatibility.
+
+    awex registry in current environments may not have explicit Qwen3 entries and
+    falls back to default strategy. For awex metadata/strategy selection only,
+    provide a Qwen2-compatible architecture hint while preserving the original
+    config object behavior for all other attributes.
+    """
+
+    def __init__(self, base_cfg: Any):
+        self._base_cfg = base_cfg
+
+    def __getattr__(self, name: str):
+        return getattr(self._base_cfg, name)
+
+    def to_dict(self):
+        cfg = dict(self._base_cfg.to_dict())
+        architectures = cfg.get("architectures")
+        model_type = str(cfg.get("model_type", "")).lower()
+        if model_type == "qwen3" or (
+            isinstance(architectures, list)
+            and any(isinstance(x, str) and x.startswith("Qwen3") for x in architectures)
+        ):
+            cfg["architectures"] = ["Qwen2ForCausalLM"]
+        return cfg
+
+
 class AwexSGLangServerAdapter:
     """Server-side Awex adapter that dispatches through ``sgl.Engine`` RPC.
 
@@ -94,9 +121,22 @@ class AwexSGLangServerAdapter:
             dump_weights_list_for_validation=dump_weights_list_for_validation or [],
             dump_weights_dir_for_validation=dump_weights_dir_for_validation,
         )
-        self.hf_config = self._resolve_hf_config(server_args)
+        self.hf_config = self._coerce_awex_hf_config(
+            self._resolve_hf_config(server_args)
+        )
         self.engine_name = "sglang"
         self.weights_exchange_reader = None
+
+    def _coerce_awex_hf_config(self, cfg: Any) -> Any:
+        if not hasattr(cfg, "to_dict"):
+            return cfg
+        try:
+            proxied = _AwexHFConfigProxy(cfg)
+            # Validate proxy contract early.
+            _ = proxied.to_dict()
+            return proxied
+        except Exception:
+            return cfg
 
     def _resolve_hf_config(self, server_args):
         """Resolve HF config object expected by awex readers.

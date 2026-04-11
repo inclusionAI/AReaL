@@ -25,7 +25,10 @@ from areal.engine.sglang_ext.areal_sglang_server import (
     _parse_args,
     create_app,
 )
-from areal.engine.sglang_ext.sglang_awex_adapter import AwexSGLangServerAdapter
+from areal.engine.sglang_ext.sglang_awex_adapter import (
+    AwexSGLangServerAdapter,
+    _AwexHFConfigProxy,
+)
 from areal.engine.sglang_ext.sglang_worker_extension import (
     _build_fallback_infer_engine_config,
     _normalize_awex_param_meta_keys,
@@ -287,8 +290,21 @@ def test_awex_adapter_prefers_nested_hf_config_over_wrapper_to_dict():
         comm_backend="file",
     )
     cfg = adapter.hf_config.to_dict()
-    assert cfg.get("architectures") == ["Qwen3ForCausalLM"]
+    assert cfg.get("architectures") == ["Qwen2ForCausalLM"]
     assert "wrapper_only" not in cfg
+
+
+def test_awex_hf_config_proxy_maps_qwen3_arch_to_qwen2_for_awex():
+    class _Cfg:
+        def to_dict(self):
+            return {
+                "model_type": "qwen3",
+                "architectures": ["Qwen3ForCausalLM"],
+            }
+
+    proxied = _AwexHFConfigProxy(_Cfg())
+    d = proxied.to_dict()
+    assert d["architectures"] == ["Qwen2ForCausalLM"]
 
 
 def test_worker_patch_handles_qnorm_name(monkeypatch):
