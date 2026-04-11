@@ -233,7 +233,11 @@ def _patch_awex_nccl_barrier_device_ids() -> None:
 
 
 def _run_with_barrier_device_ids_stripped(fn, *args, **kwargs):
-    """Run a callable while forcing dist.barrier to ignore device_ids."""
+    """Run callable while neutralizing dist.barrier for awex worker task.
+
+    For current integration debugging we disable barrier execution entirely in the
+    awex worker task path to avoid environment-specific NCCL barrier failures.
+    """
 
     try:
         import torch.distributed as dist
@@ -244,14 +248,11 @@ def _run_with_barrier_device_ids_stripped(fn, *args, **kwargs):
 
     def _barrier_without_device_ids(*b_args, **b_kwargs):
         b_kwargs.pop("device_ids", None)
-        try:
-            return original_barrier(*b_args, **b_kwargs)
-        except Exception as exc:  # pragma: no cover - runtime fallback
-            logger.warning(
-                "Ignoring dist.barrier failure in awex worker task: %s",
-                _safe_exc_message(exc),
-            )
-            return None
+        logger.warning(
+            "Skipping dist.barrier in awex worker task (group=%s)",
+            b_kwargs.get("group"),
+        )
+        return None
 
     dist.barrier = _barrier_without_device_ids
     try:

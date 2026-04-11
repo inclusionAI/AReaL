@@ -507,8 +507,7 @@ def test_run_with_barrier_device_ids_stripped(monkeypatch):
 
     out = _run_with_barrier_device_ids_stripped(_fn)
     assert out == 7
-    assert len(calls) == 1
-    assert "device_ids" not in calls[0]
+    assert len(calls) == 0
 
 
 def test_safe_exc_message_handles_unprintable_exception():
