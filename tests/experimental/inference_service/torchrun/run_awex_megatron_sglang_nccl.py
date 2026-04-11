@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -77,6 +78,38 @@ def _write_result(path: str, ok: bool, message: str = "") -> None:
     payload = "Passed" if ok else f"Failed: {message}"
     with open(path, "w", encoding="utf-8") as f:
         f.write(payload)
+
+
+def _run_with_timeout(name: str, timeout_s: int, fn, *args, **kwargs):
+    """Run callable in thread with timeout and propagate exception."""
+
+    outcome: dict[str, object] = {"done": False, "error": None}
+
+    def _target():
+        try:
+            fn(*args, **kwargs)
+        except Exception as exc:  # pragma: no cover - runtime path
+            outcome["error"] = exc
+        finally:
+            outcome["done"] = True
+
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    t.join(timeout=timeout_s)
+    if t.is_alive():
+        raise TimeoutError(f"{name} timed out after {timeout_s}s")
+    if outcome["error"] is not None:
+        raise outcome["error"]  # type: ignore[misc]
+
+
+def _destroy_dist_safely(rank: int) -> None:
+    if not dist.is_initialized():
+        return
+    try:
+        dist.destroy_process_group()
+        _log(rank, "destroyed torch process group")
+    except Exception as exc:  # pragma: no cover - cleanup path
+        _log(rank, f"destroy_process_group failed: {exc}")
 
 
 def _visible_devices() -> list[str]:
@@ -184,6 +217,16 @@ def main(args: argparse.Namespace) -> None:
         timeout=timedelta(seconds=args.dist_timeout),
     )
 
+    stop_requested = {"flag": False}
+
+    def _on_terminate(signum, _frame):
+        stop_requested["flag"] = True
+        _log(rank, f"received signal {signum}; will terminate run")
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _on_terminate)
+    signal.signal(signal.SIGTERM, _on_terminate)
+
     server_proc: subprocess.Popen | None = None
     meta_started = False
     try:
@@ -247,7 +290,7 @@ def main(args: argparse.Namespace) -> None:
                         "nnodes": 1,
                         "node_rank": 0,
                     },
-                    timeout=900,
+                    timeout=max(30, args.rpc_timeout),
                 )
                 if resp.status_code == 200 and resp.json().get("success"):
                     init_result["ok"] = True
@@ -263,7 +306,7 @@ def main(args: argparse.Namespace) -> None:
                 resp = requests.post(
                     f"{base_url}/areal_awex_update",
                     json={"step_id": step_id, "kwargs": {}},
-                    timeout=900,
+                    timeout=max(30, args.rpc_timeout),
                 )
                 if resp.status_code == 200 and resp.json().get("success"):
                     update_result["ok"] = True
@@ -387,7 +430,11 @@ def main(args: argparse.Namespace) -> None:
         _log(rank, "writing weights from megatron engine")
         megatron_engine.set_global_step(step_id)
         _log(rank, f"checkpoint/write: global_step={step_id} entering write_weights")
-        megatron_engine.write_weights()
+        _run_with_timeout(
+            "megatron_engine.write_weights",
+            max(30, args.rpc_timeout),
+            megatron_engine.write_weights,
+        )
         _log(rank, "weights write completed")
 
         if rank == 0 and update_thread is not None:
@@ -413,14 +460,15 @@ def main(args: argparse.Namespace) -> None:
         tb = traceback.format_exc(limit=5)
         _log(rank, f"FAILED: {exc}\n{tb}")
         _write_result(args.output, False, f"{exc}\n{tb}")
+        _destroy_dist_safely(rank)
+        if rank == 0:
+            if server_proc is not None:
+                kill_process_tree(server_proc.pid, graceful=True)
+            if meta_started:
+                stop_meta_server()
         raise
     finally:
-        if dist.is_initialized():
-            try:
-                dist.barrier()
-            except Exception:
-                pass
-            dist.destroy_process_group()
+        _destroy_dist_safely(rank)
         if rank == 0:
             if server_proc is not None:
                 kill_process_tree(server_proc.pid, graceful=True)
