@@ -359,6 +359,30 @@ def test_normalize_awex_param_meta_keys_handles_nested_param_meta_container():
     assert "model.layers.0.attention.query_key_value_proj.weight" in out[0]
 
 
+def test_normalize_awex_param_meta_keys_maps_name_field_values():
+    src = [
+        {
+            "name": "model.layers.0.self_attn.o_proj.weight",
+            "shape": [1024, 1024],
+        }
+    ]
+    out = _normalize_awex_param_meta_keys(src)
+    assert out[0]["name"] == "model.layers.0.attention.dense.weight"
+
+
+def test_normalize_awex_param_meta_keys_adds_lm_head_alias_for_name_entries():
+    src = [
+        {
+            "name": "model.embed_tokens.weight",
+            "shape": [151936, 1024],
+        }
+    ]
+    out = _normalize_awex_param_meta_keys(src)
+    names = {item.get("name") for item in out if isinstance(item, dict)}
+    assert "model.embed_tokens.weight" in names
+    assert "lm_head.weight" in names
+
+
 def test_normalize_awex_param_meta_keys_handles_list_results():
     src = [
         {

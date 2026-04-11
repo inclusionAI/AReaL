@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import pickle
 from typing import Any
 
@@ -40,10 +41,15 @@ def _normalize_awex_param_meta_keys(result: Any) -> Any:
     Megatron-style names expected by awex checks.
     """
 
-    def _is_param_map(d: dict[Any, Any]) -> bool:
-        return any(
-            isinstance(k, str) and (".weight" in k or ".bias" in k) for k in d.keys()
+    def _is_param_name(name: str) -> bool:
+        return (
+            name.endswith(".weight")
+            or name.endswith(".bias")
+            or name == "lm_head.weight"
         )
+
+    def _is_param_map(d: dict[Any, Any]) -> bool:
+        return any(isinstance(k, str) and _is_param_name(k) for k in d.keys())
 
     def _map_param_key(key: str) -> str:
         mapped = key
@@ -56,6 +62,8 @@ def _normalize_awex_param_meta_keys(result: Any) -> Any:
         return mapped
 
     def _normalize(obj: Any) -> Any:
+        if isinstance(obj, str) and _is_param_name(obj):
+            return _map_param_key(obj)
         if isinstance(obj, list):
             return [_normalize(item) for item in obj]
         if not isinstance(obj, dict):
@@ -69,6 +77,13 @@ def _normalize_awex_param_meta_keys(result: Any) -> Any:
                 _map_param_key(key) if (param_map and isinstance(key, str)) else key
             )
             normalized.setdefault(mapped_key, _normalize(value))
+
+        # Some awex structures carry parameter names in values
+        # (e.g. {"name": "model.layers..."}) instead of dict keys.
+        for name_field in ("name", "param_name", "weight_name"):
+            field_val = normalized.get(name_field)
+            if isinstance(field_val, str) and _is_param_name(field_val):
+                normalized[name_field] = _map_param_key(field_val)
 
         # For parameter maps, ensure lm_head.weight exists when tied embeddings are used.
         if param_map and "lm_head.weight" not in normalized:
@@ -91,7 +106,43 @@ def _normalize_awex_param_meta_keys(result: Any) -> Any:
 
         return normalized
 
-    return _normalize(result)
+    def _add_lm_head_alias_in_name_entries(obj: Any) -> Any:
+        if isinstance(obj, list):
+            names: set[str] = set()
+            template_item: dict[str, Any] | None = None
+            template_field: str | None = None
+
+            for item in obj:
+                if not isinstance(item, dict):
+                    continue
+                for field in ("name", "param_name", "weight_name"):
+                    val = item.get(field)
+                    if isinstance(val, str):
+                        names.add(val)
+                        if val.endswith("embed_tokens.weight") or val.endswith(
+                            "tok_embeddings.weight"
+                        ):
+                            template_item = item
+                            template_field = field
+
+            if (
+                "lm_head.weight" not in names
+                and template_item is not None
+                and template_field is not None
+            ):
+                alias_item = copy.deepcopy(template_item)
+                alias_item[template_field] = "lm_head.weight"
+                obj = [*obj, alias_item]
+
+            return [_add_lm_head_alias_in_name_entries(x) for x in obj]
+
+        if isinstance(obj, dict):
+            return {k: _add_lm_head_alias_in_name_entries(v) for k, v in obj.items()}
+        return obj
+
+    normalized = _normalize(result)
+    normalized = _add_lm_head_alias_in_name_entries(normalized)
+    return normalized
 
 
 def _patch_awex_sglang_converter() -> None:
