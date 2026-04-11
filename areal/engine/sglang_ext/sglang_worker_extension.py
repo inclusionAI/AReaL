@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import pickle
+import traceback
 import types
 from typing import Any
 
@@ -331,6 +332,7 @@ def patch_scheduler_for_awex() -> None:
 
         success = True
         err: Exception | None = None
+        err_tb = ""
         result = None
         try:
             func = getattr(self, recv_req.method)
@@ -341,10 +343,14 @@ def patch_scheduler_for_awex() -> None:
         except Exception as exc:  # pragma: no cover - runtime behavior
             success = False
             err = exc
+            err_tb = traceback.format_exc()
 
         barrier()
         if not success:
-            return RpcReqOutput(False, _safe_exc_message(err))
+            msg = _safe_exc_message(err)
+            if err_tb:
+                msg = f"{msg}\n--- worker traceback ---\n{err_tb}"
+            return RpcReqOutput(False, msg)
 
         if result is None:
             return RpcReqOutput(True, "")
