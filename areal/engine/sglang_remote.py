@@ -303,6 +303,11 @@ class RemoteSGLangEngine(InferenceEngine):
         return self._engine.initialized
 
     @property
+    def addresses(self) -> list[str]:
+        """Get the server addresses this engine is connected to."""
+        return self._engine.addresses
+
+    @property
     def workflow_executor(self) -> WorkflowExecutor:
         """Get the workflow executor of the inference engine."""
         return self._engine.workflow_executor

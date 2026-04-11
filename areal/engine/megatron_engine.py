@@ -520,8 +520,6 @@ class MegatronEngine(TrainEngine):
         self,
         engine: InferenceEngine,
         meta: WeightUpdateMeta,
-        tensor_server_addresses: list[str] | None = None,
-        tensor_target_backend: str | None = None,
     ):
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(

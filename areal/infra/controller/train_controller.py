@@ -575,8 +575,6 @@ class TrainController:
         self,
         rollout: RolloutController,
         meta: WeightUpdateMeta,
-        tensor_server_addresses: list[str] | None = None,
-        tensor_target_backend: str | None = None,
     ):
         if self.rollout is not None and self.rollout != rollout:
             logger.warning(
@@ -591,8 +589,6 @@ class TrainController:
             "connect_engine",
             engine=engine,
             meta=meta,
-            tensor_server_addresses=tensor_server_addresses,
-            tensor_target_backend=tensor_target_backend,
         )
 
     def export_stats(self):

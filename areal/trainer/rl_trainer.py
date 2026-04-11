@@ -346,17 +346,9 @@ class PPOTrainer:
                         "base_model_name": config.actor.path,
                     }
                 )
-            self.weight_update_meta = WeightUpdateMeta.from_tensor(**tensor_kwargs)
-        else:
-            raise ValueError(
-                f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
-            )
 
-        # Build tensor_server_addresses for tensor mode
-        tensor_server_addresses = None
-        tensor_target_backend = None
-        if self.config.actor.weight_update_mode == "tensor":
-            tensor_target_backend = self.rollout_alloc.backend
+            # Build tensor_server_addresses
+            tensor_server_addresses = None
             if is_single_controller():
                 from areal.utils.network import format_hostport
 
@@ -365,13 +357,21 @@ class PPOTrainer:
                     for info in self.rollout.server_infos
                 ]
             else:
-                tensor_server_addresses = self.rollout._engine.addresses
+                tensor_server_addresses = self.rollout.addresses
+
+            self.weight_update_meta = WeightUpdateMeta.from_tensor(
+                tensor_server_addresses=tensor_server_addresses,
+                tensor_target_backend=self.rollout_alloc.backend,
+                **tensor_kwargs,
+            )
+        else:
+            raise ValueError(
+                f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
+            )
 
         self.actor.connect_engine(
             self.rollout,
             self.weight_update_meta,
-            tensor_server_addresses=tensor_server_addresses,
-            tensor_target_backend=tensor_target_backend,
         )
 
         # Set up evaluation (skip in online mode)

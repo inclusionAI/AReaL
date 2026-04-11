@@ -441,8 +441,6 @@ class FSDPEngine(TrainEngine):
         self,
         engine: InferenceEngine,
         meta: WeightUpdateMeta,
-        tensor_server_addresses: list[str] | None = None,
-        tensor_target_backend: str | None = None,
     ):
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(
@@ -456,16 +454,17 @@ class FSDPEngine(TrainEngine):
         if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
-        elif meta.type == "tensor" and tensor_server_addresses is not None:
-            self._tensor_server_addresses = tensor_server_addresses
-            self._tensor_target_backend = tensor_target_backend or "sglang"
+        elif meta.type == "tensor" and meta.tensor_server_addresses is not None:
+            self._tensor_server_addresses = meta.tensor_server_addresses
+            self._tensor_target_backend = meta.tensor_target_backend or "sglang"
             self._tensor_backend = self._make_tensor_backend(
                 self._tensor_target_backend
             )
             self.logger.info(
                 f"Tensor colocated weight sync configured with "
                 f"backend={self._tensor_target_backend}, "
-                f"{len(tensor_server_addresses)} server(s): {tensor_server_addresses}"
+                f"{len(meta.tensor_server_addresses)} server(s): "
+                f"{meta.tensor_server_addresses}"
             )
 
         current_platform.synchronize()
@@ -1490,7 +1489,9 @@ class FSDPEngine(TrainEngine):
         try:
             if (
                 hasattr(self, "_tensor_backend")
-                and hasattr(self._tensor_backend, "supports_direct_tensor_weight_update")
+                and hasattr(
+                    self._tensor_backend, "supports_direct_tensor_weight_update"
+                )
                 and self._tensor_backend.supports_direct_tensor_weight_update
             ):
                 # vLLM path: delegate to vLLM's IPCWeightTransferEngine

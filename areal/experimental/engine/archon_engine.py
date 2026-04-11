@@ -632,8 +632,6 @@ class ArchonEngine(TrainEngine):
         self,
         engine: InferenceEngine,
         meta: WeightUpdateMeta,
-        tensor_server_addresses: list[str] | None = None,
-        tensor_target_backend: str | None = None,
     ):
         """Connect to an inference engine for rollout."""
         if self.rollout_engine is not None and self.rollout_engine != engine:

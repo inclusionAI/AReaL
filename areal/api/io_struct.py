@@ -163,14 +163,19 @@ def get_versioned_lora_name(lora_name: str, version: int) -> str:
 
 @dataclass
 class WeightUpdateMeta:
-    type: Literal["disk", "xccl"]
+    type: Literal["disk", "xccl", "tensor"]
     path: str | None = None
     gen_allocation: ModelAllocation | None = None
 
+    # xccl fields
     nccl_master_address: str | None = None
     nccl_master_port: int | None = None
     nccl_group_name: str | None = None
     weight_chunked_mem_mb: int = 1024
+
+    # tensor fields
+    tensor_server_addresses: list[str] | None = None
+    tensor_target_backend: str | None = None  # "sglang" | "vllm"
 
     use_lora: bool = False
     lora_name: str = ""
@@ -268,7 +273,9 @@ class WeightUpdateMeta:
     @classmethod
     def from_tensor(
         cls,
-        weight_chunked_mem_mb: int = 512,
+        tensor_server_addresses: list[str] | None = None,
+        tensor_target_backend: str | None = None,
+        weight_chunked_mem_mb: int = 1024,
         use_lora: bool = False,
         lora_name: str = "",
         lora_int_id: int = 1,
@@ -277,6 +284,8 @@ class WeightUpdateMeta:
         """Create meta for tensor-based colocated weight update via CUDA IPC."""
         return cls(
             type="tensor",
+            tensor_server_addresses=tensor_server_addresses,
+            tensor_target_backend=tensor_target_backend,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
             use_lora=use_lora,
             lora_name=lora_name,
