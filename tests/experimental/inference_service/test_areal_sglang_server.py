@@ -33,6 +33,7 @@ from areal.engine.sglang_ext.sglang_awex_adapter import (
 from areal.engine.sglang_ext.sglang_worker_extension import (
     _build_fallback_infer_engine_config,
     _normalize_awex_param_meta_keys,
+    _patch_awex_nccl_barrier_device_ids,
     _patch_awex_sglang_converter,
     _safe_exc_message,
 )
@@ -440,6 +441,47 @@ def test_build_fallback_infer_engine_config_from_scheduler_server_args():
     assert cfg.pp_size == 3
     assert cfg.dp_size == 4
     assert cfg.enable_dp_lm_head is True
+
+
+def test_patch_awex_nccl_barrier_device_ids_drops_device_ids(monkeypatch):
+    import types
+
+    calls = []
+
+    def _barrier(*_args, **kwargs):
+        calls.append(kwargs)
+
+    fake_torch = types.ModuleType("torch")
+    fake_dist = types.ModuleType("torch.distributed")
+    fake_dist.barrier = _barrier
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "torch.distributed", fake_dist)
+
+    class _FakeReader:
+        def initialize(self):
+            import torch.distributed as dist
+
+            dist.barrier(group="g", device_ids=[0])
+
+    class _FakeWriter:
+        def initialize(self):
+            import torch.distributed as dist
+
+            dist.barrier(group="g", device_ids=[1])
+
+    fake_reader_mod = types.ModuleType("awex.reader.nccl_reader")
+    fake_writer_mod = types.ModuleType("awex.writer.nccl_writer")
+    setattr(fake_reader_mod, "NCCLWeightsReader", _FakeReader)
+    setattr(fake_writer_mod, "NCCLWeightsWriter", _FakeWriter)
+    monkeypatch.setitem(sys.modules, "awex.reader.nccl_reader", fake_reader_mod)
+    monkeypatch.setitem(sys.modules, "awex.writer.nccl_writer", fake_writer_mod)
+
+    _patch_awex_nccl_barrier_device_ids()
+    _FakeReader().initialize()
+    _FakeWriter().initialize()
+
+    assert len(calls) == 2
+    assert all("device_ids" not in kwargs for kwargs in calls)
 
 
 def test_safe_exc_message_handles_unprintable_exception():

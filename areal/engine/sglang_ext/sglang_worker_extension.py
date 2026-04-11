@@ -185,6 +185,53 @@ def _patch_awex_sglang_converter() -> None:
     logger.info("Patched awex SGlangToHFWeightConverter in worker")
 
 
+def _patch_awex_nccl_barrier_device_ids() -> None:
+    """Patch awex NCCL initialize paths to avoid barrier(device_ids=...).
+
+    In some containerized environments with custom CUDA visibility mappings,
+    ``dist.barrier(..., device_ids=[...])`` can trigger NCCL/Torch runtime errors.
+    For awex reader/writer initialize only, drop ``device_ids`` from barrier calls.
+    """
+
+    try:
+        from awex.reader.nccl_reader import NCCLWeightsReader
+    except ImportError:
+        NCCLWeightsReader = None
+
+    try:
+        from awex.writer.nccl_writer import NCCLWeightsWriter
+    except ImportError:
+        NCCLWeightsWriter = None
+
+    def _wrap_initialize(cls, tag: str):
+        if cls is None or getattr(cls, "_areal_barrier_device_patch", False):
+            return
+
+        original_initialize = cls.initialize
+
+        def _patched_initialize(self, *args, **kwargs):
+            import torch.distributed as dist
+
+            original_barrier = dist.barrier
+
+            def _barrier_without_device_ids(*b_args, **b_kwargs):
+                b_kwargs.pop("device_ids", None)
+                return original_barrier(*b_args, **b_kwargs)
+
+            dist.barrier = _barrier_without_device_ids
+            try:
+                return original_initialize(self, *args, **kwargs)
+            finally:
+                dist.barrier = original_barrier
+
+        cls.initialize = _patched_initialize
+        cls._areal_barrier_device_patch = True
+        logger.info("Patched awex %s initialize barrier device_ids", tag)
+
+    _wrap_initialize(NCCLWeightsReader, "NCCLWeightsReader")
+    _wrap_initialize(NCCLWeightsWriter, "NCCLWeightsWriter")
+
+
 def _sanitize_for_ipc(obj: Any) -> Any:
     try:
         import torch
@@ -282,6 +329,7 @@ def patch_scheduler_for_awex() -> None:
 
     def awex_execute(self, task_module: str, task_qualname: str, task_kwargs=None):
         _patch_awex_sglang_converter()
+        _patch_awex_nccl_barrier_device_ids()
 
         module = __import__(task_module, fromlist=["__dummy__"])
         target = module
