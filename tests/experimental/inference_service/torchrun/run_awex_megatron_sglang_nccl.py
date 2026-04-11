@@ -67,12 +67,8 @@ def _log(rank: int, message: str) -> None:
 
 def _probe_health(base_url: str, timeout_s: float = 2.0) -> tuple[bool, str]:
     try:
-        resp = requests.get(f"{base_url}/health", timeout=timeout_s)
-        text = resp.text.strip().replace("\n", " ")
-        if len(text) > 300:
-            text = text[:300] + "..."
-        if resp.status_code == 200:
-            return True, f"200 {text}"
+        resp = requests.get(f"{base_url}/health", timeout=timeout_s, json={})
+        return resp.status_code == 200, f"200 {text}"
         return False, f"{resp.status_code} {text}"
     except requests.exceptions.RequestException as exc:
         return False, f"request_error: {exc}"
@@ -206,7 +202,7 @@ def _server_command(
         dist_init_addr=f"{host}:{dist_port}",
     )
     cmd = get_py_cmd("areal.engine.sglang_ext.areal_sglang_server", args)
-    cmd[0] = sys.executable
+    # cmd[0] = sys.executable
     return cmd
 
 
@@ -330,6 +326,7 @@ def main(args: argparse.Namespace) -> None:
                 stdout=sys.stdout,
                 stderr=sys.stdout,
             )
+            _log(rank, f"sglang process command issued: {' '.join(cmd)}")
 
         # Broadcast meta/server endpoint to all ranks via env + object list.
         shared = [
@@ -355,7 +352,7 @@ def main(args: argparse.Namespace) -> None:
                         "engine_rank": 0,
                         "num_engines": 1,
                         "comm_backend": "nccl",
-                        "enable_debug_mode": True,
+                        "enable_debug_mode": False,
                         "debug_mode_config": {
                             "enable_nccl_debug_mode": True,
                             "raise_on_validation_fail": False,
@@ -580,6 +577,5 @@ if __name__ == "__main__":
     parser.add_argument("--health-timeout", type=int, default=300)
     parser.add_argument("--rpc-timeout", type=int, default=300)
     parser.add_argument("--dist-timeout", type=int, default=600)
-    parser.add_argument("--global-pg-port", type=int, required=True)
     args = parser.parse_args()
     main(args)
