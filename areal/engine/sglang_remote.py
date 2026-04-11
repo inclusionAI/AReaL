@@ -188,46 +188,55 @@ class SGLangBackend:
     ) -> HttpRequest:
         """Build SGLang init weights group request.
 
-        Supports both PP=1 (original behavior) and PP>1 (per-PP-rank groups).
+        Supports three scenarios:
 
-        When PP>1, each training PP rank creates its own NCCL group. The group
-        name encodes the PP rank (e.g., ``update_weight_group_0``). Only the
-        sglang workers at that PP rank participate in the group, so:
-        - ``rank_offset`` is based on ``tp_size`` only (not ``tp_size * pp_size``)
-        - ``world_size`` = ``n_servers * tp_size + 1``
-        - The payload includes ``pp_rank`` so sglang knows which PP workers join
+        1. **PP=1** (original): Single NCCL group spanning all TP workers across
+           all DP instances. ``rank_offset`` is based on ``tp_size``.
+
+        2. **PP>1, per-PP-rank groups** (Megatron engine): The training engine
+           creates a separate NCCL group per PP stage. The group name encodes
+           the PP rank (e.g., ``update_weight_group_0``). Only sglang workers
+           at that PP rank participate, so ``rank_offset`` is based on
+           ``tp_size`` only, ``world_size = n_servers * tp_size + 1``, and
+           ``pp_rank`` is included in the payload.
+
+        3. **PP>1, single group** (FSDP engine): The training engine creates ONE
+           NCCL group containing ALL inference workers (across all PP stages).
+           The group name has no PP rank suffix (e.g., ``update_weight_group``).
+           ``rank_offset`` must account for the full per-server instance size
+           (``tp_size * pp_size``), and ``world_size`` is the total inference
+           world size + 1.
         """
         assert meta.gen_allocation is not None
         gen_parallel = meta.gen_allocation.parallel
+        group_name = meta.nccl_group_name
 
-        if gen_parallel.pp_size == 1:
-            # Original behavior: single group spanning all TP workers
-            rank_offset = 1 + server_idx * gen_parallel.tp_size
-            payload = {
-                "master_address": format_host_for_url(meta.nccl_master_address),
-                "master_port": str(meta.nccl_master_port),
-                "rank_offset": rank_offset,
-                "world_size": gen_parallel.world_size + 1,
-                "backend": current_platform.communication_backend,
-                "group_name": meta.nccl_group_name,
-            }
-        else:
-            # PP>1: per-PP-rank group approach.
-            # Extract pp_rank from the group name (format: "update_weight_group_{pp_rank}")
-            group_name = meta.nccl_group_name
+        # Determine if training side uses per-PP-rank groups (Megatron PP>1)
+        # vs single-group approach (FSDP, or any engine without training-side PP).
+        # Per-PP-rank groups are identified by group names ending with _{digit}.
+        per_pp_groups = False
+        if gen_parallel.pp_size > 1:
+            try:
+                _suffix = group_name.rsplit("_", 1)[-1]
+                int(_suffix)
+                per_pp_groups = True
+            except (ValueError, IndexError):
+                per_pp_groups = False
+
+        if per_pp_groups:
+            # Scenario 2: PP>1 with per-PP-rank groups (Megatron engine).
+            # Extract pp_rank from the group name suffix.
             pp_rank = int(group_name.rsplit("_", 1)[-1])
 
             tp_size = gen_parallel.tp_size
-            # n_servers is the total number of DP instances (sglang server replicas).
-            # gen_parallel.world_size = tp_size * pp_size * n_servers, so:
+            # n_servers = total DP instances (sglang server replicas).
+            # gen_parallel.world_size = tp_size * pp_size * n_servers
             n_servers = gen_parallel.world_size // (tp_size * gen_parallel.pp_size)
 
-            # rank_offset is based on tp_size only since only TP workers at one
-            # PP rank join each per-PP-rank group. Rank 0 is the training rank.
+            # Only TP workers at this PP rank join, so rank_offset uses tp_size.
             rank_offset = 1 + server_idx * tp_size
 
-            # world_size for this per-PP-rank group: all TP workers across all
-            # DP instances at this PP rank, plus the one training rank.
+            # world_size for this group: TP workers across all DP at this PP rank + 1.
             world_size = n_servers * tp_size + 1
 
             payload = {
@@ -238,6 +247,21 @@ class SGLangBackend:
                 "backend": current_platform.communication_backend,
                 "group_name": group_name,
                 "pp_rank": pp_rank,
+            }
+        else:
+            # Scenario 1 (PP=1) and Scenario 3 (PP>1, single group / FSDP).
+            # One NCCL group containing ALL inference workers.
+            # instance_size = workers per sglang server = tp_size * pp_size.
+            # When pp_size=1 this reduces to tp_size (backward compatible).
+            instance_size = gen_parallel.tp_size * gen_parallel.pp_size
+            rank_offset = 1 + server_idx * instance_size
+            payload = {
+                "master_address": format_host_for_url(meta.nccl_master_address),
+                "master_port": str(meta.nccl_master_port),
+                "rank_offset": rank_offset,
+                "world_size": gen_parallel.world_size + 1,
+                "backend": current_platform.communication_backend,
+                "group_name": group_name,
             }
 
         return HttpRequest(endpoint="/init_weights_update_group", payload=payload)
