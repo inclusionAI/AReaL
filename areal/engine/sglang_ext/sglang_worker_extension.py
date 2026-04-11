@@ -32,6 +32,17 @@ _AWEX_WORKER_METHODS = {
 }
 
 
+def _safe_exc_message(exc: Exception) -> str:
+    """Best-effort stringification for cross-process error transport."""
+    try:
+        return str(exc)
+    except Exception:
+        try:
+            return repr(exc)
+        except Exception:
+            return f"{type(exc).__name__}: <unprintable>"
+
+
 def _normalize_awex_param_meta_keys(result: Any) -> Any:
     """Normalize infer param-meta keys to awex Megatron-style naming.
 
@@ -333,7 +344,7 @@ def patch_scheduler_for_awex() -> None:
 
         barrier()
         if not success:
-            return RpcReqOutput(False, str(err))
+            return RpcReqOutput(False, _safe_exc_message(err))
 
         if result is None:
             return RpcReqOutput(True, "")

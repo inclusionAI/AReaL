@@ -319,7 +319,10 @@ class AwexSGLangServerAdapter:
         if not isinstance(response, RpcReqOutput):
             return response
         if not response.success:
-            raise RuntimeError(response.message)
+            msg = response.message
+            if isinstance(msg, bytes):
+                msg = msg.decode("utf-8", errors="replace")
+            raise RuntimeError(str(msg))
 
         message = response.message
         if isinstance(message, bytes):

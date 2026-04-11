@@ -33,6 +33,7 @@ from areal.engine.sglang_ext.sglang_worker_extension import (
     _build_fallback_infer_engine_config,
     _normalize_awex_param_meta_keys,
     _patch_awex_sglang_converter,
+    _safe_exc_message,
 )
 
 
@@ -429,6 +430,15 @@ def test_build_fallback_infer_engine_config_from_scheduler_server_args():
     assert cfg.pp_size == 3
     assert cfg.dp_size == 4
     assert cfg.enable_dp_lm_head is True
+
+
+def test_safe_exc_message_handles_unprintable_exception():
+    class _BadExc(Exception):
+        def __str__(self):
+            raise UnicodeDecodeError("utf-8", b"\xf0", 0, 1, "invalid continuation")
+
+    msg = _safe_exc_message(_BadExc())
+    assert "BadExc" in msg
 
 
 class _MockMegatronEngineForAwexFileWriter:
