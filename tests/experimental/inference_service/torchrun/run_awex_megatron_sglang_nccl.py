@@ -22,6 +22,8 @@ import requests
 import torch
 import torch.distributed as dist
 
+from areal.utils.network import find_free_ports
+
 
 def _log(rank: int, message: str) -> None:
     print(f"[awex-sglang-nccl][rank{rank}] {message}", flush=True)
@@ -267,7 +269,7 @@ def main(args: argparse.Namespace) -> None:
     os.environ.setdefault("NCCL_DEBUG_SUBSYS", "INIT,COLL,GRAPH,TUNING")
     os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
     os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
-    os.environ.setdefault("TORCHELASTIC_USE_AGENT_STORE", "False")
+    os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
     _log(
         rank,
         "checkpoint/bootstrap: debug env "
@@ -299,12 +301,18 @@ def main(args: argparse.Namespace) -> None:
     )
     device_util.set_device(0)
 
+    _log(
+        rank,
+        "checkpoint/global-pg: initializing "
+        f"MASTER_ADDR={os.environ.get('MASTER_ADDR')} MASTER_PORT={os.environ.get('MASTER_PORT')}",
+    )
     dist.init_process_group(
         "nccl",
         rank=rank,
         world_size=world_size,
         timeout=timedelta(seconds=args.dist_timeout),
     )
+    _log(rank, "checkpoint/global-pg: initialized")
 
     server_proc: subprocess.Popen | None = None
     meta_started = False
@@ -343,7 +351,10 @@ def main(args: argparse.Namespace) -> None:
             meta_started = True
             os.environ["AWEX_META_ADDR_BCAST"] = f"{meta_ip}:{meta_port}"
             host = network.gethostip()
-            sglang_port, sglang_dist_port = network.find_free_ports(2)
+            global_master_port = int(os.environ["MASTER_PORT"])
+            sglang_port, sglang_dist_port = find_free_ports(
+                2, exclude_ports={global_master_port}
+            )
             os.environ["AWEX_SGLANG_HOST_BCAST"] = host
             os.environ["AWEX_SGLANG_PORT_BCAST"] = str(sglang_port)
 
@@ -364,8 +375,13 @@ def main(args: argparse.Namespace) -> None:
                 f"RANK={server_env['RANK']} WORLD_SIZE={server_env['WORLD_SIZE']} "
                 f"LOCAL_RANK={server_env['LOCAL_RANK']} "
                 f"MASTER_ADDR={server_env['MASTER_ADDR']} MASTER_PORT={server_env['MASTER_PORT']} "
-                f"TORCHELASTIC_USE_AGENT_STORE={server_env['TORCHELASTIC_USE_AGENT_STORE']}",
+                f"TORCHELASTIC_USE_AGENT_STORE={server_env['TORCHELASTIC_USE_AGENT_STORE']} "
+                f"global_pg_master_port={global_master_port}",
             )
+            if int(server_env["MASTER_PORT"]) == global_master_port:
+                raise RuntimeError(
+                    "Port collision: SGLang dist MASTER_PORT must differ from global process group MASTER_PORT"
+                )
             server_proc = subprocess.Popen(
                 cmd,
                 env=server_env,

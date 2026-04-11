@@ -31,41 +31,55 @@ def _run_awex_sglang_torchrun(
     pp_size: int,
     output: str,
 ):
-    port = find_free_ports(1)[0]
     model_path = get_test_model_path()
-    cmd = [
-        "torchrun",
-        f"--nproc_per_node={n_gpus}",
-        "--nnodes=1",
-        "--master-addr=localhost",
-        f"--master_port={port}",
-        "tests/experimental/inference_service/torchrun/run_awex_megatron_sglang_nccl.py",
-        f"--dp-size={dp_size}",
-        f"--tp-size={tp_size}",
-        f"--pp-size={pp_size}",
-        f"--model-path={model_path}",
-        f"--output={output}",
-        "--health-timeout=240",
-        "--rpc-timeout=240",
-    ]
+    max_trials = 4
+    for trial in range(1, max_trials + 1):
+        port = find_free_ports(1)[0]
+        cmd = [
+            "torchrun",
+            f"--nproc_per_node={n_gpus}",
+            "--nnodes=1",
+            "--master-addr=localhost",
+            f"--master_port={port}",
+            "tests/experimental/inference_service/torchrun/run_awex_megatron_sglang_nccl.py",
+            f"--dp-size={dp_size}",
+            f"--tp-size={tp_size}",
+            f"--pp-size={pp_size}",
+            f"--model-path={model_path}",
+            f"--output={output}",
+            "--health-timeout=240",
+            "--rpc-timeout=240",
+        ]
 
-    print(f"[controller] launching: {' '.join(cmd)}", flush=True)
-    try:
-        subprocess.run(
-            cmd,
-            check=True,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            text=True,
-            timeout=1200,
+        print(
+            f"[controller] trial {trial}/{max_trials} launching: {' '.join(cmd)}",
+            flush=True,
         )
-    except subprocess.TimeoutExpired as exc:
-        pytest.fail(f"Torchrun timed out after {exc.timeout}s: {' '.join(cmd)}")
-    except subprocess.CalledProcessError as exc:
-        pytest.fail(
-            f"Torchrun failed with exit code {exc.returncode}. "
-            f"See streamed logs above. Command: {' '.join(cmd)}"
-        )
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                text=True,
+                timeout=1200,
+            )
+            break
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+            if trial >= max_trials:
+                if isinstance(exc, subprocess.TimeoutExpired):
+                    pytest.fail(
+                        f"Torchrun timed out after {exc.timeout}s on trial {trial}/{max_trials}: {' '.join(cmd)}"
+                    )
+                else:
+                    pytest.fail(
+                        f"Torchrun failed with exit code {exc.returncode} on trial {trial}/{max_trials}. "
+                        f"See streamed logs above. Command: {' '.join(cmd)}"
+                    )
+            print(
+                f"[controller] trial {trial}/{max_trials} failed ({type(exc).__name__}); retrying with a fresh master_port",
+                flush=True,
+            )
 
     with open(output, encoding="utf-8") as f:
         result = f.read().strip()
