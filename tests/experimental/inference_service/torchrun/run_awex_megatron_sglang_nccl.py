@@ -179,17 +179,21 @@ def main(args: argparse.Namespace) -> None:
     # ncclUnhandledCudaError/invalid argument on cross-process exchange.
     # Prefer a more portable transport path for this integration test.
     os.environ.setdefault("NCCL_P2P_DISABLE", "1")
-    os.environ.setdefault("AREAL_AWEX_IGNORE_BARRIER_ERRORS", "1")
+    os.environ.setdefault("NCCL_CUMEM_ENABLE", "0")
+    os.environ.setdefault("NCCL_NVLS_ENABLE", "0")
     os.environ.setdefault("NCCL_DEBUG", "INFO")
     os.environ.setdefault("NCCL_DEBUG_SUBSYS", "INIT,COLL,GRAPH,TUNING")
     os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
+    os.environ.setdefault("TORCHELASTIC_USE_AGENT_STORE", "False")
     _log(
         rank,
         "checkpoint/bootstrap: debug env "
+        f"NCCL_CUMEM_ENABLE={os.environ.get('NCCL_CUMEM_ENABLE')} "
+        f"NCCL_NVLS_ENABLE={os.environ.get('NCCL_NVLS_ENABLE')} "
         f"NCCL_DEBUG={os.environ.get('NCCL_DEBUG')} "
         f"NCCL_DEBUG_SUBSYS={os.environ.get('NCCL_DEBUG_SUBSYS')} "
         f"TORCH_DISTRIBUTED_DEBUG={os.environ.get('TORCH_DISTRIBUTED_DEBUG')} "
-        f"AREAL_AWEX_IGNORE_BARRIER_ERRORS={os.environ.get('AREAL_AWEX_IGNORE_BARRIER_ERRORS')}",
+        f"TORCHELASTIC_USE_AGENT_STORE={os.environ.get('TORCHELASTIC_USE_AGENT_STORE')}",
     )
 
     visible = _visible_devices()
@@ -229,6 +233,17 @@ def main(args: argparse.Namespace) -> None:
 
     server_proc: subprocess.Popen | None = None
     meta_started = False
+
+    def _stop_server_and_meta() -> None:
+        if rank != 0:
+            return
+        if server_proc is not None:
+            kill_process_tree(server_proc.pid, graceful=True)
+            if server_proc.poll() is None:
+                kill_process_tree(server_proc.pid, graceful=False)
+        if meta_started:
+            stop_meta_server()
+
     try:
         if rank == 0:
             _log(rank, "starting awex meta server")
@@ -386,6 +401,8 @@ def main(args: argparse.Namespace) -> None:
 
         if rank == 0 and init_thread is not None:
             init_thread.join(timeout=args.rpc_timeout)
+            if init_thread.is_alive() and init_result["error"] is None:
+                init_result["error"] = f"awex init timed out after {args.rpc_timeout}s"
             init_gate = [bool(init_result["ok"]), str(init_result["error"] or "")]
             _log(rank, f"checkpoint/awex-init: result ok={init_gate[0]}")
             if init_gate[0]:
@@ -439,6 +456,10 @@ def main(args: argparse.Namespace) -> None:
 
         if rank == 0 and update_thread is not None:
             update_thread.join(timeout=args.rpc_timeout)
+            if update_thread.is_alive() and update_result["error"] is None:
+                update_result["error"] = (
+                    f"awex update timed out after {args.rpc_timeout}s"
+                )
             update_gate = [
                 bool(update_result["ok"]),
                 str(update_result["error"] or ""),
@@ -461,19 +482,11 @@ def main(args: argparse.Namespace) -> None:
         _log(rank, f"FAILED: {exc}\n{tb}")
         _write_result(args.output, False, f"{exc}\n{tb}")
         _destroy_dist_safely(rank)
-        if rank == 0:
-            if server_proc is not None:
-                kill_process_tree(server_proc.pid, graceful=True)
-            if meta_started:
-                stop_meta_server()
+        _stop_server_and_meta()
         raise
     finally:
         _destroy_dist_safely(rank)
-        if rank == 0:
-            if server_proc is not None:
-                kill_process_tree(server_proc.pid, graceful=True)
-            if meta_started:
-                stop_meta_server()
+        _stop_server_and_meta()
 
 
 if __name__ == "__main__":

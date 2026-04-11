@@ -311,6 +311,69 @@ def test_awex_hf_config_proxy_maps_qwen3_arch_to_qwen2_for_awex():
     assert d["architectures"] == ["Qwen2ForCausalLM"]
 
 
+def test_awex_adapter_initialize_cleans_reader_on_failure(monkeypatch):
+    pytest.importorskip("awex")
+
+    class _FakeHFConfig:
+        def to_dict(self):
+            return {"model_type": "qwen3"}
+
+    class _FakeServerArgs:
+        tp_size = 1
+        dp_size = 1
+        pp_size = 1
+        nnodes = 1
+        node_rank = 0
+        model_path = "unused-model"
+
+    class _FakeModelConfig:
+        hf_config = _FakeHFConfig()
+
+    class _FakeSglEngine:
+        server_args = _FakeServerArgs()
+        model_config = _FakeModelConfig()
+
+    cleanup_calls: list[str] = []
+
+    class _FailingReader:
+        def initialize(self):
+            raise RuntimeError("boom")
+
+        def close(self):
+            cleanup_calls.append("close")
+
+    import areal.engine.sglang_ext.sglang_awex_adapter as adapter_module
+
+    monkeypatch.setattr(
+        adapter_module,
+        "logger",
+        type(
+            "_L",
+            (),
+            {
+                "info": staticmethod(lambda *args, **kwargs: None),
+                "warning": staticmethod(lambda *args, **kwargs: None),
+            },
+        )(),
+    )
+
+    import awex.reader.weights_reader as reader_mod
+
+    monkeypatch.setattr(
+        reader_mod, "get_weights_exchange_reader", lambda _adapter: _FailingReader()
+    )
+
+    adapter = AwexSGLangServerAdapter(
+        sgl_engine=_FakeSglEngine(),
+        meta_server_addr="127.0.0.1:7081",
+        comm_backend="file",
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        adapter.initialize()
+    assert cleanup_calls == ["close"]
+    assert adapter.weights_exchange_reader is None
+
+
 def test_safe_rpc_error_message_handles_unprintable_message_obj():
     class _BadMessage:
         def __str__(self):
@@ -507,7 +570,8 @@ def test_run_with_barrier_device_ids_stripped(monkeypatch):
 
     out = _run_with_barrier_device_ids_stripped(_fn)
     assert out == 7
-    assert len(calls) == 0
+    assert len(calls) == 1
+    assert "device_ids" not in calls[0]
 
 
 def test_safe_exc_message_handles_unprintable_exception():

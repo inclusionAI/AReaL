@@ -238,7 +238,23 @@ class AwexSGLangServerAdapter:
             self._patch_awex_sglang_converter()
             logger.info("Initializing Awex weights reader in SGLang server process")
             self.weights_exchange_reader = get_weights_exchange_reader(self)
-            self.weights_exchange_reader.initialize()
+            try:
+                self.weights_exchange_reader.initialize()
+            except Exception:
+                reader = self.weights_exchange_reader
+                self.weights_exchange_reader = None
+                for cleanup_name in ("close", "destroy", "shutdown"):
+                    cleanup_fn = getattr(reader, cleanup_name, None)
+                    if callable(cleanup_fn):
+                        try:
+                            cleanup_fn()
+                        except Exception as cleanup_exc:
+                            logger.warning(
+                                "Awex reader cleanup %s failed after init error: %r",
+                                cleanup_name,
+                                cleanup_exc,
+                            )
+                raise
             self._initialized = True
             logger.info(
                 "Awex reader initialized: engine_rank=%s num_engines=%s backend=%s debug=%s",

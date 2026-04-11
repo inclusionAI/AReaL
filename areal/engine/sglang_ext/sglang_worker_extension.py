@@ -233,10 +233,10 @@ def _patch_awex_nccl_barrier_device_ids() -> None:
 
 
 def _run_with_barrier_device_ids_stripped(fn, *args, **kwargs):
-    """Run callable while neutralizing dist.barrier for awex worker task.
+    """Run callable while stripping ``device_ids`` from dist.barrier kwargs.
 
-    For current integration debugging we disable barrier execution entirely in the
-    awex worker task path to avoid environment-specific NCCL barrier failures.
+    Preserve barrier synchronization semantics, but avoid passing ``device_ids``
+    which can trigger runtime/device-mapping failures in some environments.
     """
 
     try:
@@ -248,11 +248,7 @@ def _run_with_barrier_device_ids_stripped(fn, *args, **kwargs):
 
     def _barrier_without_device_ids(*b_args, **b_kwargs):
         b_kwargs.pop("device_ids", None)
-        logger.warning(
-            "Skipping dist.barrier in awex worker task (group=%s)",
-            b_kwargs.get("group"),
-        )
-        return None
+        return original_barrier(*b_args, **b_kwargs)
 
     dist.barrier = _barrier_without_device_ids
     try:
@@ -436,7 +432,9 @@ def patch_scheduler_for_awex() -> None:
 
         barrier()
         if not success:
-            msg = _safe_exc_message(err)
+            msg = (
+                _safe_exc_message(err) if err is not None else "awex worker task failed"
+            )
             if err_tb:
                 msg = f"{msg}\n--- worker traceback ---\n{err_tb}"
             return RpcReqOutput(False, msg)
