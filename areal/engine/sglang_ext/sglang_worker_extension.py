@@ -232,6 +232,27 @@ def _patch_awex_nccl_barrier_device_ids() -> None:
     _wrap_initialize(NCCLWeightsWriter, "NCCLWeightsWriter")
 
 
+def _run_with_barrier_device_ids_stripped(fn, *args, **kwargs):
+    """Run a callable while forcing dist.barrier to ignore device_ids."""
+
+    try:
+        import torch.distributed as dist
+    except Exception:
+        return fn(*args, **kwargs)
+
+    original_barrier = dist.barrier
+
+    def _barrier_without_device_ids(*b_args, **b_kwargs):
+        b_kwargs.pop("device_ids", None)
+        return original_barrier(*b_args, **b_kwargs)
+
+    dist.barrier = _barrier_without_device_ids
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        dist.barrier = original_barrier
+
+
 def _sanitize_for_ipc(obj: Any) -> Any:
     try:
         import torch
@@ -351,7 +372,7 @@ def patch_scheduler_for_awex() -> None:
         task_kwargs["model_context"] = _build_awex_model_context(
             self, infer_engine_config
         )
-        result = target(**task_kwargs)
+        result = _run_with_barrier_device_ids_stripped(target, **task_kwargs)
 
         # awex InferParamMetaResolver expects execute_task_in_model_worker() to
         # return List[Dict[str, Any]] for _get_model_param_info, even with one

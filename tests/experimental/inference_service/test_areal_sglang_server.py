@@ -35,6 +35,7 @@ from areal.engine.sglang_ext.sglang_worker_extension import (
     _normalize_awex_param_meta_keys,
     _patch_awex_nccl_barrier_device_ids,
     _patch_awex_sglang_converter,
+    _run_with_barrier_device_ids_stripped,
     _safe_exc_message,
 )
 
@@ -482,6 +483,32 @@ def test_patch_awex_nccl_barrier_device_ids_drops_device_ids(monkeypatch):
 
     assert len(calls) == 2
     assert all("device_ids" not in kwargs for kwargs in calls)
+
+
+def test_run_with_barrier_device_ids_stripped(monkeypatch):
+    import types
+
+    calls = []
+
+    def _barrier(*_args, **kwargs):
+        calls.append(kwargs)
+
+    fake_torch = types.ModuleType("torch")
+    fake_dist = types.ModuleType("torch.distributed")
+    fake_dist.barrier = _barrier
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "torch.distributed", fake_dist)
+
+    def _fn():
+        import torch.distributed as dist
+
+        dist.barrier(group="g", device_ids=[0])
+        return 7
+
+    out = _run_with_barrier_device_ids_stripped(_fn)
+    assert out == 7
+    assert len(calls) == 1
+    assert "device_ids" not in calls[0]
 
 
 def test_safe_exc_message_handles_unprintable_exception():
