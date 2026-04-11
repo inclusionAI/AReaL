@@ -40,6 +40,7 @@ from areal.engine.sglang_ext.sglang_awex_adapter import (
 )
 from areal.engine.sglang_ext.sglang_worker_extension import (
     _build_fallback_infer_engine_config,
+    _inject_awex_parameter_aliases,
     _normalize_awex_param_meta_keys,
     _patch_awex_nccl_barrier_device_ids,
     _patch_awex_sglang_converter,
@@ -495,6 +496,36 @@ def test_normalize_awex_param_meta_keys_handles_list_results():
     assert isinstance(out, list)
     assert "model.layers.0.attention.dense.weight" in out[0]
     assert "model.layers.0.attention.query_key_value_proj.weight" in out[0]
+
+
+def test_inject_awex_parameter_aliases_adds_attention_aliases_for_self_attn_keys():
+    dense = object()
+    qkv = object()
+    params = {
+        "model.layers.0.self_attn.o_proj.weight": dense,
+        "model.layers.0.self_attn.qkv_proj.weight": qkv,
+    }
+
+    added = _inject_awex_parameter_aliases(params)
+
+    assert added >= 2
+    assert params["model.layers.0.attention.dense.weight"] is dense
+    assert params["model.layers.0.attention.query_key_value_proj.weight"] is qkv
+
+
+def test_inject_awex_parameter_aliases_adds_self_attn_aliases_for_attention_keys():
+    dense = object()
+    qkv = object()
+    params = {
+        "model.layers.0.attention.dense.weight": dense,
+        "model.layers.0.attention.query_key_value_proj.weight": qkv,
+    }
+
+    added = _inject_awex_parameter_aliases(params)
+
+    assert added >= 2
+    assert params["model.layers.0.self_attn.o_proj.weight"] is dense
+    assert params["model.layers.0.self_attn.qkv_proj.weight"] is qkv
 
 
 def test_build_fallback_infer_engine_config_from_scheduler_server_args():

@@ -32,6 +32,25 @@ _AWEX_WORKER_METHODS = {
     ),
 }
 
+_PARAM_NAME_ALIAS_RULES = (
+    (".self_attn.o_proj.", ".attention.dense."),
+    (".attention.dense.", ".self_attn.o_proj."),
+    (".attention.o_proj.", ".attention.dense."),
+    (".attention.dense.", ".attention.o_proj."),
+    (".self_attn.qkv_proj.", ".attention.query_key_value_proj."),
+    (".attention.query_key_value_proj.", ".self_attn.qkv_proj."),
+    (".self_attn.q_proj.", ".attention.q_proj."),
+    (".attention.q_proj.", ".self_attn.q_proj."),
+    (".self_attn.k_proj.", ".attention.k_proj."),
+    (".attention.k_proj.", ".self_attn.k_proj."),
+    (".self_attn.v_proj.", ".attention.v_proj."),
+    (".attention.v_proj.", ".self_attn.v_proj."),
+    (".self_attn.query_layernorm.", ".attention.query_layernorm."),
+    (".attention.query_layernorm.", ".self_attn.query_layernorm."),
+    (".self_attn.key_layernorm.", ".attention.key_layernorm."),
+    (".attention.key_layernorm.", ".self_attn.key_layernorm."),
+)
+
 
 def _safe_exc_message(exc: Exception) -> str:
     """Best-effort stringification for cross-process error transport."""
@@ -156,6 +175,85 @@ def _normalize_awex_param_meta_keys(result: Any) -> Any:
     normalized = _normalize(result)
     normalized = _add_lm_head_alias_in_name_entries(normalized)
     return normalized
+
+
+def _inject_awex_parameter_aliases(parameters: dict[str, Any]) -> int:
+    """Inject missing parameter aliases for awex transfer-plan name variants.
+
+    awex transfer plans may use either SGLang-style names (``self_attn.*``)
+    or canonical attention names (``attention.*``). Ensure both spellings are
+    present in ``parameters`` so recv-side lookups do not fail.
+    """
+
+    if not isinstance(parameters, dict) or not parameters:
+        return 0
+
+    added = 0
+    existing_names = list(parameters.keys())
+    for name in existing_names:
+        if not isinstance(name, str):
+            continue
+        value = parameters[name]
+        for src, dst in _PARAM_NAME_ALIAS_RULES:
+            if src not in name:
+                continue
+            alias = name.replace(src, dst)
+            if alias not in parameters:
+                parameters[alias] = value
+                added += 1
+
+    # Keep tied embedding aliases symmetric for readers/writers expecting either key.
+    if "lm_head.weight" not in parameters:
+        for emb in (
+            "model.embed_tokens.weight",
+            "model.tok_embeddings.weight",
+            "model.output_layer.weight",
+            "transformer.wte.weight",
+        ):
+            if emb in parameters:
+                parameters["lm_head.weight"] = parameters[emb]
+                added += 1
+                break
+    if "model.output_layer.weight" not in parameters and "lm_head.weight" in parameters:
+        parameters["model.output_layer.weight"] = parameters["lm_head.weight"]
+        added += 1
+    if "model.embed_tokens.weight" not in parameters and "lm_head.weight" in parameters:
+        parameters["model.embed_tokens.weight"] = parameters["lm_head.weight"]
+        added += 1
+
+    return added
+
+
+def _patch_awex_reader_parameter_aliases() -> None:
+    """Patch awex WorkerWeightsReader.initialize to inject param-name aliases."""
+
+    try:
+        from awex.reader.weights_reader import WorkerWeightsReader
+    except ImportError:
+        return
+
+    if getattr(WorkerWeightsReader, "_areal_param_alias_patch", False):
+        return
+
+    original_initialize = WorkerWeightsReader.initialize
+
+    def _patched_initialize(self, *args, **kwargs):
+        out = original_initialize(self, *args, **kwargs)
+        params = getattr(self, "parameters", None)
+        added = (
+            _inject_awex_parameter_aliases(params) if isinstance(params, dict) else 0
+        )
+        if added > 0:
+            logger.info(
+                "Injected %s awex parameter aliases for rank %s",
+                added,
+                getattr(getattr(self, "rank_info", None), "global_rank", "unknown"),
+            )
+        return out
+
+    WorkerWeightsReader.initialize = _patched_initialize
+    WorkerWeightsReader._areal_param_alias_patch = True
+    logger.info("Patched awex WorkerWeightsReader.initialize parameter aliases")
 
 
 def _patch_awex_sglang_converter() -> None:
@@ -355,6 +453,7 @@ def patch_scheduler_for_awex() -> None:
     def awex_execute(self, task_module: str, task_qualname: str, task_kwargs=None):
         _patch_awex_sglang_converter()
         _patch_awex_nccl_barrier_device_ids()
+        _patch_awex_reader_parameter_aliases()
 
         logger.info(
             "awex_execute start: task=%s.%s kwargs_keys=%s",
