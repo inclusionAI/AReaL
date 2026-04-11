@@ -262,6 +262,49 @@ class RemoteSGLangEngine(InferenceEngine):
         # Pure composition - create internal engine with SGLang backend
         self._engine = RemoteInfEngine(config, SGLangBackend())
 
+    @classmethod
+    def from_pretrained(
+        cls,
+        model: str,
+        dp_size: int = 1,
+        tp_size: int = 1,
+        max_concurrent_rollouts: int | None = None,
+        **kwargs,
+    ) -> "RemoteInfEngine":
+        """Create a RemoteInfEngine without kwargs instead of InferenceEngineConfig.
+        
+        Parameters
+        ----------
+        model : str
+            Path to the pretrained model
+        dp_size : int
+            Data parallelism size  
+        tp_size : int
+            Tensor parallelism size
+        max_concurrent_rollouts : int | None
+            Maximum concurrent rollouts
+        **kwargs : dict
+            Additional config parameters passed to InferenceEngineConfig
+        
+        Returns
+        -------
+        RemoteInfEngine
+        """
+
+        backend_str =f"sglang:d{dp_size}t{tp_size}"
+        
+        config = InferenceEngineConfig(
+            backend=backend_str,
+            max_concurrent_rollouts=max_concurrent_rollouts,
+            tokenizer_path=model,
+            **kwargs,
+        )
+        
+        engine = cls(config)
+    
+        return engine
+
+
     def initialize(
         self,
         engine_id: str | None = None,
