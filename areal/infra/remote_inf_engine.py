@@ -18,6 +18,7 @@ import aiohttp
 import numpy as np
 import ray
 import requests
+import torch
 import torch.distributed as dist
 import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -213,7 +214,7 @@ class RemoteInfBackendProtocol(Protocol):
     def build_tensor_weight_update_requests(
         self,
         serialized_named_tensors: list[str],
-        weight_version: str | None = None,
+        meta: WeightUpdateMeta,
     ) -> WeightUpdateRequests:
         """Build requests for tensor-based (CUDA IPC) weight update.
 
@@ -221,8 +222,8 @@ class RemoteInfBackendProtocol(Protocol):
         ----------
         serialized_named_tensors : list[str]
             Serialized tensor data produced by ``serialize_tensors_for_ipc``.
-        weight_version : str | None
-            Optional weight version string
+        meta : WeightUpdateMeta
+            Metadata containing information about the weight update
 
         Returns
         -------
@@ -233,7 +234,7 @@ class RemoteInfBackendProtocol(Protocol):
 
     def serialize_tensors_for_ipc(
         self,
-        named_tensors: list[tuple[str, "torch.Tensor"]],
+        named_tensors: list[tuple[str, torch.Tensor]],
     ) -> list[str]:
         """Serialize GPU tensors into backend-specific IPC payloads.
 
@@ -1054,8 +1055,8 @@ class RemoteInfEngine(InferenceEngine):
     def update_weights_from_tensor(
         self,
         serialized_named_tensors: list[str],
+        meta: WeightUpdateMeta,
         addresses: list[str] | None = None,
-        weight_version: str | None = None,
     ) -> None:
         """Update weights via CUDA IPC tensor transfer (synchronous).
 
@@ -1063,10 +1064,10 @@ class RemoteInfEngine(InferenceEngine):
         ----------
         serialized_named_tensors : list[str]
             Serialized tensor data with CUDA IPC handles
+        meta : WeightUpdateMeta
+            Metadata containing information about the weight update
         addresses : list[str] | None
             Target server addresses. If None, uses all addresses.
-        weight_version : str | None
-            Optional weight version string
         """
         target_addrs = addresses if addresses is not None else self.addresses
         _update_weights_from_tensor(
@@ -1074,7 +1075,7 @@ class RemoteInfEngine(InferenceEngine):
             serialized_named_tensors,
             target_addrs,
             self.config.request_timeout,
-            weight_version=weight_version,
+            meta=meta,
         )
 
     def submit(
@@ -1507,14 +1508,14 @@ def _update_weights_from_tensor(
     serialized_named_tensors: list[str],
     addresses: list[str],
     request_timeout: float,
-    weight_version: str | None = None,
+    meta: WeightUpdateMeta | None = None,
 ):
     """Helper to update weights from tensor (CUDA IPC) in a separate process."""
 
     async def _fn():
         weight_reqs = backend.build_tensor_weight_update_requests(
             serialized_named_tensors,
-            weight_version=weight_version,
+            meta=meta,
         )
 
         async with aiohttp.ClientSession(

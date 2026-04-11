@@ -6,6 +6,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
+import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
@@ -194,7 +195,7 @@ class VLLMBackend:
     def build_tensor_weight_update_requests(
         self,
         serialized_named_tensors: list[str],
-        weight_version: str | None = None,
+        meta: WeightUpdateMeta | None = None,
     ) -> WeightUpdateRequests:
         """Build vLLM tensor-based (CUDA IPC) weight update requests.
 
@@ -208,7 +209,8 @@ class VLLMBackend:
             Each element is a JSON string containing ``names``,
             ``dtype_names``, ``shapes``, and ``ipc_handles_pickled``,
             produced by ``serialize_tensors_for_ipc``.
-        weight_version : str | None
+        meta : WeightUpdateMeta | None
+            Metadata containing information about the weight update.
             Unused for vLLM tensor path (kept for protocol compatibility).
         """
         import json
@@ -280,12 +282,14 @@ class VLLMBackend:
 
         pickled_handles = base64.b64encode(pickle.dumps(ipc_handles)).decode("utf-8")
 
-        chunk = json.dumps({
-            "names": names,
-            "dtype_names": dtype_names,
-            "shapes": shapes,
-            "ipc_handles_pickled": pickled_handles,
-        })
+        chunk = json.dumps(
+            {
+                "names": names,
+                "dtype_names": dtype_names,
+                "shapes": shapes,
+                "ipc_handles_pickled": pickled_handles,
+            }
+        )
         return [chunk]
 
     def build_init_weights_group_request(
@@ -447,14 +451,14 @@ class RemotevLLMEngine(InferenceEngine):
     def update_weights_from_tensor(
         self,
         serialized_named_tensors: list[str],
+        meta: WeightUpdateMeta,
         addresses: list[str] | None = None,
-        weight_version: str | None = None,
     ) -> None:
         """Update weights via CUDA IPC tensor transfer."""
         return self._engine.update_weights_from_tensor(
             serialized_named_tensors,
+            meta=meta,
             addresses=addresses,
-            weight_version=weight_version,
         )
 
     def submit(

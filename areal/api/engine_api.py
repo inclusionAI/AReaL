@@ -698,8 +698,8 @@ class InferenceEngine(abc.ABC):
     def update_weights_from_tensor(
         self,
         serialized_named_tensors: list[str],
+        meta: WeightUpdateMeta,
         addresses: list[str] | None = None,
-        weight_version: str | None = None,
     ) -> None:
         """Update weights via CUDA IPC tensor transfer (synchronous).
 
@@ -707,10 +707,10 @@ class InferenceEngine(abc.ABC):
         ----------
         serialized_named_tensors : list[str]
             Serialized tensor data with CUDA IPC handles
+        meta : WeightUpdateMeta
+            Metadata containing information about the weight update
         addresses : list[str] | None
             Target server addresses. If None, uses default addresses.
-        weight_version : str | None
-            Optional weight version string
         """
         raise NotImplementedError()
 

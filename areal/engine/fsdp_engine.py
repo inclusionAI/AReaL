@@ -1482,13 +1482,8 @@ class FSDPEngine(TrainEngine):
         """
         serialized: list[str] | None = None
         try:
-            serialized = self._tensor_backend.serialize_tensors_for_ipc(
-                list(bucket)
-            )
-            weight_version = str(meta.version) if meta.version is not None else None
-            self.rollout_engine.update_weights_from_tensor(
-                serialized, weight_version=weight_version
-            )
+            serialized = self._tensor_backend.serialize_tensors_for_ipc(list(bucket))
+            self.rollout_engine.update_weights_from_tensor(serialized, meta=meta)
         finally:
             # Cleanup: release GPU memory and serialization artifacts
             if serialized is not None:

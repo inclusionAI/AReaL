@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import pybase64
+import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
@@ -207,9 +208,12 @@ class SGLangBackend:
     def build_tensor_weight_update_requests(
         self,
         serialized_named_tensors: list[str],
-        weight_version: str | None = None,
+        meta: WeightUpdateMeta | None = None,
     ) -> WeightUpdateRequests:
         """Build SGLang tensor-based (CUDA IPC) weight update requests."""
+        weight_version = (
+            str(meta.version) if meta is not None and meta.version is not None else None
+        )
         payload: dict[str, Any] = {
             "serialized_named_tensors": serialized_named_tensors,
             "load_format": "flattened_bucket",
@@ -244,7 +248,7 @@ class SGLangBackend:
         from sglang.srt.utils import MultiprocessingSerializer
         from sglang.srt.weight_utils import FlattenedTensorBucket
 
-        dtypes_groups: dict[str, list[tuple[str, "torch.Tensor"]]] = {}
+        dtypes_groups: dict[str, list[tuple[str, torch.Tensor]]] = {}
         for name, tensor in named_tensors:
             dtype_key = str(tensor.dtype)
             dtypes_groups.setdefault(dtype_key, []).append((name, tensor))
@@ -383,14 +387,14 @@ class RemoteSGLangEngine(InferenceEngine):
     def update_weights_from_tensor(
         self,
         serialized_named_tensors: list[str],
+        meta: WeightUpdateMeta,
         addresses: list[str] | None = None,
-        weight_version: str | None = None,
     ) -> None:
         """Update weights via CUDA IPC tensor transfer."""
         return self._engine.update_weights_from_tensor(
             serialized_named_tensors,
+            meta=meta,
             addresses=addresses,
-            weight_version=weight_version,
         )
 
     def submit(
