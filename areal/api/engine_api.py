@@ -695,6 +695,25 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def update_weights_from_tensor(
+        self,
+        serialized_named_tensors: list[str],
+        addresses: list[str] | None = None,
+        weight_version: str | None = None,
+    ) -> None:
+        """Update weights via CUDA IPC tensor transfer (synchronous).
+
+        Parameters
+        ----------
+        serialized_named_tensors : list[str]
+            Serialized tensor data with CUDA IPC handles
+        addresses : list[str] | None
+            Target server addresses. If None, uses default addresses.
+        weight_version : str | None
+            Optional weight version string
+        """
+        raise NotImplementedError()
+
     def set_version(self, version: int) -> None:
         """Set the current weight version in the inference engine.
 

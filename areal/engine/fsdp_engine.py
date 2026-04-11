@@ -53,7 +53,7 @@ from areal.api import (
     WorkflowLike,
 )
 from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
-from areal.api.io_struct import DeviceRuntimeInfo, WeightUpdateRequests
+from areal.api.io_struct import DeviceRuntimeInfo
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_total_loss_weight,
@@ -203,7 +203,6 @@ class FSDPEngine(TrainEngine):
         self.rollout_coordinator: DistRolloutCoordinator | None = None
 
         # Tensor colocated weight sync state
-        self._tensor_server_addresses: list[str] | None = None
         self._staged_cpu_weights: list[tuple[str, torch.Tensor]] | None = None
         self._staged_weight_meta: WeightUpdateMeta | None = None
 
@@ -454,17 +453,14 @@ class FSDPEngine(TrainEngine):
         if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
-        elif meta.type == "tensor" and meta.tensor_server_addresses is not None:
-            self._tensor_server_addresses = meta.tensor_server_addresses
-            self._tensor_target_backend = meta.tensor_target_backend or "sglang"
+        elif meta.type == "tensor" and meta.tensor_target_backend is not None:
+            self._tensor_target_backend = meta.tensor_target_backend
             self._tensor_backend = self._make_tensor_backend(
                 self._tensor_target_backend
             )
             self.logger.info(
                 f"Tensor colocated weight sync configured with "
-                f"backend={self._tensor_target_backend}, "
-                f"{len(meta.tensor_server_addresses)} server(s): "
-                f"{meta.tensor_server_addresses}"
+                f"backend={self._tensor_target_backend}"
             )
 
         current_platform.synchronize()
@@ -1368,9 +1364,9 @@ class FSDPEngine(TrainEngine):
         Phase 2 (inference on GPU): CPU → GPU → IPC serialize → send → cleanup.
         """
         assert meta.type == "tensor"
-        assert self._tensor_server_addresses is not None, (
-            "Tensor server addresses not set. Call connect_engine with "
-            "tensor_server_addresses first."
+        assert self._tensor_backend is not None, (
+            "Tensor backend not set. Call connect_engine with "
+            "tensor_target_backend first."
         )
 
         # Phase 1: CPU staging (requires train params on GPU)
@@ -1481,22 +1477,18 @@ class FSDPEngine(TrainEngine):
         """Flush one bucket of GPU tensors to the inference engine.
 
         Uses the configured ``_tensor_backend`` to serialize GPU tensors into
-        IPC payloads, build HTTP requests, and send them to all tensor servers.
-        Both SGLang and vLLM backends follow the same code path:
-        serialize → build_requests → HTTP POST.
+        IPC payloads, then delegates HTTP transport to the rollout engine
+        (consistent with xccl/disk modes).
         """
-        assert self._tensor_server_addresses is not None
-
         serialized: list[str] | None = None
         try:
             serialized = self._tensor_backend.serialize_tensors_for_ipc(
                 list(bucket)
             )
             weight_version = str(meta.version) if meta.version is not None else None
-            weight_reqs = self._tensor_backend.build_tensor_weight_update_requests(
+            self.rollout_engine.update_weights_from_tensor(
                 serialized, weight_version=weight_version
             )
-            self._send_tensor_requests(weight_reqs, self._tensor_server_addresses)
         finally:
             # Cleanup: release GPU memory and serialization artifacts
             if serialized is not None:
@@ -1522,42 +1514,6 @@ class FSDPEngine(TrainEngine):
             return VLLMBackend()
         else:
             raise ValueError(f"Unknown tensor transport backend: {backend_name}")
-
-    @staticmethod
-    def _send_tensor_requests(
-        weight_reqs: "WeightUpdateRequests",
-        addresses: list[str],
-    ) -> None:
-        """Send weight update HTTP requests to all tensor server addresses."""
-        import asyncio
-
-        import aiohttp
-        import uvloop
-
-        from areal.infra.utils.http import arequest_with_retry, get_default_connector
-
-        async def _fn():
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=600),
-                read_bufsize=1024 * 1024 * 10,
-                connector=get_default_connector(),
-            ) as session:
-                for http_req in weight_reqs.requests:
-                    jobs = [
-                        arequest_with_retry(
-                            session=session,
-                            addr=addr,
-                            endpoint=http_req.endpoint,
-                            payload=http_req.payload,
-                            method=http_req.method,
-                            max_retries=1,
-                            timeout=600,
-                        )
-                        for addr in addresses
-                    ]
-                    await asyncio.gather(*jobs)
-
-        uvloop.run(_fn())
 
     def _save_model_to_hf(
         self,
