@@ -26,7 +26,10 @@ from areal.engine.sglang_ext.areal_sglang_server import (
     create_app,
 )
 from areal.engine.sglang_ext.sglang_awex_adapter import AwexSGLangServerAdapter
-from areal.engine.sglang_ext.sglang_worker_extension import _patch_awex_sglang_converter
+from areal.engine.sglang_ext.sglang_worker_extension import (
+    _normalize_awex_param_meta_keys,
+    _patch_awex_sglang_converter,
+)
 
 
 class _FakeTokenizerManager:
@@ -311,6 +314,36 @@ def test_worker_patch_handles_qnorm_name(monkeypatch):
         "0",
     )
     assert out[0][0] == "self_attn.query_layernorm.weight"
+
+
+def test_normalize_awex_param_meta_keys_maps_attention_aliases():
+    src = {
+        "model.layers.0.self_attn.o_proj.weight": {"shape": [1]},
+        "model.layers.0.self_attn.qkv_proj.weight": {"shape": [2]},
+        "model.layers.0.self_attn.query_layernorm.weight": {"shape": [3]},
+    }
+    out = _normalize_awex_param_meta_keys(src)
+    assert "model.layers.0.attention.dense.weight" in out
+    assert "model.layers.0.attention.query_key_value_proj.weight" in out
+    assert "model.layers.0.attention.query_layernorm.weight" in out
+
+
+def test_normalize_awex_param_meta_keys_adds_lm_head_alias_when_missing():
+    src = {
+        "model.embed_tokens.weight": {"shape": [151936, 1024]},
+    }
+    out = _normalize_awex_param_meta_keys(src)
+    assert "lm_head.weight" in out
+    assert out["lm_head.weight"] == out["model.embed_tokens.weight"]
+
+
+def test_normalize_awex_param_meta_keys_keeps_self_attn_when_no_qkv_signature():
+    src = {
+        "model.layers.0.self_attn.some_other_proj.weight": {"shape": [1]},
+    }
+    out = _normalize_awex_param_meta_keys(src)
+    assert "model.layers.0.self_attn.some_other_proj.weight" in out
+    assert "model.layers.0.attention.some_other_proj.weight" not in out
 
 
 class _MockMegatronEngineForAwexFileWriter:

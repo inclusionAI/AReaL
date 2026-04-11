@@ -30,6 +30,56 @@ _AWEX_WORKER_METHODS = {
 }
 
 
+def _normalize_awex_param_meta_keys(result: Any) -> Any:
+    """Normalize infer param-meta keys to awex Megatron-style naming.
+
+    awex writer/reader strict meta validation compares training-side Megatron names
+    (e.g. ``attention.dense``, ``attention.query_key_value_proj``) with infer-side
+    resolved names. For Qwen3 SGLang side, infer meta can appear as
+    ``self_attn.o_proj`` / ``self_attn.qkv_proj``. Normalize those variants to the
+    Megatron-style names expected by awex checks.
+    """
+
+    if not isinstance(result, dict):
+        return result
+
+    has_qwen_fused_qkv_signature = any(
+        isinstance(k, str) and ".self_attn.qkv_proj." in k for k in result.keys()
+    )
+
+    normalized: dict[str, Any] = {}
+    for key, value in result.items():
+        if not isinstance(key, str):
+            normalized[key] = value
+            continue
+
+        mapped = key
+        # Keep this remap model-family scoped; broad global remap can overreach
+        # for models whose train-side keys also use self_attn.*.
+        if has_qwen_fused_qkv_signature and ".self_attn." in mapped:
+            mapped = mapped.replace(".self_attn.", ".attention.")
+        mapped = mapped.replace(".attention.o_proj.", ".attention.dense.")
+        mapped = mapped.replace(
+            ".attention.qkv_proj.", ".attention.query_key_value_proj."
+        )
+        normalized.setdefault(mapped, value)
+
+    # Qwen3 frequently ties lm_head to token embeddings on inference side.
+    # awex meta check expects lm_head.weight key from training side.
+    if "lm_head.weight" not in normalized:
+        for candidate in (
+            "model.embed_tokens.weight",
+            "model.tok_embeddings.weight",
+            "model.output_layer.weight",
+            "transformer.wte.weight",
+        ):
+            if candidate in normalized:
+                normalized["lm_head.weight"] = normalized[candidate]
+                break
+
+    return normalized
+
+
 def _patch_awex_sglang_converter() -> None:
     """Patch awex SGLang converter in worker process."""
 
@@ -156,6 +206,7 @@ def patch_scheduler_for_awex() -> None:
         if task_qualname.endswith("._get_model_param_info") and isinstance(
             result, dict
         ):
+            result = _normalize_awex_param_meta_keys(result)
             result = [result]
 
         return _sanitize_for_ipc(result)
