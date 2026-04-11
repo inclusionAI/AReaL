@@ -64,11 +64,6 @@ class UpdateGroupRequest(OpenAIBaseModel):
     group_name: str
 
 
-class UpdateWeightsFromTensorRequest(OpenAIBaseModel):
-    # Base64-encoded pickled list of (name, ipc_handle) tuples
-    ipc_handles_pickled: str
-
-
 class UpdateWeightsFromXcclRequest(OpenAIBaseModel):
     names: list[str]
     dtypes: list[str]
@@ -215,24 +210,6 @@ async def areal_update_weight_xccl(raw_request: Request):
     await llm.reset_mm_cache()
     try:
         ret_list = await llm.collective_rpc("areal_update_weight_xccl")
-    finally:
-        await llm.resume_generation()
-    return build_response(ret_list)
-
-
-@router.post("/areal_update_weights_tensor")
-async def areal_update_weight_tensor(
-    request: UpdateWeightsFromTensorRequest, raw_request: Request
-):
-    logger.info("API server starts areal_update_weights_tensor (IPC)")
-    llm = raw_request.app.state.engine_client
-    await llm.pause_generation(wait_for_inflight_requests=False, clear_cache=True)
-    await llm.reset_mm_cache()
-    try:
-        ret_list = await llm.collective_rpc(
-            "areal_update_weights_tensor",
-            args=(request.ipc_handles_pickled,),
-        )
     finally:
         await llm.resume_generation()
     return build_response(ret_list)

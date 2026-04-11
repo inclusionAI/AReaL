@@ -198,21 +198,35 @@ class VLLMBackend:
     ) -> WeightUpdateRequests:
         """Build vLLM tensor-based (CUDA IPC) weight update requests.
 
+        Uses vLLM's native ``/update_weights`` endpoint which expects a
+        payload matching ``IPCWeightTransferUpdateInfo``:
+        ``{"update_info": {"names", "dtype_names", "shapes", "ipc_handles_pickled"}}``.
+
         Parameters
         ----------
         serialized_named_tensors : list[str]
-            Each element is a base64-encoded pickled list of
-            ``(name, ipc_handle_dict)`` tuples produced by
-            ``_serialize_tensors_for_ipc``.
+            Each element is a JSON string containing ``names``,
+            ``dtype_names``, ``shapes``, and ``ipc_handles_pickled``,
+            produced by ``serialize_tensors_for_ipc``.
         weight_version : str | None
             Unused for vLLM tensor path (kept for protocol compatibility).
         """
+        import json
+
         requests = []
-        for pickled_chunk in serialized_named_tensors:
-            payload = {"ipc_handles_pickled": pickled_chunk}
+        for chunk_json in serialized_named_tensors:
+            chunk = json.loads(chunk_json)
+            payload = {
+                "update_info": {
+                    "names": chunk["names"],
+                    "dtype_names": chunk["dtype_names"],
+                    "shapes": chunk["shapes"],
+                    "ipc_handles_pickled": chunk["ipc_handles_pickled"],
+                }
+            }
             requests.append(
                 HttpRequest(
-                    endpoint="/areal_update_weights_tensor",
+                    endpoint="/update_weights",
                     payload=payload,
                 )
             )
@@ -222,11 +236,11 @@ class VLLMBackend:
     def serialize_tensors_for_ipc(
         named_tensors: list[tuple[str, "torch.Tensor"]],
     ) -> list[str]:
-        """Serialize GPU tensors to base64-encoded IPC handles.
+        """Serialize GPU tensors into vLLM-native IPC format.
 
-        Mirrors the serialization logic from vLLM's ``IPCWeightTransferEngine``
-        but produces a standalone payload suitable for HTTP transport to
-        AReaL's ``/areal_update_weights_tensor`` endpoint.
+        Produces a JSON string containing ``names``, ``dtype_names``,
+        ``shapes``, and ``ipc_handles_pickled`` — matching the format
+        expected by vLLM's ``IPCWeightTransferUpdateInfo``.
 
         Parameters
         ----------
@@ -236,9 +250,10 @@ class VLLMBackend:
         Returns
         -------
         list[str]
-            Single-element list containing a base64-encoded pickled list of
-            ``(name, {gpu_uuid: ipc_handle})`` tuples.
+            Single-element list containing a JSON string with the
+            serialized weight data ready for ``build_tensor_weight_update_requests``.
         """
+        import json
         import pickle
 
         import pybase64 as base64
@@ -249,13 +264,29 @@ class VLLMBackend:
         props = torch.cuda.get_device_properties(device_index)
         gpu_uuid = str(props.uuid)
 
-        named_ipc_handles: list[tuple[str, dict]] = []
+        names: list[str] = []
+        dtype_names: list[str] = []
+        shapes: list[list[int]] = []
+        ipc_handles: list[dict[str, tuple]] = []
+
         for name, tensor in named_tensors:
+            names.append(name)
+            dtype_names.append(str(tensor.dtype).split(".")[-1])
+            shapes.append(list(tensor.shape))
+
             weight = tensor.detach().contiguous()
             ipc_handle = reduce_tensor(weight)
-            named_ipc_handles.append((name, {gpu_uuid: ipc_handle}))
+            ipc_handles.append({gpu_uuid: ipc_handle})
 
-        return [base64.b64encode(pickle.dumps(named_ipc_handles)).decode("utf-8")]
+        pickled_handles = base64.b64encode(pickle.dumps(ipc_handles)).decode("utf-8")
+
+        chunk = json.dumps({
+            "names": names,
+            "dtype_names": dtype_names,
+            "shapes": shapes,
+            "ipc_handles_pickled": pickled_handles,
+        })
+        return [chunk]
 
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta

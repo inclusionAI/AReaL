@@ -289,61 +289,6 @@ class VLLMWorkerExtension:
             logger.error(error_msg)
             return False, error_msg
 
-    def areal_update_weights_tensor(self, ipc_handles_pickled: str):
-        """Receive weights via CUDA IPC handles (tensor colocated mode).
-
-        Parameters
-        ----------
-        ipc_handles_pickled : str
-            Base64-encoded pickled list of (name, ipc_handle) tuples.
-            Each ipc_handle maps physical GPU UUID → (func, args) for
-            ``torch.multiprocessing.reductions.reduce_tensor`` reconstruction.
-        """
-        import pickle
-
-        import pybase64 as base64
-
-        logger.info("start update weights from tensor (IPC)", flush=True)
-        try:
-            if not getattr(self, "_areal_allow_insecure_deserialization", True):
-                raise RuntimeError(
-                    "Insecure deserialization is disabled. "
-                    "Set VLLM_ALLOW_INSECURE_SERIALIZATION=1 to enable."
-                )
-
-            named_ipc_handles: list[tuple[str, dict]] = pickle.loads(
-                base64.b64decode(ipc_handles_pickled)
-            )
-
-            device_index = torch.accelerator.current_device_index()
-            props = torch.cuda.get_device_properties(device_index)
-            physical_gpu_id = str(props.uuid)
-
-            weights: list[tuple[str, torch.Tensor]] = []
-            for name, ipc_handle in named_ipc_handles:
-                if physical_gpu_id not in ipc_handle:
-                    raise ValueError(
-                        f"IPC handle not found for GPU UUID {physical_gpu_id}. "
-                        f"Available UUIDs: {list(ipc_handle.keys())}"
-                    )
-                func, args = ipc_handle[physical_gpu_id]
-                list_args = list(args)
-                # Index 6 is the device_index parameter in torch's
-                # IPC handle tuple (rebuild_cuda_tensor). Update it
-                # to the current device since the logical index can
-                # differ between sender and receiver.
-                list_args[6] = device_index
-                weight = func(*list_args)
-                weights.append((name, weight))
-
-            self.model_runner.model.load_weights(weights=weights)
-            self.sync()
-            return True, "Success"
-        except Exception as e:
-            error_msg = f"Failed to update weights from tensor (IPC)! {e}"
-            logger.error(error_msg)
-            return False, error_msg
-
     def areal_init_update_weight_group(
         self,
         master_address: str,
