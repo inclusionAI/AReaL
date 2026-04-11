@@ -210,6 +210,33 @@ class RemoteInfBackendProtocol(Protocol):
         """
         ...
 
+    def build_tensor_weight_update_requests(
+        self,
+        serialized_named_tensors: list[str],
+        weight_version: str | None = None,
+    ) -> WeightUpdateRequests:
+        """Build requests for tensor-based (CUDA IPC) weight update.
+
+        Parameters
+        ----------
+        serialized_named_tensors : list[str]
+            Serialized tensor data with CUDA IPC handles
+        weight_version : str | None
+            Optional weight version string
+
+        Returns
+        -------
+        WeightUpdateRequests
+            Collection of HTTP requests for tensor update
+
+        Raises
+        ------
+        NotImplementedError
+            If tensor weight update is not supported by this backend
+            (e.g., vLLM uses direct IPC transport instead).
+        """
+        ...
+
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:

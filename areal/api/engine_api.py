@@ -186,6 +186,7 @@ class TrainEngine(abc.ABC):
         engine: InferenceEngine,
         meta: WeightUpdateMeta,
         tensor_server_addresses: list[str] | None = None,
+        tensor_target_backend: str | None = None,
     ):
         """Connect to an inference engine for online training.
 
@@ -197,6 +198,8 @@ class TrainEngine(abc.ABC):
             Metadata containing information about the weight update
         tensor_server_addresses : list[str] | None
             Server addresses for tensor-based IPC weight updates
+        tensor_target_backend : str | None
+            Backend name for tensor transport ('sglang' or 'vllm')
         """
         raise NotImplementedError()
 

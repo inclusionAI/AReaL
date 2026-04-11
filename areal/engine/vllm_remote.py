@@ -191,6 +191,60 @@ class VLLMBackend:
             ]
         )
 
+    supports_direct_tensor_weight_update = True
+
+    def build_tensor_weight_update_requests(
+        self,
+        serialized_named_tensors: list[str],
+        weight_version: str | None = None,
+    ) -> WeightUpdateRequests:
+        """vLLM tensor updates bypass AReaL request building.
+
+        Use send_tensor_weight_update() to delegate transport to
+        vLLM's IPCWeightTransferEngine instead.
+        """
+        raise NotImplementedError(
+            "Use send_tensor_weight_update() to delegate transport to "
+            "vLLM's IPCWeightTransferEngine."
+        )
+
+    def send_tensor_weight_update(
+        self,
+        named_tensors: list[tuple[str, "torch.Tensor"]],
+        addresses: list[str],
+        request_timeout: float,
+    ) -> None:
+        """Delegate colocated tensor transport to vLLM's official IPC engine."""
+        del request_timeout
+
+        if not named_tensors:
+            return
+        if len(addresses) != 1:
+            raise ValueError(
+                "vLLM tensor weight update requires exactly one server address in "
+                f"colocated mode, got {len(addresses)}: {addresses}."
+            )
+
+        os.environ.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
+
+        from vllm.distributed.weight_transfer.ipc_engine import (
+            IPCTrainerSendWeightsArgs,
+            IPCWeightTransferEngine,
+        )
+
+        base_url = addresses[0]
+        if not base_url.startswith(("http://", "https://")):
+            base_url = f"http://{base_url}"
+
+        trainer_args = IPCTrainerSendWeightsArgs(
+            mode="http",
+            url=base_url,
+        )
+        IPCWeightTransferEngine.trainer_send_weights(
+            iterator=iter(named_tensors),
+            trainer_args=trainer_args,
+        )
+
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
@@ -341,6 +395,19 @@ class RemotevLLMEngine(InferenceEngine):
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""
         return self._engine.update_weights_from_disk(meta)
+
+    def update_weights_from_tensor(
+        self,
+        serialized_named_tensors: list[str],
+        addresses: list[str] | None = None,
+        weight_version: str | None = None,
+    ) -> None:
+        """Update weights via CUDA IPC tensor transfer."""
+        return self._engine.update_weights_from_tensor(
+            serialized_named_tensors,
+            addresses=addresses,
+            weight_version=weight_version,
+        )
 
     def submit(
         self,

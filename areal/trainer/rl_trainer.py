@@ -354,7 +354,9 @@ class PPOTrainer:
 
         # Build tensor_server_addresses for tensor mode
         tensor_server_addresses = None
+        tensor_target_backend = None
         if self.config.actor.weight_update_mode == "tensor":
+            tensor_target_backend = self.rollout_alloc.backend
             if is_single_controller():
                 from areal.utils.network import format_hostport
 
@@ -369,6 +371,7 @@ class PPOTrainer:
             self.rollout,
             self.weight_update_meta,
             tensor_server_addresses=tensor_server_addresses,
+            tensor_target_backend=tensor_target_backend,
         )
 
         # Set up evaluation (skip in online mode)

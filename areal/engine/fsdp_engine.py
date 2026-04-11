@@ -442,6 +442,7 @@ class FSDPEngine(TrainEngine):
         engine: InferenceEngine,
         meta: WeightUpdateMeta,
         tensor_server_addresses: list[str] | None = None,
+        tensor_target_backend: str | None = None,
     ):
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(
@@ -457,8 +458,13 @@ class FSDPEngine(TrainEngine):
             self.weight_update_group_initialized = True
         elif meta.type == "tensor" and tensor_server_addresses is not None:
             self._tensor_server_addresses = tensor_server_addresses
+            self._tensor_target_backend = tensor_target_backend or "sglang"
+            self._tensor_backend = self._make_tensor_backend(
+                self._tensor_target_backend
+            )
             self.logger.info(
                 f"Tensor colocated weight sync configured with "
+                f"backend={self._tensor_target_backend}, "
                 f"{len(tensor_server_addresses)} server(s): {tensor_server_addresses}"
             )
 
@@ -1473,11 +1479,47 @@ class FSDPEngine(TrainEngine):
         bucket: list[tuple[str, torch.Tensor]],
         meta: WeightUpdateMeta,
     ) -> None:
-        """Serialize one bucket of GPU tensors via IPC and send to inference engine."""
+        """Flush one bucket of GPU tensors to the inference engine.
+
+        Dispatches to vLLM's IPCWeightTransferEngine or SGLang's
+        FlattenedTensorBucket + MultiprocessingSerializer based on
+        the configured tensor_target_backend.
+        """
+        assert self._tensor_server_addresses is not None
+
+        try:
+            if (
+                hasattr(self, "_tensor_backend")
+                and hasattr(self._tensor_backend, "supports_direct_tensor_weight_update")
+                and self._tensor_backend.supports_direct_tensor_weight_update
+            ):
+                # vLLM path: delegate to vLLM's IPCWeightTransferEngine
+                self._tensor_backend.send_tensor_weight_update(
+                    named_tensors=list(bucket),
+                    addresses=self._tensor_server_addresses,
+                    request_timeout=600,
+                )
+            else:
+                # SGLang path: serialize via FlattenedTensorBucket + IPC
+                self._flush_sglang_tensor_bucket(bucket, meta)
+        finally:
+            # Cleanup: release GPU memory
+            for _, tensor in bucket:
+                del tensor
+            bucket.clear()
+            gc.collect()
+            if current_platform.device_type == "cuda" and torch.cuda.is_available():
+                torch.cuda.ipc_collect()
+                torch.cuda.empty_cache()
+
+    def _flush_sglang_tensor_bucket(
+        self,
+        bucket: list[tuple[str, torch.Tensor]],
+        meta: WeightUpdateMeta,
+    ) -> None:
+        """Serialize one bucket of GPU tensors via SGLang IPC and send."""
         from sglang.srt.utils import MultiprocessingSerializer
         from sglang.srt.weight_utils import FlattenedTensorBucket
-
-        assert self._tensor_server_addresses is not None
 
         serialized_tensors: list[str] = []
         long_lived_tensors: list[dict] = []
@@ -1507,16 +1549,22 @@ class FSDPEngine(TrainEngine):
                 weight_version=weight_version,
             )
         finally:
-            # Cleanup: release IPC handles and GPU memory
             del serialized_tensors
             del long_lived_tensors
-            for _, tensor in bucket:
-                del tensor
-            bucket.clear()
-            gc.collect()
-            if current_platform.device_type == "cuda" and torch.cuda.is_available():
-                torch.cuda.ipc_collect()
-                torch.cuda.empty_cache()
+
+    @staticmethod
+    def _make_tensor_backend(backend_name: str):
+        """Factory to create the appropriate tensor transport backend."""
+        if backend_name == "sglang":
+            from areal.engine.sglang_remote import SGLangBackend
+
+            return SGLangBackend()
+        elif backend_name == "vllm":
+            from areal.engine.vllm_remote import VLLMBackend
+
+            return VLLMBackend()
+        else:
+            raise ValueError(f"Unknown tensor transport backend: {backend_name}")
 
     def _send_tensor_to_servers(
         self,
