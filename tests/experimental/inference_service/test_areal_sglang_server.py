@@ -19,6 +19,9 @@ from tests.experimental.inference_service.integration_utils import (
     get_test_model_path,
     has_gpu,
 )
+from tests.experimental.inference_service.torchrun.run_awex_megatron_sglang_nccl import (
+    _force_shutdown_on_signal,
+)
 
 from areal.engine.sglang_ext.areal_sglang_server import (
     _AWEX_SCHEDULER_LAUNCHER,
@@ -572,6 +575,31 @@ def test_run_with_barrier_device_ids_stripped(monkeypatch):
     assert out == 7
     assert len(calls) == 1
     assert "device_ids" not in calls[0]
+
+
+def test_force_shutdown_on_signal_calls_cleanup_and_exits():
+    calls: list[str] = []
+    exit_codes: list[int] = []
+
+    def _destroy(_rank: int):
+        calls.append("destroy")
+
+    def _stop():
+        calls.append("stop")
+
+    def _exit(code: int):
+        exit_codes.append(code)
+
+    _force_shutdown_on_signal(
+        rank=3,
+        signum=2,
+        destroy_dist_fn=_destroy,
+        stop_server_and_meta_fn=_stop,
+        exit_fn=_exit,
+    )
+
+    assert calls == ["destroy", "stop"]
+    assert exit_codes == [130]
 
 
 def test_safe_exc_message_handles_unprintable_exception():

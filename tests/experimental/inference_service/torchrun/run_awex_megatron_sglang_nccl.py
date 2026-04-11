@@ -112,6 +112,27 @@ def _destroy_dist_safely(rank: int) -> None:
         _log(rank, f"destroy_process_group failed: {exc}")
 
 
+def _force_shutdown_on_signal(
+    rank: int,
+    signum: int,
+    destroy_dist_fn,
+    stop_server_and_meta_fn,
+    exit_fn,
+) -> None:
+    """Best-effort emergency shutdown path for SIGINT/SIGTERM.
+
+    Ensure distributed resources and child processes are torn down before
+    terminating the current process to prevent lingering NCCL heartbeat logs.
+    """
+
+    _log(rank, f"received signal {signum}; forcing shutdown")
+    try:
+        destroy_dist_fn(rank)
+    finally:
+        stop_server_and_meta_fn()
+    exit_fn(128 + signum)
+
+
 def _visible_devices() -> list[str]:
     env_name = "CUDA_VISIBLE_DEVICES"
     if env_name in os.environ and os.environ[env_name].strip():
@@ -184,6 +205,7 @@ def main(args: argparse.Namespace) -> None:
     os.environ.setdefault("NCCL_DEBUG", "INFO")
     os.environ.setdefault("NCCL_DEBUG_SUBSYS", "INIT,COLL,GRAPH,TUNING")
     os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
+    os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
     os.environ.setdefault("TORCHELASTIC_USE_AGENT_STORE", "False")
     _log(
         rank,
@@ -193,6 +215,7 @@ def main(args: argparse.Namespace) -> None:
         f"NCCL_DEBUG={os.environ.get('NCCL_DEBUG')} "
         f"NCCL_DEBUG_SUBSYS={os.environ.get('NCCL_DEBUG_SUBSYS')} "
         f"TORCH_DISTRIBUTED_DEBUG={os.environ.get('TORCH_DISTRIBUTED_DEBUG')} "
+        f"TORCH_NCCL_ENABLE_MONITORING={os.environ.get('TORCH_NCCL_ENABLE_MONITORING')} "
         f"TORCHELASTIC_USE_AGENT_STORE={os.environ.get('TORCHELASTIC_USE_AGENT_STORE')}",
     )
 
@@ -221,16 +244,6 @@ def main(args: argparse.Namespace) -> None:
         timeout=timedelta(seconds=args.dist_timeout),
     )
 
-    stop_requested = {"flag": False}
-
-    def _on_terminate(signum, _frame):
-        stop_requested["flag"] = True
-        _log(rank, f"received signal {signum}; will terminate run")
-        raise KeyboardInterrupt
-
-    signal.signal(signal.SIGINT, _on_terminate)
-    signal.signal(signal.SIGTERM, _on_terminate)
-
     server_proc: subprocess.Popen | None = None
     meta_started = False
 
@@ -243,6 +256,23 @@ def main(args: argparse.Namespace) -> None:
                 kill_process_tree(server_proc.pid, graceful=False)
         if meta_started:
             stop_meta_server()
+
+    shutdown_once = {"done": False}
+
+    def _on_terminate(signum, _frame):
+        if shutdown_once["done"]:
+            return
+        shutdown_once["done"] = True
+        _force_shutdown_on_signal(
+            rank=rank,
+            signum=signum,
+            destroy_dist_fn=_destroy_dist_safely,
+            stop_server_and_meta_fn=_stop_server_and_meta,
+            exit_fn=os._exit,
+        )
+
+    signal.signal(signal.SIGINT, _on_terminate)
+    signal.signal(signal.SIGTERM, _on_terminate)
 
     try:
         if rank == 0:
