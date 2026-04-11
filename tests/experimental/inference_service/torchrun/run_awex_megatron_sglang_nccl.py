@@ -146,6 +146,18 @@ def main(args: argparse.Namespace) -> None:
     # ncclUnhandledCudaError/invalid argument on cross-process exchange.
     # Prefer a more portable transport path for this integration test.
     os.environ.setdefault("NCCL_P2P_DISABLE", "1")
+    os.environ.setdefault("AREAL_AWEX_IGNORE_BARRIER_ERRORS", "1")
+    os.environ.setdefault("NCCL_DEBUG", "INFO")
+    os.environ.setdefault("NCCL_DEBUG_SUBSYS", "INIT,COLL,GRAPH,TUNING")
+    os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
+    _log(
+        rank,
+        "checkpoint/bootstrap: debug env "
+        f"NCCL_DEBUG={os.environ.get('NCCL_DEBUG')} "
+        f"NCCL_DEBUG_SUBSYS={os.environ.get('NCCL_DEBUG_SUBSYS')} "
+        f"TORCH_DISTRIBUTED_DEBUG={os.environ.get('TORCH_DISTRIBUTED_DEBUG')} "
+        f"AREAL_AWEX_IGNORE_BARRIER_ERRORS={os.environ.get('AREAL_AWEX_IGNORE_BARRIER_ERRORS')}",
+    )
 
     visible = _visible_devices()
     if len(visible) < world_size:
@@ -227,6 +239,11 @@ def main(args: argparse.Namespace) -> None:
                         "engine_rank": 0,
                         "num_engines": 1,
                         "comm_backend": "nccl",
+                        "enable_debug_mode": True,
+                        "debug_mode_config": {
+                            "enable_nccl_debug_mode": True,
+                            "raise_on_validation_fail": False,
+                        },
                         "nnodes": 1,
                         "node_rank": 0,
                     },
@@ -301,6 +318,7 @@ def main(args: argparse.Namespace) -> None:
 
         if rank == 0:
             init_thread = threading.Thread(target=_call_awex_init, daemon=True)
+            _log(rank, "checkpoint/awex-init: dispatching init request")
             init_thread.start()
         else:
             init_thread = None
@@ -326,6 +344,7 @@ def main(args: argparse.Namespace) -> None:
         if rank == 0 and init_thread is not None:
             init_thread.join(timeout=args.rpc_timeout)
             init_gate = [bool(init_result["ok"]), str(init_result["error"] or "")]
+            _log(rank, f"checkpoint/awex-init: result ok={init_gate[0]}")
             if init_gate[0]:
                 _log(rank, "awex reader init done")
         else:
@@ -342,6 +361,7 @@ def main(args: argparse.Namespace) -> None:
             update_thread = threading.Thread(
                 target=_call_awex_update, kwargs={"step_id": step_id}, daemon=True
             )
+            _log(rank, f"checkpoint/awex-update: dispatching step_id={step_id}")
             update_thread.start()
             # Give update path a short grace window to surface immediate failures
             # (e.g., awex reader init/update validation errors) before writer
@@ -366,6 +386,7 @@ def main(args: argparse.Namespace) -> None:
 
         _log(rank, "writing weights from megatron engine")
         megatron_engine.set_global_step(step_id)
+        _log(rank, f"checkpoint/write: global_step={step_id} entering write_weights")
         megatron_engine.write_weights()
         _log(rank, "weights write completed")
 
@@ -375,6 +396,7 @@ def main(args: argparse.Namespace) -> None:
                 bool(update_result["ok"]),
                 str(update_result["error"] or ""),
             ]
+            _log(rank, f"checkpoint/awex-update: result ok={update_gate[0]}")
             if update_gate[0]:
                 _log(rank, "awex reader update done")
         else:

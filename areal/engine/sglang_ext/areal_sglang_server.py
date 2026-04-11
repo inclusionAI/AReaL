@@ -251,6 +251,13 @@ def create_app(engine) -> FastAPI:
 
         engine = app.state.engine
         try:
+            logger.info(
+                "Awex init request: meta=%s comm_backend=%s debug=%s config=%s",
+                request.meta_server_addr,
+                request.comm_backend,
+                request.enable_debug_mode,
+                request.debug_mode_config,
+            )
             if os.environ.get("AREAL_AWEX_USE_MOCK_ADAPTER", "0") == "1":
                 adapter = _MockAwexAdapter()
             else:
@@ -297,7 +304,13 @@ def create_app(engine) -> FastAPI:
             )
         try:
             kwargs = request.kwargs or {}
+            logger.info(
+                "Awex update request: step_id=%s kwargs_keys=%s",
+                request.step_id,
+                sorted(kwargs.keys()),
+            )
             await asyncio.to_thread(adapter.update_weights, request.step_id, **kwargs)
+            logger.info("Awex update finished: step_id=%s", request.step_id)
             return _to_json_response(True, "Awex update done")
         except Exception as exc:
             logger.exception("Awex update failed")

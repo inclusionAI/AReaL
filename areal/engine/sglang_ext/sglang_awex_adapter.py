@@ -18,13 +18,11 @@ _PICKLE_PREFIX = "__awex_pickle_base64__:"
 
 def _safe_rpc_error_message(msg: Any) -> str:
     """Best-effort conversion for RPC error payloads."""
-    if isinstance(msg, bytes):
-        return msg.decode("utf-8", errors="replace")
     try:
-        return str(msg)
+        return repr(msg)
     except Exception:
         try:
-            return repr(msg)
+            return str(type(msg))
         except Exception:
             return f"{type(msg).__name__}: <unprintable>"
 
@@ -242,6 +240,13 @@ class AwexSGLangServerAdapter:
             self.weights_exchange_reader = get_weights_exchange_reader(self)
             self.weights_exchange_reader.initialize()
             self._initialized = True
+            logger.info(
+                "Awex reader initialized: engine_rank=%s num_engines=%s backend=%s debug=%s",
+                self.engine_rank,
+                self.num_engines,
+                self.config.comm_backend,
+                self.config.enable_debug_mode,
+            )
         finally:
             self._initializing = False
 
@@ -276,7 +281,13 @@ class AwexSGLangServerAdapter:
             raise RuntimeError("Awex adapter not initialized.")
         if self.weights_exchange_reader is None:
             raise RuntimeError("Awex weights reader is unavailable")
+        logger.info(
+            "Awex adapter update start: step_id=%s kwargs_keys=%s",
+            step_id,
+            sorted(kwargs.keys()),
+        )
         self.weights_exchange_reader.update_weights(step_id=step_id, **kwargs)
+        logger.info("Awex adapter update end: step_id=%s", step_id)
 
     def update_weights_from_disk(self, model_path: str, load_format: str | None = None):
         updater = getattr(self._sgl_engine, "update_weights_from_disk", None)
@@ -325,6 +336,11 @@ class AwexSGLangServerAdapter:
             raise RuntimeError("SGLang engine has no send_to_rpc socket")
 
         request = RpcReqInput(method=method, parameters=kwargs)
+        logger.info(
+            "Awex RPC send: method=%s keys=%s",
+            method,
+            sorted(kwargs.keys()),
+        )
         with self._rpc_lock:
             rpc_socket.send_pyobj(request)
             response = rpc_socket.recv_pyobj()
@@ -342,4 +358,9 @@ class AwexSGLangServerAdapter:
             return pickle.loads(base64.b64decode(encoded))
         if message in (None, ""):
             return None
+        logger.info(
+            "Awex RPC recv: method=%s raw_message_type=%s",
+            method,
+            type(message).__name__,
+        )
         return message

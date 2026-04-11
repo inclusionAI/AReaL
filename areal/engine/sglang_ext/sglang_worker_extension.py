@@ -36,10 +36,10 @@ _AWEX_WORKER_METHODS = {
 def _safe_exc_message(exc: Exception) -> str:
     """Best-effort stringification for cross-process error transport."""
     try:
-        return str(exc)
+        return repr(exc)
     except Exception:
         try:
-            return repr(exc)
+            return str(type(exc))
         except Exception:
             return f"{type(exc).__name__}: <unprintable>"
 
@@ -244,7 +244,14 @@ def _run_with_barrier_device_ids_stripped(fn, *args, **kwargs):
 
     def _barrier_without_device_ids(*b_args, **b_kwargs):
         b_kwargs.pop("device_ids", None)
-        return original_barrier(*b_args, **b_kwargs)
+        try:
+            return original_barrier(*b_args, **b_kwargs)
+        except Exception as exc:  # pragma: no cover - runtime fallback
+            logger.warning(
+                "Ignoring dist.barrier failure in awex worker task: %s",
+                _safe_exc_message(exc),
+            )
+            return None
 
     dist.barrier = _barrier_without_device_ids
     try:
@@ -352,6 +359,13 @@ def patch_scheduler_for_awex() -> None:
         _patch_awex_sglang_converter()
         _patch_awex_nccl_barrier_device_ids()
 
+        logger.info(
+            "awex_execute start: task=%s.%s kwargs_keys=%s",
+            task_module,
+            task_qualname,
+            sorted((task_kwargs or {}).keys()),
+        )
+
         module = __import__(task_module, fromlist=["__dummy__"])
         target = module
         for attr in task_qualname.split("."):
@@ -381,7 +395,12 @@ def patch_scheduler_for_awex() -> None:
             result = _normalize_awex_param_meta_keys(result)
             if isinstance(result, dict):
                 result = [result]
-
+        logger.info(
+            "awex_execute done: task=%s.%s result_type=%s",
+            task_module,
+            task_qualname,
+            type(result).__name__,
+        )
         return _sanitize_for_ipc(result)
 
     def _make_awex_worker_method(task_module: str, task_qualname: str):
