@@ -580,8 +580,7 @@ class PPOTrainer:
                     for traj, v in zip(rollout_batch, values):
                         traj["values"] = v
                     self.critic.get_device_stats().log("critic values")
-                if self._should_offload_critic:
-                    self._offload_model(self.critic, role="critic")
+                # Critic stays onloaded — offloaded after ppo_update below
 
             if self.ref is not None:
                 if self._should_offload_ref:
@@ -664,12 +663,9 @@ class PPOTrainer:
                 self.actor.ppo_update(adv_batch)
                 self.actor.step_lr_scheduler()
                 self.actor.get_device_stats().log("ppo update")
-            if self._should_offload_actor:
-                self._offload_model(self.actor, role="actor")
+            # Actor stays onloaded through paused window below
 
             if self.critic is not None:
-                if self._should_offload_critic:
-                    self._onload_model(self.critic, role="critic")
                 with (
                     stats_tracker.record_timing("critic_train_step"),
                     perf_tracer.trace_scope(
@@ -686,6 +682,9 @@ class PPOTrainer:
 
             # pause inference for updating weights, save, and evaluation
             self.rollout.pause()
+
+            # Actor already onloaded; engine-internal _offload_aware_context
+            # calls in update_weights/save are no-ops.
 
             with (
                 stats_tracker.record_timing("update_weights"),
@@ -728,6 +727,10 @@ class PPOTrainer:
                 self._save_recover_checkpoint(
                     epoch=epoch, epoch_step=step, global_step=global_step
                 )
+
+            # Offload actor before eval
+            if self._should_offload_actor:
+                self._offload_model(self.actor, role="actor")
 
             if self._should_offload_rollout:
                 self._onload_rollout(is_eval=True)

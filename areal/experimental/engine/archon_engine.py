@@ -6,7 +6,7 @@ import math
 import os
 import time
 from collections.abc import Callable
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -191,6 +191,7 @@ class ArchonEngine(TrainEngine):
         self._version: int = 0
         self._initialized = False
         self.is_offload = False
+        self._offload_depth: int = 0
 
     def create_process_group(
         self,
@@ -735,17 +736,24 @@ class ArchonEngine(TrainEngine):
 
     @contextmanager
     def _offload_aware_context(self):
-        """Temporarily onload parameters for offload-unsafe operations."""
+        """Temporarily onload parameters for offload-unsafe operations.
+
+        Reentrant: nested calls increment depth; only the outermost
+        call performs actual onload/offload transitions.
+        """
         if not self.is_offload:
-            with nullcontext():
-                yield
+            yield
             return
 
-        self.onload()
+        self._offload_depth += 1
+        if self._offload_depth == 1:
+            self.onload()
         try:
             yield
         finally:
-            self.offload()
+            self._offload_depth -= 1
+            if self._offload_depth == 0:
+                self.offload()
 
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver."""

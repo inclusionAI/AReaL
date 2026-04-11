@@ -7,7 +7,7 @@ import math
 import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -164,6 +164,7 @@ class MegatronEngine(TrainEngine):
         self.seed: int = 0
         self.own_global_group: bool = False
         self.is_offload: bool = False
+        self._offload_depth: int = 0
         self.enable_tree_training: bool = self.config.enable_tree_training
         # FP8 configuration
         self.fp8_config = self.mcore_config.fp8_config
@@ -633,17 +634,24 @@ class MegatronEngine(TrainEngine):
 
     @contextmanager
     def _offload_aware_context(self):
-        """Temporarily onload parameters for offload-unsafe operations."""
+        """Temporarily onload parameters for offload-unsafe operations.
+
+        Reentrant: nested calls increment depth; only the outermost
+        call performs actual onload/offload transitions.
+        """
         if not self.is_offload:
-            with nullcontext():
-                yield
+            yield
             return
 
-        self.onload()
+        self._offload_depth += 1
+        if self._offload_depth == 1:
+            self.onload()
         try:
             yield
         finally:
-            self.offload()
+            self._offload_depth -= 1
+            if self._offload_depth == 0:
+                self.offload()
 
     def optimizer_zero_grad(self):
         assert self.optimizer is not None, "Optimizer is not initialized."
