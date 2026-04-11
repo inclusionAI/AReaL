@@ -225,6 +225,10 @@ def _server_command(model_path: str, host: str, port: int, dist_port: int) -> li
     return cmd
 
 
+def _global_pg_init_method(master_addr: str, global_pg_port: int) -> str:
+    return f"tcp://{master_addr}:{global_pg_port}"
+
+
 def _init_megatron_parallel(tp_size: int, pp_size: int) -> None:
     from megatron.core import parallel_state as mpu
     from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
@@ -283,6 +287,16 @@ def main(args: argparse.Namespace) -> None:
     )
 
     all_visible = _visible_devices()
+    torchrun_master_addr = os.environ.get("MASTER_ADDR", "localhost")
+    torchrun_master_port = int(os.environ.get("MASTER_PORT", "0"))
+    global_pg_port = int(args.global_pg_port)
+    if global_pg_port <= 0:
+        raise ValueError("--global-pg-port must be a positive integer")
+    if global_pg_port == torchrun_master_port:
+        raise ValueError(
+            "--global-pg-port must differ from torchrun MASTER_PORT to avoid rendezvous collision"
+        )
+    global_pg_init_method = _global_pg_init_method(torchrun_master_addr, global_pg_port)
 
     from awex.engine.mcore import MegatronEngine
     from awex.meta.meta_server import start_meta_server, stop_meta_server
@@ -304,10 +318,12 @@ def main(args: argparse.Namespace) -> None:
     _log(
         rank,
         "checkpoint/global-pg: initializing "
-        f"MASTER_ADDR={os.environ.get('MASTER_ADDR')} MASTER_PORT={os.environ.get('MASTER_PORT')}",
+        f"init_method={global_pg_init_method} "
+        f"torchrun_master={torchrun_master_addr}:{torchrun_master_port}",
     )
     dist.init_process_group(
         "nccl",
+        init_method=global_pg_init_method,
         rank=rank,
         world_size=world_size,
         timeout=timedelta(seconds=args.dist_timeout),
@@ -351,9 +367,8 @@ def main(args: argparse.Namespace) -> None:
             meta_started = True
             os.environ["AWEX_META_ADDR_BCAST"] = f"{meta_ip}:{meta_port}"
             host = network.gethostip()
-            global_master_port = int(os.environ["MASTER_PORT"])
             sglang_port, sglang_dist_port = find_free_ports(
-                2, exclude_ports={global_master_port}
+                2, exclude_ports={torchrun_master_port, global_pg_port}
             )
             os.environ["AWEX_SGLANG_HOST_BCAST"] = host
             os.environ["AWEX_SGLANG_PORT_BCAST"] = str(sglang_port)
@@ -376,11 +391,12 @@ def main(args: argparse.Namespace) -> None:
                 f"LOCAL_RANK={server_env['LOCAL_RANK']} "
                 f"MASTER_ADDR={server_env['MASTER_ADDR']} MASTER_PORT={server_env['MASTER_PORT']} "
                 f"TORCHELASTIC_USE_AGENT_STORE={server_env['TORCHELASTIC_USE_AGENT_STORE']} "
-                f"global_pg_master_port={global_master_port}",
+                f"global_pg_master_port={global_pg_port} "
+                f"torchrun_master_port={torchrun_master_port}",
             )
-            if int(server_env["MASTER_PORT"]) == global_master_port:
+            if int(server_env["MASTER_PORT"]) in {global_pg_port, torchrun_master_port}:
                 raise RuntimeError(
-                    "Port collision: SGLang dist MASTER_PORT must differ from global process group MASTER_PORT"
+                    "Port collision: SGLang dist MASTER_PORT must differ from both global process group and torchrun rendezvous MASTER_PORT"
                 )
             server_proc = subprocess.Popen(
                 cmd,
@@ -615,5 +631,6 @@ if __name__ == "__main__":
     parser.add_argument("--health-timeout", type=int, default=300)
     parser.add_argument("--rpc-timeout", type=int, default=300)
     parser.add_argument("--dist-timeout", type=int, default=600)
+    parser.add_argument("--global-pg-port", type=int, required=True)
     args = parser.parse_args()
     main(args)

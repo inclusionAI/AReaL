@@ -23,6 +23,7 @@ from tests.experimental.inference_service.torchrun.run_awex_megatron_sglang_nccl
     _build_reader_server_env,
     _configure_single_gpu_runtime_env,
     _force_shutdown_on_signal,
+    _global_pg_init_method,
     _sanitize_server_env,
 )
 
@@ -661,6 +662,10 @@ def test_configure_single_gpu_runtime_env_normalizes_local_rank(monkeypatch):
     assert os.environ["LOCAL_WORLD_SIZE"] == "1"
     assert os.environ["DEVICE"] == "0"
     assert os.environ["TORCHELASTIC_USE_AGENT_STORE"] == "False"
+
+
+def test_global_pg_init_method_builds_tcp_endpoint():
+    assert _global_pg_init_method("localhost", 23456) == "tcp://localhost:23456"
 
 
 def test_safe_exc_message_handles_unprintable_exception():
