@@ -1,7 +1,3 @@
-import torch
-from torch.distributed.tensor._ops._tensor_ops import propagate_single_input_strategy
-from torch.distributed.tensor._ops.utils import register_op_strategy
-register_op_strategy([torch.ops.aten.alias.default])(propagate_single_input_strategy)
 import sys
 
 from areal import PPOTrainer
