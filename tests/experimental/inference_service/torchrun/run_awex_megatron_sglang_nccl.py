@@ -142,6 +142,11 @@ def main(args: argparse.Namespace) -> None:
 
     _validate_allocation(world_size, args.dp_size, args.tp_size, args.pp_size)
 
+    # In virtualized/containerized environments NCCL P2P can fail with
+    # ncclUnhandledCudaError/invalid argument on cross-process exchange.
+    # Prefer a more portable transport path for this integration test.
+    os.environ.setdefault("NCCL_P2P_DISABLE", "1")
+
     visible = _visible_devices()
     if len(visible) < world_size:
         raise RuntimeError(
