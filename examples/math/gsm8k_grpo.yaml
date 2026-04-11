@@ -110,7 +110,7 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 8192
-  mem_fraction_static: 0.4
+  mem_fraction_static: 0.5
 
 vllm:
   model: ${actor.path}
