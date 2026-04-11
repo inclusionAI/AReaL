@@ -28,6 +28,7 @@ from areal.engine.sglang_ext.areal_sglang_server import (
 from areal.engine.sglang_ext.sglang_awex_adapter import (
     AwexSGLangServerAdapter,
     _AwexHFConfigProxy,
+    _safe_rpc_error_message,
 )
 from areal.engine.sglang_ext.sglang_worker_extension import (
     _build_fallback_infer_engine_config,
@@ -306,6 +307,15 @@ def test_awex_hf_config_proxy_maps_qwen3_arch_to_qwen2_for_awex():
     proxied = _AwexHFConfigProxy(_Cfg())
     d = proxied.to_dict()
     assert d["architectures"] == ["Qwen2ForCausalLM"]
+
+
+def test_safe_rpc_error_message_handles_unprintable_message_obj():
+    class _BadMessage:
+        def __str__(self):
+            raise UnicodeDecodeError("utf-8", b"\xf0", 0, 1, "invalid continuation")
+
+    msg = _safe_rpc_error_message(_BadMessage())
+    assert "BadMessage" in msg
 
 
 def test_worker_patch_handles_qnorm_name(monkeypatch):

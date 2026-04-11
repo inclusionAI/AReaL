@@ -16,6 +16,19 @@ logger = logging.getLogger("SGLangAwexAdapter")
 _PICKLE_PREFIX = "__awex_pickle_base64__:"
 
 
+def _safe_rpc_error_message(msg: Any) -> str:
+    """Best-effort conversion for RPC error payloads."""
+    if isinstance(msg, bytes):
+        return msg.decode("utf-8", errors="replace")
+    try:
+        return str(msg)
+    except Exception:
+        try:
+            return repr(msg)
+        except Exception:
+            return f"{type(msg).__name__}: <unprintable>"
+
+
 class _AwexHFConfigProxy:
     """Proxy HF config for awex strategy compatibility.
 
@@ -319,10 +332,7 @@ class AwexSGLangServerAdapter:
         if not isinstance(response, RpcReqOutput):
             return response
         if not response.success:
-            msg = response.message
-            if isinstance(msg, bytes):
-                msg = msg.decode("utf-8", errors="replace")
-            raise RuntimeError(str(msg))
+            raise RuntimeError(_safe_rpc_error_message(response.message))
 
         message = response.message
         if isinstance(message, bytes):
