@@ -469,7 +469,7 @@ requires-dist = [
     { name = "areal", extras = ["megatron"], marker = "extra == 'cuda-train'" },
     { name = "areal", extras = ["sglang"], marker = "extra == 'cuda'" },
     { name = "areal", extras = ["tms"], marker = "extra == 'cuda-train'" },
-    { name = "awex", marker = "extra == 'awex'", specifier = ">=0.1.0" },
+    { name = "awex", marker = "extra == 'awex'", specifier = "==0.3.0" },
     { name = "blosc" },
     { name = "build", specifier = ">=1.2.1" },
     { name = "claude-agent-sdk" },

@@ -40,46 +40,58 @@ def _normalize_awex_param_meta_keys(result: Any) -> Any:
     Megatron-style names expected by awex checks.
     """
 
-    if isinstance(result, list):
-        return [_normalize_awex_param_meta_keys(item) for item in result]
-    if not isinstance(result, dict):
-        return result
+    def _is_param_map(d: dict[Any, Any]) -> bool:
+        return any(
+            isinstance(k, str) and (".weight" in k or ".bias" in k) for k in d.keys()
+        )
 
-    has_qwen_fused_qkv_signature = any(
-        isinstance(k, str) and ".self_attn.qkv_proj." in k for k in result.keys()
-    )
-
-    normalized: dict[str, Any] = {}
-    for key, value in result.items():
-        if not isinstance(key, str):
-            normalized[key] = value
-            continue
-
+    def _map_param_key(key: str) -> str:
         mapped = key
-        # Keep this remap model-family scoped; broad global remap can overreach
-        # for models whose train-side keys also use self_attn.*.
-        if has_qwen_fused_qkv_signature and ".self_attn." in mapped:
+        if ".self_attn." in mapped:
             mapped = mapped.replace(".self_attn.", ".attention.")
         mapped = mapped.replace(".attention.o_proj.", ".attention.dense.")
         mapped = mapped.replace(
             ".attention.qkv_proj.", ".attention.query_key_value_proj."
         )
-        normalized.setdefault(mapped, value)
+        return mapped
 
-    # Qwen3 frequently ties lm_head to token embeddings on inference side.
-    # awex meta check expects lm_head.weight key from training side.
-    if "lm_head.weight" not in normalized:
-        for candidate in (
-            "model.embed_tokens.weight",
-            "model.tok_embeddings.weight",
-            "model.output_layer.weight",
-            "transformer.wte.weight",
-        ):
-            if candidate in normalized:
-                normalized["lm_head.weight"] = normalized[candidate]
-                break
+    def _normalize(obj: Any) -> Any:
+        if isinstance(obj, list):
+            return [_normalize(item) for item in obj]
+        if not isinstance(obj, dict):
+            return obj
 
-    return normalized
+        normalized: dict[Any, Any] = {}
+        param_map = _is_param_map(obj)
+
+        for key, value in obj.items():
+            mapped_key = (
+                _map_param_key(key) if (param_map and isinstance(key, str)) else key
+            )
+            normalized.setdefault(mapped_key, _normalize(value))
+
+        # For parameter maps, ensure lm_head.weight exists when tied embeddings are used.
+        if param_map and "lm_head.weight" not in normalized:
+            for candidate in normalized.keys():
+                if not isinstance(candidate, str):
+                    continue
+                if candidate.endswith("embed_tokens.weight") or candidate.endswith(
+                    "tok_embeddings.weight"
+                ):
+                    normalized["lm_head.weight"] = normalized[candidate]
+                    break
+            else:
+                for candidate in (
+                    "model.output_layer.weight",
+                    "transformer.wte.weight",
+                ):
+                    if candidate in normalized:
+                        normalized["lm_head.weight"] = normalized[candidate]
+                        break
+
+        return normalized
+
+    return _normalize(result)
 
 
 def _patch_awex_sglang_converter() -> None:

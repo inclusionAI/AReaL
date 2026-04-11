@@ -338,13 +338,25 @@ def test_normalize_awex_param_meta_keys_adds_lm_head_alias_when_missing():
     assert out["lm_head.weight"] == out["model.embed_tokens.weight"]
 
 
-def test_normalize_awex_param_meta_keys_keeps_self_attn_when_no_qkv_signature():
+def test_normalize_awex_param_meta_keys_maps_self_attn_even_without_qkv_signature():
     src = {
         "model.layers.0.self_attn.some_other_proj.weight": {"shape": [1]},
     }
     out = _normalize_awex_param_meta_keys(src)
-    assert "model.layers.0.self_attn.some_other_proj.weight" in out
-    assert "model.layers.0.attention.some_other_proj.weight" not in out
+    assert "model.layers.0.attention.some_other_proj.weight" in out
+
+
+def test_normalize_awex_param_meta_keys_handles_nested_param_meta_container():
+    src = {
+        0: {
+            "model.layers.0.self_attn.o_proj.weight": {"shape": [1]},
+            "model.layers.0.self_attn.qkv_proj.weight": {"shape": [2]},
+        }
+    }
+    out = _normalize_awex_param_meta_keys(src)
+    assert isinstance(out, dict)
+    assert "model.layers.0.attention.dense.weight" in out[0]
+    assert "model.layers.0.attention.query_key_value_proj.weight" in out[0]
 
 
 def test_normalize_awex_param_meta_keys_handles_list_results():
