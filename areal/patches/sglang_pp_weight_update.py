@@ -51,6 +51,9 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
+import threading
+import time as _time
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -87,6 +90,10 @@ def apply_sglang_pp_patch() -> None:
         return
 
     try:
+        logger.info(
+            "[DIAG] apply_sglang_pp_patch: patching io_struct and model_runner "
+            "(PID=%d)", os.getpid()
+        )
         _patch_io_struct()
         _patch_model_runner()
         _PATCHED = True
@@ -117,6 +124,11 @@ def _patch_io_struct() -> None:
 
     OrigCls = io_struct.InitWeightsUpdateGroupReqInput
 
+    logger.info(
+        "[DIAG] _patch_io_struct: OrigCls fields = %s",
+        [f.name for f in dataclasses.fields(OrigCls)]
+    )
+
     # If the field already exists (e.g. future sglang version), nothing to do.
     existing_fields = {f.name for f in dataclasses.fields(OrigCls)}
     if "pp_rank" in existing_fields:
@@ -141,6 +153,11 @@ def _patch_io_struct() -> None:
 
     PatchedCls.__module__ = OrigCls.__module__
     PatchedCls.__qualname__ = OrigCls.__qualname__
+
+    logger.info(
+        "[DIAG] _patch_io_struct: PatchedCls fields = %s",
+        [f.name for f in dataclasses.fields(PatchedCls)]
+    )
 
     # Overwrite in the module so that FastAPI picks up the new schema.
     io_struct.InitWeightsUpdateGroupReqInput = PatchedCls
@@ -170,6 +187,10 @@ def _patch_model_runner() -> None:
     # -- init_weights_update_group ----------------------------------------
     _orig_init_group = ModelRunner.init_weights_update_group
 
+    logger.info(
+        "[DIAG] _patch_model_runner: patching ModelRunner (PID=%d)", os.getpid()
+    )
+
     def _patched_init_weights_update_group(
         self: "ModelRunner",
         master_address: str,
@@ -193,6 +214,17 @@ def _patch_model_runner() -> None:
 
             If ``None``, *all* workers join (original behaviour).
         """
+        logger.info(
+            "[DIAG] _patched_init_weights_update_group ENTER: "
+            "self.pp_rank=%s self.tp_rank=%s self.pp_size=%s self.tp_size=%s "
+            "master_address=%s master_port=%s "
+            "rank_offset=%s world_size=%s group_name=%s "
+            "pp_rank_arg=%s PID=%d",
+            getattr(self, 'pp_rank', '?'), getattr(self, 'tp_rank', '?'),
+            getattr(self, 'pp_size', '?'), getattr(self, 'tp_size', '?'),
+            master_address, master_port,
+            rank_offset, world_size, group_name, pp_rank, os.getpid()
+        )
         if pp_rank is not None and self.pp_rank != pp_rank:
             # This worker is at a different PP rank -- skip group creation.
             self._model_update_group[group_name] = None  # sentinel
@@ -226,25 +258,85 @@ def _patch_model_runner() -> None:
             # different PP ranks (but the same TP rank) to claim the same NCCL
             # rank and deadlock.  Shift rank_offset by pp_rank * tp_size so
             # each PP stage occupies a unique rank range.
+            _orig_rank_offset = rank_offset
             rank_offset = rank_offset + self.pp_rank * self.tp_size
             logger.info(
                 "Worker pp_rank=%d tp_rank=%d joining single group '%s' "
-                "(adjusted rank_offset=%d).",
+                "(adjusted rank_offset=%d = %d + pp_rank(%d)*tp_size(%d)).",
                 self.pp_rank,
                 self.tp_rank,
                 group_name,
                 rank_offset,
+                _orig_rank_offset,
+                self.pp_rank,
+                self.tp_size,
+            )
+        else:
+            logger.info(
+                "[DIAG] pp_size=%s, pp_rank_arg=%s => no rank_offset adjustment. "
+                "rank_offset stays %d",
+                getattr(self, 'pp_size', '?'), pp_rank, rank_offset,
             )
 
-        return _orig_init_group(
-            self,
-            master_address,
-            master_port,
-            rank_offset,
-            world_size,
-            group_name,
-            backend,
+        _final_nccl_rank = rank_offset + getattr(self, 'tp_rank', 0)
+        logger.info(
+            "[DIAG] About to call original init_weights_update_group: "
+            "rank_offset=%d + tp_rank=%s => NCCL rank=%d, world_size=%d, "
+            "group_name=%s, init_method=tcp://%s:%s PID=%d",
+            rank_offset, getattr(self, 'tp_rank', '?'), _final_nccl_rank,
+            world_size, group_name, master_address, master_port, os.getpid()
         )
+
+        _t0 = _time.monotonic()
+        _stop = threading.Event()
+
+        def _wd():
+            for s in [10, 20, 30, 60, 120]:
+                if _stop.wait(s):
+                    return
+                elapsed = _time.monotonic() - _t0
+                logger.warning(
+                    "[DIAG] ModelRunner.init_weights_update_group BLOCKED "
+                    "%.0fs: pp=%s tp=%s nccl_rank=%d ws=%d group=%s PID=%d",
+                    elapsed, getattr(self, 'pp_rank', '?'),
+                    getattr(self, 'tp_rank', '?'),
+                    _final_nccl_rank, world_size, group_name, os.getpid()
+                )
+
+        _wd_t = threading.Thread(target=_wd, daemon=True)
+        _wd_t.start()
+
+        try:
+            result = _orig_init_group(
+                self,
+                master_address,
+                master_port,
+                rank_offset,
+                world_size,
+                group_name,
+                backend,
+            )
+        except Exception as e:
+            _stop.set()
+            logger.error(
+                "[DIAG] ModelRunner.init_weights_update_group EXCEPTION after "
+                "%.2fs: pp=%s tp=%s nccl_rank=%d group=%s: %s",
+                _time.monotonic() - _t0,
+                self.pp_rank, self.tp_rank,
+                _final_nccl_rank, group_name, e,
+                exc_info=True,
+            )
+            raise
+
+        _stop.set()
+        _elapsed = _time.monotonic() - _t0
+        logger.info(
+            "[DIAG] ModelRunner.init_weights_update_group DONE in %.2fs: "
+            "pp=%s tp=%s nccl_rank=%d group=%s result=%s PID=%d",
+            _elapsed, self.pp_rank, self.tp_rank,
+            _final_nccl_rank, group_name, result, os.getpid()
+        )
+        return result
 
     ModelRunner.init_weights_update_group = _patched_init_weights_update_group
 
@@ -261,6 +353,15 @@ def _patch_model_runner() -> None:
     ):
         """Skip broadcast receive if this worker did not join *group_name*."""
         pg = self._model_update_group.get(group_name, _PP_SKIP_SENTINEL)
+
+        logger.info(
+            "[DIAG] _patched_update_weights_from_distributed: "
+            "pp=%s tp=%s group=%s pg_is_None=%s pg_is_sentinel=%s "
+            "n_params=%d PID=%d",
+            getattr(self, 'pp_rank', '?'), getattr(self, 'tp_rank', '?'),
+            group_name, pg is None, pg is _PP_SKIP_SENTINEL,
+            len(names), os.getpid()
+        )
 
         if pg is None:
             # Sentinel: this worker was deliberately excluded from the group.
@@ -351,6 +452,14 @@ def _patch_tp_worker() -> None:
     def _patched_tp_init_weights_update_group(self, recv_req):
         """Forward pp_rank from the request object to model_runner."""
         pp_rank = getattr(recv_req, "pp_rank", None)
+        logger.info(
+            "[DIAG] BaseTpWorker._patched_tp_init_weights_update_group: "
+            "pp_rank=%s rank_offset=%s world_size=%s group_name=%s "
+            "master=%s:%s PID=%d",
+            pp_rank, recv_req.rank_offset, recv_req.world_size,
+            recv_req.group_name, recv_req.master_address,
+            recv_req.master_port, os.getpid()
+        )
 
         success, message = self.model_runner.init_weights_update_group(
             recv_req.master_address,

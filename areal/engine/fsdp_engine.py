@@ -1142,18 +1142,81 @@ class FSDPEngine(TrainEngine):
         # NOTE: Processes launched with torchrun will set the following env var to True,
         # which blocks creating another TCP store for weight update.
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
+
+        self.logger.info(
+            f"[DIAG] _init_weight_update_from_distributed ENTER: "
+            f"dist.rank={dist.get_rank()} "
+            f"meta.type={meta.type} "
+            f"meta.nccl_master_address={meta.nccl_master_address} "
+            f"meta.nccl_master_port={meta.nccl_master_port} "
+            f"meta.nccl_group_name={meta.nccl_group_name} "
+            f"gen_allocation.pp_size="
+            f"{meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 'N/A'} "
+            f"gen_allocation.tp_size="
+            f"{meta.gen_allocation.parallel.tp_size if meta.gen_allocation else 'N/A'} "
+            f"gen_allocation.world_size="
+            f"{meta.gen_allocation.parallel.world_size if meta.gen_allocation else 'N/A'}"
+        )
+
         if dist.get_rank() == 0:
             assert meta.gen_allocation is not None
 
+            gen_world_size = meta.gen_allocation.parallel.world_size
+            self.logger.info(
+                f"[DIAG] rank=0: about to call "
+                f"rollout_engine.init_weights_update_group(meta). "
+                f"gen_world_size={gen_world_size} "
+                f"target NCCL world_size={gen_world_size + 1} (gen + 1 trainer)"
+            )
+
             fut = self.rollout_engine.init_weights_update_group(meta)
 
-            gen_world_size = meta.gen_allocation.parallel.world_size
+            self.logger.info(
+                f"[DIAG] rank=0: HTTP requests dispatched (Future returned). "
+                f"Now calling init_custom_process_group(world_size="
+                f"{gen_world_size + 1}, rank=0) — this will BLOCK until all "
+                f"{gen_world_size + 1} participants join."
+            )
+
             init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             self.logger.info(
                 f"Initializing weight update group: type={meta.type} "
                 f"init_method={init_method} "
                 f"group={meta.nccl_group_name}"
             )
+
+            import threading
+            import time as _time
+
+            _nccl_init_start = _time.monotonic()
+            _nccl_stop_event = threading.Event()
+
+            def _nccl_watchdog():
+                intervals = [10, 20, 30, 60, 60, 120, 120]
+                for wait_sec in intervals:
+                    if _nccl_stop_event.wait(wait_sec):
+                        return
+                    elapsed = _time.monotonic() - _nccl_init_start
+                    self.logger.warning(
+                        f"[DIAG] init_custom_process_group STILL BLOCKED "
+                        f"after {elapsed:.0f}s! "
+                        f"group={meta.nccl_group_name} "
+                        f"world_size={gen_world_size + 1} rank=0 "
+                        f"init_method={init_method} "
+                        f"— waiting for {gen_world_size} sglang workers to join"
+                    )
+                while not _nccl_stop_event.wait(300):
+                    elapsed = _time.monotonic() - _nccl_init_start
+                    self.logger.warning(
+                        f"[DIAG] init_custom_process_group STILL BLOCKED "
+                        f"after {elapsed:.0f}s!"
+                    )
+
+            _wd_thread = threading.Thread(
+                target=_nccl_watchdog, daemon=True, name="nccl-init-watchdog"
+            )
+            _wd_thread.start()
+
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
                 world_size=gen_world_size + 1,
@@ -1163,7 +1226,27 @@ class FSDPEngine(TrainEngine):
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
 
+            _nccl_stop_event.set()
+            _nccl_elapsed = _time.monotonic() - _nccl_init_start
+            self.logger.info(
+                f"[DIAG] init_custom_process_group COMPLETED in "
+                f"{_nccl_elapsed:.2f}s for group={meta.nccl_group_name}"
+            )
+
+            self.logger.info(
+                f"[DIAG] rank=0: waiting for fut.result() "
+                f"(HTTP responses from sglang servers)..."
+            )
             fut.result()
+            self.logger.info(
+                f"[DIAG] rank=0: fut.result() returned. "
+                f"_init_weight_update_from_distributed DONE."
+            )
+        else:
+            self.logger.info(
+                f"[DIAG] rank={dist.get_rank()}: NOT rank 0, "
+                f"skipping NCCL group creation."
+            )
 
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):

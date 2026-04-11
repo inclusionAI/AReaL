@@ -223,6 +223,19 @@ class SGLangBackend:
             except (ValueError, IndexError):
                 per_pp_groups = False
 
+        import logging as _logging
+        _diag_log = _logging.getLogger("areal.diag.sglang_remote")
+        _diag_log.info(
+            f"[DIAG] build_init_weights_group_request: "
+            f"addr={addr} server_idx={server_idx} "
+            f"group_name={group_name} "
+            f"pp_size={gen_parallel.pp_size} tp_size={gen_parallel.tp_size} "
+            f"world_size={gen_parallel.world_size} "
+            f"per_pp_groups={per_pp_groups} "
+            f"master_addr={meta.nccl_master_address} "
+            f"master_port={meta.nccl_master_port}"
+        )
+
         if per_pp_groups:
             # Scenario 2: PP>1 with per-PP-rank groups (Megatron engine).
             # Extract pp_rank from the group name suffix.
@@ -248,6 +261,11 @@ class SGLangBackend:
                 "group_name": group_name,
                 "pp_rank": pp_rank,
             }
+            _diag_log.info(
+                f"[DIAG] -> Scenario 2 (per-PP-rank): pp_rank={pp_rank} "
+                f"tp_size={tp_size} n_servers={n_servers} "
+                f"rank_offset={rank_offset} world_size={world_size}"
+            )
         else:
             # Scenario 1 (PP=1) and Scenario 3 (PP>1, single group / FSDP).
             # One NCCL group containing ALL inference workers.
@@ -263,6 +281,13 @@ class SGLangBackend:
                 "backend": current_platform.communication_backend,
                 "group_name": group_name,
             }
+            _diag_log.info(
+                f"[DIAG] -> Scenario 1/3 (single group): "
+                f"instance_size={instance_size} "
+                f"rank_offset={rank_offset} "
+                f"world_size={gen_parallel.world_size + 1} "
+                f"(no pp_rank in payload)"
+            )
 
         return HttpRequest(endpoint="/init_weights_update_group", payload=payload)
 
