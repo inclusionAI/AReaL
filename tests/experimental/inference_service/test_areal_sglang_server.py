@@ -22,6 +22,7 @@ from tests.experimental.inference_service.integration_utils import (
 from tests.experimental.inference_service.torchrun.run_awex_megatron_sglang_nccl import (
     _build_reader_server_env,
     _configure_single_gpu_runtime_env,
+    _early_pin_visible_device_from_local_rank,
     _force_shutdown_on_signal,
     _global_pg_init_method,
     _sanitize_server_env,
@@ -666,6 +667,22 @@ def test_configure_single_gpu_runtime_env_normalizes_local_rank(monkeypatch):
 
 def test_global_pg_init_method_builds_tcp_endpoint():
     assert _global_pg_init_method("localhost", 23456) == "tcp://localhost:23456"
+
+
+def test_early_pin_visible_device_from_local_rank(monkeypatch):
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setenv("LOCAL_RANK", "1")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2")
+    monkeypatch.delenv("AREAL_ORIG_CUDA_VISIBLE_DEVICES", raising=False)
+
+    _early_pin_visible_device_from_local_rank()
+
+    assert os.environ["AREAL_ORIG_CUDA_VISIBLE_DEVICES"] == "0,1,2"
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "1"
+    assert os.environ["LOCAL_RANK"] == "0"
+    assert os.environ["LOCAL_WORLD_SIZE"] == "1"
+    assert os.environ["DEVICE"] == "0"
 
 
 def test_safe_exc_message_handles_unprintable_exception():

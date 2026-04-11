@@ -25,6 +25,42 @@ import torch.distributed as dist
 from areal.utils.network import find_free_ports
 
 
+def _split_visible_devices(raw: str | None) -> list[str]:
+    if raw is None:
+        return []
+    return [d.strip() for d in raw.split(",") if d.strip()]
+
+
+def _early_pin_visible_device_from_local_rank() -> None:
+    """Pin a single visible GPU before CUDA runtime is initialized.
+
+    This runs at module import time and only takes effect in torchrun workers,
+    where distributed env vars are present.
+    """
+
+    if not all(k in os.environ for k in ("RANK", "WORLD_SIZE", "LOCAL_RANK")):
+        return
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES")
+    devices = _split_visible_devices(raw)
+    if not devices:
+        return
+    os.environ.setdefault("AREAL_ORIG_CUDA_VISIBLE_DEVICES", raw or "")
+    try:
+        local_rank = int(os.environ["LOCAL_RANK"])
+    except ValueError:
+        return
+    if local_rank < 0 or local_rank >= len(devices):
+        return
+    os.environ["CUDA_VISIBLE_DEVICES"] = devices[local_rank]
+    # Process now has singleton GPU visibility.
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["LOCAL_WORLD_SIZE"] = "1"
+    os.environ["DEVICE"] = "0"
+
+
+_early_pin_visible_device_from_local_rank()
+
+
 def _log(rank: int, message: str) -> None:
     print(f"[awex-sglang-nccl][rank{rank}] {message}", flush=True)
 
@@ -197,6 +233,9 @@ def _force_shutdown_on_signal(
 
 
 def _visible_devices() -> list[str]:
+    original = _split_visible_devices(os.environ.get("AREAL_ORIG_CUDA_VISIBLE_DEVICES"))
+    if original:
+        return original
     env_name = "CUDA_VISIBLE_DEVICES"
     if env_name in os.environ and os.environ[env_name].strip():
         return [d.strip() for d in os.environ[env_name].split(",") if d.strip()]
@@ -314,6 +353,12 @@ def main(args: argparse.Namespace) -> None:
         all_visible=all_visible,
     )
     device_util.set_device(0)
+    _log(
+        rank,
+        "checkpoint/bootstrap: cuda runtime view "
+        f"device_count={torch.cuda.device_count()} current_device={torch.cuda.current_device()} "
+        f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}",
+    )
 
     _log(
         rank,
@@ -321,13 +366,23 @@ def main(args: argparse.Namespace) -> None:
         f"init_method={global_pg_init_method} "
         f"torchrun_master={torchrun_master_addr}:{torchrun_master_port}",
     )
-    dist.init_process_group(
-        "nccl",
-        init_method=global_pg_init_method,
-        rank=rank,
-        world_size=world_size,
-        timeout=timedelta(seconds=args.dist_timeout),
-    )
+    try:
+        dist.init_process_group(
+            "nccl",
+            init_method=global_pg_init_method,
+            rank=rank,
+            world_size=world_size,
+            timeout=timedelta(seconds=args.dist_timeout),
+            device_id=0,
+        )
+    except TypeError:
+        dist.init_process_group(
+            "nccl",
+            init_method=global_pg_init_method,
+            rank=rank,
+            world_size=world_size,
+            timeout=timedelta(seconds=args.dist_timeout),
+        )
     _log(rank, "checkpoint/global-pg: initialized")
 
     server_proc: subprocess.Popen | None = None
