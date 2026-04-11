@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from areal.api.cli_args import OpenAIProxyConfig
+from areal.api.cli_args import OpenAIProxyConfig, SGLangConfig
 from areal.experimental.inference_service.controller.config import (
     GatewayControllerConfig,
 )
@@ -61,6 +61,25 @@ class TestGatewayControllerConfig:
     def test_dump_to_file_defaults_to_false(self):
         cfg = GatewayControllerConfig()
         assert cfg.dump_to_file is False
+
+
+class TestSGLangConfigLaunchModule:
+    def test_build_cmd_from_args_uses_default_sglang_module(self):
+        cmd = SGLangConfig.build_cmd_from_args({"model_path": "m"})
+        assert cmd[:3] == ["python3", "-m", "sglang.launch_server"]
+
+    def test_build_cmd_from_args_respects_module_override(self):
+        cmd = SGLangConfig.build_cmd_from_args(
+            {
+                "launch_server_module": "areal.engine.sglang_ext.areal_sglang_server",
+                "model_path": "m",
+            }
+        )
+        assert cmd[:3] == [
+            "python3",
+            "-m",
+            "areal.engine.sglang_ext.areal_sglang_server",
+        ]
 
 
 # =============================================================================

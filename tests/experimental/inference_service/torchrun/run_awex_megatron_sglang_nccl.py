@@ -68,8 +68,8 @@ def _log(rank: int, message: str) -> None:
 def _probe_health(base_url: str, timeout_s: float = 2.0) -> tuple[bool, str]:
     try:
         resp = requests.get(f"{base_url}/health", timeout=timeout_s, json={})
-        return resp.status_code == 200, f"200 {text}"
-        return False, f"{resp.status_code} {text}"
+        text = resp.text
+        return resp.status_code == 200, f"{resp.status_code} {text}"
     except requests.exceptions.RequestException as exc:
         return False, f"request_error: {exc}"
 
@@ -104,6 +104,41 @@ def _sanitize_server_env(env: Mapping[str, str]) -> dict[str, str]:
         if key in blocked_exact or any(key.startswith(p) for p in blocked_prefixes):
             sanitized.pop(key, None)
     return sanitized
+
+
+def _build_reader_server_env(
+    parent_env: Mapping[str, str], host: str, dist_port: int, gpu_id: str
+) -> dict[str, str]:
+    env = _sanitize_server_env(parent_env)
+    env["CUDA_VISIBLE_DEVICES"] = gpu_id
+    env["DEVICE"] = "0"
+    env["RANK"] = "0"
+    env["WORLD_SIZE"] = "1"
+    env["LOCAL_RANK"] = "0"
+    env["LOCAL_WORLD_SIZE"] = "1"
+    env["MASTER_ADDR"] = host
+    env["MASTER_PORT"] = str(dist_port)
+    env["TORCHELASTIC_USE_AGENT_STORE"] = "False"
+    return env
+
+
+def _configure_single_gpu_runtime_env(
+    rank: int, world_size: int, local_rank: int, all_visible: list[str]
+) -> str:
+    del world_size
+    selected = str(rank)
+    if all_visible and 0 <= local_rank < len(all_visible):
+        selected = all_visible[local_rank]
+    os.environ["CUDA_VISIBLE_DEVICES"] = selected
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["LOCAL_WORLD_SIZE"] = "1"
+    os.environ["DEVICE"] = "0"
+    os.environ["TORCHELASTIC_USE_AGENT_STORE"] = "False"
+    return selected
+
+
+def _global_pg_init_method(host: str, port: int) -> str:
+    return f"tcp://{host}:{port}"
 
 
 def _write_result(path: str, ok: bool, message: str = "") -> None:
@@ -177,33 +212,6 @@ def _visible_devices() -> list[str]:
     if torch.cuda.is_available():
         return [str(i) for i in range(torch.cuda.device_count())]
     return []
-
-
-def _server_command(
-    model_path: str,
-    host: str,
-    port: int,
-    dist_port: int,
-    base_gpu_id: int,
-    tp_size: int,
-) -> list[str]:
-    from areal.api.cli_args import SGLangConfig, get_py_cmd
-
-    args = SGLangConfig.build_args(
-        sglang_config=SGLangConfig(
-            skip_tokenizer_init=True,
-            model_path=model_path,
-            mem_fraction_static=0.15,
-        ),
-        host=host,
-        port=port,
-        tp_size=tp_size,
-        base_gpu_id=base_gpu_id,
-        dist_init_addr=f"{host}:{dist_port}",
-    )
-    cmd = get_py_cmd("areal.engine.sglang_ext.areal_sglang_server", args)
-    # cmd[0] = sys.executable
-    return cmd
 
 
 def _init_megatron_parallel(tp_size: int, pp_size: int) -> None:
@@ -311,18 +319,32 @@ def main(args: argparse.Namespace) -> None:
             os.environ["AWEX_SGLANG_HOST_BCAST"] = host
             os.environ["AWEX_SGLANG_PORT_BCAST"] = str(sglang_port)
 
-            cmd = _server_command(
-                args.model_path,
-                host,
-                sglang_port,
-                sglang_dist_port,
-                base_gpu_id=0,
+            from areal.api.cli_args import SGLangConfig
+
+            cmd = SGLangConfig.build_cmd(
+                sglang_config=SGLangConfig(
+                    skip_tokenizer_init=True,
+                    model_path=args.model_path,
+                    mem_fraction_static=0.15,
+                    launch_server_module="areal.engine.sglang_ext.areal_sglang_server",
+                ),
+                host=host,
+                port=sglang_port,
                 tp_size=1,
+                base_gpu_id=0,
+                dist_init_addr=f"{host}:{sglang_dist_port}",
+            )
+            gpu_id = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0].strip()
+            server_env = _build_reader_server_env(
+                parent_env=os.environ,
+                host=host,
+                dist_port=sglang_dist_port,
+                gpu_id=gpu_id or "0",
             )
             # Prefer a non-overlapping GPU when available; otherwise colocate.
             server_proc = subprocess.Popen(
                 cmd,
-                env=os.environ.copy(),
+                env=server_env,
                 stdout=sys.stdout,
                 stderr=sys.stdout,
             )
@@ -548,9 +570,16 @@ def main(args: argparse.Namespace) -> None:
 
 
 def _amend_init_environs():
-    # For local test, simply pin each process with a single GPU
-    os.environ["CUDA_VISIBLE_DEVICES"] = os.environ["RANK"]
-    os.environ["LOCAL_RANK"] = "0"
+    rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    all_visible = _visible_devices()
+    _configure_single_gpu_runtime_env(
+        rank=rank,
+        world_size=world_size,
+        local_rank=local_rank,
+        all_visible=all_visible,
+    )
     # In virtualized/containerized environments NCCL P2P can fail with
     # ncclUnhandledCudaError/invalid argument on cross-process exchange.
     # Prefer a more portable transport path for this integration test.

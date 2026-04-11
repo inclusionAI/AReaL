@@ -1514,6 +1514,7 @@ class SGLangConfig:
     """
 
     model_path: str = ""
+    launch_server_module: str = "sglang.launch_server"
     random_seed: int = 1
     skip_tokenizer_init: bool = False
     disable_cuda_graph: bool = False
@@ -1606,7 +1607,9 @@ class SGLangConfig:
 
     @staticmethod
     def build_cmd_from_args(args: dict[str, Any]):
-        return get_py_cmd("sglang.launch_server", args)
+        cmd_args = dict(args)
+        module = cmd_args.pop("launch_server_module", "sglang.launch_server")
+        return get_py_cmd(module, cmd_args)
 
     @staticmethod
     def build_args(

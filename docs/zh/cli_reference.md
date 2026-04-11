@@ -531,62 +531,63 @@ Configuration for SGLang runtime. Refer to:
 
 https://github.com/sgl-project/sglang for detailed documentation.
 
-| Parameter                         | Type                    | Default      | Description |
-| --------------------------------- | ----------------------- | ------------ | ----------- |
-| `model_path`                      | string                  | `""`         | -           |
-| `random_seed`                     | integer                 | `1`          | -           |
-| `skip_tokenizer_init`             | boolean                 | `False`      | -           |
-| `disable_cuda_graph`              | boolean                 | `False`      | -           |
-| `disable_radix_cache`             | boolean                 | `True`       | -           |
-| `disable_cuda_graph_padding`      | boolean                 | `False`      | -           |
-| `enable_nccl_nvls`                | boolean                 | `False`      | -           |
-| `disable_outlines_disk_cache`     | boolean                 | `False`      | -           |
-| `disable_custom_all_reduce`       | boolean                 | `False`      | -           |
-| `disable_overlap_schedule`        | boolean                 | `False`      | -           |
-| `enable_mixed_chunk`              | boolean                 | `False`      | -           |
-| `enable_dp_attention`             | boolean                 | `False`      | -           |
-| `enable_ep_moe`                   | boolean                 | `False`      | -           |
-| `enable_torch_compile`            | boolean                 | `False`      | -           |
-| `torch_compile_max_bs`            | integer                 | `32`         | -           |
-| `cuda_graph_max_bs`               | integer \| None         | `None`       | -           |
-| `cuda_graph_bs`                   | list of integer \| None | `None`       | -           |
-| `torchao_config`                  | string                  | `""`         | -           |
-| `enable_nan_detection`            | boolean                 | `False`      | -           |
-| `enable_p2p_check`                | boolean                 | `False`      | -           |
-| `triton_attention_reduce_in_fp32` | boolean                 | `False`      | -           |
-| `triton_attention_num_kv_splits`  | integer                 | `8`          | -           |
-| `num_continuous_decode_steps`     | integer                 | `1`          | -           |
-| `enable_memory_saver`             | boolean                 | `False`      | -           |
-| `allow_auto_truncate`             | boolean                 | `False`      | -           |
-| `attention_backend`               | string \| None          | `"fa3"`      | -           |
-| `enable_multimodal`               | boolean                 | `False`      | -           |
-| `sampling_backend`                | string \| None          | `None`       | -           |
-| `context_length`                  | integer \| None         | `32768`      | -           |
-| `mem_fraction_static`             | float \| None           | `0.9`        | -           |
-| `max_running_requests`            | integer \| None         | `None`       | -           |
-| `chunked_prefill_size`            | integer \| None         | `-1`         | -           |
-| `max_prefill_tokens`              | integer                 | `32768`      | -           |
-| `schedule_policy`                 | string                  | `"lpm"`      | -           |
-| `schedule_conservativeness`       | float                   | `1.0`        | -           |
-| `cpu_offload_gb`                  | integer                 | `0`          | -           |
-| `dtype`                           | string                  | `"bfloat16"` | -           |
-| `kv_cache_dtype`                  | string                  | `"auto"`     | -           |
-| `dp_size`                         | integer                 | `1`          | -           |
-| `ep_size`                         | integer                 | `1`          | -           |
-| `enable_lora`                     | boolean \| None         | `None`       | -           |
-| `max_lora_rank`                   | integer \| None         | `None`       | -           |
-| `max_loaded_loras`                | integer                 | `8`          | -           |
-| `lora_paths`                      | list of string \| None  | `None`       | -           |
-| `lora_backend`                    | string                  | `"triton"`   | -           |
-| `log_level`                       | string                  | `"warning"`  | -           |
-| `log_level_http`                  | string \| None          | `"warning"`  | -           |
-| `log_requests`                    | boolean                 | `False`      | -           |
-| `log_requests_level`              | integer                 | `0`          | -           |
-| `show_time_cost`                  | boolean                 | `False`      | -           |
-| `enable_metrics`                  | boolean                 | `True`       | -           |
-| `decode_log_interval`             | integer                 | `1`          | -           |
-| `enable_multithread_load`         | boolean                 | `False`      | -           |
-| `enable_return_routed_experts`    | boolean                 | `False`      | -           |
+| Parameter                         | Type                    | Default                  | Description |
+| --------------------------------- | ----------------------- | ------------------------ | ----------- |
+| `model_path`                      | string                  | `""`                     | -           |
+| `launch_server_module`            | string                  | `"sglang.launch_server"` | -           |
+| `random_seed`                     | integer                 | `1`                      | -           |
+| `skip_tokenizer_init`             | boolean                 | `False`                  | -           |
+| `disable_cuda_graph`              | boolean                 | `False`                  | -           |
+| `disable_radix_cache`             | boolean                 | `True`                   | -           |
+| `disable_cuda_graph_padding`      | boolean                 | `False`                  | -           |
+| `enable_nccl_nvls`                | boolean                 | `False`                  | -           |
+| `disable_outlines_disk_cache`     | boolean                 | `False`                  | -           |
+| `disable_custom_all_reduce`       | boolean                 | `False`                  | -           |
+| `disable_overlap_schedule`        | boolean                 | `False`                  | -           |
+| `enable_mixed_chunk`              | boolean                 | `False`                  | -           |
+| `enable_dp_attention`             | boolean                 | `False`                  | -           |
+| `enable_ep_moe`                   | boolean                 | `False`                  | -           |
+| `enable_torch_compile`            | boolean                 | `False`                  | -           |
+| `torch_compile_max_bs`            | integer                 | `32`                     | -           |
+| `cuda_graph_max_bs`               | integer \| None         | `None`                   | -           |
+| `cuda_graph_bs`                   | list of integer \| None | `None`                   | -           |
+| `torchao_config`                  | string                  | `""`                     | -           |
+| `enable_nan_detection`            | boolean                 | `False`                  | -           |
+| `enable_p2p_check`                | boolean                 | `False`                  | -           |
+| `triton_attention_reduce_in_fp32` | boolean                 | `False`                  | -           |
+| `triton_attention_num_kv_splits`  | integer                 | `8`                      | -           |
+| `num_continuous_decode_steps`     | integer                 | `1`                      | -           |
+| `enable_memory_saver`             | boolean                 | `False`                  | -           |
+| `allow_auto_truncate`             | boolean                 | `False`                  | -           |
+| `attention_backend`               | string \| None          | `"fa3"`                  | -           |
+| `enable_multimodal`               | boolean                 | `False`                  | -           |
+| `sampling_backend`                | string \| None          | `None`                   | -           |
+| `context_length`                  | integer \| None         | `32768`                  | -           |
+| `mem_fraction_static`             | float \| None           | `0.9`                    | -           |
+| `max_running_requests`            | integer \| None         | `None`                   | -           |
+| `chunked_prefill_size`            | integer \| None         | `-1`                     | -           |
+| `max_prefill_tokens`              | integer                 | `32768`                  | -           |
+| `schedule_policy`                 | string                  | `"lpm"`                  | -           |
+| `schedule_conservativeness`       | float                   | `1.0`                    | -           |
+| `cpu_offload_gb`                  | integer                 | `0`                      | -           |
+| `dtype`                           | string                  | `"bfloat16"`             | -           |
+| `kv_cache_dtype`                  | string                  | `"auto"`                 | -           |
+| `dp_size`                         | integer                 | `1`                      | -           |
+| `ep_size`                         | integer                 | `1`                      | -           |
+| `enable_lora`                     | boolean \| None         | `None`                   | -           |
+| `max_lora_rank`                   | integer \| None         | `None`                   | -           |
+| `max_loaded_loras`                | integer                 | `8`                      | -           |
+| `lora_paths`                      | list of string \| None  | `None`                   | -           |
+| `lora_backend`                    | string                  | `"triton"`               | -           |
+| `log_level`                       | string                  | `"warning"`              | -           |
+| `log_level_http`                  | string \| None          | `"warning"`              | -           |
+| `log_requests`                    | boolean                 | `False`                  | -           |
+| `log_requests_level`              | integer                 | `0`                      | -           |
+| `show_time_cost`                  | boolean                 | `False`                  | -           |
+| `enable_metrics`                  | boolean                 | `True`                   | -           |
+| `decode_log_interval`             | integer                 | `1`                      | -           |
+| `enable_multithread_load`         | boolean                 | `False`                  | -           |
+| `enable_return_routed_experts`    | boolean                 | `False`                  | -           |
 
 (section-v-llm)=
 
