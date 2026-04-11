@@ -191,59 +191,71 @@ class VLLMBackend:
             ]
         )
 
-    supports_direct_tensor_weight_update = True
-
     def build_tensor_weight_update_requests(
         self,
         serialized_named_tensors: list[str],
         weight_version: str | None = None,
     ) -> WeightUpdateRequests:
-        """vLLM tensor updates bypass AReaL request building.
+        """Build vLLM tensor-based (CUDA IPC) weight update requests.
 
-        Use send_tensor_weight_update() to delegate transport to
-        vLLM's IPCWeightTransferEngine instead.
+        Parameters
+        ----------
+        serialized_named_tensors : list[str]
+            Each element is a base64-encoded pickled list of
+            ``(name, ipc_handle_dict)`` tuples produced by
+            ``_serialize_tensors_for_ipc``.
+        weight_version : str | None
+            Unused for vLLM tensor path (kept for protocol compatibility).
         """
-        raise NotImplementedError(
-            "Use send_tensor_weight_update() to delegate transport to "
-            "vLLM's IPCWeightTransferEngine."
-        )
-
-    def send_tensor_weight_update(
-        self,
-        named_tensors: list[tuple[str, "torch.Tensor"]],
-        addresses: list[str],
-        request_timeout: float,
-    ) -> None:
-        """Delegate colocated tensor transport to vLLM's official IPC engine."""
-        del request_timeout
-
-        if not named_tensors:
-            return
-        if len(addresses) != 1:
-            raise ValueError(
-                "vLLM tensor weight update requires exactly one server address in "
-                f"colocated mode, got {len(addresses)}: {addresses}."
+        requests = []
+        for pickled_chunk in serialized_named_tensors:
+            payload = {"ipc_handles_pickled": pickled_chunk}
+            requests.append(
+                HttpRequest(
+                    endpoint="/areal_update_weights_tensor",
+                    payload=payload,
+                )
             )
+        return WeightUpdateRequests(requests=requests)
 
-        os.environ.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
+    @staticmethod
+    def serialize_tensors_for_ipc(
+        named_tensors: list[tuple[str, "torch.Tensor"]],
+    ) -> list[str]:
+        """Serialize GPU tensors to base64-encoded IPC handles.
 
-        from vllm.distributed.weight_transfer.ipc_engine import (
-            IPCTrainerSendWeightsArgs,
-            IPCWeightTransferEngine,
-        )
+        Mirrors the serialization logic from vLLM's ``IPCWeightTransferEngine``
+        but produces a standalone payload suitable for HTTP transport to
+        AReaL's ``/areal_update_weights_tensor`` endpoint.
 
-        base_url = addresses[0]
-        if not base_url.startswith(("http://", "https://")):
-            base_url = f"http://{base_url}"
+        Parameters
+        ----------
+        named_tensors : list[tuple[str, torch.Tensor]]
+            List of (param_name, gpu_tensor) pairs.
 
-        trainer_args = IPCTrainerSendWeightsArgs(
-            mode="http",
-            url=base_url,
-        )
-        IPCWeightTransferEngine.trainer_send_weights(
-            iterator=iter(named_tensors),
-            trainer_args=trainer_args,
-        )
+        Returns
+        -------
+        list[str]
+            Single-element list containing a base64-encoded pickled list of
+            ``(name, {gpu_uuid: ipc_handle})`` tuples.
+        """
+        import pickle
+
+        import pybase64 as base64
+        import torch
+        from torch.multiprocessing.reductions import reduce_tensor
+
+        device_index = torch.accelerator.current_device_index()
+        props = torch.cuda.get_device_properties(device_index)
+        gpu_uuid = str(props.uuid)
+
+        named_ipc_handles: list[tuple[str, dict]] = []
+        for name, tensor in named_tensors:
+            weight = tensor.detach().contiguous()
+            ipc_handle = reduce_tensor(weight)
+            named_ipc_handles.append((name, {gpu_uuid: ipc_handle}))
+
+        return [base64.b64encode(pickle.dumps(named_ipc_handles)).decode("utf-8")]
 
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta

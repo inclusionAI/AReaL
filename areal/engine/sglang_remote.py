@@ -226,6 +226,41 @@ class SGLangBackend:
             ]
         )
 
+    @staticmethod
+    def serialize_tensors_for_ipc(
+        named_tensors: list[tuple[str, "torch.Tensor"]],
+    ) -> list[str]:
+        """Serialize GPU tensors via SGLang's FlattenedTensorBucket + IPC.
+
+        Groups tensors by dtype, flattens each group, and serializes using
+        SGLang's ``MultiprocessingSerializer`` which produces CUDA IPC handles.
+
+        Returns
+        -------
+        list[str]
+            Serialized chunks (one per dtype group), each a string containing
+            the serialized FlattenedTensorBucket data with IPC handles.
+        """
+        from sglang.srt.utils import MultiprocessingSerializer
+        from sglang.srt.weight_utils import FlattenedTensorBucket
+
+        dtypes_groups: dict[str, list[tuple[str, "torch.Tensor"]]] = {}
+        for name, tensor in named_tensors:
+            dtype_key = str(tensor.dtype)
+            dtypes_groups.setdefault(dtype_key, []).append((name, tensor))
+
+        serialized: list[str] = []
+        for _dtype, group in dtypes_groups.items():
+            flattened = FlattenedTensorBucket(named_tensors=group)
+            flattened_data = {
+                "flattened_tensor": flattened.get_flattened_tensor(),
+                "metadata": flattened.get_metadata(),
+            }
+            serialized.append(
+                MultiprocessingSerializer.serialize(flattened_data, output_str=True)
+            )
+        return serialized
+
     def get_pause_request(self) -> HttpRequest:
         """Get SGLang pause request."""
         return HttpRequest(endpoint="/pause_generation", payload={})

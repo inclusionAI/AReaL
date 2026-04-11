@@ -220,7 +220,7 @@ class RemoteInfBackendProtocol(Protocol):
         Parameters
         ----------
         serialized_named_tensors : list[str]
-            Serialized tensor data with CUDA IPC handles
+            Serialized tensor data produced by ``serialize_tensors_for_ipc``.
         weight_version : str | None
             Optional weight version string
 
@@ -228,12 +228,24 @@ class RemoteInfBackendProtocol(Protocol):
         -------
         WeightUpdateRequests
             Collection of HTTP requests for tensor update
+        """
+        ...
 
-        Raises
-        ------
-        NotImplementedError
-            If tensor weight update is not supported by this backend
-            (e.g., vLLM uses direct IPC transport instead).
+    def serialize_tensors_for_ipc(
+        self,
+        named_tensors: list[tuple[str, "torch.Tensor"]],
+    ) -> list[str]:
+        """Serialize GPU tensors into backend-specific IPC payloads.
+
+        Parameters
+        ----------
+        named_tensors : list[tuple[str, torch.Tensor]]
+            List of (param_name, gpu_tensor) pairs.
+
+        Returns
+        -------
+        list[str]
+            Serialized chunks suitable for ``build_tensor_weight_update_requests``.
         """
         ...
 

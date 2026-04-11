@@ -53,7 +53,7 @@ from areal.api import (
     WorkflowLike,
 )
 from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
-from areal.api.io_struct import DeviceRuntimeInfo
+from areal.api.io_struct import DeviceRuntimeInfo, WeightUpdateRequests
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_total_loss_weight,
@@ -1480,31 +1480,27 @@ class FSDPEngine(TrainEngine):
     ) -> None:
         """Flush one bucket of GPU tensors to the inference engine.
 
-        Dispatches to vLLM's IPCWeightTransferEngine or SGLang's
-        FlattenedTensorBucket + MultiprocessingSerializer based on
-        the configured tensor_target_backend.
+        Uses the configured ``_tensor_backend`` to serialize GPU tensors into
+        IPC payloads, build HTTP requests, and send them to all tensor servers.
+        Both SGLang and vLLM backends follow the same code path:
+        serialize → build_requests → HTTP POST.
         """
         assert self._tensor_server_addresses is not None
 
+        serialized: list[str] | None = None
         try:
-            if (
-                hasattr(self, "_tensor_backend")
-                and hasattr(
-                    self._tensor_backend, "supports_direct_tensor_weight_update"
-                )
-                and self._tensor_backend.supports_direct_tensor_weight_update
-            ):
-                # vLLM path: delegate to vLLM's IPCWeightTransferEngine
-                self._tensor_backend.send_tensor_weight_update(
-                    named_tensors=list(bucket),
-                    addresses=self._tensor_server_addresses,
-                    request_timeout=600,
-                )
-            else:
-                # SGLang path: serialize via FlattenedTensorBucket + IPC
-                self._flush_sglang_tensor_bucket(bucket, meta)
+            serialized = self._tensor_backend.serialize_tensors_for_ipc(
+                list(bucket)
+            )
+            weight_version = str(meta.version) if meta.version is not None else None
+            weight_reqs = self._tensor_backend.build_tensor_weight_update_requests(
+                serialized, weight_version=weight_version
+            )
+            self._send_tensor_requests(weight_reqs, self._tensor_server_addresses)
         finally:
-            # Cleanup: release GPU memory
+            # Cleanup: release GPU memory and serialization artifacts
+            if serialized is not None:
+                del serialized
             for _, tensor in bucket:
                 del tensor
             bucket.clear()
@@ -1512,46 +1508,6 @@ class FSDPEngine(TrainEngine):
             if current_platform.device_type == "cuda" and torch.cuda.is_available():
                 torch.cuda.ipc_collect()
                 torch.cuda.empty_cache()
-
-    def _flush_sglang_tensor_bucket(
-        self,
-        bucket: list[tuple[str, torch.Tensor]],
-        meta: WeightUpdateMeta,
-    ) -> None:
-        """Serialize one bucket of GPU tensors via SGLang IPC and send."""
-        from sglang.srt.utils import MultiprocessingSerializer
-        from sglang.srt.weight_utils import FlattenedTensorBucket
-
-        serialized_tensors: list[str] = []
-        long_lived_tensors: list[dict] = []
-
-        try:
-            dtypes_groups: dict[str, list[tuple[str, torch.Tensor]]] = {}
-            for name, tensor in bucket:
-                dtype_key = str(tensor.dtype)
-                dtypes_groups.setdefault(dtype_key, []).append((name, tensor))
-
-            for _dtype, named_tensors in dtypes_groups.items():
-                flattened = FlattenedTensorBucket(named_tensors=named_tensors)
-                metadata = flattened.get_metadata()
-                flattened_data = {
-                    "flattened_tensor": flattened.get_flattened_tensor(),
-                    "metadata": metadata,
-                }
-                long_lived_tensors.append(flattened_data)
-                serialized_tensors.append(
-                    MultiprocessingSerializer.serialize(flattened_data, output_str=True)
-                )
-
-            weight_version = str(meta.version) if meta.version is not None else None
-            self._send_tensor_to_servers(
-                serialized_tensors,
-                self._tensor_server_addresses,
-                weight_version=weight_version,
-            )
-        finally:
-            del serialized_tensors
-            del long_lived_tensors
 
     @staticmethod
     def _make_tensor_backend(backend_name: str):
@@ -1567,13 +1523,12 @@ class FSDPEngine(TrainEngine):
         else:
             raise ValueError(f"Unknown tensor transport backend: {backend_name}")
 
-    def _send_tensor_to_servers(
-        self,
-        serialized_named_tensors: list[str],
+    @staticmethod
+    def _send_tensor_requests(
+        weight_reqs: "WeightUpdateRequests",
         addresses: list[str],
-        weight_version: str | None = None,
     ) -> None:
-        """Send serialized tensor data to SGLang servers via HTTP."""
+        """Send weight update HTTP requests to all tensor server addresses."""
         import asyncio
 
         import aiohttp
@@ -1581,33 +1536,26 @@ class FSDPEngine(TrainEngine):
 
         from areal.infra.utils.http import arequest_with_retry, get_default_connector
 
-        payload: dict[str, Any] = {
-            "serialized_named_tensors": serialized_named_tensors,
-            "load_format": "flattened_bucket",
-            "flush_cache": False,
-        }
-        if weight_version is not None:
-            payload["weight_version"] = weight_version
-
         async def _fn():
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=600),
                 read_bufsize=1024 * 1024 * 10,
                 connector=get_default_connector(),
             ) as session:
-                jobs = [
-                    arequest_with_retry(
-                        session=session,
-                        addr=addr,
-                        endpoint="/update_weights_from_tensor",
-                        payload=payload,
-                        method="POST",
-                        max_retries=1,
-                        timeout=600,
-                    )
-                    for addr in addresses
-                ]
-                await asyncio.gather(*jobs)
+                for http_req in weight_reqs.requests:
+                    jobs = [
+                        arequest_with_retry(
+                            session=session,
+                            addr=addr,
+                            endpoint=http_req.endpoint,
+                            payload=http_req.payload,
+                            method=http_req.method,
+                            max_retries=1,
+                            timeout=600,
+                        )
+                        for addr in addresses
+                    ]
+                    await asyncio.gather(*jobs)
 
         uvloop.run(_fn())
 
