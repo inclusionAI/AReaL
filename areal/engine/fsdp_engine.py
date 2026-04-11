@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import nullcontext
+import copy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -184,7 +185,8 @@ class FSDPEngine(TrainEngine):
         self.own_global_group = False
         self._cpu_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
-        self.weight_update_group_name: str
+        self.weight_update_group_names: list[str] = []
+        self.weight_update_groups: list = []
         self.weight_update_master_addr: str
         self.weight_update_master_port: int
 
@@ -270,7 +272,6 @@ class FSDPEngine(TrainEngine):
 
         if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
-        self.weight_update_group_name = "update_weight_group"
 
         # Create device model
         self._create_device_model()
@@ -1085,6 +1086,33 @@ class FSDPEngine(TrainEngine):
                 "bias": "none",
             }
 
+        if len(self.weight_update_groups) > 1:
+            # Per-PP-rank groups: broadcast to each group sequentially.
+            # Each group's NCCL broadcast must complete before the next
+            # starts, because sglang's PP event loop processes requests
+            # serially within each PP rank.
+            for group_name, group in zip(
+                self.weight_update_group_names, self.weight_update_groups
+            ):
+                pp_meta = copy.copy(meta)
+                pp_meta.nccl_group_name = group_name
+                fut = self.rollout_engine.update_weights_from_distributed(
+                    pp_meta, param_specs
+                )
+                for _, tensor in named_tensors:
+                    dist.broadcast(tensor, src=0, group=group, async_op=False)
+                fut.result()
+            # Return a no-op bucket (all work is already done).
+            _done_fut: Future = Future()
+            _done_fut.set_result(None)
+            return _PendingWeightUpdateBucket(
+                handles=[],
+                fut=_done_fut,
+                named_tensors=named_tensors,
+                stream=stream,
+            )
+
+        # Single group: original async path
         fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
 
         handles = []
@@ -1098,7 +1126,10 @@ class FSDPEngine(TrainEngine):
             for _, tensor in named_tensors:
                 handles.append(
                     dist.broadcast(
-                        tensor, src=0, group=self.weight_update_group, async_op=True
+                        tensor,
+                        src=0,
+                        group=self.weight_update_groups[0],
+                        async_op=True,
                     )
                 )
 
@@ -1133,120 +1164,143 @@ class FSDPEngine(TrainEngine):
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         assert meta.type == "xccl"
-
-        # Reset weight weight meta with local info
-        meta.nccl_master_address = self.weight_update_master_addr = gethostip()
-        meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
-        meta.nccl_group_name = self.weight_update_group_name
-
-        # NOTE: Processes launched with torchrun will set the following env var to True,
-        # which blocks creating another TCP store for weight update.
-        os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
-
-        self.logger.info(
-            f"[DIAG] _init_weight_update_from_distributed ENTER: "
-            f"dist.rank={dist.get_rank()} "
-            f"meta.type={meta.type} "
-            f"meta.nccl_master_address={meta.nccl_master_address} "
-            f"meta.nccl_master_port={meta.nccl_master_port} "
-            f"meta.nccl_group_name={meta.nccl_group_name} "
-            f"gen_allocation.pp_size="
-            f"{meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 'N/A'} "
-            f"gen_allocation.tp_size="
-            f"{meta.gen_allocation.parallel.tp_size if meta.gen_allocation else 'N/A'} "
-            f"gen_allocation.world_size="
-            f"{meta.gen_allocation.parallel.world_size if meta.gen_allocation else 'N/A'}"
+        gen_pp_size = (
+            meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 1
         )
 
-        if dist.get_rank() == 0:
-            assert meta.gen_allocation is not None
+        # NOTE: Processes launched with torchrun will set the following env var
+        # to True, which blocks creating another TCP store for weight update.
+        os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
 
-            gen_world_size = meta.gen_allocation.parallel.world_size
+        if gen_pp_size > 1:
+            # When the inference side uses PP > 1, we MUST create per-PP-rank
+            # NCCL groups (one per PP stage).  sglang's PP scheduler event loop
+            # processes requests at PP rank 0 BEFORE forwarding them to PP
+            # rank 1.  If a single NCCL group spans all PP ranks, the TCP
+            # rendezvous at PP rank 0 blocks forever because PP rank 1 never
+            # receives the init request -> deadlock.  Per-PP-rank groups avoid
+            # this: each group only requires the trainer + one PP stage's TP
+            # workers, so the rendezvous can complete within one PP stage.
             self.logger.info(
-                f"[DIAG] rank=0: about to call "
-                f"rollout_engine.init_weights_update_group(meta). "
-                f"gen_world_size={gen_world_size} "
-                f"target NCCL world_size={gen_world_size + 1} (gen + 1 trainer)"
+                f"gen_pp_size={gen_pp_size} > 1: creating per-PP-rank "
+                f"weight update groups to avoid PP event-loop deadlock."
             )
-
-            fut = self.rollout_engine.init_weights_update_group(meta)
-
-            self.logger.info(
-                f"[DIAG] rank=0: HTTP requests dispatched (Future returned). "
-                f"Now calling init_custom_process_group(world_size="
-                f"{gen_world_size + 1}, rank=0) — this will BLOCK until all "
-                f"{gen_world_size + 1} participants join."
-            )
-
-            init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
-            self.logger.info(
-                f"Initializing weight update group: type={meta.type} "
-                f"init_method={init_method} "
-                f"group={meta.nccl_group_name}"
-            )
-
-            import threading
-            import time as _time
-
-            _nccl_init_start = _time.monotonic()
-            _nccl_stop_event = threading.Event()
-
-            def _nccl_watchdog():
-                intervals = [10, 20, 30, 60, 60, 120, 120]
-                for wait_sec in intervals:
-                    if _nccl_stop_event.wait(wait_sec):
-                        return
-                    elapsed = _time.monotonic() - _nccl_init_start
-                    self.logger.warning(
-                        f"[DIAG] init_custom_process_group STILL BLOCKED "
-                        f"after {elapsed:.0f}s! "
-                        f"group={meta.nccl_group_name} "
-                        f"world_size={gen_world_size + 1} rank=0 "
-                        f"init_method={init_method} "
-                        f"— waiting for {gen_world_size} sglang workers to join"
-                    )
-                while not _nccl_stop_event.wait(300):
-                    elapsed = _time.monotonic() - _nccl_init_start
-                    self.logger.warning(
-                        f"[DIAG] init_custom_process_group STILL BLOCKED "
-                        f"after {elapsed:.0f}s!"
-                    )
-
-            _wd_thread = threading.Thread(
-                target=_nccl_watchdog, daemon=True, name="nccl-init-watchdog"
-            )
-            _wd_thread.start()
-
-            self.weight_update_group = init_custom_process_group(
-                backend=current_platform.communication_backend,
-                world_size=gen_world_size + 1,
-                init_method=init_method,
-                rank=0,
-                group_name=meta.nccl_group_name,
-                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
-            )
-
-            _nccl_stop_event.set()
-            _nccl_elapsed = _time.monotonic() - _nccl_init_start
-            self.logger.info(
-                f"[DIAG] init_custom_process_group COMPLETED in "
-                f"{_nccl_elapsed:.2f}s for group={meta.nccl_group_name}"
-            )
-
-            self.logger.info(
-                f"[DIAG] rank=0: waiting for fut.result() "
-                f"(HTTP responses from sglang servers)..."
-            )
-            fut.result()
-            self.logger.info(
-                f"[DIAG] rank=0: fut.result() returned. "
-                f"_init_weight_update_from_distributed DONE."
-            )
+            self._init_per_pp_weight_update_groups(meta, gen_pp_size)
         else:
-            self.logger.info(
-                f"[DIAG] rank={dist.get_rank()}: NOT rank 0, "
-                f"skipping NCCL group creation."
+            # PP == 1: single group spanning all inference workers.
+            group_name = "update_weight_group"
+            self.weight_update_group_names = [group_name]
+
+            meta.nccl_master_address = self.weight_update_master_addr = gethostip()
+            meta.nccl_master_port = self.weight_update_master_port = (
+                find_free_ports(1)[0]
             )
+            meta.nccl_group_name = group_name
+
+            if dist.get_rank() == 0:
+                assert meta.gen_allocation is not None
+                gen_world_size = meta.gen_allocation.parallel.world_size
+
+                fut = self.rollout_engine.init_weights_update_group(meta)
+
+                init_method = (
+                    f"tcp://{format_host_for_url(meta.nccl_master_address)}"
+                    f":{meta.nccl_master_port}"
+                )
+                self.logger.info(
+                    f"Initializing weight update group: type={meta.type} "
+                    f"init_method={init_method} group={group_name} "
+                    f"world_size={gen_world_size + 1}"
+                )
+                pg = init_custom_process_group(
+                    backend=current_platform.communication_backend,
+                    world_size=gen_world_size + 1,
+                    init_method=init_method,
+                    rank=0,
+                    group_name=group_name,
+                    timeout=DIST_GROUP_DEFAULT_TIMEOUT,
+                )
+                self.weight_update_groups = [pg]
+                self.weight_update_group = pg
+
+                fut.result()
+                self.logger.info(
+                    f"Weight update group '{group_name}' initialized."
+                )
+
+    def _init_per_pp_weight_update_groups(
+        self, meta: WeightUpdateMeta, gen_pp_size: int
+    ):
+        """Create one NCCL weight-update group per inference PP stage.
+
+        Each group contains the inference TP workers at one PP rank plus the
+        FSDP trainer (rank 0 in every group).  Groups are created sequentially
+        so that each init request can pass through sglang's PP event loop
+        without deadlocking.
+
+        The group name carries a PP-rank suffix (e.g. ``update_weight_group_0``)
+        which the inference side uses (Scenario 2 in ``sglang_remote.py``) to
+        route the request to the correct PP stage's workers.
+        """
+        assert meta.gen_allocation is not None
+        gen_world_size = meta.gen_allocation.parallel.world_size
+        per_pp_world_size = gen_world_size // gen_pp_size
+
+        self.weight_update_group_names = []
+        self.weight_update_groups = []
+
+        if dist.get_rank() == 0:
+            for pp_rank in range(gen_pp_size):
+                group_name = f"update_weight_group_{pp_rank}"
+                self.weight_update_group_names.append(group_name)
+
+                pp_meta = copy.copy(meta)
+                pp_meta.nccl_master_address = gethostip()
+                pp_meta.nccl_master_port = find_free_ports(1)[0]
+                pp_meta.nccl_group_name = group_name
+
+                if pp_rank == 0:
+                    self.weight_update_master_addr = pp_meta.nccl_master_address
+                    self.weight_update_master_port = pp_meta.nccl_master_port
+
+                self.logger.info(
+                    f"Initializing per-PP weight update group: "
+                    f"pp_rank={pp_rank} group={group_name} "
+                    f"world_size={per_pp_world_size + 1}"
+                )
+
+                fut = self.rollout_engine.init_weights_update_group(pp_meta)
+
+                init_method = (
+                    f"tcp://{format_host_for_url(pp_meta.nccl_master_address)}"
+                    f":{pp_meta.nccl_master_port}"
+                )
+                pg = init_custom_process_group(
+                    backend=current_platform.communication_backend,
+                    world_size=per_pp_world_size + 1,
+                    init_method=init_method,
+                    rank=0,
+                    group_name=group_name,
+                    timeout=DIST_GROUP_DEFAULT_TIMEOUT,
+                )
+                self.weight_update_groups.append(pg)
+
+                fut.result()
+                self.logger.info(
+                    f"Per-PP weight update group '{group_name}' "
+                    f"(pp_rank={pp_rank}) initialized."
+                )
+
+            # Backward compat: set single-group attribute to first group
+            self.weight_update_group = self.weight_update_groups[0]
+        else:
+            # Non rank-0 FSDP ranks do not participate in NCCL groups
+            for pp_rank in range(gen_pp_size):
+                self.weight_update_group_names.append(
+                    f"update_weight_group_{pp_rank}"
+                )
+            self.weight_update_master_addr = ""
+            self.weight_update_master_port = 0
 
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
@@ -1255,7 +1309,7 @@ class FSDPEngine(TrainEngine):
         # Reset weight weight meta with local info
         meta.nccl_master_address = self.weight_update_master_addr
         meta.nccl_master_port = self.weight_update_master_port
-        meta.nccl_group_name = self.weight_update_group_name
+        meta.nccl_group_name = self.weight_update_group_names[0] if self.weight_update_group_names else "update_weight_group"
 
         main_rank = dist.get_rank() == 0
         if main_rank:
