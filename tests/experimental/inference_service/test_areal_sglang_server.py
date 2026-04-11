@@ -211,6 +211,7 @@ def test_awex_adapter_exposes_hf_config_from_engine_model_config():
     assert adapter.hf_config is marker
     assert callable(getattr(adapter.hf_config, "to_dict", None))
     assert adapter.engine_name == "sglang"
+    assert adapter.config.enable_dp_lm_head is True
 
 
 def test_awex_adapter_unwraps_tokenizer_model_config_wrapper():
@@ -344,6 +345,19 @@ def test_normalize_awex_param_meta_keys_keeps_self_attn_when_no_qkv_signature():
     out = _normalize_awex_param_meta_keys(src)
     assert "model.layers.0.self_attn.some_other_proj.weight" in out
     assert "model.layers.0.attention.some_other_proj.weight" not in out
+
+
+def test_normalize_awex_param_meta_keys_handles_list_results():
+    src = [
+        {
+            "model.layers.0.self_attn.o_proj.weight": {"shape": [1]},
+            "model.layers.0.self_attn.qkv_proj.weight": {"shape": [2]},
+        }
+    ]
+    out = _normalize_awex_param_meta_keys(src)
+    assert isinstance(out, list)
+    assert "model.layers.0.attention.dense.weight" in out[0]
+    assert "model.layers.0.attention.query_key_value_proj.weight" in out[0]
 
 
 class _MockMegatronEngineForAwexFileWriter:

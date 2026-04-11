@@ -40,6 +40,8 @@ def _normalize_awex_param_meta_keys(result: Any) -> Any:
     Megatron-style names expected by awex checks.
     """
 
+    if isinstance(result, list):
+        return [_normalize_awex_param_meta_keys(item) for item in result]
     if not isinstance(result, dict):
         return result
 
@@ -203,11 +205,10 @@ def patch_scheduler_for_awex() -> None:
         # awex InferParamMetaResolver expects execute_task_in_model_worker() to
         # return List[Dict[str, Any]] for _get_model_param_info, even with one
         # worker/rank.
-        if task_qualname.endswith("._get_model_param_info") and isinstance(
-            result, dict
-        ):
+        if task_qualname.endswith("._get_model_param_info"):
             result = _normalize_awex_param_meta_keys(result)
-            result = [result]
+            if isinstance(result, dict):
+                result = [result]
 
         return _sanitize_for_ipc(result)
 

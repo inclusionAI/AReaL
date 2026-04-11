@@ -74,7 +74,8 @@ class AwexSGLangServerAdapter:
             dp_size=dp_size,
             ep_size=1,
             enable_dp_attention=False,
-            enable_dp_lm_head=False,
+            # Keep lm_head metadata visible for writer/reader strict key checks.
+            enable_dp_lm_head=True,
             moe_dense_tp_size=None,
             nnodes=resolved_nnodes,
             node_rank=resolved_node_rank,
