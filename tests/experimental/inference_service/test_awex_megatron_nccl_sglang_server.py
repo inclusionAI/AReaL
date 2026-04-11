@@ -35,7 +35,6 @@ def _run_awex_sglang_torchrun(
     max_trials = 4
     for trial in range(1, max_trials + 1):
         torchrun_port = find_free_ports(1)[0]
-        global_pg_port = find_free_ports(1, exclude_ports={torchrun_port})[0]
         cmd = [
             "torchrun",
             f"--nproc_per_node={n_gpus}",
@@ -50,7 +49,6 @@ def _run_awex_sglang_torchrun(
             f"--output={output}",
             "--health-timeout=240",
             "--rpc-timeout=240",
-            f"--global-pg-port={global_pg_port}",
         ]
 
         print(

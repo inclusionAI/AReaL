@@ -110,67 +110,6 @@ def _sanitize_server_env(env: Mapping[str, str]) -> dict[str, str]:
     return sanitized
 
 
-def _configure_single_gpu_runtime_env(
-    *,
-    rank: int,
-    world_size: int,
-    local_rank: int,
-    all_visible: list[str],
-) -> str:
-    """Bind current torchrun process to a single visible GPU.
-
-    Returns selected physical GPU id from original visibility list.
-    """
-
-    if len(all_visible) < world_size:
-        raise RuntimeError(
-            f"Need >= {world_size} visible GPUs for torchrun world size {world_size}, got {len(all_visible)}"
-        )
-    if local_rank < 0 or local_rank >= len(all_visible):
-        raise RuntimeError(
-            f"Invalid local_rank={local_rank} for visible GPU list {all_visible}"
-        )
-
-    selected_gpu = all_visible[local_rank]
-    os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpu
-    # Per-process singleton visibility means logical local rank is always 0.
-    os.environ["LOCAL_RANK"] = "0"
-    os.environ["LOCAL_WORLD_SIZE"] = "1"
-    os.environ["DEVICE"] = "0"
-    os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
-    _log(
-        rank,
-        "checkpoint/bootstrap: normalized runtime env "
-        f"RANK={os.environ.get('RANK')} WORLD_SIZE={os.environ.get('WORLD_SIZE')} "
-        f"LOCAL_RANK={os.environ.get('LOCAL_RANK')} "
-        f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}",
-    )
-    return selected_gpu
-
-
-def _build_reader_server_env(
-    *,
-    parent_env: Mapping[str, str],
-    host: str,
-    dist_port: int,
-    gpu_id: str,
-) -> dict[str, str]:
-    """Build child SGLang server env with deterministic single-process settings."""
-
-    server_env = _sanitize_server_env(parent_env)
-    server_env["PYTHONUNBUFFERED"] = "1"
-    server_env["CUDA_VISIBLE_DEVICES"] = gpu_id
-    server_env["DEVICE"] = "0"
-    server_env["RANK"] = "0"
-    server_env["WORLD_SIZE"] = "1"
-    server_env["LOCAL_RANK"] = "0"
-    server_env["LOCAL_WORLD_SIZE"] = "1"
-    server_env["MASTER_ADDR"] = host
-    server_env["MASTER_PORT"] = str(dist_port)
-    server_env["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
-    return server_env
-
-
 def _write_result(path: str, ok: bool, message: str = "") -> None:
     if dist.get_rank() != 0:
         return
@@ -244,7 +183,14 @@ def _visible_devices() -> list[str]:
     return []
 
 
-def _server_command(model_path: str, host: str, port: int, dist_port: int) -> list[str]:
+def _server_command(
+    model_path: str,
+    host: str,
+    port: int,
+    dist_port: int,
+    base_gpu_id: int,
+    tp_size: int,
+) -> list[str]:
     from areal.api.cli_args import SGLangConfig, get_py_cmd
 
     args = SGLangConfig.build_args(
@@ -255,17 +201,13 @@ def _server_command(model_path: str, host: str, port: int, dist_port: int) -> li
         ),
         host=host,
         port=port,
-        tp_size=1,
-        base_gpu_id=0,
+        tp_size=tp_size,
+        base_gpu_id=base_gpu_id,
         dist_init_addr=f"{host}:{dist_port}",
     )
     cmd = get_py_cmd("areal.engine.sglang_ext.areal_sglang_server", args)
     cmd[0] = sys.executable
     return cmd
-
-
-def _global_pg_init_method(master_addr: str, global_pg_port: int) -> str:
-    return f"tcp://{master_addr}:{global_pg_port}"
 
 
 def _init_megatron_parallel(tp_size: int, pp_size: int) -> None:
@@ -298,21 +240,8 @@ def _validate_allocation(
 def main(args: argparse.Namespace) -> None:
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
-    local_rank = int(os.environ["LOCAL_RANK"])
-
     _validate_allocation(world_size, args.dp_size, args.tp_size, args.pp_size)
 
-    # In virtualized/containerized environments NCCL P2P can fail with
-    # ncclUnhandledCudaError/invalid argument on cross-process exchange.
-    # Prefer a more portable transport path for this integration test.
-    os.environ.setdefault("NCCL_P2P_DISABLE", "1")
-    os.environ.setdefault("NCCL_CUMEM_ENABLE", "0")
-    os.environ.setdefault("NCCL_NVLS_ENABLE", "0")
-    os.environ.setdefault("NCCL_DEBUG", "INFO")
-    os.environ.setdefault("NCCL_DEBUG_SUBSYS", "INIT,COLL,GRAPH,TUNING")
-    os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
-    os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
-    os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
     _log(
         rank,
         "checkpoint/bootstrap: debug env "
@@ -325,34 +254,13 @@ def main(args: argparse.Namespace) -> None:
         f"TORCHELASTIC_USE_AGENT_STORE={os.environ.get('TORCHELASTIC_USE_AGENT_STORE')}",
     )
 
-    all_visible = _visible_devices()
-    torchrun_master_addr = os.environ.get("MASTER_ADDR", "localhost")
-    torchrun_master_port = int(os.environ.get("MASTER_PORT", "0"))
-    global_pg_port = int(args.global_pg_port)
-    if global_pg_port <= 0:
-        raise ValueError("--global-pg-port must be a positive integer")
-    if global_pg_port == torchrun_master_port:
-        raise ValueError(
-            "--global-pg-port must differ from torchrun MASTER_PORT to avoid rendezvous collision"
-        )
-    global_pg_init_method = _global_pg_init_method(torchrun_master_addr, global_pg_port)
-
     from awex.engine.mcore import MegatronEngine
     from awex.meta.meta_server import start_meta_server, stop_meta_server
     from awex.tests.test_utils import megatron_model_from_hf
-    from awex.util import device as device_util
 
     from areal.infra.utils.proc import kill_process_tree
     from areal.utils import network
 
-    # Training ranks occupy GPUs [0..world_size-1], SGLang server preferably occupies GPU [world_size].
-    _configure_single_gpu_runtime_env(
-        rank=rank,
-        world_size=world_size,
-        local_rank=local_rank,
-        all_visible=all_visible,
-    )
-    device_util.set_device(0)
     _log(
         rank,
         "checkpoint/bootstrap: cuda runtime view "
@@ -360,29 +268,10 @@ def main(args: argparse.Namespace) -> None:
         f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}",
     )
 
-    _log(
-        rank,
-        "checkpoint/global-pg: initializing "
-        f"init_method={global_pg_init_method} "
-        f"torchrun_master={torchrun_master_addr}:{torchrun_master_port}",
+    dist.init_process_group(
+        "nccl",
+        timeout=timedelta(seconds=args.dist_timeout),
     )
-    try:
-        dist.init_process_group(
-            "nccl",
-            init_method=global_pg_init_method,
-            rank=rank,
-            world_size=world_size,
-            timeout=timedelta(seconds=args.dist_timeout),
-            device_id=0,
-        )
-    except TypeError:
-        dist.init_process_group(
-            "nccl",
-            init_method=global_pg_init_method,
-            rank=rank,
-            world_size=world_size,
-            timeout=timedelta(seconds=args.dist_timeout),
-        )
     _log(rank, "checkpoint/global-pg: initialized")
 
     server_proc: subprocess.Popen | None = None
@@ -422,40 +311,22 @@ def main(args: argparse.Namespace) -> None:
             meta_started = True
             os.environ["AWEX_META_ADDR_BCAST"] = f"{meta_ip}:{meta_port}"
             host = network.gethostip()
-            sglang_port, sglang_dist_port = find_free_ports(
-                2, exclude_ports={torchrun_master_port, global_pg_port}
-            )
+            sglang_port, sglang_dist_port = find_free_ports(2)
             os.environ["AWEX_SGLANG_HOST_BCAST"] = host
             os.environ["AWEX_SGLANG_PORT_BCAST"] = str(sglang_port)
 
-            cmd = _server_command(args.model_path, host, sglang_port, sglang_dist_port)
+            cmd = _server_command(
+                args.model_path,
+                host,
+                sglang_port,
+                sglang_dist_port,
+                base_gpu_id=0,
+                tp_size=1,
+            )
             # Prefer a non-overlapping GPU when available; otherwise colocate.
-            server_gpu_idx = world_size if world_size < len(all_visible) else 0
-            server_gpu = all_visible[server_gpu_idx]
-            server_env = _build_reader_server_env(
-                parent_env=os.environ,
-                host=host,
-                dist_port=sglang_dist_port,
-                gpu_id=server_gpu,
-            )
-            _log(
-                rank,
-                f"launching sglang server host={host} port={sglang_port} "
-                f"gpu={server_env['CUDA_VISIBLE_DEVICES']} "
-                f"RANK={server_env['RANK']} WORLD_SIZE={server_env['WORLD_SIZE']} "
-                f"LOCAL_RANK={server_env['LOCAL_RANK']} "
-                f"MASTER_ADDR={server_env['MASTER_ADDR']} MASTER_PORT={server_env['MASTER_PORT']} "
-                f"TORCHELASTIC_USE_AGENT_STORE={server_env['TORCHELASTIC_USE_AGENT_STORE']} "
-                f"global_pg_master_port={global_pg_port} "
-                f"torchrun_master_port={torchrun_master_port}",
-            )
-            if int(server_env["MASTER_PORT"]) in {global_pg_port, torchrun_master_port}:
-                raise RuntimeError(
-                    "Port collision: SGLang dist MASTER_PORT must differ from both global process group and torchrun rendezvous MASTER_PORT"
-                )
             server_proc = subprocess.Popen(
                 cmd,
-                env=server_env,
+                env=os.environ.copy(),
                 stdout=sys.stdout,
                 stderr=sys.stdout,
             )
@@ -583,6 +454,9 @@ def main(args: argparse.Namespace) -> None:
             "expert_model_parallel_size": 1,
         }
         megatron_engine = MegatronEngine(train_config, hf_config, megatron_model)
+        # Disable torch agent store for torchrun,
+        # otherwise the process group won't be properly initialized.
+        os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
         megatron_engine.initialize()
         _log(rank, "megatron engine initialized")
 
@@ -676,7 +550,27 @@ def main(args: argparse.Namespace) -> None:
         _stop_server_and_meta()
 
 
+def _amend_init_environs():
+    # For local test, simply pin each process with a single GPU
+    os.environ["CUDA_VISIBLE_DEVICES"] = os.environ["RANK"]
+    os.environ["LOCAL_RANK"] = "0"
+    # In virtualized/containerized environments NCCL P2P can fail with
+    # ncclUnhandledCudaError/invalid argument on cross-process exchange.
+    # Prefer a more portable transport path for this integration test.
+    os.environ.setdefault("NCCL_P2P_DISABLE", "1")
+    os.environ.setdefault("NCCL_CUMEM_ENABLE", "0")
+    os.environ.setdefault("NCCL_NVLS_ENABLE", "0")
+    os.environ.setdefault("NCCL_DEBUG", "INFO")
+    os.environ.setdefault("NCCL_DEBUG_SUBSYS", "INIT,COLL,GRAPH,TUNING")
+    os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
+    os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
+    from awex.util import device as device_util
+
+    device_util.set_device(0)
+
+
 if __name__ == "__main__":
+    _amend_init_environs()
     parser = argparse.ArgumentParser()
     parser.add_argument("--dp-size", type=int, required=True)
     parser.add_argument("--tp-size", type=int, required=True)
