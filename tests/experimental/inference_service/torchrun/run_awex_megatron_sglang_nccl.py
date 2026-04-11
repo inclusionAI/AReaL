@@ -58,7 +58,6 @@ def _early_pin_visible_device_from_local_rank() -> None:
     os.environ["DEVICE"] = "0"
 
 
-_early_pin_visible_device_from_local_rank()
 
 
 def _log(rank: int, message: str) -> None:
@@ -122,19 +121,7 @@ def _build_reader_server_env(
     return env
 
 
-def _configure_single_gpu_runtime_env(
-    rank: int, world_size: int, local_rank: int, all_visible: list[str]
-) -> str:
-    del world_size
-    selected = str(rank)
-    if all_visible and 0 <= local_rank < len(all_visible):
-        selected = all_visible[local_rank]
-    os.environ["CUDA_VISIBLE_DEVICES"] = selected
-    os.environ["LOCAL_RANK"] = "0"
-    os.environ["LOCAL_WORLD_SIZE"] = "1"
-    os.environ["DEVICE"] = "0"
-    os.environ["TORCHELASTIC_USE_AGENT_STORE"] = "False"
-    return selected
+
 
 
 def _global_pg_init_method(host: str, port: int) -> str:
@@ -246,6 +233,7 @@ def main(args: argparse.Namespace) -> None:
     world_size = int(os.environ["WORLD_SIZE"])
     _validate_allocation(world_size, args.dp_size, args.tp_size, args.pp_size)
 
+
     _log(
         rank,
         "checkpoint/bootstrap: debug env "
@@ -258,12 +246,24 @@ def main(args: argparse.Namespace) -> None:
         f"TORCHELASTIC_USE_AGENT_STORE={os.environ.get('TORCHELASTIC_USE_AGENT_STORE')}",
     )
 
-    from awex.engine.mcore import MegatronEngine
+    from awex.engine.mcore import MegatronEngine as AwexMegatronEngine
     from awex.meta.meta_server import start_meta_server, stop_meta_server
     from awex.tests.test_utils import megatron_model_from_hf
 
     from areal.infra.utils.proc import kill_process_tree
     from areal.utils import network
+
+    class MegatronEngine(AwexMegatronEngine):
+        def initialize(self):
+            super().initialize()
+            # HACK:
+            self.weights_exchange_writer.asystem_train_config = self.weights_exchange_writer.config
+            # FIXME: awex doesn't work on a single colocated GPU
+
+        def resume_memory_occupation(self, tags=None):
+            pass
+        def release_grad_memory(self, empty_cache=True):
+            pass
 
     _log(
         rank,
@@ -272,11 +272,9 @@ def main(args: argparse.Namespace) -> None:
         f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}",
     )
 
-    dist.init_process_group(
-        "nccl",
-        timeout=timedelta(seconds=args.dist_timeout),
-    )
+    dist.init_process_group('nccl')
     _log(rank, "checkpoint/global-pg: initialized")
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
     server_proc: subprocess.Popen | None = None
     meta_started = False
@@ -334,12 +332,11 @@ def main(args: argparse.Namespace) -> None:
                 base_gpu_id=0,
                 dist_init_addr=f"{host}:{sglang_dist_port}",
             )
-            gpu_id = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0].strip()
             server_env = _build_reader_server_env(
                 parent_env=os.environ,
                 host=host,
                 dist_port=sglang_dist_port,
-                gpu_id=gpu_id or "0",
+                gpu_id="1",  # HACK
             )
             # Prefer a non-overlapping GPU when available; otherwise colocate.
             server_proc = subprocess.Popen(
@@ -379,6 +376,7 @@ def main(args: argparse.Namespace) -> None:
                             "enable_nccl_debug_mode": True,
                             "raise_on_validation_fail": False,
                         },
+                        "enable_colocate_mode": False,
                         "nnodes": 1,
                         "node_rank": 0,
                     },
@@ -471,6 +469,7 @@ def main(args: argparse.Namespace) -> None:
             "tensor_model_parallel_size": args.tp_size,
             "pipeline_model_parallel_size": args.pp_size,
             "expert_model_parallel_size": 1,
+            "enable_colocate_mode": False,
         }
         megatron_engine = MegatronEngine(train_config, hf_config, megatron_model)
         # Disable torch agent store for torchrun,
@@ -569,34 +568,9 @@ def main(args: argparse.Namespace) -> None:
         _stop_server_and_meta()
 
 
-def _amend_init_environs():
-    rank = int(os.environ.get("RANK", "0"))
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    all_visible = _visible_devices()
-    _configure_single_gpu_runtime_env(
-        rank=rank,
-        world_size=world_size,
-        local_rank=local_rank,
-        all_visible=all_visible,
-    )
-    # In virtualized/containerized environments NCCL P2P can fail with
-    # ncclUnhandledCudaError/invalid argument on cross-process exchange.
-    # Prefer a more portable transport path for this integration test.
-    os.environ.setdefault("NCCL_P2P_DISABLE", "1")
-    os.environ.setdefault("NCCL_CUMEM_ENABLE", "0")
-    os.environ.setdefault("NCCL_NVLS_ENABLE", "0")
-    os.environ.setdefault("NCCL_DEBUG", "INFO")
-    os.environ.setdefault("NCCL_DEBUG_SUBSYS", "INIT,COLL,GRAPH,TUNING")
-    os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
-    os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
-    from awex.util import device as device_util
-
-    device_util.set_device(0)
-
 
 if __name__ == "__main__":
-    _amend_init_environs()
+    print(os.environ['CUDA_VISIBLE_DEVICES'], os.environ['LOCAL_RANK'])
     parser = argparse.ArgumentParser()
     parser.add_argument("--dp-size", type=int, required=True)
     parser.add_argument("--tp-size", type=int, required=True)

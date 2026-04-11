@@ -7,7 +7,7 @@ Pattern follows Archon distributed tests:
 """
 
 from __future__ import annotations
-
+import os
 import subprocess
 import sys
 
@@ -15,6 +15,7 @@ import pytest
 import torch
 
 from tests.experimental.inference_service.integration_utils import get_test_model_path
+from tests.utils import get_model_path
 
 from areal.infra.platforms import current_platform
 from areal.utils.network import find_free_ports
@@ -31,54 +32,51 @@ def _run_awex_sglang_torchrun(
     pp_size: int,
     output: str,
 ):
-    model_path = get_test_model_path()
-    max_trials = 4
-    for trial in range(1, max_trials + 1):
-        torchrun_port = find_free_ports(1)[0]
-        cmd = [
-            "torchrun",
-            f"--nproc_per_node={n_gpus}",
-            "--nnodes=1",
-            "--master-addr=localhost",
-            f"--master_port={torchrun_port}",
-            "tests/experimental/inference_service/torchrun/run_awex_megatron_sglang_nccl.py",
-            f"--dp-size={dp_size}",
-            f"--tp-size={tp_size}",
-            f"--pp-size={pp_size}",
-            f"--model-path={model_path}",
-            f"--output={output}",
-            "--health-timeout=240",
-            "--rpc-timeout=240",
-        ]
-
-        print(
-            f"[controller] trial {trial}/{max_trials} launching: {' '.join(cmd)}",
-            flush=True,
+    model_path = get_model_path("/storage/openpsi/models/Qwen__Qwen2-1.5B-Instruct/", "Qwen/Qwen2-1.5B-Instruct")
+    torchrun_port = find_free_ports(1)[0]
+    print(">>>>>>>", torchrun_port)
+    cmd = [
+        "torchrun",
+        f"--nproc_per_node={n_gpus}",
+        "--nnodes=1",
+        "--master-addr=localhost",
+        f"--master-port={torchrun_port}",
+        "tests/experimental/inference_service/torchrun/run_awex_megatron_sglang_nccl.py",
+        f"--dp-size={dp_size}",
+        f"--tp-size={tp_size}",
+        f"--pp-size={pp_size}",
+        f"--model-path={model_path}",
+        f"--output={output}",
+        "--health-timeout=240",
+        "--rpc-timeout=240",
+    ]
+    environ = os.environ.copy()
+    environ["NCCL_P2P_DISABLE"] = "1"
+    environ["NCCL_CUMEM_ENABLE"] = "0"
+    environ["NCCL_NVLS_ENABLE"] = "0"
+    # environ["NCCL_DEBUG"] = "INFO"
+    # environ["NCCL_DEBUG_SUBSYS"] = "INIT,COLL,GRAPH,TUNING"
+    environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
+    environ["TORCH_NCCL_ENABLE_MONITORING"] = "0"
+    try:
+        subprocess.run(
+            cmd,
+            env=environ,
+            check=True,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            text=True,
+            timeout=1200,
         )
-        try:
-            subprocess.run(
-                cmd,
-                check=True,
-                stdout=sys.stdout,
-                stderr=sys.stderr,
-                text=True,
-                timeout=1200,
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+        if isinstance(exc, subprocess.TimeoutExpired):
+            pytest.fail(
+                f"Torchrun timed out after {exc.timeout}s: {' '.join(cmd)}"
             )
-            break
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
-            if trial >= max_trials:
-                if isinstance(exc, subprocess.TimeoutExpired):
-                    pytest.fail(
-                        f"Torchrun timed out after {exc.timeout}s on trial {trial}/{max_trials}: {' '.join(cmd)}"
-                    )
-                else:
-                    pytest.fail(
-                        f"Torchrun failed with exit code {exc.returncode} on trial {trial}/{max_trials}. "
-                        f"See streamed logs above. Command: {' '.join(cmd)}"
-                    )
-            print(
-                f"[controller] trial {trial}/{max_trials} failed ({type(exc).__name__}); retrying with a fresh master_port",
-                flush=True,
+        else:
+            pytest.fail(
+                f"Torchrun failed with exit code {exc.returncode}. "
+                f"See streamed logs above. Command: {' '.join(cmd)}"
             )
 
     with open(output, encoding="utf-8") as f:
