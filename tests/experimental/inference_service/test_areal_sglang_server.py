@@ -27,6 +27,7 @@ from areal.engine.sglang_ext.areal_sglang_server import (
 )
 from areal.engine.sglang_ext.sglang_awex_adapter import AwexSGLangServerAdapter
 from areal.engine.sglang_ext.sglang_worker_extension import (
+    _build_fallback_infer_engine_config,
     _normalize_awex_param_meta_keys,
     _patch_awex_sglang_converter,
 )
@@ -394,6 +395,24 @@ def test_normalize_awex_param_meta_keys_handles_list_results():
     assert isinstance(out, list)
     assert "model.layers.0.attention.dense.weight" in out[0]
     assert "model.layers.0.attention.query_key_value_proj.weight" in out[0]
+
+
+def test_build_fallback_infer_engine_config_from_scheduler_server_args():
+    class _ServerArgs:
+        tp_size = 2
+        pp_size = 3
+        dp_size = 4
+        nnodes = 1
+        node_rank = 0
+
+    class _Scheduler:
+        server_args = _ServerArgs()
+
+    cfg = _build_fallback_infer_engine_config(_Scheduler())
+    assert cfg.tp_size == 2
+    assert cfg.pp_size == 3
+    assert cfg.dp_size == 4
+    assert cfg.enable_dp_lm_head is True
 
 
 class _MockMegatronEngineForAwexFileWriter:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import pickle
+import types
 from typing import Any
 
 from areal.utils import logging
@@ -230,6 +231,30 @@ def _build_awex_model_context(scheduler, infer_engine_config=None) -> dict[str, 
     }
 
 
+def _build_fallback_infer_engine_config(scheduler) -> Any:
+    """Build minimal config object for awex worker hooks when missing.
+
+    Some awex worker code paths expect ``infer_engine_config`` to exist and expose
+    attributes like ``tp_size``/``pp_size``/``dp_size``. If upstream call sites do
+    not pass it through, synthesize a best-effort object from scheduler/server args.
+    """
+
+    server_args = getattr(scheduler, "server_args", None)
+    return types.SimpleNamespace(
+        tp_size=int(getattr(server_args, "tp_size", 1) or 1),
+        pp_size=int(getattr(server_args, "pp_size", 1) or 1),
+        dp_size=int(getattr(server_args, "dp_size", 1) or 1),
+        ep_size=1,
+        nnodes=int(getattr(server_args, "nnodes", 1) or 1),
+        node_rank=int(getattr(server_args, "node_rank", 0) or 0),
+        num_engines=1,
+        engine_rank=0,
+        comm_backend="nccl",
+        enable_dp_attention=False,
+        enable_dp_lm_head=True,
+    )
+
+
 def patch_scheduler_for_awex() -> None:
     """Patch SGLang Scheduler to support awex RPC entrypoints."""
 
@@ -257,6 +282,9 @@ def patch_scheduler_for_awex() -> None:
             from awex.config import InferenceConfig
 
             infer_engine_config = InferenceConfig.from_dict(infer_engine_config)
+            task_kwargs["infer_engine_config"] = infer_engine_config
+        if infer_engine_config is None:
+            infer_engine_config = _build_fallback_infer_engine_config(self)
             task_kwargs["infer_engine_config"] = infer_engine_config
 
         task_kwargs["model"] = self.tp_worker.model_runner.model
