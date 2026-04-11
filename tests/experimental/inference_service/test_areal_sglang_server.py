@@ -20,7 +20,10 @@ from tests.experimental.inference_service.integration_utils import (
     has_gpu,
 )
 from tests.experimental.inference_service.torchrun.run_awex_megatron_sglang_nccl import (
+    _build_reader_server_env,
+    _configure_single_gpu_runtime_env,
     _force_shutdown_on_signal,
+    _sanitize_server_env,
 )
 
 from areal.engine.sglang_ext.areal_sglang_server import (
@@ -600,6 +603,64 @@ def test_force_shutdown_on_signal_calls_cleanup_and_exits():
 
     assert calls == ["destroy", "stop"]
     assert exit_codes == [130]
+
+
+def test_sanitize_server_env_removes_torchrun_vars_but_keeps_nccl_vars():
+    env = {
+        "RANK": "2",
+        "WORLD_SIZE": "8",
+        "LOCAL_RANK": "1",
+        "MASTER_ADDR": "127.0.0.1",
+        "MASTER_PORT": "29500",
+        "TORCHELASTIC_USE_AGENT_STORE": "True",
+        "NCCL_DEBUG": "INFO",
+    }
+    out = _sanitize_server_env(env)
+    assert "RANK" not in out
+    assert "WORLD_SIZE" not in out
+    assert "LOCAL_RANK" not in out
+    assert "MASTER_ADDR" not in out
+    assert "MASTER_PORT" not in out
+    assert "TORCHELASTIC_USE_AGENT_STORE" not in out
+    assert out["NCCL_DEBUG"] == "INFO"
+
+
+def test_build_reader_server_env_sets_single_process_dist_env():
+    out = _build_reader_server_env(
+        parent_env={"NCCL_DEBUG": "INFO", "RANK": "7"},
+        host="10.0.0.1",
+        dist_port=29999,
+        gpu_id="5",
+    )
+    assert out["CUDA_VISIBLE_DEVICES"] == "5"
+    assert out["DEVICE"] == "0"
+    assert out["RANK"] == "0"
+    assert out["WORLD_SIZE"] == "1"
+    assert out["LOCAL_RANK"] == "0"
+    assert out["LOCAL_WORLD_SIZE"] == "1"
+    assert out["MASTER_ADDR"] == "10.0.0.1"
+    assert out["MASTER_PORT"] == "29999"
+    assert out["TORCHELASTIC_USE_AGENT_STORE"] == "False"
+    assert out["NCCL_DEBUG"] == "INFO"
+
+
+def test_configure_single_gpu_runtime_env_normalizes_local_rank(monkeypatch):
+    monkeypatch.setenv("RANK", "1")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setenv("LOCAL_RANK", "1")
+
+    selected = _configure_single_gpu_runtime_env(
+        rank=1,
+        world_size=2,
+        local_rank=1,
+        all_visible=["0", "1"],
+    )
+    assert selected == "1"
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "1"
+    assert os.environ["LOCAL_RANK"] == "0"
+    assert os.environ["LOCAL_WORLD_SIZE"] == "1"
+    assert os.environ["DEVICE"] == "0"
+    assert os.environ["TORCHELASTIC_USE_AGENT_STORE"] == "False"
 
 
 def test_safe_exc_message_handles_unprintable_exception():

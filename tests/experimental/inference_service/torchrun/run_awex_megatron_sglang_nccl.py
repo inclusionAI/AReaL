@@ -72,6 +72,67 @@ def _sanitize_server_env(env: Mapping[str, str]) -> dict[str, str]:
     return sanitized
 
 
+def _configure_single_gpu_runtime_env(
+    *,
+    rank: int,
+    world_size: int,
+    local_rank: int,
+    all_visible: list[str],
+) -> str:
+    """Bind current torchrun process to a single visible GPU.
+
+    Returns selected physical GPU id from original visibility list.
+    """
+
+    if len(all_visible) < world_size:
+        raise RuntimeError(
+            f"Need >= {world_size} visible GPUs for torchrun world size {world_size}, got {len(all_visible)}"
+        )
+    if local_rank < 0 or local_rank >= len(all_visible):
+        raise RuntimeError(
+            f"Invalid local_rank={local_rank} for visible GPU list {all_visible}"
+        )
+
+    selected_gpu = all_visible[local_rank]
+    os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpu
+    # Per-process singleton visibility means logical local rank is always 0.
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["LOCAL_WORLD_SIZE"] = "1"
+    os.environ["DEVICE"] = "0"
+    os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
+    _log(
+        rank,
+        "checkpoint/bootstrap: normalized runtime env "
+        f"RANK={os.environ.get('RANK')} WORLD_SIZE={os.environ.get('WORLD_SIZE')} "
+        f"LOCAL_RANK={os.environ.get('LOCAL_RANK')} "
+        f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}",
+    )
+    return selected_gpu
+
+
+def _build_reader_server_env(
+    *,
+    parent_env: Mapping[str, str],
+    host: str,
+    dist_port: int,
+    gpu_id: str,
+) -> dict[str, str]:
+    """Build child SGLang server env with deterministic single-process settings."""
+
+    server_env = _sanitize_server_env(parent_env)
+    server_env["PYTHONUNBUFFERED"] = "1"
+    server_env["CUDA_VISIBLE_DEVICES"] = gpu_id
+    server_env["DEVICE"] = "0"
+    server_env["RANK"] = "0"
+    server_env["WORLD_SIZE"] = "1"
+    server_env["LOCAL_RANK"] = "0"
+    server_env["LOCAL_WORLD_SIZE"] = "1"
+    server_env["MASTER_ADDR"] = host
+    server_env["MASTER_PORT"] = str(dist_port)
+    server_env["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
+    return server_env
+
+
 def _write_result(path: str, ok: bool, message: str = "") -> None:
     if dist.get_rank() != 0:
         return
@@ -219,11 +280,7 @@ def main(args: argparse.Namespace) -> None:
         f"TORCHELASTIC_USE_AGENT_STORE={os.environ.get('TORCHELASTIC_USE_AGENT_STORE')}",
     )
 
-    visible = _visible_devices()
-    if len(visible) < world_size:
-        raise RuntimeError(
-            f"Need >= {world_size} visible GPUs for torchrun world size {world_size}, got {len(visible)}"
-        )
+    all_visible = _visible_devices()
 
     from awex.engine.mcore import MegatronEngine
     from awex.meta.meta_server import start_meta_server, stop_meta_server
@@ -233,9 +290,14 @@ def main(args: argparse.Namespace) -> None:
     from areal.infra.utils.proc import kill_process_tree
     from areal.utils import network
 
-    # Training ranks occupy GPUs [0..world_size-1], SGLang server occupies GPU [world_size].
-    os.environ["DEVICE"] = str(local_rank)
-    device_util.set_device(local_rank)
+    # Training ranks occupy GPUs [0..world_size-1], SGLang server preferably occupies GPU [world_size].
+    _configure_single_gpu_runtime_env(
+        rank=rank,
+        world_size=world_size,
+        local_rank=local_rank,
+        all_visible=all_visible,
+    )
+    device_util.set_device(0)
 
     dist.init_process_group(
         "nccl",
@@ -286,15 +348,23 @@ def main(args: argparse.Namespace) -> None:
             os.environ["AWEX_SGLANG_PORT_BCAST"] = str(sglang_port)
 
             cmd = _server_command(args.model_path, host, sglang_port, sglang_dist_port)
-            server_env = _sanitize_server_env(os.environ)
-            server_env["PYTHONUNBUFFERED"] = "1"
             # Prefer a non-overlapping GPU when available; otherwise colocate.
-            server_gpu_idx = world_size if world_size < len(visible) else 0
-            server_env["CUDA_VISIBLE_DEVICES"] = visible[server_gpu_idx]
+            server_gpu_idx = world_size if world_size < len(all_visible) else 0
+            server_gpu = all_visible[server_gpu_idx]
+            server_env = _build_reader_server_env(
+                parent_env=os.environ,
+                host=host,
+                dist_port=sglang_dist_port,
+                gpu_id=server_gpu,
+            )
             _log(
                 rank,
                 f"launching sglang server host={host} port={sglang_port} "
-                f"gpu={server_env['CUDA_VISIBLE_DEVICES']}",
+                f"gpu={server_env['CUDA_VISIBLE_DEVICES']} "
+                f"RANK={server_env['RANK']} WORLD_SIZE={server_env['WORLD_SIZE']} "
+                f"LOCAL_RANK={server_env['LOCAL_RANK']} "
+                f"MASTER_ADDR={server_env['MASTER_ADDR']} MASTER_PORT={server_env['MASTER_PORT']} "
+                f"TORCHELASTIC_USE_AGENT_STORE={server_env['TORCHELASTIC_USE_AGENT_STORE']}",
             )
             server_proc = subprocess.Popen(
                 cmd,
