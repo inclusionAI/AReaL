@@ -56,6 +56,7 @@ All arguments:
     --temperature           Temperature for diversification LLM (default: 0.7)
     --requests-per-minute   Rate limit for diversification API (default: 60, 0=no limit)
     --skip-diversify        Only filter, skip LLM diversification
+    --reuse-filter          Reuse cached Phase 1 filter results if available
 """
 
 from __future__ import annotations
@@ -287,6 +288,119 @@ def copy_subfolder(
             shutil.copytree(item, dst_item)
 
 
+# ── Filter Cache ─────────────────────────────────────────────────────────────
+
+_FILTER_CACHE_NAME = ".filter_cache.json"
+
+
+def _filter_config_fingerprint(args: argparse.Namespace) -> Dict[str, Any]:
+    """Build a dict capturing the filter-relevant CLI settings."""
+    return {
+        "filter_wrong_answers": args.filter_wrong_answers,
+        "filter_answer_leakage": args.filter_answer_leakage,
+        "filter_brute_force": args.filter_brute_force,
+        "filter_tool_mismatch": args.filter_tool_mismatch,
+        "leakage_check_mode": args.leakage_check_mode,
+    }
+
+
+def _save_filter_cache(
+    dst_dir: Path,
+    src_dir: Path,
+    args: argparse.Namespace,
+    passed: List[Tuple[Path, Path]],
+    stats: AugmentStats,
+) -> None:
+    """Persist Phase 1 filter results so subsequent runs can skip filtering."""
+    os.makedirs(dst_dir, exist_ok=True)
+    cache = {
+        "src_dir": str(src_dir),
+        "filter_config": _filter_config_fingerprint(args),
+        "stats": {
+            "total": stats.total,
+            "passed_filter": stats.passed_filter,
+            "filtered_wrong_answer": stats.filtered_wrong_answer,
+            "filtered_leakage": stats.filtered_leakage,
+            "filtered_tool_mismatch": stats.filtered_tool_mismatch,
+            "filtered_brute_force": stats.filtered_brute_force,
+            "filtered_structure_error": stats.filtered_structure_error,
+            "api_errors": stats.api_errors,
+        },
+        "passed_subfolders": [[str(sf), str(img)] for sf, img in passed],
+    }
+    cache_path = dst_dir / _FILTER_CACHE_NAME
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+    logger.info("Filter cache saved to %s (%d entries)", cache_path, len(passed))
+
+
+def _load_filter_cache(
+    dst_dir: Path,
+    src_dir: Path,
+    args: argparse.Namespace,
+    current_total: int,
+) -> Optional[Tuple[List[Tuple[Path, Path]], AugmentStats]]:
+    """Load cached Phase 1 results if cache exists and settings match."""
+    cache_path = dst_dir / _FILTER_CACHE_NAME
+    if not cache_path.exists():
+        logger.info("No filter cache found at %s", cache_path)
+        return None
+
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to read filter cache: %s", e)
+        return None
+
+    if cache.get("src_dir") != str(src_dir):
+        logger.info("Filter cache src_dir mismatch — re-filtering")
+        return None
+
+    if cache.get("filter_config") != _filter_config_fingerprint(args):
+        logger.info("Filter cache config mismatch — re-filtering")
+        return None
+
+    s = cache.get("stats", {})
+    if s.get("total", -1) != current_total:
+        logger.info(
+            "Filter cache total mismatch (cached=%d, current=%d) — re-filtering",
+            s.get("total", -1),
+            current_total,
+        )
+        return None
+
+    passed_raw = cache.get("passed_subfolders", [])
+    passed = [(Path(sf), Path(img)) for sf, img in passed_raw]
+
+    missing = [(sf, img) for sf, img in passed if not sf.exists()]
+    if missing:
+        logger.warning(
+            "Filter cache: %d / %d cached paths missing on disk — re-filtering",
+            len(missing),
+            len(passed),
+        )
+        return None
+
+    stats = AugmentStats(
+        total=s.get("total", 0),
+        passed_filter=s.get("passed_filter", 0),
+        filtered_wrong_answer=s.get("filtered_wrong_answer", 0),
+        filtered_leakage=s.get("filtered_leakage", 0),
+        filtered_tool_mismatch=s.get("filtered_tool_mismatch", 0),
+        filtered_brute_force=s.get("filtered_brute_force", 0),
+        filtered_structure_error=s.get("filtered_structure_error", 0),
+        api_errors=s.get("api_errors", 0),
+    )
+    logger.info(
+        "Loaded filter cache: %d / %d passed (%s)",
+        stats.passed_filter,
+        stats.total,
+        cache_path,
+    )
+    return passed, stats
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -411,6 +525,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only filter — skip LLM diversification",
     )
+    p.add_argument(
+        "--reuse-filter",
+        action="store_true",
+        help="Reuse cached Phase 1 filter results from a previous run (skips re-filtering when src_dir, filter config, and subfolder count all match)",
+    )
     return p
 
 
@@ -499,65 +618,74 @@ def main() -> None:
 
     # ── Phase 1: Filter ─────────────────────────────────────────────────
     passed_subfolders: List[Tuple[Path, Path]] = []
+    _phase1_from_cache = False
 
-    def _safe_filter(sf: Path, img_dir: Path) -> Tuple[Path, Path, bool, str]:
-        try:
-            meta = load_meta_info(sf / "meta_info.jsonl")
-            if not meta:
+    if args.reuse_filter:
+        _cached = _load_filter_cache(dst_dir, src_dir, args, current_total=stats.total)
+        if _cached is not None:
+            passed_subfolders, stats = _cached
+            _phase1_from_cache = True
+
+    if not _phase1_from_cache:
+        def _safe_filter(sf: Path, img_dir: Path) -> Tuple[Path, Path, bool, str]:
+            try:
+                meta = load_meta_info(sf / "meta_info.jsonl")
+                if not meta:
+                    return sf, img_dir, False, "structure_error"
+                if use_local_correctness:
+                    is_correct, reason = _local_correctness_check(meta)
+                    if not is_correct:
+                        logger.debug("Filtered %s: %s", sf.name, reason)
+                        return sf, img_dir, False, "wrong_answer"
+
+                passed, reason = filter_subfolder(
+                    sf, judge, config, args.filter_brute_force
+                )
+                if passed and config.filter_tool_mismatch:
+                    traj = load_trajectory(sf / "trajectory.json")
+                    has_mismatch, mismatch_reason = _strict_tool_match(traj)
+                    if has_mismatch:
+                        logger.debug(
+                            "Filtered %s: strict tool mismatch — %s",
+                            sf.name,
+                            mismatch_reason,
+                        )
+                        return sf, img_dir, False, "tool_mismatch"
+                return sf, img_dir, passed, reason
+            except Exception as exc:
+                logger.error("Unexpected error filtering %s: %s", sf.name, exc)
                 return sf, img_dir, False, "structure_error"
-            if use_local_correctness:
-                is_correct, reason = _local_correctness_check(meta)
-                if not is_correct:
-                    logger.debug("Filtered %s: %s", sf.name, reason)
-                    return sf, img_dir, False, "wrong_answer"
 
-            passed, reason = filter_subfolder(
-                sf, judge, config, args.filter_brute_force
+        with ThreadPoolExecutor(max_workers=args.max_concurrent) as pool:
+            futures = [
+                pool.submit(_safe_filter, sf, img_dir)
+                for sf, img_dir in subfolders_with_images
+            ]
+            pbar = tqdm(
+                total=len(futures), desc="Phase 1: Filtering", unit="traj"
             )
-            if passed and config.filter_tool_mismatch:
-                traj = load_trajectory(sf / "trajectory.json")
-                has_mismatch, mismatch_reason = _strict_tool_match(traj)
-                if has_mismatch:
-                    logger.debug(
-                        "Filtered %s: strict tool mismatch — %s",
-                        sf.name,
-                        mismatch_reason,
-                    )
-                    return sf, img_dir, False, "tool_mismatch"
-            return sf, img_dir, passed, reason
-        except Exception as exc:
-            logger.error("Unexpected error filtering %s: %s", sf.name, exc)
-            return sf, img_dir, False, "structure_error"
+            for future in as_completed(futures):
+                sf, img_dir, passed, reason = future.result()
+                if passed:
+                    passed_subfolders.append((sf, img_dir))
+                    stats.passed_filter += 1
+                elif reason == "wrong_answer":
+                    stats.filtered_wrong_answer += 1
+                elif reason == "leakage":
+                    stats.filtered_leakage += 1
+                elif reason == "tool_mismatch":
+                    stats.filtered_tool_mismatch += 1
+                elif reason == "brute_force":
+                    stats.filtered_brute_force += 1
+                elif reason == "api_error":
+                    stats.api_errors += 1
+                else:
+                    stats.filtered_structure_error += 1
+                pbar.update(1)
+            pbar.close()
 
-    with ThreadPoolExecutor(max_workers=args.max_concurrent) as pool:
-        futures = [
-            pool.submit(_safe_filter, sf, img_dir)
-            for sf, img_dir in subfolders_with_images
-        ]
-        pbar = tqdm(
-            total=len(futures), desc="Phase 1: Filtering", unit="traj"
-        )
-        for future in as_completed(futures):
-            sf, img_dir, passed, reason = future.result()
-            if passed:
-                passed_subfolders.append((sf, img_dir))
-                stats.passed_filter += 1
-            elif reason == "wrong_answer":
-                stats.filtered_wrong_answer += 1
-            elif reason == "leakage":
-                stats.filtered_leakage += 1
-            elif reason == "tool_mismatch":
-                stats.filtered_tool_mismatch += 1
-            elif reason == "brute_force":
-                stats.filtered_brute_force += 1
-            elif reason == "api_error":
-                stats.api_errors += 1
-            else:
-                stats.filtered_structure_error += 1
-            pbar.update(1)
-        pbar.close()
-
-    logger.info("Phase 1 complete: %d / %d passed filter", stats.passed_filter, stats.total)
+        logger.info("Phase 1 complete: %d / %d passed filter", stats.passed_filter, stats.total)
+        _save_filter_cache(dst_dir, src_dir, args, passed_subfolders, stats)
 
     if not passed_subfolders:
         logger.error("No subfolders passed filtering — nothing to output")
