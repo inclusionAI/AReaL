@@ -11,7 +11,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -74,6 +74,7 @@ class ThinkBlock:
     prompt_type: Optional[PromptType] = None
     tool_name: Optional[str] = None  # Extracted from "Tool: xxx"
     context: str = ""  # Formatted conversation history preceding this block
+    images: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ── Prompt Templates ─────────────────────────────────────────────────────────
@@ -81,7 +82,7 @@ class ThinkBlock:
 DIVERSIFY_SYSTEM_PROMPT = (
     "You are a text rephrasing assistant. Rephrase the given reasoning text "
     "while preserving its core meaning and key technical information. "
-    "Output ONLY the rephrased text, nothing else."
+    "Wrap your final rephrased text in <answer>...</answer> tags."
 )
 
 PROMPT_FIRST_TOOL = """\
@@ -92,8 +93,8 @@ Requirements:
 - Keep the tool name "{tool_name}" exactly as-is in the output
 - Vary how and why this tool is chosen as the first step
 - Change sentence structure, word choice, and perspective
-- Do NOT include any XML tags like <think>, </think>, <answer>, or <action>
-- Output ONLY the rephrased reasoning text, no explanations
+- Do NOT include <think>, </think>, or <action> tags inside <answer>
+- Wrap your final rephrased text in <answer>...</answer> tags
 
 Original text:
 {text}"""
@@ -119,8 +120,8 @@ calling "{tool_name}" next is the right decision
 - Use natural self-reflection phrases (e.g. "Wait, let me verify...", \
 "Hmm, this result suggests...", "I should double-check...")
 - Change sentence structure and word choice compared to the original
-- Do NOT include any XML tags like <think>, </think>, <answer>, or <action>
-- Output ONLY the rewritten reasoning text, no explanations"""
+- Do NOT include <think>, </think>, or <action> tags inside <answer>
+- Wrap your final rewritten text in <answer>...</answer> tags"""
 
 PROMPT_FINAL_REASONING = """\
 Below is the full conversation history of a geometric analysis model solving \
@@ -142,11 +143,26 @@ how to correct for it and derive the right answer despite the error
 - Use natural self-reflection phrases (e.g. "Let me verify this makes sense...", \
 "Looking back at the results...", "I need to reconsider whether...")
 - Change sentence structure and word choice compared to the original
-- Do NOT include any XML tags like <think>, </think>, <answer>, or <action>
-- Output ONLY the rewritten reasoning text, no explanations"""
+- Do NOT include <think>, </think>, or <action> tags inside <answer>
+- Wrap your final rewritten text in <answer>...</answer> tags"""
 
 
 # ── Block Extraction & Classification ────────────────────────────────────────
+
+
+def _extract_images(trajectory: List[Dict[str, Any]], up_to: int) -> List[Dict[str, Any]]:
+    """Extract image_url parts from user messages in trajectory[0:up_to]."""
+    images: List[Dict[str, Any]] = []
+    for msg in trajectory[:up_to]:
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                images.append(part)
+    return images
 
 
 def extract_think_blocks(trajectory: List[Dict[str, Any]]) -> List[ThinkBlock]:
@@ -167,6 +183,7 @@ def extract_think_blocks(trajectory: List[Dict[str, Any]]) -> List[ThinkBlock]:
             continue
 
         ctx = _build_context(trajectory, msg_idx)
+        images = _extract_images(trajectory, msg_idx)
 
         if isinstance(content, str):
             for m in think_re.finditer(content):
@@ -178,6 +195,7 @@ def extract_think_blocks(trajectory: List[Dict[str, Any]]) -> List[ThinkBlock]:
                         end_pos=m.end(),
                         text=m.group(1),
                         context=ctx,
+                        images=images,
                     )
                 )
 
@@ -199,6 +217,7 @@ def extract_think_blocks(trajectory: List[Dict[str, Any]]) -> List[ThinkBlock]:
                             end_pos=m.end(),
                             text=m.group(1),
                             context=ctx,
+                            images=images,
                         )
                     )
 
@@ -265,19 +284,17 @@ class DiversificationClient:
         )
 
     @staticmethod
-    def _validate_result(block: ThinkBlock, rephrased: str) -> bool:
+    def _validate_result(block: ThinkBlock, rephrased: str) -> Tuple[bool, str]:
         if not rephrased or len(rephrased) <= 10:
-            return False
-        if len(rephrased) > len(block.text) * 3:
-            return False
+            return False, f"too_short (len={len(rephrased) if rephrased else 0})"
         if block.prompt_type in (PromptType.A, PromptType.B):
             if block.tool_name and block.tool_name not in rephrased:
-                return False
+                return False, f"missing_tool_name ({block.tool_name})"
         rephrased_lower = rephrased.lower()
-        for tag in ("<think>", "</think>", "<answer>", "</answer>", "<action>", "</action>"):
+        for tag in ("<think>", "</think>", "<action>", "</action>"):
             if tag in rephrased_lower:
-                return False
-        return True
+                return False, f"contains_forbidden_tag ({tag})"
+        return True, ""
 
     def _wait_for_rate_limit(self) -> None:
         """Block until enough time has passed since the last request."""
@@ -293,6 +310,11 @@ class DiversificationClient:
     def diversify_block(self, block: ThinkBlock) -> str:
         prompt = self._build_prompt(block)
 
+        if block.images:
+            user_content: Any = list(block.images) + [{"type": "text", "text": prompt}]
+        else:
+            user_content = prompt
+
         for attempt in range(self.max_retries):
             try:
                 self._wait_for_rate_limit()
@@ -300,20 +322,26 @@ class DiversificationClient:
                     model=self.model,
                     messages=[
                         {"role": "system", "content": DIVERSIFY_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
+                        {"role": "user", "content": user_content},
                     ],
                     temperature=self.temperature,
                 )
-                rephrased = (resp.choices[0].message.content or "").strip()
+                raw = (resp.choices[0].message.content or "").strip()
 
-                if self._validate_result(block, rephrased):
+                answer_match = re.search(r"<answer>(.*?)</answer>", raw, re.DOTALL)
+                rephrased = answer_match.group(1).strip() if answer_match else raw
+
+                valid, reason = self._validate_result(block, rephrased)
+                if valid:
                     return rephrased
 
-                logger.debug(
-                    "Validation failed (attempt %d/%d, len=%d)",
+                logger.warning(
+                    "Validation failed (attempt %d/%d, reason=%s, len=%d, preview=%.200s)",
                     attempt + 1,
                     self.max_retries,
+                    reason,
                     len(rephrased),
+                    rephrased,
                 )
             except Exception as e:
                 logger.warning(
