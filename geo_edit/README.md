@@ -281,7 +281,7 @@ Typical deployment: Head node runs vLLM 8-TP inference service, Worker node runs
 
 ```bash
 # Start Ray on Head node
-ray start --head --port=6379
+ray start --head --port=6379 --resources='{"tool_agent": 8}'
 
 # Start vLLM 8-TP inference service
 bash geo_edit/scripts/launch_vllm_generate.sh
@@ -323,7 +323,7 @@ echo "endpoint ready"
 
 ```bash
 # Join Ray cluster on Worker node, mark as tool_agent node
-ray start --address='33.180.162.187:6379' --resources='{"tool_agent": 8}'
+ray start --address='33.180.160.211:6379' --resources='{"tool_agent": 8}'
 ```
 
 > `"tool_agent": 8` indicates this node has 8 GPUs available for Tool Agents

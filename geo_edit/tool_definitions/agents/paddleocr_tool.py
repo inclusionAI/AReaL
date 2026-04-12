@@ -305,11 +305,24 @@ def merge_nearby_text(text_results: list, distance_threshold: int = 50) -> list:
     return merged
 
 
+def _deduplicate_text_results(text_results: list) -> list:
+    """Remove duplicate text entries (case-insensitive)."""
+    seen = set()
+    deduped = []
+    for item in text_results:
+        key = item["text"].strip().lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(item)
+    return deduped
+
+
 def process_map_ocr_result(text_results: list) -> list:
-    """Full processing pipeline for map OCR: filter -> merge."""
+    """Full processing pipeline for map OCR: filter -> merge -> deduplicate."""
     filtered = filter_map_text(text_results)
     merged = merge_nearby_text(filtered)
-    return merged
+    deduped = _deduplicate_text_results(merged)
+    return deduped
 
 
 def filter_map_text_string(text: str) -> str:
@@ -326,6 +339,7 @@ def filter_map_text_string(text: str) -> str:
     Returns:
         Filtered text with each valid item on a new line.
     """
+    seen = set()
     filtered_lines = []
     for line in text.splitlines():
         line = line.strip()
@@ -340,6 +354,11 @@ def filter_map_text_string(text: str) -> str:
         # 3. Filter pure symbols
         if re.match(r"^[^\w\u4e00-\u9fff]+$", line):
             continue
+        # 4. Deduplicate (case-insensitive)
+        key = line.lower()
+        if key in seen:
+            continue
+        seen.add(key)
         filtered_lines.append(line)
     return "\n".join(filtered_lines)
 
