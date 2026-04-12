@@ -328,19 +328,24 @@ class DiversificationClient:
                 )
                 raw = (resp.choices[0].message.content or "").strip()
 
-                answer_match = re.search(r"<answer>(.*?)</answer>", raw, re.DOTALL)
-                rephrased = answer_match.group(1).strip() if answer_match else raw
+                last_answer = re.search(r".*<answer>(.*?)</answer>", raw, re.DOTALL)
+                if last_answer:
+                    rephrased = last_answer.group(1).strip()
+                else:
+                    cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
+                    rephrased = cleaned.replace("</think>", "").strip()
 
                 valid, reason = self._validate_result(block, rephrased)
                 if valid:
                     return rephrased
 
                 logger.warning(
-                    "Validation failed (attempt %d/%d, reason=%s, len=%d, preview=%.200s)",
+                    "Validation failed (attempt %d/%d, reason=%s, len=%d)\n=== RAW RESPONSE ===\n%s\n=== END RAW ===\n=== REPHRASED ===\n%s\n=== END REPHRASED ===",
                     attempt + 1,
                     self.max_retries,
                     reason,
                     len(rephrased),
+                    raw,
                     rephrased,
                 )
             except Exception as e:

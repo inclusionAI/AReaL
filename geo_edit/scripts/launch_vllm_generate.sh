@@ -15,6 +15,7 @@ nohup python -m vllm.entrypoints.openai.api_server \
   --tensor-parallel-size 8 \
   --max-model-len "${MAX_MODEL_LEN:-65536}" \
   --dtype auto \
+  --allowed-local-media-path /storage/openpsi/data \
   --gpu-memory-utilization "${GPU_MEM_UTIL:-0.8}" \
   --enable-prefix-caching \
   > /tmp/log/vllm_api.log 2>&1 &
