@@ -24,7 +24,7 @@ else
         geo_edit_function
         geo_paddleocr
         geo_sam3
-        geo_chartr1
+        # geo_chartr1
         geo_grounding_dino
     )
 fi

@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
 set -x
 
-WORKSPACE=/storage/openpsi/models/lcy_image_edit/rl_workspace
+# ============================================================
+# Environment variables you MUST set before running:
+#
+#   WORKSPACE        – root dir for logs/checkpoints
+#                      default: /storage/openpsi/data/reasonmap_rl
+#   MODEL_PATH       – path to Qwen3-VL-8B-Thinking
+#                      default: /storage/openpsi/models/Qwen3-VL-8B-Thinking
+#   TOOL_SERVER_IP   – IP of the node running the tool server
+#                      default: auto-detect via Ray (tool_agent resource)
+#   JUDGE_API_KEY    – LLM judge API key (enables fallback scoring)
+#   JUDGE_API_BASE   – LLM judge endpoint URL
+#   JUDGE_MODEL      – judge model name (default: gpt-5-mini-2025-08-07)
+#
+# Optional:
+#   WANDB_API_KEY    – for wandb logging
+#   WANDB_BASE_URL   – custom wandb server
+# ============================================================
 
-train_data="[$WORKSPACE/data/chartqa_rl_train.parquet]"
-val_data="[$WORKSPACE/data/chartqa_rl_val.parquet]"
-model_name=/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-instruct-chartqa-1third
-run_name="chartqa-rl-smoke-test"
+WORKSPACE=${WORKSPACE:-/storage/openpsi/data/reasonmap_rl}
+model_name=${MODEL_PATH:-/storage/openpsi/models/Qwen3-VL-8B-Thinking}
+
+train_data="[$WORKSPACE/combined_train.parquet]"
+val_data="[$WORKSPACE/combined_test.parquet]"
+run_name="reasonmap-rl-zero-smoke"
 rl_alg=grpo
 n_gpus_per_node=8
 n_nodes=1
@@ -23,7 +41,7 @@ top_p=1.0
 enable_agent=True
 strategy="fsdp2"
 action_stop_tokens='</action>'
-max_turns=3
+max_turns=5
 kl_loss_coef=0.0
 kl_coef=0
 entropy_coeff=0
@@ -135,9 +153,9 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     critic.ulysses_sequence_parallel_size=$ulysses_sequence_parallel_size \
     algorithm.kl_ctrl.kl_coef=$kl_coef \
     trainer.logger=['console','wandb'] \
-    trainer.project_name=chartqa_rl \
+    trainer.project_name=reasonmap_rl \
     trainer.experiment_name=$run_name \
-    trainer.val_before_train=False \
+    trainer.val_before_train=True \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=$WORKSPACE/checkpoints/$run_name \
     trainer.n_gpus_per_node=$n_gpus_per_node \
