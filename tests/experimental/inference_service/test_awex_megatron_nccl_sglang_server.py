@@ -152,7 +152,7 @@ def _run_awex_sglang_torchrun(
     # In some CI/container setups, those processes do not share a stable /dev/shm
     # namespace; NCCL SHM transport can fail to attach segments and deadlock first
     # collectives. Force NCCL to avoid SHM for this integration test.
-    environ["NCCL_SHM_DISABLE"] = "1"
+    # environ["NCCL_SHM_DISABLE"] = "1"
     environ["NCCL_CUMEM_ENABLE"] = "0"
     environ["NCCL_NVLS_ENABLE"] = "0"
     # DETAIL may wrap process groups and has known device-binding caveats in
@@ -205,7 +205,7 @@ def _temporary_env(overrides: dict[str, str]):
 @pytest.mark.parametrize(
     "split_name,trainer_gpu_count,dp_size,tp_size,pp_size,inf_tp",
     [
-        ("4plus4_d4_d4", 4, 4, 1, 1, 4),
+        ("4plus4_d4_t4", 4, 4, 1, 1, 4),
         ("4plus4_d2t2_t4", 4, 2, 2, 1, 4),
         ("4plus4_t4_d4", 4, 1, 4, 1, 1),
     ],
@@ -250,7 +250,7 @@ def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
     scheduler = None
     with _temporary_env(
         {
-            "NCCL_SHM_DISABLE": "1",
+            # "NCCL_SHM_DISABLE": "1",
             "NCCL_CUMEM_ENABLE": "0",
             "NCCL_NVLS_ENABLE": "0",
             "TORCH_DISTRIBUTED_DEBUG": "INFO",
