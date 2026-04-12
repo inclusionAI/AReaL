@@ -469,19 +469,14 @@ def main() -> None:
 
     client: Optional[DiversificationClient] = None
     if not args.skip_diversify:
-        if api_key:
-            client = DiversificationClient(
-                api_base=args.api_base,
-                api_key=api_key,
-                model=args.model,
-                temperature=args.temperature,
-                requests_per_minute=args.requests_per_minute,
-            )
-            logger.info("Diversification client initialised: model=%s", args.model)
-        else:
-            logger.warning(
-                "No API key for diversification — will copy without diversifying"
-            )
+        client = DiversificationClient(
+            api_base=args.api_base,
+            api_key=api_key,
+            model=args.model,
+            temperature=args.temperature,
+            requests_per_minute=args.requests_per_minute,
+        )
+        logger.info("Diversification client initialised: model=%s", args.model)
 
     subfolders_with_images = _discover_subfolders(src_dir)
     stats = AugmentStats(total=len(subfolders_with_images))

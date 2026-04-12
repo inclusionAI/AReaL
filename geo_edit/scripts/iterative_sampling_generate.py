@@ -507,6 +507,9 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
             logger.warning(f"[{task_id}] Forced final answer failed: {e}")
 
     logger.warning(f"[{task_id}] Max rounds reached without valid trajectory")
+    if not task.conversation_history:
+        logger.warning(f"[{task_id}] No conversation history recorded, skipping save")
+        return False, None
     meta_info = task.save_trajectory()
     return False, meta_info
 

@@ -92,7 +92,6 @@ Requirements:
 - Keep the tool name "{tool_name}" exactly as-is in the output
 - Vary how and why this tool is chosen as the first step
 - Change sentence structure, word choice, and perspective
-- Maximum output length: {max_len} characters
 - Do NOT include any XML tags like <think>, </think>, <answer>, or <action>
 - Output ONLY the rephrased reasoning text, no explanations
 
@@ -120,7 +119,6 @@ calling "{tool_name}" next is the right decision
 - Use natural self-reflection phrases (e.g. "Wait, let me verify...", \
 "Hmm, this result suggests...", "I should double-check...")
 - Change sentence structure and word choice compared to the original
-- Maximum output length: {max_len} characters
 - Do NOT include any XML tags like <think>, </think>, <answer>, or <action>
 - Output ONLY the rewritten reasoning text, no explanations"""
 
@@ -144,7 +142,6 @@ how to correct for it and derive the right answer despite the error
 - Use natural self-reflection phrases (e.g. "Let me verify this makes sense...", \
 "Looking back at the results...", "I need to reconsider whether...")
 - Change sentence structure and word choice compared to the original
-- Maximum output length: {max_len} characters
 - Do NOT include any XML tags like <think>, </think>, <answer>, or <action>
 - Output ONLY the rewritten reasoning text, no explanations"""
 
@@ -253,20 +250,18 @@ class DiversificationClient:
         self._rate_lock = threading.Lock()
 
     def _build_prompt(self, block: ThinkBlock) -> str:
-        max_len = len(block.text) * 3
         if block.prompt_type == PromptType.A:
             return PROMPT_FIRST_TOOL.format(
-                tool_name=block.tool_name, max_len=max_len, text=block.text
+                tool_name=block.tool_name, text=block.text
             )
         if block.prompt_type == PromptType.B:
             return PROMPT_SUBSEQUENT_TOOL.format(
                 tool_name=block.tool_name,
-                max_len=max_len,
                 text=block.text,
                 context=block.context,
             )
         return PROMPT_FINAL_REASONING.format(
-            max_len=max_len, text=block.text, context=block.context
+            text=block.text, context=block.context
         )
 
     @staticmethod

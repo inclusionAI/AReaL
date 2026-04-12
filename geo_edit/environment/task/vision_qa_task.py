@@ -413,11 +413,7 @@ class VisionQATask(AbstractVLMTask, gym.Env):
 
         tokens_used_total = tokens_total_per_step[-1]
 
-        # Token calculation based on api_mode
-        # - responses API: total_tokens is cumulative, input = total - output
-        # - chat_completions API: prompt_tokens is cumulative input, total = input + output
         if self.model_type == "google":
-            # Google uses its own native API
             tokens_output_total = sum(t for t in tokens_output_per_step if isinstance(t, (int, float)))
             tokens_input_total = None
             if isinstance(tokens_used_total, (int, float)) and isinstance(tokens_output_total, (int, float)):
@@ -425,12 +421,10 @@ class VisionQATask(AbstractVLMTask, gym.Env):
                 if tokens_input_total < 0:
                     raise ValueError("Calculated tokens_input_total is negative.")
         elif self.api_mode == "chat_completions":
-            # Chat Completions API: prompt_tokens is cumulative input tokens
             tokens_output_total = sum(t for t in tokens_output_per_step if isinstance(t, (int, float)))
             tokens_input_total = tokens_input_per_step[-1]
             tokens_used_total = tokens_output_total + tokens_input_total
         elif self.api_mode == "responses":
-            # Responses API: total_tokens is cumulative
             tokens_output_total = sum(t for t in tokens_output_per_step if isinstance(t, (int, float)))
             tokens_used_total = tokens_total_per_step[-1]
             tokens_input_total = tokens_used_total - tokens_output_total

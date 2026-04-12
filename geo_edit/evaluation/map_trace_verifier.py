@@ -104,7 +104,7 @@ def map_trace_judge(
     prediction: str,
     image_path: str = "",
     meta_info_extra: Optional[Dict[str, Any]] = None,
-    ndtw_threshold: float = 1.0,
+    ndtw_threshold: float = 0.5,
 ) -> Tuple[bool, str]:
     """TrajectoryJudge-compatible interface for MapTrace verification."""
     ndtw, is_success, reason = map_trace_score(prediction, ground_truth, ndtw_threshold)

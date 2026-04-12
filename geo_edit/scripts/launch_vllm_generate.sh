@@ -11,8 +11,8 @@ nohup python -m vllm.entrypoints.openai.api_server \
   --host 0.0.0.0 \
   --trust-remote-code \
   --port "$port" \
-  --data-parallel-size "${DP_SIZE:-8}" \
-  --tensor-parallel-size "${TP_SIZE:-1}" \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 8 \
   --max-model-len "${MAX_MODEL_LEN:-65536}" \
   --dtype auto \
   --gpu-memory-utilization "${GPU_MEM_UTIL:-0.8}" \
