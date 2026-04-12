@@ -39,6 +39,15 @@ LOG_FILE="${LOG_DIR}/exp-${EXP_NAME}.log"
 
 mkdir -p "${LOG_DIR}"
 
+# Force disable PIL decompression bomb check for all subprocesses (including torchrun workers)
+# sitecustomize.py is auto-imported by Python at startup, before any user code runs
+PIL_PATCH_DIR=$(mktemp -d)
+cat > "${PIL_PATCH_DIR}/sitecustomize.py" << 'PYEOF'
+import PIL.Image
+PIL.Image.MAX_IMAGE_PIXELS = None
+PYEOF
+export PYTHONPATH="${PIL_PATCH_DIR}:${PYTHONPATH:-}"
+
 echo "=== [$(date)] Starting SFT: ${EXP_NAME} ==="
 echo "Config : ${CONFIG}"
 echo "GPUs   : ${NPROC}"
