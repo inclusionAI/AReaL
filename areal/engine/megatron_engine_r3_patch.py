@@ -1,0 +1,309 @@
+# Copyright 2024 Bytedance Ltd. and/or its affiliates
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""
+R3 Integration Patch for MegatronEngine.
+
+This module wraps ``MegatronEngine.forward_backward_batch`` so that, when
+the micro-batch data contains ``routed_experts`` tensors, each micro-batch's
+forward step is preceded by a call to ``setup_per_microbatch_replay_forward``
+and followed (after the full forward pass) by a switch to backward-replay
+mode.
+
+The patch handles the critical issue that ``routed_experts`` is a 4D tensor
+``(bs, seq_len, num_moe_layers, topk)`` which will NOT be correctly split by
+``split_padded_tensor_dict_into_mb_list`` (which only splits tensors with
+``numel() == bs * max_seqlen``).  Instead, we extract ``routed_experts``
+from ``mb_list.data`` before micro-batch splitting, and manually distribute
+it to each micro-batch using the ``forward_indices`` and ``group_lens``
+from ``MicroBatchList``.
+
+Usage::
+
+    from areal.engine.megatron_engine_r3_patch import patch_megatron_engine_for_r3
+    patch_megatron_engine_for_r3(engine, enable_router_replay=True)
+"""
+
+from __future__ import annotations
+
+import logging
+import types
+from collections.abc import Callable
+from typing import Any
+
+import torch
+
+logger = logging.getLogger(__name__)
+
+
+# ===================================================================
+# Public API
+# ===================================================================
+
+
+def patch_megatron_engine_for_r3(
+    engine,
+    enable_router_replay: bool = False,
+) -> None:
+    """Patch a ``MegatronEngine`` instance to support Router Replay (R3).
+
+    1. Applies Megatron-Core monkey-patches (TransformerConfig, TopKRouter,
+       Dispatcher).
+    2. Tags the engine with ``_r3_enabled = True``.
+    3. Wraps ``forward_backward_batch`` to inject per-microbatch replay
+       setup / teardown around the Megatron pipeline schedule.
+
+    Args:
+        engine: A ``MegatronEngine`` instance (already initialized).
+        enable_router_replay: Master switch.
+    """
+    if not enable_router_replay:
+        engine._r3_enabled = False
+        logger.debug("[R3] Router replay not enabled; skipping engine patch.")
+        return
+
+    logger.info("[R3] Patching MegatronEngine for Router Replay (R3).")
+
+    # Mark and save original
+    engine._r3_enabled = True
+    engine._r3_original_forward_backward_batch = engine.forward_backward_batch
+
+    # Bind the wrapped method
+    engine.forward_backward_batch = types.MethodType(
+        _r3_forward_backward_batch, engine
+    )
+
+    logger.info("[R3] MegatronEngine patched successfully.")
+
+
+# ===================================================================
+# routed_experts splitting
+# ===================================================================
+
+
+def _split_routed_experts_for_mbs(
+    routed_experts: torch.Tensor,
+    mb_list,
+) -> list[torch.Tensor | None]:
+    """Split the batch-level ``routed_experts`` tensor into per-micro-batch tensors.
+
+    Uses ``mb_list.forward_indices`` and ``mb_list.group_lens`` to correctly
+    reorder and slice samples, mirroring how ``split_padded_tensor_dict_into_mb_list``
+    splits other tensors.
+
+    Args:
+        routed_experts: ``(bs, max_seqlen, num_moe_layers, topk)``
+        mb_list: ``MicroBatchList`` with ``forward_indices`` and ``group_lens``.
+
+    Returns:
+        List of tensors, one per micro-batch, each of shape
+        ``(mb_bs, max_seqlen, num_moe_layers, topk)``.
+    """
+    if routed_experts is None:
+        return [None] * len(mb_list)
+
+    forward_indices = mb_list.forward_indices
+    group_lens = mb_list.group_lens
+
+    if forward_indices is None:
+        # No reordering -- just split evenly
+        n_mbs = len(mb_list)
+        bs = routed_experts.shape[0]
+        chunk = bs // n_mbs
+        return [routed_experts[i * chunk : (i + 1) * chunk] for i in range(n_mbs)]
+
+    # Reorder by forward_indices (sample-level reordering)
+    reordered = routed_experts[forward_indices]
+
+    # Split according to group_lens (number of samples per micro-batch)
+    # group_lens gives number of *tokens* per micro-batch, but since
+    # routed_experts is indexed by *sample* (dim-0 is bs), we need
+    # the number of samples per micro-batch.
+    # We can derive this from the mbs list.
+    result = []
+    offset = 0
+    for i, mb_dict in enumerate(mb_list.mbs):
+        # Determine number of samples in this micro-batch
+        # The mb_dict contains "attention_mask" which has shape (n_samples, ...)
+        if isinstance(mb_dict, dict) and "attention_mask" in mb_dict:
+            attn = mb_dict["attention_mask"]
+            if hasattr(attn, "shape"):
+                n_samples = attn.shape[0]
+            else:
+                n_samples = len(attn)
+        else:
+            # Fallback: try cu_seqlens
+            if isinstance(mb_dict, dict) and "cu_seqlens" in mb_dict:
+                cu = mb_dict["cu_seqlens"]
+                n_samples = len(cu) - 1
+            else:
+                # Last resort: divide evenly
+                n_samples = routed_experts.shape[0] // len(mb_list)
+
+        result.append(reordered[offset : offset + n_samples])
+        offset += n_samples
+
+    return result
+
+
+# ===================================================================
+# Wrapped forward_backward_batch
+# ===================================================================
+
+
+def _r3_forward_backward_batch(
+    self,
+    mb_list,
+    process_output_fn: Callable[
+        [torch.Tensor, dict[str, Any]], torch.Tensor | None
+    ],
+    forward_only: bool = False,
+) -> None:
+    """Drop-in replacement for ``MegatronEngine.forward_backward_batch``
+    that injects R3 replay setup around each micro-batch.
+
+    If the data does not contain ``routed_experts``, delegates directly
+    to the original method with zero overhead.
+    """
+    from areal.engine.router_replay_utils import (
+        clear_router_replay,
+        setup_per_microbatch_replay_backward,
+        setup_per_microbatch_replay_forward,
+    )
+
+    # ------------------------------------------------------------------
+    # 1. Extract routed_experts from the batch data and split per-MB.
+    #    routed_experts is (bs, max_seqlen, num_moe_layers, topk) and
+    #    does NOT get split by split_padded_tensor_dict_into_mb_list.
+    # ------------------------------------------------------------------
+    routed_experts_batch = None
+    if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
+        routed_experts_batch = mb_list.data.pop("routed_experts", None)
+
+    # Also clean from mbs and padded_mbs to avoid confusing downstream code
+    for mb_dict in mb_list.mbs:
+        if isinstance(mb_dict, dict):
+            mb_dict.pop("routed_experts", None)
+    if mb_list.padded_mbs is not None:
+        for mb_dict in mb_list.padded_mbs:
+            if isinstance(mb_dict, dict):
+                mb_dict.pop("routed_experts", None)
+
+    if routed_experts_batch is None:
+        logger.debug(
+            "[R3] No routed_experts in batch data; using original "
+            "forward_backward_batch."
+        )
+        return self._r3_original_forward_backward_batch(
+            mb_list, process_output_fn, forward_only=forward_only
+        )
+
+    logger.debug(
+        "[R3] R3 forward_backward: %d micro-batches, routed_experts shape=%s, "
+        "forward_only=%s",
+        len(mb_list),
+        routed_experts_batch.shape,
+        forward_only,
+    )
+
+    # Split routed_experts per micro-batch
+    per_mb_routed_experts = _split_routed_experts_for_mbs(
+        routed_experts_batch, mb_list
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Store R3 data on the engine for the wrapped iterator.
+    # ------------------------------------------------------------------
+    self._r3_per_mb_experts = per_mb_routed_experts
+    self._r3_mb_counter = 0
+    model_config = self.tf_config
+
+    # ------------------------------------------------------------------
+    # 3. Wrap the MicroBatchList iterator to inject R3 setup before each
+    #    micro-batch's forward pass.
+    # ------------------------------------------------------------------
+    engine_ref = self
+
+    class _R3MicroBatchIterator:
+        """Wraps the micro-batch iterator to inject R3 setup."""
+
+        def __init__(self, base_iter):
+            self._base = base_iter
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            mb_item = next(self._base)
+
+            idx = engine_ref._r3_mb_counter
+            engine_ref._r3_mb_counter += 1
+            re = (
+                engine_ref._r3_per_mb_experts[idx]
+                if idx < len(engine_ref._r3_per_mb_experts)
+                else None
+            )
+
+            if re is not None:
+                # Get attention_mask from orig_mb or padded_mb
+                attn_mask = None
+                if hasattr(mb_item, "orig_mb") and isinstance(mb_item.orig_mb, dict):
+                    attn_mask = mb_item.orig_mb.get("attention_mask")
+                if attn_mask is None and hasattr(mb_item, "padded_mb") and isinstance(
+                    mb_item.padded_mb, dict
+                ):
+                    attn_mask = mb_item.padded_mb.get("attention_mask")
+
+                if attn_mask is not None:
+                    try:
+                        setup_per_microbatch_replay_forward(
+                            re.to(attn_mask.device),
+                            attn_mask,
+                            model_config,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "[R3] Failed to setup replay for micro-batch %d.",
+                            idx,
+                            exc_info=True,
+                        )
+                else:
+                    logger.warning(
+                        "[R3] Cannot find attention_mask for micro-batch %d; "
+                        "skipping replay setup.",
+                        idx,
+                    )
+            return mb_item
+
+    # Patch __iter__ on the MicroBatchList instance
+    original_iter = mb_list.__class__.__iter__
+
+    def _r3_iter(mb_list_self):
+        return _R3MicroBatchIterator(original_iter(mb_list_self))
+
+    mb_list.__class__.__iter__ = _r3_iter
+
+    try:
+        self._r3_original_forward_backward_batch(
+            mb_list, process_output_fn, forward_only=forward_only
+        )
+
+        # Switch to backward replay after forward pass
+        if not forward_only:
+            setup_per_microbatch_replay_backward()
+    finally:
+        # Restore original iterator and clean up
+        mb_list.__class__.__iter__ = original_iter
+        clear_router_replay()
+        self._r3_per_mb_experts = None
+        self._r3_mb_counter = 0
