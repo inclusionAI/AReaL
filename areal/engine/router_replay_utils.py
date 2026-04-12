@@ -27,10 +27,6 @@ Ported from verl reference implementation, adapted for AReaL:
 - No dependency on megatron.core.transformer.moe.router_replay
 - Simplified packed-sequence handling (no preprocess_packed_seqs dependency)
 - topk and num_moe_layers passed explicitly (no hardcoded guessing)
-
-v3 changes:
-- Problem 6 fix: guard scatter_to_sequence_parallel_region for tp_size==1
-- Improved logging and bounds checking throughout
 """
 
 from __future__ import annotations

@@ -28,26 +28,6 @@ from ``mb_list.data`` before micro-batch splitting, and manually distribute
 it to each micro-batch using the ``forward_indices`` and ``group_lens``
 from ``MicroBatchList``.
 
-Key design decisions (v3 fixes):
-- **Problem 1 fix**: routed_experts is popped from mb_list.data AND from
-  every mb in mb_list.mbs / padded_mbs so that it is never broadcast
-  incorrectly to mini-batches.  The PPO actor side also pops it before
-  ``split_padded_tensor_dict_into_mb_list`` and manually re-distributes.
-- **Problem 2 fix**: ``__iter__`` is patched on the *instance* via
-  ``types.MethodType``, not on the class, to avoid affecting other
-  ``MicroBatchList`` instances.
-- **Problem 3 fix**: ``REPLAY_BACKWARD`` is NOT set after
-  ``forward_backward_batch`` returns (by then backward is already done
-  in Megatron's 1F1B schedule).  Instead, ``set_target_indices()`` in
-  ``setup_per_microbatch_replay_forward`` appends to ``replay_backward_list``
-  so that activation-checkpoint recompute during backward already has the
-  data it needs via ``REPLAY_FORWARD`` mode.
-- **Problem 5 fix**: When ``attention_mask`` is absent (packed format),
-  we reconstruct it from ``cu_seqlens`` + ``max_seqlen`` so that
-  ``setup_per_microbatch_replay_forward`` always receives valid data.
-- **Problem 7 fix**: Sample-count inference uses cu_seqlens first, then
-  attention_mask, then input_ids, then even division as last resort.
-
 Usage::
 
     from areal.engine.megatron_engine_r3_patch import patch_megatron_engine_for_r3
@@ -360,7 +340,6 @@ def _r3_forward_backward_batch(
 
     # ------------------------------------------------------------------
     # 3. Wrap the MicroBatchList iterator on the INSTANCE level
-    #    (Problem 2 fix: do NOT modify __class__.__iter__).
     #
     #    The iterator injects R3 setup before each micro-batch's forward.
     #    Because Megatron's 1F1B schedule interleaves forward and backward,
@@ -424,12 +403,6 @@ def _r3_forward_backward_batch(
                     )
             return mb_item
 
-    # Problem 2 fix: patch __iter__ on the INSTANCE, not the class.
-    # Python's iter() protocol looks up __iter__ on the *type*, not the instance.
-    # So we cannot simply assign mb_list.__iter__ = ... and have iter() find it.
-    # Instead, we save the original class __iter__, temporarily replace it on
-    # the class for the duration of this call, and restore it in finally.
-    # This is safe because forward_backward_batch is synchronous.
     original_class_iter = mb_list.__class__.__iter__
 
     def _r3_iter(mb_list_self):
@@ -438,7 +411,6 @@ def _r3_forward_backward_batch(
     mb_list.__class__.__iter__ = _r3_iter
 
     try:
-        # Problem 3 explanation:
         # Megatron's forward_backward_func (e.g. 1F1B schedule) internally
         # interleaves forward and backward for each micro-batch.  We do NOT
         # call setup_per_microbatch_replay_backward() after this function
