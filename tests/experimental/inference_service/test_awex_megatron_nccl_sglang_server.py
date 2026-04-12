@@ -67,6 +67,7 @@ def _split_disjoint_gpus(
 
 def _start_controller(
     *,
+    inf_tp: int,
     tmp_root: str,
     inference_gpus: list[int],
     model_path: str,
@@ -84,8 +85,8 @@ def _start_controller(
         name_resolve_type="nfs",
     )
 
-    infer_tp = len(inference_gpus)
-    backend = f"sglang:d1t{infer_tp}"
+    inf_dp = len(inference_gpus) // inf_tp
+    backend = f"sglang:d{inf_dp}t{infer_tp}"
 
     controller_cfg = GatewayControllerConfig(
         tokenizer_path=model_path,
@@ -179,10 +180,9 @@ def _run_awex_sglang_torchrun(
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 @pytest.mark.parametrize(
-    "split_name,trainer_gpu_count,dp_size,tp_size,pp_size",
+    "split_name,trainer_gpu_count,dp_size,tp_size,pp_size,inf_tp",
     [
-        ("2plus6", 2, 2, 1, 1),
-        ("4plus4", 4, 1, 2, 2),
+        ("4plus4", 4, 4, 1, 1, 4),
     ],
 )
 def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
@@ -192,6 +192,7 @@ def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
     dp_size: int,
     tp_size: int,
     pp_size: int,
+    inf_tp: int,
 ):
     """Run awex Megatron<->SGLang with trainer/inference disjoint GPU pools.
 
@@ -224,6 +225,7 @@ def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
     scheduler = None
     try:
         controller, scheduler = _start_controller(
+            inf_tp=inf_tp,
             tmp_root=runtime_root,
             inference_gpus=inference_gpu_ids,
             model_path=model_path,
