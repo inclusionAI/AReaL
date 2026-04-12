@@ -43,6 +43,19 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> dict[str,
         result[f"verl_tool/{key}/mean"] = values.mean()
         result[f"verl_tool/{key}/max"] = values.max()
         result[f"verl_tool/{key}/min"] = values.min()
+
+    reward_extra_keys = batch.meta_info.get("reward_extra_keys", [])
+    for key in reward_extra_keys:
+        values = batch.non_tensor_batch.get(key)
+        if values is None:
+            continue
+        arr = np.array([float(v) for v in values if v is not None])
+        if len(arr) == 0:
+            continue
+        result[f"reward/{key}/mean"] = arr.mean()
+        result[f"reward/{key}/max"] = arr.max()
+        result[f"reward/{key}/min"] = arr.min()
+
     return result
 
 def process_validation_metrics(
