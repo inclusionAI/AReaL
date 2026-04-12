@@ -371,6 +371,7 @@ def main():
     )
     if tool_router.is_agent_enabled():
         from geo_edit.environment.tool_agents import get_manager
+
         manager = get_manager()
         enabled_agent_names = manager.get_all_actor_names()
     else:
@@ -442,6 +443,10 @@ def main():
         f"Starting {n_workers} worker processes (each reuses Agent for all tasks)"
     )
 
+    resolved_max_tool_calls = (
+        args.max_tool_calls if args.max_tool_calls is not None else MAX_TOOL_CALLS
+    )
+
     pool = ctx.Pool(
         processes=n_workers,
         initializer=_init_worker,
@@ -452,7 +457,7 @@ def main():
             args.api_base,
             args.port,
             output_path,
-            args.max_tool_calls if args.max_tool_calls is not None else MAX_TOOL_CALLS,
+            resolved_max_tool_calls,
             enabled_agent_names,
             args.enable_tools,  # Pass enable_tools to workers
         ),
@@ -559,7 +564,9 @@ def main():
             logger.info("Worker pool closed successfully")
 
     if meta_info_list:
-        save_global_meta_info(output_path, meta_info_list)
+        save_global_meta_info(
+            output_path, meta_info_list, max_tool_calls=resolved_max_tool_calls
+        )
 
     if interrupted:
         logger.info(f"Script interrupted. Saved {len(meta_info_list)} completed tasks.")

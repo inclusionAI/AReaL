@@ -26,7 +26,9 @@ def get_input_tokens_total(item: Dict) -> Optional[float]:
         return float(input_total)
     tokens_used_total = item.get("tokens_used_total")
     output_total = get_output_tokens_total(item)
-    if isinstance(tokens_used_total, (int, float)) and isinstance(output_total, (int, float)):
+    if isinstance(tokens_used_total, (int, float)) and isinstance(
+        output_total, (int, float)
+    ):
         value = float(tokens_used_total) - float(output_total)
         return value if value > 0 else 0.0
     per_step = item.get("tokens_input_per_step")
@@ -41,7 +43,9 @@ def get_input_tokens_total(item: Dict) -> Optional[float]:
             return None
         outputs = item.get("tokens_used_per_step")
         if isinstance(outputs, list) and last_idx is not None:
-            output_before = sum(v for v in outputs[:last_idx] if isinstance(v, (int, float)))
+            output_before = sum(
+                v for v in outputs[:last_idx] if isinstance(v, (int, float))
+            )
             input_total = last_input - float(output_before)
             return input_total if input_total > 0 else 0.0
         return last_input
@@ -59,7 +63,11 @@ def get_total_tokens(item: Dict) -> Optional[float]:
             return float(sum(values))
     output_total = get_output_tokens_total(item)
     input_total = get_input_tokens_total(item)
-    return float(output_total + input_total) if output_total is not None and input_total is not None else None
+    return (
+        float(output_total + input_total)
+        if output_total is not None and input_total is not None
+        else None
+    )
 
 
 def compute_tool_combination_statistics(eval_results: List[Dict]) -> str:
@@ -95,14 +103,28 @@ def compute_tool_combination_statistics(eval_results: List[Dict]) -> str:
     for cat in sorted(stats.keys(), key=lambda x: (x != "no_tool", x)):
         s = stats[cat]
         acc = s["correct"] / s["total"] if s["total"] > 0 else 0.0
-        avg_tokens = s["token_total_sum"] / s["token_total_count"] if s["token_total_count"] > 0 else 0.0
-        avg_tokens_correct = s["token_correct_sum"] / s["token_correct_count"] if s["token_correct_count"] > 0 else 0.0
-        lines.append("  " + f"{cat}: total={s['total']}, correct={s['correct']}, accuracy={acc:.4f}, " + f"avg_tokens={avg_tokens:.2f}, avg_tokens_correct={avg_tokens_correct:.2f}")
+        avg_tokens = (
+            s["token_total_sum"] / s["token_total_count"]
+            if s["token_total_count"] > 0
+            else 0.0
+        )
+        avg_tokens_correct = (
+            s["token_correct_sum"] / s["token_correct_count"]
+            if s["token_correct_count"] > 0
+            else 0.0
+        )
+        lines.append(
+            "  "
+            + f"{cat}: total={s['total']}, correct={s['correct']}, accuracy={acc:.4f}, "
+            + f"avg_tokens={avg_tokens:.2f}, avg_tokens_correct={avg_tokens_correct:.2f}"
+        )
     lines.append("=" * 60)
     return "\n".join(lines)
 
 
-def aggregate_meta_info(meta_info_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+def aggregate_meta_info(
+    meta_info_list: List[Dict[str, Any]], max_tool_calls: int = MAX_TOOL_CALLS
+) -> Dict[str, Any]:
     total_tool_calls = 0
     total_tokens = 0.0
     total_output_tokens = 0.0
@@ -117,12 +139,14 @@ def aggregate_meta_info(meta_info_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         tokens_used_total = info.get("tokens_used_total")
         if isinstance(tokens_used_total, (int, float)):
             total_tokens += float(tokens_used_total)
-        if info.get("total_steps", 0) >= MAX_TOOL_CALLS:
+        if info.get("total_steps", 0) >= max_tool_calls:
             reach_max_tool_call_count += 1
         if info.get("function_call_total_count", 0) == 0:
             direct_answer_count += 1
         for tool_name, count in info.get("function_call_each_count", {}).items():
-            tool_usage_counts[tool_name] = tool_usage_counts.get(tool_name, 0) + int(count)
+            tool_usage_counts[tool_name] = tool_usage_counts.get(tool_name, 0) + int(
+                count
+            )
         if "id" in info:
             unique_tasks.add(info["id"])
         output_total = info.get("tokens_output_total")
@@ -132,7 +156,9 @@ def aggregate_meta_info(meta_info_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         if isinstance(input_total, (int, float)):
             total_input_tokens += float(input_total)
             has_io_totals = True
-        elif isinstance(tokens_used_total, (int, float)) and isinstance(output_total, (int, float)):
+        elif isinstance(tokens_used_total, (int, float)) and isinstance(
+            output_total, (int, float)
+        ):
             value = float(tokens_used_total) - float(output_total)
             total_input_tokens += value if value > 0 else 0.0
             has_io_totals = True
@@ -151,8 +177,14 @@ def aggregate_meta_info(meta_info_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def save_global_meta_info(output_path: str, meta_info_list: List[Dict[str, Any]]) -> None:
-    global_meta_info = aggregate_meta_info(meta_info_list)
+def save_global_meta_info(
+    output_path: str,
+    meta_info_list: List[Dict[str, Any]],
+    max_tool_calls: int = MAX_TOOL_CALLS,
+) -> None:
+    global_meta_info = aggregate_meta_info(
+        meta_info_list, max_tool_calls=max_tool_calls
+    )
     global_meta_info_jsonl_path = os.path.join(output_path, "global_meta_info.jsonl")
     with open(global_meta_info_jsonl_path, "w", encoding="utf-8") as f:
         f.write(json.dumps(global_meta_info, ensure_ascii=False) + "\n")

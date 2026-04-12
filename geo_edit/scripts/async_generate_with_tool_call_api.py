@@ -72,11 +72,14 @@ def _init_worker(
         _WORKER_ACTION_TAG_MODE
 
     # Create ToolRouter WITHOUT initializing Ray actors (main process already did that)
-    _WORKER_TOOL_ROUTER = ToolRouter(tool_mode=tool_mode, enable_tools=enable_tools, skip_agent_init=True)
+    _WORKER_TOOL_ROUTER = ToolRouter(
+        tool_mode=tool_mode, enable_tools=enable_tools, skip_agent_init=True
+    )
 
     # Connect to existing Ray actors created by main process
     if enabled_agent_names:
         from geo_edit.utils.worker_utils import connect_to_ray_agents
+
         connect_to_ray_agents(_WORKER_TOOL_ROUTER, enabled_agent_names)
 
     max_output_tokens = None
@@ -86,7 +89,9 @@ def _init_worker(
     # Determine api_mode based on model_type
     if model_type == "Google":
         api_mode = "google"
-    elif model_type in {"SGLang", "vLLM"} or (api_base is not None and "matrixllm" in api_base):
+    elif model_type in {"SGLang", "vLLM"} or (
+        api_base is not None and "matrixllm" in api_base
+    ):
         api_mode = "chat_completions"
     else:
         api_mode = "responses"
@@ -226,7 +231,7 @@ def _run_one_task(task_payload: dict):
                 model_text = action.choices[0].message.content or ""
             else:
                 model_text = getattr(action, "output_text", "") or ""
-            logger.warning(f"[{task_id}] Step {i+1} model output:\n{model_text}")
+            logger.warning(f"[{task_id}] Step {i + 1} model output:\n{model_text}")
 
             function_call_part_list = task.parse_action(
                 step=i + 1, action=action, extra_info=extra_info
@@ -235,21 +240,31 @@ def _run_one_task(task_payload: dict):
             if not function_call_part_list:
                 break
 
-            contents_before = len(task.contents) if isinstance(task.contents, list) else 0
+            contents_before = (
+                len(task.contents) if isinstance(task.contents, list) else 0
+            )
             task.update_observation_from_action(function_call_part_list)
             if isinstance(task.contents, list):
                 for msg in task.contents[contents_before:]:
                     role = msg.get("role", "")
-                    text = msg.get("content", "") if isinstance(msg.get("content"), str) else ""
+                    text = (
+                        msg.get("content", "")
+                        if isinstance(msg.get("content"), str)
+                        else ""
+                    )
                     if role == "tool" and text:
-                        logger.warning(f"[{task_id}] Step {i+1} tool result:\n{text[:500]}")
+                        logger.warning(
+                            f"[{task_id}] Step {i + 1} tool result:\n{text[:500]}"
+                        )
 
         if (
             task.state
             and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS
             and _WORKER_TOOL_ROUTER.tool_mode != "direct"
         ):
-            logger.info(f"[{task_id}] Max tool calls ({_WORKER_MAX_TOOL_CALLS}), forcing final answer")
+            logger.info(
+                f"[{task_id}] Max tool calls ({_WORKER_MAX_TOOL_CALLS}), forcing final answer"
+            )
             force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
             task.append_prompt(force_prompt)
             _WORKER_AGENT.config.generate_config = (
@@ -380,7 +395,9 @@ def main():
     dataset_spec = get_dataset_spec(args.dataset_name)
     tool_mode = args.use_tools
     if tool_mode == "direct" and dataset_spec.notool_prompt_template is None:
-        logger.warning(f"Dataset {dataset_spec.name}: no notool template, using tool template")
+        logger.warning(
+            f"Dataset {dataset_spec.name}: no notool template, using tool template"
+        )
 
     tool_router = ToolRouter(
         tool_mode=tool_mode,
@@ -389,6 +406,7 @@ def main():
     )
     if tool_router.is_agent_enabled():
         from geo_edit.environment.tool_agents import get_manager
+
         manager = get_manager()
         enabled_agent_names = manager.get_all_actor_names()
     else:
@@ -519,7 +537,9 @@ def main():
                     "id": task_id,
                     "traj_id": traj_id,
                     "task_save_dir": traj_save_dir,
-                    "prompt": dataset_spec.build_prompt(item, tool_mode != "direct", unified=True),
+                    "prompt": dataset_spec.build_prompt(
+                        item, tool_mode != "direct", unified=True
+                    ),
                     "answer": dataset_spec.get_answer(item),
                     "image_path": image_path,
                     "text_only": text_only,
@@ -548,7 +568,9 @@ def main():
 
         pbar.close()
 
-    save_global_meta_info(output_path, meta_info_list)
+    save_global_meta_info(
+        output_path, meta_info_list, max_tool_calls=args.max_tool_calls
+    )
     logger.info(f"Completed. Total valid: {len(meta_info_list)}")
 
     tool_router.shutdown_agents()
