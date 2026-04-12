@@ -112,6 +112,10 @@ class RouterReplay:
     # Class-level list of all router instances (one per MoE layer).
     router_instances: list["RouterReplay"] = []
 
+    # Class-level pipeline parallelism size for backward remapping.
+    # Set by the engine patch before forward_backward_func.
+    pp_size: int = 1
+
     # ------------------------------------------------------------------
     # Class-level (static) helpers
     # ------------------------------------------------------------------
@@ -157,6 +161,12 @@ class RouterReplay:
         for r in RouterReplay.router_instances:
             r.clear_router_replay_action()
 
+    @staticmethod
+    def reset_all_call_counters() -> None:
+        """Reset call counters on all instances (call before forward_backward)."""
+        for r in RouterReplay.router_instances:
+            r.routing_call_count = 0
+
     # ------------------------------------------------------------------
     # Instance methods
     # ------------------------------------------------------------------
@@ -165,11 +175,18 @@ class RouterReplay:
         self.target_topk_idx: torch.Tensor | None = None
         self.recorded_topk_idx: torch.Tensor | None = None
         self.router_replay_action: RouterReplayAction | None = None
+        # Legacy list kept for API compatibility; no longer used for
+        # backward replay (call-counter approach replaces it).
         self.replay_backward_list: list[torch.Tensor] = []
+        # Call-counter mechanism for multi-MB activation checkpointing.
+        self.routing_data_list: list[torch.Tensor] = []
+        self.routing_call_count: int = 0
         RouterReplay.router_instances.append(self)
 
     def set_target_indices(self, topk_indices: torch.Tensor) -> None:
         self.target_topk_idx = topk_indices
+        self.routing_data_list.append(topk_indices)
+        # Keep replay_backward_list in sync for backward compatibility.
         self.replay_backward_list.append(topk_indices)
 
     def get_recorded_indices(self) -> torch.Tensor | None:
@@ -182,12 +199,62 @@ class RouterReplay:
         self.recorded_topk_idx = None
         self.target_topk_idx = None
         self.replay_backward_list = []
+        self.routing_data_list = []
+        self.routing_call_count = 0
 
     def set_router_replay_action(self, action: RouterReplayAction) -> None:
         self.router_replay_action = action
 
     def clear_router_replay_action(self) -> None:
         self.router_replay_action = None
+
+    def get_replay_indices_by_call_count(self) -> torch.Tensor | None:
+        """Return the correct replay indices based on the current call count.
+
+        Uses the call-counter mechanism to handle multi-MB + activation
+        checkpointing correctly.
+
+        Returns:
+            The routing indices tensor for the current call, or None if
+            no data is available.
+        """
+        n_mbs = len(self.routing_data_list)
+        if n_mbs == 0:
+            return None
+
+        call_idx = self.routing_call_count
+        self.routing_call_count += 1
+
+        if call_idx < n_mbs:
+            # Forward pass: use indices in order [0, 1, ..., N-1]
+            data_idx = call_idx
+            phase = "forward"
+        else:
+            # Backward recompute: remap based on pipeline schedule
+            recompute_idx = call_idx - n_mbs
+            if RouterReplay.pp_size <= 1:
+                # PP=1: forward_backward_no_pipelining
+                # Backward order is REVERSE: MB_{N-1}, MB_{N-2}, ..., MB_0
+                data_idx = n_mbs - 1 - recompute_idx
+            else:
+                # PP>1: 1F1B schedule
+                # Backward order is SAME as forward: MB_0, MB_1, ..., MB_{N-1}
+                data_idx = recompute_idx
+            phase = "backward_recompute"
+
+        # Clamp to valid range as safety measure
+        data_idx = max(0, min(data_idx, n_mbs - 1))
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[R3] get_replay_indices_by_call_count: "
+                "call_idx=%d, n_mbs=%d, pp_size=%d, phase=%s, "
+                "data_idx=%d, shape=%s.",
+                call_idx, n_mbs, RouterReplay.pp_size, phase,
+                data_idx, self.routing_data_list[data_idx].shape,
+            )
+
+        return self.routing_data_list[data_idx]
 
 
 # ===================================================================
@@ -240,17 +307,26 @@ def _patched_topk_routing_with_score_function(
             return probs, top_indices
 
         elif routing_action == RouterReplayAction.REPLAY_FORWARD:
-            if router_replay is None or router_replay.target_topk_idx is None:
+            # Use call-counter approach for multi-MB + activation checkpointing.
+            # This handles both forward and backward recompute correctly:
+            # - Forward calls (call_idx < N): use routing_data_list[call_idx]
+            # - Backward recompute (call_idx >= N): remapped by PP schedule
+            top_indices = router_replay.get_replay_indices_by_call_count()
+            if top_indices is None:
                 logger.warning(
-                    "[R3] REPLAY_FORWARD: no target indices available, "
-                    "falling back to normal routing."
+                    "[R3] REPLAY_FORWARD: no replay indices available "
+                    "(routing_data_list empty), falling back to normal routing."
                 )
                 return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
-            top_indices = router_replay.target_topk_idx.to(scores.device)
+            top_indices = top_indices.to(scores.device)
             probs = scores.gather(1, top_indices)
             return probs, top_indices
 
         elif routing_action == RouterReplayAction.REPLAY_BACKWARD:
+            # Legacy backward mode using replay_backward_list.pop(0).
+            # Kept for backward compatibility but no longer the primary
+            # mechanism. The call-counter approach in REPLAY_FORWARD
+            # handles both forward and backward recompute.
             if router_replay is None or not router_replay.replay_backward_list:
                 logger.warning(
                     "[R3] REPLAY_BACKWARD: no backward indices available, "

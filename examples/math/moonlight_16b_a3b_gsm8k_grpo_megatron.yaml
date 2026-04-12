@@ -30,6 +30,11 @@ rollout:
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
   dump_to_file: true
+  # R3: Enable returning routed expert assignments from rollout inference.
+  # This triggers the entire Router Replay pipeline: SGLang returns per-token
+  # expert indices, which are then replayed during training to eliminate
+  # train/inference routing mismatch in MoE models.
+  return_routed_experts: true
 
 gconfig:
   n_samples: 4
@@ -127,6 +132,10 @@ sglang:
   context_length: 2048
   mem_fraction_static: 0.2
   attention_backend: triton
+  # R3: Enable SGLang to capture and return per-token routed expert indices
+  # during inference. This is auto-set by rl_trainer when
+  # rollout.return_routed_experts=true, but explicitly declared here for clarity.
+  enable_return_routed_experts: true
 
 vllm:
   model: ${actor.path}
