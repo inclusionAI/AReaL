@@ -363,12 +363,53 @@ def _patch_awex_sglang_converter() -> None:
 
 
 def _patch_awex_nccl_barrier_device_ids() -> None:
-    """Patch awex NCCL initialize paths to avoid barrier(device_ids=...).
+    """Patch awex NCCL initialize paths to normalize barrier(device_ids=...).
 
     In some containerized environments with custom CUDA visibility mappings,
-    ``dist.barrier(..., device_ids=[...])`` can trigger NCCL/Torch runtime errors.
-    For awex reader/writer initialize only, drop ``device_ids`` from barrier calls.
+    passing stale/incompatible ``device_ids`` can fail. At the same time, omitting
+    ``device_ids`` for NCCL may force backend-side guessing and cause hangs when
+    rank-to-device mappings are heterogeneous.
+
+    For awex reader/writer initialize only, normalize barrier kwargs as:
+    - NCCL group: force ``device_ids=[torch.cuda.current_device()]``
+    - Non-NCCL/unknown backend: drop ``device_ids``
     """
+
+    def _is_nccl_backend(backend: Any) -> bool:
+        if backend is None:
+            return False
+        try:
+            return str(backend).lower() == "nccl"
+        except Exception:
+            return False
+
+    def _normalize_barrier_kwargs(b_kwargs: dict[str, Any]) -> None:
+        try:
+            import torch
+            import torch.distributed as dist
+        except Exception:
+            b_kwargs.pop("device_ids", None)
+            return
+
+        group = b_kwargs.get("group")
+        try:
+            backend = (
+                dist.get_backend(group) if group is not None else dist.get_backend()
+            )
+        except Exception:
+            backend = None
+
+        if not _is_nccl_backend(backend):
+            b_kwargs.pop("device_ids", None)
+            return
+
+        try:
+            current_device = int(torch.cuda.current_device())
+        except Exception:
+            b_kwargs.pop("device_ids", None)
+            return
+
+        b_kwargs["device_ids"] = [current_device]
 
     try:
         from awex.reader.nccl_reader import NCCLWeightsReader
@@ -392,7 +433,7 @@ def _patch_awex_nccl_barrier_device_ids() -> None:
             original_barrier = dist.barrier
 
             def _barrier_without_device_ids(*b_args, **b_kwargs):
-                b_kwargs.pop("device_ids", None)
+                _normalize_barrier_kwargs(b_kwargs)
                 return original_barrier(*b_args, **b_kwargs)
 
             dist.barrier = _barrier_without_device_ids
@@ -410,10 +451,10 @@ def _patch_awex_nccl_barrier_device_ids() -> None:
 
 
 def _run_with_barrier_device_ids_stripped(fn, *args, **kwargs):
-    """Run callable while stripping ``device_ids`` from dist.barrier kwargs.
+    """Run callable while normalizing ``device_ids`` in dist.barrier kwargs.
 
-    Preserve barrier synchronization semantics, but avoid passing ``device_ids``
-    which can trigger runtime/device-mapping failures in some environments.
+    Preserve barrier synchronization semantics while avoiding stale/invalid
+    ``device_ids`` and preventing NCCL backend device guessing.
     """
 
     try:
@@ -424,7 +465,29 @@ def _run_with_barrier_device_ids_stripped(fn, *args, **kwargs):
     original_barrier = dist.barrier
 
     def _barrier_without_device_ids(*b_args, **b_kwargs):
-        b_kwargs.pop("device_ids", None)
+        group = b_kwargs.get("group")
+        try:
+            backend = (
+                dist.get_backend(group) if group is not None else dist.get_backend()
+            )
+        except Exception:
+            backend = None
+
+        is_nccl = False
+        try:
+            is_nccl = str(backend).lower() == "nccl"
+        except Exception:
+            is_nccl = False
+
+        if is_nccl:
+            try:
+                import torch
+
+                b_kwargs["device_ids"] = [int(torch.cuda.current_device())]
+            except Exception:
+                b_kwargs.pop("device_ids", None)
+        else:
+            b_kwargs.pop("device_ids", None)
         return original_barrier(*b_args, **b_kwargs)
 
     dist.barrier = _barrier_without_device_ids
