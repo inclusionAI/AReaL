@@ -2,8 +2,8 @@
 
 Usage:
     python -m geo_edit.evaluation.eval_reason_map_plus \
-        --result_path /path/to/inference_output \
-        --output_path /path/to/eval_output
+        --result_path /storage/openpsi/data/lcy_image_edit/reasonmap_plus_test_0412/Qwen3vl8b-thinking-reasonmap_plus  \
+        --output_path /storage/openpsi/data/lcy_image_edit/reasonmap_plus_test_0412/Qwen3vl8b-thinking-reasonmap_plus_eval
 """
 
 from __future__ import annotations
@@ -36,6 +36,33 @@ def _get_field(record: dict, key: str, default: str = "") -> str:
     if val is not None:
         return str(val)
     return str(record.get("meta_info_extra", {}).get(key, default))
+
+
+_LETTER_TO_INDEX = {"A": 0, "B": 1, "C": 2, "D": 3}
+_YESNO_TO_INT = {"yes": 1, "no": 0, "true": 1, "false": 0}
+
+
+def _normalize_ground_truth(raw, question_type: str) -> int | None:
+    """Convert ground truth to int, accepting both integer and string formats.
+
+    Handles: int/str-int directly, A/B/C/D for Counting1, Yes/No for TorF.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    s = str(raw).strip()
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    upper = s.upper()
+    if question_type == "Counting1" and upper in _LETTER_TO_INDEX:
+        return _LETTER_TO_INDEX[upper]
+    lower = s.lower()
+    if question_type in ("TorF1", "TorF2") and lower in _YESNO_TO_INT:
+        return _YESNO_TO_INT[lower]
+    return None
 
 
 def main() -> None:
@@ -104,12 +131,11 @@ def main() -> None:
                     out_f.write(json.dumps(eval_item, ensure_ascii=False) + "\n")
                     continue
 
-                try:
-                    ground_truth = int(gt_raw)
-                except (TypeError, ValueError):
+                ground_truth = _normalize_ground_truth(gt_raw, question_type)
+                if ground_truth is None:
                     filtered += 1
                     logger.warning(
-                        "Non-integer ground_truth for id=%s: %s", record_id, gt_raw
+                        "Unparseable ground_truth for id=%s: %s", record_id, gt_raw
                     )
                     eval_item = {
                         "id": record_id,
