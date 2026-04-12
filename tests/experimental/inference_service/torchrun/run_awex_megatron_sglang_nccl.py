@@ -13,6 +13,7 @@ import signal
 import threading
 import time
 import traceback
+from datetime import timedelta
 
 import requests
 import torch
@@ -71,28 +72,6 @@ def _write_result(path: str, ok: bool, message: str = "") -> None:
     payload = "Passed" if ok else f"Failed: {message}"
     with open(path, "w", encoding="utf-8") as f:
         f.write(payload)
-
-
-def _run_with_timeout(name: str, timeout_s: int, fn, *args, **kwargs):
-    """Run callable in thread with timeout and propagate exception."""
-
-    outcome: dict[str, object] = {"done": False, "error": None}
-
-    def _target():
-        try:
-            fn(*args, **kwargs)
-        except Exception as exc:  # pragma: no cover - runtime path
-            outcome["error"] = exc
-        finally:
-            outcome["done"] = True
-
-    t = threading.Thread(target=_target, daemon=True)
-    t.start()
-    t.join(timeout=timeout_s)
-    if t.is_alive():
-        raise TimeoutError(f"{name} timed out after {timeout_s}s")
-    if outcome["error"] is not None:
-        raise outcome["error"]  # type: ignore[misc]
 
 
 def _destroy_dist_safely(rank: int) -> None:
@@ -208,7 +187,7 @@ def main(args: argparse.Namespace) -> None:
         f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}",
     )
 
-    dist.init_process_group("nccl")
+    dist.init_process_group("nccl", timeout=timedelta(seconds=args.dist_timeout))
     _log(rank, "checkpoint/global-pg: initialized")
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
@@ -390,35 +369,13 @@ def main(args: argparse.Namespace) -> None:
             )
             _log(rank, f"checkpoint/awex-update: dispatching step_id={step_id}")
             update_thread.start()
-            # Give update path a short grace window to surface immediate failures
-            # (e.g., awex reader init/update validation errors) before writer
-            # enters long infer_conf wait paths.
-            prewrite_deadline = time.time() + 5
-            while time.time() < prewrite_deadline:
-                if update_result["error"]:
-                    raise RuntimeError(
-                        f"Reader update failed early: {update_result['error']}"
-                    )
-                if update_result["ok"]:
-                    break
-                if not update_thread.is_alive():
-                    break
-                time.sleep(0.1)
-            if update_result["error"]:
-                raise RuntimeError(
-                    f"Reader update failed early: {update_result['error']}"
-                )
         else:
             update_thread = None
 
         _log(rank, "writing weights from megatron engine")
         megatron_engine.set_global_step(step_id)
         _log(rank, f"checkpoint/write: global_step={step_id} entering write_weights")
-        _run_with_timeout(
-            "megatron_engine.write_weights",
-            max(30, args.rpc_timeout),
-            megatron_engine.write_weights,
-        )
+        megatron_engine.write_weights()
         _log(rank, "weights write completed")
 
         if rank == 0 and update_thread is not None:

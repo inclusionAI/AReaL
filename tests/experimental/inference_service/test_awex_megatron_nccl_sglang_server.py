@@ -86,7 +86,7 @@ def _start_controller(
     )
 
     inf_dp = len(inference_gpus) // inf_tp
-    backend = f"sglang:d{inf_dp}t{infer_tp}"
+    backend = f"sglang:d{inf_dp}t{inf_tp}"
 
     controller_cfg = GatewayControllerConfig(
         tokenizer_path=model_path,
