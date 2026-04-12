@@ -177,6 +177,85 @@ def _normalize_awex_param_meta_keys(result: Any) -> Any:
     return normalized
 
 
+def _gather_awex_param_meta_across_workers(result: Any) -> list[dict[str, Any]]:
+    """Collect infer parameter metadata from all distributed TP workers.
+
+    SGLang awex RPC returns a single worker response to the caller. For
+    ``InferParamMetaResolver._get_model_param_info`` we must aggregate metadata
+    across all TP workers so awex can reconstruct global parameter shapes.
+    """
+
+    if isinstance(result, list):
+        local_entries = [x for x in result if isinstance(x, dict)]
+    elif isinstance(result, dict):
+        local_entries = [result]
+    else:
+        return []
+
+    try:
+        import torch.distributed as dist
+    except Exception:
+        return local_entries
+
+    if not (dist.is_available() and dist.is_initialized()):
+        return local_entries
+
+    world_size = dist.get_world_size()
+    if world_size <= 1:
+        return local_entries
+
+    gathered: list[Any] = [None] * world_size
+    dist.all_gather_object(gathered, local_entries)
+
+    merged: list[dict[str, Any]] = []
+    for item in gathered:
+        if isinstance(item, list):
+            merged.extend(x for x in item if isinstance(x, dict))
+        elif isinstance(item, dict):
+            merged.append(item)
+
+    dedup: dict[int, dict[str, Any]] = {}
+    fallback: list[dict[str, Any]] = []
+    for meta in merged:
+        rank_info = meta.get("rank_info")
+        global_rank = getattr(rank_info, "global_rank", None)
+        if isinstance(global_rank, int):
+            if global_rank in dedup:
+                prev = dedup[global_rank]
+                prev_rank_info = prev.get("rank_info")
+                prev_tp_rank = getattr(prev_rank_info, "tp_rank", None)
+                curr_tp_rank = getattr(rank_info, "tp_rank", None)
+                logger.warning(
+                    "Duplicate awex infer meta for global_rank=%s (prev_tp_rank=%s curr_tp_rank=%s). "
+                    "Keeping first entry.",
+                    global_rank,
+                    prev_tp_rank,
+                    curr_tp_rank,
+                )
+                continue
+            dedup[global_rank] = meta
+        else:
+            fallback.append(meta)
+
+    ordered = [dedup[k] for k in sorted(dedup.keys())]
+    ordered.extend(fallback)
+    if ordered:
+        expected_world_size = 0
+        for meta in ordered:
+            rank_info = meta.get("rank_info")
+            expected_world_size = max(
+                expected_world_size, int(getattr(rank_info, "world_size", 0) or 0)
+            )
+        if expected_world_size > 0 and len(dedup) < expected_world_size:
+            logger.warning(
+                "Incomplete awex infer meta gather: got %s unique ranks, expected at least %s. "
+                "This may cause TP shard-size mismatch.",
+                len(dedup),
+                expected_world_size,
+            )
+    return ordered if ordered else local_entries
+
+
 def _inject_awex_parameter_aliases(parameters: dict[str, Any]) -> int:
     """Inject missing parameter aliases for awex transfer-plan name variants.
 
@@ -489,6 +568,7 @@ def patch_scheduler_for_awex() -> None:
         # worker/rank.
         if task_qualname.endswith("._get_model_param_info"):
             result = _normalize_awex_param_meta_keys(result)
+            result = _gather_awex_param_meta_across_workers(result)
             if isinstance(result, dict):
                 result = [result]
         logger.info(
