@@ -368,12 +368,6 @@ class PPOActor:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
-
-        # R3 Problem 1 fix: Pop routed_experts BEFORE split_padded_tensor_dict_into_mb_list.
-        # routed_experts is 4D (bs, seq_len, num_moe_layers, topk) and its numel() !=
-        # bs * max_seqlen, so it would be placed in not_to_split and broadcast identically
-        # to every mini-batch, causing data mismatch when ppo_n_minibatches > 1.
-        # We pop it here and manually split it per mini-batch after the standard split.
         _r3_routed_experts = data.pop("routed_experts", None)
 
         mb_inputs = split_padded_tensor_dict_into_mb_list(
