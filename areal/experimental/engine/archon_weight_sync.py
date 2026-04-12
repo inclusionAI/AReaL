@@ -75,7 +75,7 @@ def init_weight_update_group(
     # which blocks creating another TCP store for weight update.
     os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
 
-    gen_pp_size = getattr(meta.gen_allocation.parallel, "pipeline_parallel_size", 1) if meta.gen_allocation else 1
+    gen_pp_size = meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 1
     logger.info(
         f"[ArchonWeightSync] init_weight_update_group called: "
         f"gen_pp_size={gen_pp_size}, is_pp_head={engine.is_pipeline_parallel_head()}, "
@@ -159,14 +159,15 @@ def _init_per_pp_weight_update_groups(
 
     assert meta.gen_allocation is not None
     gen_world_size = meta.gen_allocation.parallel.world_size
-    tp_size = meta.gen_allocation.parallel.model_parallel_size
-    n_servers = meta.gen_allocation.n_servers if hasattr(meta.gen_allocation, 'n_servers') else (gen_world_size // (tp_size * gen_pp_size))
-    per_pp_world_size = n_servers * tp_size
+    # per_pp_world_size = total_gen_workers / pp_stages
+    # This equals n_servers * tp_size (workers at each PP stage)
+    per_pp_world_size = gen_world_size // gen_pp_size
 
     engine.logger.info(
         f"[ArchonWeightSync] Creating per-PP-rank groups: gen_pp_size={gen_pp_size}, "
-        f"gen_world_size={gen_world_size}, tp_size={tp_size}, "
-        f"n_servers={n_servers}, per_pp_world_size={per_pp_world_size}"
+        f"gen_world_size={gen_world_size}, "
+        f"per_pp_world_size={per_pp_world_size}, "
+        f"tp_size={meta.gen_allocation.parallel.tp_size}"
     )
 
     host_addr = gethostip()
