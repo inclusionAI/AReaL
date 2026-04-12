@@ -285,6 +285,7 @@ def _r3_forward_backward_batch(
     If the data does not contain ``routed_experts``, delegates directly
     to the original method with zero overhead.
     """
+    from areal.engine.router_replay_patch import RouterReplay
     from areal.engine.router_replay_utils import (
         clear_router_replay,
         setup_per_microbatch_replay_forward,
@@ -339,13 +340,38 @@ def _r3_forward_backward_batch(
     model_config = self.tf_config
 
     # ------------------------------------------------------------------
+    # 2b. Set PP size on RouterReplay for backward recompute remapping.
+    #     Reset call counters so each forward_backward_batch starts clean.
+    # ------------------------------------------------------------------
+    try:
+        from megatron.core import parallel_state as mpu
+        pp_size = mpu.get_pipeline_model_parallel_world_size()
+    except Exception:
+        pp_size = getattr(model_config, "pipeline_model_parallel_size", 1)
+    RouterReplay.pp_size = pp_size
+    RouterReplay.reset_all_call_counters()
+    logger.debug(
+        "[R3] Set RouterReplay.pp_size=%d, reset all call counters "
+        "(%d instances).",
+        pp_size,
+        len(RouterReplay.router_instances),
+    )
+
+    # ------------------------------------------------------------------
     # 3. Wrap the MicroBatchList iterator on the INSTANCE level
     #
     #    The iterator injects R3 setup before each micro-batch's forward.
-    #    Because Megatron's 1F1B schedule interleaves forward and backward,
-    #    we rely on set_target_indices() appending to replay_backward_list
-    #    so that activation-checkpoint recompute in backward has the data
-    #    it needs (Problem 3 fix).
+    #    The call-counter mechanism in RouterReplay handles backward
+    #    recompute correctly for both PP=1 and PP>1 scenarios:
+    #
+    #    - PP=1 (forward_backward_no_pipelining): all forwards first,
+    #      then all backwards in REVERSE order. The call counter tracks
+    #      which MB's data to use: forward calls [0..N-1], backward
+    #      recompute calls [N..2N-1] remapped as [N-1..0].
+    #
+    #    - PP>1 (1F1B): interleaved forward-backward. Each MB's backward
+    #      follows its forward closely. The call counter handles this
+    #      with same-order remapping.
     # ------------------------------------------------------------------
     engine_ref = self
 
@@ -375,16 +401,23 @@ def _r3_forward_backward_batch(
                 attn_mask = _get_attention_mask_for_mb(mb_item)
 
                 if attn_mask is not None:
+                    # Truncate `re` sequence length to match `attn_mask`
+                    # Since data is right-padded (real tokens are on the left),
+                    # slicing the first max_seqlen elements safely removes extra padding.
+                    # This prevents a shape mismatch when the micro-batch has a smaller max_seqlen
+                    # than the full batch (which occurs when sequences are packed).
+                    re_matched = re[:, :attn_mask.shape[1], ...]
+
                     try:
                         setup_per_microbatch_replay_forward(
-                            re.to(attn_mask.device),
+                            re_matched.to(attn_mask.device),
                             attn_mask,
                             model_config,
                         )
                         logger.debug(
                             "[R3] Replay setup OK for micro-batch %d: "
                             "routed_experts=%s, attn_mask=%s.",
-                            idx, re.shape, attn_mask.shape,
+                            idx, re_matched.shape, attn_mask.shape,
                         )
                     except Exception:
                         logger.warning(
@@ -412,22 +445,20 @@ def _r3_forward_backward_batch(
 
     try:
         # Megatron's forward_backward_func (e.g. 1F1B schedule) internally
-        # interleaves forward and backward for each micro-batch.  We do NOT
-        # call setup_per_microbatch_replay_backward() after this function
-        # returns -- by then backward is already done.
+        # interleaves forward and backward for each micro-batch.
         #
-        # Instead, the backward replay is handled by the RouterReplay design:
-        # - set_target_indices() in setup_per_microbatch_replay_forward()
-        #   appends indices to replay_backward_list for each layer.
-        # - When activation checkpointing triggers recompute during backward,
-        #   the patched routing function checks router_replay_action.
-        # - We set REPLAY_FORWARD before each micro-batch's forward.
-        #   During the same micro-batch's backward recompute, the
-        #   replay_backward_list is consumed via pop(0) in FIFO order.
+        # The call-counter mechanism in RouterReplay handles backward
+        # recompute (activation checkpointing) correctly:
+        # - Each RouterReplay instance tracks how many times its routing
+        #   function is called via routing_call_count.
+        # - Forward calls (call_idx < N) use routing_data_list[call_idx].
+        # - Backward recompute calls (call_idx >= N) are remapped based
+        #   on pp_size:
+        #   * PP=1: reverse order (N-1-recompute_idx)
+        #   * PP>1: same order (recompute_idx)
         #
-        # For the non-activation-checkpoint case, backward simply uses
-        # autograd on the forward's recorded computation graph, so no
-        # re-routing occurs and replay is not needed.
+        # This replaces the previous design that relied on target_topk_idx
+        # (which got overwritten by subsequent MBs in PP=1 multi-MB case).
         self._r3_original_forward_backward_batch(
             mb_list, process_output_fn, forward_only=forward_only
         )
