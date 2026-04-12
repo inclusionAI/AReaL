@@ -172,4 +172,20 @@ class RLVRWorkflow(RolloutWorkflow):
             "attention_mask": torch.ones(len(seq), dtype=torch.bool),
             "rewards": torch.tensor(reward, dtype=torch.float32),
         }
-        return {k: v.unsqueeze(0) for k, v in res.items()}
+        res = {k: v.unsqueeze(0) for k, v in res.items()}
+
+        # R3: Extract and inject routed_experts from rollout response
+        if resp.routed_experts is not None:
+            from areal.workflow.rlvr_r3_patch import (
+                extract_routed_experts,
+                inject_routed_experts_into_result,
+            )
+
+            routed_experts_tensor = extract_routed_experts(
+                resp.routed_experts,
+                res["input_ids"],
+                res["attention_mask"],
+            )
+            res = inject_routed_experts_into_result(res, routed_experts_tensor)
+
+        return res

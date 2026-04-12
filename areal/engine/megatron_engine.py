@@ -287,6 +287,8 @@ class MegatronEngine(TrainEngine):
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
+        # R3: Check early so the variable is always defined.
+        _r3_enabled = getattr(self.config, "_r3_enable_router_replay", False)
         with patch_bridge_for_tree_training(
             self.enable_tree_training and self.bridge_cls == "mbridge"
         ):
@@ -308,6 +310,14 @@ class MegatronEngine(TrainEngine):
 
             self._check_and_apply_fp8_config()
             self._validate_fp8_consistency()
+
+            # R3: Apply Router Replay patch BEFORE model creation so that
+            # TopKRouter.__init__ and TransformerConfig.__init__ are patched.
+            if _r3_enabled:
+                from areal.engine.router_replay_patch import apply_router_replay_patch
+                apply_router_replay_patch()
+                self.tf_config.enable_routing_replay = True
+                self.logger.info("[R3] Router Replay patches applied before model creation.")
 
             with self.device:
                 models = make_mcore_model(
@@ -400,6 +410,12 @@ class MegatronEngine(TrainEngine):
                 model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
         self._create_optimizer(ft_spec)
+
+        # R3: Apply engine-level patch after model and optimizer are ready.
+        if _r3_enabled:
+            from areal.engine.megatron_engine_r3_patch import patch_megatron_engine_for_r3
+            patch_megatron_engine_for_r3(self, enable_router_replay=True)
+            self.logger.info("[R3] Router Replay enabled on MegatronEngine.")
         self._initialized = True
 
     def _build_hf_mcore_bridge(self):

@@ -270,6 +270,11 @@ class PPOTrainer:
         # Initialize engines first — the scheduler must know about roles
         # before the data controller can colocate with them.
         engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
+
+        # R3: Propagate router replay flag to actor engine config so that
+        # MegatronEngine.initialize() can apply the R3 patch.
+        if getattr(config.rollout, "return_routed_experts", False):
+            config.actor._r3_enable_router_replay = True
         self.actor.initialize(**engine_init_kwargs, role="actor")
         if self.critic is not None:
             self.critic.initialize(**engine_init_kwargs, role="critic")
@@ -661,6 +666,12 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
+                # R3: Log routing replay statistics if available.
+                if getattr(self.config.rollout, "return_routed_experts", False):
+                    from areal.trainer.ppo.actor_r3_patch import log_r3_data_stats
+                    for traj in adv_batch:
+                        log_r3_data_stats(traj)
+
                 self.actor.ppo_update(adv_batch)
                 self.actor.step_lr_scheduler()
                 self.actor.get_device_stats().log("ppo update")
