@@ -594,7 +594,6 @@ def patch_scheduler_for_awex() -> None:
 
     def awex_execute(self, task_module: str, task_qualname: str, task_kwargs=None):
         _patch_awex_sglang_converter()
-        _patch_awex_nccl_barrier_device_ids()
         _patch_awex_reader_parameter_aliases()
 
         logger.info(
@@ -624,7 +623,7 @@ def patch_scheduler_for_awex() -> None:
         task_kwargs["model_context"] = _build_awex_model_context(
             self, infer_engine_config
         )
-        result = _run_with_barrier_device_ids_stripped(target, **task_kwargs)
+        result = target(**task_kwargs)
 
         # awex InferParamMetaResolver expects execute_task_in_model_worker() to
         # return List[Dict[str, Any]] for _get_model_param_info, even with one

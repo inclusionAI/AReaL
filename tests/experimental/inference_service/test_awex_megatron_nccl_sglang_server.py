@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict
 
 import pytest
@@ -147,7 +148,11 @@ def _run_awex_sglang_torchrun(
         "--rpc-timeout=240",
     ]
     environ = os.environ.copy()
-    environ["NCCL_P2P_DISABLE"] = "1"
+    # AWEX reader/writer communicators span independently launched process trees.
+    # In some CI/container setups, those processes do not share a stable /dev/shm
+    # namespace; NCCL SHM transport can fail to attach segments and deadlock first
+    # collectives. Force NCCL to avoid SHM for this integration test.
+    environ["NCCL_SHM_DISABLE"] = "1"
     environ["NCCL_CUMEM_ENABLE"] = "0"
     environ["NCCL_NVLS_ENABLE"] = "0"
     # DETAIL may wrap process groups and has known device-binding caveats in
@@ -177,6 +182,22 @@ def _run_awex_sglang_torchrun(
     with open(output, encoding="utf-8") as f:
         result = f.read().strip()
     assert result == "Passed", f"Integration failed: {result}"
+
+
+@contextmanager
+def _temporary_env(overrides: dict[str, str]):
+    previous: dict[str, str | None] = {}
+    for key, value in overrides.items():
+        previous[key] = os.environ.get(key)
+        os.environ[key] = value
+    try:
+        yield
+    finally:
+        for key, old in previous.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
 
 
 @pytest.mark.multi_gpu
@@ -225,25 +246,34 @@ def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
 
     controller = None
     scheduler = None
-    try:
-        controller, scheduler = _start_controller(
-            inf_tp=inf_tp,
-            tmp_root=runtime_root,
-            inference_gpus=inference_gpu_ids,
-            model_path=model_path,
-        )
-        awex_server_url = controller.inference_worker_addrs[0]
+    with _temporary_env(
+        {
+            "NCCL_SHM_DISABLE": "1",
+            "NCCL_CUMEM_ENABLE": "0",
+            "NCCL_NVLS_ENABLE": "0",
+            "TORCH_DISTRIBUTED_DEBUG": "INFO",
+            "TORCH_NCCL_ENABLE_MONITORING": "0",
+        }
+    ):
+        try:
+            controller, scheduler = _start_controller(
+                inf_tp=inf_tp,
+                tmp_root=runtime_root,
+                inference_gpus=inference_gpu_ids,
+                model_path=model_path,
+            )
+            awex_server_url = controller.inference_worker_addrs[0]
 
-        _run_awex_sglang_torchrun(
-            trainer_gpu_ids=trainer_gpu_ids,
-            dp_size=dp_size,
-            tp_size=tp_size,
-            pp_size=pp_size,
-            awex_server_url=awex_server_url,
-            output=str(output),
-        )
-    finally:
-        if controller is not None:
-            controller.destroy()
-        if scheduler is not None:
-            scheduler.delete_workers(None)
+            _run_awex_sglang_torchrun(
+                trainer_gpu_ids=trainer_gpu_ids,
+                dp_size=dp_size,
+                tp_size=tp_size,
+                pp_size=pp_size,
+                awex_server_url=awex_server_url,
+                output=str(output),
+            )
+        finally:
+            if controller is not None:
+                controller.destroy()
+            if scheduler is not None:
+                scheduler.delete_workers(None)
