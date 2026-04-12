@@ -6,7 +6,9 @@ blocks inside assistant messages.
 
 from __future__ import annotations
 
+import base64
 import copy
+import io
 import re
 import threading
 import time
@@ -18,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from tqdm import tqdm
 
 from geo_edit.data_preprocess.trajectory_utils import get_text_from_content
+from geo_edit.utils.image_utils import image_to_data_url
 from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -145,6 +148,65 @@ how to correct for it and derive the right answer despite the error
 - Change sentence structure and word choice compared to the original
 - Do NOT include <think>, </think>, or <action> tags inside <answer>
 - Wrap your final rewritten text in <answer>...</answer> tags"""
+
+
+# ── Image Resizing ───────────────────────────────────────────────────────────
+
+# Well below the server-side PIL limit of 178,956,970 pixels.
+_MAX_IMAGE_PIXELS = 100_000_000
+
+
+def _maybe_resize_image(
+    part: Dict[str, Any],
+    max_pixels: int = _MAX_IMAGE_PIXELS,
+) -> Dict[str, Any]:
+    """Downscale an ``image_url`` part if it exceeds *max_pixels*."""
+    url_obj = part.get("image_url") or {}
+    url: str = url_obj.get("url", "")
+    if not url:
+        return part
+
+    try:
+        from PIL import Image as _PILImage
+
+        # Temporarily raise PIL decompression-bomb guard so we can open and resize.
+        old_limit = _PILImage.MAX_IMAGE_PIXELS
+        _PILImage.MAX_IMAGE_PIXELS = max(max_pixels * 4, old_limit or 0)
+
+        try:
+            if url.startswith("data:"):
+                _header, b64data = url.split(",", 1)
+                raw = base64.b64decode(b64data)
+                img = _PILImage.open(io.BytesIO(raw))
+            elif url.startswith("file://"):
+                img = _PILImage.open(url[len("file://"):])
+            else:
+                return part
+        finally:
+            _PILImage.MAX_IMAGE_PIXELS = old_limit
+
+        w, h = img.size
+        if w * h <= max_pixels:
+            img.close()
+            return part
+
+        scale = (max_pixels / (w * h)) ** 0.5
+        new_w, new_h = int(w * scale), int(h * scale)
+        resized = img.resize((new_w, new_h), _PILImage.LANCZOS)
+        img.close()
+
+        logger.info(
+            "Resized oversized image %dx%d -> %dx%d (%d -> %d px)",
+            w, h, new_w, new_h, w * h, new_w * new_h,
+        )
+
+        data_url = image_to_data_url(resized, image_format="PNG")
+        resized.close()
+        return {"type": "image_url", "image_url": {"url": data_url}}
+
+    except Exception as exc:
+        logger.warning("Could not resize image, sending as-is: %s", exc)
+        return part
 
 
 # ── Block Extraction & Classification ────────────────────────────────────────
@@ -311,7 +373,7 @@ class DiversificationClient:
         prompt = self._build_prompt(block)
 
         if block.images:
-            user_content: Any = list(block.images) + [{"type": "text", "text": prompt}]
+            user_content: Any = [_maybe_resize_image(img) for img in block.images] + [{"type": "text", "text": prompt}]
         else:
             user_content = prompt
 
