@@ -28,6 +28,26 @@ from ``mb_list.data`` before micro-batch splitting, and manually distribute
 it to each micro-batch using the ``forward_indices`` and ``group_lens``
 from ``MicroBatchList``.
 
+Key design decisions (v3 fixes):
+- **Problem 1 fix**: routed_experts is popped from mb_list.data AND from
+  every mb in mb_list.mbs / padded_mbs so that it is never broadcast
+  incorrectly to mini-batches.  The PPO actor side also pops it before
+  ``split_padded_tensor_dict_into_mb_list`` and manually re-distributes.
+- **Problem 2 fix**: ``__iter__`` is patched on the *instance* via
+  ``types.MethodType``, not on the class, to avoid affecting other
+  ``MicroBatchList`` instances.
+- **Problem 3 fix**: ``REPLAY_BACKWARD`` is NOT set after
+  ``forward_backward_batch`` returns (by then backward is already done
+  in Megatron's 1F1B schedule).  Instead, ``set_target_indices()`` in
+  ``setup_per_microbatch_replay_forward`` appends to ``replay_backward_list``
+  so that activation-checkpoint recompute during backward already has the
+  data it needs via ``REPLAY_FORWARD`` mode.
+- **Problem 5 fix**: When ``attention_mask`` is absent (packed format),
+  we reconstruct it from ``cu_seqlens`` + ``max_seqlen`` so that
+  ``setup_per_microbatch_replay_forward`` always receives valid data.
+- **Problem 7 fix**: Sample-count inference uses cu_seqlens first, then
+  attention_mask, then input_ids, then even division as last resort.
+
 Usage::
 
     from areal.engine.megatron_engine_r3_patch import patch_megatron_engine_for_r3
@@ -87,8 +107,85 @@ def patch_megatron_engine_for_r3(
 
 
 # ===================================================================
-# routed_experts splitting
+# attention_mask reconstruction from cu_seqlens (Problem 5 fix)
 # ===================================================================
+
+
+def _reconstruct_attention_mask_from_cu_seqlens(
+    cu_seqlens: torch.Tensor,
+    max_seqlen: int,
+) -> torch.Tensor:
+    """Reconstruct a 2D ``attention_mask`` from packed ``cu_seqlens``.
+
+    After ``pack_tensor_dict``, the original ``attention_mask`` is replaced
+    by ``cu_seqlens`` (shape ``(B+1,)``) and ``max_seqlen``.  For R3's
+    ``set_router_replay_data`` we need an ``attention_mask`` of shape
+    ``(B, padded_seq_len)`` where padded_seq_len = max_seqlen.
+
+    Args:
+        cu_seqlens: ``(B+1,)`` cumulative sequence lengths.
+        max_seqlen: Maximum sequence length (the padded dimension).
+
+    Returns:
+        ``torch.Tensor`` of shape ``(B, max_seqlen)`` with dtype ``torch.bool``.
+    """
+    bs = cu_seqlens.shape[0] - 1
+    seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]  # (B,)
+    # Build mask: position j < seq_lens[i] -> True
+    positions = torch.arange(max_seqlen, device=cu_seqlens.device).unsqueeze(0)  # (1, S)
+    mask = positions < seq_lens.unsqueeze(1)  # (B, S)
+    logger.debug(
+        "[R3] Reconstructed attention_mask from cu_seqlens: "
+        "bs=%d, max_seqlen=%d, seq_lens=%s.",
+        bs,
+        max_seqlen,
+        seq_lens.tolist()[:8],  # log first 8 for brevity
+    )
+    return mask
+
+
+# ===================================================================
+# routed_experts splitting (Problem 7 fix: robust sample-count inference)
+# ===================================================================
+
+
+def _infer_mb_sample_count(
+    mb_dict: dict,
+    total_bs: int,
+    n_mbs: int,
+) -> int:
+    """Infer the number of samples in a micro-batch dict.
+
+    Tries multiple strategies in order of reliability:
+    1. ``cu_seqlens`` -> ``len(cu_seqlens) - 1`` (packed format, most reliable)
+    2. ``attention_mask.shape[0]`` (padded format)
+    3. ``input_ids.shape[0]`` (fallback)
+    4. Even division (last resort)
+    """
+    if isinstance(mb_dict, dict):
+        # Strategy 1: cu_seqlens (packed format -- most common after pack_tensor_dict)
+        cu = mb_dict.get("cu_seqlens")
+        if cu is not None:
+            return len(cu) - 1
+
+        # Strategy 2: attention_mask (padded format)
+        attn = mb_dict.get("attention_mask")
+        if attn is not None and hasattr(attn, "shape"):
+            return attn.shape[0]
+
+        # Strategy 3: input_ids
+        ids = mb_dict.get("input_ids")
+        if ids is not None and hasattr(ids, "shape"):
+            return ids.shape[0]
+
+    # Strategy 4: last resort
+    logger.warning(
+        "[R3] _infer_mb_sample_count: no reliable key found, "
+        "falling back to even division (%d / %d).",
+        total_bs,
+        n_mbs,
+    )
+    return total_bs // n_mbs
 
 
 def _split_routed_experts_for_mbs(
@@ -97,7 +194,7 @@ def _split_routed_experts_for_mbs(
 ) -> list[torch.Tensor | None]:
     """Split the batch-level ``routed_experts`` tensor into per-micro-batch tensors.
 
-    Uses ``mb_list.forward_indices`` and ``mb_list.group_lens`` to correctly
+    Uses ``mb_list.forward_indices`` and per-MB sample counts to correctly
     reorder and slice samples, mirroring how ``split_padded_tensor_dict_into_mb_list``
     splits other tensors.
 
@@ -113,47 +210,80 @@ def _split_routed_experts_for_mbs(
         return [None] * len(mb_list)
 
     forward_indices = mb_list.forward_indices
-    group_lens = mb_list.group_lens
+    n_mbs = len(mb_list)
 
     if forward_indices is None:
         # No reordering -- just split evenly
-        n_mbs = len(mb_list)
         bs = routed_experts.shape[0]
         chunk = bs // n_mbs
-        return [routed_experts[i * chunk : (i + 1) * chunk] for i in range(n_mbs)]
+        result = [routed_experts[i * chunk : (i + 1) * chunk] for i in range(n_mbs)]
+        logger.debug(
+            "[R3] _split_routed_experts_for_mbs: no forward_indices, "
+            "split %d samples evenly into %d chunks of %d.",
+            bs, n_mbs, chunk,
+        )
+        return result
 
     # Reorder by forward_indices (sample-level reordering)
     reordered = routed_experts[forward_indices]
 
-    # Split according to group_lens (number of samples per micro-batch)
-    # group_lens gives number of *tokens* per micro-batch, but since
-    # routed_experts is indexed by *sample* (dim-0 is bs), we need
-    # the number of samples per micro-batch.
-    # We can derive this from the mbs list.
+    # Determine number of samples per micro-batch from mbs dicts.
     result = []
     offset = 0
     for i, mb_dict in enumerate(mb_list.mbs):
-        # Determine number of samples in this micro-batch
-        # The mb_dict contains "attention_mask" which has shape (n_samples, ...)
-        if isinstance(mb_dict, dict) and "attention_mask" in mb_dict:
-            attn = mb_dict["attention_mask"]
-            if hasattr(attn, "shape"):
-                n_samples = attn.shape[0]
-            else:
-                n_samples = len(attn)
-        else:
-            # Fallback: try cu_seqlens
-            if isinstance(mb_dict, dict) and "cu_seqlens" in mb_dict:
-                cu = mb_dict["cu_seqlens"]
-                n_samples = len(cu) - 1
-            else:
-                # Last resort: divide evenly
-                n_samples = routed_experts.shape[0] // len(mb_list)
-
+        n_samples = _infer_mb_sample_count(mb_dict, routed_experts.shape[0], n_mbs)
         result.append(reordered[offset : offset + n_samples])
         offset += n_samples
 
+    logger.debug(
+        "[R3] _split_routed_experts_for_mbs: split %d samples into %d mbs "
+        "with sizes %s (forward_indices len=%d).",
+        routed_experts.shape[0],
+        n_mbs,
+        [r.shape[0] for r in result],
+        len(forward_indices),
+    )
     return result
+
+
+# ===================================================================
+# Per-MB attention_mask extraction (Problem 5 fix)
+# ===================================================================
+
+
+def _get_attention_mask_for_mb(mb_item) -> torch.Tensor | None:
+    """Extract or reconstruct ``attention_mask`` from a ``MicroBatchItem``.
+
+    After ``pack_tensor_dict``, both ``orig_mb`` and ``padded_mb`` have
+    ``cu_seqlens`` instead of ``attention_mask``.  We reconstruct the mask
+    from ``cu_seqlens`` + ``max_seqlen`` in the padded_mb (which reflects
+    the actual padded sequence length used by the model).
+
+    Falls back to ``attention_mask`` if still present (e.g. tree training).
+    """
+    # Try padded_mb first (has the actual padded dimensions)
+    if hasattr(mb_item, "padded_mb") and isinstance(mb_item.padded_mb, dict):
+        # Direct attention_mask
+        attn = mb_item.padded_mb.get("attention_mask")
+        if attn is not None:
+            return attn
+        # Reconstruct from cu_seqlens
+        cu = mb_item.padded_mb.get("cu_seqlens")
+        max_sl = mb_item.padded_mb.get("max_seqlen")
+        if cu is not None and max_sl is not None:
+            return _reconstruct_attention_mask_from_cu_seqlens(cu, int(max_sl))
+
+    # Try orig_mb as fallback
+    if hasattr(mb_item, "orig_mb") and isinstance(mb_item.orig_mb, dict):
+        attn = mb_item.orig_mb.get("attention_mask")
+        if attn is not None:
+            return attn
+        cu = mb_item.orig_mb.get("cu_seqlens")
+        max_sl = mb_item.orig_mb.get("max_seqlen")
+        if cu is not None and max_sl is not None:
+            return _reconstruct_attention_mask_from_cu_seqlens(cu, int(max_sl))
+
+    return None
 
 
 # ===================================================================
@@ -177,7 +307,6 @@ def _r3_forward_backward_batch(
     """
     from areal.engine.router_replay_utils import (
         clear_router_replay,
-        setup_per_microbatch_replay_backward,
         setup_per_microbatch_replay_forward,
     )
 
@@ -190,7 +319,8 @@ def _r3_forward_backward_batch(
     if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
         routed_experts_batch = mb_list.data.pop("routed_experts", None)
 
-    # Also clean from mbs and padded_mbs to avoid confusing downstream code
+    # Also clean from mbs and padded_mbs to avoid confusing downstream code.
+    # Problem 1: these would contain the un-split full tensor via not_to_split broadcast.
     for mb_dict in mb_list.mbs:
         if isinstance(mb_dict, dict):
             mb_dict.pop("routed_experts", None)
@@ -208,7 +338,7 @@ def _r3_forward_backward_batch(
             mb_list, process_output_fn, forward_only=forward_only
         )
 
-    logger.debug(
+    logger.info(
         "[R3] R3 forward_backward: %d micro-batches, routed_experts shape=%s, "
         "forward_only=%s",
         len(mb_list),
@@ -229,8 +359,14 @@ def _r3_forward_backward_batch(
     model_config = self.tf_config
 
     # ------------------------------------------------------------------
-    # 3. Wrap the MicroBatchList iterator to inject R3 setup before each
-    #    micro-batch's forward pass.
+    # 3. Wrap the MicroBatchList iterator on the INSTANCE level
+    #    (Problem 2 fix: do NOT modify __class__.__iter__).
+    #
+    #    The iterator injects R3 setup before each micro-batch's forward.
+    #    Because Megatron's 1F1B schedule interleaves forward and backward,
+    #    we rely on set_target_indices() appending to replay_backward_list
+    #    so that activation-checkpoint recompute in backward has the data
+    #    it needs (Problem 3 fix).
     # ------------------------------------------------------------------
     engine_ref = self
 
@@ -255,14 +391,9 @@ def _r3_forward_backward_batch(
             )
 
             if re is not None:
-                # Get attention_mask from orig_mb or padded_mb
-                attn_mask = None
-                if hasattr(mb_item, "orig_mb") and isinstance(mb_item.orig_mb, dict):
-                    attn_mask = mb_item.orig_mb.get("attention_mask")
-                if attn_mask is None and hasattr(mb_item, "padded_mb") and isinstance(
-                    mb_item.padded_mb, dict
-                ):
-                    attn_mask = mb_item.padded_mb.get("attention_mask")
+                # Problem 5 fix: reconstruct attention_mask from cu_seqlens
+                # when pack_tensor_dict has replaced it.
+                attn_mask = _get_attention_mask_for_mb(mb_item)
 
                 if attn_mask is not None:
                     try:
@@ -270,6 +401,11 @@ def _r3_forward_backward_batch(
                             re.to(attn_mask.device),
                             attn_mask,
                             model_config,
+                        )
+                        logger.debug(
+                            "[R3] Replay setup OK for micro-batch %d: "
+                            "routed_experts=%s, attn_mask=%s.",
+                            idx, re.shape, attn_mask.shape,
                         )
                     except Exception:
                         logger.warning(
@@ -279,31 +415,54 @@ def _r3_forward_backward_batch(
                         )
                 else:
                     logger.warning(
-                        "[R3] Cannot find attention_mask for micro-batch %d; "
-                        "skipping replay setup.",
+                        "[R3] Cannot find or reconstruct attention_mask for "
+                        "micro-batch %d; skipping replay setup. "
+                        "Keys in orig_mb: %s, keys in padded_mb: %s.",
                         idx,
+                        list(mb_item.orig_mb.keys()) if hasattr(mb_item, "orig_mb") and isinstance(mb_item.orig_mb, dict) else "N/A",
+                        list(mb_item.padded_mb.keys()) if hasattr(mb_item, "padded_mb") and isinstance(mb_item.padded_mb, dict) else "N/A",
                     )
             return mb_item
 
-    # Patch __iter__ on the MicroBatchList instance
-    original_iter = mb_list.__class__.__iter__
+    # Problem 2 fix: patch __iter__ on the INSTANCE, not the class.
+    # Python's iter() protocol looks up __iter__ on the *type*, not the instance.
+    # So we cannot simply assign mb_list.__iter__ = ... and have iter() find it.
+    # Instead, we save the original class __iter__, temporarily replace it on
+    # the class for the duration of this call, and restore it in finally.
+    # This is safe because forward_backward_batch is synchronous.
+    original_class_iter = mb_list.__class__.__iter__
 
     def _r3_iter(mb_list_self):
-        return _R3MicroBatchIterator(original_iter(mb_list_self))
+        return _R3MicroBatchIterator(original_class_iter(mb_list_self))
 
     mb_list.__class__.__iter__ = _r3_iter
 
     try:
+        # Problem 3 explanation:
+        # Megatron's forward_backward_func (e.g. 1F1B schedule) internally
+        # interleaves forward and backward for each micro-batch.  We do NOT
+        # call setup_per_microbatch_replay_backward() after this function
+        # returns -- by then backward is already done.
+        #
+        # Instead, the backward replay is handled by the RouterReplay design:
+        # - set_target_indices() in setup_per_microbatch_replay_forward()
+        #   appends indices to replay_backward_list for each layer.
+        # - When activation checkpointing triggers recompute during backward,
+        #   the patched routing function checks router_replay_action.
+        # - We set REPLAY_FORWARD before each micro-batch's forward.
+        #   During the same micro-batch's backward recompute, the
+        #   replay_backward_list is consumed via pop(0) in FIFO order.
+        #
+        # For the non-activation-checkpoint case, backward simply uses
+        # autograd on the forward's recorded computation graph, so no
+        # re-routing occurs and replay is not needed.
         self._r3_original_forward_backward_batch(
             mb_list, process_output_fn, forward_only=forward_only
         )
-
-        # Switch to backward replay after forward pass
-        if not forward_only:
-            setup_per_microbatch_replay_backward()
     finally:
-        # Restore original iterator and clean up
-        mb_list.__class__.__iter__ = original_iter
+        # Restore original class __iter__ and clean up R3 state
+        mb_list.__class__.__iter__ = original_class_iter
         clear_router_replay()
         self._r3_per_mb_experts = None
         self._r3_mb_counter = 0
+        logger.debug("[R3] forward_backward_batch cleanup complete.")

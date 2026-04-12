@@ -34,6 +34,53 @@ from areal.utils.perf_tracer import trace_perf
 logger = logging.getLogger("PPOActor")
 
 
+
+def _split_routed_experts_for_minibatches(
+    routed_experts: torch.Tensor,
+    mb_inputs,
+) -> list:
+    """Split routed_experts tensor per mini-batch using forward_indices.
+
+    This handles R3 Problem 1: routed_experts is 4D and cannot be split
+    by split_padded_tensor_dict_into_mb_list (which only splits 2D tensors
+    with numel == bs * max_seqlen).
+
+    Args:
+        routed_experts: ``(bs, seq_len, num_moe_layers, topk)``
+        mb_inputs: ``MicroBatchList`` with ``forward_indices``.
+
+    Returns:
+        List of tensors, one per mini-batch.
+    """
+    forward_indices = mb_inputs.forward_indices
+    n_mbs = len(mb_inputs.mbs)
+
+    if forward_indices is None:
+        # No reordering -- split evenly
+        bs = routed_experts.shape[0]
+        chunk = bs // n_mbs
+        return [routed_experts[i * chunk : (i + 1) * chunk] for i in range(n_mbs)]
+
+    # Reorder by forward_indices
+    reordered = routed_experts[forward_indices]
+
+    # Determine per-MB sample counts from group_lens and attention_mask info.
+    # Since we are before pack_tensor_dict, mbs still have attention_mask.
+    result = []
+    offset = 0
+    for i, mb_dict in enumerate(mb_inputs.mbs):
+        if isinstance(mb_dict, dict) and "attention_mask" in mb_dict:
+            n_samples = mb_dict["attention_mask"].shape[0]
+        elif isinstance(mb_dict, dict) and "cu_seqlens" in mb_dict:
+            n_samples = len(mb_dict["cu_seqlens"]) - 1
+        else:
+            n_samples = routed_experts.shape[0] // n_mbs
+        result.append(reordered[offset : offset + n_samples])
+        offset += n_samples
+
+    return result
+
+
 class PPOActor:
     def __init__(self, config: PPOActorConfig, engine: TrainEngine):
         self.config = config
@@ -321,10 +368,27 @@ class PPOActor:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
+
+        # R3 Problem 1 fix: Pop routed_experts BEFORE split_padded_tensor_dict_into_mb_list.
+        # routed_experts is 4D (bs, seq_len, num_moe_layers, topk) and its numel() !=
+        # bs * max_seqlen, so it would be placed in not_to_split and broadcast identically
+        # to every mini-batch, causing data mismatch when ppo_n_minibatches > 1.
+        # We pop it here and manually split it per mini-batch after the standard split.
+        _r3_routed_experts = data.pop("routed_experts", None)
+
         mb_inputs = split_padded_tensor_dict_into_mb_list(
             data,
             mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
         )
+
+        # R3: Manually split routed_experts and inject into each mini-batch.
+        if _r3_routed_experts is not None:
+            _r3_split = _split_routed_experts_for_minibatches(
+                _r3_routed_experts, mb_inputs
+            )
+            for i, mb_dict in enumerate(mb_inputs.mbs):
+                if _r3_split[i] is not None:
+                    mb_dict["routed_experts"] = _r3_split[i]
 
         with stats_tracker.scope("update"):
             # Get current version for proximal approximation metrics

@@ -27,6 +27,10 @@ Ported from verl reference implementation, adapted for AReaL:
 - No dependency on megatron.core.transformer.moe.router_replay
 - Simplified packed-sequence handling (no preprocess_packed_seqs dependency)
 - topk and num_moe_layers passed explicitly (no hardcoded guessing)
+
+v3 changes:
+- Problem 6 fix: guard scatter_to_sequence_parallel_region for tp_size==1
+- Improved logging and bounds checking throughout
 """
 
 from __future__ import annotations
@@ -248,11 +252,19 @@ def set_router_replay_data(
         vp_rank: Virtual pipeline stage rank override.
     """
     from megatron.core import parallel_state as mpu
-    from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 
     with torch.no_grad():
         device = torch.cuda.current_device()
         bs, max_seq_len = attention_mask.shape[:2]
+
+        logger.debug(
+            "[R3] set_router_replay_data: input layers_topk_idx=%s, "
+            "attention_mask=%s, bs=%d, max_seq_len=%d.",
+            layers_topk_idx.shape,
+            attention_mask.shape,
+            bs,
+            max_seq_len,
+        )
 
         # Step 1: Remove left-padding -> flat (total_real_tokens, num_layers, topk)
         seq_lens = attention_mask.sum(dim=1).long()  # (bs,)
@@ -263,10 +275,37 @@ def set_router_replay_data(
             pieces.append(layers_topk_idx[i, mask][:slen])
         flat_tokens = torch.cat(pieces, dim=0)  # (total_real_tokens, num_layers, topk)
 
-        # Step 2: Scatter to SP ranks
-        # scatter_to_sequence_parallel_region expects (seq, ...) and splits dim=0
+        logger.debug(
+            "[R3] set_router_replay_data: after left-padding removal: "
+            "flat_tokens=%s (total_real_tokens=%d).",
+            flat_tokens.shape,
+            flat_tokens.shape[0],
+        )
+
+        # Step 2: Scatter to SP ranks (Problem 6 fix: guard for non-SP case)
+        # When tp_size == 1 (no sequence parallelism), scatter_to_sequence_parallel_region
+        # should be an identity op in Megatron-Core. However, we guard against potential
+        # issues when the TP process group is trivial.
         flat_tokens = flat_tokens.to(device)
-        local_tokens = scatter_to_sequence_parallel_region(flat_tokens)
+        tp_size = mpu.get_tensor_model_parallel_world_size()
+        if tp_size > 1:
+            from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
+            local_tokens = scatter_to_sequence_parallel_region(flat_tokens)
+            logger.debug(
+                "[R3] set_router_replay_data: SP scatter tp_size=%d, "
+                "flat_tokens %s -> local_tokens %s.",
+                tp_size,
+                flat_tokens.shape,
+                local_tokens.shape,
+            )
+        else:
+            # tp_size == 1: no SP splitting needed, use flat_tokens directly
+            local_tokens = flat_tokens
+            logger.debug(
+                "[R3] set_router_replay_data: tp_size=1, skipping SP scatter. "
+                "local_tokens=%s.",
+                local_tokens.shape,
+            )
         # local_tokens: (local_tokens_count, num_layers, topk)
 
         # Step 3: Permute to (num_layers, local_tokens_count, topk)
@@ -276,6 +315,16 @@ def set_router_replay_data(
         local_info = get_current_rank_layer_info(tf_config, vp_rank)
         offset, end = local_info["start"], local_info["end"]
         router_list = RouterReplayHelper.get_micro_batch_router_list(tf_config, vp_rank)
+
+        if len(router_list) == 0:
+            logger.warning(
+                "[R3] set_router_replay_data: no RouterReplay instances found "
+                "for PP offset=%d..%d, vp_rank=%s. "
+                "Total router_instances=%d.",
+                offset, end, vp_rank,
+                len(RouterReplay.router_instances),
+            )
+            return
 
         # Determine indexing: if dim-0 covers all layers, use absolute index;
         # otherwise (only MoE layers), use MoE-layer ordinal.
@@ -287,18 +336,38 @@ def set_router_replay_data(
         for layer_idx in range(offset, end):
             if not is_moe_layer(tf_config, layer_idx):
                 continue
+            if router_offset >= len(router_list):
+                logger.warning(
+                    "[R3] set_router_replay_data: router_offset=%d >= "
+                    "len(router_list)=%d. Layer assignment mismatch at "
+                    "layer_idx=%d.",
+                    router_offset, len(router_list), layer_idx,
+                )
+                break
             router = router_list[router_offset]
             idx = layer_idx if index_by_layer else moe_idx
+            if idx >= len(layers_topk):
+                logger.warning(
+                    "[R3] set_router_replay_data: layer index %d >= "
+                    "layers_topk dim-0 (%d). Skipping.",
+                    idx, len(layers_topk),
+                )
+                moe_idx += 1
+                router_offset += 1
+                continue
             router.set_target_indices(layers_topk[idx].to(torch.int64))
             router_offset += 1
             moe_idx += 1
 
         logger.debug(
             "[R3] set_router_replay_data: distributed %d layers of replay data "
-            "to %d router instances (PP offset=%d).",
-            len(layers_topk),
+            "to %d/%d router instances (PP layers %d..%d, tp_size=%d).",
+            router_offset,
             len(router_list),
+            len(RouterReplay.router_instances),
             offset,
+            end,
+            tp_size,
         )
 
 
@@ -321,6 +390,13 @@ def setup_per_microbatch_replay_forward(
         tf_config: Megatron TransformerConfig.
         vp_rank: Virtual pipeline stage rank override.
     """
+    logger.debug(
+        "[R3] setup_per_microbatch_replay_forward: "
+        "routed_experts=%s (dtype=%s), attention_mask=%s.",
+        routed_experts.shape,
+        routed_experts.dtype,
+        attention_mask.shape,
+    )
     routed_experts = routed_experts.to(torch.int32)
     set_router_replay_data(routed_experts, attention_mask, tf_config, vp_rank)
     RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
@@ -335,9 +411,10 @@ def setup_per_microbatch_replay_backward() -> None:
 
 def clear_router_replay() -> None:
     """Clear all RouterReplay state after a full forward-backward pass."""
+    n_instances = len(RouterReplay.router_instances)
     RouterReplay.clear_global_indices()
     RouterReplay.clear_global_router_replay_action()
-    logger.debug("[R3] Router replay state cleared.")
+    logger.debug("[R3] Router replay state cleared (%d instances).", n_instances)
 
 
 # ===================================================================
@@ -421,13 +498,15 @@ def preprocess_routed_experts_batch(
 
     logger.debug(
         "[R3] preprocess_routed_experts_batch: shape=%s dtype=%s "
-        "(num_moe_layers=%d, topk=%d, sgl_tokens=%d, real_tokens=%d).",
+        "(num_moe_layers=%d, topk=%d, sgl_tokens=%d, real_tokens=%d, "
+        "left_pad=%d).",
         padded.shape,
         padded.dtype,
         num_moe_layers,
         topk,
         num_sgl_tokens,
         real_tokens,
+        left_pad,
     )
 
     return padded
