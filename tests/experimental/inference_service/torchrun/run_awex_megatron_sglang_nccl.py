@@ -67,7 +67,7 @@ def _probe_health(base_url: str, timeout_s: float = 2.0) -> tuple[bool, str]:
 
 
 def _write_result(path: str, ok: bool, message: str = "") -> None:
-    if dist.get_rank() != 0:
+    if dist.is_initialized() and dist.get_rank() != 0:
         return
     payload = "Passed" if ok else f"Failed: {message}"
     with open(path, "w", encoding="utf-8") as f:
@@ -117,6 +117,72 @@ def _visible_devices() -> list[str]:
     return []
 
 
+def _sanitize_server_env(parent_env: dict[str, str]) -> dict[str, str]:
+    """Drop torchrun launcher vars before spawning isolated reader workers."""
+
+    env = dict(parent_env)
+    for key in (
+        "RANK",
+        "WORLD_SIZE",
+        "LOCAL_RANK",
+        "LOCAL_WORLD_SIZE",
+        "MASTER_ADDR",
+        "MASTER_PORT",
+        "TORCHELASTIC_USE_AGENT_STORE",
+    ):
+        env.pop(key, None)
+    return env
+
+
+def _global_pg_init_method(host: str, dist_port: int) -> str:
+    return f"tcp://{host}:{dist_port}"
+
+
+def _build_reader_server_env(
+    parent_env: dict[str, str],
+    host: str,
+    dist_port: int,
+    gpu_id: str,
+) -> dict[str, str]:
+    """Build single-process dist env for an isolated reader server process."""
+
+    env = _sanitize_server_env(parent_env)
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["DEVICE"] = "0"
+    env["RANK"] = "0"
+    env["WORLD_SIZE"] = "1"
+    env["LOCAL_RANK"] = "0"
+    env["LOCAL_WORLD_SIZE"] = "1"
+    env["MASTER_ADDR"] = str(host)
+    env["MASTER_PORT"] = str(dist_port)
+    env["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
+    return env
+
+
+def _configure_single_gpu_runtime_env(
+    rank: int,
+    world_size: int,
+    local_rank: int,
+    all_visible: list[str],
+) -> str:
+    """Normalize per-process runtime env to singleton CUDA visibility."""
+
+    if local_rank < 0 or local_rank >= len(all_visible):
+        raise ValueError(
+            f"Invalid local_rank={local_rank} for visible devices={all_visible}"
+        )
+    selected = all_visible[local_rank]
+    os.environ.setdefault("AREAL_ORIG_CUDA_VISIBLE_DEVICES", ",".join(all_visible))
+    os.environ["CUDA_VISIBLE_DEVICES"] = selected
+    os.environ["RANK"] = str(rank)
+    os.environ["WORLD_SIZE"] = str(world_size)
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["LOCAL_WORLD_SIZE"] = "1"
+    os.environ["DEVICE"] = "0"
+    os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
+    return selected
+
+
 def _init_megatron_parallel(tp_size: int, pp_size: int) -> None:
     from megatron.core import parallel_state as mpu
     from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
@@ -144,10 +210,29 @@ def _validate_allocation(
         )
 
 
+def _validate_awex_tp_contract(train_tp_size: int, infer_tp_size: int) -> None:
+    """Validate AWEX tp-resharding contract early with a clear error.
+
+    AWEX metadata alignment enforces: infer_tp >= train_tp and infer_tp % train_tp == 0.
+    """
+
+    if infer_tp_size < train_tp_size or infer_tp_size % train_tp_size != 0:
+        raise ValueError(
+            "Unsupported AWEX TP topology: "
+            f"train_tp_size={train_tp_size}, infer_tp_size={infer_tp_size}. "
+            "AWEX requires infer_tp_size >= train_tp_size and "
+            "infer_tp_size % train_tp_size == 0."
+        )
+
+
 def main(args: argparse.Namespace) -> None:
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     _validate_allocation(world_size, args.dp_size, args.tp_size, args.pp_size)
+    _validate_awex_tp_contract(
+        train_tp_size=args.tp_size,
+        infer_tp_size=args.infer_tp_size,
+    )
 
     _log(
         rank,
@@ -223,60 +308,75 @@ def main(args: argparse.Namespace) -> None:
             _log(rank, "starting awex meta server")
             meta_ip, meta_port = start_meta_server()
             meta_started = True
-            shared = [f"{meta_ip}:{meta_port}", args.awex_server_url]
+            base_urls = [
+                u.strip() for u in args.awex_server_urls.split(",") if u.strip()
+            ]
+            if not base_urls:
+                raise ValueError("--awex-server-urls must include at least one URL")
+            shared = [f"{meta_ip}:{meta_port}", base_urls]
         else:
-            shared = ["", ""]
+            shared = ["", []]
 
         # Broadcast meta address + externally managed awex server endpoint.
         dist.broadcast_object_list(shared, src=0)
-        meta_addr, base_url = shared
-        _log(rank, f"received endpoints: meta={meta_addr} sglang={base_url}")
+        meta_addr, base_urls = shared
+        if not isinstance(base_urls, list) or not base_urls:
+            raise RuntimeError("No awex server URLs broadcast from rank0")
+        _log(
+            rank,
+            f"received endpoints: meta={meta_addr} sglang_count={len(base_urls)} first={base_urls[0]}",
+        )
 
         init_result: dict[str, object] = {"ok": False, "error": None}
         update_result: dict[str, object] = {"ok": False, "error": None}
 
         def _call_awex_init() -> None:
             try:
-                resp = requests.post(
-                    f"{base_url}/areal_awex_init",
-                    json={
-                        "meta_server_addr": meta_addr,
-                        "engine_rank": 0,
-                        "num_engines": 1,
-                        "comm_backend": "nccl",
-                        "enable_debug_mode": False,
-                        "debug_mode_config": {
-                            "enable_nccl_debug_mode": True,
-                            "raise_on_validation_fail": False,
+                num_engines = len(base_urls)
+                for engine_rank, base_url in enumerate(base_urls):
+                    resp = requests.post(
+                        f"{base_url}/areal_awex_init",
+                        json={
+                            "meta_server_addr": meta_addr,
+                            "engine_rank": engine_rank,
+                            "num_engines": num_engines,
+                            "comm_backend": "nccl",
+                            "enable_debug_mode": False,
+                            "debug_mode_config": {
+                                "enable_nccl_debug_mode": True,
+                                "raise_on_validation_fail": False,
+                            },
+                            "enable_colocate_mode": False,
+                            "nnodes": 1,
+                            "node_rank": 0,
                         },
-                        "enable_colocate_mode": False,
-                        "nnodes": 1,
-                        "node_rank": 0,
-                    },
-                    timeout=max(30, args.rpc_timeout),
-                )
-                if resp.status_code == 200 and resp.json().get("success"):
-                    init_result["ok"] = True
-                else:
-                    init_result["error"] = (
-                        f"init failed: {resp.status_code} {resp.text}"
+                        timeout=max(30, args.rpc_timeout),
                     )
+                    if not (resp.status_code == 200 and resp.json().get("success")):
+                        init_result["error"] = (
+                            f"init failed for engine_rank={engine_rank} url={base_url}: "
+                            f"{resp.status_code} {resp.text}"
+                        )
+                        return
+                init_result["ok"] = True
             except Exception as exc:  # pragma: no cover
                 init_result["error"] = str(exc)
 
         def _call_awex_update(step_id: int) -> None:
             try:
-                resp = requests.post(
-                    f"{base_url}/areal_awex_update",
-                    json={"step_id": step_id, "kwargs": {}},
-                    timeout=max(30, args.rpc_timeout),
-                )
-                if resp.status_code == 200 and resp.json().get("success"):
-                    update_result["ok"] = True
-                else:
-                    update_result["error"] = (
-                        f"update failed: {resp.status_code} {resp.text}"
+                for engine_rank, base_url in enumerate(base_urls):
+                    resp = requests.post(
+                        f"{base_url}/areal_awex_update",
+                        json={"step_id": step_id, "kwargs": {}},
+                        timeout=max(30, args.rpc_timeout),
                     )
+                    if not (resp.status_code == 200 and resp.json().get("success")):
+                        update_result["error"] = (
+                            f"update failed for engine_rank={engine_rank} url={base_url}: "
+                            f"{resp.status_code} {resp.text}"
+                        )
+                        return
+                update_result["ok"] = True
             except Exception as exc:  # pragma: no cover
                 update_result["error"] = str(exc)
 
@@ -285,25 +385,35 @@ def main(args: argparse.Namespace) -> None:
             deadline = time.time() + args.health_timeout
             _log(
                 rank,
-                f"waiting for sglang health at {base_url} (timeout={args.health_timeout}s)",
+                f"waiting for all sglang workers health (timeout={args.health_timeout}s)",
             )
             last_detail = ""
             last_log_ts = 0.0
             while time.time() < deadline:
-                ok, detail = _probe_health(base_url, timeout_s=2.0)
-                last_detail = detail
+                all_ok = True
+                details: list[str] = []
+                for idx, base_url in enumerate(base_urls):
+                    ok, detail = _probe_health(base_url, timeout_s=2.0)
+                    details.append(f"{idx}:{detail}")
+                    if not ok:
+                        all_ok = False
+                last_detail = " | ".join(details)
                 now = time.time()
                 if now - last_log_ts >= 10:
                     elapsed = int(now - (deadline - args.health_timeout))
-                    _log(rank, f"health probe pending (elapsed={elapsed}s): {detail}")
+                    _log(
+                        rank,
+                        f"health probe pending (elapsed={elapsed}s): {last_detail}",
+                    )
                     last_log_ts = now
-                if detail.startswith("500 "):
+                if any(d.split(":", 1)[1].startswith("500 ") for d in details):
                     health_gate[1] = (
-                        f"AReaL SGLang server reported fatal health error: {detail}"
+                        "AReaL SGLang server reported fatal health error: "
+                        f"{last_detail}"
                     )
                     break
-                if ok:
-                    _log(rank, "sglang server is healthy")
+                if all_ok:
+                    _log(rank, "all sglang workers are healthy")
                     health_gate[0] = True
                     break
                 time.sleep(1)
@@ -420,8 +530,16 @@ if __name__ == "__main__":
     parser.add_argument("--dp-size", type=int, required=True)
     parser.add_argument("--tp-size", type=int, required=True)
     parser.add_argument("--pp-size", type=int, required=True)
+    parser.add_argument("--infer-tp-size", type=int, required=True)
     parser.add_argument("--model-path", type=str, required=True)
-    parser.add_argument("--awex-server-url", type=str, required=True)
+    parser.add_argument(
+        "--awex-server-urls",
+        "--awex-server-url",
+        dest="awex_server_urls",
+        type=str,
+        required=True,
+        help="Comma-separated inference worker base URLs.",
+    )
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--health-timeout", type=int, default=300)
     parser.add_argument("--rpc-timeout", type=int, default=300)

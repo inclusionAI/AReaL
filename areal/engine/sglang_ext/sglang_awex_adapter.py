@@ -40,6 +40,13 @@ class _AwexHFConfigProxy:
         self._base_cfg = base_cfg
 
     def __getattr__(self, name: str):
+        if name == "architectures":
+            try:
+                mapped = self.to_dict().get("architectures")
+                if mapped is not None:
+                    return mapped
+            except Exception:
+                pass
         return getattr(self._base_cfg, name)
 
     def to_dict(self):

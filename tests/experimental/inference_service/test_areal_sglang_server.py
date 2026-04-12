@@ -318,6 +318,7 @@ def test_awex_hf_config_proxy_maps_qwen3_arch_to_qwen2_for_awex():
     proxied = _AwexHFConfigProxy(_Cfg())
     d = proxied.to_dict()
     assert d["architectures"] == ["Qwen2ForCausalLM"]
+    assert proxied.architectures == ["Qwen2ForCausalLM"]
 
 
 def test_awex_adapter_initialize_cleans_reader_on_failure(monkeypatch):

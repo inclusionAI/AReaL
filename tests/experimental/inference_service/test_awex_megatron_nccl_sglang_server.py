@@ -126,8 +126,12 @@ def _run_awex_sglang_torchrun(
     dp_size: int,
     tp_size: int,
     pp_size: int,
-    awex_server_url: str,
+    infer_tp_size: int,
+    awex_server_urls: list[str],
     output: str,
+    *,
+    expect_success: bool,
+    expected_error_substr: str | None = None,
 ):
     model_path = get_test_model_path()
     torchrun_port = find_free_ports(1)[0]
@@ -141,8 +145,9 @@ def _run_awex_sglang_torchrun(
         f"--dp-size={dp_size}",
         f"--tp-size={tp_size}",
         f"--pp-size={pp_size}",
+        f"--infer-tp-size={infer_tp_size}",
         f"--model-path={model_path}",
-        f"--awex-server-url={awex_server_url}",
+        f"--awex-server-urls={','.join(awex_server_urls)}",
         f"--output={output}",
         "--health-timeout=240",
         "--rpc-timeout=240",
@@ -160,28 +165,47 @@ def _run_awex_sglang_torchrun(
     environ["TORCH_DISTRIBUTED_DEBUG"] = "INFO"
     environ["TORCH_NCCL_ENABLE_MONITORING"] = "0"
     environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, trainer_gpu_ids))
+    completed: subprocess.CompletedProcess[str] | None = None
     try:
-        subprocess.run(
+        completed = subprocess.run(
             cmd,
             env=environ,
-            check=True,
+            check=False,
             stdout=sys.stdout,
             stderr=sys.stderr,
             text=True,
             timeout=1200,
         )
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
-        if isinstance(exc, subprocess.TimeoutExpired):
-            pytest.fail(f"Torchrun timed out after {exc.timeout}s: {' '.join(cmd)}")
-        else:
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"Torchrun timed out after {exc.timeout}s: {' '.join(cmd)}")
+    if completed is None:
+        pytest.fail(f"Torchrun failed to execute command: {' '.join(cmd)}")
+    assert completed is not None
+
+    result = ""
+    if os.path.exists(output):
+        with open(output, encoding="utf-8") as f:
+            result = f.read().strip()
+
+    if expect_success:
+        if completed.returncode != 0:
             pytest.fail(
-                f"Torchrun failed with exit code {exc.returncode}. "
+                f"Torchrun failed with exit code {completed.returncode}. "
                 f"See streamed logs above. Command: {' '.join(cmd)}"
             )
+        assert result == "Passed", f"Integration failed: {result}"
+        return
 
-    with open(output, encoding="utf-8") as f:
-        result = f.read().strip()
-    assert result == "Passed", f"Integration failed: {result}"
+    if completed.returncode == 0 and result == "Passed":
+        pytest.fail(
+            "Expected this topology to be rejected by AWEX, but torchrun passed. "
+            f"Command: {' '.join(cmd)}"
+        )
+    if expected_error_substr:
+        assert expected_error_substr in result, (
+            "Torchrun failed as expected, but missing expected error marker. "
+            f"expected={expected_error_substr!r} actual={result!r}"
+        )
 
 
 @contextmanager
@@ -203,11 +227,20 @@ def _temporary_env(overrides: dict[str, str]):
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 @pytest.mark.parametrize(
-    "split_name,trainer_gpu_count,dp_size,tp_size,pp_size,inf_tp",
+    "split_name,trainer_gpu_count,dp_size,tp_size,pp_size,inf_tp,expect_success,expected_error_substr",
     [
-        ("4plus4_d4_t4", 4, 4, 1, 1, 4),
-        ("4plus4_d2t2_t4", 4, 2, 2, 1, 4),
-        ("4plus4_t4_d4", 4, 1, 4, 1, 1),
+        ("4plus4_d4_t4", 4, 4, 1, 1, 4, True, None),
+        ("4plus4_d2t2_t4", 4, 2, 2, 1, 4, True, None),
+        (
+            "4plus4_t4_d4",
+            4,
+            1,
+            4,
+            1,
+            1,
+            False,
+            "Unsupported AWEX TP topology",
+        ),
     ],
 )
 def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
@@ -218,6 +251,8 @@ def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
     tp_size: int,
     pp_size: int,
     inf_tp: int,
+    expect_success: bool,
+    expected_error_substr: str | None,
 ):
     """Run awex Megatron<->SGLang with trainer/inference disjoint GPU pools.
 
@@ -264,15 +299,20 @@ def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
                 inference_gpus=inference_gpu_ids,
                 model_path=model_path,
             )
-            awex_server_url = controller.inference_worker_addrs[0]
+            awex_server_urls = controller.inference_worker_addrs
+            if not awex_server_urls:
+                raise RuntimeError("Controller started with no inference worker URLs")
 
             _run_awex_sglang_torchrun(
                 trainer_gpu_ids=trainer_gpu_ids,
                 dp_size=dp_size,
                 tp_size=tp_size,
                 pp_size=pp_size,
-                awex_server_url=awex_server_url,
+                infer_tp_size=inf_tp,
+                awex_server_urls=awex_server_urls,
                 output=str(output),
+                expect_success=expect_success,
+                expected_error_substr=expected_error_substr,
             )
         finally:
             if controller is not None:
