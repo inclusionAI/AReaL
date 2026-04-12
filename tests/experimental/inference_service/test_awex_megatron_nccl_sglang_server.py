@@ -205,7 +205,9 @@ def _temporary_env(overrides: dict[str, str]):
 @pytest.mark.parametrize(
     "split_name,trainer_gpu_count,dp_size,tp_size,pp_size,inf_tp",
     [
-        ("4plus4", 4, 4, 1, 1, 4),
+        ("4plus4_d4_d4", 4, 4, 1, 1, 4),
+        ("4plus4_d2t2_t4", 4, 2, 2, 1, 4),
+        ("4plus4_t4_d4", 4, 1, 4, 1, 1),
     ],
 )
 def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
