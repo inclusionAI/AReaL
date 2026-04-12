@@ -10,19 +10,13 @@ from __future__ import annotations
 import argparse
 import os
 import signal
-import subprocess
-import sys
 import threading
 import time
 import traceback
-from collections.abc import Mapping
-from datetime import timedelta
 
 import requests
 import torch
 import torch.distributed as dist
-
-from areal.utils.network import find_free_ports
 
 
 def _split_visible_devices(raw: str | None) -> list[str]:
@@ -58,8 +52,6 @@ def _early_pin_visible_device_from_local_rank() -> None:
     os.environ["DEVICE"] = "0"
 
 
-
-
 def _log(rank: int, message: str) -> None:
     print(f"[awex-sglang-nccl][rank{rank}] {message}", flush=True)
 
@@ -71,61 +63,6 @@ def _probe_health(base_url: str, timeout_s: float = 2.0) -> tuple[bool, str]:
         return resp.status_code == 200, f"{resp.status_code} {text}"
     except requests.exceptions.RequestException as exc:
         return False, f"request_error: {exc}"
-
-
-def _sanitize_server_env(env: Mapping[str, str]) -> dict[str, str]:
-    """Remove parent torchrun distributed env vars for child SGLang server.
-
-    The child server runs its own distributed bootstrap and must not inherit the
-    controller torchrun rendezvous variables.
-    """
-
-    blocked_prefixes = (
-        "TORCHELASTIC_",
-        "GROUP_",
-        "ROLE_",
-    )
-    blocked_exact = {
-        "RANK",
-        "WORLD_SIZE",
-        "LOCAL_RANK",
-        "LOCAL_WORLD_SIZE",
-        "MASTER_ADDR",
-        "MASTER_PORT",
-        "TORCH_NCCL_ASYNC_ERROR_HANDLING",
-        "PMI_RANK",
-        "PMI_SIZE",
-        "PMI_FD",
-    }
-
-    sanitized = dict(env)
-    for key in list(sanitized.keys()):
-        if key in blocked_exact or any(key.startswith(p) for p in blocked_prefixes):
-            sanitized.pop(key, None)
-    return sanitized
-
-
-def _build_reader_server_env(
-    parent_env: Mapping[str, str], host: str, dist_port: int, gpu_id: str
-) -> dict[str, str]:
-    env = _sanitize_server_env(parent_env)
-    env["CUDA_VISIBLE_DEVICES"] = gpu_id
-    env["DEVICE"] = "0"
-    env["RANK"] = "0"
-    env["WORLD_SIZE"] = "1"
-    env["LOCAL_RANK"] = "0"
-    env["LOCAL_WORLD_SIZE"] = "1"
-    env["MASTER_ADDR"] = host
-    env["MASTER_PORT"] = str(dist_port)
-    env["TORCHELASTIC_USE_AGENT_STORE"] = "False"
-    return env
-
-
-
-
-
-def _global_pg_init_method(host: str, port: int) -> str:
-    return f"tcp://{host}:{port}"
 
 
 def _write_result(path: str, ok: bool, message: str = "") -> None:
@@ -233,7 +170,6 @@ def main(args: argparse.Namespace) -> None:
     world_size = int(os.environ["WORLD_SIZE"])
     _validate_allocation(world_size, args.dp_size, args.tp_size, args.pp_size)
 
-
     _log(
         rank,
         "checkpoint/bootstrap: debug env "
@@ -250,18 +186,18 @@ def main(args: argparse.Namespace) -> None:
     from awex.meta.meta_server import start_meta_server, stop_meta_server
     from awex.tests.test_utils import megatron_model_from_hf
 
-    from areal.infra.utils.proc import kill_process_tree
-    from areal.utils import network
-
     class MegatronEngine(AwexMegatronEngine):
         def initialize(self):
             super().initialize()
             # HACK:
-            self.weights_exchange_writer.asystem_train_config = self.weights_exchange_writer.config
+            self.weights_exchange_writer.asystem_train_config = (
+                self.weights_exchange_writer.config
+            )
             # FIXME: awex doesn't work on a single colocated GPU
 
         def resume_memory_occupation(self, tags=None):
             pass
+
         def release_grad_memory(self, empty_cache=True):
             pass
 
@@ -272,20 +208,15 @@ def main(args: argparse.Namespace) -> None:
         f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}",
     )
 
-    dist.init_process_group('nccl')
+    dist.init_process_group("nccl")
     _log(rank, "checkpoint/global-pg: initialized")
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
-    server_proc: subprocess.Popen | None = None
     meta_started = False
 
     def _stop_server_and_meta() -> None:
         if rank != 0:
             return
-        if server_proc is not None:
-            kill_process_tree(server_proc.pid, graceful=True)
-            if server_proc.poll() is None:
-                kill_process_tree(server_proc.pid, graceful=False)
         if meta_started:
             stop_meta_server()
 
@@ -311,52 +242,13 @@ def main(args: argparse.Namespace) -> None:
             _log(rank, "starting awex meta server")
             meta_ip, meta_port = start_meta_server()
             meta_started = True
-            os.environ["AWEX_META_ADDR_BCAST"] = f"{meta_ip}:{meta_port}"
-            host = network.gethostip()
-            sglang_port, sglang_dist_port = find_free_ports(2)
-            os.environ["AWEX_SGLANG_HOST_BCAST"] = host
-            os.environ["AWEX_SGLANG_PORT_BCAST"] = str(sglang_port)
+            shared = [f"{meta_ip}:{meta_port}", args.awex_server_url]
+        else:
+            shared = ["", ""]
 
-            from areal.api.cli_args import SGLangConfig
-
-            cmd = SGLangConfig.build_cmd(
-                sglang_config=SGLangConfig(
-                    skip_tokenizer_init=True,
-                    model_path=args.model_path,
-                    mem_fraction_static=0.15,
-                    launch_server_module="areal.engine.sglang_ext.areal_sglang_server",
-                ),
-                host=host,
-                port=sglang_port,
-                tp_size=1,
-                base_gpu_id=0,
-                dist_init_addr=f"{host}:{sglang_dist_port}",
-            )
-            server_env = _build_reader_server_env(
-                parent_env=os.environ,
-                host=host,
-                dist_port=sglang_dist_port,
-                gpu_id="1",  # HACK
-            )
-            # Prefer a non-overlapping GPU when available; otherwise colocate.
-            server_proc = subprocess.Popen(
-                cmd,
-                env=server_env,
-                stdout=sys.stdout,
-                stderr=sys.stdout,
-            )
-            _log(rank, f"sglang process command issued: {' '.join(cmd)}")
-
-        # Broadcast meta/server endpoint to all ranks via env + object list.
-        shared = [
-            os.environ.get("AWEX_META_ADDR_BCAST", ""),
-            os.environ.get("AWEX_SGLANG_HOST_BCAST", ""),
-            os.environ.get("AWEX_SGLANG_PORT_BCAST", ""),
-        ]
+        # Broadcast meta address + externally managed awex server endpoint.
         dist.broadcast_object_list(shared, src=0)
-        meta_addr, sglang_host, sglang_port_str = shared
-        sglang_port = int(sglang_port_str)
-        base_url = f"http://{sglang_host}:{sglang_port}"
+        meta_addr, base_url = shared
         _log(rank, f"received endpoints: meta={meta_addr} sglang={base_url}")
 
         init_result: dict[str, object] = {"ok": False, "error": None}
@@ -417,10 +309,6 @@ def main(args: argparse.Namespace) -> None:
             last_detail = ""
             last_log_ts = 0.0
             while time.time() < deadline:
-                if server_proc is not None and server_proc.poll() is not None:
-                    raise RuntimeError(
-                        f"AReaL SGLang server exited early with code {server_proc.returncode}"
-                    )
                 ok, detail = _probe_health(base_url, timeout_s=2.0)
                 last_detail = detail
                 now = time.time()
@@ -568,14 +456,13 @@ def main(args: argparse.Namespace) -> None:
         _stop_server_and_meta()
 
 
-
 if __name__ == "__main__":
-    print(os.environ['CUDA_VISIBLE_DEVICES'], os.environ['LOCAL_RANK'])
     parser = argparse.ArgumentParser()
     parser.add_argument("--dp-size", type=int, required=True)
     parser.add_argument("--tp-size", type=int, required=True)
     parser.add_argument("--pp-size", type=int, required=True)
     parser.add_argument("--model-path", type=str, required=True)
+    parser.add_argument("--awex-server-url", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--health-timeout", type=int, default=300)
     parser.add_argument("--rpc-timeout", type=int, default=300)
