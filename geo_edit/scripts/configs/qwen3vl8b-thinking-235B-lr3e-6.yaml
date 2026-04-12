@@ -1,0 +1,40 @@
+model_name_or_path: /storage/openpsi/models/Qwen3-VL-8B-Thinking
+image_max_pixels: 262144
+video_max_pixels: 16384
+trust_remote_code: true
+
+stage: sft
+do_train: true
+finetuning_type: full
+freeze_vision_tower: true
+freeze_multi_modal_projector: true
+freeze_language_model: false
+deepspeed: /storage/openpsi/models/lcy_image_edit/sft_workspace/configs/ds_z2_config.json
+
+dataset_dir: /storage/openpsi/data/lcy_image_edit/reasonmap_plus_train_qwen3_235B_augmented_sft_data
+dataset: reasonmap_plus_sft
+template: qwen3_vl
+cutoff_len: 32768
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+output_dir: /storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-235B-lr3e-6
+logging_steps: 10
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: none
+
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 1
+learning_rate: 3.0e-6
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+weight_decay: 0.01
+bf16: true
+gradient_checkpointing: true
+ddp_timeout: 180000000
+
+save_strategy: epoch
+save_total_limit: 3
