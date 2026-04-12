@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-model_path="${1:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-chartqa-1third}"
+model_path="${1:-/storage/openpsi/models/Qwen3-VL-8B-Thinking}"
 port="${2:-8000}"
 echo "model: $model_path"
 echo "port: $port"

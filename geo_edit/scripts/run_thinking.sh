@@ -14,15 +14,15 @@ echo "=== [$(date)] Launching vLLM: Thinking ==="
 bash geo_edit/scripts/launch_vllm_generate.sh "$MODEL" "$PORT"
 
 echo "=== [$(date)] Starting inference: ${TAG} ==="
-python -m geo_edit.scripts.direct_generate \
-    --dataset_path "$DATASET" \
-    --output_dir "$OUTPUT" \
-    --dataset_name mm_mapqa \
-    --model_name_or_path "$MODEL" \
-    --api_base "http://localhost:${PORT}" \
-    --model_type vLLM \
-    --api_mode chat_completions \
-    --max_concurrent_requests "$WORKERS"
+# python -m geo_edit.scripts.direct_generate \
+#     --dataset_path "$DATASET" \
+#     --output_dir "$OUTPUT" \
+#     --dataset_name mm_mapqa \
+#     --model_name_or_path "$MODEL" \
+#     --api_base "http://localhost:${PORT}" \
+#     --model_type vLLM \
+#     --api_mode chat_completions \
+#     --max_concurrent_requests "$WORKERS"
 
 echo "=== [$(date)] Inference done, evaluating ==="
 python -m geo_edit.evaluation.eval_mm_mapqa \

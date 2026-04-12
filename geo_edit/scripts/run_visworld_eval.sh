@@ -15,8 +15,8 @@ fi
 DATASET_ROOT="/storage/openpsi/data/lcy_image_edit/VisWorld-Eval"
 OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/visworld_iterative_gpt5_0403"
 #DONE SUBSETS=(ballgame multihop)
-# SUBSETS=(mmsi multihop paperfolding sokoban)
-SUBSETS=(maze)
+SUBSETS=(mmsi cube paperfolding)
+
 echo "============================================"
 echo "VisWorld-Eval Iterative Sampling"
 echo "Output: $OUTPUT_ROOT"
@@ -49,7 +49,7 @@ for subset in "${SUBSETS[@]}"; do
         --output_dir "$output_dir" \
         --sample_rate 1.0 \
         --max_concurrent_requests 16 \
-        --max_iterative_rounds 10 \
+        --max_iterative_rounds 5 \
         --judge_model "gpt-5-mini-2025-08-07" \
         --judge_api_key "$API_KEY" \
         --judge_api_base "https://matrixllm.alipay.com/v1" \

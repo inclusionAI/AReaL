@@ -1,7 +1,4 @@
-"""Exact-match evaluator for mm_mapqa.
-
-Answers are typically short: Yes/No, numbers, place names.
-Uses normalized string matching with a fallback to OpenAI judge for ambiguous cases.
+"""Rule-based evaluator for mm_mapqa.
 
 Usage:
     python -m geo_edit.evaluation.eval_mm_mapqa \
@@ -15,9 +12,9 @@ import json
 import os
 import re
 import unicodedata
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional
+from typing import List, Optional
+
+from tqdm import tqdm
 
 from geo_edit.utils.io_utils import iter_meta_info_files, load_records
 from geo_edit.utils.stats import (
@@ -28,7 +25,7 @@ from geo_edit.utils.stats import (
 from geo_edit.utils.text_utils import get_final_prediction
 
 
-def normalize(text: str) -> str:
+def _unicode_normalize(text: str) -> str:
     text = unicodedata.normalize("NFKD", text)
     text = text.lower().strip()
     text = text.rstrip(".")
@@ -36,23 +33,91 @@ def normalize(text: str) -> str:
     return text
 
 
-def exact_match(prediction: str, ground_truth: str) -> bool:
-    return normalize(prediction) == normalize(ground_truth)
+def _parse_number(s: str) -> Optional[float]:
+    s = s.strip().replace(",", "")
+    try:
+        return float(s)
+    except ValueError:
+        return None
 
 
-def relaxed_match(prediction: str, ground_truth: str) -> bool:
-    pred_n = normalize(prediction)
-    gt_n = normalize(ground_truth)
+def _parse_items_as_set(text: str) -> set[str]:
+    items = [item.strip() for item in text.split(",")]
+    return {item for item in items if item}
 
-    if pred_n == gt_n:
+
+_RANGE_PCT_RE = re.compile(
+    r"^([\d,]+(?:\.\d+)?)\s*%\s*[-\u2013]\s*([\d,]+(?:\.\d+)?)\s*%$"
+)
+_RANGE_NUM_RE = re.compile(
+    r"^([\d,]+(?:\.\d+)?)\s*[-\u2013]\s*([\d,]+(?:\.\d+)?)$"
+)
+
+
+def _parse_range(text: str) -> Optional[tuple[float, float, bool]]:
+    """Parse 'lo-hi' or 'lo%-hi%'. Returns (lo, hi, is_pct) or None."""
+    m = _RANGE_PCT_RE.match(text)
+    if m:
+        lo = _parse_number(m.group(1))
+        hi = _parse_number(m.group(2))
+        if lo is not None and hi is not None:
+            return (lo, hi, True)
+
+    m = _RANGE_NUM_RE.match(text)
+    if m:
+        lo = _parse_number(m.group(1))
+        hi = _parse_number(m.group(2))
+        if lo is not None and hi is not None:
+            return (lo, hi, False)
+
+    return None
+
+
+_YES_VARIANTS = {"yes", "true", "correct"}
+_NO_VARIANTS = {"no", "false", "incorrect"}
+_NA_VARIANTS = {"n/a", "na", "not applicable", "none"}
+
+
+def rule_match(prediction: str, ground_truth: str) -> bool:
+    """Matching cascade (first hit wins):
+      1. Exact normalized string
+      2. Yes / No synonym groups
+      3. N/A synonym group
+      4. Order-independent set match for comma-separated lists
+      5. Numeric equality (strips commas)
+      6. Range equality (lo-hi or lo%-hi%)
+    """
+    pred = _unicode_normalize(prediction)
+    gt = _unicode_normalize(ground_truth)
+
+    if pred == gt:
         return True
 
-    YES_VARIANTS = {"yes", "true", "correct"}
-    NO_VARIANTS = {"no", "false", "incorrect"}
-    if gt_n in YES_VARIANTS and pred_n in YES_VARIANTS:
+    if gt in _YES_VARIANTS and pred in _YES_VARIANTS:
         return True
-    if gt_n in NO_VARIANTS and pred_n in NO_VARIANTS:
+    if gt in _NO_VARIANTS and pred in _NO_VARIANTS:
         return True
+
+    if gt in _NA_VARIANTS and pred in _NA_VARIANTS:
+        return True
+
+    if "," in gt:
+        gt_set = _parse_items_as_set(gt)
+        pred_set = _parse_items_as_set(pred)
+        if gt_set and gt_set == pred_set:
+            return True
+
+    gt_num = _parse_number(gt)
+    pred_num = _parse_number(pred)
+    if gt_num is not None and pred_num is not None:
+        if gt_num == pred_num:
+            return True
+
+    gt_range = _parse_range(gt)
+    pred_range = _parse_range(pred)
+    if gt_range is not None and pred_range is not None:
+        if gt_range == pred_range:
+            return True
 
     return False
 
@@ -61,7 +126,6 @@ def evaluate_record(
     record: dict,
     record_id: str,
     extract_mode: str = "split",
-    judge=None,
 ) -> dict:
     question = record["question"]
     ground_truth = record["answer"]
@@ -77,16 +141,7 @@ def evaluate_record(
 
     prediction = get_final_prediction(predict_str_list, extract_mode)
 
-    if relaxed_match(prediction, ground_truth):
-        result = 1.0
-    elif judge is not None:
-        try:
-            score_str = judge.judge_correctness(question, ground_truth, prediction)
-            result = 1.0 if score_str == "1" else 0.0
-        except Exception:
-            result = {"is_filter": True, "info": "judge_error"}
-    else:
-        result = 0.0
+    result = 1.0 if rule_match(prediction, ground_truth) else 0.0
 
     return {
         "id": record_id,
@@ -106,7 +161,7 @@ def evaluate_record(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Exact-match evaluator for mm_mapqa.")
+    parser = argparse.ArgumentParser(description="Rule-based evaluator for mm_mapqa.")
     parser.add_argument("--result_path", type=str, required=True)
     parser.add_argument("--output_path", type=str, required=True)
     parser.add_argument(
@@ -115,33 +170,17 @@ def main():
         default="split",
         choices=["split", "strict"],
     )
-    parser.add_argument(
-        "--use_judge_fallback",
-        action="store_true",
-        help="Fall back to OpenAI judge for non-exact matches.",
-    )
-    parser.add_argument("--judge_api_key", type=str, default=None)
-    parser.add_argument("--judge_model", type=str, default="gpt-5-mini-2025-08-07")
-    parser.add_argument("--judge_api_base", type=str, default=None)
     args = parser.parse_args()
 
     os.makedirs(args.output_path, exist_ok=True)
 
-    judge = None
-    if args.use_judge_fallback and args.judge_api_key:
-        from geo_edit.evaluation.openai_as_judge import OpenAIJudge
-        judge = OpenAIJudge(
-            api_key=args.judge_api_key,
-            model=args.judge_model,
-            api_base=args.judge_api_base,
-        )
-
     eval_output_path = os.path.join(args.output_path, "eval_result.jsonl")
     summary_path = os.path.join(args.output_path, "summary.txt")
 
+    meta_paths = list(iter_meta_info_files(args.result_path))
+ 
     total = 0
     correct = 0
-    filtered = 0
     eval_results: List[dict] = []
     output_tokens_sum = 0.0
     input_tokens_sum = 0.0
@@ -151,21 +190,17 @@ def main():
     total_tokens_count = 0
 
     with open(eval_output_path, "w", encoding="utf-8") as out_f:
-        for meta_path in iter_meta_info_files(args.result_path):
+        for meta_path in tqdm(meta_paths, desc="Evaluating", unit="record"):
             record_id = os.path.basename(os.path.dirname(meta_path))
             for record in load_records(meta_path):
                 eval_item = evaluate_record(
-                    record, record_id, args.extract_answer_tags, judge
+                    record, record_id, args.extract_answer_tags,
                 )
                 eval_results.append(eval_item)
                 result = eval_item["result"]
-                is_filter = isinstance(result, dict) and result.get("is_filter")
-                if is_filter:
-                    filtered += 1
-                else:
-                    total += 1
-                    if result == 1.0:
-                        correct += 1
+                total += 1
+                if result == 1.0:
+                    correct += 1
                 out_f.write(json.dumps(eval_item, ensure_ascii=False) + "\n")
 
                 output_total = get_output_tokens_total(eval_item)
@@ -199,7 +234,6 @@ def main():
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write(f"evaluated={total}\n")
         f.write(f"correct={correct}\n")
-        f.write(f"filtered={filtered}\n")
         f.write(f"accuracy={accuracy:.6f}\n")
         f.write(f"error_count={len(error_ids)}\n")
         f.write(f"total_output_tokens={output_tokens_sum:.0f}\n")
@@ -210,7 +244,6 @@ def main():
         f.write(f"avg_total_tokens={avg_total:.2f}\n")
 
     print(f"Accuracy: {correct}/{total} = {accuracy:.4f}")
-    print(f"Filtered: {filtered}")
     print(f"Error IDs: {len(error_ids)} saved to {error_ids_path}")
     print(f"Avg output tokens: {avg_output:.2f}")
     print(f"Results saved to {args.output_path}")
