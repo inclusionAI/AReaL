@@ -8,6 +8,7 @@ be launched by a controller pytest file with different strategies.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import signal
 import threading
@@ -142,6 +143,64 @@ def _validate_allocation(
             f"Invalid allocation: dp({dp_size})*tp({tp_size})*pp({pp_size})={expected} "
             f"!= world_size({world_size})"
         )
+
+
+def _is_nccl_backend(backend: object) -> bool:
+    if backend is None:
+        return False
+    try:
+        return str(backend).lower() == "nccl"
+    except Exception:
+        return False
+
+
+@contextlib.contextmanager
+def _patched_barrier_for_nccl(rank: int):
+    """Normalize NCCL barrier kwargs in trainer-side torchrun process.
+
+    This covers AWEX writer-side barriers that run in this process and are not
+    affected by scheduler-side SGLang patches.
+    """
+
+    original_barrier = dist.barrier
+    warmed_groups: set[int] = set()
+
+    def _patched_barrier(*b_args, **b_kwargs):
+        group = b_kwargs.get("group")
+        try:
+            backend = (
+                dist.get_backend(group) if group is not None else dist.get_backend()
+            )
+        except Exception:
+            backend = None
+
+        if _is_nccl_backend(backend):
+            try:
+                current_device = int(torch.cuda.current_device())
+                b_kwargs["device_ids"] = [current_device]
+                group_key = id(group) if group is not None else -1
+                if group_key not in warmed_groups:
+                    # Avoid first-collective barrier edge cases on NCCL PGs.
+                    warm = torch.zeros(1, device=torch.device("cuda", current_device))
+                    dist.all_reduce(warm, group=group)
+                    warmed_groups.add(group_key)
+                    _log(
+                        rank,
+                        f"checkpoint/barrier-patch: warmed NCCL group={group_key} device={current_device}",
+                    )
+            except Exception as exc:
+                _log(rank, f"checkpoint/barrier-patch: warmup skipped: {exc}")
+                b_kwargs.pop("device_ids", None)
+        else:
+            b_kwargs.pop("device_ids", None)
+
+        return original_barrier(*b_args, **b_kwargs)
+
+    dist.barrier = _patched_barrier
+    try:
+        yield
+    finally:
+        dist.barrier = original_barrier
 
 
 def main(args: argparse.Namespace) -> None:
@@ -323,27 +382,28 @@ def main(args: argparse.Namespace) -> None:
         else:
             init_thread = None
 
-        _log(rank, "initializing megatron parallel + model")
-        _init_megatron_parallel(tp_size=args.tp_size, pp_size=args.pp_size)
-        model, hf_config = megatron_model_from_hf(
-            model_path=args.model_path, use_mbridge=True
-        )
-        megatron_model = model[0] if isinstance(model, list) else model
-        train_config = {
-            "meta_server_addr": meta_addr,
-            "comm_backend": "nccl",
-            "enable_debug_mode": False,
-            "tensor_model_parallel_size": args.tp_size,
-            "pipeline_model_parallel_size": args.pp_size,
-            "expert_model_parallel_size": 1,
-            "enable_colocate_mode": False,
-        }
-        megatron_engine = MegatronEngine(train_config, hf_config, megatron_model)
-        # Disable torch agent store for torchrun,
-        # otherwise the process group won't be properly initialized.
-        os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
-        megatron_engine.initialize()
-        _log(rank, "megatron engine initialized")
+        with _patched_barrier_for_nccl(rank):
+            _log(rank, "initializing megatron parallel + model")
+            _init_megatron_parallel(tp_size=args.tp_size, pp_size=args.pp_size)
+            model, hf_config = megatron_model_from_hf(
+                model_path=args.model_path, use_mbridge=True
+            )
+            megatron_model = model[0] if isinstance(model, list) else model
+            train_config = {
+                "meta_server_addr": meta_addr,
+                "comm_backend": "nccl",
+                "enable_debug_mode": False,
+                "tensor_model_parallel_size": args.tp_size,
+                "pipeline_model_parallel_size": args.pp_size,
+                "expert_model_parallel_size": 1,
+                "enable_colocate_mode": False,
+            }
+            megatron_engine = MegatronEngine(train_config, hf_config, megatron_model)
+            # Disable torch agent store for torchrun,
+            # otherwise the process group won't be properly initialized.
+            os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
+            megatron_engine.initialize()
+            _log(rank, "megatron engine initialized")
 
         if rank == 0 and init_thread is not None:
             init_thread.join(timeout=args.rpc_timeout)
@@ -360,7 +420,8 @@ def main(args: argparse.Namespace) -> None:
         if not bool(init_gate[0]):
             raise RuntimeError(f"Reader init failed: {init_gate[1]}")
 
-        dist.barrier()
+        with _patched_barrier_for_nccl(rank):
+            dist.barrier()
 
         step_id = 1
         if rank == 0:
@@ -372,11 +433,14 @@ def main(args: argparse.Namespace) -> None:
         else:
             update_thread = None
 
-        _log(rank, "writing weights from megatron engine")
-        megatron_engine.set_global_step(step_id)
-        _log(rank, f"checkpoint/write: global_step={step_id} entering write_weights")
-        megatron_engine.write_weights()
-        _log(rank, "weights write completed")
+        with _patched_barrier_for_nccl(rank):
+            _log(rank, "writing weights from megatron engine")
+            megatron_engine.set_global_step(step_id)
+            _log(
+                rank, f"checkpoint/write: global_step={step_id} entering write_weights"
+            )
+            megatron_engine.write_weights()
+            _log(rank, "weights write completed")
 
         if rank == 0 and update_thread is not None:
             update_thread.join(timeout=args.rpc_timeout)
@@ -398,7 +462,8 @@ def main(args: argparse.Namespace) -> None:
         if not bool(update_gate[0]):
             raise RuntimeError(f"Reader update failed: {update_gate[1]}")
 
-        dist.barrier()
+        with _patched_barrier_for_nccl(rank):
+            dist.barrier()
         _write_result(args.output, True)
         _log(rank, "test run passed")
     except Exception as exc:

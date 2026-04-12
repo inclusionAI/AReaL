@@ -150,7 +150,9 @@ def _run_awex_sglang_torchrun(
     environ["NCCL_P2P_DISABLE"] = "1"
     environ["NCCL_CUMEM_ENABLE"] = "0"
     environ["NCCL_NVLS_ENABLE"] = "0"
-    environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
+    # DETAIL may wrap process groups and has known device-binding caveats in
+    # some PyTorch versions; INFO keeps useful logs without that extra wrapper.
+    environ["TORCH_DISTRIBUTED_DEBUG"] = "INFO"
     environ["TORCH_NCCL_ENABLE_MONITORING"] = "0"
     environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, trainer_gpu_ids))
     try:
