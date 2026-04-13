@@ -279,7 +279,7 @@ def set_env():
         except ValidationError as e:
             return jsonify({"error": str(e)}), 400
 
-        env_payload = payload.en
+        env_payload = payload.env
 
         def execute_set_env():
             for key, value in env_payload.items():
