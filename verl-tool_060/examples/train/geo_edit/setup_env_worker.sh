@@ -12,5 +12,5 @@ pip install vllm==0.11.0
 pip install timm fire iopath ftfy tensordict codetiming qwen_omni_utils nvitop httptools colorlog
 pip install "pyzmq==26.*"
 # pip install --upgrade numpy
-# pip uninstall -y transformers
-# pip install "git+https://github.com/huggingface/transformers.git@b3e3c3d"
+pip uninstall -y transformers
+pip install "git+https://github.com/huggingface/transformers.git@b3e3c3d"
