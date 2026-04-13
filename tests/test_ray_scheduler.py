@@ -3,6 +3,7 @@ import time
 from unittest.mock import Mock, patch
 
 import pytest
+import ray
 from ray.util.state import summarize_actors
 
 from areal.api import Job, Worker
@@ -375,4 +376,34 @@ class TestForkColocation:
         )
 
         # Clean up
+        scheduler.delete_workers()
+
+    def test_fork_proxy(self):
+        # create the proxy server from a rollout
+        config = BaseExperimentConfig()
+
+        scheduler = RayScheduler(startup_timeout=60.0, exp_config=config)
+
+        rollout_job = Job(
+            replicas=1,
+            role="rollout",
+            tasks=[
+                SchedulingSpec(cpu=1, mem=1, gpu=0),
+            ],
+        )
+        scheduler.create_workers(rollout_job)
+
+        command = "areal.experimental.openai.proxy.proxy_rollout_server"
+        worker_ids = scheduler.fork_workers(
+            role="proxy",
+            target_role="rollout",
+            command=command,
+        )
+
+        # health check each proxy to make sure they are active
+        for wid in worker_ids:
+            worker_info = scheduler._worker_info_by_id[wid]
+            actor_ref = worker_info.actor
+            ray.get(actor_ref._check_health.remote())
+
         scheduler.delete_workers()
