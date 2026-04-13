@@ -64,7 +64,6 @@ RID_CACHE_SIZE = 128
 
 logger = logging.getLogger("RemoteInfEngine")
 
-
 class GroupedRolloutWorkflow(RolloutWorkflow):
     def __init__(
         self,
@@ -118,7 +117,6 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
         # Otherwise, tensor dicts - concatenate
         concatenated = concat_padded_tensors(valid_results)
         return concatenated if concatenated else None
-
 
 class RemoteInfBackendProtocol(Protocol):
     """Protocol defining backend-specific operations for remote inference engines.
@@ -320,7 +318,6 @@ class RemoteInfBackendProtocol(Protocol):
             The launched server process
         """
         ...
-
 
 class RemoteInfEngine(InferenceEngine):
     """
@@ -907,12 +904,8 @@ class RemoteInfEngine(InferenceEngine):
         assert meta.type == "xccl"
 
         self.logger.info(
-            f"[DIAG] RemoteInfEngine.init_weights_update_group: "
-            f"group_name={meta.nccl_group_name} "
-            f"master_addr={meta.nccl_master_address} "
-            f"master_port={meta.nccl_master_port} "
-            f"addresses={self.addresses} "
-            f"xccl_group_ranks={xccl_group_ranks}"
+            "Initializing weight update group: group=%s, addresses=%s",
+            meta.nccl_group_name, self.addresses,
         )
 
         fut = get_executor().submit(
@@ -1305,9 +1298,7 @@ class RemoteInfEngine(InferenceEngine):
             self._shutdown_one_server(server_info)
         self.local_server_processes.clear()
 
-
 # Helper functions that run in ProcessPoolExecutor
-
 
 def _update_weights_from_disk(
     backend: RemoteInfBackendProtocol,
@@ -1356,7 +1347,6 @@ def _update_weights_from_disk(
 
     return uvloop.run(_fn())
 
-
 def _init_weights_update_group_remote(
     backend: RemoteInfBackendProtocol,
     meta: WeightUpdateMeta,
@@ -1370,13 +1360,6 @@ def _init_weights_update_group_remote(
     used as the per-address rank passed to the backend request builder.
     Otherwise, ranks default to enumerate(addresses).
     """
-    import logging as _logging
-    _diag_log = _logging.getLogger("areal.diag.remote_inf")
-    _diag_log.info(
-        f"[DIAG] _init_weights_update_group_remote ENTER: "
-        f"addresses={addresses} group_name={meta.nccl_group_name} "
-        f"xccl_group_ranks={xccl_group_ranks}"
-    )
 
     if xccl_group_ranks is not None and len(xccl_group_ranks) != len(addresses):
         raise ValueError(
@@ -1398,12 +1381,6 @@ def _init_weights_update_group_remote(
                 http_req = backend.build_init_weights_group_request(
                     addr, xccl_group_rank, meta
                 )
-                _diag_log.info(
-                    f"[DIAG] Sending init_weights_update_group to "
-                    f"addr={addr} server_idx={xccl_group_rank} "
-                    f"endpoint={http_req.endpoint} "
-                    f"payload={http_req.payload}"
-                )
                 jobs.append(
                     arequest_with_retry(
                         session=session,
@@ -1415,21 +1392,12 @@ def _init_weights_update_group_remote(
                         timeout=request_timeout,
                     )
                 )
-            _diag_log.info(
-                f"[DIAG] asyncio.gather: waiting for {len(jobs)} HTTP "
-                f"requests to complete..."
-            )
             results = await asyncio.gather(*jobs, return_exceptions=True)
             for _idx, _r in enumerate(results):
                 if isinstance(_r, Exception):
-                    _diag_log.error(
-                        f"[DIAG] HTTP request {_idx} to {addresses[_idx]} "
-                        f"FAILED: {_r}"
-                    )
-                else:
-                    _diag_log.info(
-                        f"[DIAG] HTTP request {_idx} to {addresses[_idx]} "
-                        f"succeeded: status={_r}"
+                    logger.error(
+                        "init_weights_update_group request %d to %s failed: %s",
+                        _idx, addresses[_idx], _r,
                     )
             # Re-raise first exception if any failed
             for _r in results:
@@ -1437,7 +1405,6 @@ def _init_weights_update_group_remote(
                     raise _r
 
     return uvloop.run(_fn())
-
 
 def _update_weights_from_distributed(
     backend: RemoteInfBackendProtocol,
