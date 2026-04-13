@@ -4,10 +4,9 @@ Tests the per-PP-rank NCCL group creation logic in SGLangBackend and related
 allocation mode parsing without requiring actual GPU hardware or a running
 sglang server.
 
-Covers three scenarios:
+Covers two scenarios:
   1. PP=1 (original / backward compatible)
-  2. PP>1 with per-PP-rank groups (Megatron-style, group name ends with _{digit})
-  3. PP>1 with single group (FSDP-style, group name without PP rank suffix)
+  2. PP>1 with per-PP-rank groups (group name ends with _{digit})
 
 Also tests allocation mode parsing with PP dimension and patch module imports.
 """
@@ -97,11 +96,15 @@ class TestPP1BackwardCompatible:
 
 
 # ===================================================================== #
-#  Scenario 2: PP>1 with per-PP-rank groups (Megatron engine style)     #
+#  Scenario 2: PP>1 with per-PP-rank groups                             #
 # ===================================================================== #
 
 class TestPerPPRankGroups:
-    """PP>1, group name ends with _{digit} -> per-PP-rank groups."""
+    """PP>1, group name ends with _{digit} -> per-PP-rank groups.
+
+    All three training engines (Megatron, FSDP, Archon) use per-PP-rank
+    group naming (``update_weight_group_{pp_rank}``) when PP>1.
+    """
 
     def test_pp2_tp2_dp1_rank0(self):
         """PP=2, TP=2, DP=1: per-PP-rank group for pp_rank=0."""
@@ -172,59 +175,6 @@ class TestPerPPRankGroups:
 
 
 # ===================================================================== #
-#  Scenario 3: PP>1 with single group (FSDP engine style)              #
-# ===================================================================== #
-
-class TestSingleGroupWithPP:
-    """PP>1, group name without digit suffix -> single group for all workers."""
-
-    def test_pp2_tp2_dp1_single_group(self):
-        """PP=2, TP=2, DP=1: single group, all workers join."""
-        backend = SGLangBackend()
-        meta = _make_meta(tp=2, pp=2, dp=1, group_name="update_weight_group")
-        req = backend.build_init_weights_group_request("addr", 0, meta)
-        # instance_size = tp * pp = 2*2 = 4
-        # world_size = total_gen_workers + 1 = 4 + 1 = 5
-        assert req.payload["world_size"] == 5
-        # rank_offset = 1 + 0 * instance_size = 1
-        assert req.payload["rank_offset"] == 1
-        assert "pp_rank" not in req.payload
-
-    def test_pp2_tp2_dp2_single_group_server0(self):
-        """PP=2, TP=2, DP=2: single group, server 0."""
-        backend = SGLangBackend()
-        meta = _make_meta(tp=2, pp=2, dp=2, group_name="update_weight_group")
-        req = backend.build_init_weights_group_request("addr0", 0, meta)
-        # instance_size = 2*2 = 4
-        # world_size = 8 + 1 = 9
-        assert req.payload["world_size"] == 9
-        assert req.payload["rank_offset"] == 1  # 1 + 0*4
-        assert "pp_rank" not in req.payload
-
-    def test_pp2_tp2_dp2_single_group_server1(self):
-        """PP=2, TP=2, DP=2: single group, server 1."""
-        backend = SGLangBackend()
-        meta = _make_meta(tp=2, pp=2, dp=2, group_name="update_weight_group")
-        req = backend.build_init_weights_group_request("addr1", 1, meta)
-        # rank_offset = 1 + 1*4 = 5
-        assert req.payload["rank_offset"] == 5
-        assert req.payload["world_size"] == 9
-        assert "pp_rank" not in req.payload
-
-    def test_pp2_tp1_dp4_single_group_server2(self):
-        """PP=2, TP=1, DP=4: single group, server 2."""
-        backend = SGLangBackend()
-        meta = _make_meta(tp=1, pp=2, dp=4, group_name="update_weight_group")
-        req = backend.build_init_weights_group_request("addr2", 2, meta)
-        # instance_size = 1*2 = 2
-        # rank_offset = 1 + 2*2 = 5
-        assert req.payload["rank_offset"] == 5
-        # world_size = 8 + 1 = 9
-        assert req.payload["world_size"] == 9
-        assert "pp_rank" not in req.payload
-
-
-# ===================================================================== #
 #  Group name parsing edge cases                                        #
 # ===================================================================== #
 
@@ -240,20 +190,6 @@ class TestGroupNameParsing:
             )
             req = backend.build_init_weights_group_request("addr", 0, meta)
             assert req.payload["pp_rank"] == pp_rank
-
-    def test_group_name_no_suffix_is_single_group(self):
-        """Group name without trailing digit -> Scenario 3 (single group)."""
-        backend = SGLangBackend()
-        meta = _make_meta(tp=2, pp=2, dp=1, group_name="update_weight_group")
-        req = backend.build_init_weights_group_request("addr", 0, meta)
-        assert "pp_rank" not in req.payload
-
-    def test_group_name_with_text_suffix_is_single_group(self):
-        """Group name ending with non-digit -> Scenario 3."""
-        backend = SGLangBackend()
-        meta = _make_meta(tp=2, pp=2, dp=1, group_name="update_weight_group_abc")
-        req = backend.build_init_weights_group_request("addr", 0, meta)
-        assert "pp_rank" not in req.payload
 
     def test_group_name_digit_suffix_only_triggers_when_pp_gt_1(self):
         """Even with digit suffix, PP=1 should use Scenario 1 (no pp_rank)."""
@@ -326,7 +262,7 @@ class TestBackwardCompatibilityPerEngine:
 
     def test_megatron_pp2_uses_scenario2(self):
         """Megatron with PP=2: group_name='update_weight_group_0' and PP>1
-        triggers Scenario 2 (per-PP-rank)."""
+        triggers per-PP-rank path."""
         backend = SGLangBackend()
         meta = _make_meta(tp=2, pp=2, dp=1, group_name="update_weight_group_0")
         req = backend.build_init_weights_group_request("addr", 0, meta)
@@ -342,14 +278,20 @@ class TestBackwardCompatibilityPerEngine:
         assert req.payload["world_size"] == 5  # 4 + 1
 
     def test_fsdp_pp2_per_pp_rank_groups(self):
-        """FSDP with PP=2 but per-PP-rank group names: group_name still
-        ends with _{digit}, so it uses Scenario 2 (per-PP-rank).
-        Note: FSDP's _init_per_pp_weight_update_groups creates per-PP-rank
-        group names like 'update_weight_group_0', same as Megatron."""
+        """FSDP with PP=2: per-PP-rank group names like 'update_weight_group_0',
+        same as Megatron. Uses per-PP-rank path."""
         backend = SGLangBackend()
         meta = _make_meta(tp=2, pp=2, dp=1, group_name="update_weight_group_0")
         req = backend.build_init_weights_group_request("addr", 0, meta)
         assert req.payload["pp_rank"] == 0
+        assert req.payload["world_size"] == 3
+
+    def test_archon_pp2_per_pp_rank_groups(self):
+        """Archon with PP=2: per-PP-rank group names like 'update_weight_group_1'."""
+        backend = SGLangBackend()
+        meta = _make_meta(tp=2, pp=2, dp=1, group_name="update_weight_group_1")
+        req = backend.build_init_weights_group_request("addr", 0, meta)
+        assert req.payload["pp_rank"] == 1
         assert req.payload["world_size"] == 3
 
 

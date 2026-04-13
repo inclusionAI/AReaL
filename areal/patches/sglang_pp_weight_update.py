@@ -29,11 +29,8 @@ The patch intercepts three code-paths inside sglang:
 Backward compatibility
 ----------------------
 When ``pp_rank`` is *not* present in the HTTP payload (or is ``None``), every
-worker joins the group.  For PP=1 the behaviour is identical to the original
-sglang code.  For PP>1 (single-group approach, e.g. FSDP engine), the patch
-automatically adjusts each worker's ``rank_offset`` by
-``self.pp_rank * self.tp_size`` so that workers across different PP stages
-receive unique NCCL ranks within the shared group.
+worker joins the group unconditionally.  For PP=1 the behaviour is identical
+to the original sglang code.
 
 Usage
 -----
@@ -194,7 +191,7 @@ def _patch_model_runner() -> None:
             ``update_weights_from_distributed`` and
             ``destroy_weights_update_group`` can short-circuit.
 
-            If ``None``, *all* workers join (original behaviour).
+            If ``None``, *all* workers join (original behaviour for PP=1).
         """
         if pp_rank is not None and self.pp_rank != pp_rank:
             # This worker is at a different PP rank -- skip group creation.
@@ -208,27 +205,11 @@ def _patch_model_runner() -> None:
                 f"requested={pp_rank}, local={self.pp_rank})."
             )
 
-        # Either pp_rank is None (all-join) or matches this worker.
+        # Either pp_rank is None (all-join, PP=1) or matches this worker.
         if pp_rank is not None:
             logger.info(
                 "Worker pp_rank=%d tp_rank=%d joining per-PP-rank group '%s'.",
                 self.pp_rank, self.tp_rank, group_name,
-            )
-        elif self.pp_size > 1:
-            # Single-group approach (e.g. FSDP engine): every worker joins the
-            # same NCCL group.  The original sglang code computes
-            #   rank = rank_offset + self.tp_rank
-            # which does NOT account for the PP dimension, causing workers at
-            # different PP ranks (but the same TP rank) to claim the same NCCL
-            # rank and deadlock.  Shift rank_offset by pp_rank * tp_size so
-            # each PP stage occupies a unique rank range.
-            _orig_rank_offset = rank_offset
-            rank_offset = rank_offset + self.pp_rank * self.tp_size
-            logger.info(
-                "Worker pp_rank=%d tp_rank=%d joining single group '%s' "
-                "(adjusted rank_offset=%d from %d).",
-                self.pp_rank, self.tp_rank, group_name,
-                rank_offset, _orig_rank_offset,
             )
 
         _final_nccl_rank = rank_offset + getattr(self, 'tp_rank', 0)

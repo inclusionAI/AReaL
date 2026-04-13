@@ -187,32 +187,29 @@ class SGLangBackend:
     ) -> HttpRequest:
         """Build SGLang init weights group request.
 
-        Supports three scenarios:
+        Supports two scenarios:
 
         1. **PP=1** (original): Single NCCL group spanning all TP workers across
            all DP instances. ``rank_offset`` is based on ``tp_size``.
 
-        2. **PP>1, per-PP-rank groups** (Megatron engine): The training engine
-           creates a separate NCCL group per PP stage. The group name encodes
-           the PP rank (e.g., ``update_weight_group_0``). Only sglang workers
-           at that PP rank participate, so ``rank_offset`` is based on
-           ``tp_size`` only, ``world_size = n_servers * tp_size + 1``, and
-           ``pp_rank`` is included in the payload.
+        2. **PP>1, per-PP-rank groups**: The training engine creates a separate
+           NCCL group per PP stage. The group name encodes the PP rank
+           (e.g., ``update_weight_group_0``). Only sglang workers at that PP
+           rank participate, so ``rank_offset`` is based on ``tp_size`` only,
+           ``world_size = n_servers * tp_size + 1``, and ``pp_rank`` is
+           included in the payload.
 
-        3. **PP>1, single group** (FSDP engine): The training engine creates ONE
-           NCCL group containing ALL inference workers (across all PP stages).
-           The group name has no PP rank suffix (e.g., ``update_weight_group``).
-           ``rank_offset`` must account for the full per-server instance size
-           (``tp_size * pp_size``), and ``world_size`` is the total inference
-           world size + 1.
+        All three training engines (Megatron, FSDP, Archon) use per-PP-rank
+        group naming (``update_weight_group_{pp_rank}``) when PP>1, so the
+        per-PP-rank path is always taken for PP>1.
         """
         assert meta.gen_allocation is not None
         gen_parallel = meta.gen_allocation.parallel
         group_name = meta.nccl_group_name
 
-        # Determine if training side uses per-PP-rank groups (Megatron PP>1)
-        # vs single-group approach (FSDP, or any engine without training-side PP).
-        # Per-PP-rank groups are identified by group names ending with _{digit}.
+        # Determine if training side uses per-PP-rank groups.
+        # Per-PP-rank groups are identified by group names ending with _{digit}
+        # and pp_size > 1. All engines use this pattern when PP>1.
         per_pp_groups = False
         if gen_parallel.pp_size > 1:
             try:
@@ -223,7 +220,7 @@ class SGLangBackend:
                 per_pp_groups = False
 
         if per_pp_groups:
-            # Scenario 2: PP>1 with per-PP-rank groups (Megatron engine).
+            # Scenario 2: PP>1 with per-PP-rank groups.
             # Extract pp_rank from the group name suffix.
             pp_rank = int(group_name.rsplit("_", 1)[-1])
 
@@ -248,10 +245,6 @@ class SGLangBackend:
                 "pp_rank": pp_rank,
             }
         else:
-            # Scenario 1 (PP=1) and Scenario 3 (PP>1, single group / FSDP).
-            # One NCCL group containing ALL inference workers.
-            # instance_size = workers per sglang server = tp_size * pp_size.
-            # When pp_size=1 this reduces to tp_size (backward compatible).
             instance_size = gen_parallel.tp_size * gen_parallel.pp_size
             rank_offset = 1 + server_idx * instance_size
             payload = {
