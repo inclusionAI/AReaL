@@ -36,9 +36,9 @@ n=2
 batch_size=16
 ppo_mini_batch_size=4
 max_prompt_length=16384
-max_response_length=4096
-max_action_length=4096
-max_obs_length=4096
+max_response_length=16384
+max_action_length=2048
+max_obs_length=2048
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 temperature=1.0
 top_p=1.0
@@ -63,7 +63,7 @@ fsdp_size=16
 additional_eos_token_ids=[151645]
 mask_observations=True
 enable_mtrl=True
-max_num_batched_tokens=20480
+max_num_batched_tokens=32768
 rollout_mode='async'
 
 # ---- Full run settings (differ from smoke test) ----

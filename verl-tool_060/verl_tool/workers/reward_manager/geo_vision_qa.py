@@ -121,14 +121,24 @@ def _compute_repetition_penalty(text: str) -> float:
 
 
 def _compute_format_reward(text: str) -> float:
-    """R_format = (𝕀{format_ok} - 0.5) × 2 → {-1.0, +1.0}."""
+    """R_format = (𝕀{format_ok} - 0.5) × 2 → {-1.0, 0.0, +1.0}.
+
+    Incomplete trajectories (has <action> but no <answer>) get 0.0 instead of
+    -1.0, because the model was still mid-conversation when the token budget
+    ran out — it never had a chance to produce <answer>.
+    """
     has_think = bool(_THINK_RE.search(text))
     has_answer = bool(_ANSWER_RE.search(text))
+    has_action = bool(_ACTION_RE.search(text))
 
     if not has_think:
         return -1.0
 
     if not has_answer:
+        # Incomplete trajectory: model called tools but was truncated before
+        # it could produce <answer>. Don't penalise.
+        if has_action:
+            return 0.0
         return -1.0
 
     # If there are <action> blocks, they must be preceded by <think> blocks
