@@ -152,14 +152,11 @@ class RLVRWorkflow(RolloutWorkflow):
                     f"2) Checking MTP layer training status; "
                     f"3) Reducing speculative_num_steps."
                 )
-            elif accept_rate < 0.5:
-                logger.info(
-                    f"[SpecDec] Accept rate: {accept_rate:.4f} "
-                    f"(accept={resp.spec_accept_token_num}, draft={resp.spec_draft_token_num})"
-                )
             else:
-                logger.info(
-                    f"[SpecDec] Good accept rate: {accept_rate:.4f} "
+                # Per-sample accept rates are recorded via stats_tracker above;
+                # log at DEBUG to avoid flooding stdout during large rollouts.
+                logger.debug(
+                    f"[SpecDec] Accept rate: {accept_rate:.4f} "
                     f"(accept={resp.spec_accept_token_num}, draft={resp.spec_draft_token_num})"
                 )
 
