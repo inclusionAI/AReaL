@@ -145,25 +145,36 @@ def packed_context_parallel_forward(
         )
         input_ids = input_ids.contiguous()
 
-        # Also split MTP labels with the same CP logic if present
-        if extra_block_kwargs and "mtp_kwargs" in extra_block_kwargs:
-            mtp_kwargs = extra_block_kwargs["mtp_kwargs"]
-            if "mtp_labels" in mtp_kwargs:
-                mtp_labels_split, _ = preprocess_packed_seqs_context_parallel(
-                    mtp_kwargs["mtp_labels"], cu_seqlens
-                )
-                mtp_kwargs["mtp_labels"] = mtp_labels_split.contiguous()
-            if "mtp_loss_mask" in mtp_kwargs:
-                mtp_mask_split, _ = preprocess_packed_seqs_context_parallel(
-                    mtp_kwargs["mtp_loss_mask"], cu_seqlens
-                )
-                mtp_kwargs["mtp_loss_mask"] = mtp_mask_split.contiguous()
+        # Split MTP labels / loss_mask with the same CP logic if present.
+        # These tensors are passed via extra_block_kwargs and will be
+        # forwarded to GPTModel.forward() as `labels` and `loss_mask`
+        # so that megatron-core computes MTP loss internally.
+        if extra_block_kwargs:
+            for key in ("labels", "loss_mask"):
+                if key in extra_block_kwargs:
+                    split_val, _ = preprocess_packed_seqs_context_parallel(
+                        extra_block_kwargs[key], cu_seqlens
+                    )
+                    extra_block_kwargs[key] = split_val.contiguous()
 
     # Pass tree_triton_data as attention_mask if present (for Triton tree attention)
     # Otherwise use the attention_mask from input (could be dense tensor for flex attention)
     final_attention_mask = (
         tree_triton_data if tree_triton_data is not None else attention_mask
     )
+
+    # Extract model-level forward kwargs (labels, loss_mask) from
+    # extra_block_kwargs.  These must be passed as top-level keyword
+    # arguments to GPTModel.forward() — NOT inside extra_block_kwargs,
+    # because GPTModel unpacks extra_block_kwargs via **-splat into
+    # TransformerBlock.forward() which does not accept them.
+    model_fwd_kwargs: dict[str, Any] = {}
+    if extra_block_kwargs:
+        for key in ("labels", "loss_mask"):
+            if key in extra_block_kwargs:
+                model_fwd_kwargs[key] = extra_block_kwargs.pop(key)
+        if not extra_block_kwargs:
+            extra_block_kwargs = None
 
     try:
         output = model(
@@ -172,6 +183,7 @@ def packed_context_parallel_forward(
             position_ids=position_ids,
             packed_seq_params=packed_seq_params,
             extra_block_kwargs=extra_block_kwargs,
+            **model_fwd_kwargs,
         )
     except Exception as e:
         raise RuntimeError(

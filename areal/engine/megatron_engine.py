@@ -865,51 +865,32 @@ class MegatronEngine(TrainEngine):
                     mb_input.padded_mb.update(tree_kwargs)
                     tree_attn_keys = list(tree_kwargs.keys())
 
-            # Build MTP kwargs if MTP training is enabled
+            # Build MTP kwargs if MTP training is enabled AND this is a
+            # training pass (not forward-only inference like compute_logp).
+            #
+            # Megatron-core 0.16.x GPTModel.forward() computes MTP loss
+            # internally in _postprocess() when `labels` and `loss_mask`
+            # are provided.  These must be passed as top-level kwargs to
+            # GPTModel.forward(), NOT inside extra_block_kwargs — because
+            # GPTModel unpacks extra_block_kwargs via **-splat into
+            # TransformerBlock.forward() which does not accept them.
+            #
+            # We pass labels/loss_mask through extra_block_kwargs as a
+            # transport dict; packed_context_parallel_forward extracts
+            # them before the actual model() call.
             extra_block_kwargs = None
-            if self.enable_mtp_training:
+            if self.enable_mtp_training and not forward_only:
                 mtp_labels = mb_input.padded_mb["input_ids"]
+                mtp_loss_mask = mb_input.padded_mb.get("loss_mask", None)
 
-                loss_mask = mb_input.padded_mb.get("loss_mask", None)
-                mtp_loss_mask = None
-                if loss_mask is not None:
-                    cu_seqlens = mb_input.padded_mb.get("cu_seqlens", None)
-                    if cu_seqlens is not None:
-                        mask_1 = self._roll_tensor_packed(
-                            loss_mask, shift=-1, cu_seqlens=cu_seqlens
-                        )
-                        mask_2 = self._roll_tensor_packed(
-                            mask_1, shift=-1, cu_seqlens=cu_seqlens
-                        )
-                    else:
-                        mask_1 = torch.roll(loss_mask, shifts=-1, dims=-1)
-                        mask_1[..., -1] = 0
-                        mask_2 = torch.roll(mask_1, shifts=-1, dims=-1)
-                        mask_2[..., -1] = 0
-                    mtp_loss_mask = mask_1 * mask_2
-                    valid_mtp_tokens = mtp_loss_mask.sum().item()
-                    total_mtp_tokens = mtp_loss_mask.numel()
-                    self.logger.info(
-                        f"[MTPTrain] MTP loss mask: valid_tokens={valid_mtp_tokens}, "
-                        f"total_tokens={total_mtp_tokens}, "
-                        f"mask_ratio={valid_mtp_tokens / max(total_mtp_tokens, 1):.4f}"
-                    )
-                else:
-                    self.logger.warning(
-                        "[MTPTrain] loss_mask is None; MTP loss will be computed over "
-                        "all positions including padding. This may lead to incorrect "
-                        "MTP loss values. Ensure loss_mask is provided in the input."
-                    )
-
-                mtp_kwargs = {"mtp_labels": mtp_labels}
+                extra_block_kwargs = {"labels": mtp_labels}
                 if mtp_loss_mask is not None:
-                    mtp_kwargs["mtp_loss_mask"] = mtp_loss_mask
-                extra_block_kwargs = {"mtp_kwargs": mtp_kwargs}
+                    extra_block_kwargs["loss_mask"] = mtp_loss_mask
 
-                self.logger.info(
-                    f"[MTPTrain] Forward step: mtp_labels shape={mtp_labels.shape}, "
+                self.logger.debug(
+                    f"[MTPTrain] Forward step: labels shape={mtp_labels.shape}, "
                     f"dtype={mtp_labels.dtype}, "
-                    f"has_mtp_loss_mask={mtp_loss_mask is not None}, "
+                    f"has_loss_mask={mtp_loss_mask is not None}, "
                     f"mtp_num_layers={self.mtp_num_layers}"
                 )
             output = packed_context_parallel_forward(
