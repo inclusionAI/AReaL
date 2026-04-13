@@ -48,3 +48,4 @@ parts:
     - file: reference/rollout_workflow
     - file: reference/agent_workflow
     - file: reference/ai_assisted_dev
+    - file: tutorial/speculative_decoding

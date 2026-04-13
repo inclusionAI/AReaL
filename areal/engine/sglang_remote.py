@@ -31,7 +31,10 @@ from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
 from areal.utils import perf_tracer, stats_tracker
+from areal.utils.logging import getLogger
 from areal.utils.network import format_host_for_url
+
+logger = getLogger("SGLangRemote")
 
 
 class SGLangBackend:
@@ -105,12 +108,24 @@ class SGLangBackend:
                 pybase64.b64decode(routed_experts.encode("utf-8")), dtype=np.int32
             ).reshape(num_sgl_token, -1)
 
+        # Extract speculative decoding statistics if available
+        spec_accept_token_num = meta_info.get("spec_accept_token_num", None)
+        spec_draft_token_num = meta_info.get("spec_draft_token_num", None)
+        if spec_accept_token_num is not None and spec_draft_token_num is not None:
+            if spec_draft_token_num > 0:
+                accept_rate = spec_accept_token_num / spec_draft_token_num
+                logger.debug(
+                    f"[SpecDec] SGLang response: accept={spec_accept_token_num}, "
+                    f"draft={spec_draft_token_num}, rate={accept_rate:.4f}"
+                )
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):
             return HttpGenerationResult(
                 output_tokens=[],
                 output_logprobs=[],
                 stop_reason=stop_reason,
                 routed_experts=routed_experts,
+                spec_accept_token_num=spec_accept_token_num,
+                spec_draft_token_num=spec_draft_token_num,
             )
 
         output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
@@ -121,6 +136,8 @@ class SGLangBackend:
             output_logprobs=output_logprobs,
             stop_reason=stop_reason,
             routed_experts=routed_experts,
+            spec_accept_token_num=spec_accept_token_num,
+            spec_draft_token_num=spec_draft_token_num,
         )
 
     def build_disk_weight_update_requests(

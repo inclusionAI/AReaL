@@ -123,6 +123,7 @@ def postprocess_packed_seqs_context_parallel(
 def packed_context_parallel_forward(
     model: torch.nn.Module,
     input_: dict[str, Any],
+    extra_block_kwargs: dict[str, Any] | None = None,
 ):
     input_ids = input_["input_ids"]
     position_ids = input_["position_ids"]
@@ -144,6 +145,20 @@ def packed_context_parallel_forward(
         )
         input_ids = input_ids.contiguous()
 
+        # Also split MTP labels with the same CP logic if present
+        if extra_block_kwargs and "mtp_kwargs" in extra_block_kwargs:
+            mtp_kwargs = extra_block_kwargs["mtp_kwargs"]
+            if "mtp_labels" in mtp_kwargs:
+                mtp_labels_split, _ = preprocess_packed_seqs_context_parallel(
+                    mtp_kwargs["mtp_labels"], cu_seqlens
+                )
+                mtp_kwargs["mtp_labels"] = mtp_labels_split.contiguous()
+            if "mtp_loss_mask" in mtp_kwargs:
+                mtp_mask_split, _ = preprocess_packed_seqs_context_parallel(
+                    mtp_kwargs["mtp_loss_mask"], cu_seqlens
+                )
+                mtp_kwargs["mtp_loss_mask"] = mtp_mask_split.contiguous()
+
     # Pass tree_triton_data as attention_mask if present (for Triton tree attention)
     # Otherwise use the attention_mask from input (could be dense tensor for flex attention)
     final_attention_mask = (
@@ -156,6 +171,7 @@ def packed_context_parallel_forward(
             attention_mask=final_attention_mask,
             position_ids=position_ids,
             packed_seq_params=packed_seq_params,
+            extra_block_kwargs=extra_block_kwargs,
         )
     except Exception as e:
         raise RuntimeError(

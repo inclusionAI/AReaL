@@ -80,6 +80,10 @@ class ModelResponse:
     # MoE routing (only populated when return_routed_experts=True)
     routed_experts: np.ndarray | None = None
 
+    # Speculative decoding statistics
+    spec_accept_token_num: int = 0
+    spec_draft_token_num: int = 0
+
     @property
     def input_len(self) -> int:
         return len(self.input_tokens)
@@ -283,6 +287,8 @@ class HttpGenerationResult:
     output_logprobs: list[float]
     stop_reason: str
     routed_experts: np.ndarray | None = None
+    spec_accept_token_num: int | None = None
+    spec_draft_token_num: int | None = None
 
 
 @dataclass

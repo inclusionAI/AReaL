@@ -159,6 +159,46 @@ def remove_padding(
     return param
 
 
+
+def _convert_mtp_layer_to_hf(
+    name: str,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
+    tf_config: TransformerConfig,
+) -> list[tuple[str, Tensor]] | None:
+    """Convert MCore MTP layer parameter names to HuggingFace format.
+
+    MCore MTP layers follow the naming pattern:
+        module.module.decoder.mtp_layers.{layer_idx}.{submodule}.{param}
+    which maps to HF format:
+        model.mtp_layers.{layer_idx}.{submodule}.{param}
+
+    Returns a list of (hf_name, param) tuples if the parameter is an MTP
+    parameter, or None if it is not.
+    """
+    import re
+    mtp_match = re.match(
+        r"module\.module\.decoder\.mtp_layers\.(\d+)\.(.+)", name
+    )
+    if mtp_match is None:
+        return None
+
+    layer_idx = int(mtp_match.group(1))
+    remainder = mtp_match.group(2)
+
+    # Map common MCore submodule names to HF names
+    hf_remainder = remainder
+
+    # enorm / hnorm -> input_layernorm / post_attention_layernorm equivalent
+    hf_remainder = hf_remainder.replace("enorm.weight", "enorm.weight")
+    hf_remainder = hf_remainder.replace("hnorm.weight", "hnorm.weight")
+
+    # Note: Some models (e.g., MiMo) may need column-half swap for eh_proj.
+    # This should be handled in model-specific conversion functions, not here.
+    # The generic MTP converter passes eh_proj through unchanged.
+
+    hf_name = f"model.mtp_layers.{layer_idx}.{hf_remainder}"
+    return [(hf_name, param)]
+
 # Adapted from slime
 def convert_qwen3moe_to_hf(
     tf_config: TransformerConfig,
@@ -171,6 +211,11 @@ def convert_qwen3moe_to_hf(
         return [("lm_head.weight", param)]
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
+
+    # Check for MTP layer parameters
+    mtp_result = _convert_mtp_layer_to_hf(name, param, tf_config)
+    if mtp_result is not None:
+        return mtp_result
 
     try:
         head_dim = (
@@ -329,6 +374,11 @@ def convert_qwen2_to_hf(
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
 
+    # Check for MTP layer parameters
+    mtp_result = _convert_mtp_layer_to_hf(name, param, tf_config)
+    if mtp_result is not None:
+        return mtp_result
+
     try:
         head_dim = (
             tf_config.kv_channels
@@ -418,6 +468,11 @@ def convert_deepseekv3_to_hf(
         return [("lm_head.weight", param)]
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
+
+    # Check for MTP layer parameters
+    mtp_result = _convert_mtp_layer_to_hf(name, param, tf_config)
+    if mtp_result is not None:
+        return mtp_result
 
     try:
         head_dim = (
@@ -592,6 +647,11 @@ def convert_bailingmoe_to_hf(
         return [("lm_head.weight", param)]
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
+
+    # Check for MTP layer parameters
+    mtp_result = _convert_mtp_layer_to_hf(name, param, tf_config)
+    if mtp_result is not None:
+        return mtp_result
 
     decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
     match = re.match(decoder_layers_pattern, name)

@@ -131,6 +131,38 @@ class RLVRWorkflow(RolloutWorkflow):
 
         stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
+        # Log speculative decoding statistics if available
+        if resp.spec_draft_token_num > 0:
+            accept_rate = (
+                resp.spec_accept_token_num / resp.spec_draft_token_num
+                if resp.spec_draft_token_num > 0
+                else 0.0
+            )
+            stats_tracker.get(workflow_context.stat_scope()).scalar(
+                spec_accept_rate=accept_rate,
+                spec_accept_tokens=float(resp.spec_accept_token_num),
+                spec_draft_tokens=float(resp.spec_draft_token_num),
+            )
+            if accept_rate < 0.1:
+                logger.warning(
+                    f"[SpecDec] Very low accept rate: {accept_rate:.4f} "
+                    f"(accept={resp.spec_accept_token_num}, draft={resp.spec_draft_token_num}). "
+                    f"Draft model may be severely out of sync with target model. "
+                    f"Consider: 1) Reducing mtp_loss_scaling_factor; "
+                    f"2) Checking MTP layer training status; "
+                    f"3) Reducing speculative_num_steps."
+                )
+            elif accept_rate < 0.5:
+                logger.info(
+                    f"[SpecDec] Accept rate: {accept_rate:.4f} "
+                    f"(accept={resp.spec_accept_token_num}, draft={resp.spec_draft_token_num})"
+                )
+            else:
+                logger.info(
+                    f"[SpecDec] Good accept rate: {accept_rate:.4f} "
+                    f"(accept={resp.spec_accept_token_num}, draft={resp.spec_draft_token_num})"
+                )
+
         return resp, reward
 
     async def arun_episode(

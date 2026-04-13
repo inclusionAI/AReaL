@@ -275,6 +275,22 @@ def make_mcore_model(
                 "Virtual pipeline parallelism requires mbridge-backed models."
             )
         transformer_layer_spec = make_mcore_layer_specs(hf_config, tf_config)
+
+        # Build MTP block spec if MTP is configured
+        mtp_block_spec = None
+        mtp_num_layers = getattr(tf_config, "mtp_num_layers", 0)
+        if mtp_num_layers > 0:
+            try:
+                from megatron.core.models.gpt.gpt_layer_specs import get_mtp_block_spec
+                mtp_block_spec = get_mtp_block_spec(tf_config, transformer_layer_spec)
+                logger.info(
+                    f"[MTPTrain] Created MTP block spec with {mtp_num_layers} layers"
+                )
+            except ImportError:
+                logger.warning(
+                    "[MTPTrain] Cannot import get_mtp_block_spec from megatron.core. "
+                    "MTP layers will not be created. Ensure megatron-core >= 0.11.0."
+                )
         rope_scaling_args = {}
         if hf_config.rope_scaling is not None:
             if hf_config.rope_scaling["type"] != "linear":
@@ -297,6 +313,7 @@ def make_mcore_model(
             rotary_base=hf_config.rope_theta,
             **rope_scaling_args,
             # vp_stage=None TODO: virtual pipeline parallel
+            **({"mtp_block_spec": mtp_block_spec} if mtp_block_spec is not None else {}),
         )
 
         # Replace output_layer with ValueHead for critic models
