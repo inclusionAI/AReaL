@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Partitioned HTTP dispatcher for one 5D-parallel worker group.
 
 Replicates the dispatch semantics of

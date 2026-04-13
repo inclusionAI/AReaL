@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Authentication helpers for the inference gateway."""
 
 from __future__ import annotations

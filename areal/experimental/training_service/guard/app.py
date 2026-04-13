@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Training service guard backed by the shared RPC guard."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Serverless training service — microservice-based training gateway.
 
 Workers are individual SPMD processes (one per 5D-parallel rank), each

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """CLI entrypoint: ``python -m areal.experimental.training_service.guard``"""
 
 from __future__ import annotations
