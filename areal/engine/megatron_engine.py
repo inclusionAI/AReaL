@@ -133,6 +133,7 @@ class _MegatronModelList(list):
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
+        self.logger = logging.getLogger("[MegatronEngine]")
         self.hf_config: PretrainedConfig
         self.tf_config: TransformerConfig
         self.model: _MegatronModelList | None = None
