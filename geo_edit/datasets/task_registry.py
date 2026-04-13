@@ -205,11 +205,7 @@ class DatasetSpec:
 # Per-dataset tool guidance
 # =============================================================================
 VISWORLD_TOOL_GUIDANCE = {
-    "ballgame": (
-        "Strategy: First understand the image layout and identify key elements "
-        "(balls, holes, obstacles). Then use draw_line repeatedly to draw the ball's future trajectory "
-        "step by step through the image. Until you can determine whether the ball will go into the hole or hit an obstacle. "
-    ),
+    
 }
 
 

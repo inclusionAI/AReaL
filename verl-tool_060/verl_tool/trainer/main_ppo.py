@@ -59,6 +59,7 @@ def run_ppo(config) -> None:
         # Set environment variables in the runtime environment to control tokenizer parallelism,
         # NCCL debug level, VLLM logging level, and allow runtime LoRA updating
         # `num_cpus` specifies the number of CPU cores Ray can use, obtained from the configuration
+        os.environ.pop("ROCR_VISIBLE_DEVICES",None)
         default_runtime_env = get_ppo_ray_runtime_env()
         default_runtime_env.setdefault("env_vars", {})
         if os.environ.get("PYTHONPATH"):

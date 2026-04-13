@@ -8,8 +8,9 @@ pip install -e verl/ --no-deps
 pip install -e . --no-deps
 pip install -e ../geo_edit/ --no-deps
 pip install vllm==0.11.0
-# Install dependencies
+# # Install dependencies
 pip install timm fire iopath ftfy tensordict codetiming qwen_omni_utils nvitop httptools colorlog
-pip install --upgrade numpy
-pip uninstall -y transformers
-pip install "git+https://github.com/huggingface/transformers.git@b3e3c3d"
+pip install "pyzmq==26.*"
+# pip install --upgrade numpy
+# pip uninstall -y transformers
+# pip install "git+https://github.com/huggingface/transformers.git@b3e3c3d"
