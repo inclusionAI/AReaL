@@ -3,7 +3,11 @@ from typing import Any
 import torch
 
 from areal.api import TrainEngine
+from areal.experimental.training_service.controller.controller import (
+    GatewayTrainController,
+)
 from areal.infra import TrainController
+from areal.infra.rpc.serialization import serialize_value
 from areal.utils import stats_tracker
 from areal.utils.data import batched_call
 from areal.utils.perf_tracer import trace_perf
@@ -52,6 +56,22 @@ class LMController(TrainController):
         self._custom_function_call(
             "evaluate_lm", *args, rpc_meta={"broadcast": True}, **kwargs
         )
+
+
+class LMControllerV2(GatewayTrainController):
+    def train_lm(self, *args, **kwargs):
+        payload = {
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        self._gateway_post_result("/sft/train", payload)
+
+    def evaluate_lm(self, *args, **kwargs):
+        payload = {
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        self._gateway_post_result("/sft/evaluate", payload)
 
 
 def compute_packed_sft_loss(
