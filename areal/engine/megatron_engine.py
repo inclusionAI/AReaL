@@ -1410,9 +1410,9 @@ class MegatronEngine(TrainEngine):
 
     @trace_perf("megatron_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta) -> None:
-        fut = Future()
-
+        
         if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
             fut = self.rollout_engine.update_weights_from_disk(meta)
 
         self._save_model_to_hf(meta.path, self.tokenizer, None)
@@ -1429,6 +1429,7 @@ class MegatronEngine(TrainEngine):
             )
 
             fut.result()
+            self.rollout_engine.pause_generation()
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
