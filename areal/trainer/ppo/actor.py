@@ -321,21 +321,41 @@ class PPOActor:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
-        # NOTE: routed_experts is intentionally left in data.
-        # It is a 4D tensor and will be put into not_to_split by
-        # split_padded_tensor_dict_into_mb_list. The R3 engine patch
-        # (megatron_engine_r3_patch.py) will extract it from mb_inputs.data
-        # and handle the per-microbatch splitting.
+        _r3_routed_experts = data.pop("routed_experts", None)
+
         mb_inputs = split_padded_tensor_dict_into_mb_list(
             data,
             mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
         )
 
+        # R3: Split routed_experts per mini-batch for side-channel delivery.
+        _r3_split = None
+        if _r3_routed_experts is not None:
+            from areal.trainer.ppo.actor_r3_patch import split_routed_experts_for_minibatches
+            _r3_split = split_routed_experts_for_minibatches(
+                _r3_routed_experts, mb_inputs
+            )
+            logger.info(
+                "[R3] Split routed_experts for %d mini-batches via side-channel "
+                "(shapes: %s).",
+                len(mb_inputs.mbs),
+                [s.shape if s is not None else None for s in _r3_split],
+            )
+
         with stats_tracker.scope("update"):
             # Get current version for proximal approximation metrics
             current_version = self.engine.get_version()
 
-            for mb in mb_inputs.mbs:
+            for i, mb in enumerate(mb_inputs.mbs):
+                # deliver routed_experts via engine side-channel
+                # to bypass pack_tensor_dict corruption and ensure correct per-mini-batch data.
+                if _r3_split is not None and hasattr(self.engine, '_r3_enabled'):
+                    self.engine._r3_pending_routed_experts = (
+                        _r3_split[i]
+                        if i < len(_r3_split) and _r3_split[i] is not None
+                        else None
+                    )
+
                 train_stat = self.engine.train_batch(
                     mb,
                     loss_fn=functools.partial(
