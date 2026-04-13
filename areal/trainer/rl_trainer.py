@@ -445,11 +445,19 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                # R3: Log routing replay statistics if available.
-                if getattr(self.config.rollout, "return_routed_experts", False):
-                    from areal.trainer.ppo.actor_r3_patch import log_r3_data_stats
-                    for traj in adv_batch:
-                        log_r3_data_stats(traj)
+                # MoE routing metrics: Log for ALL MoE models when
+                # routed_experts data is available in the trajectory.
+                # R3 data stats are logged only when R3 is enabled.
+                for traj in adv_batch:
+                    if "routed_experts" in traj:
+                        from areal.trainer.ppo.actor_r3_patch import (
+                            log_moe_routing_metrics,
+                            log_r3_data_stats,
+                        )
+                        log_moe_routing_metrics(traj)
+                        if getattr(self.config.rollout, "return_routed_experts", False):
+                            log_r3_data_stats(traj)
+                        break  # Log once per batch, not per trajectory
 
                 self.actor.ppo_update(adv_batch)
                 self.actor.step_lr_scheduler()

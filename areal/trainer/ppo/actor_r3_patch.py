@@ -12,11 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-R3 metrics and logging helpers for the PPO actor.
+MoE routing metrics and R3 logging helpers for the PPO actor.
 
-When Router Replay (R3) is enabled, these functions compute and log
-statistics about the replayed routing decisions. 
-The key effectiveness metrics are:
+Provides two categories of metrics:
+
+1. **R3 data stats** (``log_r3_data_stats``): Summary of the routed_experts
+   tensor shape, dtype, and basic coverage info.  Logged when R3 is enabled.
+
+2. **MoE routing effectiveness metrics** (``log_moe_routing_metrics``):
+   SkyRL-style routing quality indicators that are useful for ANY MoE model,
+   regardless of whether R3 is enabled.  These include:
+   - Routing entropy (per-layer and aggregated)
+   - Expert utilization balance (std dev of expert load)
+   - Data coverage ratio (fraction of samples with valid routing data)
+   - Top-1 expert concentration (how much traffic goes to most-used expert)
+   - Expert diversity (number of unique experts used per token)
+
+The key R3-specific effectiveness metrics are:
 
 1. **Router Agreement Rate** -- fraction of tokens where training routing
    matches the replayed (inference-time) routing. Measures how effectively
@@ -82,6 +94,81 @@ def log_r3_data_stats(
             _log_r3_effectiveness_metrics(re)
         else:
             stats_tracker.scalar(r3_present=0)
+
+
+def split_routed_experts_for_minibatches(
+    routed_experts: torch.Tensor,
+    mb_list,
+) -> list[torch.Tensor | None]:
+    """Split ``routed_experts`` tensor for actor-level mini-batches.
+
+    This handles the Level-1 split (actor._ppo_update splits into
+    ppo_n_minibatches).  The tensor is reordered by ``forward_indices``
+    and then sliced according to each mini-batch's sample count.
+
+    Args:
+        routed_experts: ``(bs, seq_len, num_moe_layers, topk)`` full batch tensor.
+        mb_list: ``MicroBatchList`` from ``split_padded_tensor_dict_into_mb_list``.
+
+    Returns:
+        List of tensors, one per mini-batch, each of shape
+        ``(mini_bs, seq_len, num_moe_layers, topk)``.
+    """
+    if routed_experts is None:
+        return [None] * len(mb_list)
+
+    forward_indices = mb_list.forward_indices
+    n_mbs = len(mb_list)
+
+    if forward_indices is None:
+        # No reordering -- just split evenly
+        bs = routed_experts.shape[0]
+        chunk = bs // n_mbs
+        result = [routed_experts[i * chunk : (i + 1) * chunk] for i in range(n_mbs)]
+        logger.debug(
+            "[R3] split_routed_experts_for_minibatches: no forward_indices, "
+            "split %d samples evenly into %d chunks of %d.",
+            bs, n_mbs, chunk,
+        )
+        return result
+
+    # Reorder by forward_indices (sample-level reordering)
+    reordered = routed_experts[forward_indices]
+
+    # Determine number of samples per mini-batch from mbs dicts
+    result = []
+    offset = 0
+    for i, mb_dict in enumerate(mb_list.mbs):
+        n_samples = _infer_mb_sample_count_from_dict(
+            mb_dict, routed_experts.shape[0], n_mbs
+        )
+        result.append(reordered[offset : offset + n_samples])
+        offset += n_samples
+
+    logger.debug(
+        "[R3] split_routed_experts_for_minibatches: split %d samples into "
+        "%d mini-batches with sizes %s.",
+        routed_experts.shape[0],
+        n_mbs,
+        [r.shape[0] for r in result],
+    )
+    return result
+
+
+def _infer_mb_sample_count_from_dict(
+    mb_dict: dict,
+    total_bs: int,
+    n_mbs: int,
+) -> int:
+    """Infer sample count from a mini-batch dict."""
+    if isinstance(mb_dict, dict):
+        attn = mb_dict.get("attention_mask")
+        if attn is not None and hasattr(attn, "shape"):
+            return attn.shape[0]
+        ids = mb_dict.get("input_ids")
+        if ids is not None and hasattr(ids, "shape"):
+            return ids.shape[0]
+    return total_bs // n_mbs
 
 
 def _log_r3_effectiveness_metrics(
@@ -301,6 +388,125 @@ def compute_router_agreement_rate(
     actual_sorted = actual_indices.sort(dim=-1).values
     matches = (replay_sorted == actual_sorted).all(dim=-1).float()
     return matches.mean().item()
+
+
+def log_moe_routing_metrics(
+    data: dict[str, Any],
+    scope: str = "moe_routing",
+) -> None:
+    """Log MoE routing effectiveness metrics for ANY MoE model.
+
+    Computes routing quality indicators from the
+    ``routed_experts`` tensor.  These metrics help diagnose routing
+    quality issues (expert collapse, load imbalance, etc.) and are
+    useful even without R3.
+
+    Args:
+        data: Training data dict containing ``"routed_experts"``
+            of shape ``(bs, seq_len, num_moe_layers, topk)``.
+        scope: Stats-tracker scope prefix.
+    """
+    re = data.get("routed_experts")
+    if re is None:
+        return
+    if not isinstance(re, torch.Tensor) or re.dim() < 4:
+        return
+
+    bs, seq_len, num_layers, topk = re.shape
+    attn_mask = data.get("attention_mask")
+
+    with stats_tracker.scope(scope):
+        # ------------------------------------------------------------------
+        # 1. Data coverage: fraction of samples with non-zero routing data
+        # ------------------------------------------------------------------
+        has_routing = (re.sum(dim=(1, 2, 3)) != 0).float()
+        coverage = has_routing.mean().item()
+        stats_tracker.scalar(data_coverage=coverage)
+
+        # ------------------------------------------------------------------
+        # 2. Expert utilization and load balance (per-layer)
+        # ------------------------------------------------------------------
+        if attn_mask is not None:
+            real_mask = attn_mask.bool()  # (bs, seq_len)
+        else:
+            real_mask = torch.ones(bs, seq_len, dtype=torch.bool, device=re.device)
+
+        # Expand mask for layers and topk: (bs, seq_len, 1, 1)
+        token_mask = real_mask.unsqueeze(-1).unsqueeze(-1).expand_as(re)
+        max_expert_id = re[token_mask].max().item() if token_mask.any() else 0
+        num_experts = int(max_expert_id) + 1
+        if num_experts < 2:
+            stats_tracker.scalar(
+                num_experts=num_experts,
+                insufficient_data=1,
+            )
+            return
+
+        entropy_sum = 0.0
+        balance_sum = 0.0
+        top1_concentration_sum = 0.0
+        diversity_sum = 0.0
+        valid_layers = 0
+
+        for layer_idx in range(num_layers):
+            layer_re = re[:, :, layer_idx, :]
+            layer_mask = real_mask.unsqueeze(-1).expand_as(layer_re)
+            valid_experts = layer_re[layer_mask]
+
+            if valid_experts.numel() == 0:
+                continue
+
+            valid_layers += 1
+
+            expert_counts = torch.bincount(
+                valid_experts.long().clamp(0, num_experts - 1),
+                minlength=num_experts,
+            ).float()
+            total_assignments = expert_counts.sum()
+
+            if total_assignments == 0:
+                continue
+
+            expert_probs = expert_counts / total_assignments
+
+            # Routing entropy (normalized)
+            log_probs = torch.log(expert_probs + 1e-10)
+            entropy = -(expert_probs * log_probs).sum().item()
+            max_entropy = torch.log(torch.tensor(float(num_experts))).item()
+            normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
+            entropy_sum += normalized_entropy
+
+            # Expert load imbalance (CV)
+            load_std = expert_probs.std().item()
+            load_mean = expert_probs.mean().item()
+            balance = load_std / (load_mean + 1e-10)
+            balance_sum += balance
+
+            # Top-1 expert concentration
+            top1_ratio = expert_probs.max().item()
+            top1_concentration_sum += top1_ratio
+
+            # Expert diversity
+            unique_experts_used = (expert_counts > 0).sum().item()
+            diversity = unique_experts_used / num_experts
+            diversity_sum += diversity
+
+        if valid_layers > 0:
+            stats_tracker.scalar(
+                num_experts=num_experts,
+                num_moe_layers=num_layers,
+                routing_entropy=entropy_sum / valid_layers,
+                expert_load_imbalance_cv=balance_sum / valid_layers,
+                top1_expert_concentration=top1_concentration_sum / valid_layers,
+                expert_diversity=diversity_sum / valid_layers,
+                valid_moe_layers=valid_layers,
+            )
+        else:
+            stats_tracker.scalar(
+                num_experts=num_experts,
+                num_moe_layers=num_layers,
+                valid_moe_layers=0,
+            )
 
 
 def strip_routed_experts_before_loss(

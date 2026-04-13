@@ -77,6 +77,7 @@ def patch_megatron_engine_for_r3(
     # Mark and save original
     engine._r3_enabled = True
     engine._r3_original_forward_backward_batch = engine.forward_backward_batch
+    engine._r3_pending_routed_experts = None
 
     # Bind the wrapped method
     engine.forward_backward_batch = types.MethodType(
@@ -122,6 +123,95 @@ def _reconstruct_attention_mask_from_cu_seqlens(
         seq_lens.tolist()[:8],  # log first 8 for brevity
     )
     return mask
+
+
+# ===================================================================
+# Problem 2 fix: Align routed_experts seq dim to attention_mask
+# ===================================================================
+
+
+def _align_routed_experts_to_mask(
+    routed_experts: torch.Tensor,
+    attention_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Align ``routed_experts`` seq dimension to match ``attention_mask``.
+
+    **Problem 2 Fix**: After pack_tensor_dict + pad_mb_list, the
+    cu_seqlens-reconstructed ``attention_mask`` has ``mb_max_seqlen``
+    which may be SMALLER than ``routed_experts``' seq dimension
+    (``batch_max_seqlen``).  The rollout-produced ``routed_experts`` is
+    LEFT-padded (padding on the left, real tokens on the right), while
+    the post-pack ``attention_mask`` is LEFT-aligned (real tokens first,
+    no left-padding).
+
+    This function extracts the right-most ``actual_len`` tokens from each
+    sample's left-padded ``routed_experts`` and places them at the
+    left-aligned positions expected by ``attention_mask``.
+
+    Args:
+        routed_experts: ``(bs, batch_max_seqlen, num_moe_layers, topk)``
+            Left-padded routing indices from rollout.
+        attention_mask: ``(bs, mb_max_seqlen)``
+            Left-aligned mask (1 for real tokens, 0 for padding).
+
+    Returns:
+        ``(bs, mb_max_seqlen, num_moe_layers, topk)`` aligned tensor.
+    """
+    bs, re_seqlen = routed_experts.shape[:2]
+    _, mask_seqlen = attention_mask.shape[:2]
+
+    if re_seqlen == mask_seqlen:
+        # No alignment needed
+        return routed_experts
+
+    if re_seqlen < mask_seqlen:
+        # Unlikely but possible if mask was padded beyond batch_max_seqlen.
+        # Right-pad routed_experts with zeros.
+        extra_dims = routed_experts.shape[2:]  # (num_moe_layers, topk)
+        padded = torch.zeros(
+            bs, mask_seqlen, *extra_dims,
+            dtype=routed_experts.dtype,
+            device=routed_experts.device,
+        )
+        padded[:, :re_seqlen] = routed_experts
+        logger.info(
+            "[R3] _align_routed_experts_to_mask: re_seqlen(%d) < mask_seqlen(%d), "
+            "right-padded routed_experts with zeros.",
+            re_seqlen, mask_seqlen,
+        )
+        return padded
+
+    # re_seqlen > mask_seqlen: the common case.
+    # routed_experts is LEFT-padded: real tokens are at the RIGHT end.
+    # attention_mask is LEFT-aligned: real tokens are at the LEFT end.
+    # For each sample, extract the rightmost `actual_len` tokens from
+    # routed_experts and place them at positions [0, actual_len) in output.
+    extra_dims = routed_experts.shape[2:]  # (num_moe_layers, topk)
+    aligned = torch.zeros(
+        bs, mask_seqlen, *extra_dims,
+        dtype=routed_experts.dtype,
+        device=routed_experts.device,
+    )
+
+    seq_lens = attention_mask.sum(dim=1).long()  # actual lengths per sample
+    for i in range(bs):
+        actual_len = int(seq_lens[i].item())
+        if actual_len <= 0:
+            continue
+        # Take rightmost actual_len tokens from left-padded routed_experts
+        src_start = re_seqlen - actual_len
+        n = min(actual_len, mask_seqlen)
+        aligned[i, :n] = routed_experts[i, src_start : src_start + n]
+
+    logger.info(
+        "[R3] _align_routed_experts_to_mask: re_seqlen=%d -> mask_seqlen=%d, "
+        "bs=%d, seq_lens=%s (aligned left-padded RE to left-aligned mask).",
+        re_seqlen,
+        mask_seqlen,
+        bs,
+        seq_lens.tolist()[:8],
+    )
+    return aligned
 
 
 # ===================================================================
@@ -284,6 +374,14 @@ def _r3_forward_backward_batch(
 
     If the data does not contain ``routed_experts``, delegates directly
     to the original method with zero overhead.
+
+    **Problem 1 Fix**: Retrieves routed_experts from engine side-channel
+    (``self._r3_pending_routed_experts``) set by actor._ppo_update FIRST,
+    falling back to ``mb_list.data`` for backward compatibility.
+
+    **Problem 2 Fix**: Before passing per-MB routed_experts to
+    ``setup_per_microbatch_replay_forward``, aligns the seq dimension
+    to match the attention_mask's seq dimension.
     """
     from areal.engine.router_replay_patch import RouterReplay
     from areal.engine.router_replay_utils import (
@@ -292,16 +390,36 @@ def _r3_forward_backward_batch(
     )
 
     # ------------------------------------------------------------------
-    # 1. Extract routed_experts from the batch data and split per-MB.
-    #    routed_experts is (bs, max_seqlen, num_moe_layers, topk) and
-    #    does NOT get split by split_padded_tensor_dict_into_mb_list.
+    # 1. Retrieve routed_experts.
+    #    Problem 1 Fix: Prefer side-channel from actor._ppo_update, which
+    #    bypasses _prepare_mb_list/pack_tensor_dict entirely.
+    #    Fall back to mb_list.data for backward compatibility.
     # ------------------------------------------------------------------
     routed_experts_batch = None
-    if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
-        routed_experts_batch = mb_list.data.pop("routed_experts", None)
+
+    # Strategy A: Side-channel (Problem 1 fix -- preferred path)
+    if hasattr(self, '_r3_pending_routed_experts') and self._r3_pending_routed_experts is not None:
+        routed_experts_batch = self._r3_pending_routed_experts
+        self._r3_pending_routed_experts = None  # Consume it
+        logger.info(
+            "[R3] Retrieved routed_experts from engine side-channel: shape=%s.",
+            routed_experts_batch.shape,
+        )
+
+    # Strategy B: Legacy path from mb_list.data (backward compatibility)
+    if routed_experts_batch is None:
+        if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
+            routed_experts_batch = mb_list.data.pop("routed_experts", None)
+            if routed_experts_batch is not None:
+                logger.info(
+                    "[R3] Retrieved routed_experts from mb_list.data (legacy path): "
+                    "shape=%s.",
+                    routed_experts_batch.shape,
+                )
 
     # Also clean from mbs and padded_mbs to avoid confusing downstream code.
-    # Problem 1: these would contain the un-split full tensor via not_to_split broadcast.
+    # Problem 1: these would contain the un-split full tensor via not_to_split broadcast,
+    # or corrupted 3D tensors from pack_tensor_dict.
     for mb_dict in mb_list.mbs:
         if isinstance(mb_dict, dict):
             mb_dict.pop("routed_experts", None)
@@ -312,8 +430,8 @@ def _r3_forward_backward_batch(
 
     if routed_experts_batch is None:
         logger.debug(
-            "[R3] No routed_experts in batch data; using original "
-            "forward_backward_batch."
+            "[R3] No routed_experts found (neither side-channel nor mb_list.data); "
+            "using original forward_backward_batch."
         )
         return self._r3_original_forward_backward_batch(
             mb_list, process_output_fn, forward_only=forward_only
@@ -401,23 +519,22 @@ def _r3_forward_backward_batch(
                 attn_mask = _get_attention_mask_for_mb(mb_item)
 
                 if attn_mask is not None:
-                    # Truncate `re` sequence length to match `attn_mask`
-                    # Since data is right-padded (real tokens are on the left),
-                    # slicing the first max_seqlen elements safely removes extra padding.
-                    # This prevents a shape mismatch when the micro-batch has a smaller max_seqlen
-                    # than the full batch (which occurs when sequences are packed).
-                    re_matched = re[:, :attn_mask.shape[1], ...]
-
                     try:
+                        # Problem 2 fix: Align routed_experts seq dimension
+                        # to match attention_mask's seq dimension.
+                        # routed_experts is left-padded (batch_max_seqlen),
+                        # attn_mask is left-aligned (mb_max_seqlen).
+                        aligned_re = _align_routed_experts_to_mask(re, attn_mask)
+
                         setup_per_microbatch_replay_forward(
-                            re_matched.to(attn_mask.device),
+                            aligned_re.to(attn_mask.device),
                             attn_mask,
                             model_config,
                         )
                         logger.debug(
                             "[R3] Replay setup OK for micro-batch %d: "
-                            "routed_experts=%s, attn_mask=%s.",
-                            idx, re_matched.shape, attn_mask.shape,
+                            "original_re=%s, aligned_re=%s, attn_mask=%s.",
+                            idx, re.shape, aligned_re.shape, attn_mask.shape,
                         )
                     except Exception:
                         logger.warning(
