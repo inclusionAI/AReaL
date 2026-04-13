@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """``python -m areal.experimental.agent_service.data_proxy``"""
 
 from .app import create_data_proxy_app

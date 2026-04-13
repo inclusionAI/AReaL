@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """AReaL Agent Service — agent-level inference tier.
 
 Exposes complete agent sessions (autonomous multi-step reasoning, tool use,

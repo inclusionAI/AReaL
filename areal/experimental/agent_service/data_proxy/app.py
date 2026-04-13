@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Data Proxy — stateful session proxy between Gateway and Worker."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Inference Gateway — thin HTTP proxy with auth, routing, and forwarding.
 
 The gateway holds only ``admin_api_key`` and ``router_addr``. All worker state,

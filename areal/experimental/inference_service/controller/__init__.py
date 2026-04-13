@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from areal.experimental.inference_service.controller.config import (
     GatewayControllerConfig,
 )

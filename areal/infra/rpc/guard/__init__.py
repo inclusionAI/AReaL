@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared Guard: reusable process management for RPC and inference services.
 
 The Guard is the base process management layer shared between:
