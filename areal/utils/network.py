@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import functools
 import random
 import socket
 from ipaddress import ip_address
@@ -109,6 +110,55 @@ def split_hostport(addr: str) -> tuple[str, int]:
     except ValueError as e:
         raise ValueError(f"Invalid host:port address: {addr}") from e
     return host, int(port_s)
+
+
+@functools.lru_cache(maxsize=1)
+def _local_addresses() -> frozenset[str]:
+    """Return a frozenset of all IP addresses bound to local interfaces.
+
+    The result is cached for the lifetime of the process because the set
+    of local addresses rarely changes during a training job.
+    """
+    addrs: set[str] = {"127.0.0.1", "::1", "localhost"}
+
+    # Add hostname and its resolved IPs
+    try:
+        hostname = socket.gethostname()
+        addrs.add(hostname)
+        addrs.add(socket.getfqdn())
+        for family, _, _, _, sockaddr in socket.getaddrinfo(
+            hostname, None, socket.AF_UNSPEC, socket.SOCK_DGRAM
+        ):
+            addrs.add(sockaddr[0])
+    except socket.gaierror:
+        pass
+
+    # Add outbound IP (the one used for external routing)
+    try:
+        addrs.add(gethostip())
+    except RuntimeError:
+        pass
+
+    return frozenset(addrs)
+
+
+def is_local_addr(node_addr: str) -> bool:
+    """Check whether *node_addr* (``host:port`` or bare host) points to this machine.
+
+    Supports IPv4 and IPv6 bracketed addresses.  The comparison is done
+    against all IPs bound to local interfaces plus ``localhost``,
+    ``gethostname()`` and ``getfqdn()``.
+    """
+    try:
+        host, _ = split_hostport(node_addr)
+    except ValueError:
+        host = node_addr
+
+    # Strip IPv6 brackets if present (e.g. from format_hostport)
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+
+    return host in _local_addresses()
 
 
 def find_free_ports(

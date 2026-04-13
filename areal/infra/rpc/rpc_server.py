@@ -14,8 +14,11 @@ Usage::
 
 from __future__ import annotations
 
+import atexit
 import logging as stdlib_logging
+import os
 
+from areal.infra.rpc import rtensor
 from areal.infra.rpc.guard.app import (
     GuardState,
     configure_state_from_args,
@@ -28,6 +31,13 @@ from areal.infra.rpc.guard.engine_blueprint import engine_bp, register_engine_ho
 from areal.utils import logging, perf_tracer
 
 logger = logging.getLogger("SyncRPCServer")
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def main():
@@ -50,14 +60,37 @@ def main():
     state = GuardState()
     bind_host = configure_state_from_args(state, args)
 
+    shm_enabled = _env_flag("AREAL_RTENSOR_SHM_ENABLED", True)
+    pool_size_mb = int(os.environ.get("AREAL_RTENSOR_SHM_POOL_SIZE_MB", "512"))
+
+    shm_pool = None
+    if shm_enabled and pool_size_mb > 0:
+        shm_pool = rtensor.RTensorShmPool(
+            job_token=f"{state.experiment_name}_{state.trial_name}",
+            role=state.role or "",
+            worker_index=state.worker_index or 0,
+            pool_size_bytes=pool_size_mb * 1024 * 1024,
+        )
+        shm_pool.init_writer()
+        atexit.register(shm_pool.close)
+
+    rtensor.set_backend(rtensor.HttpRTensorBackend(shm_pool=shm_pool))
+
     app = create_app(state)
     app.register_blueprint(data_bp)
     app.register_blueprint(engine_bp)
     register_engine_hooks(state)
 
+    if shm_pool is not None:
+        state.register_cleanup_hook(shm_pool.close)
     state.register_cleanup_hook(lambda: perf_tracer.save(force=True))
 
-    logger.info(f"Werkzeug log level: {args.werkzeug_log_level}")
+    logger.info("Werkzeug log level: %s", args.werkzeug_log_level)
+    logger.info(
+        "RTensor SharedMemory pool %s for rpc_server (pool_size=%dMB)",
+        "enabled" if shm_pool is not None and shm_pool._enabled else "disabled",
+        pool_size_mb,
+    )
 
     run_server(state, app, bind_host, args.port)
 

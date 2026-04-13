@@ -1090,3 +1090,674 @@ class TestTensorShardInfoDocumentation:
             node_addr="192.168.1.1:8080",
         )
         assert ":" in shard.node_addr
+
+
+# =============================================================================
+# SharedMemory IPC backend tests
+# =============================================================================
+
+
+class TestRTensorShmPool:
+    def setup_method(self):
+        from areal.infra.rpc.rtensor import (
+            _fetch_buffer,
+            _fetch_buffer_lock,
+            _storage,
+            _storage_lock,
+            _storage_stats,
+            set_backend,
+        )
+
+        with _storage_lock:
+            _storage.clear()
+            _storage_stats.clear()
+        with _fetch_buffer_lock:
+            _fetch_buffer.clear()
+        set_backend(None)
+        self._pools = []
+
+    def teardown_method(self):
+        from areal.infra.rpc.rtensor import set_backend
+
+        for pool in self._pools:
+            pool.close()
+        self._pools.clear()
+        set_backend(None)
+
+    def _make_pool(self, pool_size_bytes: int = 1024 * 1024):
+        from areal.infra.rpc.rtensor import RTensorShmPool
+
+        pool = RTensorShmPool(
+            job_token="test",
+            role="actor",
+            worker_index=0,
+            pool_size_bytes=pool_size_bytes,
+        )
+        pool.init_writer()
+        self._pools.append(pool)
+        return pool
+
+    @staticmethod
+    def _assert_roundtrip_equal(actual: torch.Tensor, expected: torch.Tensor) -> None:
+        if actual.dtype in {
+            torch.float16,
+            torch.float32,
+            torch.float64,
+            torch.bfloat16,
+        }:
+            torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
+            return
+        assert torch.equal(actual, expected)
+
+    @staticmethod
+    def _write_tensor_to_pool(pool, shard_id: str, tensor: torch.Tensor) -> None:
+        from areal.infra.rpc.rtensor import _DTYPE_TO_ENUM
+
+        t = tensor.contiguous()
+        try:
+            raw = t.numpy().view("uint8").ravel()
+        except TypeError:
+            raw = t.view(torch.uint8).numpy().ravel()
+
+        nbytes = raw.nbytes
+        dtype_enum = _DTYPE_TO_ENUM[t.dtype]
+
+        with pool._lock:
+            aligned = (pool._next_offset + 63) & ~63
+            assert aligned + nbytes <= pool._pool_size
+            pool._next_offset = aligned + nbytes
+            pool._occupied[shard_id] = (aligned, nbytes, dtype_enum, list(t.shape))
+
+        pool._shm.buf[aligned : aligned + nbytes] = raw
+
+    def test_pool_name_generation(self):
+        from areal.infra.rpc.rtensor import RTensorShmPool
+
+        name1 = RTensorShmPool._make_pool_name("job", "actor", 1)
+        name2 = RTensorShmPool._make_pool_name("job", "actor", 1)
+        assert name1 == name2
+        assert name1.startswith("rt_")
+
+    def test_pool_name_different_params(self):
+        from areal.infra.rpc.rtensor import RTensorShmPool
+
+        name1 = RTensorShmPool._make_pool_name("job", "actor", 0)
+        name2 = RTensorShmPool._make_pool_name("job", "master", 0)
+        name3 = RTensorShmPool._make_pool_name("job", "actor", 1)
+        assert name1 != name2
+        assert name1 != name3
+
+    def test_init_writer_creates_shm(self):
+        pool = self._make_pool()
+        assert pool._shm is not None
+        assert pool._is_writer is True
+
+    def test_init_writer_retry_on_exists(self):
+        pool1 = self._make_pool()
+        pool2 = self._make_pool()
+        assert pool1._shm is not None
+        assert pool2._shm is not None
+        assert pool1._pool_name != pool2._pool_name
+
+    def test_init_writer_failure_disables_pool(self):
+        from unittest.mock import patch
+
+        from areal.infra.rpc.rtensor import RTensorShmPool
+
+        pool = RTensorShmPool(
+            job_token="test",
+            role="actor",
+            worker_index=0,
+            pool_size_bytes=1024,
+        )
+        self._pools.append(pool)
+
+        with patch(
+            "areal.infra.rpc.rtensor._SharedMemory", side_effect=OSError("boom")
+        ):
+            pool.init_writer()
+
+        assert pool._enabled is False
+        assert pool._shm is None
+
+    def test_allocate_and_write_basic(self):
+        pool = self._make_pool()
+        shard_id = str(uuid.uuid4())
+        tensor = torch.arange(12, dtype=torch.uint8).reshape(3, 4)
+
+        ok = pool.allocate_and_write(shard_id, tensor)
+        assert ok is True
+
+        meta = pool.get_meta(shard_id)
+        assert meta is not None
+        pool_name, offset, nbytes, dtype_enum, shape = meta
+        assert pool_name == pool._pool_name
+        assert offset >= 0
+        assert nbytes == tensor.nbytes
+        assert isinstance(dtype_enum, int)
+        assert shape == [3, 4]
+
+    def test_allocate_and_write_alignment(self):
+        pool = self._make_pool()
+        shard_id1 = str(uuid.uuid4())
+        shard_id2 = str(uuid.uuid4())
+
+        t1 = torch.ones(3, dtype=torch.uint8)
+        t2 = torch.ones(7, dtype=torch.uint8)
+
+        assert pool.allocate_and_write(shard_id1, t1) is True
+        assert pool.allocate_and_write(shard_id2, t2) is True
+
+        meta1 = pool.get_meta(shard_id1)
+        meta2 = pool.get_meta(shard_id2)
+        assert meta1 is not None
+        assert meta2 is not None
+        assert meta1[1] % 64 == 0
+        assert meta2[1] % 64 == 0
+
+    def test_allocate_and_write_pool_full(self):
+        pool = self._make_pool(pool_size_bytes=100)
+        first_id = str(uuid.uuid4())
+        second_id = str(uuid.uuid4())
+
+        assert (
+            pool.allocate_and_write(first_id, torch.ones(16, dtype=torch.uint8)) is True
+        )
+        assert (
+            pool.allocate_and_write(second_id, torch.ones(128, dtype=torch.uint8))
+            is False
+        )
+
+    def test_allocate_unsupported_dtype(self):
+        pool = self._make_pool()
+        shard_id = str(uuid.uuid4())
+        tensor = torch.ones(4, dtype=torch.complex64)
+
+        result = pool.allocate_and_write(shard_id, tensor)
+        if result:
+            pytest.skip("complex64 is supported in this build; no unsupported dtype")
+        assert result is False
+
+    def test_release_removes_metadata(self):
+        pool = self._make_pool()
+        shard_id = str(uuid.uuid4())
+
+        assert (
+            pool.allocate_and_write(shard_id, torch.ones(4, dtype=torch.uint8)) is True
+        )
+        assert pool.get_meta(shard_id) is not None
+
+        pool.release(shard_id)
+        assert pool.get_meta(shard_id) is None
+
+    def test_reset_zeroes_offset(self):
+        pool = self._make_pool()
+        sid1 = str(uuid.uuid4())
+        sid2 = str(uuid.uuid4())
+
+        assert pool.allocate_and_write(sid1, torch.ones(11, dtype=torch.uint8)) is True
+        meta1 = pool.get_meta(sid1)
+        assert meta1 is not None
+        assert meta1[1] == 0
+
+        pool.release(sid1)
+        pool.reset()
+
+        assert pool.allocate_and_write(sid2, torch.ones(5, dtype=torch.uint8)) is True
+        meta2 = pool.get_meta(sid2)
+        assert meta2 is not None
+        assert meta2[1] == 0
+
+    def test_reset_asserts_on_live_tensors(self):
+        pool = self._make_pool()
+        shard_id = str(uuid.uuid4())
+
+        assert (
+            pool.allocate_and_write(shard_id, torch.ones(3, dtype=torch.uint8)) is True
+        )
+        with pytest.raises(AssertionError, match="live tensors"):
+            pool.reset()
+
+    def test_read_tensor_roundtrip(self):
+        pool = self._make_pool()
+        tensors = [
+            torch.randn(2, 3, dtype=torch.float32),
+            torch.randn(2, 3, dtype=torch.bfloat16),
+            torch.randint(-100, 100, (2, 3), dtype=torch.int64),
+            torch.randint(0, 2, (2, 3), dtype=torch.bool),
+            torch.randint(0, 255, (2, 3), dtype=torch.uint8),
+        ]
+
+        for tensor in tensors:
+            shard_id = str(uuid.uuid4())
+            self._write_tensor_to_pool(pool, shard_id, tensor)
+            meta = pool.get_meta(shard_id)
+            assert meta is not None
+            loaded = pool.read_tensor(
+                pool_name=meta[0],
+                offset=meta[1],
+                nbytes=meta[2],
+                dtype_enum=meta[3],
+                shape=meta[4],
+            )
+            self._assert_roundtrip_equal(loaded, tensor)
+            pool.release(shard_id)
+
+    def test_read_tensor_independent_clone(self):
+        pool = self._make_pool()
+        shard_id = str(uuid.uuid4())
+        tensor = torch.arange(12, dtype=torch.uint8).reshape(3, 4)
+
+        assert pool.allocate_and_write(shard_id, tensor) is True
+        meta = pool.get_meta(shard_id)
+        assert meta is not None
+
+        first = pool.read_tensor(meta[0], meta[1], meta[2], meta[3], meta[4])
+        first.fill_(0)
+        second = pool.read_tensor(meta[0], meta[1], meta[2], meta[3], meta[4])
+        assert torch.equal(second, tensor)
+
+    def test_read_tensor_bounds_check(self):
+        pool = self._make_pool()
+        with pytest.raises(ValueError, match="out of bounds"):
+            pool.read_tensor(
+                pool_name=pool._pool_name,
+                offset=2 * 1024 * 1024,
+                nbytes=32,
+                dtype_enum=1,
+                shape=[8],
+            )
+
+    def test_read_tensor_meta_mismatch(self):
+        pool = self._make_pool()
+        shard_id = str(uuid.uuid4())
+        tensor = torch.arange(10, dtype=torch.uint8)
+
+        assert pool.allocate_and_write(shard_id, tensor) is True
+        meta = pool.get_meta(shard_id)
+        assert meta is not None
+
+        with pytest.raises(ValueError, match="Pool meta mismatch"):
+            pool.read_tensor(
+                pool_name=meta[0],
+                offset=meta[1],
+                nbytes=meta[2] + 1,
+                dtype_enum=meta[3],
+                shape=meta[4],
+            )
+
+    def test_close_cleans_up(self):
+        from multiprocessing.shared_memory import SharedMemory
+
+        pool = self._make_pool()
+        pool_name = pool._pool_name
+        pool.close()
+
+        with pytest.raises(FileNotFoundError):
+            SharedMemory(name=pool_name, create=False)
+
+    def test_various_dtypes(self):
+        pool = self._make_pool(pool_size_bytes=2 * 1024 * 1024)
+        test_cases = [
+            torch.randn(3, 4).half(),
+            torch.randn(3, 4),
+            torch.randn(3, 4).double(),
+            torch.randint(-128, 127, (3, 4), dtype=torch.int8),
+            torch.randint(-100, 100, (3, 4), dtype=torch.int16),
+            torch.randint(-100, 100, (3, 4), dtype=torch.int32),
+            torch.randint(-100, 100, (3, 4), dtype=torch.int64),
+            torch.randint(0, 2, (3, 4), dtype=torch.bool),
+            torch.randn(3, 4).bfloat16(),
+            torch.randint(0, 255, (3, 4), dtype=torch.uint8),
+        ]
+
+        for tensor in test_cases:
+            shard_id = str(uuid.uuid4())
+            self._write_tensor_to_pool(pool, shard_id, tensor)
+            meta = pool.get_meta(shard_id)
+            assert meta is not None
+            loaded = pool.read_tensor(meta[0], meta[1], meta[2], meta[3], meta[4])
+            self._assert_roundtrip_equal(loaded, tensor)
+            pool.release(shard_id)
+
+    def test_various_shapes(self):
+        pool = self._make_pool(pool_size_bytes=2 * 1024 * 1024)
+        shapes = [
+            torch.Size([10]),
+            torch.Size([3, 4]),
+            torch.Size([2, 3, 4]),
+            torch.Size([2, 3, 4, 5]),
+        ]
+
+        for shape in shapes:
+            shard_id = str(uuid.uuid4())
+            tensor = torch.randint(0, 255, shape, dtype=torch.uint8)
+            assert pool.allocate_and_write(shard_id, tensor) is True
+            meta = pool.get_meta(shard_id)
+            assert meta is not None
+            loaded = pool.read_tensor(meta[0], meta[1], meta[2], meta[3], meta[4])
+            assert torch.equal(loaded, tensor)
+            pool.release(shard_id)
+
+    def test_disabled_pool_returns_false(self):
+        pool = self._make_pool()
+        pool._enabled = False
+
+        shard_id = str(uuid.uuid4())
+        assert (
+            pool.allocate_and_write(shard_id, torch.ones(4, dtype=torch.float32))
+            is False
+        )
+        assert pool.get_meta(shard_id) is None
+
+
+class TestShmPoolIntegration:
+    def setup_method(self):
+        from areal.infra.rpc.rtensor import (
+            _fetch_buffer,
+            _fetch_buffer_lock,
+            _storage,
+            _storage_lock,
+            _storage_stats,
+            set_backend,
+        )
+
+        with _storage_lock:
+            _storage.clear()
+            _storage_stats.clear()
+        with _fetch_buffer_lock:
+            _fetch_buffer.clear()
+        set_backend(None)
+        self._pools = []
+
+    def teardown_method(self):
+        from areal.infra.rpc.rtensor import set_backend
+
+        for pool in self._pools:
+            pool.close()
+        self._pools.clear()
+        set_backend(None)
+
+    def _make_pool(self, pool_size_bytes: int = 1024 * 1024):
+        from areal.infra.rpc.rtensor import RTensorShmPool
+
+        pool = RTensorShmPool(
+            job_token="test_integ",
+            role="actor",
+            worker_index=0,
+            pool_size_bytes=pool_size_bytes,
+        )
+        pool.init_writer()
+        self._pools.append(pool)
+        return pool
+
+    @staticmethod
+    def _make_pool_shard(
+        shard_id: str, node_addr: str, meta: tuple[str, int, int, int, list[int]]
+    ) -> TensorShardInfo:
+        return TensorShardInfo(
+            shard_id=shard_id,
+            node_addr=node_addr,
+            pool_name=meta[0],
+            pool_offset=meta[1],
+            pool_nbytes=meta[2],
+            pool_dtype=meta[3],
+            pool_shape=meta[4],
+        )
+
+    def test_backend_store_writes_to_pool(self):
+        pool = self._make_pool()
+        backend = HttpRTensorBackend(shm_pool=pool)
+        tensor = torch.arange(12, dtype=torch.uint8).reshape(3, 4)
+
+        shard_id = backend.store(tensor)
+        meta = pool.get_meta(shard_id)
+        assert meta is not None
+        assert meta[2] == tensor.nbytes
+        assert meta[4] == [3, 4]
+
+    def test_backend_fetch_uses_pool_for_local(self):
+        pool = self._make_pool()
+        backend = HttpRTensorBackend(shm_pool=pool)
+        tensor = torch.randint(0, 255, (4, 5), dtype=torch.uint8)
+
+        shard_id = backend.store(tensor)
+        meta = pool.get_meta(shard_id)
+        assert meta is not None
+
+        shard = self._make_pool_shard(shard_id, "localhost:7000", meta)
+        fetched = backend.fetch([shard])[0]
+        assert torch.equal(fetched, tensor)
+
+    def test_backend_fetch_falls_back_without_pool_meta(self):
+        from unittest.mock import patch
+
+        from areal.infra.rpc.rtensor import fetch
+
+        pool = self._make_pool()
+        backend = HttpRTensorBackend(shm_pool=pool)
+        tensor = torch.randint(0, 255, (3, 3), dtype=torch.uint8)
+        shard_id = backend.store(tensor)
+
+        calls: list[str] = []
+
+        async def fake_fetch_shard_group(
+            session: object,
+            node_addr: str,
+            grouped: list[tuple[int, TensorShardInfo]],
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+        ) -> list[torch.Tensor]:
+            del session, max_retries, retry_delay
+            calls.append(node_addr)
+            return [fetch(shard.shard_id) for _, shard in grouped]
+
+        backend._fetch_shard_group = fake_fetch_shard_group
+
+        with patch.object(
+            pool, "read_tensor", side_effect=AssertionError("unexpected")
+        ):
+            shard = TensorShardInfo(shard_id=shard_id, node_addr="localhost:7001")
+            fetched = backend.fetch([shard])[0]
+
+        assert calls == ["localhost:7001"]
+        assert torch.equal(fetched, tensor)
+
+    def test_remotize_localize_roundtrip_via_pool(self):
+        from areal.infra.rpc.rtensor import set_backend
+
+        pool = self._make_pool()
+        backend = HttpRTensorBackend(shm_pool=pool)
+        set_backend(backend)
+
+        tensor = torch.randint(0, 255, (5, 6), dtype=torch.uint8)
+        obj = {"data": tensor}
+
+        remotized = RTensor.remotize(obj, node_addr="localhost:7010")
+        assert isinstance(remotized["data"], RTensor)
+        assert remotized["data"].shard.has_pool_meta is True
+
+        localized = RTensor.localize(remotized)
+        assert torch.equal(localized["data"], tensor)
+
+    def test_remove_releases_from_pool(self):
+        from areal.infra.rpc.rtensor import remove, set_backend
+
+        pool = self._make_pool()
+        backend = HttpRTensorBackend(shm_pool=pool)
+        set_backend(backend)
+
+        shard_id = backend.store(torch.randint(0, 255, (2, 2), dtype=torch.uint8))
+        assert pool.get_meta(shard_id) is not None
+
+        remove(shard_id)
+        assert pool.get_meta(shard_id) is None
+
+    def test_step_lifecycle(self):
+        from areal.infra.rpc.rtensor import remove, set_backend
+
+        pool = self._make_pool(pool_size_bytes=2 * 1024 * 1024)
+        backend = HttpRTensorBackend(shm_pool=pool)
+        set_backend(backend)
+
+        tensors = [
+            torch.randint(0, 255, (3, 4), dtype=torch.uint8),
+            torch.randint(0, 255, (2, 5), dtype=torch.uint8),
+            torch.randint(0, 255, (2, 2, 2), dtype=torch.uint8),
+        ]
+        shard_ids = [backend.store(tensor) for tensor in tensors]
+
+        shards: list[TensorShardInfo] = []
+        for shard_id in shard_ids:
+            meta = pool.get_meta(shard_id)
+            assert meta is not None
+            shards.append(self._make_pool_shard(shard_id, "localhost:7020", meta))
+
+        fetched = backend.fetch(shards)
+        for actual, expected in zip(fetched, tensors, strict=True):
+            assert torch.equal(actual, expected)
+
+        for shard_id in shard_ids:
+            remove(shard_id)
+
+        pool.reset()
+
+        tensor2 = torch.arange(16, dtype=torch.uint8).reshape(4, 4)
+        shard2 = backend.store(tensor2)
+        meta2 = pool.get_meta(shard2)
+        assert meta2 is not None
+        assert meta2[1] == 0
+
+        remove(shard2)
+
+    def test_pool_full_falls_back(self):
+        from areal.infra.rpc.rtensor import fetch
+
+        pool = self._make_pool(pool_size_bytes=128)
+        backend = HttpRTensorBackend(shm_pool=pool)
+        tensor = torch.randn(256, dtype=torch.float32)
+
+        shard_id = backend.store(tensor)
+        assert pool.get_meta(shard_id) is None
+
+        async def fake_fetch_shard_group(
+            session: object,
+            node_addr: str,
+            grouped: list[tuple[int, TensorShardInfo]],
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+        ) -> list[torch.Tensor]:
+            del session, node_addr, max_retries, retry_delay
+            return [fetch(shard.shard_id) for _, shard in grouped]
+
+        backend._fetch_shard_group = fake_fetch_shard_group
+        shard = TensorShardInfo(shard_id=shard_id, node_addr="localhost:7030")
+        fetched = backend.fetch([shard])[0]
+        torch.testing.assert_close(fetched, tensor, rtol=1e-5, atol=1e-5)
+
+    def test_concurrent_fetch_via_pool(self):
+        import threading
+
+        pool = self._make_pool()
+        backend = HttpRTensorBackend(shm_pool=pool)
+        tensor = torch.randint(0, 255, (8, 8), dtype=torch.uint8)
+        shard_id = backend.store(tensor)
+
+        meta = pool.get_meta(shard_id)
+        assert meta is not None
+        shard = self._make_pool_shard(shard_id, "localhost:7040", meta)
+
+        results: list[torch.Tensor | None] = [None] * 8
+
+        def fetch_one(index: int) -> None:
+            results[index] = backend.fetch([shard])[0]
+
+        threads = [threading.Thread(target=fetch_one, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        for result in results:
+            assert result is not None
+            assert torch.equal(result, tensor)
+
+    def test_backend_without_pool_works(self):
+        from areal.infra.rpc.rtensor import fetch
+
+        backend = HttpRTensorBackend(shm_pool=None)
+        tensor = torch.randn(4, 4, dtype=torch.float32)
+        shard_id = backend.store(tensor)
+
+        calls: list[str] = []
+
+        async def fake_fetch_shard_group(
+            session: object,
+            node_addr: str,
+            grouped: list[tuple[int, TensorShardInfo]],
+            max_retries: int = 3,
+            retry_delay: float = 1.0,
+        ) -> list[torch.Tensor]:
+            del session, max_retries, retry_delay
+            calls.append(node_addr)
+            return [fetch(shard.shard_id) for _, shard in grouped]
+
+        backend._fetch_shard_group = fake_fetch_shard_group
+
+        shard = TensorShardInfo(shard_id=shard_id, node_addr="localhost:7050")
+        fetched = backend.fetch([shard])[0]
+
+        assert calls == ["localhost:7050"]
+        torch.testing.assert_close(fetched, tensor, rtol=1e-5, atol=1e-5)
+
+    def test_storage_stats_without_shm_fields(self):
+        from areal.infra.rpc.rtensor import remove, storage_stats
+
+        backend = HttpRTensorBackend(shm_pool=None)
+        shard_id = backend.store(torch.randn(4, 4, dtype=torch.float32))
+
+        stats = storage_stats()
+        assert "num_tensors" in stats
+        assert "total_bytes" in stats
+        assert "shm_segments" not in stats
+        assert "shm_bytes" not in stats
+
+        remove(shard_id)
+
+
+class TestIsLocalAddr:
+    """Tests for the is_local_addr utility."""
+
+    def test_localhost_is_local(self):
+        from areal.utils.network import is_local_addr
+
+        assert is_local_addr("localhost:8080") is True
+
+    def test_127_0_0_1_is_local(self):
+        from areal.utils.network import is_local_addr
+
+        assert is_local_addr("127.0.0.1:8080") is True
+
+    def test_loopback_ipv6_is_local(self):
+        from areal.utils.network import is_local_addr
+
+        assert is_local_addr("[::1]:8080") is True
+
+    def test_hostname_is_local(self):
+        import socket
+
+        from areal.utils.network import is_local_addr
+
+        hostname = socket.gethostname()
+        assert is_local_addr(f"{hostname}:8080") is True
+
+    def test_remote_addr_is_not_local(self):
+        from areal.utils.network import is_local_addr
+
+        # Use an address that is very unlikely to be local
+        assert is_local_addr("203.0.113.1:8080") is False
+
+    def test_bare_localhost(self):
+        from areal.utils.network import is_local_addr
+
+        assert is_local_addr("localhost") is True

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import math
+import platform
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
+from multiprocessing.shared_memory import SharedMemory as _SharedMemory
 from threading import Lock
 from typing import Any, Protocol, cast
 
@@ -19,6 +23,310 @@ from areal.infra.utils.http import DEFAULT_REQUEST_TIMEOUT, get_default_connecto
 from areal.utils import logging
 
 logger = logging.getLogger("HttpRTensor")
+
+# =============================================================================
+# SharedMemory IPC pool
+# =============================================================================
+
+_SHM_PREFIX = "rt_"
+
+# Mapping torch dtype <-> uint8 enum
+_DTYPE_TO_ENUM: dict[torch.dtype, int] = {
+    torch.float16: 0,
+    torch.float32: 1,
+    torch.float64: 2,
+    torch.int8: 3,
+    torch.int16: 4,
+    torch.int32: 5,
+    torch.int64: 6,
+    torch.bool: 7,
+    torch.bfloat16: 8,
+    torch.uint8: 9,
+}
+_ENUM_TO_DTYPE: dict[int, torch.dtype] = {v: k for k, v in _DTYPE_TO_ENUM.items()}
+
+_DTYPE_ELEMENT_SIZE: dict[torch.dtype, int] = {
+    dt: torch.tensor([], dtype=dt).element_size() for dt in _DTYPE_TO_ENUM
+}
+
+# macOS has a 31-char shm name limit; Linux allows 255.
+_SHM_NAME_MAX_LEN = 31 if platform.system() == "Darwin" else 255
+
+
+class RTensorShmPool:
+    """Writer-owned SharedMemory pool for same-node RTensor IPC.
+
+    This pool pre-allocates a single large SharedMemory segment and uses
+    a bump allocator to sub-allocate regions for individual tensor shards.
+    It is designed for the training-worker RPC server path where tensor
+    lifetimes are bounded by training steps.
+
+    Writer lifecycle (rpc_server only):
+        pool = RTensorShmPool(...)
+        pool.init_writer()           # creates the shm segment
+        # ... step loop ...
+        pool.allocate_and_write(...)  # per tensor
+        pool.release(...)             # per tensor, at clear_batches
+        pool.reset()                  # at step boundary
+        pool.close()                  # at shutdown
+
+    Reader lifecycle (any local process):
+        pool.read_tensor(pool_name, offset, nbytes, dtype_enum, shape)
+    """
+
+    def __init__(
+        self,
+        job_token: str,
+        role: str,
+        worker_index: int,
+        pool_size_bytes: int,
+    ) -> None:
+        self._job_token = job_token
+        self._role = role
+        self._worker_index = worker_index
+        self._pool_size = pool_size_bytes
+        self._lock = Lock()
+        self._reader_lock = Lock()
+
+        self._pool_name = self._make_pool_name(job_token, role, worker_index)
+        self._shm: _SharedMemory | None = None
+        self._enabled = True
+        self._is_writer = False
+        self._closing = False
+
+        # bump allocator state (writer side)
+        self._next_offset = 0
+        self._occupied: dict[str, tuple[int, int, int, list[int]]] = {}
+        self._in_flight = 0  # count of allocate_and_write() between reserve and publish
+
+        # reader-side cache
+        self._reader_pools: dict[str, _SharedMemory] = {}
+
+    @staticmethod
+    def _make_pool_name(
+        job_token: str,
+        role: str,
+        worker_index: int,
+        suffix: str = "",
+    ) -> str:
+        raw = f"{_SHM_PREFIX}{job_token}_{role}_{worker_index}{suffix}"
+        if len(raw) + 1 > _SHM_NAME_MAX_LEN:
+            digest = hashlib.md5(raw.encode()).hexdigest()
+            raw = f"{_SHM_PREFIX}{digest[: _SHM_NAME_MAX_LEN - 4]}"
+        return raw
+
+    def init_writer(self) -> None:
+        if not self._enabled:
+            return
+
+        for retry in range(3):
+            try:
+                self._shm = _SharedMemory(
+                    name=self._pool_name,
+                    create=True,
+                    size=self._pool_size,
+                )
+                self._is_writer = True
+                self._next_offset = 0
+                return
+            except FileExistsError:
+                self._pool_name = self._make_pool_name(
+                    self._job_token,
+                    self._role,
+                    self._worker_index,
+                    suffix=f"_r{retry}",
+                )
+            except Exception as exc:
+                logger.warning("Failed to initialize RTensor shm pool: %s", exc)
+                self._enabled = False
+                self._shm = None
+                return
+
+        logger.warning(
+            "Failed to create RTensor shm pool after retries; fallback to HTTP"
+        )
+        self._enabled = False
+
+    def allocate_and_write(self, shard_id: str, tensor: torch.Tensor) -> bool:
+        """Try to write *tensor* into the pool.
+
+        Returns ``True`` on success, ``False`` if the tensor should fall back
+        to the HTTP path (pool disabled, unsupported dtype, or insufficient
+        space).
+
+        Thread safety
+        -------------
+        The method uses a **reserve -> write -> publish** protocol to ensure
+        that ``get_meta()`` never exposes a shard whose data has not been
+        fully written yet:
+
+        1. **Reserve** (under ``_lock``): bump ``_next_offset`` to claim the
+           region, but do NOT register the shard in ``_occupied``.
+        2. **Write** (lock-free): copy tensor bytes into the reserved region.
+           No other thread can discover this region via ``get_meta()`` because
+           it is not yet in ``_occupied``.
+        3. **Publish** (under ``_lock``): insert the shard into ``_occupied``,
+           making it visible to ``get_meta()`` callers.
+        """
+        shm = self._shm
+        if not self._enabled or shm is None or self._closing:
+            return False
+        if tensor.dtype not in _DTYPE_TO_ENUM:
+            return False
+
+        t = tensor.contiguous()
+        try:
+            data_view = t.numpy().ravel()
+        except TypeError:
+            data_view = t.view(torch.uint8).numpy().ravel()
+
+        nbytes = data_view.nbytes
+        dtype_enum = _DTYPE_TO_ENUM[t.dtype]
+        shape = list(t.shape)
+
+        # Step 1: reserve space (under lock)
+        with self._lock:
+            if self._closing:
+                return False
+            aligned = (self._next_offset + 63) & ~63
+            if aligned + nbytes > self._pool_size:
+                return False
+            self._next_offset = aligned + nbytes
+            self._in_flight += 1
+
+        # Step 2: write data (lock-free; region is invisible to readers)
+        try:
+            buf = cast(memoryview, shm.buf)
+            buf[aligned : aligned + nbytes] = data_view
+        finally:
+            # Step 3: publish metadata (under lock; readers can now discover it)
+            with self._lock:
+                self._in_flight -= 1
+                self._occupied[shard_id] = (aligned, nbytes, dtype_enum, shape)
+
+        return True
+
+    def get_meta(self, shard_id: str) -> tuple[str, int, int, int, list[int]] | None:
+        with self._lock:
+            entry = self._occupied.get(shard_id)
+        if entry is None:
+            return None
+        offset, nbytes, dtype_enum, shape = entry
+        return (self._pool_name, offset, nbytes, dtype_enum, shape)
+
+    def release(self, shard_id: str) -> None:
+        with self._lock:
+            self._occupied.pop(shard_id, None)
+
+    def try_reset(self) -> bool:
+        """Reset the bump pointer if the pool is fully drained.
+
+        Unlike ``reset()``, this method does **not** assert — it returns
+        ``False`` when the pool still has live or in-flight tensors.
+        Intended to be called automatically after each ``release()``.
+        """
+        with self._lock:
+            if self._occupied or self._in_flight != 0:
+                return False
+            self._next_offset = 0
+            return True
+
+    def reset(self) -> None:
+        """Reset the bump pointer so the pool can be reused for the next step.
+
+        Thread-safety contract (MUST be upheld by the caller)
+        -----------------------------------------------------
+        ``reset()`` reclaims the **entire** pool buffer by resetting
+        ``_next_offset`` to 0.  After this call, subsequent
+        ``allocate_and_write()`` invocations may overwrite any previously
+        occupied region.
+
+        To avoid a TOCTOU race where a reader's ``torch.frombuffer()`` ->
+        ``.clone()`` window overlaps with a writer reusing the same region,
+        the caller **MUST** guarantee **both** of the following before
+        invoking ``reset()``:
+
+        1. All ``release()`` calls for the current step have completed
+           (i.e. ``_occupied`` is empty).  In practice this means
+           ``await clear_batches()`` must have returned successfully.
+        2. All reader processes have finished their ``read_tensor()`` calls
+           for shards belonging to the current step.  In the training-worker
+           scenario this is guaranteed because ``localize()`` completes
+           before the trainer advances to ``clear_batches()``.
+
+        If either condition is violated, readers may clone corrupted data
+        (silent data corruption).
+        """
+        with self._lock:
+            assert not self._occupied, (
+                f"Cannot reset pool: {len(self._occupied)} live tensors remain"
+            )
+            assert self._in_flight == 0, (
+                f"Cannot reset pool: {self._in_flight} in-flight allocations"
+            )
+            self._next_offset = 0
+
+    def _attach_reader(self, pool_name: str) -> memoryview:
+        with self._reader_lock:
+            shm = self._reader_pools.get(pool_name)
+            if shm is None:
+                shm = _SharedMemory(name=pool_name, create=False)
+                self._reader_pools[pool_name] = shm
+            return cast(memoryview, shm.buf)
+
+    def read_tensor(
+        self,
+        pool_name: str,
+        offset: int,
+        nbytes: int,
+        dtype_enum: int,
+        shape: list[int],
+    ) -> torch.Tensor:
+        buf = self._attach_reader(pool_name)
+        if offset < 0 or offset + nbytes > len(buf):
+            raise ValueError(
+                f"Pool read out of bounds: offset={offset}, nbytes={nbytes}, pool_size={len(buf)}"
+            )
+
+        dtype = _ENUM_TO_DTYPE.get(dtype_enum)
+        if dtype is None:
+            raise ValueError(f"Unknown dtype enum {dtype_enum} in pool metadata")
+
+        shape_tuple = tuple(shape)
+        expected = int(math.prod(shape_tuple)) * _DTYPE_ELEMENT_SIZE[dtype]
+        if expected != nbytes:
+            raise ValueError(
+                f"Pool meta mismatch: expected {expected} bytes from shape/dtype, got {nbytes}"
+            )
+
+        raw = torch.frombuffer(buf, dtype=torch.uint8, count=nbytes, offset=offset)
+        return raw.view(dtype).reshape(shape_tuple).clone()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closing = True
+            self._enabled = False
+
+        with self._reader_lock:
+            for shm in self._reader_pools.values():
+                try:
+                    shm.close()
+                except Exception:
+                    pass
+            self._reader_pools.clear()
+
+        if self._shm is not None:
+            try:
+                self._shm.close()
+                if self._is_writer:
+                    self._shm.unlink()
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+            finally:
+                self._shm = None
+                self._is_writer = False
 
 
 class RTensorBackend(Protocol):
@@ -67,28 +375,53 @@ class RTensorBackend(Protocol):
 
 @dataclass
 class TensorShardInfo:
-    """Metadata for a single shard of an RTensor.
-
-    This is a pure data class containing only shard metadata.
-    All storage operations are handled by RTensorBackend implementations.
-
-    Attributes
-    ----------
-    shard_id : Any
-        Unique identifier for the shard (str for HTTP, ray.ObjectRef for Ray)
-    node_addr : str
-        Network address where shard is stored (empty for Ray backend)
-    """
+    """Metadata for a single shard of an RTensor."""
 
     shard_id: Any
     node_addr: str
 
+    # shm pool metadata (only set when the writer stored this tensor in pool)
+    pool_name: str | None = None
+    pool_offset: int | None = None
+    pool_nbytes: int | None = None
+    pool_dtype: int | None = None
+    pool_shape: list[int] | None = None
+
+    @property
+    def has_pool_meta(self) -> bool:
+        return (
+            self.pool_name is not None
+            and self.pool_offset is not None
+            and self.pool_nbytes is not None
+            and self.pool_dtype is not None
+            and self.pool_shape is not None
+        )
+
 
 class HttpRTensorBackend:
-    def __init__(self, max_shards_per_request: int = 32) -> None:
+    def __init__(
+        self,
+        max_shards_per_request: int = 32,
+        shm_pool: RTensorShmPool | None = None,
+    ) -> None:
         if max_shards_per_request <= 0:
             raise ValueError("max_shards_per_request must be positive")
         self.max_shards_per_request = max_shards_per_request
+        self._shm_pool = shm_pool
+        self._reader_pool: RTensorShmPool | None = None
+
+    def _get_pool_for_reading(self) -> RTensorShmPool:
+        if self._shm_pool is not None:
+            return self._shm_pool
+        if self._reader_pool is None:
+            self._reader_pool = RTensorShmPool(
+                job_token="",
+                role="",
+                worker_index=0,
+                pool_size_bytes=0,
+            )
+            self._reader_pool._enabled = False
+        return self._reader_pool
 
     def _create_session(self) -> aiohttp.ClientSession:
         """Create a properly configured aiohttp session for large tensor transfers."""
@@ -206,51 +539,92 @@ class HttpRTensorBackend:
         )
 
     def fetch(self, shards: list[TensorShardInfo]) -> list[torch.Tensor]:
-        """Fetch multiple shards concurrently via HTTP using a single session."""
+        """Fetch multiple shards concurrently."""
         if not shards:
             return []
 
-        async def _fetch():
-            indexed_shards = list(enumerate(shards))
-            shards_by_node: dict[str, list[tuple[int, TensorShardInfo]]] = defaultdict(
-                list
-            )
-            for index, shard in indexed_shards:
-                shards_by_node[shard.node_addr].append((index, shard))
+        from areal.utils.network import is_local_addr
 
-            results: list[torch.Tensor | None] = [None] * len(shards)
+        indexed_shards = list(enumerate(shards))
+        pool_hits: list[tuple[int, TensorShardInfo]] = []
+        remote_by_node: dict[str, list[tuple[int, TensorShardInfo]]] = defaultdict(list)
+        results: list[torch.Tensor | None] = [None] * len(shards)
 
-            async with self._create_session() as session:
+        for index, shard in indexed_shards:
+            if (
+                shard.has_pool_meta
+                and shard.node_addr
+                and is_local_addr(shard.node_addr)
+            ):
+                pool_hits.append((index, shard))
+            else:
+                remote_by_node[shard.node_addr].append((index, shard))
 
-                async def _fetch_node(
-                    node_addr: str, grouped: list[tuple[int, TensorShardInfo]]
-                ) -> None:
-                    for start in range(0, len(grouped), self.max_shards_per_request):
-                        chunk = grouped[start : start + self.max_shards_per_request]
-                        tensors = await self._fetch_shard_group(
-                            session, node_addr, chunk
-                        )
-                        for (original_index, _), tensor in zip(
-                            chunk, tensors, strict=True
+        if pool_hits:
+            pool = self._get_pool_for_reading()
+            for idx, shard in pool_hits:
+                try:
+                    tensor = pool.read_tensor(
+                        pool_name=cast(str, shard.pool_name),
+                        offset=cast(int, shard.pool_offset),
+                        nbytes=cast(int, shard.pool_nbytes),
+                        dtype_enum=cast(int, shard.pool_dtype),
+                        shape=cast(list[int], shard.pool_shape),
+                    )
+                    results[idx] = tensor
+                except (FileNotFoundError, ValueError, OSError) as exc:
+                    logger.debug(
+                        "Pool read failed for shard %s, falling back to HTTP: %s",
+                        shard.shard_id,
+                        exc,
+                    )
+                    remote_by_node[shard.node_addr].append((idx, shard))
+
+        if remote_by_node:
+
+            async def _fetch_remote() -> None:
+                async with self._create_session() as session:
+
+                    async def _fetch_node(
+                        node_addr: str, grouped: list[tuple[int, TensorShardInfo]]
+                    ) -> None:
+                        for start in range(
+                            0, len(grouped), self.max_shards_per_request
                         ):
-                            results[original_index] = tensor
+                            chunk = grouped[start : start + self.max_shards_per_request]
+                            tensors = await self._fetch_shard_group(
+                                session, node_addr, chunk
+                            )
+                            for (original_index, _), tensor in zip(
+                                chunk, tensors, strict=True
+                            ):
+                                results[original_index] = tensor
 
-                await asyncio.gather(
-                    *[
-                        _fetch_node(node_addr, grouped)
-                        for node_addr, grouped in shards_by_node.items()
-                    ]
-                )
+                    await asyncio.gather(
+                        *[
+                            _fetch_node(node_addr, grouped)
+                            for node_addr, grouped in remote_by_node.items()
+                        ]
+                    )
 
-            return cast(list[torch.Tensor], results)
+            run_async_task(_fetch_remote)
 
-        return run_async_task(_fetch)
+        return cast(list[torch.Tensor], results)
 
     def store(self, tensor: torch.Tensor) -> str:
         """Store tensor in local storage, return UUID shard_id."""
         shard_id = str(uuid.uuid4())
         _store_local(shard_id, tensor)
+        if self._shm_pool is not None:
+            self._shm_pool.allocate_and_write(shard_id, tensor)
         return shard_id
+
+    def get_pool_meta(
+        self, shard_id: str
+    ) -> tuple[str, int, int, int, list[int]] | None:
+        if self._shm_pool is None:
+            return None
+        return self._shm_pool.get_meta(shard_id)
 
     async def delete(self, node_addr: str, shard_ids: list[str]) -> None:
         """Delete shards via HTTP DELETE request."""
@@ -322,6 +696,14 @@ class RTensor:
     data: torch.Tensor
 
     def to_local(self) -> torch.Tensor:
+        """Fetch the tensor data, returning a cached version when available.
+
+        .. warning::
+            The returned tensor may be a **shared reference** held in the
+            internal fetch buffer.  Callers **must not** modify it in-place
+            (e.g. ``tensor.fill_()``); doing so would silently corrupt data
+            seen by other consumers of the same shard.
+        """
         if not self.data.is_meta:
             return self.data
         # Check client-side fetch buffer before making a network request.
@@ -333,7 +715,14 @@ class RTensor:
         # Buffer miss: fetch from backend and populate buffer.
         self.data = get_backend().fetch([self.shard])[0]
         with _fetch_buffer_lock:
-            _fetch_buffer[self.shard.shard_id] = self.data
+            # Double-check: another thread may have populated the buffer
+            # while we were fetching.  Prefer the existing entry to avoid
+            # duplicating memory.
+            existing = _fetch_buffer.get(self.shard.shard_id)
+            if existing is not None:
+                self.data = existing
+            else:
+                _fetch_buffer[self.shard.shard_id] = self.data
         return self.data
 
     @staticmethod
@@ -360,11 +749,33 @@ class RTensor:
 
         if isinstance(obj, torch.Tensor):
             tensor = obj.detach().cpu()
-            shard_id = get_backend().store(tensor)
-            shard = TensorShardInfo(
-                shard_id=shard_id,
-                node_addr=node_addr,
-            )
+            backend = get_backend()
+            shard_id = backend.store(tensor)
+            get_pool_meta = getattr(cast(Any, backend), "get_pool_meta", None)
+            pool_meta: tuple[str, int, int, int, list[int]] | None
+            if callable(get_pool_meta):
+                pool_meta = cast(
+                    tuple[str, int, int, int, list[int]] | None,
+                    get_pool_meta(shard_id),
+                )
+            else:
+                pool_meta = None
+
+            if pool_meta is None:
+                shard = TensorShardInfo(
+                    shard_id=shard_id,
+                    node_addr=node_addr,
+                )
+            else:
+                shard = TensorShardInfo(
+                    shard_id=shard_id,
+                    node_addr=node_addr,
+                    pool_name=pool_meta[0],
+                    pool_offset=pool_meta[1],
+                    pool_nbytes=pool_meta[2],
+                    pool_dtype=pool_meta[3],
+                    pool_shape=pool_meta[4],
+                )
             return RTensor(shard=shard, data=tensor.to("meta"))
 
         if isinstance(obj, dict):
@@ -544,7 +955,7 @@ _storage_stats: dict[str, int] = defaultdict(int)
 
 
 def _store_local(shard_id: str, tensor: torch.Tensor) -> None:
-    """Store a tensor shard in local storage (internal use)."""
+    """Store a tensor shard in local storage."""
     global _storage, _storage_lock, _storage_stats
     with _storage_lock:
         _storage[shard_id] = tensor
@@ -573,6 +984,13 @@ def remove(shard_id: str) -> int:
         if shard_id in _storage:
             del _storage[shard_id]
             del _storage_stats[shard_id]
+            backend = _backend
+            if (
+                isinstance(backend, HttpRTensorBackend)
+                and backend._shm_pool is not None
+            ):
+                backend._shm_pool.release(shard_id)
+                backend._shm_pool.try_reset()
             return 1
         return 0
 
@@ -581,4 +999,7 @@ def storage_stats() -> dict[str, int]:
     """Get current storage stats."""
     global _storage_stats, _storage_lock, _storage
     with _storage_lock:
-        return dict(num_tensors=len(_storage), total_bytes=sum(_storage_stats.values()))
+        return dict(
+            num_tensors=len(_storage),
+            total_bytes=sum(_storage_stats.values()),
+        )
