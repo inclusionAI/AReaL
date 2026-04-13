@@ -24,7 +24,7 @@ agent_config = {
     "max_tokens": 4096,
     "num_gpus": 1,
     "tensor_parallel_size": 1,  # Number of GPUs for tensor parallelism
-    "num_replicas": 3,
+    "num_replicas": 6,
 }
 
 
