@@ -90,6 +90,19 @@ class GatewayInferenceController:
         # Parse allocation from config.backend
         self.rollout_alloc = ModelAllocation.from_str(config.backend)
 
+        # Multi-node validation
+        nnodes = config.nnodes
+        if nnodes < 1:
+            raise ValueError(f"nnodes must be >= 1, got {nnodes}")
+        total_gpus = (
+            self.rollout_alloc.parallel.tp_size * self.rollout_alloc.parallel.pp_size
+        )
+        if total_gpus % nnodes != 0:
+            raise ValueError(
+                f"tp_size * pp_size ({total_gpus}) must be divisible by nnodes ({nnodes})"
+            )
+        self._nnodes = nnodes
+
         # Worker management
         self.workers: list[Worker] = []
         self.server_infos: list[LocalInfServerInfo] = []
@@ -224,27 +237,32 @@ class GatewayInferenceController:
         inf_backend = alloc.backend
 
         # ==================================================================
-        # Step 0: Always create dp_size RPCGuard workers
+        # Step 0: Create RPCGuard workers (dp_size × nnodes)
         # ==================================================================
         inf_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
         instance_size = alloc.parallel.tp_size * alloc.parallel.pp_size
+        nnodes = self._nnodes
+        gpus_per_node = instance_size // nnodes
+
         if server_infos is not None:
-            # Pre-existing inference servers — RPCGuard workers only host
-            # CPU services (data proxy, router, gateway), no GPUs needed.
+            # Pre-existing inference servers — only need dp_size workers
+            # for CPU services (data proxy, router, gateway), no GPUs.
+            total_workers = dp_size
             inf_spec.gpu = 0
         else:
-            inf_spec.cpu *= instance_size
-            inf_spec.mem *= instance_size
+            total_workers = dp_size * nnodes
+            inf_spec.cpu *= gpus_per_node
+            inf_spec.mem *= gpus_per_node
             if inf_spec.gpu > 0:
-                inf_spec.gpu = instance_size
+                inf_spec.gpu = gpus_per_node
 
         # Override cmd to launch RPCGuard instead of RPC server
         inf_spec.cmd = "python -m areal.experimental.inference_service.guard"
 
         inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
         inf_job = Job(
-            replicas=dp_size,
-            tasks=[inf_spec for _ in range(dp_size)],
+            replicas=total_workers,
+            tasks=[inf_spec for _ in range(total_workers)],
             scheduling_strategy=SchedulingStrategy(),
             role=inf_role,
         )
@@ -252,6 +270,11 @@ class GatewayInferenceController:
         self.scheduler.create_workers(job=inf_job)
         self._service_roles.append(inf_role)
         inf_workers = self.scheduler.get_workers(role=inf_role)
+        if len(inf_workers) != total_workers:
+            raise RuntimeError(
+                f"Expected {total_workers} workers for role {inf_role!r}, "
+                f"got {len(inf_workers)}"
+            )
         self.workers = inf_workers
         logger.info("RPCGuard workers ready: %s", [w.id for w in inf_workers])
 
@@ -291,13 +314,22 @@ class GatewayInferenceController:
                                 v,
                             )
 
-                def _build_launch_cmd(host: str, port: int) -> list[str]:
+                def _build_launch_cmd(
+                    host: str | None,
+                    port: int | None,
+                    n_nodes: int = 1,
+                    node_rank: int = 0,
+                    dist_init_addr: str | None = None,
+                ) -> list[str]:
                     return SGLangConfig.build_cmd(
                         sglang_config=sglang_config,
                         tp_size=tp_size,
                         base_gpu_id=0,
                         host=host,
                         port=port,
+                        dist_init_addr=dist_init_addr,
+                        n_nodes=n_nodes,
+                        node_rank=node_rank,
                     )
 
             elif inf_backend == "vllm":
@@ -315,79 +347,133 @@ class GatewayInferenceController:
                             v,
                         )
 
-                def _build_launch_cmd(host: str, port: int) -> list[str]:
+                def _build_launch_cmd(
+                    host: str | None,
+                    port: int | None,
+                    n_nodes: int = 1,
+                    node_rank: int = 0,
+                    dist_init_addr: str | None = None,
+                ) -> list[str]:
                     return vLLMConfig.build_cmd(
                         vllm_config=vllm_config,
                         tp_size=tp_size,
                         pp_size=alloc.parallel.pp_size,
                         host=host,
                         port=port,
+                        dist_init_addr=dist_init_addr,
+                        n_nodes=n_nodes,
+                        node_rank=node_rank,
                     )
 
             else:
                 raise ValueError(f"Unsupported inference backend: {inf_backend!r}")
 
-            # For each RPCGuard worker: alloc port, build cmd, fork server
-            for rank, worker in enumerate(inf_workers):
-                guard_addr = (
-                    f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
-                )
+            # For each inference instance group: alloc ports, build cmd, fork servers
+            for group_idx in range(dp_size):
+                group_workers = inf_workers[
+                    group_idx * nnodes : (group_idx + 1) * nnodes
+                ]
+                head_worker = group_workers[0]
+                head_guard_addr = f"http://{format_hostport(head_worker.ip, int(head_worker.worker_ports[0]))}"
 
-                resp = requests.post(
-                    f"{guard_addr}/alloc_ports",
-                    json={"count": 1},
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                port_data = resp.json()
-                inf_host = port_data["host"]
-                inf_port = port_data["ports"][0]
-
-                cmd = _build_launch_cmd(inf_host, inf_port)
-
-                fork_payload: dict[str, Any] = {
-                    "role": "inf-server",
-                    "worker_index": rank,
-                    "raw_cmd": cmd,
-                }
-                if inf_backend == "vllm":
-                    from areal.infra.utils.launcher import (
-                        TRITON_CACHE_PATH as _TRITON_CACHE,
+                # Allocate rendezvous port on head node for distributed init
+                dist_init_addr = None
+                if nnodes > 1:
+                    resp = requests.post(
+                        f"{head_guard_addr}/alloc_ports",
+                        json={"count": 1},
+                        timeout=30,
                     )
-                    from areal.infra.utils.launcher import (
-                        VLLM_CACHE_ROOT as _VLLM_CACHE,
+                    resp.raise_for_status()
+                    rendezvous_data = resp.json()
+                    rendezvous_host = rendezvous_data["host"]
+                    rendezvous_port = rendezvous_data["ports"][0]
+                    dist_init_addr = f"{rendezvous_host}:{rendezvous_port}"
+
+                head_inf_host = None
+                head_inf_port = None
+
+                for node_rank, worker in enumerate(group_workers):
+                    guard_addr = f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+
+                    # Allocate port for inference server on this node
+                    resp = requests.post(
+                        f"{guard_addr}/alloc_ports",
+                        json={"count": 1},
+                        timeout=30,
+                    )
+                    resp.raise_for_status()
+                    port_data = resp.json()
+                    inf_host = port_data["host"]
+                    inf_port = port_data["ports"][0]
+
+                    # Worker nodes (rank > 0) don't need to serve HTTP,
+                    # but we still pass host/port for the server to bind
+                    cmd = _build_launch_cmd(
+                        host=inf_host,
+                        port=inf_port,
+                        n_nodes=nnodes,
+                        node_rank=node_rank,
+                        dist_init_addr=dist_init_addr,
                     )
 
-                    fork_payload["env"] = {
-                        "TRITON_CACHE_PATH": os.path.join(
-                            os.environ.get("TRITON_CACHE_PATH", _TRITON_CACHE),
-                            str(uuid.uuid4()),
-                        ),
-                        "VLLM_CACHE_ROOT": os.path.join(
-                            os.environ.get("VLLM_CACHE_ROOT", _VLLM_CACHE),
-                            str(uuid.uuid4()),
-                        ),
-                        "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "True",
+                    fork_payload: dict[str, Any] = {
+                        "role": "inf-server",
+                        "worker_index": group_idx * nnodes + node_rank,
+                        "raw_cmd": cmd,
                     }
+                    if inf_backend == "vllm":
+                        from areal.infra.utils.launcher import (
+                            TRITON_CACHE_PATH as _TRITON_CACHE,
+                        )
+                        from areal.infra.utils.launcher import (
+                            VLLM_CACHE_ROOT as _VLLM_CACHE,
+                        )
 
-                resp = requests.post(
-                    f"{guard_addr}/fork",
-                    json=fork_payload,
-                    timeout=30,
-                )
-                resp.raise_for_status()
+                        fork_payload["env"] = {
+                            "TRITON_CACHE_PATH": os.path.join(
+                                os.environ.get("TRITON_CACHE_PATH", _TRITON_CACHE),
+                                str(uuid.uuid4()),
+                            ),
+                            "VLLM_CACHE_ROOT": os.path.join(
+                                os.environ.get("VLLM_CACHE_ROOT", _VLLM_CACHE),
+                                str(uuid.uuid4()),
+                            ),
+                            "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "True",
+                        }
 
-                addr = f"http://{format_hostport(inf_host, inf_port)}"
+                    resp = requests.post(
+                        f"{guard_addr}/fork",
+                        json=fork_payload,
+                        timeout=30,
+                    )
+                    resp.raise_for_status()
+                    self._forked_services.append(
+                        (guard_addr, "inf-server", group_idx * nnodes + node_rank)
+                    )
+
+                    if node_rank == 0:
+                        head_inf_host = inf_host
+                        head_inf_port = inf_port
+
+                if head_inf_host is None or head_inf_port is None:
+                    raise RuntimeError(
+                        f"No head worker resolved for group {group_idx}; "
+                        f"expected {nnodes} workers per group"
+                    )
+
+                # Only record the head node's address as the inference endpoint
+                addr = f"http://{format_hostport(head_inf_host, head_inf_port)}"
                 self._inf_addrs.append(addr)
                 self.server_infos.append(
                     LocalInfServerInfo(
-                        host=inf_host,
-                        port=inf_port,
+                        host=head_inf_host,
+                        port=head_inf_port,
                         process=None,  # type: ignore[arg-type]  # RPCGuard manages process
                     )
                 )
 
-            # Wait for inference servers to be healthy
+            # Wait for inference servers to be healthy (only head nodes)
             for i, addr in enumerate(self._inf_addrs):
                 self._wait_for_service(
                     f"{addr}/health", f"InfServer-{i}", timeout=cfg.setup_timeout
@@ -442,21 +528,22 @@ class GatewayInferenceController:
             f"http://{self.callback_addr}",
         ]
 
-        for rank, worker in enumerate(inf_workers):
-            guard_addr = (
-                f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
-            )
-            # Each data proxy connects to its corresponding inference server
+        for group_idx in range(dp_size):
+            head_worker = inf_workers[
+                group_idx if server_infos is not None else group_idx * nnodes
+            ]
+            guard_addr = f"http://{format_hostport(head_worker.ip, int(head_worker.worker_ports[0]))}"
+            # Each data proxy connects to its group's head inference server
             data_proxy_cmd = data_proxy_base_cmd + [
                 "--backend-addr",
-                self._inf_addrs[rank],
+                self._inf_addrs[group_idx],
                 "--backend-type",
                 inf_backend or "sglang",
             ]
             data_proxy_host, data_proxy_port = self._fork_on_guard(
                 guard_addr=guard_addr,
                 role="data-proxy",
-                worker_index=rank,
+                worker_index=group_idx,
                 raw_cmd=data_proxy_cmd,
             )
             self._data_proxy_addrs.append(

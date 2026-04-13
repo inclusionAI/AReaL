@@ -615,3 +615,196 @@ class TestInferenceServiceWorkflow:
         workflow._export_interactions.assert_awaited_once_with(
             mock_http_session, "sess-1", trajectory_id=None
         )
+
+
+# =============================================================================
+# Multi-node inference configuration
+# =============================================================================
+
+
+class TestMultiNodeConfig:
+    def test_nnodes_default_is_1(self):
+        cfg = GatewayControllerConfig()
+        assert cfg.nnodes == 1
+
+    def test_nnodes_custom(self):
+        cfg = GatewayControllerConfig(nnodes=2)
+        assert cfg.nnodes == 2
+
+    def test_nnodes_zero_raises(self):
+        cfg = GatewayControllerConfig(nnodes=0, backend="sglang:d1t8")
+        with pytest.raises(ValueError, match="nnodes must be >= 1"):
+            GatewayInferenceController(config=cfg, scheduler=MagicMock())
+
+    def test_gpus_not_divisible_raises(self):
+        cfg = GatewayControllerConfig(nnodes=3, backend="sglang:d1t8")
+        with pytest.raises(ValueError, match="must be divisible by nnodes"):
+            GatewayInferenceController(config=cfg, scheduler=MagicMock())
+
+    def test_single_node_backward_compat(self):
+        cfg = GatewayControllerConfig(backend="sglang:d2t4")
+        controller = GatewayInferenceController(config=cfg, scheduler=MagicMock())
+        assert controller._nnodes == 1
+
+    def test_multi_node_valid_config(self):
+        cfg = GatewayControllerConfig(nnodes=2, backend="sglang:d1t16")
+        controller = GatewayInferenceController(config=cfg, scheduler=MagicMock())
+        assert controller._nnodes == 2
+
+    @pytest.mark.asyncio
+    async def test_async_initialize_multinode_worker_count(self):
+        """With nnodes=2 and pre-existing server_infos, should create dp_size workers."""
+        from areal.api.cli_args import SchedulingSpec
+        from areal.api.io_struct import LocalInfServerInfo
+
+        worker0 = MagicMock()
+        worker0.ip = "10.0.0.1"
+        worker0.worker_ports = [18000]
+        worker0.id = "w0"
+
+        worker1 = MagicMock()
+        worker1.ip = "10.0.0.2"
+        worker1.worker_ports = [18000]
+        worker1.id = "w1"
+
+        scheduler = MagicMock()
+        scheduler.get_workers.return_value = [worker0]
+
+        cfg = GatewayControllerConfig(
+            tokenizer_path="mock-tokenizer",
+            backend="sglang:d1t8",
+            nnodes=2,
+            scheduling_spec=(SchedulingSpec(gpu=1, cpu=1, mem=1, cmd="mock"),),
+            openai=OpenAIProxyConfig(admin_api_key="test-key"),
+        )
+        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller._callback_host = "127.0.0.1"
+        controller._callback_port = 19000
+
+        with patch.object(controller, "_fork_on_guard") as mock_fork:
+            mock_fork.side_effect = [
+                ("127.0.0.1", 18081),  # router
+                ("127.0.0.1", 18082),  # data proxy (only 1, on head)
+                ("127.0.0.1", 18080),  # gateway
+            ]
+
+            await controller._async_initialize(
+                server_args=None,
+                server_infos=[
+                    LocalInfServerInfo(
+                        host="10.0.0.1", port=30000, process=MagicMock()
+                    ),
+                ],
+            )
+
+        # With server_infos, total_workers = dp_size = 1 (not dp_size * nnodes)
+        create_call = scheduler.create_workers.call_args
+        job = create_call.kwargs.get("job") or create_call.args[0]
+        assert job.replicas == 1
+
+        # 3 forks: router + data-proxy + gateway (all on head worker)
+        assert mock_fork.call_count == 3
+        data_proxy_calls = [
+            c for c in mock_fork.call_args_list if c.kwargs.get("role") == "data-proxy"
+        ]
+        assert len(data_proxy_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_async_initialize_multinode_fork_path(self):
+        """Exercise the full multi-node fork path (server_infos=None)."""
+        from areal.api.cli_args import SchedulingSpec
+
+        worker0 = MagicMock()
+        worker0.ip = "10.0.0.1"
+        worker0.worker_ports = [18000]
+        worker0.id = "w0"
+
+        worker1 = MagicMock()
+        worker1.ip = "10.0.0.2"
+        worker1.worker_ports = [18000]
+        worker1.id = "w1"
+
+        scheduler = MagicMock()
+        scheduler.get_workers.return_value = [worker0, worker1]
+
+        cfg = GatewayControllerConfig(
+            tokenizer_path="mock-tokenizer",
+            backend="sglang:d1t8",
+            nnodes=2,
+            scheduling_spec=(SchedulingSpec(gpu=1, cpu=1, mem=1, cmd="mock"),),
+            openai=OpenAIProxyConfig(admin_api_key="test-key"),
+        )
+        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller._callback_host = "127.0.0.1"
+        controller._callback_port = 19000
+
+        # Track requests.post calls to /alloc_ports and /fork
+        alloc_port_counter = 0
+        fork_calls = []
+
+        def mock_requests_post(url, json=None, timeout=None):
+            nonlocal alloc_port_counter
+            resp = MagicMock()
+            resp.status_code = 200
+            if "/alloc_ports" in url:
+                alloc_port_counter += 1
+                resp.json.return_value = {
+                    "status": "success",
+                    "host": url.split("//")[1].split(":")[0],
+                    "ports": [30000 + alloc_port_counter],
+                }
+            elif "/fork" in url:
+                fork_calls.append(json)
+                resp.json.return_value = {"status": "success"}
+            return resp
+
+        with (
+            patch("requests.post", side_effect=mock_requests_post) as mock_post,
+            patch.object(controller, "_fork_on_guard") as mock_fork,
+            patch.object(controller, "_wait_for_service"),
+            patch(
+                "areal.api.cli_args.pkg_version.is_version_greater_or_equal",
+                return_value=True,
+            ),
+            patch("areal.api.cli_args.is_version_less", return_value=False),
+        ):
+            mock_fork.side_effect = [
+                ("10.0.0.1", 18081),  # router
+                ("10.0.0.1", 18082),  # data proxy
+                ("10.0.0.1", 18080),  # gateway
+            ]
+
+            await controller._async_initialize(
+                server_args=None,
+                server_infos=None,
+            )
+
+        # dp_size=1, nnodes=2: total_workers = 2
+        create_call = scheduler.create_workers.call_args
+        job = create_call.kwargs.get("job") or create_call.args[0]
+        assert job.replicas == 2
+
+        # requests.post calls:
+        # 1 rendezvous alloc (nnodes > 1) + 2 node allocs + 2 forks = 5
+        post_calls = mock_post.call_args_list
+        alloc_calls = [c for c in post_calls if "/alloc_ports" in str(c)]
+        fork_post_calls = [c for c in post_calls if "/fork" in str(c)]
+        assert len(alloc_calls) == 3  # 1 rendezvous + 2 per-node
+        assert len(fork_post_calls) == 2  # 1 per node in the group
+
+        # Verify fork payloads have correct worker_index and role
+        assert fork_calls[0]["role"] == "inf-server"
+        assert fork_calls[0]["worker_index"] == 0
+        assert fork_calls[1]["role"] == "inf-server"
+        assert fork_calls[1]["worker_index"] == 1
+
+        # Verify dist_init_addr propagated to fork commands
+        for fc in fork_calls:
+            cmd_str = " ".join(fc["raw_cmd"])
+            assert "--dist-init-addr" in cmd_str or "--dist_init_addr" in cmd_str
+
+        # Only 1 data proxy (dp_size=1, on head worker only)
+        data_proxy_calls = [
+            c for c in mock_fork.call_args_list if c.kwargs.get("role") == "data-proxy"
+        ]
+        assert len(data_proxy_calls) == 1
