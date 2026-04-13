@@ -24,9 +24,12 @@ def process_image(image: dict | Image.Image, image_patch_size: int = 14) -> Imag
     if isinstance(image, Image.Image):
         return image.convert("RGB")
 
-    if "bytes" in image:
+    if image.get("bytes"):
         assert "image" not in image, "Cannot have both `bytes` and `image`"
         image["image"] = Image.open(BytesIO(image["bytes"]))
+    elif image.get("path"):
+        assert "image" not in image, "Cannot have both `path` and `image`"
+        image["image"] = Image.open(image["path"])
 
     return fetch_image(image, image_patch_size=image_patch_size)
 
