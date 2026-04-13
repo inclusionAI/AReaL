@@ -289,3 +289,93 @@ MAPTRACE_SEPARATED_TEMPLATE = """\
 
 Provide your answer as a sequence of normalized (0-1) coordinate pairs.
 """
+
+DEEPEYES_CHART_INPUT_TEMPLATE = """\
+You are a chart understanding assistant specialized in analyzing charts, graphs, and scientific figures.
+
+Look at the image and answer the following question. You can zoom in on specific regions to see details more clearly.
+
+Question: {question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+DEEPEYES_CHART_NOTOOL_INPUT_TEMPLATE = """\
+You are a chart understanding assistant specialized in analyzing charts, graphs, and scientific figures.
+
+Look at the image carefully and answer the following question. Provide a precise and concise answer.
+
+Question: {question}
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+DEEPEYES_CHART_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+Provide a precise and concise answer based on the image.
+"""
+
+DEEPEYES_CHART_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."
+
+DEEPEYES_VSTAR_INPUT_TEMPLATE = """\
+You are a visual question answering assistant capable of analyzing images in detail.
+
+Look at the image and answer the following question. You can zoom in on specific regions to see details more clearly.
+
+Question: {question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+DEEPEYES_VSTAR_NOTOOL_INPUT_TEMPLATE = """\
+You are a visual question answering assistant capable of analyzing images in detail.
+
+Look at the image carefully and answer the following question.
+
+Question: {question}
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+DEEPEYES_VSTAR_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+Provide a precise answer based on the image.
+"""
+
+DEEPEYES_VSTAR_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."
+
+AIIC_INPUT_TEMPLATE = """\
+You are a visual question answering assistant capable of analyzing images in detail.
+
+Look at the image and answer the following question. You can zoom in on specific regions to see details more clearly.
+
+Question: {question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+AIIC_NOTOOL_INPUT_TEMPLATE = """\
+You are a visual question answering assistant capable of analyzing images in detail.
+
+Look at the image carefully and answer the following question.
+
+Question: {question}
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+AIIC_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+Provide a precise answer based on the image.
+"""
+
+AIIC_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."

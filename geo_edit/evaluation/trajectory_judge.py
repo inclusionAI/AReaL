@@ -20,39 +20,32 @@ from typing import Optional, Tuple
 from openai import OpenAI
 
 from geo_edit.prompts import (
+    COMBINED_VALIDATION_QUERY_PROMPT,
+    COMBINED_VALIDATION_SYSTEM_PROMPT,
     EVAL_QUERY_PROMPT,
     EVAL_SYSTEM_PROMPT,
     LEAKAGE_DETECTION_QUERY_PROMPT,
     LEAKAGE_DETECTION_SYSTEM_PROMPT,
-    COMBINED_VALIDATION_SYSTEM_PROMPT,
-    COMBINED_VALIDATION_QUERY_PROMPT,
 )
-from geo_edit.utils.text_utils import extract_response_text, parse_leakage_score, parse_score
+from geo_edit.tool_definitions.router import TOOL_CATEGORIES
+from geo_edit.utils.text_utils import (
+    extract_response_text,
+    parse_leakage_score,
+    parse_score,
+)
 
 # Pattern to detect <answer> tags (case insensitive)
 ANSWER_TAG_PATTERN = re.compile(r"<answer>", re.IGNORECASE)
 
-# Known tool names for tool plan extraction
-KNOWN_TOOL_NAMES = [
-    # General tools
-    "image_crop", "image_label", "draw_line", "bounding_box", "image_highlight",
-    "text_ocr", "auto_segment", "bbox_segment", "grounding_dino",
-    # Math tools
-    "math_latex_ocr", "math_image_describe", "formula_ocr", "gllava", "multimath", "ovr",
-    # Table tools
-    "table_ocr",
-    # Chart tools (Chart-R1)
-    "chart_reasoning", "chart_data_extract", "chart_trend_analysis", "chart_text_ocr",
-    # Map tools
-    "text_spotting", "map_text_ocr",
-    # Document tools
-    "seal_ocr",
-]
+# Known tool names - derived from the single source of truth in router.py
+KNOWN_TOOL_NAMES = sorted(
+    {name for names in TOOL_CATEGORIES.values() for name in names}
+)
 
 # Build regex pattern for tool name extraction (case insensitive)
 TOOL_NAME_PATTERN = re.compile(
     r"\b(" + "|".join(re.escape(name) for name in KNOWN_TOOL_NAMES) + r")\b",
-    re.IGNORECASE
+    re.IGNORECASE,
 )
 
 
@@ -65,7 +58,9 @@ class TrajectoryFilterConfig:
     api_base: Optional[str] = None
     filter_wrong_answers: bool = True
     filter_answer_leakage: bool = True
-    filter_tool_mismatch: bool = False  # Filter if Phase 1 plan doesn't match Phase 2 tool calls
+    filter_tool_mismatch: bool = (
+        False  # Filter if Phase 1 plan doesn't match Phase 2 tool calls
+    )
     leakage_check_mode: str = "quick"  # "quick" (regex only) or "full" (AI-based)
     max_workers: int = 16
 
@@ -150,7 +145,12 @@ class TrajectoryJudge:
             resp = self.client.responses.create(
                 model=self.model,
                 instructions=system_prompt,
-                input=[{"role": "user", "content": [{"type": "input_text", "text": user_prompt}]}],
+                input=[
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": user_prompt}],
+                    }
+                ],
             )
             return resp.output_text or ""
 
@@ -286,7 +286,10 @@ class TrajectoryJudge:
 
         # Check all conditions
         if correctness != "1":
-            return False, f"wrong_answer (gt={ground_truth}, pred={prediction}) reason={reason}"
+            return (
+                False,
+                f"wrong_answer (gt={ground_truth}, pred={prediction}) reason={reason}",
+            )
         if leakage == "1":
             return False, f"answer_leakage (reason={reason})"
         if tool_match != "1":
@@ -404,12 +407,18 @@ def check_tool_plan_mismatch(trajectory: list) -> Tuple[bool, str]:
 
         if not planned_tools:
             # Phase 1 didn't declare any tools but Phase 2 called tools
-            return True, f"Step {i+1}: No tools declared in Phase 1, but called: {actual_tools}"
+            return (
+                True,
+                f"Step {i + 1}: No tools declared in Phase 1, but called: {actual_tools}",
+            )
 
         # Check if actual tools are subset of planned tools
         # (model might plan multiple tools but only call some)
         if not actual_tools.issubset(planned_tools):
             unexpected = actual_tools - planned_tools
-            return True, f"Step {i+1}: Unexpected tools {unexpected}, planned: {planned_tools}"
+            return (
+                True,
+                f"Step {i + 1}: Unexpected tools {unexpected}, planned: {planned_tools}",
+            )
 
     return False, "Tool plans match"

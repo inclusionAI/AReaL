@@ -24,6 +24,7 @@ agent_config = {
     "max_tokens": 4096,
     "num_gpus": 1,
     "tensor_parallel_size": 1,  # Number of GPUs for tensor parallelism
+    "num_replicas": 3,
 }
 
 
@@ -96,6 +97,8 @@ class PaddleOCRActor(BaseToolModelActor):
         """
         from vllm import SamplingParams
         from PIL import Image
+
+        Image.MAX_IMAGE_PIXELS = None  # Disable DecompressionBombError for large images (Ray actor has its own process)
 
         # Extract parameters
         task = (

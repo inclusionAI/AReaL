@@ -15,8 +15,9 @@ import base64
 import json
 from pathlib import Path
 
+from datasets import Dataset, Features, Value, load_dataset
+from datasets import Image as HFImage
 from tqdm import tqdm
-from datasets import Dataset, Features, Image as HFImage, Value, load_dataset
 
 
 def package_reasonmap_base(input_dir: str | None, out_dir: Path, split: str = "validation") -> Path:

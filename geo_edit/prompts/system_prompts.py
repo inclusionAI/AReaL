@@ -87,6 +87,12 @@ DATASET_TASK_TYPES = {
     "cartomapqa_srn": "sequential route navigation",
     "mapeval_visual": "map visual question answering",
     "reason_map_plus": "map reasoning",
+    "deepeyes_chart": "chart comprehension",
+    "deepeyes_vstar": "visual question answering",
+    "aiic_0509": "visual question answering",
+    "aiic_0512": "visual question answering",
+    "aiic_0704": "visual question answering",
+    "aiic_0716": "visual question answering",
 }
 
 DEFAULT_OUTPUT_FORMAT = "Provide the final answer inside <answer> and </answer> tags."

@@ -16,8 +16,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from datasets import Dataset, Features, Value, load_dataset
+from datasets import Image as HFImage
 from tqdm import tqdm
-from datasets import Dataset, Features, Value, load_dataset, Image as HFImage
 
 # Question types to keep (planning excluded — open-ended with no reference answer)
 KEEP_TYPES = {"Counting1", "Counting2", "Counting3", "TorF1", "TorF2"}

@@ -2,7 +2,7 @@
 
 Usage:
     python -m geo_edit.evaluation.eval_reason_map_plus \
-        --result_path /storage/openpsi/data/lcy_image_edit/reasonmap_plus_test_0412/qwen3vl8b-thinking-reasonmap-lr3e-6/   \
+        --result_path /storage/openpsi/data/lcy_image_edit/reasonmap_plus_test_0412/qwen3vl8b-thinking-reasonmapplus_235B-lr1e-5   \
         --output_path /storage/openpsi/data/lcy_image_edit/reasonmap_plus_test_0412/qwen3vl8b-thinking-reasonmap-lr3e-6_eval/
 """
 

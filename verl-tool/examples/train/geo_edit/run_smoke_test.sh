@@ -8,8 +8,9 @@ set -x
 #                      default: /storage/openpsi/data/reasonmap_rl
 #   MODEL_PATH       – path to Qwen3-VL-8B-Thinking
 #                      default: /storage/openpsi/models/Qwen3-VL-8B-Thinking
-#   TOOL_SERVER_IP   – IP of the node running the tool server
-#                      default: auto-detect via Ray (tool_agent resource)
+#   TOOL_SERVER_URL – full tool server URL (e.g. http://10.0.0.1:30888/get_observation)
+#   TOOL_SERVER_IP   – IP of the node running the tool server (port defaults to 30888)
+#                      fallback: auto-detect via Ray (tool_agent resource)
 #   JUDGE_API_KEY    – LLM judge API key (enables fallback scoring)
 #   JUDGE_API_BASE   – LLM judge endpoint URL
 #   JUDGE_MODEL      – judge model name (default: gpt-5-mini-2025-08-07)
@@ -23,13 +24,13 @@ WORKSPACE=${WORKSPACE:-/storage/openpsi/data/reasonmap_rl}
 model_name=${MODEL_PATH:-/storage/openpsi/models/Qwen3-VL-8B-Thinking}
 
 train_data="[$WORKSPACE/combined_train.parquet]"
-val_data="[$WORKSPACE/combined_test.parquet]"
+val_data="[$WORKSPACE/combined_test_10pct.parquet]"
 run_name="reasonmap-rl-zero-smoke"
 rl_alg=grpo
 n_gpus_per_node=8
 n_nodes=1
 n=2
-batch_size=16
+batch_size=64
 ppo_mini_batch_size=16
 max_prompt_length=16384
 max_response_length=16384
@@ -50,8 +51,8 @@ lr=1e-6
 reward_manager=geo_vision_qa
 ppo_micro_batch_size_per_gpu=1
 log_prob_micro_batch_size_per_gpu=1
-tensor_model_parallel_size=2
-gpu_memory_utilization=0.6
+tensor_model_parallel_size=1
+gpu_memory_utilization=0.7
 do_offload=False
 use_dynamic_bsz=True
 ulysses_sequence_parallel_size=1
@@ -59,7 +60,7 @@ fsdp_size=-1
 additional_eos_token_ids=[151645]
 mask_observations=True
 enable_mtrl=True
-max_num_batched_tokens=10000
+max_num_batched_tokens=32768
 rollout_mode='async'
 total_epochs=1
 save_freq=100
@@ -72,14 +73,20 @@ mkdir -p $WORKSPACE/logs/$run_name
 action_stop_tokens_file="$WORKSPACE/logs/$run_name/action_stop_tokens.txt"
 echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 
-WORKER_IP=${TOOL_SERVER_IP:-$(python3 -c "
+if [ -n "${TOOL_SERVER_URL:-}" ]; then
+    tool_server_url=$TOOL_SERVER_URL
+elif [ -n "${TOOL_SERVER_IP:-}" ]; then
+    tool_server_url=http://$TOOL_SERVER_IP:30888/get_observation
+else
+    WORKER_IP=$(python3 -c "
 import ray; ray.init(address='auto',ignore_reinit_error=True)
 for n in ray.nodes():
     if n['Resources'].get('tool_agent',0)>0 and n['Alive']:
         print(n['NodeManagerAddress']); break
-")}
-tool_server_url=http://$WORKER_IP:30888/get_observation
-echo "Using tool server on worker at $tool_server_url"
+")
+    tool_server_url=http://$WORKER_IP:30888/get_observation
+fi
+echo "Using tool server at $tool_server_url"
 
 PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     algorithm.adv_estimator=$rl_alg \
@@ -87,16 +94,16 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
     data.val_batch_size=16 \
-    data.dataloader_num_workers=4 \
+    data.dataloader_num_workers=32 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=False \
     data.truncation='right' \
     reward.reward_manager.name=geo_vision_qa \
     actor_rollout_ref.model.path=$model_name \
-    actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.model.enable_gradient_checkpointing=False \
     actor_rollout_ref.actor.optim.lr=$lr \
-    actor_rollout_ref.actor.optim.lr_warmup_steps=10 \
+    actor_rollout_ref.actor.optim.lr_warmup_steps=8 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.actor.checkpoint.save_contents=['model','optimizer','extra','hf_model'] \
@@ -126,10 +133,11 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.agent.enable_mtrl=$enable_mtrl \
     actor_rollout_ref.agent.max_action_length=$max_action_length \
     actor_rollout_ref.agent.max_concurrent_trajectories=32 \
+    actor_rollout_ref.rollout.data_parallel_size=4 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$tensor_model_parallel_size \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$log_prob_micro_batch_size_per_gpu \
-    actor_rollout_ref.rollout.enforce_eager=True \
-    actor_rollout_ref.rollout.free_cache_engine=False \
+    actor_rollout_ref.rollout.enforce_eager=False \
+    actor_rollout_ref.rollout.free_cache_engine=True \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.gpu_memory_utilization=$gpu_memory_utilization \
     actor_rollout_ref.rollout.temperature=$temperature \
