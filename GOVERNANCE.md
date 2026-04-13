@@ -21,6 +21,7 @@ project.
 | Wentai Zhang | AReaL Team, Ant Group     | @rchardx      |
 | Zhiyu Mei    | AReaL Team, Ant Group     | @nuzant       |
 | Xujie Shen   | AReaL Team, Ant Group     | @fishcrap     |
+| Tongkai Yang | AReaL Team, Ant Group     | @fredy12      |
 
 ### Lead Maintainer (BDFL)
 
@@ -28,15 +29,21 @@ Wei Fu ([@garrett4wade](https://github.com/garrett4wade)) serves as the lead mai
 The lead maintainer has final authority on technical decisions when maintainers cannot
 reach consensus.
 
+### Community Moderators
+
+The [Code of Conduct](CODE_OF_CONDUCT.md) refers to "Community Moderators" as the
+individuals responsible for enforcement. In this project, community moderators are the
+current maintainers listed above.
+
 ## Decision-Making
 
 Decisions are made by consensus among maintainers whenever possible. When consensus
 cannot be reached, the lead maintainer makes the final decision.
 
-For day-to-day changes (bug fixes, minor improvements), a single maintainer approval is
-sufficient to merge. For significant changes (new features, architectural changes,
-public API modifications), the approval from the lead maintainer or from at least two
-other maintainers is required.
+For routine changes, such as bug fixes and minor improvements, a single maintainer’s
+approval is sufficient for merging. For more substantial changes, including new
+features, architectural updates, or modifications to the public API, approval from the
+lead maintainer or at least two other maintainers is required.
 
 ## Becoming a Maintainer
 
