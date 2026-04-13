@@ -4,6 +4,8 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 
+_MAX_CONSECUTIVE_HEALTH_FAILURES = 2
+
 
 @dataclass
 class ModelInfo:
@@ -11,6 +13,7 @@ class ModelInfo:
     api_key: str
     name: str = ""
     is_healthy: bool = True
+    consecutive_health_failures: int = 0
     registered_at: float = field(default_factory=time.time)
 
 
@@ -61,7 +64,17 @@ class ModelRegistry:
         async with self._lock:
             model = self._models.get(model_addr)
             if model is not None:
-                model.is_healthy = healthy
+                if healthy:
+                    model.is_healthy = True
+                    model.consecutive_health_failures = 0
+                    return
+
+                model.consecutive_health_failures += 1
+                if (
+                    model.consecutive_health_failures
+                    >= _MAX_CONSECUTIVE_HEALTH_FAILURES
+                ):
+                    model.is_healthy = False
 
     async def get_all(self) -> list[ModelInfo]:
         async with self._lock:

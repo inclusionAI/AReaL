@@ -54,6 +54,8 @@ from areal.utils.offload import get_tms_env_vars
 
 logger = logging.getLogger("LocalScheduler")
 
+_MAX_STARTUP_PORT_CONFLICT_RETRIES = 3
+
 
 @dataclass
 class WorkerInfo:
@@ -231,6 +233,20 @@ class LocalScheduler(Scheduler):
             return ports
         except ValueError as e:
             raise PortAllocationError(str(e)) from e
+
+    def _release_ports(self, ports: list[int]) -> None:
+        for port in ports:
+            self._allocated_ports.discard(port)
+
+    @staticmethod
+    def _is_port_conflict_error(details: str) -> bool:
+        lowered = details.lower()
+        return (
+            "address already in use" in lowered
+            or "errno 98" in lowered
+            or "errno 48" in lowered
+            or ("port " in lowered and "is in use by another program" in lowered)
+        )
 
     def _prepare_worker_specs(
         self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
@@ -702,10 +718,8 @@ class LocalScheduler(Scheduler):
                 scheduling = schedulings[idx]
 
                 try:
-                    # Allocate GPUs and ports for this worker
                     gpu_devices = self._allocate_gpus(scheduling.gpu)
                     logger.debug(f"Worker {worker_id} allocated GPUs {gpu_devices}")
-                    ports = self._allocate_ports(scheduling.port_count)
                 except (
                     GPUAllocationError,
                     PortAllocationError,
@@ -754,48 +768,102 @@ class LocalScheduler(Scheduler):
                         "Custom command should not include --port argument",
                         "The scheduler automatically allocates and provides the port.",
                     )
-                cmd = shlex.split(scheduling.cmd)
-                cmd.extend(["--port", str(ports[0])])
-                # Add name_resolve and worker identity args
-                cmd.extend(["--experiment-name", str(self.experiment_name)])
-                cmd.extend(["--trial-name", str(self.trial_name)])
-                cmd.extend(["--role", role])
-                cmd.extend(["--worker-index", str(idx)])
-                cmd.extend(["--name-resolve-type", self.name_resolve_config.type])
-                cmd.extend(
-                    ["--nfs-record-root", self.name_resolve_config.nfs_record_root]
-                )
-                cmd.extend(["--etcd3-addr", self.name_resolve_config.etcd3_addr])
-                cmd.extend(["--fileroot", str(self.fileroot)])
+                cmd_prefix = shlex.split(scheduling.cmd)
+                cmd_suffix = [
+                    "--experiment-name",
+                    str(self.experiment_name),
+                    "--trial-name",
+                    str(self.trial_name),
+                    "--role",
+                    role,
+                    "--worker-index",
+                    str(idx),
+                    "--name-resolve-type",
+                    self.name_resolve_config.type,
+                    "--nfs-record-root",
+                    self.name_resolve_config.nfs_record_root,
+                    "--etcd3-addr",
+                    self.name_resolve_config.etcd3_addr,
+                    "--fileroot",
+                    str(self.fileroot),
+                ]
 
-                logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
-                if cmd[0].startswith("python"):
-                    cmd[0] = sys.executable
+                process = None
+                ports = []
+                for attempt in range(1, _MAX_STARTUP_PORT_CONFLICT_RETRIES + 1):
+                    try:
+                        ports = self._allocate_ports(scheduling.port_count)
+                    except (
+                        PortAllocationError,
+                        WorkerNotFoundError,
+                        ValueError,
+                    ) as e:
+                        self._cleanup_workers(workers)
+                        raise WorkerCreationError(
+                            role,
+                            f"Resource allocation failed for worker {idx}",
+                            str(e),
+                        ) from e
 
-                try:
-                    process = run_with_streaming_logs(
-                        cmd,
-                        log_file,
-                        merged_log,
-                        role,
-                        env_vars_in_cmd=env,
+                    cmd = [*cmd_prefix, "--port", str(ports[0]), *cmd_suffix]
+
+                    logger.info(
+                        "Starting worker %s (attempt %s/%s): %s",
+                        worker_id,
+                        attempt,
+                        _MAX_STARTUP_PORT_CONFLICT_RETRIES,
+                        " ".join(cmd),
                     )
-                except Exception as e:
-                    self._cleanup_workers(workers)
-                    raise WorkerCreationError(
-                        role,
-                        f"Failed to spawn subprocess for worker {idx}",
-                        str(e),
-                    ) from e
+                    if cmd[0].startswith("python"):
+                        cmd[0] = sys.executable
 
-                time.sleep(0.1)
-                if process.poll() is not None:
-                    stderr = self._read_log_tail(log_file)
+                    try:
+                        process = run_with_streaming_logs(
+                            cmd,
+                            log_file,
+                            merged_log,
+                            role,
+                            env_vars_in_cmd=env,
+                        )
+                    except Exception as e:
+                        self._release_ports(ports)
+                        self._cleanup_workers(workers)
+                        raise WorkerCreationError(
+                            role,
+                            f"Failed to spawn subprocess for worker {idx}",
+                            str(e),
+                        ) from e
+
+                    time.sleep(0.1)
+                    if process.poll() is None:
+                        break
+
+                    stderr = self._read_log_tail(str(log_file))
+                    self._release_ports(ports)
+
+                    if self._is_port_conflict_error(stderr):
+                        logger.warning(
+                            "Worker %s hit port conflict on startup attempt %s/%s; retrying with new ports.",
+                            worker_id,
+                            attempt,
+                            _MAX_STARTUP_PORT_CONFLICT_RETRIES,
+                        )
+                        if attempt < _MAX_STARTUP_PORT_CONFLICT_RETRIES:
+                            time.sleep(0.1 * attempt)
+                            continue
+
                     self._cleanup_workers(workers)
                     raise WorkerCreationError(
                         role,
                         f"Worker {worker_id} exited immediately with code {process.returncode}",
                         stderr,
+                    )
+                else:
+                    self._cleanup_workers(workers)
+                    raise WorkerCreationError(
+                        role,
+                        f"Worker {worker_id} failed to start after {_MAX_STARTUP_PORT_CONFLICT_RETRIES} attempts",
+                        self._read_log_tail(str(log_file)),
                     )
 
                 worker = Worker(

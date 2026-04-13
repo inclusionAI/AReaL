@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import importlib
 from contextlib import asynccontextmanager
+from typing import Any
 
 from areal.experimental.training_service.router.config import RouterConfig
 from areal.experimental.training_service.router.state import ModelRegistry
@@ -18,6 +19,19 @@ Request = fastapi.Request
 BaseModel = pydantic.BaseModel
 
 logger = logging.getLogger("TrainRouter")
+
+
+async def _probe_model_health(
+    model_registry: ModelRegistry,
+    model_addr: str,
+    client: Any,
+) -> None:
+    try:
+        resp = await client.get(f"{model_addr}/health")
+        healthy = resp.status_code == 200
+    except Exception:
+        healthy = False
+    await model_registry.update_health(model_addr, healthy)
 
 
 def _extract_bearer_token(request: Request) -> str:
@@ -54,22 +68,11 @@ class UnregisterRequest(BaseModel):
 def create_app(config: RouterConfig) -> FastAPI:
     model_registry = ModelRegistry()
 
-    async def _poll_models() -> None:
+    async def _poll_models(client: Any) -> None:
         while True:
             models = await model_registry.get_all()
             for model in models:
-                try:
-                    async with httpx.AsyncClient(
-                        timeout=config.worker_health_timeout
-                    ) as client:
-                        resp = await client.get(f"{model.model_addr}/health")
-                        healthy = resp.status_code == 200
-                        await model_registry.update_health(
-                            model.model_addr,
-                            healthy,
-                        )
-                except Exception:
-                    await model_registry.update_health(model.model_addr, False)
+                await _probe_model_health(model_registry, model.model_addr, client)
             await asyncio.sleep(config.poll_interval)
 
     @asynccontextmanager
@@ -78,15 +81,20 @@ def create_app(config: RouterConfig) -> FastAPI:
             "Train router starting — poll_interval=%.1fs",
             config.poll_interval,
         )
-        poll_task = asyncio.create_task(_poll_models())
+        health_client = httpx.AsyncClient(timeout=config.worker_health_timeout)
         app.state.model_registry = model_registry
-        yield
-        poll_task.cancel()
+        app.state.health_client = health_client
+        poll_task = asyncio.create_task(_poll_models(health_client))
         try:
-            await poll_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("Train router shutting down")
+            yield
+        finally:
+            poll_task.cancel()
+            try:
+                await poll_task
+            except asyncio.CancelledError:
+                pass
+            await health_client.aclose()
+            logger.info("Train router shutting down")
 
     app = FastAPI(title="AReaL Train Router", lifespan=lifespan)
     app.state.model_registry = model_registry

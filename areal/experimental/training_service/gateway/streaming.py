@@ -24,18 +24,19 @@ async def query_router(
     timeout: float = 2.0,
     *,
     admin_api_key: str | None = None,
+    client: httpx.AsyncClient,
 ) -> str:
     payload = {"api_key": api_key}
     try:
         headers = {}
         if admin_api_key is not None:
             headers["Authorization"] = f"Bearer {admin_api_key}"
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                f"{router_addr}/route",
-                json=payload,
-                headers=headers,
-            )
+        resp = await client.post(
+            f"{router_addr}/route",
+            json=payload,
+            headers=headers,
+            timeout=timeout,
+        )
         if resp.status_code in {404, 503}:
             try:
                 data = resp.json()
@@ -65,8 +66,14 @@ async def forward_request(
     body: bytes,
     headers: dict[str, str],
     timeout: float = 600.0,
+    *,
+    client: httpx.AsyncClient,
 ) -> httpx.Response:
     fwd_headers = _forwarding_headers(headers)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(upstream_url, content=body, headers=fwd_headers)
+    resp = await client.post(
+        upstream_url,
+        content=body,
+        headers=fwd_headers,
+        timeout=timeout,
+    )
     return resp

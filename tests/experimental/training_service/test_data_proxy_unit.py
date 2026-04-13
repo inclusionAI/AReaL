@@ -58,7 +58,7 @@ class _CapturingSession:
         self.captured_payloads: list[dict[str, Any]] = []
         self._post_handler = post_handler
 
-    def post(self, url, *, data=None, headers=None):
+    def post(self, url, *, data=b"", headers=None):
         _ = headers
         payload = orjson.loads(data)
         self.captured_payloads.append(
@@ -85,15 +85,25 @@ class _CapturingSession:
 
 
 class _FakeDispatchRequest:
-    def __init__(self, parent: _FakeDispatcher, path: str):
+    def __init__(
+        self,
+        parent: _FakeDispatcher,
+        path: str,
+        *,
+        pad_eval_batch: bool = False,
+    ):
         self._parent = parent
         self._path = path
+        self._pad_eval_batch = pad_eval_batch
 
     async def get(self) -> bytes:
         return b'{"status":"success","result":{"path":"get"}}'
 
     async def post(self, body: bytes) -> bytes:
         _ = body
+        self._parent.dispatch_calls.append(
+            {"path": self._path, "pad_eval_batch": self._pad_eval_batch}
+        )
         return b'{"status":"success","result":{"path":"compute"}}'
 
 
@@ -118,9 +128,12 @@ class _FakeDispatcher:
         self.broadcast_get_return: list[bytes] = [
             b'{"status":"success","result":{"path":"broadcast_get"}}'
         ]
+        self.dispatch_calls: list[dict[str, Any]] = []
 
-    def dispatch(self, path: str) -> _FakeDispatchRequest:
-        return _FakeDispatchRequest(self, path)
+    def dispatch(
+        self, path: str, *, pad_eval_batch: bool = False
+    ) -> _FakeDispatchRequest:
+        return _FakeDispatchRequest(self, path, pad_eval_batch=pad_eval_batch)
 
     def broadcast(self, path: str) -> _FakeBroadcastRequest:
         return _FakeBroadcastRequest(self, path)
@@ -198,6 +211,40 @@ class TestDataProxyBasics:
         resp = await client.post("/rw/train", content=b"{}")
         assert resp.status_code == 200
         assert resp.json()["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_eval_routes_opt_in_to_padding(self, app_client):
+        app, client = app_client
+
+        await client.post("/eval_batch", content=b"{}")
+        await client.post("/sft/evaluate", content=b"{}")
+        await client.post("/rw/evaluate", content=b"{}")
+
+        assert app.state.dispatcher.dispatch_calls == [
+            {"path": "/eval_batch", "pad_eval_batch": True},
+            {"path": "/sft/evaluate", "pad_eval_batch": True},
+            {"path": "/rw/evaluate", "pad_eval_batch": True},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_training_routes_do_not_enable_padding(self, app_client):
+        app, client = app_client
+
+        await client.post("/train_batch", content=b"{}")
+        await client.post("/forward_batch", content=b"{}")
+        await client.post("/sft/train", content=b"{}")
+        await client.post("/ppo/actor/update", content=b"{}")
+        await client.post("/ppo/critic/update", content=b"{}")
+        await client.post("/rw/train", content=b"{}")
+
+        assert app.state.dispatcher.dispatch_calls == [
+            {"path": "/train_batch", "pad_eval_batch": False},
+            {"path": "/forward_batch", "pad_eval_batch": False},
+            {"path": "/sft/train", "pad_eval_batch": False},
+            {"path": "/ppo/actor/update", "pad_eval_batch": False},
+            {"path": "/ppo/critic/update", "pad_eval_batch": False},
+            {"path": "/rw/train", "pad_eval_batch": False},
+        ]
 
     @pytest.mark.asyncio
     async def test_optimizer_step_empty_broadcast_returns_502(self, app_client):
@@ -422,3 +469,182 @@ class TestDispatcherParityWithTrainController:
         merged = deserialize_value(result_payload["result"])
 
         assert merged == [5, 11, 7, 13]
+
+    @pytest.mark.asyncio
+    async def test_dispatch_post_does_not_pad_training_routes(self):
+        def _shard_handler(url, data, headers):
+            _ = url, headers
+            payload = orjson.loads(data)
+            args = deserialize_value(payload["args"])
+            shard = args[0] if args else []
+            return orjson.dumps(
+                {
+                    "status": "success",
+                    "result": serialize_value(
+                        [int(item["attention_mask"].sum().item()) for item in shard]
+                    ),
+                }
+            )
+
+        session = _CapturingSession(post_handler=_shard_handler)
+        dispatcher = _make_dispatcher(
+            dp_size=2, dp_heads=[0, 1], dp_ranks=[0, 1], session=session
+        )
+
+        batch = [_make_tensor_item(5), _make_tensor_item(11), _make_tensor_item(7)]
+        body = orjson.dumps(
+            {
+                "args": serialize_value([batch]),
+                "kwargs": serialize_value({}),
+            }
+        )
+
+        with pytest.raises(ValueError, match="divisible by K"):
+            await dispatcher.dispatch("/train_batch").post(body)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_post_pads_eval_routes_only(self):
+        def _shard_handler(url, data, headers):
+            _ = url, headers
+            payload = orjson.loads(data)
+            args = deserialize_value(payload["args"])
+            shard = args[0] if args else []
+            return orjson.dumps(
+                {
+                    "status": "success",
+                    "result": serialize_value(
+                        [int(item["attention_mask"].sum().item()) for item in shard]
+                    ),
+                }
+            )
+
+        session = _CapturingSession(post_handler=_shard_handler)
+        dispatcher = _make_dispatcher(
+            dp_size=2, dp_heads=[0, 1], dp_ranks=[0, 1], session=session
+        )
+
+        batch = [_make_tensor_item(5), _make_tensor_item(11), _make_tensor_item(7)]
+        body = orjson.dumps(
+            {
+                "args": serialize_value([batch]),
+                "kwargs": serialize_value({}),
+            }
+        )
+
+        result_bytes = await dispatcher.dispatch(
+            "/eval_batch", pad_eval_batch=True
+        ).post(body)
+        result_payload = orjson.loads(result_bytes)
+        merged = deserialize_value(result_payload["result"])
+
+        assert merged == [5, 11, 7, 0]
+
+
+class TestScalarFanOut:
+    """Tests for _scalar_fan_out: non-partitionable payloads must reach all workers."""
+
+    @pytest.mark.asyncio
+    async def test_non_partitionable_tensor_fans_out_to_all_workers(self):
+        session = _CapturingSession()
+        dispatcher = _make_dispatcher(
+            dp_size=1, dp_heads=[0], dp_ranks=[0, 0], session=session
+        )
+
+        packed = {"tensor_a": [1, 2, 3]}
+        body = orjson.dumps(
+            {
+                "args": serialize_value([packed]),
+                "kwargs": serialize_value({}),
+            }
+        )
+
+        await dispatcher.dispatch("/forward_batch").post(body)
+
+        captured = session.captured_payloads
+        assert len(captured) == 2
+
+        assert captured[0]["args"] == [packed]
+        assert captured[0]["kwargs"] == {}
+
+        assert captured[1]["args"] == []
+        assert captured[1]["kwargs"] == {}
+
+    @pytest.mark.asyncio
+    async def test_returns_first_dp_head_with_non_contiguous_heads(self):
+        def _echo_handler(url, data, headers):
+            _ = headers
+            addr = url.rsplit("/", 1)[0]
+            return orjson.dumps({"status": "success", "result": serialize_value(addr)})
+
+        session = _CapturingSession(post_handler=_echo_handler)
+        dispatcher = _make_dispatcher(
+            dp_size=2,
+            dp_heads=[1, 3],
+            dp_ranks=[0, 0, 1, 1],
+            session=session,
+        )
+
+        body = orjson.dumps(
+            {
+                "args": serialize_value(["scalar_value"]),
+                "kwargs": serialize_value({}),
+            }
+        )
+
+        result_bytes = await dispatcher.dispatch("/train_batch").post(body)
+        result_payload = orjson.loads(result_bytes)
+
+        assert result_payload == {
+            "status": "success",
+            "result": serialize_value("http://worker-1:19001"),
+        }
+
+    @pytest.mark.asyncio
+    async def test_partitionable_list_still_uses_tensor_dispatch(self):
+        def _shard_handler(url, data, headers):
+            _ = url, headers
+            payload = orjson.loads(data)
+            args = deserialize_value(payload["args"])
+            shard = args[0] if args else []
+            return orjson.dumps(
+                {"status": "success", "result": serialize_value(len(shard))}
+            )
+
+        session = _CapturingSession(post_handler=_shard_handler)
+        dispatcher = _make_dispatcher(
+            dp_size=2, dp_heads=[0, 1], dp_ranks=[0, 1], session=session
+        )
+
+        batch = [_make_tensor_item(4), _make_tensor_item(8)]
+        body = orjson.dumps(
+            {
+                "args": serialize_value([batch]),
+                "kwargs": serialize_value({}),
+            }
+        )
+
+        result_bytes = await dispatcher.dispatch("/forward_batch").post(body)
+        result_payload = orjson.loads(result_bytes)
+        merged = deserialize_value(result_payload["result"])
+
+        assert merged == [1, 1]
+
+    @pytest.mark.asyncio
+    async def test_single_worker_single_dp_head(self):
+        session = _CapturingSession()
+        dispatcher = _make_dispatcher(
+            dp_size=1, dp_heads=[0], dp_ranks=[0], session=session
+        )
+
+        body = orjson.dumps(
+            {
+                "args": serialize_value(["value"]),
+                "kwargs": serialize_value({}),
+            }
+        )
+
+        await dispatcher.dispatch("/eval_batch").post(body)
+
+        captured = session.captured_payloads
+        assert len(captured) == 1
+        assert captured[0]["args"] == ["value"]
