@@ -25,6 +25,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -77,14 +78,17 @@ class Dispatcher:
     # Fluent API
     # ------------------------------------------------------------------
 
-    def dispatch(self, path: str) -> DispatchRequest:
+    def dispatch(self, path: str, *, pad_eval_batch: bool = False) -> DispatchRequest:
         """Return a dispatch builder for *path*.
 
         Dispatch operations route tensors via DP-aware partitioning
-        and return a single merged result.  Scalar payloads are sent to
-        all DP heads and the first response is returned.
+        and return a single merged result.  Non-partitionable payloads
+        are sent to all workers (DP heads receive the original body;
+        non-heads receive an empty envelope to participate in
+        intra-group collectives) and the first DP head's response is
+        returned.
         """
-        return DispatchRequest(self, path)
+        return DispatchRequest(self, path, pad_eval_batch=pad_eval_batch)
 
     def broadcast(self, path: str) -> BroadcastRequest:
         """Return a broadcast builder for *path*.
@@ -114,7 +118,7 @@ class Dispatcher:
 
     async def _gather_validated(
         self,
-        tasks: list,
+        tasks: Sequence[Awaitable[_WorkerResponse]],
         addrs: list[str],
     ) -> list[_WorkerResponse]:
         """Run *tasks* concurrently and validate every response."""
@@ -131,17 +135,23 @@ class Dispatcher:
 class DispatchRequest:
     """Builder for DP-aware dispatch operations.
 
-    Tensor payloads are partitioned across DP groups.  Scalar payloads
-    are sent to all DP heads and the first response is returned.
+    Tensor payloads are partitioned across DP groups.  Non-partitionable
+    payloads are sent to all workers (DP heads receive the original
+    body; non-heads receive an empty envelope to participate in
+    intra-group collectives) and the first DP head's response is
+    returned.
 
     Obtain via :meth:`Dispatcher.dispatch`.
     """
 
-    __slots__ = ("_dispatcher", "_path")
+    __slots__ = ("_dispatcher", "_path", "_pad_eval_batch")
 
-    def __init__(self, dispatcher: Dispatcher, path: str) -> None:
+    def __init__(
+        self, dispatcher: Dispatcher, path: str, *, pad_eval_batch: bool = False
+    ) -> None:
         self._dispatcher = dispatcher
         self._path = path
+        self._pad_eval_batch = pad_eval_batch
 
     async def get(self) -> bytes:
         """GET from all DP heads, return the first response."""
@@ -155,11 +165,13 @@ class DispatchRequest:
         """POST with tensor-aware dispatch.
 
         If the payload contains partitionable tensor batches, it is split
-        across DP groups, padded if necessary, and the per-shard results
-        are merged in original trajectory order.
+        across DP groups. Eval endpoints can opt into padding before
+        dispatch so the per-shard results still merge in original
+        trajectory order.
 
-        Otherwise the body is forwarded as-is to all DP heads and the
-        first response is returned (scalar dispatch).
+        Otherwise the body is forwarded to all workers (DP heads receive
+        the original body; non-heads receive an empty envelope) and the
+        first DP head's response is returned.
         """
         data = orjson.loads(body)
         raw_args = deserialize_value(data.get("args", []))
@@ -172,16 +184,37 @@ class DispatchRequest:
         if (
             _is_tensor_like(raw_args) or _is_tensor_like(raw_kwargs)
         ) and _contains_partitionable_tensor_batch(raw_args, raw_kwargs):
-            return await self._tensor_dispatch(raw_args, raw_kwargs, group_size)
-        return await self._scalar_post(body)
+            return await self._tensor_dispatch(
+                raw_args,
+                raw_kwargs,
+                group_size,
+                pad_eval_batch=self._pad_eval_batch,
+            )
+        return await self._scalar_fan_out(body)
 
-    async def _scalar_post(self, body: bytes) -> bytes:
-        """POST to all DP heads, return the first response."""
+    async def _scalar_fan_out(self, body: bytes) -> bytes:
+        """POST to all workers; DP heads get *body*, non-heads get empty.
+
+        Compute routes on the worker side use ``require_broadcast=True``,
+        so every rank must receive an HTTP request to participate in
+        intra-group NCCL collectives.
+        """
         d = self._dispatcher
-        dp_head_addrs = [d._topology.workers[i].addr for i in d._topology.dp_heads]
-        tasks = [d._do_post(addr, self._path, body) for addr in dp_head_addrs]
-        responses = await d._gather_validated(tasks, dp_head_addrs)
-        return responses[0].content
+        if not d._topology.dp_heads:
+            raise RuntimeError("No DP head available for scalar compute dispatch")
+
+        dp_head_set = set(d._topology.dp_heads)
+        empty = _empty_payload()
+
+        addrs = [w.addr for w in d._topology.workers]
+        tasks = [
+            d._do_post(addr, self._path, body if i in dp_head_set else empty)
+            for i, addr in enumerate(addrs)
+        ]
+        responses = await d._gather_validated(tasks, addrs)
+
+        first_dp_head_idx = d._topology.dp_heads[0]
+        return responses[first_dp_head_idx].content
 
     # ------------------------------------------------------------------
     # Tensor dispatch (partitioned fan-out + merge)
@@ -192,13 +225,15 @@ class DispatchRequest:
         raw_args: list[Any],
         raw_kwargs: dict[str, Any],
         group_size: int,
+        *,
+        pad_eval_batch: bool,
     ) -> bytes:
         d = self._dispatcher
         dp_size = d._topology.dp_size
 
-        # Pad when batch is not evenly divisible (PR 1109 eval-padding).
-        args_tuple = _pad_eval_batch(tuple(raw_args), dp_size, group_size)
-        raw_args = list(args_tuple)
+        if pad_eval_batch:
+            args_tuple = _pad_eval_batch(tuple(raw_args), dp_size, group_size)
+            raw_args = list(args_tuple)
 
         dp_args, dp_kwargs, group_indices = self._partition_inputs(
             raw_args, raw_kwargs, group_size
@@ -265,8 +300,8 @@ class DispatchRequest:
                 worker_kwargs = {k: splits[dp_idx] for k, splits in dp_kwargs.items()}
                 dp_idx += 1
             else:
-                worker_args = []
-                worker_kwargs = {}
+                payloads.append(_empty_payload())
+                continue
 
             payloads.append(
                 orjson.dumps(
@@ -328,6 +363,17 @@ class BroadcastRequest:
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+
+def _empty_payload() -> bytes:
+    """Empty args/kwargs envelope for non-DP-head workers.
+
+    Non-heads only need to enter the endpoint to participate in
+    intra-group NCCL collectives via ``broadcast_tensor_container``.
+    This must stay in sync with the envelope format expected by
+    :func:`~areal.infra.rpc.serialization.deserialize_value`.
+    """
+    return orjson.dumps({"args": serialize_value([]), "kwargs": serialize_value({})})
 
 
 def _raise_for_worker(resp: _WorkerResponse) -> None:

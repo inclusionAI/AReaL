@@ -22,6 +22,11 @@ logger = logging.getLogger("GatewayTrainController")
 class GatewayTrainController:
     _GUARD_SUFFIX = "-guard"
 
+    # TODO(agent): Controller v2 is not yet a drop-in replacement for
+    # TrainController on PPO/GRPO paths. Add parity for connect_engine,
+    # prepare_batch/rollout_batch, and update_weights (plus the matching
+    # gateway/data-proxy/worker endpoints), or keep RL controllers on v1.
+
     def __init__(
         self,
         train_engine: type[TrainEngine] | str,
@@ -69,228 +74,241 @@ class GatewayTrainController:
     ) -> None:
         from dataclasses import asdict
 
-        import requests
+        import httpx
 
-        from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
+        from areal.api.cli_args import SchedulingSpec
         from areal.api.scheduler_api import Job
 
         cfg = self.config
 
         world_size = self.train_alloc.parallel.world_size
 
-        # ==================================================================
-        # Step 0: Create world_size guards via scheduler (one per GPU rank)
-        # ==================================================================
-        # Each guard is allocated a GPU by the scheduler (like TrainController
-        # workers). Forked workers inherit the guard's GPU environment.
-        guard_specs = []
-        if cfg.scheduling_spec:
-            for spec in cfg.scheduling_spec:
-                gs = SchedulingSpec(**asdict(spec))
-                gs.cmd = "python -m areal.experimental.training_service.guard"
-                guard_specs.append(gs)
-        else:
-            gs = SchedulingSpec()
-            gs.cmd = "python -m areal.experimental.training_service.guard"
-            guard_specs.append(gs)
+        try:
+            # ==============================================================
+            # Step 0: Create world_size guards via scheduler (one per GPU rank)
+            # ==============================================================
+            # Each guard is allocated a GPU by the scheduler (like TrainController
+            # workers). Forked workers inherit the guard's GPU environment.
+            if len(cfg.scheduling_spec) != 1:
+                raise ValueError(
+                    "GatewayTrainController (controller v2) requires exactly "
+                    "one scheduling_spec. Legacy 2-spec worker/engine layouts "
+                    "are only supported by TrainController (controller v1)."
+                )
 
-        guard_role = f"{role}{self._GUARD_SUFFIX}"
-        guard_job = Job(
-            replicas=world_size,
-            tasks=guard_specs,
-            scheduling_strategy=SchedulingStrategy(),
-            role=guard_role,
-        )
-        self.scheduler.create_workers(job=guard_job)
-        self._service_roles.append(guard_role)
-        guard_workers = self.scheduler.get_workers(
-            role=guard_role,
-            timeout=int(self.config.setup_timeout),
-        )
-        logger.info("Guards ready: %s", [w.id for w in guard_workers])
+            guard_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
+            guard_spec.cmd = "python -m areal.experimental.training_service.guard"
 
-        # ==================================================================
-        # Step 1: Allocate master addr/port for NCCL rendezvous
-        # ==================================================================
-        guard_addr_0 = f"http://{format_hostport(guard_workers[0].ip, int(guard_workers[0].worker_ports[0]))}"
-        master_addr = guard_workers[0].ip
+            guard_role = f"{role}{self._GUARD_SUFFIX}"
+            guard_job = Job(
+                replicas=world_size,
+                tasks=[guard_spec],
+                scheduling_strategy=cfg.scheduling_strategy,
+                role=guard_role,
+            )
+            await asyncio.to_thread(self.scheduler.create_workers, job=guard_job)
+            self._service_roles.append(guard_role)
+            guard_workers = await asyncio.to_thread(
+                self.scheduler.get_workers,
+                role=guard_role,
+                timeout=int(self.config.setup_timeout),
+            )
+            logger.info("Guards ready: %s", [w.id for w in guard_workers])
 
-        resp = requests.post(
-            f"{guard_addr_0}/alloc_ports", json={"count": 1}, timeout=30
-        )
-        resp.raise_for_status()
-        master_port = resp.json()["ports"][0]
+            # ==============================================================
+            # Step 1: Allocate master addr/port for NCCL rendezvous
+            # ==============================================================
+            guard_addr_0 = f"http://{format_hostport(guard_workers[0].ip, int(guard_workers[0].worker_ports[0]))}"
+            master_addr = guard_workers[0].ip
 
-        # ==================================================================
-        # Step 1.5: Set NCCL env on each guard so forked workers inherit it
-        # ==================================================================
-        def _guard_addr(worker: Worker) -> str:
-            return f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{guard_addr_0}/alloc_ports", json={"count": 1}
+                )
+                resp.raise_for_status()
+                master_port = resp.json()["ports"][0]
 
-        await self._async_set_guards_env(
-            guard_workers,
-            _guard_addr,
-            world_size=world_size,
-            master_addr=master_addr,
-            master_port=master_port,
-        )
+            # ==============================================================
+            # Step 1.5: Set NCCL env on each guard so forked workers inherit it
+            # ==============================================================
+            def _guard_addr(worker: Worker) -> str:
+                return (
+                    f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+                )
 
-        # ==================================================================
-        # Step 2: Fork one train worker per guard
-        # ==================================================================
-        async def _fork_worker(rank: int) -> str:
-            guard = _guard_addr(guard_workers[rank])
-            worker_cmd = [
+            await self._async_set_guards_env(
+                guard_workers,
+                _guard_addr,
+                world_size=world_size,
+                master_addr=master_addr,
+                master_port=master_port,
+            )
+
+            # ==============================================================
+            # Step 2: Fork one train worker per guard
+            # ==============================================================
+            async def _fork_worker(rank: int) -> str:
+                guard = _guard_addr(guard_workers[rank])
+                worker_cmd = [
+                    sys.executable,
+                    "-m",
+                    "areal.experimental.training_service.worker",
+                    "--log-level",
+                    cfg.log_level,
+                ]
+
+                host, port = await self._async_fork_on_guard(
+                    guard_addr=guard,
+                    role="train-worker",
+                    worker_index=rank,
+                    raw_cmd=worker_cmd,
+                )
+                return f"http://{format_hostport(host, port)}"
+
+            self._worker_addrs = list(
+                await asyncio.gather(
+                    *[_fork_worker(rank) for rank in range(world_size)]
+                )
+            )
+            logger.info("Workers: %s", self._worker_addrs)
+
+            # ==============================================================
+            # Step 3: Create engines on all workers (coordinated NCCL init)
+            # ==============================================================
+            if isinstance(self.train_engine, str):
+                engine_class = self.train_engine
+            else:
+                engine_class = (
+                    f"{self.train_engine.__module__}.{self.train_engine.__name__}"
+                )
+            await asyncio.gather(
+                *[
+                    self._create_engine_on_worker(
+                        worker_addr=addr,
+                        engine_class=engine_class,
+                        init_args=[],
+                        init_kwargs={"config": self.config},
+                    )
+                    for addr in self._worker_addrs
+                ]
+            )
+            logger.info("Engines created on all workers")
+
+            pg_kwargs = {"parallel_strategy": self._parallel_strategy}
+            await asyncio.gather(
+                *[
+                    self._call_worker_engine_endpoint(
+                        addr,
+                        "/create_process_group",
+                        args=[],
+                        kwargs=pg_kwargs,
+                        timeout=self.config.setup_timeout,
+                    )
+                    for addr in self._worker_addrs
+                ]
+            )
+
+            await asyncio.gather(
+                *[
+                    self._call_worker_engine_endpoint(
+                        addr,
+                        "/initialize",
+                        args=[],
+                        kwargs={
+                            "addr": kwargs.get("addr"),
+                            "ft_spec": ft_spec,
+                        },
+                        timeout=self.config.setup_timeout,
+                    )
+                    for addr in self._worker_addrs
+                ]
+            )
+            logger.info("Engines initialized on all workers")
+
+            # ==============================================================
+            # Step 4: Fork Router on guard 0
+            # ==============================================================
+            router_cmd = [
                 sys.executable,
                 "-m",
-                "areal.experimental.training_service.worker",
+                "areal.experimental.training_service.router",
+                "--admin-api-key",
+                cfg.admin_api_key,
                 "--log-level",
                 cfg.log_level,
             ]
-
-            host, port = await self._async_fork_on_guard(
-                guard_addr=guard,
-                role="train-worker",
-                worker_index=rank,
-                raw_cmd=worker_cmd,
+            router_host, router_port = await self._async_fork_on_guard(
+                guard_addr=guard_addr_0,
+                role="router",
+                worker_index=0,
+                raw_cmd=router_cmd,
             )
-            return f"http://{format_hostport(host, port)}"
+            self._router_addr = f"http://{format_hostport(router_host, router_port)}"
+            logger.info("Router: %s", self._router_addr)
 
-        self._worker_addrs = list(
-            await asyncio.gather(*[_fork_worker(rank) for rank in range(world_size)])
-        )
-        logger.info("Workers: %s", self._worker_addrs)
-
-        # ==================================================================
-        # Step 3: Create engines on all workers (coordinated NCCL init)
-        # ==================================================================
-        if isinstance(self.train_engine, str):
-            engine_class = self.train_engine
-        else:
-            engine_class = (
-                f"{self.train_engine.__module__}.{self.train_engine.__name__}"
+            # ==============================================================
+            # Step 5: Fork Data Proxy on a guard
+            # ==============================================================
+            data_proxy_cmd = [
+                sys.executable,
+                "-m",
+                "areal.experimental.training_service.data_proxy",
+                "--worker-addrs",
+                ",".join(self._worker_addrs),
+                "--admin-api-key",
+                cfg.admin_api_key,
+                "--log-level",
+                cfg.log_level,
+            ]
+            dp_host, dp_port = await self._async_fork_on_guard(
+                guard_addr=guard_addr_0,
+                role="data-proxy",
+                worker_index=0,
+                raw_cmd=data_proxy_cmd,
             )
-        await asyncio.gather(
-            *[
-                self._create_engine_on_worker(
-                    worker_addr=addr,
-                    engine_class=engine_class,
-                    init_args=[],
-                    init_kwargs={"config": self.config},
-                )
-                for addr in self._worker_addrs
+            self._model_addr = f"http://{format_hostport(dp_host, dp_port)}"
+            logger.info("Model endpoint: %s", self._model_addr)
+
+            # ==============================================================
+            # Step 6: Fork Gateway on guard 0
+            # ==============================================================
+            gw_cmd = [
+                sys.executable,
+                "-m",
+                "areal.experimental.training_service.gateway",
+                "--admin-api-key",
+                cfg.admin_api_key,
+                "--router-addr",
+                self._router_addr,
+                "--forward-timeout",
+                str(cfg.request_timeout),
+                "--log-level",
+                cfg.log_level,
             ]
-        )
-        logger.info("Engines created on all workers")
+            gw_host, gw_port = await self._async_fork_on_guard(
+                guard_addr=guard_addr_0,
+                role="gateway",
+                worker_index=0,
+                raw_cmd=gw_cmd,
+            )
+            self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
+            logger.info("Gateway: %s", self._gateway_addr)
 
-        pg_kwargs = {"parallel_strategy": self._parallel_strategy}
-        await asyncio.gather(
-            *[
-                self._call_worker_engine_endpoint(
-                    addr,
-                    "/create_process_group",
-                    args=[],
-                    kwargs=pg_kwargs,
-                    timeout=self.config.setup_timeout,
-                )
-                for addr in self._worker_addrs
-            ]
-        )
-
-        await asyncio.gather(
-            *[
-                self._call_worker_engine_endpoint(
-                    addr,
-                    "/initialize",
-                    args=[],
-                    kwargs={
-                        "addr": kwargs.get("addr"),
-                        "ft_spec": ft_spec,
-                    },
-                    timeout=self.config.setup_timeout,
-                )
-                for addr in self._worker_addrs
-            ]
-        )
-        logger.info("Engines initialized on all workers")
-
-        # ==================================================================
-        # Step 4: Fork Router on guard 0
-        # ==================================================================
-        router_cmd = [
-            sys.executable,
-            "-m",
-            "areal.experimental.training_service.router",
-            "--admin-api-key",
-            cfg.admin_api_key,
-            "--log-level",
-            cfg.log_level,
-        ]
-        router_host, router_port = self._fork_on_guard(
-            guard_addr=guard_addr_0,
-            role="router",
-            worker_index=0,
-            raw_cmd=router_cmd,
-        )
-        self._router_addr = f"http://{format_hostport(router_host, router_port)}"
-        logger.info("Router: %s", self._router_addr)
-
-        # ==================================================================
-        # Step 5: Fork Data Proxy on a guard
-        # ==================================================================
-        data_proxy_cmd = [
-            sys.executable,
-            "-m",
-            "areal.experimental.training_service.data_proxy",
-            "--worker-addrs",
-            ",".join(self._worker_addrs),
-            "--admin-api-key",
-            cfg.admin_api_key,
-            "--log-level",
-            cfg.log_level,
-        ]
-        dp_host, dp_port = self._fork_on_guard(
-            guard_addr=guard_addr_0,
-            role="data-proxy",
-            worker_index=0,
-            raw_cmd=data_proxy_cmd,
-        )
-        self._model_addr = f"http://{format_hostport(dp_host, dp_port)}"
-        logger.info("Model endpoint: %s", self._model_addr)
-
-        # ==================================================================
-        # Step 6: Fork Gateway on guard 0
-        # ==================================================================
-        gw_cmd = [
-            sys.executable,
-            "-m",
-            "areal.experimental.training_service.gateway",
-            "--admin-api-key",
-            cfg.admin_api_key,
-            "--router-addr",
-            self._router_addr,
-            "--forward-timeout",
-            str(cfg.request_timeout),
-            "--log-level",
-            cfg.log_level,
-        ]
-        gw_host, gw_port = self._fork_on_guard(
-            guard_addr=guard_addr_0,
-            role="gateway",
-            worker_index=0,
-            raw_cmd=gw_cmd,
-        )
-        self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
-        logger.info("Gateway: %s", self._gateway_addr)
-
-        # ==================================================================
-        # Step 7: Register data proxy with API key in router
-        # ==================================================================
-        self.api_key = f"ak-{role}-{uuid4().hex[:12]}"
-        await self._register_in_router(
-            self._router_addr, self._model_addr, self.api_key
-        )
-        logger.info("Model registered with api_key=%s", self.api_key)
+            # ==============================================================
+            # Step 7: Register data proxy with API key in router
+            # ==============================================================
+            self.api_key = f"ak-{role}-{uuid4().hex[:12]}"
+            await self._register_in_router(
+                self._router_addr, self._model_addr, self.api_key
+            )
+            logger.info("Model registered with api_key=%s", self.api_key)
+        except Exception:
+            logger.error(
+                "GatewayTrainController initialization failed, rolling back",
+                exc_info=True,
+            )
+            self._cleanup_runtime_state()
+            raise
 
     # -- Engine creation ---------------------------------------------------
 
@@ -512,16 +530,16 @@ class GatewayTrainController:
 
         timeout = timeout or self.config.setup_timeout
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                async with httpx.AsyncClient(timeout=2.0) as client:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            while time.monotonic() < deadline:
+                try:
                     resp = await client.get(url)
                     if resp.status_code == 200:
                         logger.info("%s is ready at %s", name, url)
                         return
-            except Exception:
-                pass
-            await asyncio.sleep(0.1)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
         raise TimeoutError(f"{name} not healthy at {url} within {timeout}s")
 
     # -- Gateway HTTP helpers (duck-type TrainController interface) ---------
@@ -797,7 +815,7 @@ class GatewayTrainController:
 
     # -- Destroy -----------------------------------------------------------
 
-    def destroy(self) -> None:
+    def _cleanup_runtime_state(self) -> None:
         if self._router_addr and self._model_addr:
             try:
                 import requests
@@ -840,5 +858,16 @@ class GatewayTrainController:
 
         import torch.distributed as dist
 
-        if dist.is_initialized() and self._own_process_group:
-            dist.destroy_process_group()
+        if self._own_process_group:
+            try:
+                if dist.is_initialized():
+                    dist.destroy_process_group()
+            except Exception:
+                logger.error(
+                    "Failed to destroy process group: %s", traceback.format_exc()
+                )
+            finally:
+                self._own_process_group = False
+
+    def destroy(self) -> None:
+        self._cleanup_runtime_state()

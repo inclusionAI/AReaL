@@ -41,12 +41,16 @@ def register_engine_routes(
 
     # -- dispatch helpers --------------------------------------------------
 
-    def _dispatch_compute_route(path: str):
+    def _dispatch_compute_route(path: str, *, pad_eval_batch: bool = False):
         async def handler(request: Request):
             dispatcher = app.state.dispatcher
             try:
                 body = await request.body()
-                return _raw_json_response(await dispatcher.dispatch(path).post(body))
+                return _raw_json_response(
+                    await dispatcher.dispatch(path, pad_eval_batch=pad_eval_batch).post(
+                        body
+                    )
+                )
             except Exception as exc:
                 return JSONResponse({"error": str(exc)}, status_code=502)
 
@@ -93,7 +97,7 @@ def register_engine_routes(
 
     app.post("/train_batch")(_dispatch_compute_route("/train_batch"))
     app.post("/forward_batch")(_dispatch_compute_route("/forward_batch"))
-    app.post("/eval_batch")(_dispatch_compute_route("/eval_batch"))
+    app.post("/eval_batch")(_dispatch_compute_route("/eval_batch", pad_eval_batch=True))
 
     app.post("/train")(_broadcast_post_route("/train"))
     app.post("/eval")(_broadcast_post_route("/eval"))
@@ -129,7 +133,9 @@ def register_engine_routes(
     # -- SFT routes --------------------------------------------------------
 
     app.post("/sft/train")(_dispatch_compute_route("/sft/train"))
-    app.post("/sft/evaluate")(_dispatch_compute_route("/sft/evaluate"))
+    app.post("/sft/evaluate")(
+        _dispatch_compute_route("/sft/evaluate", pad_eval_batch=True)
+    )
 
     # -- PPO actor routes --------------------------------------------------
 
@@ -151,4 +157,6 @@ def register_engine_routes(
     # -- RW routes ---------------------------------------------------------
 
     app.post("/rw/train")(_dispatch_compute_route("/rw/train"))
-    app.post("/rw/evaluate")(_dispatch_compute_route("/rw/evaluate"))
+    app.post("/rw/evaluate")(
+        _dispatch_compute_route("/rw/evaluate", pad_eval_batch=True)
+    )

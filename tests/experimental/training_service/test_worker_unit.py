@@ -192,7 +192,9 @@ class TestWorkerEndpoints:
         assert isinstance(result, dict)
         assert result["output_seqlens"] == [3]
 
-    def test_sft_route_requires_broadcast_and_fails_without_group(self, client):
+    def test_sft_route_succeeds_without_distributed_group_for_single_worker(
+        self, client
+    ):
         create_resp = client.post(
             "/create_engine",
             json={
@@ -210,12 +212,12 @@ class TestWorkerEndpoints:
                 "kwargs": serialize_value({}),
             },
         )
-        assert resp.status_code == 400
-        assert "Broadcast required for endpoint" in resp.get_json()["error"]
+        assert resp.status_code == 200
+        result = deserialize_value(resp.get_json()["result"])
+        assert isinstance(result, dict)
+        assert "total" in result
 
-    def test_sft_route_ignores_rpc_meta_override_and_still_requires_broadcast(
-        self, client
-    ):
+    def test_sft_route_ignores_rpc_meta_override_for_single_worker(self, client):
         create_resp = client.post(
             "/create_engine",
             json={
@@ -234,5 +236,7 @@ class TestWorkerEndpoints:
                 "rpc_meta": {"broadcast": False},
             },
         )
-        assert resp.status_code == 400
-        assert "Broadcast required for endpoint" in resp.get_json()["error"]
+        assert resp.status_code == 200
+        result = deserialize_value(resp.get_json()["result"])
+        assert isinstance(result, dict)
+        assert "total" in result

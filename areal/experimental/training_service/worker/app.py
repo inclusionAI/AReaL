@@ -112,21 +112,24 @@ def _execute_compute(
     def execute():
         nonlocal args, kwargs
         if require_broadcast:
-            if engine.context_and_model_parallel_group is None:
-                raise RuntimeError(
-                    "Broadcast required for endpoint, but "
-                    "engine.context_and_model_parallel_group is None"
+            group = engine.context_and_model_parallel_group
+            if group is None:
+                if engine.data_parallel_world_size > 1:
+                    raise RuntimeError(
+                        "Broadcast required for endpoint, but "
+                        "engine.context_and_model_parallel_group is None"
+                    )
+            else:
+                args = broadcast_tensor_container(
+                    tensor_container_to(args, current_platform.current_device()),
+                    src_rank=engine.current_data_parallel_head(),
+                    group=group,
                 )
-            args = broadcast_tensor_container(
-                tensor_container_to(args, current_platform.current_device()),
-                src_rank=engine.current_data_parallel_head(),
-                group=engine.context_and_model_parallel_group,
-            )
-            kwargs = broadcast_tensor_container(
-                tensor_container_to(kwargs, current_platform.current_device()),
-                src_rank=engine.current_data_parallel_head(),
-                group=engine.context_and_model_parallel_group,
-            )
+                kwargs = broadcast_tensor_container(
+                    tensor_container_to(kwargs, current_platform.current_device()),
+                    src_rank=engine.current_data_parallel_head(),
+                    group=group,
+                )
         return method(*args, **kwargs)
 
     return _submit_to_engine_thread(method_name, execute)
