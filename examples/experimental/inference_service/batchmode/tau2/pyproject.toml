@@ -1,0 +1,82 @@
+[project]
+name = "openclaw-tau2-integration"
+version = "0.1.0"
+description = "Integration project for testing OpenClaw agent on TAU²-Bench"
+authors = [
+    {name = "Agent Benchmark Team", email = "dev@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    # 核心依赖
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "loguru>=0.7.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+
+    # TAU²-Bench - 从本地安装
+    # 在安装时使用: pip install -e ".[tau2]"
+]
+
+[project.optional-dependencies]
+# TAU²-Bench 依赖
+tau2 = [
+    "tau2 @ git+ssh://git@github.com/sierra-research/tau2-bench.git"
+]
+
+# 开发依赖
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "ipython>=8.0.0",
+]
+
+# Entry point for tau2 plugin system
+[project.entry-points."tau2.plugins"]
+openclaw = "openclaw_tau2.register:register_plugin"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-v"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  \.git
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]  # line too long (handled by black)
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
