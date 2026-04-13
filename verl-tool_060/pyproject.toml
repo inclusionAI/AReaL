@@ -1,0 +1,83 @@
+[project]
+name = "verl-tool"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fire>=0.7.0",
+    "psutils>=3.3.9",
+    "timeout-decorator>=0.5.0",
+    "pyext",
+    "qwen_vl_utils>=0.0.14",
+    "qwen_omni_utils",
+    "transformers",
+    "tensorboard",
+    "ipython",
+    "func_timeout",
+    "aiofiles",
+    "click==8.2.1",
+]
+
+[tool.setuptools]
+packages = ["verl_tool"]  # Explicitly specify only the verl_tool package
+
+[project.optional-dependencies]
+vllm = [
+    "vllm<=0.11.0",
+]
+tool_browser = [
+    "mini_webarena @ git+https://github.com/cogito233/mini_webarena.git",
+]
+acecoder = [
+    "AceCoder @ git+https://github.com/TIGER-AI-Lab/AceCoder.git@dev",
+]
+torl = [
+    "math-verify",
+]
+search_tool = [
+    "google-api-python-client",
+    "chardet",
+    "bs4",
+    "langid",
+    "pdfplumber",
+    "nltk",
+]
+sql_tool = [
+    "sqlparse",
+]
+mcp_tool = [
+    "mcp[cli]",
+    "PyYAML>=6.0",
+    "regex>=2024.0.0",
+    "psutil>=5.9.0",
+    "requests>=2.31.0",
+    "datasets",
+    "pyarrow",
+    "mcp-server-fetch",
+]
+python_code_dep = [
+    "matplotlib",
+    "pycosat",
+    "gmpy2",
+    "cvxpy",
+    "cvxopt",
+    "statsmodels",
+    "datauri",
+    "pytesseract",
+    "igraph",
+    "num2words",
+    "mpmath",
+    "annotated-types>=0.7.0",
+    "h5py",
+    "ipython",
+    "numpy",
+    "pandas",
+    "psutil",
+    "scipy",
+    "sympy",
+    "tqdm",
+    "pulp",
+    "shapely",
+    "ortools",
+]
