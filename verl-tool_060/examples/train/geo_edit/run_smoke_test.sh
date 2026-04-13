@@ -25,7 +25,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/Qwen3-VL-8B-Thinking}
 
 train_data="[$WORKSPACE/combined_train.parquet]"
 val_data="[$WORKSPACE/combined_test_10pct.parquet]"
-run_name="reasonmap-rl-zero-smoke"
+run_name="reasonmap-rl-zero-smoke_060"
 rl_alg=grpo
 n_gpus_per_node=8
 n_nodes=1
@@ -56,7 +56,7 @@ gpu_memory_utilization=0.7
 do_offload=False
 use_dynamic_bsz=True
 ulysses_sequence_parallel_size=1
-fsdp_size=-1
+fsdp_size=16
 additional_eos_token_ids=[151645]
 mask_observations=True
 enable_mtrl=True
