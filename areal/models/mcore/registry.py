@@ -101,13 +101,31 @@ def unwrap_to_gpt_model(model: torch.nn.Module) -> GPTModel:
 
 
 def _ensure_mtp_spec_compat():
-    """Patch get_gpt_mtp_block_spec to gracefully handle TransformerConfig as spec.
+    """Patch MTP block-spec functions to gracefully handle TransformerConfig as *spec*.
 
-    mbridge may pass a raw TransformerConfig object as the ``spec`` argument to
-    ``get_gpt_mtp_block_spec``, which only accepts ``ModuleSpec`` or
-    ``TransformerBlockSubmodules``.  This monkey-patch transparently converts
-    ``TransformerConfig`` into the correct ``ModuleSpec`` so that mbridge works
-    without modification.
+    **Why multi-level patching is needed**
+
+    ``mbridge.models.mimo`` does::
+
+        from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
+
+    at module load time, which creates a *local* binding to the original
+    function object.  Simply replacing ``gpt_layer_specs.get_gpt_mtp_block_spec``
+    does NOT affect that already-bound local reference — the original function
+    will still be called by mimo.
+
+    However, the original ``get_gpt_mtp_block_spec`` internally calls
+    ``get_gpt_mtp_block_spec_for_backend`` through the module's **global
+    namespace**, which IS resolved at call time.  Therefore we apply patches
+    at three levels for maximum robustness:
+
+    1. ``get_gpt_mtp_block_spec_for_backend`` on the module — catches calls
+       coming through *any* import path (including mimo's local reference).
+       This is the **critical** patch that actually fixes the bug.
+    2. ``get_gpt_mtp_block_spec`` on the module — catches future callers that
+       access it via ``gpt_layer_specs.get_gpt_mtp_block_spec``.
+    3. The local reference inside ``mbridge.models.mimo`` (if importable) —
+       belt-and-suspenders for the direct ``from-import`` case.
     """
     try:
         from megatron.core.models.gpt import gpt_layer_specs as _specs_mod
@@ -121,39 +139,78 @@ def _ensure_mtp_spec_compat():
     if getattr(_specs_mod, "_areal_mtp_compat_patched", False):
         return
 
+    # ----- helper: convert TransformerConfig → proper ModuleSpec -----
+    def _convert_spec_if_needed(config, spec, use_transformer_engine=True):
+        if not isinstance(spec, TransformerConfig):
+            return spec
+        logger.info(
+            "[MTPCompat] Auto-converting TransformerConfig -> ModuleSpec "
+            "for get_gpt_mtp_block_spec (use_transformer_engine=%s).",
+            use_transformer_engine,
+        )
+        _get_decoder = getattr(_specs_mod, "get_gpt_decoder_block_spec", None)
+        if _get_decoder is not None:
+            decoder_block_spec = _get_decoder(
+                config=config, use_transformer_engine=use_transformer_engine
+            )
+            spec = decoder_block_spec.layer_specs[-1]
+            logger.info(
+                "[MTPCompat] Resolved spec via get_gpt_decoder_block_spec."
+            )
+        elif use_transformer_engine:
+            spec = _specs_mod.get_gpt_layer_with_transformer_engine_spec()
+            logger.info(
+                "[MTPCompat] Resolved spec via "
+                "get_gpt_layer_with_transformer_engine_spec."
+            )
+        else:
+            spec = _specs_mod.get_gpt_layer_local_spec()
+            logger.info("[MTPCompat] Resolved spec via get_gpt_layer_local_spec.")
+        return spec
+
+    # get_gpt_mtp_block_spec_for_backend ---
+    # This is the lowest-level function that validates the spec type.
+    # Because the original get_gpt_mtp_block_spec resolves this name
+    # through the module's global dict at call time, patching here
+    # intercepts ALL callers — including mimo's from-imported reference.
+    _orig_backend_fn = _specs_mod.get_gpt_mtp_block_spec_for_backend
+
+    def _compat_backend(config, spec, use_transformer_engine=True, **kwargs):
+        spec = _convert_spec_if_needed(config, spec, use_transformer_engine)
+        return _orig_backend_fn(config, spec, use_transformer_engine, **kwargs)
+
+    _specs_mod.get_gpt_mtp_block_spec_for_backend = _compat_backend
+
+    # --- Patch 2: get_gpt_mtp_block_spec (top-level entry point) ---
     _orig_fn = _specs_mod.get_gpt_mtp_block_spec
 
-    def _compat_get_gpt_mtp_block_spec(
-        config, spec, use_transformer_engine=True, **kwargs
-    ):
-        if isinstance(spec, TransformerConfig):
-            logger.info(
-                "[MTPCompat] Auto-converting TransformerConfig -> ModuleSpec "
-                "for get_gpt_mtp_block_spec (use_transformer_engine=%s).",
-                use_transformer_engine,
-            )
-            _get_decoder = getattr(_specs_mod, "get_gpt_decoder_block_spec", None)
-            if _get_decoder is not None:
-                decoder_block_spec = _get_decoder(
-                    config=config, use_transformer_engine=use_transformer_engine
-                )
-                spec = decoder_block_spec.layer_specs[-1]
-                logger.info(
-                    "[MTPCompat] Resolved spec via get_gpt_decoder_block_spec."
-                )
-            elif use_transformer_engine:
-                spec = _specs_mod.get_gpt_layer_with_transformer_engine_spec()
-                logger.info(
-                    "[MTPCompat] Resolved spec via get_gpt_layer_with_transformer_engine_spec."
-                )
-            else:
-                spec = _specs_mod.get_gpt_layer_local_spec()
-                logger.info("[MTPCompat] Resolved spec via get_gpt_layer_local_spec.")
+    def _compat_fn(config, spec, use_transformer_engine=True, **kwargs):
+        spec = _convert_spec_if_needed(config, spec, use_transformer_engine)
         return _orig_fn(config, spec, use_transformer_engine, **kwargs)
 
-    _specs_mod.get_gpt_mtp_block_spec = _compat_get_gpt_mtp_block_spec
+    _specs_mod.get_gpt_mtp_block_spec = _compat_fn
+
+    # mbridge.models.mimo local reference (if available) ---
+    try:
+        import mbridge.models.mimo as _mimo_mod
+
+        if hasattr(_mimo_mod, "get_gpt_mtp_block_spec"):
+            _mimo_mod.get_gpt_mtp_block_spec = _compat_fn
+            logger.info(
+                "[MTPCompat] Also patched mbridge.models.mimo."
+                "get_gpt_mtp_block_spec direct reference."
+            )
+    except (ImportError, AttributeError):
+        logger.info(
+            "[MTPCompat] mbridge.models.mimo not importable; "
+            "relying on backend-level patch only."
+        )
+
     _specs_mod._areal_mtp_compat_patched = True
-    logger.info("[MTPCompat] Patched get_gpt_mtp_block_spec for TransformerConfig compat.")
+    logger.info(
+        "[MTPCompat] Patched get_gpt_mtp_block_spec AND "
+        "get_gpt_mtp_block_spec_for_backend for TransformerConfig compat."
+    )
 
 
 # Model registry for different architectures
