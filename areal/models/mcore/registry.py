@@ -140,53 +140,54 @@ def _ensure_mtp_spec_compat():
         return
 
     # ----- helper: convert TransformerConfig → proper ModuleSpec -----
-    def _convert_spec_if_needed(config, spec, use_transformer_engine=True):
+    def _convert_spec_if_needed(config, spec):
+        """Convert TransformerConfig to a proper ModuleSpec for MTP block spec.
+
+        Uses get_gpt_decoder_block_spec (preferred) or falls back to
+        get_gpt_layer_with_transformer_engine_spec / get_gpt_layer_local_spec.
+        Always uses transformer_engine=True since MTP with TE is the common case.
+        """
         if not isinstance(spec, TransformerConfig):
             return spec
         logger.info(
             "[MTPCompat] Auto-converting TransformerConfig -> ModuleSpec "
-            "for get_gpt_mtp_block_spec (use_transformer_engine=%s).",
-            use_transformer_engine,
+            "for get_gpt_mtp_block_spec."
         )
         _get_decoder = getattr(_specs_mod, "get_gpt_decoder_block_spec", None)
         if _get_decoder is not None:
             decoder_block_spec = _get_decoder(
-                config=config, use_transformer_engine=use_transformer_engine
+                config=config, use_transformer_engine=True
             )
             spec = decoder_block_spec.layer_specs[-1]
             logger.info(
                 "[MTPCompat] Resolved spec via get_gpt_decoder_block_spec."
             )
-        elif use_transformer_engine:
+        else:
             spec = _specs_mod.get_gpt_layer_with_transformer_engine_spec()
             logger.info(
                 "[MTPCompat] Resolved spec via "
                 "get_gpt_layer_with_transformer_engine_spec."
             )
-        else:
-            spec = _specs_mod.get_gpt_layer_local_spec()
-            logger.info("[MTPCompat] Resolved spec via get_gpt_layer_local_spec.")
         return spec
 
     # get_gpt_mtp_block_spec_for_backend ---
-    # This is the lowest-level function that validates the spec type.
-    # Because the original get_gpt_mtp_block_spec resolves this name
-    # through the module's global dict at call time, patching here
-    # intercepts ALL callers — including mimo's from-imported reference.
+    # Signature: (config, spec, backend, vp_stage=None, pp_rank=None)
+    # The 3rd param is `backend` (BackendSpecProvider), NOT use_transformer_engine.
+    # We only intercept config + spec; all other args pass through unchanged.
     _orig_backend_fn = _specs_mod.get_gpt_mtp_block_spec_for_backend
 
-    def _compat_backend(config, spec, use_transformer_engine=True, **kwargs):
-        spec = _convert_spec_if_needed(config, spec, use_transformer_engine)
-        return _orig_backend_fn(config, spec, use_transformer_engine, **kwargs)
+    def _compat_backend(config, spec, *args, **kwargs):
+        spec = _convert_spec_if_needed(config, spec)
+        return _orig_backend_fn(config, spec, *args, **kwargs)
 
     _specs_mod.get_gpt_mtp_block_spec_for_backend = _compat_backend
 
     # --- Patch 2: get_gpt_mtp_block_spec (top-level entry point) ---
     _orig_fn = _specs_mod.get_gpt_mtp_block_spec
 
-    def _compat_fn(config, spec, use_transformer_engine=True, **kwargs):
-        spec = _convert_spec_if_needed(config, spec, use_transformer_engine)
-        return _orig_fn(config, spec, use_transformer_engine, **kwargs)
+    def _compat_fn(config, spec, *args, **kwargs):
+        spec = _convert_spec_if_needed(config, spec)
+        return _orig_fn(config, spec, *args, **kwargs)
 
     _specs_mod.get_gpt_mtp_block_spec = _compat_fn
 
