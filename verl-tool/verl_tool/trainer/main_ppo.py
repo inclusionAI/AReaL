@@ -73,6 +73,9 @@ def run_ppo(config) -> None:
         for judge_var in ("JUDGE_API_KEY", "JUDGE_API_BASE", "JUDGE_MODEL"):
             if os.environ.get(judge_var):
                 default_runtime_env["env_vars"][judge_var] = os.environ[judge_var]
+        for cuda_var in ("CUDA_LAUNCH_BLOCKING",):
+            if os.environ.get(cuda_var):
+                default_runtime_env["env_vars"][cuda_var] = os.environ[cuda_var]
         os.environ.pop("ROCR_VISIBLE_DEVICES", None)
         ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
         runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
