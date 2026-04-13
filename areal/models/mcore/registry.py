@@ -100,6 +100,62 @@ def unwrap_to_gpt_model(model: torch.nn.Module) -> GPTModel:
     return _model
 
 
+def _ensure_mtp_spec_compat():
+    """Patch get_gpt_mtp_block_spec to gracefully handle TransformerConfig as spec.
+
+    mbridge may pass a raw TransformerConfig object as the ``spec`` argument to
+    ``get_gpt_mtp_block_spec``, which only accepts ``ModuleSpec`` or
+    ``TransformerBlockSubmodules``.  This monkey-patch transparently converts
+    ``TransformerConfig`` into the correct ``ModuleSpec`` so that mbridge works
+    without modification.
+    """
+    try:
+        from megatron.core.models.gpt import gpt_layer_specs as _specs_mod
+    except ImportError:
+        logger.warning(
+            "[MTPCompat] Cannot import gpt_layer_specs from megatron.core; "
+            "skipping MTP spec compatibility patch."
+        )
+        return
+
+    if getattr(_specs_mod, "_areal_mtp_compat_patched", False):
+        return
+
+    _orig_fn = _specs_mod.get_gpt_mtp_block_spec
+
+    def _compat_get_gpt_mtp_block_spec(
+        config, spec, use_transformer_engine=True, **kwargs
+    ):
+        if isinstance(spec, TransformerConfig):
+            logger.info(
+                "[MTPCompat] Auto-converting TransformerConfig -> ModuleSpec "
+                "for get_gpt_mtp_block_spec (use_transformer_engine=%s).",
+                use_transformer_engine,
+            )
+            _get_decoder = getattr(_specs_mod, "get_gpt_decoder_block_spec", None)
+            if _get_decoder is not None:
+                decoder_block_spec = _get_decoder(
+                    config=config, use_transformer_engine=use_transformer_engine
+                )
+                spec = decoder_block_spec.layer_specs[-1]
+                logger.info(
+                    "[MTPCompat] Resolved spec via get_gpt_decoder_block_spec."
+                )
+            elif use_transformer_engine:
+                spec = _specs_mod.get_gpt_layer_with_transformer_engine_spec()
+                logger.info(
+                    "[MTPCompat] Resolved spec via get_gpt_layer_with_transformer_engine_spec."
+                )
+            else:
+                spec = _specs_mod.get_gpt_layer_local_spec()
+                logger.info("[MTPCompat] Resolved spec via get_gpt_layer_local_spec.")
+        return _orig_fn(config, spec, use_transformer_engine, **kwargs)
+
+    _specs_mod.get_gpt_mtp_block_spec = _compat_get_gpt_mtp_block_spec
+    _specs_mod._areal_mtp_compat_patched = True
+    logger.info("[MTPCompat] Patched get_gpt_mtp_block_spec for TransformerConfig compat.")
+
+
 # Model registry for different architectures
 def make_hf_and_mcore_config(
     hf_path: str,
@@ -162,8 +218,18 @@ def make_mcore_model(
     bridge_type: str = "mbridge",
     is_critic: bool = False,
     use_lora: bool = False,
+    enable_mtp: bool = False,
 ) -> list[GPTModel | DDP]:
     if bridge is not None and bridge_type == "mbridge":
+        # Patch get_gpt_mtp_block_spec before mbridge calls it so that a
+        # TransformerConfig passed as ``spec`` is auto-converted to the
+        # correct ModuleSpec type expected by megatron-core.
+        if enable_mtp:
+            _ensure_mtp_spec_compat()
+            logger.info(
+                "[MTPTrain] Applied MTP spec compatibility patch before mbridge model creation."
+            )
+
         models = bridge.get_model(
             # TODO: Add DDP options when supporting training
             wrap_with_ddp=mcore_config.wrap_with_ddp,
@@ -281,14 +347,16 @@ def make_mcore_model(
         mtp_num_layers = getattr(tf_config, "mtp_num_layers", 0)
         if mtp_num_layers > 0:
             try:
-                from megatron.core.models.gpt.gpt_layer_specs import get_mtp_block_spec
-                mtp_block_spec = get_mtp_block_spec(tf_config, transformer_layer_spec)
+                from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
+                mtp_block_spec = get_gpt_mtp_block_spec(
+                    tf_config, transformer_layer_spec, use_transformer_engine=True
+                )
                 logger.info(
                     f"[MTPTrain] Created MTP block spec with {mtp_num_layers} layers"
                 )
             except ImportError:
                 logger.warning(
-                    "[MTPTrain] Cannot import get_mtp_block_spec from megatron.core. "
+                    "[MTPTrain] Cannot import get_gpt_mtp_block_spec from megatron.core. "
                     "MTP layers will not be created. Ensure megatron-core >= 0.11.0."
                 )
         rope_scaling_args = {}

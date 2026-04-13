@@ -341,14 +341,14 @@ class MegatronEngine(TrainEngine):
             self._check_and_apply_fp8_config()
             self._validate_fp8_consistency()
 
-            # Propagate MTP config to mcore_config for model creation
+            # Propagate MTP config to tf_config (TransformerConfig) for model creation
             if self.enable_mtp_training:
-                self.mcore_config.mtp_num_layers = self.mtp_num_layers
-                self.mcore_config.mtp_loss_scaling_factor = self.mtp_loss_scaling_factor
-                if hasattr(self.mcore_config, "mtp_detach_heads"):
-                    self.mcore_config.mtp_detach_heads = self.mtp_detach_heads
+                self.tf_config.mtp_num_layers = self.mtp_num_layers
+                self.tf_config.mtp_loss_scaling_factor = self.mtp_loss_scaling_factor
+                if hasattr(self.tf_config, "mtp_detach_heads"):
+                    self.tf_config.mtp_detach_heads = self.mtp_detach_heads
                 self.logger.info(
-                    f"[MTPTrain] Propagated MTP config to mcore_config: "
+                    f"[MTPTrain] Propagated MTP config to tf_config: "
                     f"mtp_num_layers={self.mtp_num_layers}, "
                     f"mtp_loss_scaling_factor={self.mtp_loss_scaling_factor}, "
                     f"mtp_detach_heads={self.mtp_detach_heads}"
@@ -363,6 +363,7 @@ class MegatronEngine(TrainEngine):
                     bridge_type=self.bridge_cls,
                     is_critic=self.config.is_critic,
                     use_lora=self.config.use_lora,
+                    enable_mtp=self.enable_mtp_training,
                 )
 
         self.model = _MegatronModelList(models)
