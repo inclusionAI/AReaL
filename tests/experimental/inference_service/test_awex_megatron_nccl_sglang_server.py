@@ -231,16 +231,8 @@ def _temporary_env(overrides: dict[str, str]):
     [
         ("4plus4_d4_t4", 4, 4, 1, 1, 4, True, None),
         ("4plus4_d2t2_t4", 4, 2, 2, 1, 4, True, None),
-        (
-            "4plus4_t4_d4",
-            4,
-            1,
-            4,
-            1,
-            1,
-            False,
-            "Unsupported AWEX TP topology",
-        ),
+        ("4plus4_d4_d4", 4, 4, 1, 1, 1, True, None),
+        ("4plus4_p4_t4", 4, 1, 1, 4, 4, True, None),
     ],
 )
 def test_awex_megatron_sglang_nccl_disjoint_gpu_split(
