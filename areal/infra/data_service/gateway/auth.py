@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Authentication and API key registry for the data service gateway."""
 
 from __future__ import annotations

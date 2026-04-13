@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """GatewayInferenceController — parallel implementation to RolloutController.
 
 Routes inference and pause/continue traffic through the gateway HTTP stack

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """mbridge Bridge for BailingMoeV2.5 (bailing_moe_linear model_type).
 
 Registers with mbridge so that MegatronEngine.initialize() can use AutoBridge

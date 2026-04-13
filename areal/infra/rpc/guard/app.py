@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared Guard process: process management, port allocation, and child forking.
 
 This module provides the base Guard functionality shared between:

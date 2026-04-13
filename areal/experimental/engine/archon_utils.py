@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Utility functions extracted from ArchonEngine for reuse and testability."""
 
 from __future__ import annotations

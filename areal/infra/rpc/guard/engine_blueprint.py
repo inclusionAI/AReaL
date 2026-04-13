@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Engine Blueprint: engine lifecycle and method invocation.
 
 Provides a Flask Blueprint that manages engine threads, engine creation,

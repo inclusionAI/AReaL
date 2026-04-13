@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Worker and session registries for the Router service.
 
 All state is in-memory (lost on restart). Thread-safe via asyncio.Lock.

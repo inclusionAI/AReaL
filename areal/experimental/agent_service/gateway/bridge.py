@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """OpenResponses HTTP bridge — translates POST /v1/responses to DataProxy turns."""
 
 from __future__ import annotations

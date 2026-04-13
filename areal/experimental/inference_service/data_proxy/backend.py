@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Inference bridge backends -- protocol + concrete implementations.
 
 Each backend translates between AReaL domain objects (ModelRequest, etc.)

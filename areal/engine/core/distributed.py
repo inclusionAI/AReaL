@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from datetime import timedelta
 
 import torch  # noqa: F401 (used by callers)
