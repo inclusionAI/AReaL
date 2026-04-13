@@ -18,6 +18,7 @@ import traceback
 
 import orjson
 from flask import Blueprint, Response, jsonify, request
+from pydantic import BaseModel, ValidationError
 
 from areal.infra.rpc import rtensor
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
@@ -26,6 +27,30 @@ from areal.utils import logging
 logger = logging.getLogger("DataBP")
 
 data_bp = Blueprint("data", __name__)
+
+
+# ================================================================================
+# Pydantic models for Data API
+# ================================================================================
+
+
+class ShardListRequest(BaseModel):
+    """Base model for requests containing a list of shard IDs."""
+
+    shard_ids: list[str]
+
+
+class BatchShardRequest(ShardListRequest):
+    """Request to retrieve multiple tensor shards."""
+
+
+class ClearShardRequest(ShardListRequest):
+    """Request to clear specific tensor shards."""
+
+
+# ================================================================================
+# Flask Blueprint Definition
+# ================================================================================
 
 
 @data_bp.route("/data/<shard_id>", methods=["PUT"])
@@ -81,22 +106,22 @@ def retrieve_batch_data(shard_id: str):
 def retrieve_batch_data_many():
     """Retrieve multiple batch data shards in one request."""
     try:
-        payload = request.get_json(silent=True) or {}
-        shard_ids = payload.get("shard_ids", [])
-        if not isinstance(shard_ids, list) or not all(
-            isinstance(shard_id, str) for shard_id in shard_ids
-        ):
+        raw_payload = request.get_json(silent=True) or {}
+
+        # USE PYDANTIC MODEL FOR VALIDATION
+        try:
+            payload_model = BatchShardRequest(**raw_payload)
+        except ValidationError:
             return (
                 jsonify(
                     {
                         "status": "error",
-                        "message": (
-                            "Expected JSON body with string list field 'shard_ids'"
-                        ),
+                        "message": "Expected JSON body with string list field 'shard_ids'",
                     }
                 ),
                 400,
             )
+        shard_ids = payload_model.shard_ids  # use the validated data
 
         data = []
         missing_shard_ids = []
@@ -134,20 +159,24 @@ def retrieve_batch_data_many():
 
 @data_bp.route("/data/clear", methods=["DELETE"])
 def clear_batch_data():
-    """Clear specified batch data shards.
-
-    Expected JSON payload::
-
-        {"shard_ids": ["id1", "id2", ...]}
-    """
+    """Clear specified batch data shards."""
     try:
-        data = request.get_json(silent=True) or {}
-        shard_ids = data.get("shard_ids", [])
-        if not isinstance(shard_ids, list):
+        raw_data = request.get_json(silent=True) or {}
+
+        # USE PYDANTIC MODEL FOR VALIDATION
+        try:
+            payload_model = ClearShardRequest(**raw_data)
+        except ValidationError:
             return (
-                jsonify({"status": "error", "message": "'shard_ids' must be a list"}),
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "'shard_ids' must be a list",
+                    }
+                ),
                 400,
             )
+        shard_ids = payload_model.shard_ids  # use the validated data
 
         cleared_count = sum(rtensor.remove(sid) for sid in shard_ids)
         storage = rtensor.storage_stats()

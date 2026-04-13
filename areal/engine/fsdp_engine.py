@@ -66,6 +66,7 @@ from areal.engine.core.distributed import (
 from areal.engine.core.model import (
     disable_dropout_in_model,
     is_gemma3_model,
+    is_qwen3_5_model,
     is_qwen3_moe_model,
     is_qwen3_vl_model,
     is_qwen_vl_model,
@@ -1529,8 +1530,10 @@ class FSDPEngine(TrainEngine):
             ]
             mb["use_cache"] = False
             padded_mb["use_cache"] = False
-            if is_qwen3_moe_model(self.model_config.model_type) or is_qwen3_vl_model(
-                self.model_config.model_type
+            if (
+                is_qwen3_moe_model(self.model_config.model_type)
+                or is_qwen3_vl_model(self.model_config.model_type)
+                or is_qwen3_5_model(self.model_config.model_type)
             ):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
