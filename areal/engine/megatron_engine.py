@@ -449,23 +449,48 @@ class MegatronEngine(TrainEngine):
 
         if self.enable_mtp_training and not self._mtp_layers_verified:
             mtp_param_count = 0
+            mtp_param_names = []
             for module in modules:
                 for name, param in module.named_parameters():
                     if ".mtp." in name:
                         mtp_param_count += param.numel()
+                        if len(mtp_param_names) < 5:
+                            mtp_param_names.append(name)
+
+            # With pipeline parallelism, MTP layers only exist on the last stage.
+            # Non-last stages legitimately have 0 MTP params.
+            is_last_stage = True
+            try:
+                import megatron.core.parallel_state as mpu
+
+                if mpu.is_initialized() and mpu.get_pipeline_model_parallel_world_size() > 1:
+                    is_last_stage = mpu.is_pipeline_last_stage()
+            except Exception:
+                pass
+
             if mtp_param_count == 0:
-                self.logger.error(
-                    "[MTPTrain] enable_mtp_training=True but NO MTP parameters found in model! "
-                    "Possible causes: 1) mtp_num_layers=0 in model config; "
-                    "2) Model checkpoint does not contain MTP layers; "
-                    "3) mcore_config.mtp_num_layers not set correctly. "
-                    "MTP loss will NOT be computed."
-                )
+                if not is_last_stage:
+                    self._mtp_layers_verified = True
+                    self.logger.info(
+                        "[MTPTrain] This rank is NOT on the last pipeline stage; "
+                        "MTP parameters are expected only on the last stage. "
+                        "Skipping MTP param verification on this rank."
+                    )
+                else:
+                    self.logger.error(
+                        "[MTPTrain] enable_mtp_training=True but NO MTP parameters found "
+                        "on the LAST pipeline stage! "
+                        "Possible causes: 1) mtp_num_layers=0 in model config; "
+                        "2) Model checkpoint does not contain MTP layers; "
+                        "3) mbridge did not pass mtp_block_spec to GPTModel. "
+                        "MTP loss will NOT be computed."
+                    )
             else:
                 self._mtp_layers_verified = True
                 self.logger.info(
                     f"[MTPTrain] Verified MTP parameters in model: "
-                    f"total_mtp_params={mtp_param_count / 1e6:.2f}M"
+                    f"total_mtp_params={mtp_param_count / 1e6:.2f}M, "
+                    f"sample_params={mtp_param_names}"
                 )
 
         self._initialized = True

@@ -268,6 +268,105 @@ def make_mcore_layer_specs(hf_config: PretrainedConfig, tf_config: TransformerCo
         )
 
 
+def _ensure_mtp_in_gpt_model(log):
+    """Monkey-patch GPTModel.__init__ to auto-inject mtp_block_spec when mbridge
+    doesn't pass it but config.mtp_num_layers > 0.
+
+    mbridge calls bridge.get_model() which internally creates GPTModel, but does NOT
+    pass mtp_block_spec even when config.mtp_num_layers > 0. GPTModel checks
+    ``mtp_block_spec is not None`` (the constructor argument) to decide whether to
+    create MTP layers -- it does NOT check config.mtp_num_layers.
+
+    This patch intercepts GPTModel.__init__ and, when mtp_block_spec is missing but
+    config indicates MTP should be used, resolves the spec and injects it.
+
+    Returns a callable that restores the original __init__.
+    """
+    from megatron.core.models.gpt import GPTModel
+
+    _original_init = GPTModel.__init__
+
+    def _patched_init(self, *args, **kwargs):
+        config = kwargs.get("config", args[0] if args else None)
+        mtp_block_spec = kwargs.get("mtp_block_spec", None)
+
+        if (
+            mtp_block_spec is None
+            and config is not None
+            and getattr(config, "mtp_num_layers", 0) > 0
+        ):
+            log.info(
+                "[MTPTrain] GPTModel.__init__ intercepted: mtp_block_spec is None "
+                f"but config.mtp_num_layers={config.mtp_num_layers}. "
+                "Auto-resolving mtp_block_spec..."
+            )
+            try:
+                tls = kwargs.get("transformer_layer_spec", None)
+                if tls is None and len(args) > 1:
+                    tls = args[1]
+
+                spec_for_mtp = None
+                if tls is not None:
+                    from megatron.core.transformer.spec_utils import ModuleSpec
+                    from megatron.core.transformer.transformer_block import (
+                        TransformerBlockSubmodules,
+                    )
+
+                    if isinstance(tls, ModuleSpec):
+                        submodules = getattr(tls, "submodules", None)
+                        if isinstance(submodules, TransformerBlockSubmodules):
+                            layers = getattr(submodules, "layer_specs", None)
+                            if layers and len(layers) > 0:
+                                spec_for_mtp = layers[-1]
+                                log.info(
+                                    f"[MTPTrain] Extracted layer spec from "
+                                    f"TransformerBlockSubmodules (n_layers={len(layers)})"
+                                )
+                    elif isinstance(tls, TransformerBlockSubmodules):
+                        layers = getattr(tls, "layer_specs", None)
+                        if layers and len(layers) > 0:
+                            spec_for_mtp = layers[-1]
+
+                if spec_for_mtp is None:
+                    log.warning(
+                        "[MTPTrain] Could not extract layer spec from "
+                        "transformer_layer_spec; falling back to "
+                        "get_gpt_mtp_block_spec(config)."
+                    )
+                    from megatron.core.models.gpt.gpt_layer_specs import (
+                        get_gpt_mtp_block_spec,
+                    )
+                    resolved_spec = get_gpt_mtp_block_spec(config)
+                else:
+                    from megatron.core.models.gpt.gpt_layer_specs import (
+                        get_gpt_mtp_block_spec,
+                    )
+                    resolved_spec = get_gpt_mtp_block_spec(config, spec_for_mtp)
+
+                kwargs["mtp_block_spec"] = resolved_spec
+                log.info(
+                    f"[MTPTrain] Injected mtp_block_spec into GPTModel.__init__: "
+                    f"type={type(resolved_spec).__name__}"
+                )
+            except Exception as e:
+                log.error(
+                    f"[MTPTrain] Failed to auto-resolve mtp_block_spec: {e}. "
+                    "MTP layers will NOT be created.",
+                    exc_info=True,
+                )
+
+        return _original_init(self, *args, **kwargs)
+
+    GPTModel.__init__ = _patched_init
+    log.info("[MTPTrain] GPTModel.__init__ monkey-patched to auto-inject mtp_block_spec.")
+
+    def _restore():
+        GPTModel.__init__ = _original_init
+        log.info("[MTPTrain] GPTModel.__init__ restored to original.")
+
+    return _restore
+
+
 def make_mcore_model(
     hf_config: PretrainedConfig,
     tf_config: TransformerConfig,
@@ -282,24 +381,30 @@ def make_mcore_model(
         # Patch get_gpt_mtp_block_spec before mbridge calls it so that a
         # TransformerConfig passed as ``spec`` is auto-converted to the
         # correct ModuleSpec type expected by megatron-core.
+        _restore_mtp_inject = None
         if enable_mtp:
             _ensure_mtp_spec_compat()
             logger.info(
                 "[MTPTrain] Applied MTP spec compatibility patch before mbridge model creation."
             )
+            _restore_mtp_inject = _ensure_mtp_in_gpt_model(logger)
 
-        models = bridge.get_model(
-            # TODO: Add DDP options when supporting training
-            wrap_with_ddp=mcore_config.wrap_with_ddp,
-            ddp_config=dataclasses.asdict(mcore_config.ddp),
-            use_torch_fsdp2=mcore_config.use_torch_fsdp2,
-            use_custom_fsdp=mcore_config.use_custom_fsdp,
-            fp16=tf_config.fp16,
-            bf16=tf_config.bf16,
-            use_precision_aware_optimizer=mcore_config.use_precision_aware_optimizer,
-            overlap_param_gather_with_optimizer_step=mcore_config.overlap_param_gather_with_optimizer_step,
-        )
-        models = list(models)
+        try:
+            models = bridge.get_model(
+                # TODO: Add DDP options when supporting training
+                wrap_with_ddp=mcore_config.wrap_with_ddp,
+                ddp_config=dataclasses.asdict(mcore_config.ddp),
+                use_torch_fsdp2=mcore_config.use_torch_fsdp2,
+                use_custom_fsdp=mcore_config.use_custom_fsdp,
+                fp16=tf_config.fp16,
+                bf16=tf_config.bf16,
+                use_precision_aware_optimizer=mcore_config.use_precision_aware_optimizer,
+                overlap_param_gather_with_optimizer_step=mcore_config.overlap_param_gather_with_optimizer_step,
+            )
+            models = list(models)
+        finally:
+            if _restore_mtp_inject is not None:
+                _restore_mtp_inject()
 
         # Replace output_layer with ValueHead for critic models
         if is_critic:
