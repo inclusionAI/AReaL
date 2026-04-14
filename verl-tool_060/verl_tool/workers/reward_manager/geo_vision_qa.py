@@ -298,12 +298,12 @@ class GeoVisionQARewardManager:
 
             if data_source not in already_printed:
                 already_printed[data_source] = 0
-            should_print = already_printed[data_source] < self.num_examine or np.random.random() < 0.01
+            should_print = already_printed[data_source] < self.num_examine or np.random.random() < 0.03
             if should_print:
                 already_printed[data_source] += 1
                 print(f"[data_source] {data_source}")
                 prompt_display = re.sub(r"data:image/[^;]+;base64,[A-Za-z0-9+/=]+", "<image_base64>", prompt_str)
-                if np.random.random() < 0.3:
+                if np.random.random() < 0.1:
                     print(f"[prompt] {prompt_display}")
                 print(f"[response] {response_str}")
                 print(f"[ground_truth] {ground_truth}")

@@ -19,7 +19,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[$WORKSPACE/combined_train_rl_only.parquet]"
 val_data="[$WORKSPACE/combined_test_10pct.parquet]"
-run_name="reasonmap-rl-secondstage-4node_0414v3"
+run_name="reasonmap-rl-secondstage-4node_0414v4"
 rl_alg=grpo
 
 # ---- Cluster topology ----
@@ -27,17 +27,17 @@ n_gpus_per_node=8
 n_nodes=4
 
 # ---- Batch sizes (scaled for 4 nodes) ----
-n=8
-batch_size=32
-ppo_mini_batch_size=8
+n=4
+batch_size=64
+ppo_mini_batch_size=16
 
 # ---- Sequence lengths ----
 max_prompt_length=16384 
 max_response_length=32768
 max_action_length=4096
-max_obs_length=4096
-max_obs_length_image=8192
-max_obs_length_text=4096
+max_obs_length=8192
+max_obs_length_image=8192 
+max_obs_length_text=8192
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
 # ---- Sampling ----
@@ -71,8 +71,8 @@ ulysses_sequence_parallel_size=1
 fsdp_size=-1
 
 # ---- Memory ----
-gpu_memory_utilization=0.5
-do_offload=True
+gpu_memory_utilization=0.8
+do_offload=False
 use_dynamic_bsz=True
 
 # ---- Rollout ----
@@ -139,8 +139,8 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
-    data.val_batch_size=128 \
-    data.dataloader_num_workers=32 \
+    data.val_batch_size=256 \
+    data.dataloader_num_workers=64 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=False \
@@ -157,7 +157,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     actor_rollout_ref.actor.use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$ppo_max_token_len_per_gpu \
-    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.strategy=$strategy \
     actor_rollout_ref.actor.kl_loss_coef=$kl_loss_coef \
     actor_rollout_ref.actor.kl_loss_type=$kl_loss_type \
@@ -181,7 +181,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.agent.enable_mtrl=$enable_mtrl \
     actor_rollout_ref.agent.max_action_length=$max_action_length \
     actor_rollout_ref.agent.tool_call_timeout=600 \
-    actor_rollout_ref.agent.max_concurrent_trajectories=256 \
+    actor_rollout_ref.agent.max_concurrent_trajectories=512 \
     actor_rollout_ref.rollout.agent.num_workers=$(expr $n_nodes \* $n_gpus_per_node) \
     actor_rollout_ref.rollout.data_parallel_size=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$tensor_model_parallel_size \
@@ -195,7 +195,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.rollout.top_k=-1 \
     actor_rollout_ref.rollout.n=$n \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
-    actor_rollout_ref.rollout.max_num_seqs=16 \
+    actor_rollout_ref.rollout.max_num_seqs=32 \
     actor_rollout_ref.rollout.mode=$rollout_mode \
     actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
