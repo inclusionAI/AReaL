@@ -815,6 +815,90 @@ def convert_bailingmoe_to_hf(
 
     raise ValueError(f"Unknown parameter name: {name}")
 
+def convert_mimo_to_hf(
+    tf_config: TransformerConfig,
+    name: str,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
+):
+    """Convert MiMo model parameters from Megatron to HuggingFace format.
+
+    MiMo extends Qwen2 with MTP (Multi-Token Prediction) layers.
+    Non-MTP parameters are delegated to the Qwen2 converter.
+    """
+    if "mtp" in name:
+        return _convert_mimo_mtp_param(tf_config, name, param)
+
+    return convert_qwen2_to_hf(tf_config, name, param)
+
+
+def _convert_mimo_mtp_param(
+    tf_config: TransformerConfig,
+    name: str,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
+):
+    """Convert MiMo MTP layer parameters from Megatron to HuggingFace format.
+
+    MTP layers in MiMo contain:
+    - LayerNorms (enorm/token_layernorm, hnorm/hidden_layernorm, final_layernorm)
+    - Input projection (eh_proj/input_proj) with column-half swap
+    - Self attention (reuses Qwen2 attention structure via transformer_layer)
+    - MLP (reuses Qwen2 MLP structure via transformer_layer)
+
+    Handles two naming patterns produced by different megatron-core versions:
+    - module.module.mtp.layers.{idx}.{component}  (mcore native)
+    - module.module.decoder.mtp_layers.{idx}.{component}
+    """
+    mtp_pattern1 = r"module\.module\.mtp\.layers\.(\d+)\.(.+)"
+    mtp_pattern2 = r"module\.module\.decoder\.mtp_layers\.(\d+)\.(.+)"
+
+    match = re.match(mtp_pattern1, name)
+    if match is None:
+        match = re.match(mtp_pattern2, name)
+
+    if match is None:
+        raise ValueError(f"Invalid MiMo MTP parameter name: {name}")
+
+    layer_idx, component = match.groups()
+
+    # Direct mappings for MTP-specific components (Megatron -> HF)
+    direct_mappings = {
+        "enorm.weight": f"model.mtp_layers.{layer_idx}.token_layernorm.weight",
+        "hnorm.weight": f"model.mtp_layers.{layer_idx}.hidden_layernorm.weight",
+        "eh_proj.weight": f"model.mtp_layers.{layer_idx}.input_proj.weight",
+        "final_layernorm.weight": f"model.mtp_layers.{layer_idx}.final_layernorm.weight",
+    }
+
+    # MiMo-specific: swap column halves for eh_proj weight
+    if component == "eh_proj.weight":
+        first_half, second_half = param.chunk(2, dim=1)
+        param = torch.cat([second_half, first_half], dim=1)
+
+    # Check direct mappings first
+    if component in direct_mappings:
+        return [(direct_mappings[component], param)]
+
+    # Handle transformer_layer components by delegating to Qwen2 converter
+    if component.startswith("transformer_layer."):
+        transformer_component = component[len("transformer_layer."):]
+
+        # Create proxy name for reusing existing Qwen2 conversion
+        proxy_name = f"module.module.decoder.layers.{layer_idx}.{transformer_component}"
+
+        # Use existing convert_qwen2_to_hf for transformer components
+        results = convert_qwen2_to_hf(tf_config, proxy_name, param)
+
+        # Replace model.layers with model.mtp_layers in results
+        converted_results = []
+        for hf_name, hf_param in results:
+            hf_name = hf_name.replace(
+                f"model.layers.{layer_idx}", f"model.mtp_layers.{layer_idx}"
+            )
+            converted_results.append((hf_name, hf_param))
+
+        return converted_results
+
+    raise ValueError(f"Unknown MiMo MTP component: {component} in {name}")
+
 
 # Adapted from slime
 # A registry for conversion functions is more extensible.
@@ -828,6 +912,7 @@ _CONVERSION_FN_REGISTRY = {
     "bailing_moe_v2": convert_bailingmoe_to_hf,
     "bailing_moe_linear": convert_bailingmoe_to_hf,
     "bailing_hybrid": convert_bailingmoe_to_hf,
+    "mimo": convert_mimo_to_hf,
 }
 
 
