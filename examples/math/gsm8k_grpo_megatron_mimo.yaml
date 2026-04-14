@@ -8,7 +8,7 @@ tokenizer_path: ${actor.path}
 
 cluster:
   n_nodes: 1
-  n_gpus_per_node: 6
+  n_gpus_per_node: 8
   fileroot: /tmp/areal/experiments
   name_resolve:
     type: nfs
@@ -19,10 +19,10 @@ scheduler:
   type: null
 
 rollout:
-  backend: "sglang:d1p1t8"
+  backend: "sglang:d2p1t2"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 128
+  max_concurrent_rollouts: 256
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
@@ -40,13 +40,13 @@ gconfig:
   temperature: 1.0
 
 actor:
-  backend: "megatron:d1p1t8"
+  backend: "megatron:d1p1t4"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: /workspace/models/MiMo-7B-RL
   init_from_scratch: false
   disable_dropout: true
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 10240
