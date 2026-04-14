@@ -865,37 +865,54 @@ class MegatronEngine(TrainEngine):
                     mb_input.padded_mb.update(tree_kwargs)
                     tree_attn_keys = list(tree_kwargs.keys())
 
-            # Build MTP kwargs if MTP training is enabled AND this is a
-            # training pass (not forward-only inference like compute_logp).
+            # ---- MTP safety: disable in GPTModel._postprocess() ----
+            # megatron-core 0.16.x GPTModel._postprocess() has a known
+            # issue: the MTP loss block calls `labels.clone()` BEFORE
+            # the `if labels is None: return logits` early-return check.
+            # This causes AttributeError during inference (labels=None).
+            # Additionally, when labels ARE provided, _postprocess()
+            # returns loss (not logits), which is incompatible with
+            # AReaL's custom loss computation pipeline.
             #
-            # Megatron-core 0.16.x GPTModel.forward() computes MTP loss
-            # internally in _postprocess() when `labels` and `loss_mask`
-            # are provided.  These must be passed as top-level kwargs to
-            # GPTModel.forward(), NOT inside extra_block_kwargs — because
-            # GPTModel unpacks extra_block_kwargs via **-splat into
-            # TransformerBlock.forward() which does not accept them.
-            #
-            # We pass labels/loss_mask through extra_block_kwargs as a
-            # transport dict; packed_context_parallel_forward extracts
-            # them before the actual model() call.
+            # Workaround: temporarily disable MTP on the unwrapped
+            # GPTModel so that _postprocess() skips MTP entirely and
+            # always returns logits.  MTP parameters are still part of
+            # the model and will be saved/loaded with checkpoints.
             extra_block_kwargs = None
-            if self.enable_mtp_training and not forward_only:
-                mtp_labels = mb_input.padded_mb["input_ids"]
-                mtp_loss_mask = mb_input.padded_mb.get("loss_mask", None)
-
-                extra_block_kwargs = {"labels": mtp_labels}
-                if mtp_loss_mask is not None:
-                    extra_block_kwargs["loss_mask"] = mtp_loss_mask
-
-                self.logger.debug(
-                    f"[MTPTrain] Forward step: labels shape={mtp_labels.shape}, "
-                    f"dtype={mtp_labels.dtype}, "
-                    f"has_loss_mask={mtp_loss_mask is not None}, "
-                    f"mtp_num_layers={self.mtp_num_layers}"
+            _mtp_restore = None
+            if self.enable_mtp_training:
+                _unwrapped = model
+                while hasattr(_unwrapped, 'module'):
+                    _unwrapped = _unwrapped.module
+                _saved_mtp = getattr(_unwrapped, 'mtp', None)
+                _saved_mtp_layers = getattr(
+                    _unwrapped.config, 'mtp_num_layers', None
                 )
-            output = packed_context_parallel_forward(
-                model, mb_input.padded_mb, extra_block_kwargs=extra_block_kwargs
-            )
+                if _saved_mtp is not None or _saved_mtp_layers is not None:
+                    _unwrapped.mtp = None
+                    _unwrapped.config.mtp_num_layers = None
+                    _mtp_restore = (
+                        _unwrapped, _saved_mtp, _saved_mtp_layers,
+                    )
+                    self.logger.debug(
+                        f"[MTPTrain] Temporarily disabled MTP in "
+                        f"_postprocess (forward_only={forward_only}, "
+                        f"saved_mtp_num_layers={_saved_mtp_layers})"
+                    )
+
+            try:
+                output = packed_context_parallel_forward(
+                    model, mb_input.padded_mb,
+                    extra_block_kwargs=extra_block_kwargs,
+                )
+            finally:
+                if _mtp_restore is not None:
+                    _uw, _sm, _sl = _mtp_restore
+                    _uw.mtp = _sm
+                    _uw.config.mtp_num_layers = _sl
+                    self.logger.debug(
+                        "[MTPTrain] Restored MTP after forward pass"
+                    )
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
