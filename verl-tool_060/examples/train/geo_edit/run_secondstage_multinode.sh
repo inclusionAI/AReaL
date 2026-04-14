@@ -28,7 +28,7 @@ n_nodes=4
 
 # ---- Batch sizes (scaled for 4 nodes) ----
 n=4
-batch_size=64
+batch_size=32
 ppo_mini_batch_size=8
 
 # ---- Sequence lengths ----
@@ -36,7 +36,7 @@ max_prompt_length=16384
 max_response_length=32768
 max_action_length=4096
 max_obs_length=4096
-max_obs_length_image=4096
+max_obs_length_image=8192
 max_obs_length_text=2048
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
@@ -87,6 +87,7 @@ test_freq=10
 # ============================================================
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=WARN
+unset ROCR_VISIBLE_DEVICES
 mkdir -p $WORKSPACE/logs/$run_name
 
 action_stop_tokens_file="$WORKSPACE/logs/$run_name/action_stop_tokens.txt"

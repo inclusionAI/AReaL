@@ -3,6 +3,11 @@ set -x
 
 HEAD_PORT=${HEAD_PORT:-6379}
 HEAD_IP=$(hostname -I | awk '{print $1}')
+unset ROCR_VISIBLE_DEVICES
+
+for var in JUDGE_API_KEY JUDGE_API_BASE JUDGE_MODEL WANDB_API_KEY WANDB_BASE_URL; do
+    [ -n "${!var:-}" ] && export $var
+done
 
 ray stop --force 2>/dev/null
 ray start --head \

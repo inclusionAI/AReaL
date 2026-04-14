@@ -7,6 +7,11 @@ if [ -z "$HEAD_IP" ]; then
 fi
 
 HEAD_PORT=${HEAD_PORT:-6379}
+unset ROCR_VISIBLE_DEVICES
+
+for var in JUDGE_API_KEY JUDGE_API_BASE JUDGE_MODEL WANDB_API_KEY WANDB_BASE_URL; do
+    [ -n "${!var:-}" ] && export $var
+done
 
 ray stop --force 2>/dev/null
 ray start \
