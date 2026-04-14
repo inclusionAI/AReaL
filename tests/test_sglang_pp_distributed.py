@@ -11,7 +11,11 @@ Test matrix:
 
 Requires 4-8 GPUs to run.
 """
+import os
+import signal
 import subprocess
+import sys
+import threading
 
 import pytest
 
@@ -42,6 +46,45 @@ def _get_alloc_mode(engine_type: str, dp: int, pp: int, tp: int) -> str:
     if engine_type == "fsdp" and pp > 1:
         return f"fsdp:d{dp * pp}t{tp}"
     return f"{engine_type}:d{dp}p{pp}t{tp}"
+
+
+# ---------------------------------------------------------------------------
+# Helper: stream subprocess output in a background thread
+# ---------------------------------------------------------------------------
+
+def _reader_thread(pipe, collected, prefix):
+    """Read lines from *pipe*, print with a prefix, and append to *collected*."""
+    try:
+        for line in pipe:
+            sys.stdout.write(f"  [{prefix}] {line}")
+            sys.stdout.flush()
+            collected.append(line)
+    except ValueError:
+        pass  # pipe closed
+
+
+# ---------------------------------------------------------------------------
+# Helper: kill an entire process group (best-effort)
+# ---------------------------------------------------------------------------
+
+def _kill_process_tree(proc):
+    """Send SIGKILL to the process group rooted at *proc*.
+
+    torchrun spawns multiple worker processes.  Killing only the main
+    process may leave workers alive, holding GPU memory and NCCL state.
+    Using ``start_new_session=True`` when spawning the process ensures
+    the entire tree shares a single process group that can be killed
+    together.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    proc.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -82,19 +125,48 @@ def _run_test_with_torchrun(
         f"--engine_type={engine_type}",
     ]
 
+    tag = f"{engine_type}/{test_type}"
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"[torchrun] {tag}  alloc={alloc_mode}  gpus={n_gpus}", flush=True)
+    print(f"[torchrun] cmd: {' '.join(cmd)}", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    # ``start_new_session`` creates a dedicated process group so that
+    # ``_kill_process_tree`` can reliably terminate ALL torchrun workers
+    # on failure or timeout, preventing leaked GPU resources from blocking
+    # subsequent tests.
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+
+    collected: list[str] = []
+    reader = threading.Thread(
+        target=_reader_thread, args=(proc.stdout, collected, tag), daemon=True
+    )
+    reader.start()
+
     try:
-        result = subprocess.run(
-            cmd,
-            check=True,
-            text=True,
-            timeout=300,
-        )
-    except subprocess.CalledProcessError as e:
-        pytest.fail(
-            f"torchrun failed (returncode={e.returncode})"
-        )
+        returncode = proc.wait(timeout=300)
+        reader.join(timeout=5)
+
+        if returncode != 0:
+            tail = "".join(collected[-50:])
+            pytest.fail(
+                f"torchrun failed (returncode={returncode}):\n{tail}"
+            )
     except subprocess.TimeoutExpired:
-        pytest.fail("torchrun timed out after 300s")
+        _kill_process_tree(proc)
+        reader.join(timeout=5)
+        tail = "".join(collected[-50:])
+        pytest.fail(f"torchrun timed out after 300s. Last output:\n{tail}")
+    except Exception:
+        # Ensure cleanup on any unexpected error.
+        _kill_process_tree(proc)
+        raise
 
     with open(output) as f:
         content = f.read().strip()
