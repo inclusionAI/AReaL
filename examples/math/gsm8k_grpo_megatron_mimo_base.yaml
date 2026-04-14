@@ -78,11 +78,6 @@ actor:
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
 
-  # MTP Online Training - keeps EAGLE draft heads aligned with evolving policy
-  enable_mtp_training: true
-  mtp_num_layers: 1
-  mtp_loss_scaling_factor: 0.2
-
   scheduling_spec:
     - task_type: worker
       port_count: 2
@@ -91,10 +86,6 @@ actor:
       cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars: {}
 
-  megatron:
-    mtp_num_layers: 1
-    mtp_loss_scaling_factor: 0.2
-    
 ref:
   backend: ${actor.backend}
   experiment_name: ${experiment_name}
@@ -121,15 +112,6 @@ sglang:
   context_length: 32768
   mem_fraction_static: 0.4
 
-  # EAGLE speculative decoding settings
-  speculative_algorithm: "EAGLE"
-  speculative_draft_model_path: null
-  speculative_num_steps: 3
-  speculative_eagle_topk: 1
-  speculative_num_draft_tokens: 4
-  speculative_attention_mode: null
-  enable_draft_weights_cpu_backup: true
-  
 
 vllm:
   model: ${actor.path}
