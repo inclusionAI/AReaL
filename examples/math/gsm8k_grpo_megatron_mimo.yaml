@@ -40,7 +40,7 @@ gconfig:
   temperature: 1.0
 
 actor:
-  backend: "megatron:d1p1t4"
+  backend: "megatron:d1p1t6"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: /workspace/models/MiMo-7B-RL
@@ -119,7 +119,7 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 32768
-  mem_fraction_static: 0.5
+  mem_fraction_static: 0.4
 
   # EAGLE speculative decoding settings
   speculative_algorithm: "EAGLE"
