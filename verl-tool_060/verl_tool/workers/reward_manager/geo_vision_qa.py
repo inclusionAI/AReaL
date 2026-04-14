@@ -11,7 +11,7 @@ from verl.workers.reward_manager import register
 logger = logging.getLogger(__name__)
 
 _ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_RE = re.compile(r"</think>", re.IGNORECASE)
 _ACTION_RE = re.compile(r"<action>.*?</action>", re.DOTALL | re.IGNORECASE)
 
 

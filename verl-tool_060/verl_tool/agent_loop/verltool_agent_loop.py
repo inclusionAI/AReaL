@@ -83,6 +83,8 @@ class AgentActorConfig:
     val_max_response_length: int=None
     max_model_len: int=None  # Maximum model length, used for async rollout to limit the input length.
     max_obs_length: int=None
+    max_obs_length_image: int=None
+    max_obs_length_text: int=None
     max_action_length: int=None
     tool_server_url: str = None
     n: int=1
@@ -198,6 +200,8 @@ class VerlToolAgentLoop(AgentLoopBase):
             assert cls.response_length >= cls.train_max_response_length, f"rollout.response_length {cls.response_length} must be >= agent.train_max_response_length {cls.train_max_response_length}"
             cls.max_action_length = cls.agent_config.max_action_length
             cls.max_obs_length = cls.agent_config.max_obs_length if cls.agent_config.max_obs_length is not None else 512
+            cls.max_obs_length_image = cls.agent_config.max_obs_length_image or cls.max_obs_length
+            cls.max_obs_length_text = cls.agent_config.max_obs_length_text or cls.max_obs_length
             cls.max_turns = cls.agent_config.max_turns if cls.agent_config.max_turns > 0 else 10
             cls.val_max_turns = cls.agent_config.val_max_turns if cls.agent_config.val_max_turns > 0 else cls.agent_config.max_turns
             cls.logprobs = cls.agent_config.logprobs
@@ -471,7 +475,11 @@ class VerlToolAgentLoop(AgentLoopBase):
             "tool_interact_info": [],
             "is_traj_finished": False,
             "valid_traj": 1,
-            "retokenization_diff": []
+            "retokenization_diff": [],
+            "image_obs_total": 0,
+            "image_obs_truncated": 0,
+            "text_obs_total": 0,
+            "text_obs_truncated": 0,
         }
         
         if image_data or audio_data:
@@ -488,6 +496,8 @@ class VerlToolAgentLoop(AgentLoopBase):
         max_response_length = self.train_max_response_length if not kwargs.get("validate", False) else self.val_max_response_length
         max_action_length = self.max_action_length or max_response_length
         max_obs_length = self.max_obs_length
+        max_obs_length_image = self.max_obs_length_image
+        max_obs_length_text = self.max_obs_length_text
         
         agent_sampling_params = sampling_params.copy()
         agent_sampling_params.update({
@@ -517,6 +527,13 @@ class VerlToolAgentLoop(AgentLoopBase):
             agent_sampling_params["max_tokens"] = max_tokens_for_this_turn # for vllm
             logger.debug(f"Turn {step}: available_length={available_length}, max_tokens_for_this_turn={max_tokens_for_this_turn}")
             # agent_sampling_params["max_new_tokens"] = max_tokens_for_this_turn # for sglang
+            # Align image count with vision segments before generation to
+            # prevent vLLM AssertionError when obs truncation drops placeholders.
+            if running_image_data is not None:
+                vision_start_id = self.tokenizer.convert_tokens_to_ids("<|vision_start|>")
+                num_visual_segments = running_prompt_ids.count(vision_start_id)
+                if len(running_image_data) > num_visual_segments:
+                    running_image_data = running_image_data[:num_visual_segments]
             with simple_timer("generate_sequences", metrics):
                 output = await self.server_manager.generate(
                     request_id=request_id,
@@ -585,25 +602,23 @@ class VerlToolAgentLoop(AgentLoopBase):
                 # process observations and prepare for next turn
                 obs_text = tool_results['obs']
                 if tool_results.get('image', None):
+                    obs_limit = max_obs_length_image
+                    stats_dict["image_obs_total"] += 1
                     images = [tool_results['image']] if not isinstance(tool_results['image'], list) else tool_results['image']
                     decoded_images = [decode_image_url(img_url) for img_url in images]
                     running_image_data.extend(decoded_images)
-                    # add image placeholder token ids
-                    # first see whether there are <image> tags in obs_text
                     num_image_tags = obs_text.count("<image>")
                     if num_image_tags < len(decoded_images):
-                        # append at the end
                         obs_text += "<image>" * (len(decoded_images) - num_image_tags)
                         num_image_tags = len(decoded_images)
-                    # now replace <image> tags with image placeholder tokens
                     obs_text = obs_text.replace("<image>", self.qwen_image_placeholder, num_image_tags)
                     obs_token_ids = self.processor(text=[obs_text], images=decoded_images, return_tensors="pt")["input_ids"].squeeze(0).tolist()
-                    if max_obs_length < len(obs_token_ids):
+                    if obs_limit < len(obs_token_ids):
+                        stats_dict["image_obs_truncated"] += 1
                         if self.agent_config.truncate_obs_side == 'left':
-                            truncation_index = max_obs_length
-                            if obs_token_ids[max_obs_length] in self.non_truncate_token_ids:
-                                # find the nearest non-truncate token id before max_obs_length
-                                truncation_index = max_obs_length - 1
+                            truncation_index = obs_limit
+                            if obs_token_ids[obs_limit] in self.non_truncate_token_ids:
+                                truncation_index = obs_limit - 1
                                 while truncation_index > 0 and obs_token_ids[truncation_index] in self.non_truncate_token_ids:
                                     truncation_index -= 1
                             obs_token_ids = obs_token_ids[:truncation_index]
@@ -611,29 +626,23 @@ class VerlToolAgentLoop(AgentLoopBase):
                         else:
                             raise NotImplementedError(f"Only left truncation is supported for multimodal observations for now.")
                 elif tool_results.get('audio', None):
+                    obs_limit = max_obs_length_image
                     audios = [tool_results['audio']] if not isinstance(tool_results['audio'], list) else tool_results['audio']
                     decoded_audios = [decode_image_url(audio_url) for audio_url in audios]
                     running_audio_data.extend(decoded_audios)
-                    # add audio placeholder token ids
-                    # first see whether there are <audio> tags in obs_text
                     num_audio_tags = obs_text.count("<audio>")
                     if num_audio_tags < len(decoded_audios):
-                        # append at the end
                         obs_text += "<audio>" * (len(decoded_audios) - num_audio_tags)
                         num_audio_tags = len(decoded_audios)
-                    # now replace <audio> tags with audio placeholder tokens
                     obs_text = obs_text.replace("<audio>", self.qwen_audio_placeholder, num_audio_tags)
-                    # for mtrl
                     if self.enable_mtrl:
                         obs_text = self.mtrl_sep.format(obs=obs_text)
                     obs_token_ids = self.processor(text=[obs_text], audio=decoded_audios, return_tensors="pt")["input_ids"].squeeze(0).tolist()
-                    # obs_token_ids = obs_token_ids[:max_obs_length]
-                    if max_obs_length < len(obs_token_ids):
+                    if obs_limit < len(obs_token_ids):
                         if self.agent_config.truncate_obs_side == 'left':
-                            truncation_index = max_obs_length
-                            if obs_token_ids[max_obs_length] in self.non_truncate_token_ids:
-                                # find the nearest non-truncate token id before max_obs_length
-                                truncation_index = max_obs_length - 1
+                            truncation_index = obs_limit
+                            if obs_token_ids[obs_limit] in self.non_truncate_token_ids:
+                                truncation_index = obs_limit - 1
                                 while truncation_index > 0 and obs_token_ids[truncation_index] in self.non_truncate_token_ids:
                                     truncation_index -= 1
                             obs_token_ids = obs_token_ids[:truncation_index]
@@ -641,16 +650,19 @@ class VerlToolAgentLoop(AgentLoopBase):
                         else:
                             raise NotImplementedError(f"Only left truncation is supported for multimodal observations for now.")
                 else:
+                    obs_limit = max_obs_length_text
+                    stats_dict["text_obs_total"] += 1
                     obs_token_ids = self.tokenizer.encode(obs_text)
-                    if max_obs_length < len(obs_token_ids):
+                    if obs_limit < len(obs_token_ids):
+                        stats_dict["text_obs_truncated"] += 1
                         if self.agent_config.truncate_obs_side == 'left':
-                            obs_token_ids = obs_token_ids[-max_obs_length:]
+                            obs_token_ids = obs_token_ids[-obs_limit:]
                             obs_token_ids.extend(self.tokenizer.encode("...(truncated)"))
                         elif self.agent_config.truncate_obs_side == 'right':
-                            obs_token_ids = obs_token_ids[:max_obs_length]
+                            obs_token_ids = obs_token_ids[:obs_limit]
                             obs_token_ids.extend(self.tokenizer.encode("(truncated)..."))
                         elif self.agent_config.truncate_obs_side == 'middle':
-                            half_len = max_obs_length // 2
+                            half_len = obs_limit // 2
                             obs_token_ids = obs_token_ids[:half_len] + self.tokenizer.encode("...(truncated)...") + obs_token_ids[-half_len:]
                         else:
                             raise ValueError(f"Invalid truncate_obs_side: {self.agent_config.truncate_obs_side}")
@@ -772,6 +784,10 @@ class VerlToolAgentLoop(AgentLoopBase):
             "session_request_time": sum(info.get("session_request_time", 0.0) for info in stats_dict["tool_interact_info"]),
             "X-Process-Time_sec": sum(info.get("X-Process-Time", 0.0) for info in stats_dict["tool_interact_info"]),
             "close_traj_time": close_traj_time,
+            "image_obs_truncate_rate": stats_dict["image_obs_truncated"] / max(stats_dict["image_obs_total"], 1),
+            "text_obs_truncate_rate": stats_dict["text_obs_truncated"] / max(stats_dict["text_obs_total"], 1),
+            "image_obs_total": stats_dict["image_obs_total"],
+            "text_obs_total": stats_dict["text_obs_total"],
         }
         # additional metrics in tool_interact_info can be added later
         if stats_dict["tool_interact_info"] and all("metrics" in info for info in stats_dict["tool_interact_info"]):
