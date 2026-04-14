@@ -28,6 +28,23 @@ ENGINE_TYPES = ["megatron", "fsdp", "archon"]
 
 
 # ---------------------------------------------------------------------------
+# Helper: build a valid allocation string per engine type
+# ---------------------------------------------------------------------------
+
+def _get_alloc_mode(engine_type: str, dp: int, pp: int, tp: int) -> str:
+    """Build a valid allocation mode string for the given engine type.
+
+    FSDP training does not support pipeline parallelism (PP > 1).
+    When PP > 1 is requested for FSDP, the PP dimension is folded into DP
+    so that the total GPU count remains the same (dp * pp * tp).
+    The inference-side PP is controlled separately via ``gen_pp_size``.
+    """
+    if engine_type == "fsdp" and pp > 1:
+        return f"fsdp:d{dp * pp}t{tp}"
+    return f"{engine_type}:d{dp}p{pp}t{tp}"
+
+
+# ---------------------------------------------------------------------------
 # Helper: run a test via torchrun
 # ---------------------------------------------------------------------------
 
@@ -69,18 +86,15 @@ def _run_test_with_torchrun(
         result = subprocess.run(
             cmd,
             check=True,
-            capture_output=True,
             text=True,
-            timeout=600,
+            timeout=300,
         )
     except subprocess.CalledProcessError as e:
         pytest.fail(
-            f"torchrun failed (returncode={e.returncode}):\n"
-            f"stdout:\n{e.stdout}\n"
-            f"stderr:\n{e.stderr}"
+            f"torchrun failed (returncode={e.returncode})"
         )
     except subprocess.TimeoutExpired:
-        pytest.fail("torchrun timed out after 600s")
+        pytest.fail("torchrun timed out after 300s")
 
     with open(output) as f:
         content = f.read().strip()
@@ -106,7 +120,7 @@ def test_pp2_tp2_weight_group_init(tmp_path_factory, engine_type):
     if current_platform.device_count() < 4:
         pytest.skip("Requires at least 4 GPUs")
 
-    alloc_mode = f"{engine_type}:d1p2t2"
+    alloc_mode = _get_alloc_mode(engine_type, dp=1, pp=2, tp=2)
     output = tmp_path_factory.mktemp("test_output") / f"pp2_tp2_group_init_{engine_type}.out"
     _run_test_with_torchrun(
         alloc_mode=alloc_mode,
@@ -135,7 +149,7 @@ def test_dp2_pp2_tp2_weight_sync(tmp_path_factory, engine_type):
     if current_platform.device_count() < 8:
         pytest.skip("Requires 8 GPUs for DP=2, PP=2, TP=2")
 
-    alloc_mode = f"{engine_type}:d2p2t2"
+    alloc_mode = _get_alloc_mode(engine_type, dp=2, pp=2, tp=2)
     output = tmp_path_factory.mktemp("test_output") / f"dp2_pp2_tp2_sync_{engine_type}.out"
     _run_test_with_torchrun(
         alloc_mode=alloc_mode,
@@ -164,7 +178,7 @@ def test_pp1_backward_compatible(tmp_path_factory, engine_type):
     if current_platform.device_count() < 4:
         pytest.skip("Requires at least 4 GPUs")
 
-    alloc_mode = f"{engine_type}:d2p1t2"
+    alloc_mode = _get_alloc_mode(engine_type, dp=2, pp=1, tp=2)
     output = tmp_path_factory.mktemp("test_output") / f"pp1_backward_{engine_type}.out"
     _run_test_with_torchrun(
         alloc_mode=alloc_mode,
