@@ -27,15 +27,17 @@ n_gpus_per_node=8
 n_nodes=4
 
 # ---- Batch sizes (scaled for 4 nodes) ----
-n=2
+n=4
 batch_size=64
 ppo_mini_batch_size=8
 
 # ---- Sequence lengths ----
-max_prompt_length=16384
-max_response_length=16384
+max_prompt_length=16384 
+max_response_length=32768
 max_action_length=4096
 max_obs_length=4096
+max_obs_length_image=4096
+max_obs_length_text=2048
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
 # ---- Sampling ----
@@ -74,7 +76,7 @@ do_offload=True
 use_dynamic_bsz=True
 
 # ---- Rollout ----
-max_num_batched_tokens=32768
+max_num_batched_tokens=$(expr $max_prompt_length + $max_response_length)
 rollout_mode='async'
 
 # ---- Schedule ----
