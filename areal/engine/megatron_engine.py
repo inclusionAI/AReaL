@@ -866,18 +866,23 @@ class MegatronEngine(TrainEngine):
                     tree_attn_keys = list(tree_kwargs.keys())
 
             # ---- MTP safety: disable in GPTModel._postprocess() ----
-            # megatron-core 0.16.x GPTModel._postprocess() has a known
-            # issue: the MTP loss block calls `labels.clone()` BEFORE
-            # the `if labels is None: return logits` early-return check.
-            # This causes AttributeError during inference (labels=None).
-            # Additionally, when labels ARE provided, _postprocess()
-            # returns loss (not logits), which is incompatible with
-            # AReaL's custom loss computation pipeline.
+            # megatron-core 0.16.x GPTModel._postprocess() has known
+            # issues that crash both inference and training paths:
             #
-            # Workaround: temporarily disable MTP on the unwrapped
-            # GPTModel so that _postprocess() skips MTP entirely and
-            # always returns logits.  MTP parameters are still part of
-            # the model and will be saved/loaded with checkpoints.
+            # 1) `if mtp_in_postprocess:` calls `self.mtp(...)`.
+            #    `mtp_in_postprocess` comes from `self.mtp_process`,
+            #    a bool cached in __init__ from `mtp_block_spec is
+            #    not None`.  Setting self.mtp=None is NOT enough —
+            #    self.mtp_process must also be set to False.
+            # 2) `if self.config.mtp_num_layers is not None:` calls
+            #    `labels.clone()` BEFORE the `labels is None` early
+            #    return, crashing during inference.
+            # 3) When labels IS provided, _postprocess() returns loss
+            #    (not logits), incompatible with AReaL's loss pipeline.
+            #
+            # Workaround: temporarily disable all three MTP flags on
+            # the unwrapped GPTModel so _postprocess() skips MTP
+            # entirely and always returns logits.
             extra_block_kwargs = None
             _mtp_restore = None
             if self.enable_mtp_training:
@@ -885,18 +890,30 @@ class MegatronEngine(TrainEngine):
                 while hasattr(_unwrapped, 'module'):
                     _unwrapped = _unwrapped.module
                 _saved_mtp = getattr(_unwrapped, 'mtp', None)
+                _saved_mtp_process = getattr(
+                    _unwrapped, 'mtp_process', None
+                )
                 _saved_mtp_layers = getattr(
                     _unwrapped.config, 'mtp_num_layers', None
                 )
-                if _saved_mtp is not None or _saved_mtp_layers is not None:
+                if (
+                    _saved_mtp is not None
+                    or _saved_mtp_process
+                    or _saved_mtp_layers is not None
+                ):
                     _unwrapped.mtp = None
+                    _unwrapped.mtp_process = False
                     _unwrapped.config.mtp_num_layers = None
                     _mtp_restore = (
-                        _unwrapped, _saved_mtp, _saved_mtp_layers,
+                        _unwrapped,
+                        _saved_mtp,
+                        _saved_mtp_process,
+                        _saved_mtp_layers,
                     )
                     self.logger.debug(
                         f"[MTPTrain] Temporarily disabled MTP in "
                         f"_postprocess (forward_only={forward_only}, "
+                        f"saved_mtp_process={_saved_mtp_process}, "
                         f"saved_mtp_num_layers={_saved_mtp_layers})"
                     )
 
@@ -907,8 +924,9 @@ class MegatronEngine(TrainEngine):
                 )
             finally:
                 if _mtp_restore is not None:
-                    _uw, _sm, _sl = _mtp_restore
+                    _uw, _sm, _sp, _sl = _mtp_restore
                     _uw.mtp = _sm
+                    _uw.mtp_process = _sp
                     _uw.config.mtp_num_layers = _sl
                     self.logger.debug(
                         "[MTPTrain] Restored MTP after forward pass"
