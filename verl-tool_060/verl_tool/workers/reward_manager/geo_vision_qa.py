@@ -289,7 +289,7 @@ class GeoVisionQARewardManager:
 
             if data_source not in already_printed:
                 already_printed[data_source] = 0
-            should_print = already_printed[data_source] < self.num_examine or np.random.random() < 0.05
+            should_print = already_printed[data_source] < self.num_examine or np.random.random() < 0.01
             if should_print:
                 already_printed[data_source] += 1
                 print(f"[data_source] {data_source}")

@@ -28,13 +28,13 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/Qwen3-VL-8B-Thinking}
 
 train_data="[$WORKSPACE/combined_train.parquet]"
 val_data="[$WORKSPACE/combined_test_10pct.parquet]"
-run_name="reasonmap-rl-zero-full-3ep-v2"
+run_name="reasonmap-rl-zero-full-3ep-v3"
 rl_alg=grpo
 n_gpus_per_node=8
 n_nodes=1 
-n=2
-batch_size=32
-ppo_mini_batch_size=4
+n=8
+batch_size=16
+ppo_mini_batch_size=2
 max_prompt_length=16384
 max_response_length=16384
 max_action_length=4096

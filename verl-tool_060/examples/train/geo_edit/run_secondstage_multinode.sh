@@ -19,7 +19,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[$WORKSPACE/combined_train_rl_only.parquet]"
 val_data="[$WORKSPACE/combined_test_10pct.parquet]"
-run_name="reasonmap-rl-secondstage-4node"
+run_name="reasonmap-rl-secondstage-4node_0414v2"
 rl_alg=grpo
 
 # ---- Cluster topology ----
@@ -27,7 +27,7 @@ n_gpus_per_node=8
 n_nodes=4
 
 # ---- Batch sizes (scaled for 4 nodes) ----
-n=4
+n=8
 batch_size=32
 ppo_mini_batch_size=8
 
@@ -172,6 +172,8 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.agent.max_response_length=$max_response_length \
     actor_rollout_ref.agent.max_start_length=$max_prompt_length \
     actor_rollout_ref.agent.max_obs_length=$max_obs_length \
+    +actor_rollout_ref.agent.max_obs_length_image=$max_obs_length_image \
+    +actor_rollout_ref.agent.max_obs_length_text=$max_obs_length_text \
     actor_rollout_ref.agent.max_turns=$max_turns \
     actor_rollout_ref.agent.additional_eos_token_ids=$additional_eos_token_ids \
     actor_rollout_ref.agent.mask_observations=$mask_observations \
@@ -180,6 +182,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.agent.max_action_length=$max_action_length \
     actor_rollout_ref.agent.tool_call_timeout=600 \
     actor_rollout_ref.agent.max_concurrent_trajectories=64 \
+    actor_rollout_ref.rollout.agent.num_workers=$(expr $n_nodes \* $n_gpus_per_node) \
     actor_rollout_ref.rollout.data_parallel_size=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$tensor_model_parallel_size \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$log_prob_micro_batch_size_per_gpu \
