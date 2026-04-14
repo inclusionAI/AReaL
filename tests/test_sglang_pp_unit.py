@@ -13,7 +13,7 @@ Also tests allocation mode parsing with PP dimension and patch module imports.
 import pytest
 from unittest.mock import MagicMock, patch
 
-from areal.api.alloc_mode import ModelAllocation, ParallelStrategy
+from areal.api.alloc_mode import AllocationValidationError, ModelAllocation, ParallelStrategy
 from areal.api.io_struct import WeightUpdateMeta
 from areal.engine.sglang_remote import SGLangBackend
 
@@ -233,9 +233,8 @@ class TestAllocationModeParsing:
         assert alloc.parallel.world_size == 8
 
     def test_fsdp_with_pp(self):
-        alloc = ModelAllocation.from_str("fsdp:d2p2t2")
-        assert alloc.parallel.pp_size == 2
-        assert alloc.parallel.tp_size == 2
+        with pytest.raises(AllocationValidationError, match="FSDP backend only supports"):
+            ModelAllocation.from_str("fsdp:d2p2t2")
 
     def test_world_size_computation(self):
         """world_size = dp * pp * tp."""
