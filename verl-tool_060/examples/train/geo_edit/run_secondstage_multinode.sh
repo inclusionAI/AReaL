@@ -19,7 +19,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[$WORKSPACE/combined_train_rl_only.parquet]"
 val_data="[$WORKSPACE/combined_test_10pct.parquet]"
-run_name="reasonmap-rl-secondstage-4node_0414v2"
+run_name="reasonmap-rl-secondstage-4node_0414v3"
 rl_alg=grpo
 
 # ---- Cluster topology ----
@@ -37,7 +37,7 @@ max_response_length=32768
 max_action_length=4096
 max_obs_length=4096
 max_obs_length_image=8192
-max_obs_length_text=2048
+max_obs_length_text=4096
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
 # ---- Sampling ----
@@ -149,7 +149,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.model.path=$model_name \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=$lr \
-    actor_rollout_ref.actor.optim.lr_warmup_steps=8 \
+    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.05 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.actor.checkpoint.save_contents=['model','optimizer','extra','hf_model'] \
@@ -181,7 +181,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.agent.enable_mtrl=$enable_mtrl \
     actor_rollout_ref.agent.max_action_length=$max_action_length \
     actor_rollout_ref.agent.tool_call_timeout=600 \
-    actor_rollout_ref.agent.max_concurrent_trajectories=64 \
+    actor_rollout_ref.agent.max_concurrent_trajectories=256 \
     actor_rollout_ref.rollout.agent.num_workers=$(expr $n_nodes \* $n_gpus_per_node) \
     actor_rollout_ref.rollout.data_parallel_size=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$tensor_model_parallel_size \

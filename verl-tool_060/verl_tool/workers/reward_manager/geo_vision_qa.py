@@ -42,29 +42,38 @@ def compute_score(prediction: str, ground_truth) -> float:
 
 
 def _compute_reasonmap_plus_score(prediction: str, ground_truth, qtype: str = "") -> float:
-    """ReasonMap Plus: TorF → Yes/No normalisation, Counting → numeric match."""
+    """ReasonMap Plus: TorF → Yes/No normalisation, Counting MCQ → ABCD/index, Counting → numeric."""
     if not prediction:
         return 0.0
 
     gt_str = str(ground_truth).strip()
+    pred = prediction.strip().lower()
 
     if qtype.startswith("TorF"):
         try:
             gt_normalised = "yes" if int(gt_str) == 1 else "no"
         except (ValueError, TypeError):
             gt_normalised = gt_str.lower()
-        return 1.0 if prediction.strip().lower() == gt_normalised else 0.0
+        return 1.0 if pred == gt_normalised else 0.0
+
+    if qtype == "Counting1":
+        _LETTER_TO_IDX = {"a": "0", "b": "1", "c": "2", "d": "3"}
+        _IDX_TO_LETTER = {v: k for k, v in _LETTER_TO_IDX.items()}
+        pred_normalised = _LETTER_TO_IDX.get(pred, pred)
+        gt_normalised = _LETTER_TO_IDX.get(gt_str.lower(), gt_str)
+        if pred_normalised == gt_normalised:
+            return 1.0
+        gt_as_letter = _IDX_TO_LETTER.get(gt_str, gt_str.lower())
+        if pred == gt_as_letter:
+            return 1.0
+        return 0.0
 
     return compute_score(prediction, ground_truth)
 
 
 def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) -> float:
     """ReasonMap base: route topology verification."""
-    try:
-        from geo_edit.evaluation.reason_map_verifier import reason_map_score
-    except ImportError:
-        logger.warning("reason_map_verifier not available, falling back to exact match")
-        return compute_score(prediction, ground_truth)
+    from geo_edit.evaluation.reason_map_verifier import reason_map_score
 
     station_1 = extra.get("station_1", "")
     station_2 = extra.get("station_2", "")
@@ -294,7 +303,8 @@ class GeoVisionQARewardManager:
                 already_printed[data_source] += 1
                 print(f"[data_source] {data_source}")
                 prompt_display = re.sub(r"data:image/[^;]+;base64,[A-Za-z0-9+/=]+", "<image_base64>", prompt_str)
-                print(f"[prompt] {prompt_display}")
+                if np.random.random() < 0.3:
+                    print(f"[prompt] {prompt_display}")
                 print(f"[response] {response_str}")
                 print(f"[ground_truth] {ground_truth}")
                 print(f"[prediction] {prediction}")
