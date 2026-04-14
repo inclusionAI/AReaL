@@ -8,16 +8,15 @@ tokenizer_path: ${actor.path}
 
 cluster:
   n_nodes: 1
-  n_gpus_per_node: 8
+  n_gpus_per_node: 6
   fileroot: /tmp/areal/experiments
   name_resolve:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
+
 scheduler:
   type: null
-
-allocation_mode: "sglang[rollout]:d1p1t8|megatron[actor]:d1p1t8"
 
 rollout:
   backend: "sglang:d1p1t8"
@@ -36,7 +35,7 @@ rollout:
 gconfig:
   n_samples: 4
   min_new_tokens: 0
-  max_new_tokens: 1024
+  max_new_tokens: 2048
   greedy: false
   temperature: 1.0
 
@@ -120,7 +119,7 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 32768
-  mem_fraction_static: 0.5
+  mem_fraction_static: 0.4
 
   # EAGLE speculative decoding settings
   speculative_algorithm: "EAGLE"
