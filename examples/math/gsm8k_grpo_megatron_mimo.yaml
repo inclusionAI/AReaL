@@ -81,7 +81,7 @@ actor:
   # MTP Online Training - keeps EAGLE draft heads aligned with evolving policy
   enable_mtp_training: true
   mtp_num_layers: 1
-  mtp_loss_scaling_factor: 0.1
+  mtp_loss_scaling_factor: 0.2
 
   scheduling_spec:
     - task_type: worker
