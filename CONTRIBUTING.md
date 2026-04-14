@@ -1,7 +1,7 @@
 # Contributing to AReaL
 
 Thank you for your interest in contributing to AReaL! We welcome contributions from
-everyone, whether you're fixing bugs, improving documentation, adding new features, or
+everyone, whether you're fixing bugs, improving documentations, adding new features, or
 helping with code reviews. This guide will help you get started.
 
 Please review our [Code of Conduct](CODE_OF_CONDUCT.md) before participating and our

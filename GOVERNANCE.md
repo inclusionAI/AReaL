@@ -6,8 +6,9 @@ This document describes how the AReaL project is governed.
 
 ### Contributors
 
-Anyone who files issues, submits pull requests, or participates in discussions.
-Contributors are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+Anyone who files issues, submits pull requests, or participates in discussions is
+considered a contributor. All contributors are expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ### Maintainers
 
@@ -40,10 +41,11 @@ current maintainers listed above.
 Decisions are made by consensus among maintainers whenever possible. When consensus
 cannot be reached, the lead maintainer makes the final decision.
 
-For routine changes, such as bug fixes and minor improvements, a single maintainer’s
-approval is sufficient for merging. For more substantial changes, including new
-features, architectural updates, or modifications to the public API, approval from the
-lead maintainer or at least two other maintainers is required.
+Pull request approval policy:
+
+- Bug fixes or minor improvements: approved by at least one maintainer.
+- New features, architectural changes, or API modifications: approved by at least two
+  maintainers or the lead maintainer.
 
 ## Becoming a Maintainer
 
