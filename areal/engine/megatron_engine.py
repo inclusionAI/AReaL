@@ -461,8 +461,6 @@ class MegatronEngine(TrainEngine):
             # Non-last stages legitimately have 0 MTP params.
             is_last_stage = True
             try:
-                import megatron.core.parallel_state as mpu
-
                 if mpu.is_initialized() and mpu.get_pipeline_model_parallel_world_size() > 1:
                     is_last_stage = mpu.is_pipeline_last_stage()
             except Exception:
