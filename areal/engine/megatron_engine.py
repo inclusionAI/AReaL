@@ -1429,7 +1429,7 @@ class MegatronEngine(TrainEngine):
             )
 
             fut.result()
-            self.rollout_engine.pause_generation()
+            self.rollout_engine.continue_generation()
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
