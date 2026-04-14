@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Router communication and request forwarding utilities for the gateway."""
 
 from __future__ import annotations

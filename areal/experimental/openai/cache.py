@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import threading
 from collections import OrderedDict
 from typing import Any

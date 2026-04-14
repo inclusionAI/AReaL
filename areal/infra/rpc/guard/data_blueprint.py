@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Data Blueprint: RTensor ``/data/*`` storage endpoints.
 
 Provides a Flask Blueprint that handles tensor shard storage and

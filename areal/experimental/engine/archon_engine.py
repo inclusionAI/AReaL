@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 import dataclasses
@@ -1365,6 +1367,15 @@ class ArchonPPOActor(ArchonEngine):
 
     @classmethod
     def as_controller(cls, config, scheduler: Scheduler):
+        if config._version == "v2":
+            from areal.trainer.ppo.actor import PPOActorControllerV2
+
+            return PPOActorControllerV2(
+                train_engine=cls,
+                config=config,
+                scheduler=scheduler,
+            )
+
         from areal.trainer.ppo.actor import PPOActorController
 
         return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1388,6 +1399,15 @@ class ArchonPPOCritic(ArchonEngine):
 
     @classmethod
     def as_controller(cls, config, scheduler: Scheduler):
+        if config._version == "v2":
+            from areal.trainer.ppo.critic import PPOCriticControllerV2
+
+            return PPOCriticControllerV2(
+                train_engine=cls,
+                config=config,
+                scheduler=scheduler,
+            )
+
         from areal.trainer.ppo.critic import PPOCriticController
 
         return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1410,6 +1430,15 @@ class ArchonLMEngine(ArchonEngine):
 
     @classmethod
     def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
+        if config._version == "v2":
+            from areal.trainer.sft.lm_engine import LMControllerV2
+
+            return LMControllerV2(
+                train_engine=cls,
+                config=config,
+                scheduler=scheduler,
+            )
+
         from areal.trainer.sft.lm_engine import LMController
 
         return LMController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1439,6 +1468,11 @@ class ArchonRWEngine(ArchonEngine):
 
     @classmethod
     def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
+        if config._version == "v2":
+            from areal.trainer.rw.rw_engine import RWControllerV2
+
+            return RWControllerV2(train_engine=cls, config=config, scheduler=scheduler)
+
         from areal.trainer.rw.rw_engine import RWController
 
         return RWController(train_engine=cls, config=config, scheduler=scheduler)

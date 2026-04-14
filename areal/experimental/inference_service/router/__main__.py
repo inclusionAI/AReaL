@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """CLI entrypoint for the router: ``python -m areal.experimental.inference_service.router``."""
 
 from __future__ import annotations

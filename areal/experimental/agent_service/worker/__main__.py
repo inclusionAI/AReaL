@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """``python -m areal.experimental.agent_service.worker``"""
 
 import argparse

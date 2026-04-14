@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from math_verify.metric import math_metric
 from math_verify.parser import ExprExtractionConfig, LatexExtractionConfig
 

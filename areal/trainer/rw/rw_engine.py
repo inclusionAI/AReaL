@@ -1,9 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from typing import Any
 
 import torch
 
 from areal.api import TrainEngine
+from areal.experimental.training_service.controller.controller import (
+    GatewayTrainController,
+)
 from areal.infra import TrainController
+from areal.infra.rpc.serialization import serialize_value
 from areal.utils import logging, stats_tracker
 from areal.utils.data import batched_call
 from areal.utils.perf_tracer import trace_perf
@@ -86,6 +92,24 @@ class RWController(TrainController):
             rpc_meta={"broadcast": True},
             **kwargs,
         )
+
+
+class RWControllerV2(GatewayTrainController):
+    def train_rw(self, *args, **kwargs):
+        payload = {
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        self._gateway_post_result("/rw/train", payload)
+
+    def evaluate_rw(self, *args, **kwargs):
+        kwargs = dict(kwargs)
+        kwargs.setdefault("group_size", 2)
+        payload = {
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        self._gateway_post_result("/rw/evaluate", payload)
 
 
 def compute_rw_loss(scores: torch.Tensor, input_: dict[str, Any]) -> torch.Tensor:

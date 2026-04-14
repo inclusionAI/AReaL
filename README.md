@@ -12,21 +12,26 @@
 
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
 
-AReaL is an open-source **fully asynchronous** reinforcement learning training system
-for large **reasoning and agentic models**, developed by members from Tsinghua IIIS and
-the AReaL Team at Ant Group. Built upon the open-source project
-[ReaLHF](https://github.com/openpsi-project/ReaLHF), we are fully committed to
-open-source principles by providing the training details, data, and infrastructure
-required to reproduce our results, along with the models themselves. AReaL aims to help
-everyone build their own AI agents easily and affordably. Our team loves milk tea
-because it's delicious, customizable, and affordable—we hope you enjoy our project just
-as much as you'd enjoy real milk tea. Cheers!
+**AReaL** is a reinforcement learning (RL) infrastructure designed to bridge foundation
+model training with modern agent-based applications. It was originally developed by
+researchers and engineers from Tsinghua IIIS and the AReaL Team at Ant Group.
+
+Built on a **fully asynchronous RL training paradigm**, AReaL is optimized for
+efficiency and scalability, making it particularly well-suited for training large-scale
+**reasoning and agentic models**.
+
+AReaL’s mission is to make building AI agents **accessible, efficient, and
+cost-effective** for a broad community of developers and researchers.
+
+> Like milk tea - customizable, scalable, and enjoyable - we hope AReaL brings both
+> flexibility and delight to your AI development experience. Cheers!
 
 **AReaL Highlights**
 
 - ⚡ **Flexibility**: Seamless customization for
   [agentic RL](https://inclusionai.github.io/AReaL/en/tutorial/agentic_rl.html) and
-  [online RL training](./examples/openclaw/) by simply replacing the `base_url`.
+  [online RL training](https://www.inclusion-ai.org/AReaL/en/tutorial/online_proxy.html)
+  for **black-box agent applications** by simply replacing the `base_url`.
 - 📈 **Scalability**: **Stable** fully asynchronous RL training with **industry-leading
   speed**.
 - ✨ **Cutting-Edge Performance**: State-of-the-art [math](/blog/AReaL_v0_2.md),
@@ -116,12 +121,13 @@ model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
 python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml scheduler.type=local
 ```
 
-To run on a Ray cluster with 2 nodes and 8 GPUs per node (remember to update paths in
-the YAML file to point to your shared storage):
+If you prefer to run experiments on a Ray cluster, update paths in the YAML file to
+point to your shared storage, and run:
 
 ```bash
 python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
   cluster.n_nodes=2 cluster.n_gpus_per_node=8 \
+  cluster.fileroot=/path/to/nfs \
   scheduler.type=ray
 ```
 
@@ -297,7 +303,7 @@ git push
 ## 🗺️ Future Roadmap
 
 - **[Full Roadmap](ROADMAP.md)**
-- **[2025 Q4 Roadmap](https://github.com/inclusionAI/AReaL/issues/542)**
+- **[2026 Q1 Roadmap](https://github.com/inclusionAI/AReaL/issues/907)**
 
 AReaL is under active development with planned minor releases weekly and major releases
 monthly. We warmly welcome community engagement and contributions. We are also
@@ -339,6 +345,10 @@ outstanding projects, including but not limited to
 [SGLang](https://github.com/sgl-project/sglang), [QwQ](https://github.com/QwenLM/QwQ),
 [Light-R1](https://github.com/Qihoo360/Light-R1), and
 [DAPO](https://github.com/BytedTsinghua-SIA/DAPO).
+
+## 📜 License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
 
 ## 📄 Citation
 

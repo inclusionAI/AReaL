@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """CLI entrypoint: python -m areal.infra.data_service.gateway"""
 
 from __future__ import annotations

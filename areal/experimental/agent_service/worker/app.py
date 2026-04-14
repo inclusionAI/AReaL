@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Agent Worker — stateless HTTP server for agent execution."""
 
 from __future__ import annotations

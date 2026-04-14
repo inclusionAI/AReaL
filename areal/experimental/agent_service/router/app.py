@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Agent Router — session-affine routing service."""
 
 from __future__ import annotations

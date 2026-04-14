@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from areal.utils.functional.functional import (
     compute_behave_imp_weight,
     masked_normalization,

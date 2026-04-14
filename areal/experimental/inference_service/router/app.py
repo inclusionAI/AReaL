@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Router service — stateful routing, session pinning, worker registry.
 
 The Router is a separate FastAPI service from the Gateway.

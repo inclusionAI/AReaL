@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Tensor and dataclass serialization utilities for RPC communication.
 
 This module provides utilities to serialize and deserialize PyTorch tensors

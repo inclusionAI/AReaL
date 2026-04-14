@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Agent Gateway — public-facing HTTP/WebSocket server."""
 
 from __future__ import annotations

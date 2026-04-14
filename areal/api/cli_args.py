@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import argparse
 import json
 import os
@@ -1133,6 +1135,33 @@ class TrainEngineConfig:
             "e.g. 'fsdp:d4', 'megatron:d4t2p2', 'archon:d2'. Required."
         },
     )
+
+    # v2 controller options
+    _version: str = field(
+        default="v1",
+        metadata={
+            "help": "Train controller implementation version. Use 'v1' for legacy TrainController, 'v2' for GatewayTrainController.",
+            "choices": ["v1", "v2"],
+        },
+    )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": "Admin API key used by gateway/router/data-proxy in controller v2."
+        },
+    )
+    log_level: str = field(
+        default="warning",
+        metadata={"help": "Gateway stack log level for controller v2."},
+    )
+    request_timeout: float = field(
+        default=3600.0,
+        metadata={"help": "Gateway request timeout in seconds for controller v2."},
+    )
+    setup_timeout: float = field(
+        default=3600.0,
+        metadata={"help": "Gateway setup timeout in seconds for controller v2."},
+    )
     scheduling_strategy: SchedulingStrategy = field(
         default_factory=SchedulingStrategy,
         metadata={
@@ -1155,6 +1184,10 @@ class TrainEngineConfig:
                 "memory_efficient_load cannot be used with init_from_scratch=True. "
                 "memory_efficient_load is for loading pretrained weights on CPU, "
                 "but init_from_scratch creates a model without loading any weights."
+            )
+        if self._version not in ("v1", "v2"):
+            raise ValueError(
+                f"_version must be either 'v1' or 'v2', got '{self._version}'"
             )
 
 
