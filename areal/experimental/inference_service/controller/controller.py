@@ -90,18 +90,23 @@ class GatewayInferenceController:
         # Parse allocation from config.backend
         self.rollout_alloc = ModelAllocation.from_str(config.backend)
 
-        # Multi-node validation
-        nnodes = config.nnodes
-        if nnodes < 1:
-            raise ValueError(f"nnodes must be >= 1, got {nnodes}")
+        # Multi-node: derive nnodes_per_instance from n_gpus_per_node
         total_gpus = (
             self.rollout_alloc.parallel.tp_size * self.rollout_alloc.parallel.pp_size
         )
-        if total_gpus % nnodes != 0:
-            raise ValueError(
-                f"tp_size * pp_size ({total_gpus}) must be divisible by nnodes ({nnodes})"
-            )
-        self._nnodes = nnodes
+        n_gpus_per_node = config.n_gpus_per_node
+        if n_gpus_per_node is None:
+            nnodes_per_instance = 1
+        else:
+            if n_gpus_per_node < 1:
+                raise ValueError(f"n_gpus_per_node must be >= 1, got {n_gpus_per_node}")
+            if total_gpus % n_gpus_per_node != 0:
+                raise ValueError(
+                    f"tp_size * pp_size ({total_gpus}) must be divisible "
+                    f"by n_gpus_per_node ({n_gpus_per_node})"
+                )
+            nnodes_per_instance = total_gpus // n_gpus_per_node
+        self._nnodes_per_instance = nnodes_per_instance
 
         # Worker management
         self.workers: list[Worker] = []
@@ -237,12 +242,12 @@ class GatewayInferenceController:
         inf_backend = alloc.backend
 
         # ==================================================================
-        # Step 0: Create RPCGuard workers (dp_size × nnodes)
+        # Step 0: Create RPCGuard workers (dp_size × nnodes_per_instance)
         # ==================================================================
         inf_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
         instance_size = alloc.parallel.tp_size * alloc.parallel.pp_size
-        nnodes = self._nnodes
-        gpus_per_node = instance_size // nnodes
+        nnodes_per_instance = self._nnodes_per_instance
+        gpus_per_worker = instance_size // nnodes_per_instance
 
         if server_infos is not None:
             # Pre-existing inference servers — only need dp_size workers
@@ -250,11 +255,11 @@ class GatewayInferenceController:
             total_workers = dp_size
             inf_spec.gpu = 0
         else:
-            total_workers = dp_size * nnodes
-            inf_spec.cpu *= gpus_per_node
-            inf_spec.mem *= gpus_per_node
+            total_workers = dp_size * nnodes_per_instance
+            inf_spec.cpu *= gpus_per_worker
+            inf_spec.mem *= gpus_per_worker
             if inf_spec.gpu > 0:
-                inf_spec.gpu = gpus_per_node
+                inf_spec.gpu = gpus_per_worker
 
         # Override cmd to launch RPCGuard instead of RPC server
         inf_spec.cmd = "python -m areal.experimental.inference_service.guard"
@@ -371,14 +376,15 @@ class GatewayInferenceController:
             # For each inference instance group: alloc ports, build cmd, fork servers
             for group_idx in range(dp_size):
                 group_workers = inf_workers[
-                    group_idx * nnodes : (group_idx + 1) * nnodes
+                    group_idx * nnodes_per_instance : (group_idx + 1)
+                    * nnodes_per_instance
                 ]
                 head_worker = group_workers[0]
                 head_guard_addr = f"http://{format_hostport(head_worker.ip, int(head_worker.worker_ports[0]))}"
 
                 # Allocate rendezvous port on head node for distributed init
                 dist_init_addr = None
-                if nnodes > 1:
+                if nnodes_per_instance > 1:
                     resp = requests.post(
                         f"{head_guard_addr}/alloc_ports",
                         json={"count": 1},
@@ -388,7 +394,7 @@ class GatewayInferenceController:
                     rendezvous_data = resp.json()
                     rendezvous_host = rendezvous_data["host"]
                     rendezvous_port = rendezvous_data["ports"][0]
-                    dist_init_addr = f"{rendezvous_host}:{rendezvous_port}"
+                    dist_init_addr = format_hostport(rendezvous_host, rendezvous_port)
 
                 head_inf_host = None
                 head_inf_port = None
@@ -412,14 +418,14 @@ class GatewayInferenceController:
                     cmd = _build_launch_cmd(
                         host=inf_host,
                         port=inf_port,
-                        n_nodes=nnodes,
+                        n_nodes=nnodes_per_instance,
                         node_rank=node_rank,
                         dist_init_addr=dist_init_addr,
                     )
 
                     fork_payload: dict[str, Any] = {
                         "role": "inf-server",
-                        "worker_index": group_idx * nnodes + node_rank,
+                        "worker_index": group_idx * nnodes_per_instance + node_rank,
                         "raw_cmd": cmd,
                     }
                     if inf_backend == "vllm":
@@ -449,7 +455,11 @@ class GatewayInferenceController:
                     )
                     resp.raise_for_status()
                     self._forked_services.append(
-                        (guard_addr, "inf-server", group_idx * nnodes + node_rank)
+                        (
+                            guard_addr,
+                            "inf-server",
+                            group_idx * nnodes_per_instance + node_rank,
+                        )
                     )
 
                     if node_rank == 0:
@@ -459,7 +469,7 @@ class GatewayInferenceController:
                 if head_inf_host is None or head_inf_port is None:
                     raise RuntimeError(
                         f"No head worker resolved for group {group_idx}; "
-                        f"expected {nnodes} workers per group"
+                        f"expected {nnodes_per_instance} workers per group"
                     )
 
                 # Only record the head node's address as the inference endpoint
@@ -530,7 +540,9 @@ class GatewayInferenceController:
 
         for group_idx in range(dp_size):
             head_worker = inf_workers[
-                group_idx if server_infos is not None else group_idx * nnodes
+                group_idx
+                if server_infos is not None
+                else group_idx * nnodes_per_instance
             ]
             guard_addr = f"http://{format_hostport(head_worker.ip, int(head_worker.worker_ports[0]))}"
             # Each data proxy connects to its group's head inference server

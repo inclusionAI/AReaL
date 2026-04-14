@@ -623,37 +623,38 @@ class TestInferenceServiceWorkflow:
 
 
 class TestMultiNodeConfig:
-    def test_nnodes_default_is_1(self):
+    def test_n_gpus_per_node_default_is_none(self):
         cfg = GatewayControllerConfig()
-        assert cfg.nnodes == 1
+        assert cfg.n_gpus_per_node is None
 
-    def test_nnodes_custom(self):
-        cfg = GatewayControllerConfig(nnodes=2)
-        assert cfg.nnodes == 2
+    def test_n_gpus_per_node_custom(self):
+        cfg = GatewayControllerConfig(n_gpus_per_node=4)
+        assert cfg.n_gpus_per_node == 4
 
-    def test_nnodes_zero_raises(self):
-        cfg = GatewayControllerConfig(nnodes=0, backend="sglang:d1t8")
-        with pytest.raises(ValueError, match="nnodes must be >= 1"):
+    def test_n_gpus_per_node_zero_raises(self):
+        cfg = GatewayControllerConfig(n_gpus_per_node=0, backend="sglang:d1t8")
+        with pytest.raises(ValueError, match="n_gpus_per_node must be >= 1"):
             GatewayInferenceController(config=cfg, scheduler=MagicMock())
 
     def test_gpus_not_divisible_raises(self):
-        cfg = GatewayControllerConfig(nnodes=3, backend="sglang:d1t8")
-        with pytest.raises(ValueError, match="must be divisible by nnodes"):
+        cfg = GatewayControllerConfig(n_gpus_per_node=3, backend="sglang:d1t8")
+        with pytest.raises(ValueError, match="must be divisible by n_gpus_per_node"):
             GatewayInferenceController(config=cfg, scheduler=MagicMock())
 
     def test_single_node_backward_compat(self):
         cfg = GatewayControllerConfig(backend="sglang:d2t4")
         controller = GatewayInferenceController(config=cfg, scheduler=MagicMock())
-        assert controller._nnodes == 1
+        assert controller._nnodes_per_instance == 1
 
     def test_multi_node_valid_config(self):
-        cfg = GatewayControllerConfig(nnodes=2, backend="sglang:d1t16")
+        # tp=16, n_gpus_per_node=8 → nnodes_per_instance=2
+        cfg = GatewayControllerConfig(n_gpus_per_node=8, backend="sglang:d1t16")
         controller = GatewayInferenceController(config=cfg, scheduler=MagicMock())
-        assert controller._nnodes == 2
+        assert controller._nnodes_per_instance == 2
 
     @pytest.mark.asyncio
     async def test_async_initialize_multinode_worker_count(self):
-        """With nnodes=2 and pre-existing server_infos, should create dp_size workers."""
+        """With multi-node and pre-existing server_infos, should create dp_size workers."""
         from areal.api.cli_args import SchedulingSpec
         from areal.api.io_struct import LocalInfServerInfo
 
@@ -670,10 +671,11 @@ class TestMultiNodeConfig:
         scheduler = MagicMock()
         scheduler.get_workers.return_value = [worker0]
 
+        # tp=8, n_gpus_per_node=4 → nnodes_per_instance=2
         cfg = GatewayControllerConfig(
             tokenizer_path="mock-tokenizer",
             backend="sglang:d1t8",
-            nnodes=2,
+            n_gpus_per_node=4,
             scheduling_spec=(SchedulingSpec(gpu=1, cpu=1, mem=1, cmd="mock"),),
             openai=OpenAIProxyConfig(admin_api_key="test-key"),
         )
@@ -697,7 +699,7 @@ class TestMultiNodeConfig:
                 ],
             )
 
-        # With server_infos, total_workers = dp_size = 1 (not dp_size * nnodes)
+        # With server_infos, total_workers = dp_size = 1 (not dp_size * nnodes_per_instance)
         create_call = scheduler.create_workers.call_args
         job = create_call.kwargs.get("job") or create_call.args[0]
         assert job.replicas == 1
@@ -727,10 +729,11 @@ class TestMultiNodeConfig:
         scheduler = MagicMock()
         scheduler.get_workers.return_value = [worker0, worker1]
 
+        # tp=8, n_gpus_per_node=4 → nnodes_per_instance=2
         cfg = GatewayControllerConfig(
             tokenizer_path="mock-tokenizer",
             backend="sglang:d1t8",
-            nnodes=2,
+            n_gpus_per_node=4,
             scheduling_spec=(SchedulingSpec(gpu=1, cpu=1, mem=1, cmd="mock"),),
             openai=OpenAIProxyConfig(admin_api_key="test-key"),
         )
@@ -779,13 +782,13 @@ class TestMultiNodeConfig:
                 server_infos=None,
             )
 
-        # dp_size=1, nnodes=2: total_workers = 2
+        # dp_size=1, nnodes_per_instance=2: total_workers = 2
         create_call = scheduler.create_workers.call_args
         job = create_call.kwargs.get("job") or create_call.args[0]
         assert job.replicas == 2
 
         # requests.post calls:
-        # 1 rendezvous alloc (nnodes > 1) + 2 node allocs + 2 forks = 5
+        # 1 rendezvous alloc (nnodes_per_instance > 1) + 2 node allocs + 2 forks = 5
         post_calls = mock_post.call_args_list
         alloc_calls = [c for c in post_calls if "/alloc_ports" in str(c)]
         fork_post_calls = [c for c in post_calls if "/fork" in str(c)]

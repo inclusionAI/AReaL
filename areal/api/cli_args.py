@@ -1498,10 +1498,11 @@ class vLLMConfig:
             args["nnodes"] = n_nodes
             args["node_rank"] = node_rank
             if dist_init_addr is not None:
-                host_part, _, port_part = dist_init_addr.rpartition(":")
-                if host_part:
-                    args["master_addr"] = host_part
-                    args["master_port"] = port_part
+                from areal.utils.network import split_hostport
+
+                master_host, master_port = split_hostport(dist_init_addr)
+                args["master_addr"] = master_host
+                args["master_port"] = str(master_port)
             if node_rank > 0:
                 args["headless"] = True
         return args
