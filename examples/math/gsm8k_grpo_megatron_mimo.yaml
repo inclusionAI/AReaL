@@ -8,15 +8,16 @@ tokenizer_path: ${actor.path}
 
 cluster:
   n_nodes: 1
-  n_gpus_per_node: 6
+  n_gpus_per_node: 8
   fileroot: /tmp/areal/experiments
   name_resolve:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-
 scheduler:
   type: null
+
+allocation_mode: "sglang[rollout]:d1p1t8|megatron[actor]:d1p1t8"
 
 rollout:
   backend: "sglang:d1p1t8"
