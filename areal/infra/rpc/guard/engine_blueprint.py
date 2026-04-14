@@ -24,10 +24,10 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from queue import Queue
 from threading import Lock, Thread
-from typing import Any
+from typing import Annotated, Any
 
 from flask import Blueprint, jsonify, request
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, StringConstraints, ValidationError
 
 from areal.api import InferenceEngine, TrainEngine
 from areal.infra.platforms import current_platform
@@ -45,21 +45,24 @@ logger = logging.getLogger("EngineBP")
 # Pydantic Models for Engine API
 # ======================================================================================
 
+# Define the constraint
+NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+
 
 class SetEnvRequest(BaseModel):
     env: dict[str, Any]
 
 
 class CreateEngineRequest(BaseModel):
-    engine: str
-    engine_name: str
+    engine: NonEmptyStr
+    engine_name: NonEmptyStr
     init_args: list[Any] = []
     init_kwargs: dict[str, Any] = {}
 
 
 class CallEngineRequest(BaseModel):
-    method: str
-    engine_name: str
+    method: NonEmptyStr
+    engine_name: NonEmptyStr
     args: list[Any] = []
     kwargs: dict[str, Any] = {}
     rpc_meta: dict[str, Any] | None = None
