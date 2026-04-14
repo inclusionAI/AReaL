@@ -353,6 +353,14 @@ class MegatronEngine(TrainEngine):
                     f"mtp_loss_scaling_factor={self.mtp_loss_scaling_factor}, "
                     f"mtp_detach_heads={self.mtp_detach_heads}"
                 )
+            else:
+                if getattr(self.tf_config, "mtp_num_layers", 0) > 0:
+                    self.logger.info(
+                        f"[MTPTrain] MTP training disabled but tf_config.mtp_num_layers="
+                        f"{self.tf_config.mtp_num_layers}. Resetting to 0 to prevent "
+                        f"mbridge from creating MTP layers (avoids Invalid spec error)."
+                    )
+                    self.tf_config.mtp_num_layers = 0
 
             with self.device:
                 models = make_mcore_model(
