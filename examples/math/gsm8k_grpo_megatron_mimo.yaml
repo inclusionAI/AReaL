@@ -19,7 +19,7 @@ scheduler:
   type: null
 
 rollout:
-  backend: "sglang:d2p1t2"
+  backend: "sglang:d1p1t2"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 256
@@ -51,7 +51,7 @@ actor:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer:
-    type: adam
+    type: adam_bf16
     lr: 3e-6
     weight_decay: 0.003
     beta1: 0.9
