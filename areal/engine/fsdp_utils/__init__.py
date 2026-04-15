@@ -70,7 +70,7 @@ def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
             return []
         if isinstance(value, str):
             return [value]
-        return list(value)
+        return value if isinstance(value, list) else list(value)
 
     default_transformer_cls_names_to_wrap = _normalize_wrap_class_names(
         getattr(model, "_no_split_modules", list())
