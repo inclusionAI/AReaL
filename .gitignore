@@ -2,7 +2,8 @@
 .legacy/
 .data/
 .idea/
-
+.zeta/
+.zetaignore
 # claude
 .claude/settings.local.json
 .claude/sessions/
