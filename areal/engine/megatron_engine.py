@@ -926,6 +926,7 @@ class MegatronEngine(TrainEngine):
             extra_block_kwargs = None
             _mtp_restore = None
             _clm_loss_restore = None
+            _mtp_ckpt_restore = []  # (layer, orig_method) pairs
             if self.enable_mtp_training:
                 _unwrapped = model
                 while hasattr(_unwrapped, 'module'):
@@ -994,7 +995,130 @@ class MegatronEngine(TrainEngine):
                     _unwrapped.compute_language_model_loss = _mtp_loss_fn
                     _clm_loss_restore = (_unwrapped, _orig_clm)
 
-                    self.logger.info(
+                    # -----------------------------------------------------------
+                    # Megatron-Core 0.16.0 MTP _checkpointed_forward() does:
+                    #   tensor_parallel.checkpoint(fn, ..., *args, *kwargs.values())
+                    # This flattens ALL kwargs (including packed_seq_params which
+                    # is a dataclass, not a tensor) into positional args that end
+                    # up in CheckpointFunction.apply() → save_for_backward(),
+                    # which only accepts tensors → TypeError.
+                    #
+                    # The main TransformerBlock avoids this by capturing
+                    # packed_seq_params via closure (never passed as an arg).
+                    # We apply the same pattern here by monkey-patching each
+                    # MTP layer's _checkpointed_forward during training.
+                    # -----------------------------------------------------------
+                    _mtp_block = getattr(_unwrapped, 'mtp', None)
+                    if (
+                        _mtp_block is not None
+                        and hasattr(_mtp_block, 'layers')
+                        and _unwrapped.config.recompute_granularity == 'full'
+                    ):
+                        for _layer in _mtp_block.layers:
+                            _orig_ckpt_fwd = _layer._checkpointed_forward
+
+                            def _patched_checkpointed_forward(
+                                forward_func, *args,
+                                _layer_ref=_layer,
+                                **kwargs,
+                            ):
+                                """Closure-based checkpoint that keeps
+                                non-tensor args (packed_seq_params,
+                                inference_params) out of save_for_backward.
+
+                                Mirrors TransformerBlock._checkpointed_forward
+                                from megatron-core 0.16.0: non-tensor kwargs
+                                are captured in the closure of custom_forward,
+                                only tensor values go through checkpoint().
+                                """
+                                # Separate tensor vs non-tensor kwargs.
+                                _tensor_kw = {}
+                                _non_tensor_kw = {}
+                                for k, v in kwargs.items():
+                                    if isinstance(v, torch.Tensor):
+                                        _tensor_kw[k] = v
+                                    else:
+                                        _non_tensor_kw[k] = v
+
+                                # Build a wrapper that re-injects non-tensor
+                                # kwargs via closure (never saved by
+                                # checkpoint).
+                                def _ckpt_wrapper(*flat_args):
+                                    # Reconstruct kwargs: first the tensor
+                                    # ones from flat_args, then non-tensor
+                                    # from closure.
+                                    _tk_keys = list(_tensor_kw.keys())
+                                    # flat_args = original *args + tensor kw
+                                    # values in order.
+                                    n_orig = len(args)
+                                    _orig_args = flat_args[:n_orig]
+                                    _tk_vals = flat_args[n_orig:]
+                                    _rebuilt_kw = {
+                                        k: v for k, v in zip(
+                                            _tk_keys, _tk_vals
+                                        )
+                                    }
+                                    _rebuilt_kw.update(_non_tensor_kw)
+                                    return forward_func(
+                                        *_orig_args, **_rebuilt_kw
+                                    )
+
+                                _cfg = _layer_ref.config
+                                if _cfg.recompute_method == 'uniform':
+                                    assert (
+                                        _cfg.recompute_num_layers == 1
+                                    ), (
+                                        "recompute_num_layers must be 1 "
+                                        "for MTP recompute"
+                                    )
+                                    if _cfg.fp8:
+                                        from megatron.core.extensions.transformer_engine import (
+                                            te_checkpoint,
+                                        )
+                                        return te_checkpoint(
+                                            _ckpt_wrapper,
+                                            _cfg.distribute_saved_activations,
+                                            tensor_parallel.random.get_cuda_rng_tracker,
+                                            mpu.get_tensor_model_parallel_group(),
+                                            *args,
+                                            *_tensor_kw.values(),
+                                        )
+                                    else:
+                                        return tensor_parallel.checkpoint(
+                                            _ckpt_wrapper,
+                                            _cfg.distribute_saved_activations,
+                                            *args,
+                                            *_tensor_kw.values(),
+                                        )
+                                elif _cfg.recompute_method == 'block':
+                                    import warnings
+                                    warnings.warn(
+                                        "recompute_method == 'block' is not "
+                                        "supported for MTP yet. "
+                                        "Skipping recompute."
+                                    )
+                                    return forward_func(*args, **kwargs)
+                                else:
+                                    raise ValueError(
+                                        "Invalid activation recompute method."
+                                    )
+
+                            _layer._checkpointed_forward = (
+                                _patched_checkpointed_forward
+                            )
+                            _mtp_ckpt_restore.append(
+                                (_layer, _orig_ckpt_fwd)
+                            )
+
+                        self.logger.info(
+                            f"[MTPTrain] Patched _checkpointed_forward on "
+                            f"{len(_mtp_ckpt_restore)} MTP layer(s) to fix "
+                            f"gradient_checkpointing + PackedSeqParams crash "
+                            f"(recompute_granularity="
+                            f"{_unwrapped.config.recompute_granularity})"
+                        )
+
+                    self.logger.debug(
                         f"[MTPTrain] MTP enabled for training "
                         f"(mtp_num_layers={self.mtp_num_layers}, "
                         f"labels_shape={_mtp_labels.shape}, "
@@ -1018,6 +1142,8 @@ class MegatronEngine(TrainEngine):
                 if _clm_loss_restore is not None:
                     _uw, _orig = _clm_loss_restore
                     _uw.compute_language_model_loss = _orig
+                for _layer, _orig_ckpt in _mtp_ckpt_restore:
+                    _layer._checkpointed_forward = _orig_ckpt
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
