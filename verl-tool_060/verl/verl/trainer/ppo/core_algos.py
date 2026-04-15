@@ -106,6 +106,7 @@ class AdvantageEstimator(str, Enum):
     GPG = "gpg"
     RLOO_VECTORIZED = "rloo_vectorized"
     GRPO_VECTORIZED = "grpo_vectorized"
+    GIGPO = "gigpo"
 
 
 ADV_ESTIMATOR_REGISTRY: dict[str, Any] = {}
@@ -354,6 +355,116 @@ def compute_grpo_vectorized_outcome_advantage(
             scalars = scores - mean_g[g]
         advantages = scalars.unsqueeze(-1) * response_mask
         return advantages, advantages
+
+
+@register_adv_est("gigpo")
+def compute_gigpo_outcome_advantage(
+    token_level_rewards: torch.Tensor,
+    response_mask: torch.Tensor,
+    index: np.ndarray,
+    epsilon: float = 1e-6,
+    norm_adv_by_std_in_grpo: bool = True,
+    config: Optional[AlgoConfig] = None,
+    obs_hashes: Optional[np.ndarray] = None,
+    turn_boundaries: Optional[np.ndarray] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """GIGPO: two-level advantage = episode-level + omega * step-level.
+
+    Args:
+        obs_hashes: array of shape (bs,) where each element is a list of obs hash strings per turn.
+        turn_boundaries: array of shape (bs,) where each element is a list of (start, end) token indices per turn.
+    """
+    gigpo_omega = 1.0
+    gigpo_gamma = 0.99
+    if config is not None:
+        gigpo_omega = config.get("gigpo_omega", 1.0)
+        gigpo_gamma = config.get("gigpo_gamma", 0.99)
+
+    scores = token_level_rewards.sum(dim=-1)  # (bs,)
+    bs, seq_len = token_level_rewards.shape
+
+    # === Episode-level advantage (same as GRPO) ===
+    id2score = defaultdict(list)
+    id2mean = {}
+    id2std = {}
+
+    with torch.no_grad():
+        for i in range(bs):
+            id2score[index[i]].append(scores[i])
+        for idx in id2score:
+            if len(id2score[idx]) == 1:
+                id2mean[idx] = torch.tensor(0.0, device=scores.device)
+                id2std[idx] = torch.tensor(1.0, device=scores.device)
+            elif len(id2score[idx]) > 1:
+                scores_tensor = torch.stack(id2score[idx])
+                id2mean[idx] = torch.mean(scores_tensor)
+                id2std[idx] = torch.std(scores_tensor)
+            else:
+                raise ValueError(f"no score in prompt index: {idx}")
+
+        episode_advantages = torch.zeros(bs, device=scores.device)
+        for i in range(bs):
+            if norm_adv_by_std_in_grpo:
+                episode_advantages[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
+            else:
+                episode_advantages[i] = scores[i] - id2mean[index[i]]
+
+        # === Step-level advantage via obs_hash grouping ===
+        step_advantages = torch.zeros(bs, seq_len, device=token_level_rewards.device)
+
+        if obs_hashes is not None and turn_boundaries is not None:
+            # Build per-turn discounted returns for each trajectory
+            # turn_boundaries[i] = [(start0, end0), (start1, end1), ...]
+            # obs_hashes[i] = [hash0, hash1, ...]
+
+            # Collect step-level returns grouped by obs_hash
+            hash2returns = defaultdict(list)  # obs_hash -> [(traj_idx, turn_idx, discounted_return)]
+
+            for i in range(bs):
+                hashes_i = obs_hashes[i] if obs_hashes[i] is not None else []
+                bounds_i = turn_boundaries[i] if turn_boundaries[i] is not None else []
+
+                if not hashes_i or not bounds_i:
+                    continue
+
+                # Compute per-turn rewards
+                turn_rewards = []
+                for start, end in bounds_i:
+                    turn_reward = token_level_rewards[i, start:end].sum().item()
+                    turn_rewards.append(turn_reward)
+
+                # Compute discounted returns from each turn
+                n_turns = len(turn_rewards)
+                discounted_returns = [0.0] * n_turns
+                running_return = 0.0
+                for t in range(n_turns - 1, -1, -1):
+                    running_return = turn_rewards[t] + gigpo_gamma * running_return
+                    discounted_returns[t] = running_return
+
+                for t, obs_hash in enumerate(hashes_i):
+                    if t < len(discounted_returns):
+                        hash2returns[obs_hash].append((i, t, discounted_returns[t], bounds_i[t]))
+
+            # Compute step-level advantage within each obs_hash group
+            for obs_hash, entries in hash2returns.items():
+                if len(entries) <= 1:
+                    continue
+
+                returns_in_group = torch.tensor([e[2] for e in entries], device=token_level_rewards.device)
+                group_mean = returns_in_group.mean()
+                group_std = returns_in_group.std()
+
+                for traj_idx, turn_idx, ret, (start, end) in entries:
+                    if norm_adv_by_std_in_grpo:
+                        step_adv = (ret - group_mean) / (group_std + epsilon)
+                    else:
+                        step_adv = ret - group_mean
+                    step_advantages[traj_idx, start:end] = step_adv
+
+        # Combine: A = A_episode + omega * A_step
+        combined = episode_advantages.unsqueeze(-1) * response_mask + gigpo_omega * step_advantages
+
+    return combined, combined
 
 
 @register_adv_est(AdvantageEstimator.GRPO_PASSK)  # or simply: @register_adv_est("grpo_passk")

@@ -262,6 +262,12 @@ def compute_advantage(
             if config is not None:
                 adv_kwargs["turn_advantage_coef"] = config.get("turn_advantage_coef", 1.0)
 
+        if adv_estimator == "gigpo" or adv_estimator == AdvantageEstimator.GIGPO:
+            if "obs_hashes" in data.non_tensor_batch:
+                adv_kwargs["obs_hashes"] = data.non_tensor_batch["obs_hashes"]
+            if "turn_boundaries" in data.non_tensor_batch:
+                adv_kwargs["turn_boundaries"] = data.non_tensor_batch["turn_boundaries"]
+
         # calculate advantage estimator
         advantages, returns = adv_estimator_fn(**adv_kwargs)
         data.batch["advantages"] = advantages

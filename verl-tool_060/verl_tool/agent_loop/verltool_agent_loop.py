@@ -20,6 +20,7 @@ import numpy as np
 import json
 import uuid
 import threading
+import hashlib
 import regex as re
 from PIL import Image
 from typing import Union, Optional, Dict
@@ -471,6 +472,8 @@ class VerlToolAgentLoop(AgentLoopBase):
             "action_lengths": [],
             "action_logps": [],
             "obs_lengths": [],
+            "obs_hashes": [],
+            "turn_boundaries": [],
             "rewards": [],
             "tool_interact_info": [],
             "is_traj_finished": False,
@@ -553,6 +556,9 @@ class VerlToolAgentLoop(AgentLoopBase):
             
             stats_dict["num_turns"] += 1
             stats_dict["action_lengths"].append(len(gen_ids))
+            turn_start = len(response_mask) - len(gen_ids)
+            turn_end = len(response_mask)
+            stats_dict["turn_boundaries"].append((turn_start, turn_end))
             stats_dict["action_logps"].append(np.mean(gen_logprobs) if len(gen_logprobs) > 0 else 0.0)
             if gen_text.strip() == "":
                 stats_dict["empty_responses"] += 1
@@ -671,6 +677,8 @@ class VerlToolAgentLoop(AgentLoopBase):
                     obs_token_ids = self.mtrl_sep_prefix_ids + obs_token_ids + self.mtrl_sep_suffix_ids
                 # update stats
                 stats_dict["obs_lengths"].append(len(obs_token_ids))
+                obs_hash_val = hashlib.md5(obs_text.encode("utf-8")).hexdigest()
+                stats_dict["obs_hashes"].append(obs_hash_val)
                 if 'reward' in tool_results and tool_results['reward'] is not None:
                     stats_dict["rewards"].append(tool_results['reward'] if 'reward' in tool_results else 0.0)
                 stats_dict["valid_action"] += tool_results['valid_action'] if 'valid_action' in tool_results else 0
@@ -844,6 +852,12 @@ class VerlToolAgentLoop(AgentLoopBase):
             multi_modal_data=multi_modal_output,
             num_turns=stats_dict["num_turns"],
             metrics=metrics,
-            extra_fields={"tool_interact_info": stats_dict.get("tool_interact_info", []), "traj_stop_reason": traj_stop_reason, "verl_tool_metrics": verl_tool_metrics},
+            extra_fields={
+                "tool_interact_info": stats_dict.get("tool_interact_info", []),
+                "traj_stop_reason": traj_stop_reason,
+                "verl_tool_metrics": verl_tool_metrics,
+                "obs_hashes": stats_dict.get("obs_hashes", []),
+                "turn_boundaries": stats_dict.get("turn_boundaries", []),
+            },
         )
         return output

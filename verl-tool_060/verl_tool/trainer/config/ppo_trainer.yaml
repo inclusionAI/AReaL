@@ -80,6 +80,12 @@ algorithm:
   # Whether to normalize advantages by std (specific to GRPO)
   norm_adv_by_std_in_grpo: True
 
+  # GIGPO parameters
+  gigpo_omega: 1.0
+
+  # GIGPO parameters
+  gigpo_gamma: 0.99
+
   # Whether to enable in-reward KL penalty
   use_kl_in_reward: False
 
