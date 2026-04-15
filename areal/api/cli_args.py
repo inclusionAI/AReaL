@@ -1868,6 +1868,34 @@ class InferenceEngineConfig:
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}
     )
+    enable_health_monitor: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable a background health monitor that probes inference servers, deregisters unhealthy nodes, and discovers newly available nodes."
+        },
+    )
+    health_check_interval_seconds: float = field(
+        default=5.0,
+        metadata={"help": "Interval in seconds between background health checks."},
+    )
+    health_check_failure_threshold: int = field(
+        default=3,
+        metadata={
+            "help": "Number of consecutive failed health checks before a server is deregistered."
+        },
+    )
+    topology_change_cooldown_seconds: float = field(
+        default=30.0,
+        metadata={
+            "help": "Cooldown window in seconds before rebuilding the XCCL weight update group for newly added servers. Server removals still rebuild immediately."
+        },
+    )
+    enable_topology_discovery: bool = field(
+        default=True,
+        metadata={
+            "help": "Discover new inference server addresses from name_resolve during background health monitoring."
+        },
+    )
     pause_grace_period: float = field(
         default=0.0,
         metadata={

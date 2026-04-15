@@ -9,11 +9,12 @@ import shutil
 import subprocess
 import time
 import uuid
+from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import datetime
 from logging import Logger
-from threading import Lock
+from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any, Protocol
 
 import aiohttp
@@ -358,11 +359,175 @@ class RemoteInfEngine(InferenceEngine):
         self._version = 0
 
         self.lock = Lock()
+        self._addresses_lock = Lock()
+        self._topology_lock = Lock()
 
         self._workflow_executor: WorkflowExecutor | None = None
         self._initialized = False
         self._proxy_gateway_addr: str | None = None
         self.local_server_processes: list[LocalInfServerInfo] = []
+
+        self._server_failures: dict[str, int] = defaultdict(int)
+        self._needs_group_rebuild: bool = False
+        self._last_topology_change_ts: float = 0.0
+        self._health_monitor_stop = Event()
+        self._health_monitor_thread: Thread | None = None
+
+    @staticmethod
+    def _normalize_addresses(addr: str | list[str]) -> list[str]:
+        addresses = addr if isinstance(addr, list) else [addr]
+        return list(dict.fromkeys(addresses))
+
+    def _set_addresses(self, addresses: list[str]) -> None:
+        with self._addresses_lock:
+            self.addresses = list(dict.fromkeys(addresses))
+            if self.addresses:
+                self.server_idx %= len(self.addresses)
+            else:
+                self.server_idx = 0
+
+    def get_active_server_addresses(self) -> list[str]:
+        with self._addresses_lock:
+            return list(self.addresses)
+
+    def register_server(self, address: str) -> None:
+        addresses = self.get_active_server_addresses()
+        if address in addresses:
+            return
+        self._wait_for_server(address)
+        addresses.append(address)
+        self._set_addresses(addresses)
+        self._server_failures[address] = 0
+        self._mark_topology_changed()
+        self.logger.info("Registered inference server %s", address)
+
+    def deregister_server(self, address: str) -> None:
+        addresses = [
+            addr for addr in self.get_active_server_addresses() if addr != address
+        ]
+        self._set_addresses(addresses)
+        self._server_failures.pop(address, None)
+        self._mark_topology_changed()
+        self.logger.info("Deregistered inference server %s", address)
+
+    def _mark_topology_changed(self) -> None:
+        with self._topology_lock:
+            self._needs_group_rebuild = True
+            self._last_topology_change_ts = time.time()
+
+    def consume_group_rebuild_request(self) -> bool:
+        with self._topology_lock:
+            if not self._needs_group_rebuild:
+                return False
+            self._needs_group_rebuild = False
+            return True
+
+    def get_last_topology_change_time(self) -> float:
+        with self._topology_lock:
+            return self._last_topology_change_ts
+
+    def _discover_remote_addresses(self) -> list[str]:
+        if (
+            not self.config.enable_topology_discovery
+            or self.config.experiment_name is None
+            or self.config.trial_name is None
+        ):
+            return []
+        try:
+            return wait_llm_server_addrs(
+                experiment_name=self.config.experiment_name,
+                trial_name=self.config.trial_name,
+                timeout=1,
+            )
+        except (TimeoutError, RuntimeError):
+            return []
+
+    def _monitor_servers_once(self) -> None:
+        active_addresses = self.get_active_server_addresses()
+
+        healthy_addresses: list[str] = []
+        removed = False
+        threshold = max(1, self.config.health_check_failure_threshold)
+
+        for addr in active_addresses:
+            try:
+                host, port = split_hostport(addr)
+                base_url = f"http://{format_hostport(host, port)}"
+            except ValueError:
+                base_url = f"http://{addr}"
+
+            if self.check_health(base_url):
+                self._server_failures[addr] = 0
+                healthy_addresses.append(addr)
+                continue
+
+            failure_count = self._server_failures[addr] + 1
+            self._server_failures[addr] = failure_count
+            if failure_count >= threshold:
+                self.logger.warning(
+                    "Inference server %s failed health checks %d times and will be deregistered.",
+                    addr,
+                    failure_count,
+                )
+                removed = True
+            else:
+                healthy_addresses.append(addr)
+
+        if removed:
+            stale_addresses = set(active_addresses) - set(healthy_addresses)
+            for stale_addr in stale_addresses:
+                self._server_failures.pop(stale_addr, None)
+            self._set_addresses(healthy_addresses)
+            self._mark_topology_changed()
+
+        discovered_addresses = self._normalize_addresses(self._discover_remote_addresses())
+        new_addresses = [
+            addr for addr in discovered_addresses if addr not in self.get_active_server_addresses()
+        ]
+        if new_addresses:
+            for addr in new_addresses:
+                try:
+                    self._wait_for_server(addr)
+                except TimeoutError:
+                    continue
+                self._server_failures[addr] = 0
+                healthy_addresses = self.get_active_server_addresses()
+                healthy_addresses.append(addr)
+                self._set_addresses(healthy_addresses)
+                self.logger.info("Discovered new inference server %s", addr)
+                self._mark_topology_changed()
+
+    def _health_monitor_loop(self) -> None:
+        interval = max(1.0, self.config.health_check_interval_seconds)
+        while not self._health_monitor_stop.wait(interval):
+            try:
+                self._monitor_servers_once()
+            except Exception:
+                self.logger.exception("Background inference health monitor failed.")
+
+    def _start_health_monitor(self) -> None:
+        if not self.config.enable_health_monitor or self._health_monitor_thread is not None:
+            return
+        self._health_monitor_stop.clear()
+        self._health_monitor_thread = Thread(
+            target=self._health_monitor_loop,
+            name=f"remote-inf-health-monitor-{self.engine_id}",
+            daemon=True,
+        )
+        self._health_monitor_thread.start()
+
+    def _stop_health_monitor(self) -> None:
+        self._health_monitor_stop.set()
+        if self._health_monitor_thread is not None:
+            self._health_monitor_thread.join(timeout=2 * max(1.0, self.config.health_check_interval_seconds))
+            self._health_monitor_thread = None
+
+    def _get_target_addresses(self, meta: WeightUpdateMeta | None = None) -> list[str]:
+        active_addresses = self.get_active_server_addresses()
+        if meta is None or not meta.target_server_addresses:
+            return active_addresses
+        target_set = set(meta.target_server_addresses)
+        return [addr for addr in active_addresses if addr in target_set]
 
     def _wait_for_server(self, address: str, process: subprocess.Popen | None = None):
         """Wait for a server to become healthy."""
@@ -415,11 +580,12 @@ class RemoteInfEngine(InferenceEngine):
         self.engine_id = engine_id
         self.logger = logging.getLogger(f"[RemoteInfEngine Rank {engine_id}]")
 
+        addresses: list[str] = []
         if addr:
-            self.addresses = addr if isinstance(addr, list) else [addr]
+            addresses = self._normalize_addresses(addr)
             self.logger.info("Get server addresses from the `addr` argument.")
         elif len(self.local_server_processes) > 0:
-            self.addresses = [
+            addresses = [
                 format_hostport(s.host, s.port) for s in self.local_server_processes
             ]
             self.logger.info("Get server addresses from the local subprocess.")
@@ -428,7 +594,7 @@ class RemoteInfEngine(InferenceEngine):
             and self.config.trial_name is not None
         ):
             try:
-                self.addresses = wait_llm_server_addrs(
+                addresses = wait_llm_server_addrs(
                     experiment_name=self.config.experiment_name,
                     trial_name=self.config.trial_name,
                     timeout=1,
@@ -441,11 +607,11 @@ class RemoteInfEngine(InferenceEngine):
                 )
                 addrs_str = os.getenv("AREAL_LLM_SERVER_ADDRS")
                 if addrs_str:
-                    # When addr is not provided, fallback to reading addrs from env var
-                    self.addresses = addrs_str.split(",")
+                    addresses = addrs_str.split(",")
                     self.logger.info("Get server addresses from environment variable.")
 
-        if not self.addresses:
+        addresses = list(dict.fromkeys(addresses))
+        if not addresses:
             raise RuntimeError(
                 "No configured inference servers. "
                 "Please pass in server addresses by arguments "
@@ -454,9 +620,12 @@ class RemoteInfEngine(InferenceEngine):
             )
 
         self.logger.info("Waiting for server ready...")
-        for addr_ in self.addresses:
+        for addr_ in addresses:
             self._wait_for_server(addr_)
-        self.server_idx = random.randint(0, len(self.addresses) - 1)
+        self._set_addresses(addresses)
+        for addr_ in addresses:
+            self._server_failures[addr_] = 0
+        self.server_idx = random.randint(0, len(addresses) - 1)
         self.logger.info("Servers are all ready!")
 
         self.workflow_executor = WorkflowExecutor(
@@ -467,10 +636,12 @@ class RemoteInfEngine(InferenceEngine):
             logger=self.logger, train_data_parallel_size=train_data_parallel_size
         )
         self._initialized = True
+        self._start_health_monitor()
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
         self._initialized = False
+        self._stop_health_monitor()
         if self._workflow_executor is not None:
             self._workflow_executor.destroy()
         if len(self.local_server_processes) > 0:
@@ -711,8 +882,11 @@ class RemoteInfEngine(InferenceEngine):
             If schedule policy other than round-robin is used
         """
         if self.config.schedule_policy == "round_robin":
-            server = self.addresses[self.server_idx]
-            self.server_idx = (self.server_idx + 1) % len(self.addresses)
+            addresses = self.get_active_server_addresses()
+            if not addresses:
+                raise RuntimeError("No active inference servers available.")
+            server = addresses[self.server_idx % len(addresses)]
+            self.server_idx = (self.server_idx + 1) % len(addresses)
             return server
         raise NotImplementedError("Only round-robin scheduling is implemented.")
 
@@ -894,12 +1068,7 @@ class RemoteInfEngine(InferenceEngine):
             Metadata containing information about the weight update
         xccl_group_ranks : list[int] | None, optional
             Explicit rank assignment for each remote inference worker, aligned with
-            ``self.addresses`` (same length, same order).
-
-            - If provided, worker at ``self.addresses[i]`` will initialize the
-            communication group using rank ``xccl_group_ranks[i]``.
-            - If None, ranks are assigned by address order: rank ``i`` for
-            ``self.addresses[i]``.
+            the target address list used for this update.
 
         Returns
         -------
@@ -908,11 +1077,12 @@ class RemoteInfEngine(InferenceEngine):
         """
         assert meta.type == "xccl"
 
+        target_addresses = self._get_target_addresses(meta)
         fut = get_executor().submit(
             _init_weights_update_group_remote,
             self.backend,
             meta,
-            self.addresses,
+            target_addresses,
             self.config.request_timeout,
             xccl_group_ranks,
         )
@@ -960,7 +1130,7 @@ class RemoteInfEngine(InferenceEngine):
             self.backend,
             meta,
             param_specs,
-            self.addresses,
+            self._get_target_addresses(meta),
             self.config.request_timeout,
         )
 
@@ -995,7 +1165,7 @@ class RemoteInfEngine(InferenceEngine):
             self.config.experiment_name,
             self.config.trial_name,
             self.get_version(),
-            self.addresses,
+            self._get_target_addresses(meta),
             meta,
             self.config.request_retries,
             self.config.request_timeout,
@@ -1197,19 +1367,15 @@ class RemoteInfEngine(InferenceEngine):
 
     @trace_perf("remote_inf_engine.pause_generation", category="misc")
     def pause_generation(self):
-        """Pause request submission for async rollout."""
-        pause_req = self.backend.get_pause_request()
-        self._run_request_on_all_servers(pause_req)
-
-        # The above http request may require some time to be scheduled and executed.
-        # The following line waits until all requests are indeed dropped.
-        time.sleep(self.config.pause_grace_period)
+        """Soft-pause request submission for async rollout."""
+        self.workflow_executor.pause()
 
     @trace_perf("remote_inf_engine.continue_generation", category="misc")
     def continue_generation(self):
         """Resume request submission for async rollout."""
         resume_req = self.backend.get_resume_request()
         self._run_request_on_all_servers(resume_req)
+        self.workflow_executor.resume()
 
     def pause(self):
         """Pause request submission for async rollout.
@@ -1232,6 +1398,8 @@ class RemoteInfEngine(InferenceEngine):
         self._run_request_on_all_servers(onload_req)
 
     def _run_request_on_all_servers(self, req: HttpRequest):
+        addresses = self.get_active_server_addresses()
+
         async def _fn():
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.config.request_timeout),
@@ -1239,7 +1407,7 @@ class RemoteInfEngine(InferenceEngine):
                 connector=get_default_connector(),
             ) as session:
                 jobs = []
-                for addr in self.addresses:
+                for addr in addresses:
                     jobs.append(
                         arequest_with_retry(
                             session=session,
@@ -1286,8 +1454,8 @@ class RemoteInfEngine(InferenceEngine):
 
     def _shutdown_one_server(self, server_info: LocalInfServerInfo):
         addr = format_hostport(server_info.host, server_info.port)
-        if addr in self.addresses:
-            self.addresses.remove(addr)
+        remaining = [x for x in self.get_active_server_addresses() if x != addr]
+        self._set_addresses(remaining)
         if server_info.process.poll() is not None:
             return
         kill_process_tree(server_info.process.pid, graceful=True)

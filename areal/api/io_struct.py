@@ -165,7 +165,7 @@ def get_versioned_lora_name(lora_name: str, version: int) -> str:
 
 @dataclass
 class WeightUpdateMeta:
-    type: Literal["disk", "xccl"]
+    type: Literal["disk", "xccl", "awex"]
     path: str | None = None
     gen_allocation: ModelAllocation | None = None
 
@@ -183,6 +183,9 @@ class WeightUpdateMeta:
     clear_checkpoint_after_load: bool = True
 
     version: int | None = None
+    group_version: int = 0
+    active_server_addresses: list[str] = field(default_factory=list)
+    target_server_addresses: list[str] = field(default_factory=list)
 
     def with_version(self, version: int) -> "WeightUpdateMeta":
         """Return a copy of this meta with versioned path.
