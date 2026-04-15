@@ -117,7 +117,7 @@ sglang:
   random_seed: ${seed}
   skip_tokenizer_init: true
   dtype: ${actor.dtype}
-  max_running_requests: 96
+  max_running_requests: null
   context_length: 32768
   mem_fraction_static: 0.4
 
