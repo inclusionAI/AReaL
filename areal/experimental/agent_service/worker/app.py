@@ -52,6 +52,19 @@ def create_worker_app(
     async def health():
         return {"status": "ok"}
 
+    @app.post("/session/{session_key}/close")
+    async def close_session(session_key: str):
+        close_fn = getattr(agent, "close_session", None)
+        if close_fn is not None:
+            await close_fn(session_key)
+        return {"status": "ok"}
+
+    @app.on_event("shutdown")
+    async def shutdown():
+        close_all_fn = getattr(agent, "close_all_sessions", None)
+        if close_all_fn is not None:
+            await close_all_fn()
+
     @app.post("/run")
     async def run(body: dict[str, Any]):
         request = AgentRequest(
