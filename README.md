@@ -1,5 +1,5 @@
 <h1 align="center">
-<em>AReaL</em>: A Large-Scale Asynchronous Reinforcement Learning System
+<em>AReaLs</em>: A Large-Scale Asynchronous Reinforcement Learning System
 </h1>
 
 <p align="center">
