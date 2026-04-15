@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import traceback
 
@@ -12,7 +13,7 @@ from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 
 from areal.utils import logging
 
-from ..auth import DEFAULT_ADMIN_KEY, admin_headers
+from ..auth import admin_headers
 from ..protocol import (
     FrameType,
     RequestFrame,
@@ -26,6 +27,7 @@ from ..protocol import (
     parse_frame,
     serialize_frame,
 )
+from .config import GatewayConfig
 
 logger = logging.getLogger("AgentGateway")
 
@@ -41,16 +43,17 @@ def _make_accepted_json(request_id: str, run_id: str) -> str:
     )
 
 
-def create_gateway_app(router_addr: str, admin_key: str = DEFAULT_ADMIN_KEY) -> FastAPI:
+def create_gateway_app(config: GatewayConfig) -> FastAPI:
     app = FastAPI(title="AReaL Agent Gateway")
-    http_client = httpx.AsyncClient(timeout=600.0)
-    _auth_headers = admin_headers(admin_key)
+    http_client = httpx.AsyncClient(timeout=config.forward_timeout)
+    _auth_headers = admin_headers(config.admin_api_key)
 
     async def _route(session_key: str) -> str:
         resp = await http_client.post(
-            f"{router_addr}/route",
+            f"{config.router_addr}/route",
             json={"session_key": session_key},
             headers=_auth_headers,
+            timeout=config.router_timeout,
         )
         resp.raise_for_status()
         return resp.json()["data_proxy_addr"]
@@ -81,7 +84,7 @@ def create_gateway_app(router_addr: str, admin_key: str = DEFAULT_ADMIN_KEY) -> 
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket, token: str = Query(default="")):
-        if token != admin_key:
+        if not hmac.compare_digest(token, config.admin_api_key):
             await websocket.close(code=4001, reason="Invalid admin key")
             return
         await websocket.accept()
