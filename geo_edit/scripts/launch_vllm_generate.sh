@@ -11,8 +11,8 @@ nohup python -m vllm.entrypoints.openai.api_server \
   --host 0.0.0.0 \
   --trust-remote-code \
   --port "$port" \
-  --data-parallel-size 1 \
-  --tensor-parallel-size 8 \
+  --data-parallel-size 8 \
+  --tensor-parallel-size 1 \
   --max-model-len "${MAX_MODEL_LEN:-65536}" \
   --dtype auto \
   --allowed-local-media-path /storage/openpsi/data \
