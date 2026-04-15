@@ -796,7 +796,7 @@ class MegatronEngine(TrainEngine):
                         op=torch.distributed.ReduceOp.AVG,
                     )
 
-                mtp_loss_value = values.item()
+                mtp_loss_value = values.sum().item()
                 self._mtp_loss_value = mtp_loss_value
 
                 if is_last_pp_stage:
@@ -896,56 +896,109 @@ class MegatronEngine(TrainEngine):
                     mb_input.padded_mb.update(tree_kwargs)
                     tree_attn_keys = list(tree_kwargs.keys())
 
-            # ---- MTP safety: disable in GPTModel._postprocess() ----
-            # megatron-core 0.16.x GPTModel._postprocess() has known
-            # issues that crash both inference and training paths:
+            # ---- MTP handling in GPTModel._postprocess() ----
             #
-            # 1) `if mtp_in_postprocess:` calls `self.mtp(...)`.
-            #    `mtp_in_postprocess` comes from `self.mtp_process`,
-            #    a bool cached in __init__ from `mtp_block_spec is
-            #    not None`.  Setting self.mtp=None is NOT enough —
-            #    self.mtp_process must also be set to False.
-            # 2) `if self.config.mtp_num_layers is not None:` calls
-            #    `labels.clone()` BEFORE the `labels is None` early
-            #    return, crashing during inference.
-            # 3) When labels IS provided, _postprocess() returns loss
-            #    (not logits), incompatible with AReaL's loss pipeline.
+            # megatron-core 0.16.x _postprocess() behaviour:
             #
-            # Workaround: temporarily disable all three MTP flags on
-            # the unwrapped GPTModel so _postprocess() skips MTP
-            # entirely and always returns logits.
+            #   if mtp_in_postprocess:
+            #       hidden_states = self.mtp(...)       # MTP forward
+            #   if config.mtp_num_layers is not None:
+            #       <MTP loss computed, attached via MTPLossAutoScaler>
+            #   logits = self.output_layer(hidden_states)
+            #   if labels is None: return logits
+            #   return compute_language_model_loss(labels, logits)
+            #
+            # Inference (forward_only=True):
+            #   AReaL does NOT pass labels, so labels.clone() crashes.
+            #   MTP forward is also unnecessary for logprob collection.
+            #   → Disable MTP entirely so _postprocess returns logits.
+            #
+            # Training (forward_only=False):
+            #   We NEED MTP loss in the autograd graph for draft-model
+            #   training, but AReaL also needs logits (not CE loss) for
+            #   its RL loss pipeline.  Strategy:
+            #     1. Keep MTP enabled so _postprocess runs mtp forward
+            #        and computes MTP loss (MTPLossAutoScaler).
+            #     2. Pass labels & loss_mask via extra_block_kwargs.
+            #     3. Monkey-patch compute_language_model_loss: the LAST
+            #        call (main CE) returns logits instead of loss;
+            #        earlier calls (per-MTP-layer) use real CE.
             extra_block_kwargs = None
             _mtp_restore = None
+            _clm_loss_restore = None
             if self.enable_mtp_training:
                 _unwrapped = model
                 while hasattr(_unwrapped, 'module'):
                     _unwrapped = _unwrapped.module
-                _saved_mtp = getattr(_unwrapped, 'mtp', None)
-                _saved_mtp_process = getattr(
-                    _unwrapped, 'mtp_process', None
-                )
-                _saved_mtp_layers = getattr(
-                    _unwrapped.config, 'mtp_num_layers', None
-                )
-                if (
-                    _saved_mtp is not None
-                    or _saved_mtp_process
-                    or _saved_mtp_layers is not None
-                ):
-                    _unwrapped.mtp = None
-                    _unwrapped.mtp_process = False
-                    _unwrapped.config.mtp_num_layers = None
-                    _mtp_restore = (
-                        _unwrapped,
-                        _saved_mtp,
-                        _saved_mtp_process,
-                        _saved_mtp_layers,
+
+                if forward_only:
+                    # -- Inference: disable MTP to avoid crash --
+                    _saved_mtp = getattr(_unwrapped, 'mtp', None)
+                    _saved_mtp_process = getattr(
+                        _unwrapped, 'mtp_process', None
                     )
-                    self.logger.debug(
-                        f"[MTPTrain] Temporarily disabled MTP in "
-                        f"_postprocess (forward_only={forward_only}, "
-                        f"saved_mtp_process={_saved_mtp_process}, "
-                        f"saved_mtp_num_layers={_saved_mtp_layers})"
+                    _saved_mtp_layers = getattr(
+                        _unwrapped.config, 'mtp_num_layers', None
+                    )
+                    if (
+                        _saved_mtp is not None
+                        or _saved_mtp_process
+                        or _saved_mtp_layers is not None
+                    ):
+                        _unwrapped.mtp = None
+                        _unwrapped.mtp_process = False
+                        _unwrapped.config.mtp_num_layers = None
+                        _mtp_restore = (
+                            _unwrapped,
+                            _saved_mtp,
+                            _saved_mtp_process,
+                            _saved_mtp_layers,
+                        )
+                    self.logger.info(
+                        "[MTPTrain] Disabled MTP in _postprocess for "
+                        "inference (forward_only=True)"
+                    )
+                else:
+                    # -- Training: enable MTP with labels & loss_mask --
+                    # Construct causal-LM labels from padded input_ids.
+                    _input_ids = mb_input.padded_mb["input_ids"]
+                    _mtp_labels = torch.roll(
+                        _input_ids, shifts=-1, dims=-1
+                    )
+                    # loss_mask carried through pack/pad pipeline;
+                    # fall back to None → megatron uses ones_like.
+                    _mtp_loss_mask = mb_input.padded_mb.get(
+                        "loss_mask", None
+                    )
+                    extra_block_kwargs = {"labels": _mtp_labels}
+                    if _mtp_loss_mask is not None:
+                        extra_block_kwargs["loss_mask"] = _mtp_loss_mask
+
+                    # Monkey-patch: make the LAST call to
+                    # compute_language_model_loss (the main CE loss)
+                    # return logits so AReaL gets logits, not loss.
+                    _remaining = [self.mtp_num_layers]
+                    _orig_clm = _unwrapped.compute_language_model_loss
+
+                    def _mtp_loss_fn(
+                        _labels, _logits,
+                        _rem=_remaining, _orig=_orig_clm,
+                    ):
+                        if _rem[0] > 0:
+                            _rem[0] -= 1
+                            return _orig(_labels, _logits)
+                        # Return logits in [b, s, v] matching the
+                        # ``if labels is None`` path in _postprocess.
+                        return _logits.transpose(0, 1).contiguous()
+
+                    _unwrapped.compute_language_model_loss = _mtp_loss_fn
+                    _clm_loss_restore = (_unwrapped, _orig_clm)
+
+                    self.logger.info(
+                        f"[MTPTrain] MTP enabled for training "
+                        f"(mtp_num_layers={self.mtp_num_layers}, "
+                        f"labels_shape={_mtp_labels.shape}, "
+                        f"loss_mask={'yes' if _mtp_loss_mask is not None else 'no'})"
                     )
 
             try:
@@ -960,8 +1013,11 @@ class MegatronEngine(TrainEngine):
                     _uw.mtp_process = _sp
                     _uw.config.mtp_num_layers = _sl
                     self.logger.debug(
-                        "[MTPTrain] Restored MTP after forward pass"
+                        "[MTPTrain] Restored MTP after inference forward"
                     )
+                if _clm_loss_restore is not None:
+                    _uw, _orig = _clm_loss_restore
+                    _uw.compute_language_model_loss = _orig
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
