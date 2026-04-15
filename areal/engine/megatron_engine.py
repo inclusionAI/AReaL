@@ -354,13 +354,21 @@ class MegatronEngine(TrainEngine):
                     f"mtp_detach_heads={self.mtp_detach_heads}"
                 )
             else:
-                if getattr(self.tf_config, "mtp_num_layers", 0) > 0:
+                # When MTP training is disabled, clear mtp_num_layers to
+                # prevent mbridge from creating MTP layers.  Without this,
+                # models like MiMo whose HF config contains
+                # num_nextn_predict_layers>0 would still create MTP layers
+                # through mbridge, causing _postprocess() to enter the MTP
+                # loss path and crash on labels.clone() when labels is None
+                # during inference.
+                _orig_mtp = getattr(self.tf_config, "mtp_num_layers", None)
+                if _orig_mtp is not None and _orig_mtp > 0:
+                    self.tf_config.mtp_num_layers = None
                     self.logger.info(
-                        f"[MTPTrain] MTP training disabled but tf_config.mtp_num_layers="
-                        f"{self.tf_config.mtp_num_layers}. Resetting to 0 to prevent "
-                        f"mbridge from creating MTP layers (avoids Invalid spec error)."
+                        f"[MTPConfig] Cleared tf_config.mtp_num_layers "
+                        f"(was {_orig_mtp}) because enable_mtp_training=False. "
+                        f"MTP layers will NOT be created in GPTModel."
                     )
-                    self.tf_config.mtp_num_layers = 0
 
             with self.device:
                 models = make_mcore_model(
@@ -927,6 +935,46 @@ class MegatronEngine(TrainEngine):
             _mtp_restore = None
             _clm_loss_restore = None
             _mtp_ckpt_restore = []  # (layer, orig_method) pairs
+
+            # Defensive guard: even when enable_mtp_training=False, the
+            # model may still have MTP artefacts (e.g. config.mtp_num_layers
+            # leaked from HF/mbridge config, or MTP layers loaded from a
+            # checkpoint).  During inference this causes _postprocess() to
+            # enter the MTP loss path and crash on labels.clone() when
+            # labels is None.  Disable MTP at runtime in this case.
+            if not self.enable_mtp_training and forward_only:
+                _unwrapped_def = model
+                while hasattr(_unwrapped_def, 'module'):
+                    _unwrapped_def = _unwrapped_def.module
+                _def_mtp = getattr(_unwrapped_def, 'mtp', None)
+                _def_mtp_process = getattr(
+                    _unwrapped_def, 'mtp_process', False
+                )
+                _def_mtp_layers = getattr(
+                    _unwrapped_def.config, 'mtp_num_layers', None
+                )
+                if (
+                    _def_mtp is not None
+                    or _def_mtp_process
+                    or _def_mtp_layers is not None
+                ):
+                    _unwrapped_def.mtp = None
+                    _unwrapped_def.mtp_process = False
+                    _unwrapped_def.config.mtp_num_layers = None
+                    _mtp_restore = (
+                        _unwrapped_def,
+                        _def_mtp,
+                        _def_mtp_process,
+                        _def_mtp_layers,
+                    )
+                    self.logger.debug(
+                        f"[MTPGuard] Disabled MTP for inference "
+                        f"(enable_mtp_training=False but model had "
+                        f"mtp={_def_mtp is not None}, "
+                        f"mtp_process={_def_mtp_process}, "
+                        f"mtp_num_layers={_def_mtp_layers})"
+                    )
+
             if self.enable_mtp_training:
                 _unwrapped = model
                 while hasattr(_unwrapped, 'module'):
