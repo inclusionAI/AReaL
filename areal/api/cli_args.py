@@ -1507,6 +1507,8 @@ class vLLMConfig:
         host: str | None = None,
         port: int | None = None,
         dist_init_addr: str | None = None,
+        n_nodes: int = 1,
+        node_rank: int = 0,
     ):
         args: dict = conf_as_dict(vllm_config)
         args = dict(
@@ -1522,6 +1524,18 @@ class vLLMConfig:
             args["port"] = port
         if host is not None:
             args["host"] = host
+        # Multi-node support
+        if n_nodes > 1:
+            args["nnodes"] = n_nodes
+            args["node_rank"] = node_rank
+            if dist_init_addr is not None:
+                from areal.utils.network import split_hostport
+
+                master_host, master_port = split_hostport(dist_init_addr)
+                args["master_addr"] = master_host
+                args["master_port"] = str(master_port)
+            if node_rank > 0:
+                args["headless"] = True
         return args
 
     @staticmethod
@@ -1536,6 +1550,8 @@ class vLLMConfig:
         host: str | None = None,
         port: int | None = None,
         dist_init_addr: str | None = None,
+        n_nodes: int = 1,
+        node_rank: int = 0,
     ):
         args = vLLMConfig.build_args(
             vllm_config=vllm_config,
@@ -1544,6 +1560,8 @@ class vLLMConfig:
             host=host,
             port=port,
             dist_init_addr=dist_init_addr,
+            n_nodes=n_nodes,
+            node_rank=node_rank,
         )
         return vLLMConfig.build_cmd_from_args(args)
 
