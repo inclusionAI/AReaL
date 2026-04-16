@@ -32,8 +32,10 @@ from areal.infra.rpc.serialization import deserialize_value, serialize_value
 @pytest.fixture(autouse=True)
 def clear_rtensor_storage():
     rtensor_storage._storage.clear()
+    rtensor_storage._storage_stats.clear()
     yield
     rtensor_storage._storage.clear()
+    rtensor_storage._storage_stats.clear()
 
 
 @pytest.fixture
@@ -102,7 +104,7 @@ class TestDataProxyRTensor:
         resp = await client.put(
             f"/data/{shard_id}",
             content=body,
-            headers={"Content-Type": "application/octet-stream"},
+            headers={"Content-Type": "application/json"},
         )
 
         assert resp.status_code == 200
@@ -119,7 +121,7 @@ class TestDataProxyRTensor:
         put_resp = await client.put(
             f"/data/{shard_id}",
             content=body,
-            headers={"Content-Type": "application/octet-stream"},
+            headers={"Content-Type": "application/json"},
         )
         assert put_resp.status_code == 200
 
@@ -153,7 +155,7 @@ class TestDataProxyRTensor:
             put_resp = await client.put(
                 f"/data/{shard_id}",
                 content=body,
-                headers={"Content-Type": "application/octet-stream"},
+                headers={"Content-Type": "application/json"},
             )
             assert put_resp.status_code == 200
 
@@ -177,7 +179,7 @@ class TestDataProxyRTensor:
         put_resp = await client.put(
             f"/data/{shard_id}",
             content=body,
-            headers={"Content-Type": "application/octet-stream"},
+            headers={"Content-Type": "application/json"},
         )
         assert put_resp.status_code == 200
 
@@ -220,7 +222,7 @@ class TestDataProxyRTensor:
             put_resp = await client.put(
                 f"/data/{shard_id}",
                 content=body,
-                headers={"Content-Type": "application/octet-stream"},
+                headers={"Content-Type": "application/json"},
             )
             assert put_resp.status_code == 200
 
@@ -265,7 +267,7 @@ class TestDataProxyRTensor:
         put_resp = await client.put(
             f"/data/{shard_id}",
             content=body,
-            headers={"Content-Type": "application/octet-stream"},
+            headers={"Content-Type": "application/json"},
         )
         assert put_resp.status_code == 200
 
@@ -320,7 +322,7 @@ class TestDataProxyRTensor:
         put_resp = await client.put(
             f"/data/{shard_id}",
             content=body,
-            headers={"Content-Type": "application/octet-stream"},
+            headers={"Content-Type": "application/json"},
         )
         assert put_resp.status_code == 200
 

@@ -112,8 +112,12 @@ def retrieve_batch_data_many():
 
         # USE PYDANTIC MODEL FOR VALIDATION
         try:
+            if not isinstance(raw_payload, dict):
+                raise TypeError(
+                    "Expected a JSON object, got " + type(raw_payload).__name__
+                )
             payload_model = BatchShardRequest(**raw_payload)
-        except ValidationError:
+        except (ValidationError, TypeError):
             return (
                 jsonify(
                     {
