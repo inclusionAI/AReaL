@@ -1,3 +1,4 @@
+import random
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -152,7 +153,7 @@ class RLVRWorkflow(RolloutWorkflow):
                     f"2) Checking MTP layer training status; "
                     f"3) Reducing speculative_num_steps."
                 )
-            else:
+            elif random.random() < 0.01:
                 logger.info(
                     f"[SpecDec] Accept rate: {accept_rate:.4f} "
                     f"(accept={resp.spec_accept_token_num}, draft={resp.spec_draft_token_num})"
