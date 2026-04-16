@@ -22,18 +22,23 @@ def extract_answer(text: str) -> str:
     return ""
 
 
+def _normalize_answer(text: str) -> str:
+    """Strip trailing punctuation and whitespace for answer comparison."""
+    return text.strip().lower().rstrip(".")
+
+
 def compute_score(prediction: str, ground_truth) -> float:
     if isinstance(ground_truth, list):
         return max(compute_score(prediction, gt) for gt in ground_truth)
 
-    prediction = prediction.strip().lower()
-    ground_truth = str(ground_truth).strip().lower()
+    pred_norm = _normalize_answer(prediction)
+    gt_norm = _normalize_answer(str(ground_truth))
 
-    if prediction == ground_truth:
+    if pred_norm == gt_norm:
         return 1.0
 
     try:
-        if abs(float(prediction) - float(ground_truth)) < 1e-6:
+        if abs(float(pred_norm) - float(gt_norm)) < 1e-6:
             return 1.0
     except (ValueError, TypeError):
         pass
@@ -92,6 +97,20 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
 
     score, _ = reason_map_score(prediction, station_1, station_2, metro_data)
     return score
+
+
+def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.1, hi: float = 0.5) -> float:
+    """MapTrace: linear reward based on NDTW distance. 1.0 if ndtw<=lo, 0.0 if ndtw>=hi, linear between."""
+    from geo_edit.evaluation.map_trace_verifier import map_trace_score
+
+    ndtw, is_success, _ = map_trace_score(response, str(ground_truth))
+    if not is_success:
+        return 0.0
+    if ndtw <= lo:
+        return 1.0
+    if ndtw >= hi:
+        return 0.0
+    return (hi - ndtw) / (hi - lo)
 
 
 def _compute_repetition_penalty(text: str) -> float:
@@ -209,6 +228,9 @@ class GeoVisionQARewardManager:
                 if not isinstance(extra, dict):
                     extra = {}
             return _compute_reasonmap_base_score(prediction, ground_truth, extra)
+
+        if data_source == "map_trace":
+            return _compute_map_trace_score(prediction, ground_truth)
 
         return compute_score(prediction, ground_truth)
 
