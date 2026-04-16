@@ -71,7 +71,7 @@ if [[ ! -f "${EVAL_SCRIPT}" ]]; then
   exit 1
 fi
 
-TOKEN_LIMITS=( 65536)
+TOKEN_LIMITS=(0 2048 8192 16384 24756 32768)
 DATA_TYPE="${DATA_TYPE_FROM_CLI:-${DATA_TYPE:-}}"
 if [[ -z "${DATA_TYPE}" ]]; then
   read -r -p "Enter --data-type parquet path (or dataset key): " DATA_TYPE
@@ -125,7 +125,7 @@ import sys
 from datetime import datetime
 
 checkpoint_path = sys.argv[1]
-token_limits = [ 65536]
+token_limits = [0, 2048, 8192, 16384, 24756, 32768]
 target_model_path = os.path.normpath(os.path.abspath(os.path.expanduser(checkpoint_path)))
 
 abs_model = os.path.abspath(os.path.expanduser(checkpoint_path))
