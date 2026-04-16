@@ -269,12 +269,12 @@ class TestDataProxyRTensor:
         )
         assert put_resp.status_code == 200
 
-        from areal.experimental.inference_service.data_proxy import app as app_module
+        from areal.infra.rpc.guard import data_blueprint
 
         def _boom(data):
             raise RuntimeError("serialization kaboom")
 
-        monkeypatch.setattr(app_module, "serialize_value", _boom)
+        monkeypatch.setattr(data_blueprint, "serialize_value", _boom)
 
         batch_resp = await client.post(
             "/data/batch",

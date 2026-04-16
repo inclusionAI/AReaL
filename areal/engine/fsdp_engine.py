@@ -866,7 +866,15 @@ class FSDPEngine(TrainEngine):
         dtype = getattr(torch, self.config.dtype)
 
         if self.config.fsdp.memory_efficient_load:
-            loading_device = "cpu"
+            # Only rank 0 loads on CPU; other ranks use meta device (zero memory)
+            # to avoid CPU OOM when multiple workers share a node.
+            # Weights are broadcast from rank 0 after FSDP sharding in initialize().
+            # Note: meta device optimization only applies to LLM (not VLM), because
+            # VLM uses from_pretrained() which doesn't support meta device context.
+            if not self.is_vision_model and dist.get_rank() != 0:
+                loading_device = "meta"
+            else:
+                loading_device = "cpu"
         else:
             loading_device = current_platform.device_type
 
@@ -1318,6 +1326,7 @@ class FSDPEngine(TrainEngine):
         fut = Future()
 
         if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
             fut = self.rollout_engine.update_weights_from_disk(meta)
 
         assert meta.path is not None
@@ -1335,6 +1344,7 @@ class FSDPEngine(TrainEngine):
             )
 
             fut.result()
+            self.rollout_engine.continue_generation()
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)

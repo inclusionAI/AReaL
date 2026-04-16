@@ -127,7 +127,16 @@ def fsdp2_load_full_state_dict(
     )
 
     device = current_platform.current_device()
-    model = model.to(device=device, non_blocking=True)
+    # Handle meta device models (from memory_efficient_load where non-rank-0
+    # processes use meta tensors). to_empty() materializes meta tensors without
+    # copying data; the actual weights come from set_model_state_dict broadcast.
+    has_meta = any(t.is_meta for t in model.parameters()) or any(
+        t.is_meta for t in model.buffers()
+    )
+    if has_meta:
+        model = model.to_empty(device=device)
+    else:
+        model = model.to(device=device, non_blocking=True)
     cpu_offload = cpu_offload is not None
     options = StateDictOptions(
         full_state_dict=True,
