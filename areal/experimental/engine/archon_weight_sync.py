@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from concurrent.futures import Future
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -39,11 +40,17 @@ class WeightSyncState:
     """
 
     def __init__(self, pp_rank: int):
+        self.pp_rank = pp_rank
         self.group_initialized: bool = False
-        self.group_name: str = f"update_weight_group_{pp_rank}"
+        self.group_version: int = 0
+        self.group_name: str = self._make_group_name()
         self.master_addr: str = ""
         self.master_port: int = 0
         self.group: dist.ProcessGroup | None = None
+        self.active_server_addresses: list[str] = []
+
+    def _make_group_name(self) -> str:
+        return f"update_weight_group_{self.pp_rank}_v{self.group_version}"
 
 
 def init_weight_update_group(
@@ -60,6 +67,11 @@ def init_weight_update_group(
     meta.nccl_master_address = state.master_addr
     meta.nccl_master_port = state.master_port
     meta.nccl_group_name = state.group_name
+    meta.group_version = state.group_version
+    if not meta.active_server_addresses:
+        meta.active_server_addresses = list(state.active_server_addresses)
+    if not meta.target_server_addresses:
+        meta.target_server_addresses = list(state.active_server_addresses)
 
     # Processes launched with torchrun set TORCHELASTIC_USE_AGENT_STORE=True,
     # which blocks creating another TCP store for weight update.
@@ -69,14 +81,16 @@ def init_weight_update_group(
         assert meta.gen_allocation is not None
 
         with engine.engine_lock:
+            target_addresses = list(meta.target_server_addresses)
             fut = engine.rollout_engine.init_weights_update_group(meta)
 
-            gen_world_size = meta.gen_allocation.parallel.world_size
+            gen_world_size = len(target_addresses)
             init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             engine.logger.info(
                 f"Initializing weight update group: type={meta.type}, "
                 f"init_method={init_method}, "
-                f"group={meta.nccl_group_name}"
+                f"group={meta.nccl_group_name}, "
+                f"servers={target_addresses}"
             )
             state.group = init_custom_process_group(
                 backend=current_platform.communication_backend,
@@ -110,6 +124,132 @@ def _get_full_tensor(param: nn.Parameter) -> torch.Tensor:
         return tensor
 
 
+def _get_weight_update_fileroot(engine: ArchonEngine) -> str | None:
+    return getattr(engine.rollout_engine.config, "fileroot", None)
+
+
+def _should_delay_group_rebuild(engine: ArchonEngine) -> bool:
+    if engine.rollout_engine is None or not hasattr(
+        engine.rollout_engine, "get_last_topology_change_time"
+    ):
+        return False
+    cooldown = getattr(
+        engine.rollout_engine.config, "topology_change_cooldown_seconds", 0.0
+    )
+    if cooldown <= 0:
+        return False
+    last_change = engine.rollout_engine.get_last_topology_change_time()
+    return (time.time() - last_change) < cooldown
+
+
+def _sync_new_servers_from_disk(
+    state: WeightSyncState,
+    meta: WeightUpdateMeta,
+    engine: ArchonEngine,
+    new_addresses: list[str],
+) -> None:
+    if not new_addresses or dist.get_rank() != 0:
+        return
+    if not engine.config.experiment_name or not engine.config.trial_name:
+        engine.logger.warning(
+            "Skip disk fallback for new inference servers because experiment/trial metadata is missing."
+        )
+        return
+    fileroot = _get_weight_update_fileroot(engine)
+    if not fileroot:
+        engine.logger.warning(
+            "Skip disk fallback for new inference servers because fileroot is not configured."
+        )
+        return
+
+    disk_meta = WeightUpdateMeta.from_disk(
+        experiment_name=engine.config.experiment_name,
+        trial_name=engine.config.trial_name,
+        file_root=fileroot,
+        use_lora=meta.use_lora,
+        lora_name=meta.lora_name,
+        lora_int_id=meta.lora_int_id,
+        base_model_name=meta.base_model_name,
+        clear_checkpoint_after_load=True,
+    ).with_version(engine.get_version())
+    disk_meta.target_server_addresses = list(new_addresses)
+    engine.logger.info(
+        "Sync %d newly registered inference servers via disk fallback before rebuilding %s.",
+        len(new_addresses),
+        state.group_name,
+    )
+    update_weights_from_disk(disk_meta, engine)
+
+
+def maybe_rebuild_weight_update_group(
+    state: WeightSyncState,
+    meta: WeightUpdateMeta,
+    engine: ArchonEngine,
+) -> None:
+    latest_addresses = list(state.active_server_addresses)
+    if engine.rollout_engine is not None and hasattr(
+        engine.rollout_engine, "get_active_server_addresses"
+    ):
+        latest_addresses = list(engine.rollout_engine.get_active_server_addresses())
+
+    if not latest_addresses:
+        return
+
+    topology_changed = latest_addresses != state.active_server_addresses
+    if dist.get_rank() == 0:
+        remote_flag = (
+            engine.rollout_engine.consume_group_rebuild_request()
+            if engine.rollout_engine is not None
+            and hasattr(engine.rollout_engine, "consume_group_rebuild_request")
+            else False
+        )
+        topology_changed = topology_changed or remote_flag
+    topology_changed_list = [topology_changed]
+    dist.broadcast_object_list(topology_changed_list, src=0, group=engine.cpu_group)
+    topology_changed = bool(topology_changed_list[0])
+
+    if not topology_changed:
+        state.active_server_addresses = list(latest_addresses)
+        meta.active_server_addresses = list(latest_addresses)
+        meta.target_server_addresses = list(latest_addresses)
+        return
+
+    new_addresses = [
+        addr for addr in latest_addresses if addr not in state.active_server_addresses
+    ]
+    removed_addresses = [
+        addr for addr in state.active_server_addresses if addr not in latest_addresses
+    ]
+    if new_addresses:
+        _sync_new_servers_from_disk(state, meta, engine, new_addresses)
+
+    if new_addresses and not removed_addresses and _should_delay_group_rebuild(engine):
+        state.active_server_addresses = list(latest_addresses)
+        meta.active_server_addresses = list(latest_addresses)
+        meta.target_server_addresses = list(latest_addresses)
+        engine.logger.info(
+            "Delayed XCCL group rebuild for %d newly added inference servers due to topology cooldown.",
+            len(new_addresses),
+        )
+        return
+
+    dist.barrier(group=engine.cpu_group)
+    if engine.is_pipeline_parallel_head() and state.group_initialized and state.group:
+        with engine.engine_lock:
+            dist.destroy_process_group(state.group)
+        state.group = None
+        state.group_initialized = False
+    dist.barrier(group=engine.cpu_group)
+
+    state.group_version += 1
+    state.group_name = state._make_group_name()
+    state.active_server_addresses = list(latest_addresses)
+    meta.group_version = state.group_version
+    meta.active_server_addresses = list(latest_addresses)
+    meta.target_server_addresses = list(latest_addresses)
+    init_weight_update_group(state=state, meta=meta, engine=engine)
+
+
 @trace_perf("archon_engine.update_weights_from_distributed", category="comm")
 def update_weights_from_distributed(
     state: WeightSyncState,
@@ -119,9 +259,14 @@ def update_weights_from_distributed(
     """Update weights by broadcasting from training engine to inference engine."""
     assert engine.rollout_engine is not None
 
+    maybe_rebuild_weight_update_group(state=state, meta=meta, engine=engine)
+
     meta.nccl_master_address = state.master_addr
     meta.nccl_master_port = state.master_port
     meta.nccl_group_name = state.group_name
+    meta.group_version = state.group_version
+    meta.active_server_addresses = list(state.active_server_addresses)
+    meta.target_server_addresses = list(state.active_server_addresses)
 
     if dist.get_rank() == 0:
         engine.rollout_engine.pause_generation()

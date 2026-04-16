@@ -13,6 +13,8 @@ from areal.api import (
     WeightUpdateMeta,
     Worker,
 )
+from areal.api.io_struct import HttpRequest
+from areal.infra.remote_inf_engine import RemoteInfEngine
 from areal.api.cli_args import (
     GenerationHyperparameters,
     InferenceEngineConfig,
@@ -175,6 +177,41 @@ class MockInferenceEngine:
     @classmethod
     def __name__(cls):
         return "MockInferenceEngine"
+
+
+class MockRemoteBackend:
+    def build_generation_request(self, req, with_lora, version):
+        return HttpRequest(method="POST", endpoint="/generate", payload={})
+
+    def parse_generation_response(self, response):
+        return response
+
+    def build_disk_weight_update_requests(self, meta):
+        return Mock(requests=[])
+
+    def build_distributed_weight_update_requests(self, meta, param_specs):
+        return Mock(requests=[])
+
+    def build_init_weights_group_request(self, addr, server_idx, meta):
+        return HttpRequest(method="POST", endpoint="/init", payload={})
+
+    def get_pause_request(self):
+        return HttpRequest(method="POST", endpoint="/pause", payload={})
+
+    def get_resume_request(self):
+        return HttpRequest(method="POST", endpoint="/resume", payload={})
+
+    def get_health_check_request(self):
+        return HttpRequest(method="GET", endpoint="/health", payload={})
+
+    def get_offload_request(self):
+        return HttpRequest(method="POST", endpoint="/offload", payload={})
+
+    def get_onload_request(self, tags=None):
+        return HttpRequest(method="POST", endpoint="/onload", payload={"tags": tags})
+
+    def launch_server(self, server_args):
+        raise NotImplementedError
 
 
 class TestRolloutControllerInitialization:
@@ -655,7 +692,13 @@ class TestRolloutControllerWeightUpdates:
 
         controller.initialize(role="rollout", server_args={})
 
-        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
+        meta = WeightUpdateMeta(
+            type="disk",
+            path="/tmp/test",
+            group_version=3,
+            active_server_addresses=["127.0.0.1:8000"],
+            target_server_addresses=["127.0.0.1:8000"],
+        )
         coro = controller.init_weights_update_group(meta)
 
         # Run the coroutine and verify it completes successfully
@@ -777,6 +820,25 @@ class TestRolloutControllerLifecycle:
         controller.initialize(role="rollout", server_args={})
 
         controller.resume()
+
+    def test_pause_resume_updates_dispatcher_state(self):
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        controller.initialize(role="rollout", server_args={})
+
+        controller.pause()
+        assert controller.dispatcher.is_paused() is True
+
+        controller.resume()
+        assert controller.dispatcher.is_paused() is False
+
+        controller.destroy()
 
 
 class TestRolloutControllerAgenerate:
@@ -1361,6 +1423,73 @@ class TestRolloutControllerCollectiveRPC:
         assert len(test_calls) == 3
 
         controller.destroy()
+
+
+class TestRemoteInfEngineElasticity:
+    def test_health_monitor_deregisters_unhealthy_server(self):
+        config = InferenceEngineConfig(
+            backend="sglang:d2",
+            consumer_batch_size=4,
+            enable_health_monitor=False,
+            health_check_failure_threshold=2,
+        )
+        engine = RemoteInfEngine(config=config, backend=MockRemoteBackend())
+        engine.logger = Mock()
+        engine._set_addresses(["127.0.0.1:8000", "127.0.0.1:8001"])
+
+        health = {
+            "http://127.0.0.1:8000": True,
+            "http://127.0.0.1:8001": False,
+        }
+        engine.check_health = lambda base_url: health[base_url]
+        engine._discover_remote_addresses = lambda: []
+
+        engine._monitor_servers_once()
+        assert engine.get_active_server_addresses() == [
+            "127.0.0.1:8000",
+            "127.0.0.1:8001",
+        ]
+
+        engine._monitor_servers_once()
+        assert engine.get_active_server_addresses() == ["127.0.0.1:8000"]
+        assert engine.consume_group_rebuild_request() is True
+
+    def test_health_monitor_discovers_new_server(self):
+        config = InferenceEngineConfig(
+            backend="sglang:d1",
+            consumer_batch_size=4,
+            enable_health_monitor=False,
+        )
+        engine = RemoteInfEngine(config=config, backend=MockRemoteBackend())
+        engine.logger = Mock()
+        engine._set_addresses(["127.0.0.1:8000"])
+        engine.check_health = lambda base_url: True
+        engine._wait_for_server = lambda address, process=None: None
+        engine._discover_remote_addresses = lambda: [
+            "127.0.0.1:8000",
+            "127.0.0.1:8002",
+        ]
+
+        engine._monitor_servers_once()
+
+        assert engine.get_active_server_addresses() == [
+            "127.0.0.1:8000",
+            "127.0.0.1:8002",
+        ]
+        assert engine.consume_group_rebuild_request() is True
+
+    def test_target_addresses_filtering(self):
+        config = InferenceEngineConfig(backend="sglang:d2", consumer_batch_size=4)
+        engine = RemoteInfEngine(config=config, backend=MockRemoteBackend())
+        engine.logger = Mock()
+        engine._set_addresses(["127.0.0.1:8000", "127.0.0.1:8001"])
+
+        meta = WeightUpdateMeta(
+            type="xccl",
+            target_server_addresses=["127.0.0.1:8001"],
+        )
+
+        assert engine._get_target_addresses(meta) == ["127.0.0.1:8001"]
 
 
 if __name__ == "__main__":

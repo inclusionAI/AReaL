@@ -192,6 +192,8 @@ class FSDPEngine(TrainEngine):
         self.weight_update_group_name: str
         self.weight_update_master_addr: str
         self.weight_update_master_port: int
+        self.weight_update_group_version: int = 0
+        self._active_server_addresses: list[str] = []
 
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.config.path,
@@ -275,7 +277,7 @@ class FSDPEngine(TrainEngine):
 
         if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
-        self.weight_update_group_name = "update_weight_group"
+        self.weight_update_group_name = self._make_weight_update_group_name()
 
         # Create device model
         self._create_device_model()
@@ -445,9 +447,14 @@ class FSDPEngine(TrainEngine):
             rollout_engine=engine, train_engine=self
         )
 
-        if meta.type == "xccl" and not self.weight_update_group_initialized:
-            self._init_weight_update_from_distributed(meta)
-            self.weight_update_group_initialized = True
+        if meta.type == "xccl":
+            self._active_server_addresses = self._capture_active_server_addresses()
+            meta.group_version = self.weight_update_group_version
+            meta.active_server_addresses = list(self._active_server_addresses)
+            meta.target_server_addresses = list(self._active_server_addresses)
+            if not self.weight_update_group_initialized:
+                self._init_weight_update_from_distributed(meta)
+                self.weight_update_group_initialized = True
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
@@ -1118,6 +1125,124 @@ class FSDPEngine(TrainEngine):
                 tensor = tensor.to(current_platform.device_type)
             return tensor
 
+    def _make_weight_update_group_name(self) -> str:
+        return f"update_weight_group_v{self.weight_update_group_version}"
+
+    def _capture_active_server_addresses(self) -> list[str]:
+        if self.rollout_engine is None or not hasattr(
+            self.rollout_engine, "get_active_server_addresses"
+        ):
+            return []
+        return list(self.rollout_engine.get_active_server_addresses())
+
+    def _get_weight_update_fileroot(self) -> str | None:
+        return getattr(self.rollout_engine.config, "fileroot", None)
+
+    def _should_delay_group_rebuild(self) -> bool:
+        if self.rollout_engine is None or not hasattr(
+            self.rollout_engine, "get_last_topology_change_time"
+        ):
+            return False
+        cooldown = getattr(
+            self.rollout_engine.config, "topology_change_cooldown_seconds", 0.0
+        )
+        if cooldown <= 0:
+            return False
+        last_change = self.rollout_engine.get_last_topology_change_time()
+        return (time.time() - last_change) < cooldown
+
+    def _sync_new_servers_from_disk(
+        self, meta: WeightUpdateMeta, new_addresses: list[str]
+    ) -> None:
+        if not new_addresses or dist.get_rank() != 0:
+            return
+        if not self.config.experiment_name or not self.config.trial_name:
+            self.logger.warning(
+                "Skip disk fallback for new inference servers because experiment/trial metadata is missing."
+            )
+            return
+        fileroot = self._get_weight_update_fileroot()
+        if not fileroot:
+            self.logger.warning(
+                "Skip disk fallback for new inference servers because fileroot is not configured."
+            )
+            return
+
+        disk_meta = WeightUpdateMeta.from_disk(
+            experiment_name=self.config.experiment_name,
+            trial_name=self.config.trial_name,
+            file_root=fileroot,
+            use_lora=meta.use_lora,
+            lora_name=meta.lora_name,
+            lora_int_id=meta.lora_int_id,
+            base_model_name=meta.base_model_name,
+            clear_checkpoint_after_load=True,
+        ).with_version(self.get_version())
+        disk_meta.target_server_addresses = list(new_addresses)
+        self.logger.info(
+            "Sync %d newly registered inference servers via disk fallback before rebuilding %s.",
+            len(new_addresses),
+            self.weight_update_group_name,
+        )
+        self._update_weights_from_disk(disk_meta)
+
+    def _maybe_rebuild_weight_update_group(self, meta: WeightUpdateMeta) -> None:
+        latest_addresses = self._capture_active_server_addresses()
+        if not latest_addresses:
+            return
+
+        topology_changed = latest_addresses != self._active_server_addresses
+        if dist.get_rank() == 0:
+            remote_flag = (
+                self.rollout_engine.consume_group_rebuild_request()
+                if self.rollout_engine is not None
+                and hasattr(self.rollout_engine, "consume_group_rebuild_request")
+                else False
+            )
+            topology_changed = topology_changed or remote_flag
+        topology_changed_list = [topology_changed]
+        dist.broadcast_object_list(topology_changed_list, src=0, group=self.cpu_group)
+        topology_changed = bool(topology_changed_list[0])
+
+        if not topology_changed:
+            meta.active_server_addresses = list(latest_addresses)
+            meta.target_server_addresses = list(latest_addresses)
+            return
+
+        new_addresses = [
+            addr for addr in latest_addresses if addr not in self._active_server_addresses
+        ]
+        removed_addresses = [
+            addr for addr in self._active_server_addresses if addr not in latest_addresses
+        ]
+        if new_addresses:
+            self._sync_new_servers_from_disk(meta, new_addresses)
+
+        if new_addresses and not removed_addresses and self._should_delay_group_rebuild():
+            self._active_server_addresses = list(latest_addresses)
+            meta.active_server_addresses = list(latest_addresses)
+            meta.target_server_addresses = list(self._active_server_addresses)
+            self.logger.info(
+                "Delayed XCCL group rebuild for %d newly added inference servers due to topology cooldown.",
+                len(new_addresses),
+            )
+            return
+
+        dist.barrier(group=self.cpu_group)
+        if dist.get_rank() == 0 and self.weight_update_group_initialized:
+            dist.destroy_process_group(self.weight_update_group)
+            self.weight_update_group_initialized = False
+        dist.barrier(group=self.cpu_group)
+
+        self.weight_update_group_version += 1
+        self.weight_update_group_name = self._make_weight_update_group_name()
+        self._active_server_addresses = list(latest_addresses)
+        meta.group_version = self.weight_update_group_version
+        meta.active_server_addresses = list(latest_addresses)
+        meta.target_server_addresses = list(latest_addresses)
+        self._init_weight_update_from_distributed(meta)
+        self.weight_update_group_initialized = True
+
     def _update_bucket_weights_from_distributed_async(
         self,
         meta: WeightUpdateMeta,
@@ -1205,6 +1330,11 @@ class FSDPEngine(TrainEngine):
         meta.nccl_master_address = self.weight_update_master_addr = gethostip()
         meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
         meta.nccl_group_name = self.weight_update_group_name
+        meta.group_version = self.weight_update_group_version
+        if not meta.target_server_addresses:
+            meta.target_server_addresses = list(self._active_server_addresses)
+        if not meta.active_server_addresses:
+            meta.active_server_addresses = list(self._active_server_addresses)
 
         # NOTE: Processes launched with torchrun will set the following env var to True,
         # which blocks creating another TCP store for weight update.
@@ -1212,14 +1342,16 @@ class FSDPEngine(TrainEngine):
         if dist.get_rank() == 0:
             assert meta.gen_allocation is not None
 
+            target_addresses = list(meta.target_server_addresses)
             fut = self.rollout_engine.init_weights_update_group(meta)
 
-            gen_world_size = meta.gen_allocation.parallel.world_size
+            gen_world_size = len(target_addresses)
             init_method = f"tcp://{format_host_for_url(meta.nccl_master_address)}:{meta.nccl_master_port}"
             self.logger.info(
                 f"Initializing weight update group: type={meta.type} "
                 f"init_method={init_method} "
-                f"group={meta.nccl_group_name}"
+                f"group={meta.nccl_group_name} "
+                f"servers={target_addresses}"
             )
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
@@ -1236,10 +1368,15 @@ class FSDPEngine(TrainEngine):
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters with single-pending-bucket pipelining."""
 
+        self._maybe_rebuild_weight_update_group(meta)
+
         # Reset weight weight meta with local info
         meta.nccl_master_address = self.weight_update_master_addr
         meta.nccl_master_port = self.weight_update_master_port
         meta.nccl_group_name = self.weight_update_group_name
+        meta.group_version = self.weight_update_group_version
+        meta.active_server_addresses = list(self._active_server_addresses)
+        meta.target_server_addresses = list(self._active_server_addresses)
 
         main_rank = dist.get_rank() == 0
         if main_rank:

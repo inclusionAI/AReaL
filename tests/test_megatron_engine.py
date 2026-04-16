@@ -173,3 +173,41 @@ def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
     logger.info(f"Load done, time cost: {time.perf_counter() - start:.4f} seconds.")
     new = engine.forward(input_=mock_input)
     assert torch.allclose(old, new)
+
+
+def test_pending_bucket_wait_order_uses_single_pending_pipeline():
+    engine = object.__new__(MegatronEngine)
+    release_log: list[str] = []
+
+    class DummyHandle:
+        def __init__(self, tag: str):
+            self.tag = tag
+
+        def wait(self):
+            release_log.append(f"handle:{self.tag}")
+
+    class DummyFuture:
+        def __init__(self, tag: str):
+            self.tag = tag
+
+        def result(self):
+            release_log.append(f"future:{self.tag}")
+
+    lock = Mock()
+    engine.engine_lock = lock
+
+    bucket = engine._update_bucket_weights_from_distributed_async = None
+
+    from areal.engine.megatron_engine import _PendingWeightUpdateBucket
+
+    pending_bucket = _PendingWeightUpdateBucket(
+        handles=[DummyHandle("b0"), DummyHandle("b1")],
+        fut=DummyFuture("bucket"),
+        named_tensors=[("w", Mock())],
+    )
+
+    MegatronEngine._wait_pending_weight_update_bucket(engine, pending_bucket)
+
+    assert release_log == ["handle:b0", "handle:b1", "future:bucket"]
+    assert pending_bucket.named_tensors == []
+    lock.release.assert_called_once()

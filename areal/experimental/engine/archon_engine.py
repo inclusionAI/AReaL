@@ -641,12 +641,24 @@ class ArchonEngine(TrainEngine):
             rollout_engine=engine, train_engine=self
         )
 
-        if meta.type == "xccl" and not self._weight_sync_state.group_initialized:
-            init_weight_update_group(
-                state=self._weight_sync_state,
-                meta=meta,
-                engine=self,
+        if meta.type == "xccl":
+            if hasattr(engine, "get_active_server_addresses"):
+                self._weight_sync_state.active_server_addresses = list(
+                    engine.get_active_server_addresses()
+                )
+            meta.group_version = self._weight_sync_state.group_version
+            meta.active_server_addresses = list(
+                self._weight_sync_state.active_server_addresses
             )
+            meta.target_server_addresses = list(
+                self._weight_sync_state.active_server_addresses
+            )
+            if not self._weight_sync_state.group_initialized:
+                init_weight_update_group(
+                    state=self._weight_sync_state,
+                    meta=meta,
+                    engine=self,
+                )
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
@@ -696,6 +708,17 @@ class ArchonEngine(TrainEngine):
         with self._offload_aware_context():
             if meta.type == "xccl":
                 assert self._weight_sync_state.group_initialized
+                if hasattr(self.rollout_engine, "get_active_server_addresses"):
+                    self._weight_sync_state.active_server_addresses = list(
+                        self.rollout_engine.get_active_server_addresses()
+                    )
+                meta.group_version = self._weight_sync_state.group_version
+                meta.active_server_addresses = list(
+                    self._weight_sync_state.active_server_addresses
+                )
+                meta.target_server_addresses = list(
+                    self._weight_sync_state.active_server_addresses
+                )
                 update_weights_from_distributed(
                     state=self._weight_sync_state,
                     meta=meta,
