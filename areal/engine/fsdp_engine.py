@@ -1318,6 +1318,7 @@ class FSDPEngine(TrainEngine):
         fut = Future()
 
         if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
             fut = self.rollout_engine.update_weights_from_disk(meta)
 
         assert meta.path is not None
@@ -1335,6 +1336,7 @@ class FSDPEngine(TrainEngine):
             )
 
             fut.result()
+            self.rollout_engine.continue_generation()
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
