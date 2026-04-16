@@ -31,4 +31,4 @@ After each meeting, add a new row to the **Past Meetings** table with:
   a file in this folder)
 - **Slides** -- link to the slide deck or place the PDF/PPTX in this folder and link it
   here
-- **Recording** -- link to the video recording (e.g. Zoom, Tecent Meeting, Dingding)
+- **Recording** -- link to the video recording (e.g. Zoom, Tencent Meeting, Dingding)
