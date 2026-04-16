@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 import dataclasses
 import json
@@ -7,7 +8,10 @@ import pickle
 from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
-from transformers import AutoProcessor, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast
+
+if TYPE_CHECKING:
+    from transformers import AutoProcessor
 
 from areal.api import (
     FinetuneSpec,
@@ -221,7 +225,7 @@ class RecoverHandler:
         step_info: StepInfo,
         saver: Saver,
         evaluator: Evaluator,
-        stats_logger: "StatsLogger",
+        stats_logger: StatsLogger,
         dataloader: Any,
         tokenizer: PreTrainedTokenizerFast | None = None,
         processor: AutoProcessor | None = None,
@@ -270,7 +274,7 @@ class RecoverHandler:
         engine: TrainEngine | dict[str, TrainEngine] | TrainController,
         saver: Saver,
         evaluator: Evaluator,
-        stats_logger: "StatsLogger",
+        stats_logger: StatsLogger,
         dataloader: Any,
         inference_engine: InferenceEngine | None = None,
         weight_update_meta: WeightUpdateMeta | None = None,
