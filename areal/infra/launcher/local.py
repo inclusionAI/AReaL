@@ -380,6 +380,7 @@ def local_main(config, run_id: int = 0):
         tms_env_vars = {}
     # Launch trainer entrypoint
     if alloc_mode.type_ != AllocationType.LLM_SERVER_ONLY:
+        is_colocate = alloc_mode.type_ == AllocationType.COLOCATE
         gpu = nprocs = alloc_mode.train.world_size
         _env_vars = dict(
             AREAL_LLM_SERVER_ADDRS=",".join(server_addrs),
@@ -396,6 +397,21 @@ def local_main(config, run_id: int = 0):
             cpus_per_task=actor_cpus_per_task,
             existing_env_vars=actor_env_vars,
         )
+        if is_colocate:
+            # In colocation mode, trainer reuses the same GPUs as the
+            # inference server.  We roll back the GPU counter so that
+            # submit_array assigns the same CUDA_VISIBLE_DEVICES that was
+            # given to the llm_server job.
+            gen_gpu = (
+                alloc_mode.gen.dp_size
+                * alloc_mode.gen.pp_size
+                * alloc_mode.gen.tp_size
+            )
+            launcher._gpu_counter = max(0, launcher._gpu_counter - gen_gpu)
+            logger.info(
+                f"[Colocation] Trainer will share {gen_gpu} GPUs with the inference server. "
+                f"GPU counter rolled back to {launcher._gpu_counter}."
+            )
         launcher.submit(
             job_name="trainer",
             cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",

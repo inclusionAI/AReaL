@@ -900,6 +900,29 @@ class MegatronEngineConfig:
         },
     )
 
+    # MTP (Multi-Token Prediction) Configuration
+    mtp_num_layers: int = field(
+        default=0,
+        metadata={
+            "help": "Number of MTP (Multi-Token Prediction) layers for speculative decoding training. "
+            "0 means MTP is disabled."
+        },
+    )
+    mtp_loss_scaling_factor: float = field(
+        default=0.1,
+        metadata={
+            "help": "Scaling factor for MTP auxiliary loss. Controls the weight of MTP loss "
+            "relative to the main RL loss."
+        },
+    )
+    mtp_detach_heads: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to detach hidden states before passing to MTP heads in MegatronEngine. "
+            "When True, MTP loss gradients only update MTP parameters."
+        },
+    )
+
 
 class SchedulingStrategyType(str, Enum):
     separation = "separation"
@@ -1357,6 +1380,37 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={"help": "Maximum number of new tokens to generate"},
     )
 
+    # MTP (Multi-Token Prediction) Online Training
+    enable_mtp_training: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable MTP (Multi-Token Prediction) online training during RL. "
+            "When enabled, MTP layers are trained alongside the main policy model "
+            "to keep the draft model aligned with the evolving policy."
+        },
+    )
+    mtp_num_layers: int = field(
+        default=1,
+        metadata={
+            "help": "Number of MTP layers to train. Must match the model's MTP architecture."
+        },
+    )
+    mtp_loss_scaling_factor: float = field(
+        default=0.1,
+        metadata={
+            "help": "Scaling factor for MTP auxiliary loss relative to the main RL loss."
+        },
+    )
+    mtp_detach_heads: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to detach hidden states before passing to MTP heads. "
+            "When True (recommended for RL), MTP loss gradients only update MTP parameters, "
+            "preventing the MTP auxiliary loss from corrupting the main policy gradients. "
+            "When False, MTP loss gradients also flow back to the main model."
+        },
+    )
+
     def should_compute_prox_logp(self) -> bool:
         """Determine if forward pass is needed for proximal log-probabilities.
 
@@ -1412,6 +1466,19 @@ class PPOActorConfig(TrainEngineConfig):
                 raise ValueError(
                     "SAPO is not compatible with `use_decoupled_loss=True`. "
                     "Please set `actor.use_decoupled_loss=false` in your configuration."
+                )
+
+        # Validate MTP configuration
+        if self.enable_mtp_training:
+            if self.mtp_num_layers <= 0:
+                raise ValueError(
+                    f"mtp_num_layers must be > 0 when enable_mtp_training is True, "
+                    f"got {self.mtp_num_layers}."
+                )
+            if not (0 < self.mtp_loss_scaling_factor <= 1.0):
+                raise ValueError(
+                    f"mtp_loss_scaling_factor must be in (0, 1.0], "
+                    f"got {self.mtp_loss_scaling_factor}."
                 )
 
         super().__post_init__()
@@ -1638,6 +1705,44 @@ class SGLangConfig:
     # Internal field, not exposed to users.
     enable_return_routed_experts: bool = False
 
+    # Speculative Decoding Configuration
+    speculative_algorithm: str | None = field(
+        default=None,
+        metadata={
+            "help": "Speculative decoding algorithm. Options: 'EAGLE', 'EAGLE3'. None disables speculative decoding."
+        },
+    )
+    speculative_draft_model_path: str | None = field(
+        default=None,
+        metadata={"help": "Path to the draft model for speculative decoding."},
+    )
+    speculative_num_steps: int = field(
+        default=3,
+        metadata={"help": "Number of speculative decoding draft steps."},
+    )
+    speculative_eagle_topk: int = field(
+        default=1,
+        metadata={"help": "Top-k value for EAGLE draft token selection."},
+    )
+    speculative_num_draft_tokens: int = field(
+        default=4,
+        metadata={"help": "Number of draft tokens per speculative step."},
+    )
+    speculative_attention_mode: str | None = field(
+        default=None,
+        metadata={
+            "help": "Attention mode for speculative decoding. E.g., 'full', 'sparse'."
+        },
+    )
+    enable_multi_layer_eagle: bool = False
+    enable_draft_weights_cpu_backup: bool | None = field(
+        default=None,
+        metadata={
+            "help": "Keep draft model weights on CPU as backup during GPU offload cycles. "
+            "Essential for colocated training+inference mode to prevent draft weight loss."
+        },
+    )
+
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
     def build_cmd(
@@ -1688,6 +1793,13 @@ class SGLangConfig:
                 model_loader_extra_config, separators=(",", ":")
             )
         args.pop("enable_multithread_load", None)
+
+        # enable_draft_weights_cpu_backup: pass to SGLang ServerArgs constructor if set.
+        # Essential for colocated training+inference mode to prevent draft weight loss
+        # during GPU offload cycles. If None, let SGLang use its default.
+        draft_cpu_backup = args.pop("enable_draft_weights_cpu_backup", None)
+        if draft_cpu_backup is not None:
+            args["enable_draft_weights_cpu_backup"] = draft_cpu_backup
 
         args = dict(
             # Model and tokenizer

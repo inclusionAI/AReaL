@@ -102,6 +102,120 @@ def unwrap_to_gpt_model(model: torch.nn.Module) -> GPTModel:
     return _model
 
 
+def _ensure_mtp_spec_compat():
+    """Patch MTP block-spec functions to gracefully handle TransformerConfig as *spec*.
+
+    **Why multi-level patching is needed**
+
+    ``mbridge.models.mimo`` does::
+
+        from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
+
+    at module load time, which creates a *local* binding to the original
+    function object.  Simply replacing ``gpt_layer_specs.get_gpt_mtp_block_spec``
+    does NOT affect that already-bound local reference — the original function
+    will still be called by mimo.
+
+    However, the original ``get_gpt_mtp_block_spec`` internally calls
+    ``get_gpt_mtp_block_spec_for_backend`` through the module's **global
+    namespace**, which IS resolved at call time.  Therefore we apply patches
+    at three levels for maximum robustness:
+
+    1. ``get_gpt_mtp_block_spec_for_backend`` on the module — catches calls
+       coming through *any* import path (including mimo's local reference).
+       This is the **critical** patch that actually fixes the bug.
+    2. ``get_gpt_mtp_block_spec`` on the module — catches future callers that
+       access it via ``gpt_layer_specs.get_gpt_mtp_block_spec``.
+    3. The local reference inside ``mbridge.models.mimo`` (if importable) —
+       belt-and-suspenders for the direct ``from-import`` case.
+    """
+    try:
+        from megatron.core.models.gpt import gpt_layer_specs as _specs_mod
+    except ImportError:
+        logger.warning(
+            "[MTPCompat] Cannot import gpt_layer_specs from megatron.core; "
+            "skipping MTP spec compatibility patch."
+        )
+        return
+
+    if getattr(_specs_mod, "_areal_mtp_compat_patched", False):
+        return
+
+    # ----- helper: convert TransformerConfig → proper ModuleSpec -----
+    def _convert_spec_if_needed(config, spec):
+        """Convert TransformerConfig to a proper ModuleSpec for MTP block spec.
+
+        Uses get_gpt_decoder_block_spec (preferred) or falls back to
+        get_gpt_layer_with_transformer_engine_spec / get_gpt_layer_local_spec.
+        Always uses transformer_engine=True since MTP with TE is the common case.
+        """
+        if not isinstance(spec, TransformerConfig):
+            return spec
+        logger.info(
+            "[MTPCompat] Auto-converting TransformerConfig -> ModuleSpec "
+            "for get_gpt_mtp_block_spec."
+        )
+        _get_decoder = getattr(_specs_mod, "get_gpt_decoder_block_spec", None)
+        if _get_decoder is not None:
+            decoder_block_spec = _get_decoder(
+                config=config, use_transformer_engine=True
+            )
+            spec = decoder_block_spec.layer_specs[-1]
+            logger.info(
+                "[MTPCompat] Resolved spec via get_gpt_decoder_block_spec."
+            )
+        else:
+            spec = _specs_mod.get_gpt_layer_with_transformer_engine_spec()
+            logger.info(
+                "[MTPCompat] Resolved spec via "
+                "get_gpt_layer_with_transformer_engine_spec."
+            )
+        return spec
+
+    # get_gpt_mtp_block_spec_for_backend ---
+    # Signature: (config, spec, backend, vp_stage=None, pp_rank=None)
+    # The 3rd param is `backend` (BackendSpecProvider), NOT use_transformer_engine.
+    # We only intercept config + spec; all other args pass through unchanged.
+    _orig_backend_fn = _specs_mod.get_gpt_mtp_block_spec_for_backend
+
+    def _compat_backend(config, spec, *args, **kwargs):
+        spec = _convert_spec_if_needed(config, spec)
+        return _orig_backend_fn(config, spec, *args, **kwargs)
+
+    _specs_mod.get_gpt_mtp_block_spec_for_backend = _compat_backend
+
+    # --- Patch 2: get_gpt_mtp_block_spec (top-level entry point) ---
+    _orig_fn = _specs_mod.get_gpt_mtp_block_spec
+
+    def _compat_fn(config, spec, *args, **kwargs):
+        spec = _convert_spec_if_needed(config, spec)
+        return _orig_fn(config, spec, *args, **kwargs)
+
+    _specs_mod.get_gpt_mtp_block_spec = _compat_fn
+
+    # mbridge.models.mimo local reference (if available) ---
+    try:
+        import mbridge.models.mimo as _mimo_mod
+
+        if hasattr(_mimo_mod, "get_gpt_mtp_block_spec"):
+            _mimo_mod.get_gpt_mtp_block_spec = _compat_fn
+            logger.info(
+                "[MTPCompat] Also patched mbridge.models.mimo."
+                "get_gpt_mtp_block_spec direct reference."
+            )
+    except (ImportError, AttributeError):
+        logger.info(
+            "[MTPCompat] mbridge.models.mimo not importable; "
+            "relying on backend-level patch only."
+        )
+
+    _specs_mod._areal_mtp_compat_patched = True
+    logger.info(
+        "[MTPCompat] Patched get_gpt_mtp_block_spec AND "
+        "get_gpt_mtp_block_spec_for_backend for TransformerConfig compat."
+    )
+
+
 # Model registry for different architectures
 def make_hf_and_mcore_config(
     hf_path: str,
@@ -156,6 +270,105 @@ def make_mcore_layer_specs(hf_config: PretrainedConfig, tf_config: TransformerCo
         )
 
 
+def _ensure_mtp_in_gpt_model(log):
+    """Monkey-patch GPTModel.__init__ to auto-inject mtp_block_spec when mbridge
+    doesn't pass it but config.mtp_num_layers > 0.
+
+    mbridge calls bridge.get_model() which internally creates GPTModel, but does NOT
+    pass mtp_block_spec even when config.mtp_num_layers > 0. GPTModel checks
+    ``mtp_block_spec is not None`` (the constructor argument) to decide whether to
+    create MTP layers -- it does NOT check config.mtp_num_layers.
+
+    This patch intercepts GPTModel.__init__ and, when mtp_block_spec is missing but
+    config indicates MTP should be used, resolves the spec and injects it.
+
+    Returns a callable that restores the original __init__.
+    """
+    from megatron.core.models.gpt import GPTModel
+
+    _original_init = GPTModel.__init__
+
+    def _patched_init(self, *args, **kwargs):
+        config = kwargs.get("config", args[0] if args else None)
+        mtp_block_spec = kwargs.get("mtp_block_spec", None)
+
+        if (
+            mtp_block_spec is None
+            and config is not None
+            and getattr(config, "mtp_num_layers", 0) > 0
+        ):
+            log.info(
+                "[MTPTrain] GPTModel.__init__ intercepted: mtp_block_spec is None "
+                f"but config.mtp_num_layers={config.mtp_num_layers}. "
+                "Auto-resolving mtp_block_spec..."
+            )
+            try:
+                tls = kwargs.get("transformer_layer_spec", None)
+                if tls is None and len(args) > 1:
+                    tls = args[1]
+
+                spec_for_mtp = None
+                if tls is not None:
+                    from megatron.core.transformer.spec_utils import ModuleSpec
+                    from megatron.core.transformer.transformer_block import (
+                        TransformerBlockSubmodules,
+                    )
+
+                    if isinstance(tls, ModuleSpec):
+                        submodules = getattr(tls, "submodules", None)
+                        if isinstance(submodules, TransformerBlockSubmodules):
+                            layers = getattr(submodules, "layer_specs", None)
+                            if layers and len(layers) > 0:
+                                spec_for_mtp = layers[-1]
+                                log.info(
+                                    f"[MTPTrain] Extracted layer spec from "
+                                    f"TransformerBlockSubmodules (n_layers={len(layers)})"
+                                )
+                    elif isinstance(tls, TransformerBlockSubmodules):
+                        layers = getattr(tls, "layer_specs", None)
+                        if layers and len(layers) > 0:
+                            spec_for_mtp = layers[-1]
+
+                if spec_for_mtp is None:
+                    log.warning(
+                        "[MTPTrain] Could not extract layer spec from "
+                        "transformer_layer_spec; falling back to "
+                        "get_gpt_mtp_block_spec(config)."
+                    )
+                    from megatron.core.models.gpt.gpt_layer_specs import (
+                        get_gpt_mtp_block_spec,
+                    )
+                    resolved_spec = get_gpt_mtp_block_spec(config)
+                else:
+                    from megatron.core.models.gpt.gpt_layer_specs import (
+                        get_gpt_mtp_block_spec,
+                    )
+                    resolved_spec = get_gpt_mtp_block_spec(config, spec_for_mtp)
+
+                kwargs["mtp_block_spec"] = resolved_spec
+                log.info(
+                    f"[MTPTrain] Injected mtp_block_spec into GPTModel.__init__: "
+                    f"type={type(resolved_spec).__name__}"
+                )
+            except Exception as e:
+                log.error(
+                    f"[MTPTrain] Failed to auto-resolve mtp_block_spec: {e}. "
+                    "MTP layers will NOT be created.",
+                    exc_info=True,
+                )
+
+        return _original_init(self, *args, **kwargs)
+
+    GPTModel.__init__ = _patched_init
+    log.info("[MTPTrain] GPTModel.__init__ monkey-patched to auto-inject mtp_block_spec.")
+
+    def _restore():
+        GPTModel.__init__ = _original_init
+        log.info("[MTPTrain] GPTModel.__init__ restored to original.")
+
+    return _restore
+
+
 def make_mcore_model(
     hf_config: PretrainedConfig,
     tf_config: TransformerConfig,
@@ -164,20 +377,36 @@ def make_mcore_model(
     bridge_type: str = "mbridge",
     is_critic: bool = False,
     use_lora: bool = False,
+    enable_mtp: bool = False,
 ) -> list[GPTModel | DDP]:
     if bridge is not None and bridge_type == "mbridge":
-        models = bridge.get_model(
-            # TODO: Add DDP options when supporting training
-            wrap_with_ddp=mcore_config.wrap_with_ddp,
-            ddp_config=dataclasses.asdict(mcore_config.ddp),
-            use_torch_fsdp2=mcore_config.use_torch_fsdp2,
-            use_custom_fsdp=mcore_config.use_custom_fsdp,
-            fp16=tf_config.fp16,
-            bf16=tf_config.bf16,
-            use_precision_aware_optimizer=mcore_config.use_precision_aware_optimizer,
-            overlap_param_gather_with_optimizer_step=mcore_config.overlap_param_gather_with_optimizer_step,
-        )
-        models = list(models)
+        # Patch get_gpt_mtp_block_spec before mbridge calls it so that a
+        # TransformerConfig passed as ``spec`` is auto-converted to the
+        # correct ModuleSpec type expected by megatron-core.
+        _restore_mtp_inject = None
+        if enable_mtp:
+            _ensure_mtp_spec_compat()
+            logger.info(
+                "[MTPTrain] Applied MTP spec compatibility patch before mbridge model creation."
+            )
+            _restore_mtp_inject = _ensure_mtp_in_gpt_model(logger)
+
+        try:
+            models = bridge.get_model(
+                # TODO: Add DDP options when supporting training
+                wrap_with_ddp=mcore_config.wrap_with_ddp,
+                ddp_config=dataclasses.asdict(mcore_config.ddp),
+                use_torch_fsdp2=mcore_config.use_torch_fsdp2,
+                use_custom_fsdp=mcore_config.use_custom_fsdp,
+                fp16=tf_config.fp16,
+                bf16=tf_config.bf16,
+                use_precision_aware_optimizer=mcore_config.use_precision_aware_optimizer,
+                overlap_param_gather_with_optimizer_step=mcore_config.overlap_param_gather_with_optimizer_step,
+            )
+            models = list(models)
+        finally:
+            if _restore_mtp_inject is not None:
+                _restore_mtp_inject()
 
         # Replace output_layer with ValueHead for critic models
         if is_critic:
@@ -277,6 +506,24 @@ def make_mcore_model(
                 "Virtual pipeline parallelism requires mbridge-backed models."
             )
         transformer_layer_spec = make_mcore_layer_specs(hf_config, tf_config)
+
+        # Build MTP block spec if MTP is configured
+        mtp_block_spec = None
+        mtp_num_layers = getattr(tf_config, "mtp_num_layers", 0)
+        if mtp_num_layers > 0:
+            try:
+                from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
+                mtp_block_spec = get_gpt_mtp_block_spec(
+                    tf_config, transformer_layer_spec, use_transformer_engine=True
+                )
+                logger.info(
+                    f"[MTPTrain] Created MTP block spec with {mtp_num_layers} layers"
+                )
+            except ImportError:
+                logger.warning(
+                    "[MTPTrain] Cannot import get_gpt_mtp_block_spec from megatron.core. "
+                    "MTP layers will not be created. Ensure megatron-core >= 0.11.0."
+                )
         rope_scaling_args = {}
         if hf_config.rope_scaling is not None:
             if hf_config.rope_scaling["type"] != "linear":
@@ -299,6 +546,7 @@ def make_mcore_model(
             rotary_base=hf_config.rope_theta,
             **rope_scaling_args,
             # vp_stage=None TODO: virtual pipeline parallel
+            **({"mtp_block_spec": mtp_block_spec} if mtp_block_spec is not None else {}),
         )
 
         # Replace output_layer with ValueHead for critic models

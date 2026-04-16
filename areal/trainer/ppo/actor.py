@@ -359,6 +359,15 @@ class PPOActor:
                 )
                 stats_tracker.scalar(**train_stat)
 
+                if "mtp_loss" in train_stat:
+                    mtp_loss_val = train_stat["mtp_loss"]
+                    logger.info(
+                        f"[MTPTrain] MTP loss={mtp_loss_val:.6f}, "
+                        f"scaling_factor={self.config.mtp_loss_scaling_factor}, "
+                        f"scaled_loss={mtp_loss_val * self.config.mtp_loss_scaling_factor:.6f}"
+                    )
+                    stats_tracker.scalar(mtp_loss=mtp_loss_val)
+
 
 class PPOActorController(TrainController):
     def compute_logp(self, *args, **kwargs):

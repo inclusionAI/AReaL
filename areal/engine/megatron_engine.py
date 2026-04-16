@@ -137,6 +137,7 @@ class _MegatronModelList(list):
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
+        self.logger = logging.getLogger("[MegatronEngine]")
         self.hf_config: PretrainedConfig
         self.tf_config: TransformerConfig
         self.model: _MegatronModelList | None = None
@@ -176,6 +177,39 @@ class MegatronEngine(TrainEngine):
         self.quantization_config: dict[str, int | str | list[str]] | None = None
         self.bridge_cls: str = getattr(self.mcore_config, "bridge_type", "mbridge")
         self.bridge_lora: MegatronBridgeLoRA | None = None
+
+        # MTP (Multi-Token Prediction) configuration
+        self.enable_mtp_training: bool = getattr(
+            self.config, "enable_mtp_training", False
+        )
+        self.mtp_num_layers: int = getattr(self.config, "mtp_num_layers", 0)
+        self.mtp_loss_scaling_factor: float = getattr(
+            self.config, "mtp_loss_scaling_factor", 0.1
+        )
+        self.mtp_detach_heads: bool = getattr(self.config, "mtp_detach_heads", True)
+        self._mtp_loss_value: float = 0.0
+        self._mtp_layers_verified: bool = False
+        if self.enable_mtp_training:
+            self.logger.info(
+                f"[MTPTrain] MTP online training ENABLED: "
+                f"num_layers={self.mtp_num_layers}, "
+                f"loss_scaling_factor={self.mtp_loss_scaling_factor}, "
+                f"detach_heads={self.mtp_detach_heads}"
+            )
+            try:
+                import megatron.core.transformer.multi_token_prediction  # noqa: F401
+
+                self.logger.info(
+                    "[MTPTrain] Verified megatron-core MTP module available. "
+                    "Gradient isolation (embedding detach + functional_call lm_head) "
+                    "is handled internally by megatron-core MultiTokenPrediction module."
+                )
+            except ImportError:
+                self.logger.error(
+                    "[MTPTrain] megatron-core MTP module not found! "
+                    "MTP training requires megatron-core >= 0.12.0. "
+                    "Gradient isolation will NOT be applied, which corrupts RL training."
+                )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -311,6 +345,35 @@ class MegatronEngine(TrainEngine):
             self._check_and_apply_fp8_config()
             self._validate_fp8_consistency()
 
+            # Propagate MTP config to tf_config (TransformerConfig) for model creation
+            if self.enable_mtp_training:
+                self.tf_config.mtp_num_layers = self.mtp_num_layers
+                self.tf_config.mtp_loss_scaling_factor = self.mtp_loss_scaling_factor
+                if hasattr(self.tf_config, "mtp_detach_heads"):
+                    self.tf_config.mtp_detach_heads = self.mtp_detach_heads
+                self.logger.info(
+                    f"[MTPTrain] Propagated MTP config to tf_config: "
+                    f"mtp_num_layers={self.mtp_num_layers}, "
+                    f"mtp_loss_scaling_factor={self.mtp_loss_scaling_factor}, "
+                    f"mtp_detach_heads={self.mtp_detach_heads}"
+                )
+            else:
+                # When MTP training is disabled, clear mtp_num_layers to
+                # prevent mbridge from creating MTP layers.  Without this,
+                # models like MiMo whose HF config contains
+                # num_nextn_predict_layers>0 would still create MTP layers
+                # through mbridge, causing _postprocess() to enter the MTP
+                # loss path and crash on labels.clone() when labels is None
+                # during inference.
+                _orig_mtp = getattr(self.tf_config, "mtp_num_layers", None)
+                if _orig_mtp is not None and _orig_mtp > 0:
+                    self.tf_config.mtp_num_layers = None
+                    self.logger.info(
+                        f"[MTPConfig] Cleared tf_config.mtp_num_layers "
+                        f"(was {_orig_mtp}) because enable_mtp_training=False. "
+                        f"MTP layers will NOT be created in GPTModel."
+                    )
+
             with self.device:
                 models = make_mcore_model(
                     hf_config=self.hf_config,
@@ -320,6 +383,7 @@ class MegatronEngine(TrainEngine):
                     bridge_type=self.bridge_cls,
                     is_critic=self.config.is_critic,
                     use_lora=self.config.use_lora,
+                    enable_mtp=self.enable_mtp_training,
                 )
 
         self.model = _MegatronModelList(models)
@@ -402,6 +466,51 @@ class MegatronEngine(TrainEngine):
                 model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
         self._create_optimizer(ft_spec)
+
+        if self.enable_mtp_training and not self._mtp_layers_verified:
+            mtp_param_count = 0
+            mtp_param_names = []
+            for module in modules:
+                for name, param in module.named_parameters():
+                    if ".mtp." in name:
+                        mtp_param_count += param.numel()
+                        if len(mtp_param_names) < 5:
+                            mtp_param_names.append(name)
+
+            # With pipeline parallelism, MTP layers only exist on the last stage.
+            # Non-last stages legitimately have 0 MTP params.
+            is_last_stage = True
+            try:
+                if mpu.is_initialized() and mpu.get_pipeline_model_parallel_world_size() > 1:
+                    is_last_stage = mpu.is_pipeline_last_stage()
+            except Exception:
+                pass
+
+            if mtp_param_count == 0:
+                if not is_last_stage:
+                    self._mtp_layers_verified = True
+                    self.logger.info(
+                        "[MTPTrain] This rank is NOT on the last pipeline stage; "
+                        "MTP parameters are expected only on the last stage. "
+                        "Skipping MTP param verification on this rank."
+                    )
+                else:
+                    self.logger.error(
+                        "[MTPTrain] enable_mtp_training=True but NO MTP parameters found "
+                        "on the LAST pipeline stage! "
+                        "Possible causes: 1) mtp_num_layers=0 in model config; "
+                        "2) Model checkpoint does not contain MTP layers; "
+                        "3) mbridge did not pass mtp_block_spec to GPTModel. "
+                        "MTP loss will NOT be computed."
+                    )
+            else:
+                self._mtp_layers_verified = True
+                self.logger.info(
+                    f"[MTPTrain] Verified MTP parameters in model: "
+                    f"total_mtp_params={mtp_param_count / 1e6:.2f}M, "
+                    f"sample_params={mtp_param_names}"
+                )
+
         self._initialized = True
 
     def _build_hf_mcore_bridge(self):
@@ -653,6 +762,113 @@ class MegatronEngine(TrainEngine):
         for model in self.model:
             model.zero_grad_buffer()
 
+    @staticmethod
+    def _roll_tensor_packed(
+        tensor: torch.Tensor, shift: int, cu_seqlens: torch.Tensor
+    ) -> torch.Tensor:
+        """Roll tensor within each packed sequence boundary.
+
+        In sequence packing mode, multiple sequences are concatenated. A naive
+        torch.roll would leak tokens across sequence boundaries. This function
+        rolls within each sequence independently and zeros out boundary positions.
+        """
+        result = torch.zeros_like(tensor)
+        num_seqs = cu_seqlens.shape[0] - 1
+        for i in range(num_seqs):
+            start = cu_seqlens[i].item()
+            end = cu_seqlens[i + 1].item()
+            seq_slice = tensor[..., start:end]
+            rolled = torch.roll(seq_slice, shifts=shift, dims=-1)
+            if shift < 0:
+                rolled[..., shift:] = 0  # zero out wrapped-around positions at end
+            else:
+                rolled[..., :shift] = 0
+            result[..., start:end] = rolled
+        return result
+
+    def _collect_mtp_loss(self) -> dict[str, float]:
+        """Collect MTP loss from Megatron-Core's MTPLossLoggingHelper after forward-backward.
+
+        The MTP loss is computed and backpropagated by Megatron-Core's MTP module
+        during the forward-backward pass via MTPLossAutoScaler. This function only
+        collects the loss VALUE for logging and monitoring purposes.
+
+        IMPORTANT: All CP ranks must participate in the all-reduce to avoid deadlock.
+        The gate condition uses is_pipeline_last_stage() instead of
+        is_mp_src_rank_with_outputs() to ensure all CP ranks enter the all-reduce.
+        """
+        mtp_stats = {}
+        try:
+            from megatron.core.transformer.multi_token_prediction import (
+                MTPLossLoggingHelper,
+            )
+
+            tracker = MTPLossLoggingHelper.tracker
+            if tracker and "values" in tracker:
+                values = tracker["values"]
+
+                is_last_pp_stage = mpu.is_pipeline_last_stage(ignore_virtual=True)
+
+                if tracker.get("reduce_group") is not None:
+                    import torch.distributed
+
+                    torch.distributed.all_reduce(values, group=tracker["reduce_group"])
+                if tracker.get("avg_group") is not None:
+                    import torch.distributed
+
+                    torch.distributed.all_reduce(
+                        values,
+                        group=tracker["avg_group"],
+                        op=torch.distributed.ReduceOp.AVG,
+                    )
+
+                mtp_loss_value = values.sum().item()
+                self._mtp_loss_value = mtp_loss_value
+
+                if is_last_pp_stage:
+                    mtp_stats["mtp_loss"] = mtp_loss_value
+
+                if math.isnan(mtp_loss_value) or math.isinf(mtp_loss_value):
+                    self.logger.error(
+                        f"[MTPTrain] MTP loss is NaN/Inf! value={mtp_loss_value}. "
+                        f"Check MTP label construction and model configuration."
+                    )
+                else:
+                    # Note: mtp_loss_value is the SUM of per-micro-batch
+                    # average MTP losses (accumulated via += in the tracker).
+                    # This is by design in Megatron-Core.  For N micro-batches
+                    # the value ≈ N * per_token_mtp_loss.
+                    self.logger.info(
+                        f"[MTPTrain] MTP loss (accumulated)={mtp_loss_value:.6f}, "
+                        f"scaling_factor={self.mtp_loss_scaling_factor}, "
+                        f"is_last_pp_stage={is_last_pp_stage}"
+                    )
+
+                MTPLossLoggingHelper.clean_loss_in_tracker()
+            else:
+                if self.enable_mtp_training:
+                    self.logger.warning(
+                        "[MTPTrain] MTP loss tracker is empty after forward-backward "
+                        "even though enable_mtp_training=True. Possible causes: "
+                        "1) Model does not have MTP layers; "
+                        "2) mtp_kwargs were not passed correctly; "
+                        "3) Megatron-Core version mismatch. "
+                        "Verify model architecture and mtp_num_layers config."
+                    )
+
+        except ImportError:
+            self.logger.warning(
+                "[MTPTrain] Cannot import MTPLossLoggingHelper from megatron.core. "
+                "MTP loss collection disabled. Ensure megatron-core >= 0.12.0 "
+                "for MTP with gradient isolation support."
+            )
+        except Exception as e:
+            self.logger.error(
+                f"[MTPTrain] Error collecting MTP loss: {e}", exc_info=True
+            )
+
+        return mtp_stats
+
     def optimizer_step(self):
         with trace_scope("megatron_engine.step"):
             update_successful, grad_norm, _ = self.optimizer.step()
@@ -705,7 +921,296 @@ class MegatronEngine(TrainEngine):
                     mb_input.padded_mb.update(tree_kwargs)
                     tree_attn_keys = list(tree_kwargs.keys())
 
-            output = packed_context_parallel_forward(model, mb_input.padded_mb)
+            # ---- MTP handling in GPTModel._postprocess() ----
+            #
+            # megatron-core 0.16.x _postprocess() behaviour:
+            #
+            #   if mtp_in_postprocess:
+            #       hidden_states = self.mtp(...)       # MTP forward
+            #   if config.mtp_num_layers is not None:
+            #       <MTP loss computed, attached via MTPLossAutoScaler>
+            #   logits = self.output_layer(hidden_states)
+            #   if labels is None: return logits
+            #   return compute_language_model_loss(labels, logits)
+            #
+            # Inference (forward_only=True):
+            #   AReaL does NOT pass labels, so labels.clone() crashes.
+            #   MTP forward is also unnecessary for logprob collection.
+            #   → Disable MTP entirely so _postprocess returns logits.
+            #
+            # Training (forward_only=False):
+            #   We NEED MTP loss in the autograd graph for draft-model
+            #   training, but AReaL also needs logits (not CE loss) for
+            #   its RL loss pipeline.  Strategy:
+            #     1. Keep MTP enabled so _postprocess runs mtp forward
+            #        and computes MTP loss (MTPLossAutoScaler).
+            #     2. Pass labels & loss_mask via extra_block_kwargs.
+            #     3. Monkey-patch compute_language_model_loss: the LAST
+            #        call (main CE) returns logits instead of loss;
+            #        earlier calls (per-MTP-layer) use real CE.
+            extra_block_kwargs = None
+            _mtp_restore = None
+            _clm_loss_restore = None
+            _mtp_ckpt_restore = []  # (layer, orig_method) pairs
+
+            # Defensive guard: even when enable_mtp_training=False, the
+            # model may still have MTP artefacts (e.g. config.mtp_num_layers
+            # leaked from HF/mbridge config, or MTP layers loaded from a
+            # checkpoint).  During inference this causes _postprocess() to
+            # enter the MTP loss path and crash on labels.clone() when
+            # labels is None.  Disable MTP at runtime in this case.
+            if not self.enable_mtp_training and forward_only:
+                _unwrapped_def = model
+                while hasattr(_unwrapped_def, 'module'):
+                    _unwrapped_def = _unwrapped_def.module
+                _def_mtp = getattr(_unwrapped_def, 'mtp', None)
+                _def_mtp_process = getattr(
+                    _unwrapped_def, 'mtp_process', False
+                )
+                _def_mtp_layers = getattr(
+                    _unwrapped_def.config, 'mtp_num_layers', None
+                )
+                if (
+                    _def_mtp is not None
+                    or _def_mtp_process
+                    or _def_mtp_layers is not None
+                ):
+                    _unwrapped_def.mtp = None
+                    _unwrapped_def.mtp_process = False
+                    _unwrapped_def.config.mtp_num_layers = None
+                    _mtp_restore = (
+                        _unwrapped_def,
+                        _def_mtp,
+                        _def_mtp_process,
+                        _def_mtp_layers,
+                    )
+                    self.logger.debug(
+                        f"[MTPGuard] Disabled MTP for inference "
+                        f"(enable_mtp_training=False but model had "
+                        f"mtp={_def_mtp is not None}, "
+                        f"mtp_process={_def_mtp_process}, "
+                        f"mtp_num_layers={_def_mtp_layers})"
+                    )
+
+            if self.enable_mtp_training:
+                _unwrapped = model
+                while hasattr(_unwrapped, 'module'):
+                    _unwrapped = _unwrapped.module
+
+                if forward_only:
+                    # -- Inference: disable MTP to avoid crash --
+                    _saved_mtp = getattr(_unwrapped, 'mtp', None)
+                    _saved_mtp_process = getattr(
+                        _unwrapped, 'mtp_process', None
+                    )
+                    _saved_mtp_layers = getattr(
+                        _unwrapped.config, 'mtp_num_layers', None
+                    )
+                    if (
+                        _saved_mtp is not None
+                        or _saved_mtp_process
+                        or _saved_mtp_layers is not None
+                    ):
+                        _unwrapped.mtp = None
+                        _unwrapped.mtp_process = False
+                        _unwrapped.config.mtp_num_layers = None
+                        _mtp_restore = (
+                            _unwrapped,
+                            _saved_mtp,
+                            _saved_mtp_process,
+                            _saved_mtp_layers,
+                        )
+                    self.logger.info(
+                        "[MTPTrain] Disabled MTP in _postprocess for "
+                        "inference (forward_only=True)"
+                    )
+                else:
+                    # -- Training: enable MTP with labels & loss_mask --
+                    # Pass raw input_ids as MTP labels (NOT pre-shifted).
+                    # Megatron-Core _postprocess() calls roll_tensor(labels, -1)
+                    # internally for each MTP layer, so MTP layer k predicts
+                    # token at position i+(k+1).  This matches the slime
+                    # implementation which passes batch["tokens"] directly.
+                    _input_ids = mb_input.padded_mb["input_ids"]
+                    _mtp_labels = _input_ids
+                    # loss_mask carried through pack/pad pipeline;
+                    # fall back to None → megatron uses ones_like.
+                    _mtp_loss_mask = mb_input.padded_mb.get(
+                        "loss_mask", None
+                    )
+                    extra_block_kwargs = {"labels": _mtp_labels}
+                    if _mtp_loss_mask is not None:
+                        extra_block_kwargs["loss_mask"] = _mtp_loss_mask
+
+                    # Monkey-patch: make the LAST call to
+                    # compute_language_model_loss (the main CE loss)
+                    # return logits so AReaL gets logits, not loss.
+                    _remaining = [self.mtp_num_layers]
+                    _orig_clm = _unwrapped.compute_language_model_loss
+
+                    def _mtp_loss_fn(
+                        _labels, _logits,
+                        _rem=_remaining, _orig=_orig_clm,
+                    ):
+                        if _rem[0] > 0:
+                            _rem[0] -= 1
+                            return _orig(_labels, _logits)
+                        # Return logits in [b, s, v] matching the
+                        # ``if labels is None`` path in _postprocess.
+                        return _logits.transpose(0, 1).contiguous()
+
+                    _unwrapped.compute_language_model_loss = _mtp_loss_fn
+                    _clm_loss_restore = (_unwrapped, _orig_clm)
+
+                    # -----------------------------------------------------------
+                    # Megatron-Core 0.16.0 MTP _checkpointed_forward() does:
+                    #   tensor_parallel.checkpoint(fn, ..., *args, *kwargs.values())
+                    # This flattens ALL kwargs (including packed_seq_params which
+                    # is a dataclass, not a tensor) into positional args that end
+                    # up in CheckpointFunction.apply() → save_for_backward(),
+                    # which only accepts tensors → TypeError.
+                    #
+                    # The main TransformerBlock avoids this by capturing
+                    # packed_seq_params via closure (never passed as an arg).
+                    # We apply the same pattern here by monkey-patching each
+                    # MTP layer's _checkpointed_forward during training.
+                    # -----------------------------------------------------------
+                    _mtp_block = getattr(_unwrapped, 'mtp', None)
+                    if (
+                        _mtp_block is not None
+                        and hasattr(_mtp_block, 'layers')
+                        and _unwrapped.config.recompute_granularity == 'full'
+                    ):
+                        for _layer in _mtp_block.layers:
+                            _orig_ckpt_fwd = _layer._checkpointed_forward
+
+                            def _patched_checkpointed_forward(
+                                forward_func, *args,
+                                _layer_ref=_layer,
+                                **kwargs,
+                            ):
+                                """Closure-based checkpoint that keeps
+                                non-tensor args (packed_seq_params,
+                                inference_params) out of save_for_backward.
+
+                                Mirrors TransformerBlock._checkpointed_forward
+                                from megatron-core 0.16.0: non-tensor kwargs
+                                are captured in the closure of custom_forward,
+                                only tensor values go through checkpoint().
+                                """
+                                # Separate tensor vs non-tensor kwargs.
+                                _tensor_kw = {}
+                                _non_tensor_kw = {}
+                                for k, v in kwargs.items():
+                                    if isinstance(v, torch.Tensor):
+                                        _tensor_kw[k] = v
+                                    else:
+                                        _non_tensor_kw[k] = v
+
+                                # Build a wrapper that re-injects non-tensor
+                                # kwargs via closure (never saved by
+                                # checkpoint).
+                                def _ckpt_wrapper(*flat_args):
+                                    # Reconstruct kwargs: first the tensor
+                                    # ones from flat_args, then non-tensor
+                                    # from closure.
+                                    _tk_keys = list(_tensor_kw.keys())
+                                    # flat_args = original *args + tensor kw
+                                    # values in order.
+                                    n_orig = len(args)
+                                    _orig_args = flat_args[:n_orig]
+                                    _tk_vals = flat_args[n_orig:]
+                                    _rebuilt_kw = {
+                                        k: v for k, v in zip(
+                                            _tk_keys, _tk_vals
+                                        )
+                                    }
+                                    _rebuilt_kw.update(_non_tensor_kw)
+                                    return forward_func(
+                                        *_orig_args, **_rebuilt_kw
+                                    )
+
+                                _cfg = _layer_ref.config
+                                if _cfg.recompute_method == 'uniform':
+                                    assert (
+                                        _cfg.recompute_num_layers == 1
+                                    ), (
+                                        "recompute_num_layers must be 1 "
+                                        "for MTP recompute"
+                                    )
+                                    if _cfg.fp8:
+                                        from megatron.core.extensions.transformer_engine import (
+                                            te_checkpoint,
+                                        )
+                                        return te_checkpoint(
+                                            _ckpt_wrapper,
+                                            _cfg.distribute_saved_activations,
+                                            tensor_parallel.random.get_cuda_rng_tracker,
+                                            mpu.get_tensor_model_parallel_group(),
+                                            *args,
+                                            *_tensor_kw.values(),
+                                        )
+                                    else:
+                                        return tensor_parallel.checkpoint(
+                                            _ckpt_wrapper,
+                                            _cfg.distribute_saved_activations,
+                                            *args,
+                                            *_tensor_kw.values(),
+                                        )
+                                elif _cfg.recompute_method == 'block':
+                                    import warnings
+                                    warnings.warn(
+                                        "recompute_method == 'block' is not "
+                                        "supported for MTP yet. "
+                                        "Skipping recompute."
+                                    )
+                                    return forward_func(*args, **kwargs)
+                                else:
+                                    raise ValueError(
+                                        "Invalid activation recompute method."
+                                    )
+
+                            _layer._checkpointed_forward = (
+                                _patched_checkpointed_forward
+                            )
+                            _mtp_ckpt_restore.append(
+                                (_layer, _orig_ckpt_fwd)
+                            )
+
+                        self.logger.info(
+                            f"[MTPTrain] Patched _checkpointed_forward on "
+                            f"{len(_mtp_ckpt_restore)} MTP layer(s) to fix "
+                            f"gradient_checkpointing + PackedSeqParams crash "
+                            f"(recompute_granularity="
+                            f"{_unwrapped.config.recompute_granularity})"
+                        )
+
+                    self.logger.debug(
+                        f"[MTPTrain] MTP enabled for training "
+                        f"(mtp_num_layers={self.mtp_num_layers}, "
+                        f"labels_shape={_mtp_labels.shape}, "
+                        f"loss_mask={'yes' if _mtp_loss_mask is not None else 'no'})"
+                    )
+
+            try:
+                output = packed_context_parallel_forward(
+                    model, mb_input.padded_mb,
+                    extra_block_kwargs=extra_block_kwargs,
+                )
+            finally:
+                if _mtp_restore is not None:
+                    _uw, _sm, _sp, _sl = _mtp_restore
+                    _uw.mtp = _sm
+                    _uw.mtp_process = _sp
+                    _uw.config.mtp_num_layers = _sl
+                    self.logger.debug(
+                        "[MTPTrain] Restored MTP after inference forward"
+                    )
+                if _clm_loss_restore is not None:
+                    _uw, _orig = _clm_loss_restore
+                    _uw.compute_language_model_loss = _orig
+                for _layer, _orig_ckpt in _mtp_ckpt_restore:
+                    _layer._checkpointed_forward = _orig_ckpt
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
@@ -783,8 +1288,19 @@ class MegatronEngine(TrainEngine):
 
         self.forward_backward_batch(mb_list, process_output, forward_only=False)
 
-        # Step 4: Optimizer step
-        return self.optimizer_step()
+        # Step 4: Collect MTP loss after forward-backward
+        mtp_loss_stats = {}
+        if self.enable_mtp_training:
+            mtp_loss_stats = self._collect_mtp_loss()
+
+        # Step 5: Optimizer step
+        train_stats = self.optimizer_step()
+
+        # Merge MTP stats into train stats
+        if mtp_loss_stats:
+            train_stats.update(mtp_loss_stats)
+
+        return train_stats
 
     @torch.no_grad()
     def eval_batch(
@@ -819,7 +1335,15 @@ class MegatronEngine(TrainEngine):
 
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
 
-        # Step 4: Aggregate losses
+        # Step 4: Collect MTP loss during eval if enabled
+        if self.enable_mtp_training:
+            mtp_loss_stats = self._collect_mtp_loss()
+            if mtp_loss_stats:
+                self.logger.info(
+                    f"[MTPTrain] Eval MTP loss: {mtp_loss_stats.get('mtp_loss', 'N/A')}"
+                )
+
+        # Step 5: Aggregate losses
         if mpu.is_pipeline_last_stage():
             return aggregate_eval_losses(losses, mpu.get_data_parallel_group())
         return None
@@ -1455,9 +1979,14 @@ class MegatronEngine(TrainEngine):
         buffer_size = 0
         converted_named_tensors = []
 
+        mtp_param_count = 0
+        mtp_param_bytes = 0
         for name, param in get_named_parameters(self.model, num_moe_experts):
             if ".experts." in name:
                 continue
+            if ".mtp." in name:
+                mtp_param_count += 1
+                mtp_param_bytes += param.numel() * param.element_size()
             if self.config.use_lora and (
                 ".adapter." not in name or not getattr(param, "requires_grad", False)
             ):
@@ -1480,6 +2009,18 @@ class MegatronEngine(TrainEngine):
                 meta.version,
             )
 
+        if mtp_param_count > 0:
+            self.logger.info(
+                f"[MTPTrain] Weight sync: {mtp_param_count} MTP parameters "
+                f"({mtp_param_bytes / 1024 / 1024:.2f} MB) synced to inference engine "
+                f"at version={meta.version}"
+            )
+        elif self.enable_mtp_training:
+            self.logger.warning(
+                f"[MTPTrain] enable_mtp_training=True but 0 MTP parameters found "
+                f"during weight sync at version={meta.version}. "
+                f"MTP draft model weights will NOT be updated!"
+            )
         dist.barrier(group=self.cpu_group)
 
         buffer_size = 0
@@ -1543,6 +2084,8 @@ class MegatronEngine(TrainEngine):
         base_model_path: str | None = None,
     ) -> None:
         assert self.model is not None, "Model is not initialized."
+        gc.collect()
+        current_platform.empty_cache()
         os.makedirs(path, exist_ok=True)
 
         if self.bridge_cls == "megatron-bridge":

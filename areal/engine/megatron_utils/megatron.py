@@ -161,6 +161,46 @@ def remove_padding(
     return param
 
 
+
+def _convert_mtp_layer_to_hf(
+    name: str,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
+    tf_config: TransformerConfig,
+) -> list[tuple[str, Tensor]] | None:
+    """Convert MCore MTP layer parameter names to HuggingFace format.
+
+    MCore MTP layers follow the naming pattern:
+        module.module.decoder.mtp_layers.{layer_idx}.{submodule}.{param}
+    which maps to HF format:
+        model.mtp_layers.{layer_idx}.{submodule}.{param}
+
+    Returns a list of (hf_name, param) tuples if the parameter is an MTP
+    parameter, or None if it is not.
+    """
+    import re
+    mtp_match = re.match(
+        r"module\.module\.decoder\.mtp_layers\.(\d+)\.(.+)", name
+    )
+    if mtp_match is None:
+        return None
+
+    layer_idx = int(mtp_match.group(1))
+    remainder = mtp_match.group(2)
+
+    # Map common MCore submodule names to HF names
+    hf_remainder = remainder
+
+    # enorm / hnorm -> input_layernorm / post_attention_layernorm equivalent
+    hf_remainder = hf_remainder.replace("enorm.weight", "enorm.weight")
+    hf_remainder = hf_remainder.replace("hnorm.weight", "hnorm.weight")
+
+    # Note: Some models (e.g., MiMo) may need column-half swap for eh_proj.
+    # This should be handled in model-specific conversion functions, not here.
+    # The generic MTP converter passes eh_proj through unchanged.
+
+    hf_name = f"model.mtp_layers.{layer_idx}.{hf_remainder}"
+    return [(hf_name, param)]
+
 # Adapted from slime
 def convert_qwen3moe_to_hf(
     tf_config: TransformerConfig,
@@ -173,6 +213,11 @@ def convert_qwen3moe_to_hf(
         return [("lm_head.weight", param)]
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
+
+    # Check for MTP layer parameters
+    mtp_result = _convert_mtp_layer_to_hf(name, param, tf_config)
+    if mtp_result is not None:
+        return mtp_result
 
     try:
         head_dim = (
@@ -331,6 +376,11 @@ def convert_qwen2_to_hf(
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
 
+    # Check for MTP layer parameters
+    mtp_result = _convert_mtp_layer_to_hf(name, param, tf_config)
+    if mtp_result is not None:
+        return mtp_result
+
     try:
         head_dim = (
             tf_config.kv_channels
@@ -420,6 +470,11 @@ def convert_deepseekv3_to_hf(
         return [("lm_head.weight", param)]
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
+
+    # Check for MTP layer parameters
+    mtp_result = _convert_mtp_layer_to_hf(name, param, tf_config)
+    if mtp_result is not None:
+        return mtp_result
 
     try:
         head_dim = (
@@ -595,6 +650,11 @@ def convert_bailingmoe_to_hf(
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
 
+    # Check for MTP layer parameters
+    mtp_result = _convert_mtp_layer_to_hf(name, param, tf_config)
+    if mtp_result is not None:
+        return mtp_result
+
     decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
     match = re.match(decoder_layers_pattern, name)
     if match:
@@ -757,6 +817,90 @@ def convert_bailingmoe_to_hf(
 
     raise ValueError(f"Unknown parameter name: {name}")
 
+def convert_mimo_to_hf(
+    tf_config: TransformerConfig,
+    name: str,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
+):
+    """Convert MiMo model parameters from Megatron to HuggingFace format.
+
+    MiMo extends Qwen2 with MTP (Multi-Token Prediction) layers.
+    Non-MTP parameters are delegated to the Qwen2 converter.
+    """
+    if "mtp" in name:
+        return _convert_mimo_mtp_param(tf_config, name, param)
+
+    return convert_qwen2_to_hf(tf_config, name, param)
+
+
+def _convert_mimo_mtp_param(
+    tf_config: TransformerConfig,
+    name: str,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
+):
+    """Convert MiMo MTP layer parameters from Megatron to HuggingFace format.
+
+    MTP layers in MiMo contain:
+    - LayerNorms (enorm/token_layernorm, hnorm/hidden_layernorm, final_layernorm)
+    - Input projection (eh_proj/input_proj) with column-half swap
+    - Self attention (reuses Qwen2 attention structure via transformer_layer)
+    - MLP (reuses Qwen2 MLP structure via transformer_layer)
+
+    Handles two naming patterns produced by different megatron-core versions:
+    - module.module.mtp.layers.{idx}.{component}  (mcore native)
+    - module.module.decoder.mtp_layers.{idx}.{component}
+    """
+    mtp_pattern1 = r"module\.module\.mtp\.layers\.(\d+)\.(.+)"
+    mtp_pattern2 = r"module\.module\.decoder\.mtp_layers\.(\d+)\.(.+)"
+
+    match = re.match(mtp_pattern1, name)
+    if match is None:
+        match = re.match(mtp_pattern2, name)
+
+    if match is None:
+        raise ValueError(f"Invalid MiMo MTP parameter name: {name}")
+
+    layer_idx, component = match.groups()
+
+    # Direct mappings for MTP-specific components (Megatron -> HF)
+    direct_mappings = {
+        "enorm.weight": f"model.mtp_layers.{layer_idx}.token_layernorm.weight",
+        "hnorm.weight": f"model.mtp_layers.{layer_idx}.hidden_layernorm.weight",
+        "eh_proj.weight": f"model.mtp_layers.{layer_idx}.input_proj.weight",
+        "final_layernorm.weight": f"model.mtp_layers.{layer_idx}.final_layernorm.weight",
+    }
+
+    # MiMo-specific: swap column halves for eh_proj weight
+    if component == "eh_proj.weight":
+        first_half, second_half = param.chunk(2, dim=1)
+        param = torch.cat([second_half, first_half], dim=1)
+
+    # Check direct mappings first
+    if component in direct_mappings:
+        return [(direct_mappings[component], param)]
+
+    # Handle transformer_layer components by delegating to Qwen2 converter
+    if component.startswith("transformer_layer."):
+        transformer_component = component[len("transformer_layer."):]
+
+        # Create proxy name for reusing existing Qwen2 conversion
+        proxy_name = f"module.module.decoder.layers.{layer_idx}.{transformer_component}"
+
+        # Use existing convert_qwen2_to_hf for transformer components
+        results = convert_qwen2_to_hf(tf_config, proxy_name, param)
+
+        # Replace model.layers with model.mtp_layers in results
+        converted_results = []
+        for hf_name, hf_param in results:
+            hf_name = hf_name.replace(
+                f"model.layers.{layer_idx}", f"model.mtp_layers.{layer_idx}"
+            )
+            converted_results.append((hf_name, hf_param))
+
+        return converted_results
+
+    raise ValueError(f"Unknown MiMo MTP component: {component} in {name}")
+
 
 # Adapted from slime
 # A registry for conversion functions is more extensible.
@@ -770,6 +914,7 @@ _CONVERSION_FN_REGISTRY = {
     "bailing_moe_v2": convert_bailingmoe_to_hf,
     "bailing_moe_linear": convert_bailingmoe_to_hf,
     "bailing_hybrid": convert_bailingmoe_to_hf,
+    "mimo": convert_mimo_to_hf,
 }
 
 

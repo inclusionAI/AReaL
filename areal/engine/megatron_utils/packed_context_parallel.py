@@ -125,6 +125,7 @@ def postprocess_packed_seqs_context_parallel(
 def packed_context_parallel_forward(
     model: torch.nn.Module,
     input_: dict[str, Any],
+    extra_block_kwargs: dict[str, Any] | None = None,
 ):
     input_ids = input_["input_ids"]
     position_ids = input_["position_ids"]
@@ -146,11 +147,36 @@ def packed_context_parallel_forward(
         )
         input_ids = input_ids.contiguous()
 
+        # Split MTP labels / loss_mask with the same CP logic if present.
+        # These tensors are passed via extra_block_kwargs and will be
+        # forwarded to GPTModel.forward() as `labels` and `loss_mask`
+        # so that megatron-core computes MTP loss internally.
+        if extra_block_kwargs:
+            for key in ("labels", "loss_mask"):
+                if key in extra_block_kwargs:
+                    split_val, _ = preprocess_packed_seqs_context_parallel(
+                        extra_block_kwargs[key], cu_seqlens
+                    )
+                    extra_block_kwargs[key] = split_val.contiguous()
+
     # Pass tree_triton_data as attention_mask if present (for Triton tree attention)
     # Otherwise use the attention_mask from input (could be dense tensor for flex attention)
     final_attention_mask = (
         tree_triton_data if tree_triton_data is not None else attention_mask
     )
+
+    # Extract model-level forward kwargs (labels, loss_mask) from
+    # extra_block_kwargs.  These must be passed as top-level keyword
+    # arguments to GPTModel.forward() — NOT inside extra_block_kwargs,
+    # because GPTModel unpacks extra_block_kwargs via **-splat into
+    # TransformerBlock.forward() which does not accept them.
+    model_fwd_kwargs: dict[str, Any] = {}
+    if extra_block_kwargs:
+        for key in ("labels", "loss_mask"):
+            if key in extra_block_kwargs:
+                model_fwd_kwargs[key] = extra_block_kwargs.pop(key)
+        if not extra_block_kwargs:
+            extra_block_kwargs = None
 
     try:
         output = model(
@@ -158,6 +184,8 @@ def packed_context_parallel_forward(
             attention_mask=final_attention_mask,
             position_ids=position_ids,
             packed_seq_params=packed_seq_params,
+            extra_block_kwargs=extra_block_kwargs,
+            **model_fwd_kwargs,
         )
     except Exception as e:
         raise RuntimeError(

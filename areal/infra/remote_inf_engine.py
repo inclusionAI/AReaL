@@ -765,6 +765,8 @@ class RemoteInfEngine(InferenceEngine):
         accumulated_output_logprobs = []
         accumulated_versions = []
         accumulated_routed_experts: list[np.ndarray] = []
+        accumulated_spec_accept_tokens = 0
+        accumulated_spec_draft_tokens = 0
 
         # A single "rid" shares the same server to allow KV cache reuse
         if req.rid in self.rid_to_address:
@@ -842,6 +844,12 @@ class RemoteInfEngine(InferenceEngine):
             if gen_result.routed_experts is not None:
                 accumulated_routed_experts.append(gen_result.routed_experts)
 
+            # Accumulate speculative decoding statistics
+            if gen_result.spec_accept_token_num is not None:
+                accumulated_spec_accept_tokens += gen_result.spec_accept_token_num
+            if gen_result.spec_draft_token_num is not None:
+                accumulated_spec_draft_tokens += gen_result.spec_draft_token_num
+
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens
             req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
@@ -880,6 +888,8 @@ class RemoteInfEngine(InferenceEngine):
             tokenizer=req.tokenizer,
             processor=req.processor,
             routed_experts=accumulated_routed_experts,
+            spec_accept_token_num=accumulated_spec_accept_tokens,
+            spec_draft_token_num=accumulated_spec_draft_tokens,
         )
         return response
 

@@ -890,6 +890,14 @@ class PPOTrainer:
         else:
             actor = actor_cls(config=actor_config)
         actor.create_process_group(parallel_strategy=alloc.parallel)
+
+        # Log MTP training configuration if enabled
+        if getattr(actor_config, "enable_mtp_training", False):
+            logger.info(
+                f"[MTPTrain] Actor engine created with MTP training enabled: "
+                f"mtp_num_layers={actor_config.mtp_num_layers}, "
+                f"mtp_loss_scaling_factor={actor_config.mtp_loss_scaling_factor}"
+            )
         return actor
 
     def _create_critic(
