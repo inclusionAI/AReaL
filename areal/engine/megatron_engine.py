@@ -1240,9 +1240,11 @@ class MegatronEngine(TrainEngine):
     ) -> dict[str, float]:
         self._ensure_ready()
         self.optimizer_zero_grad()
+        DeviceRuntimeInfo.get_current().log("train_batch after zero_grad")
 
         # Step 1: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_).to(self.device)
+        DeviceRuntimeInfo.get_current().log("train_batch after prepare_mb")
 
         # Step 2: Compute total loss weight
         total_loss_weight = compute_total_loss_weight(
@@ -1267,6 +1269,7 @@ class MegatronEngine(TrainEngine):
             )
 
         self.forward_backward_batch(mb_list, process_output, forward_only=False)
+        DeviceRuntimeInfo.get_current().log("train_batch after forward_backward")
 
         # Step 4: Collect MTP loss after forward-backward
         mtp_loss_stats = {}
@@ -1275,6 +1278,7 @@ class MegatronEngine(TrainEngine):
 
         # Step 5: Optimizer step
         train_stats = self.optimizer_step()
+        DeviceRuntimeInfo.get_current().log("train_batch after optimizer_step")
 
         # Merge MTP stats into train stats
         if mtp_loss_stats:
@@ -1344,6 +1348,7 @@ class MegatronEngine(TrainEngine):
 
         # Step 2: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_).to(self.device)
+        DeviceRuntimeInfo.get_current().log("forward_batch after prepare_mb")
 
         # Step 3: Forward using Megatron's pipeline function, collecting results
         outputs: list[torch.Tensor] = []
@@ -1354,6 +1359,7 @@ class MegatronEngine(TrainEngine):
             return None
 
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
+        DeviceRuntimeInfo.get_current().log("forward_batch after forward_backward")
 
         # Step 4: Aggregate, reorder, and broadcast outputs
         res = None
@@ -1912,6 +1918,7 @@ class MegatronEngine(TrainEngine):
 
     @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:
+        DeviceRuntimeInfo.get_current().log("_update_weights_from_distributed start")
         # Reset weight weight meta with local info
         meta.nccl_master_address = self.weight_update_master_addr
         meta.nccl_master_port = self.weight_update_master_port
@@ -2001,6 +2008,7 @@ class MegatronEngine(TrainEngine):
 
     @trace_perf("megatron_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta) -> None:
+        DeviceRuntimeInfo.get_current().log("_update_weights_from_disk start")
         fut = Future()
 
         if dist.get_rank() == 0:
@@ -2032,8 +2040,10 @@ class MegatronEngine(TrainEngine):
         base_model_path: str | None = None,
     ) -> None:
         assert self.model is not None, "Model is not initialized."
+        DeviceRuntimeInfo.get_current().log("_save_model_to_hf before gc/empty_cache")
         gc.collect()
         current_platform.empty_cache()
+        DeviceRuntimeInfo.get_current().log("_save_model_to_hf after gc/empty_cache")
         os.makedirs(path, exist_ok=True)
 
         if self.bridge_cls == "megatron-bridge":
@@ -2065,6 +2075,8 @@ class MegatronEngine(TrainEngine):
                 is_critic=self.config.is_critic,
                 fp8_direct_convert=self.fp8_direct_convert,
             )
+
+        DeviceRuntimeInfo.get_current().log("_save_model_to_hf after save_weights")
 
         if dist.get_rank() == 0:
             if tokenizer is not None:

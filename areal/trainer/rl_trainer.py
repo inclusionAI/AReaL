@@ -33,6 +33,7 @@ from areal.api.cli_args import (
     ValidDatasetConfig,
     vLLMConfig,
 )
+from areal.api.io_struct import DeviceRuntimeInfo
 from areal.engine import RemoteSGLangEngine, RemotevLLMEngine
 from areal.infra import (
     LocalScheduler,
@@ -357,6 +358,7 @@ class PPOTrainer:
                     group_size=config.gconfig.n_samples,
                     dynamic_bs=self.config.dynamic_bs,
                 )
+            DeviceRuntimeInfo.get_current().log(f"step {global_step} after rollout")
 
             if self.critic is not None:
                 with (
@@ -385,6 +387,7 @@ class PPOTrainer:
                     for traj, logp in zip(rollout_batch, prox_logps):
                         traj["prox_logp"] = logp
                     self.actor.get_device_stats().log("recompute logp")
+            DeviceRuntimeInfo.get_current().log(f"step {global_step} after recompute_logp")
 
             if self.ref is not None:
                 with (
@@ -428,6 +431,7 @@ class PPOTrainer:
             ):
                 adv_batch = self.actor.compute_advantages(rollout_batch)
                 self.actor.get_device_stats().log("compute advantages")
+            DeviceRuntimeInfo.get_current().log(f"step {global_step} after compute_advantages")
 
             # Wait for async checkpoint staging to complete before modifying parameters
             self.saver.maybe_wait_for_staging()
@@ -443,6 +447,7 @@ class PPOTrainer:
                 self.actor.ppo_update(adv_batch)
                 self.actor.step_lr_scheduler()
                 self.actor.get_device_stats().log("ppo update")
+            DeviceRuntimeInfo.get_current().log(f"step {global_step} after ppo_update")
 
             if self.critic is not None:
                 with (
@@ -480,6 +485,8 @@ class PPOTrainer:
                 if self.eval_rollout is not None:
                     self.eval_rollout.set_version(new_version)
 
+            DeviceRuntimeInfo.get_current().log(f"step {global_step} after update_weights")
+
             with (
                 stats_tracker.record_timing("save"),
                 perf_tracer.trace_scope(
@@ -488,6 +495,7 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
+                DeviceRuntimeInfo.get_current().log(f"step {global_step} before _save_hf")
                 self._save_hf(epoch=epoch, epoch_step=step, global_step=global_step)
 
             with (
@@ -498,6 +506,7 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
+                DeviceRuntimeInfo.get_current().log(f"step {global_step} before _save_recover_checkpoint")
                 self._save_recover_checkpoint(
                     epoch=epoch, epoch_step=step, global_step=global_step
                 )
@@ -529,6 +538,8 @@ class PPOTrainer:
                 # Since all RTensor objects are affiliated IPs,
                 # calling `clear_batches` once should be sufficient.
                 self.actor.clear_batches(rollout_batch, adv_batch)
+
+            DeviceRuntimeInfo.get_current().log(f"step {global_step} after clear_batches")
 
             with perf_tracer.trace_scope(
                 "train.log_stats",
