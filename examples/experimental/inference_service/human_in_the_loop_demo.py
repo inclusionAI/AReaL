@@ -54,7 +54,12 @@ def _print_header(title: str) -> None:
 # ── Zeroclaw config helpers ────────────────────────────────────────────────
 
 
-def _patch_zeroclaw_config(config_path: Path, gateway_addr: str, api_key: str) -> Path:
+def _patch_zeroclaw_config(
+    config_path: Path,
+    gateway_addr: str,
+    api_key: str,
+    model: str | None = None,
+) -> Path:
     backup = config_path.with_suffix(".demo_bak")
     shutil.copy2(config_path, backup)
 
@@ -75,6 +80,14 @@ def _patch_zeroclaw_config(config_path: Path, gateway_addr: str, api_key: str) -
     else:
         text = f'api_key = "{api_key}"\n' + text
 
+    if model is not None:
+        text = re.sub(
+            r'^default_model\s*=\s*".*"',
+            f'default_model = "{model}"',
+            text,
+            flags=re.MULTILINE,
+        )
+
     config_path.write_text(text)
     return backup
 
@@ -89,15 +102,23 @@ def _restore_zeroclaw_config(config_path: Path, backup: Path) -> None:
 # ── Reward submission ──────────────────────────────────────────────────────
 
 
-def _set_reward(gateway_addr: str, api_key: str, reward: float) -> None:
+def _set_reward(
+    gateway_addr: str,
+    api_key: str,
+    reward: float,
+    model: str | None = None,
+) -> None:
     print(f"    Setting reward={reward}")
+    payload = {"reward": reward}
+    if model:
+        payload["model"] = model
     resp = requests.post(
         f"{gateway_addr}/rl/set_reward",
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
         },
-        json={"reward": reward},
+        json=payload,
         timeout=10,
     )
     resp.raise_for_status()
@@ -111,6 +132,7 @@ def _do_round(
     api_key: str,
     question: str,
     label: str,
+    model: str | None = None,
 ) -> None:
     session_file = tempfile.mktemp(suffix=".json", prefix="zeroclaw_session_")
 
@@ -141,7 +163,7 @@ def _do_round(
 
     if CORRECT_ANSWER_RE.search(resp_text):
         print("  ✔ Correct on first try.")
-        _set_reward(gateway_addr, api_key, 1.0)
+        _set_reward(gateway_addr, api_key, 1.0, model=model)
         Path(session_file).unlink(missing_ok=True)
         return
 
@@ -174,10 +196,10 @@ def _do_round(
 
     if CORRECT_ANSWER_RE.search(resp_text):
         print("  ✔ Correct on second try.")
-        _set_reward(gateway_addr, api_key, 1.0)
+        _set_reward(gateway_addr, api_key, 1.0, model=model)
     else:
         print("  ✘ Still wrong after two attempts — setting reward to 0.")
-        _set_reward(gateway_addr, api_key, 0.0)
+        _set_reward(gateway_addr, api_key, 0.0, model=model)
 
     Path(session_file).unlink(missing_ok=True)
 
@@ -214,6 +236,21 @@ def main() -> None:
         default=DEFAULT_INFERENCE_BACKEND,
         help="Inference backend used by online_rollout.py",
     )
+    parser.add_argument(
+        "--external-url",
+        default=None,
+        help="External API URL (enables external model mode)",
+    )
+    parser.add_argument(
+        "--external-api-key",
+        default=None,
+        help="API key for the external provider",
+    )
+    parser.add_argument(
+        "--external-model",
+        default=None,
+        help="Model name sent to the external API",
+    )
     args = parser.parse_args()
 
     online_rollout = (
@@ -248,17 +285,25 @@ def main() -> None:
         # ── Step 1: Launch online_rollout.py ──
         _print_header("Step 1: Launch online_rollout.py")
         log_fh = open(rollout_log, "w")
+        rollout_cmd = [
+            sys.executable,
+            str(online_rollout),
+            "--config",
+            str(config_yaml),
+            f"actor.path={args.actor_path}",
+            f"rollout.backend={args.inference_backend}:d1",
+            f"rollout.openai.admin_api_key={args.admin_key}",
+            f"rollout.request_timeout={args.request_timeout}",
+        ]
+        if args.external_url:
+            rollout_cmd.extend(["--external-url", args.external_url])
+        if args.external_api_key:
+            rollout_cmd.extend(["--external-api-key", args.external_api_key])
+        if args.external_model:
+            rollout_cmd.extend(["--external-model", args.external_model])
+
         rollout_proc = subprocess.Popen(
-            [
-                sys.executable,
-                str(online_rollout),
-                "--config",
-                str(config_yaml),
-                f"actor.path={args.actor_path}",
-                f"rollout.backend={args.inference_backend}:d1",
-                f"rollout.openai.admin_api_key={args.admin_key}",
-                f"rollout.request_timeout={args.request_timeout}",
-            ],
+            rollout_cmd,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             cwd=str(REPO_ROOT),
@@ -292,20 +337,45 @@ def main() -> None:
             sys.exit(1)
         print(f"  Gateway: {gateway_addr}")
 
+        is_external = args.external_url is not None
+        if is_external:
+            _print_header("External model mode")
+            print(f"  URL:   {args.external_url}")
+            print(f"  Model: {args.external_model}")
+
+        # The gateway always authenticates with the admin key, even in
+        # external mode.  The external provider API key is only used by
+        # online_rollout.py when forwarding requests to the external API.
+        gateway_api_key = args.admin_key
+
+        # Model name registered by online_rollout.py matches
+        # ``ext_args.external_model or ext_args.external_name``
+        # (--external-name defaults to "ext-model").
+        ext_model_name = (args.external_model or "ext-model") if is_external else None
+
         # ── Step 2: Patch zeroclaw config ──
         _print_header("Step 2: Update ~/.zeroclaw/config.toml")
         zeroclaw_backup = _patch_zeroclaw_config(
-            zeroclaw_config, gateway_addr, args.admin_key
+            zeroclaw_config,
+            gateway_addr,
+            gateway_api_key,
+            model=ext_model_name,
         )
         print("  Done.")
 
         # ── Steps 3–4: HITL rounds ──
         _print_header(f"Steps 3–4  ({BATCH_SIZE} HITL rounds)")
         for i in range(BATCH_SIZE):
-            _do_round(gateway_addr, args.admin_key, args.question, f"Trajectory {i}")
+            _do_round(
+                gateway_addr,
+                gateway_api_key,
+                args.question,
+                f"Trajectory {i}",
+                model=ext_model_name,
+            )
 
-        # ── Step 5: Verify rollout completion ──
-        _print_header("Step 5: Check online_rollout output for databatch")
+        # ── Verify rollout completion ──
+        _print_header("Check online_rollout output")
         print("  Waiting for rollout to process ...")
         wait_deadline = time.monotonic() + ROLLOUT_COMPLETE_WAIT_SECS
         found = False
@@ -325,8 +395,13 @@ def main() -> None:
         if found:
             for line in rollout_log.read_text().splitlines():
                 if "Rollout complete" in line:
-                    print(f"  ✔ Databatch detected:\n  {line}")
+                    print(f"  ✔ Detected:\n  {line}")
                     break
+            if is_external:
+                print()
+                for line in rollout_log.read_text().splitlines():
+                    if "request:" in line or "response:" in line:
+                        print(f"  {line.strip()}")
         else:
             print("  ✘ No 'Rollout complete' message found yet.")
             print("    The rollout may still be collecting trajectories.")

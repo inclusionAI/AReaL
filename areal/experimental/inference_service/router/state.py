@@ -207,3 +207,54 @@ class SessionRegistry:
         """Return the number of registered session keys."""
         async with self._lock:
             return len(self._key_to_worker)
+
+
+@dataclass
+class ModelInfo:
+    """A registered model (internal or external)."""
+
+    name: str
+    url: str  # empty string for internal models
+    api_key: str | None
+    data_proxy_addrs: list[str] = field(default_factory=list)
+
+
+class ModelRegistry:
+    """Thread-safe registry for model routing."""
+
+    def __init__(self) -> None:
+        self._models: dict[str, ModelInfo] = {}
+        self._lock = asyncio.Lock()
+
+    async def register(
+        self,
+        name: str,
+        url: str,
+        api_key: str | None,
+        data_proxy_addrs: list[str],
+    ) -> None:
+        async with self._lock:
+            self._models[name] = ModelInfo(
+                name=name,
+                url=url,
+                api_key=api_key,
+                data_proxy_addrs=data_proxy_addrs,
+            )
+
+    async def get(self, name: str) -> ModelInfo | None:
+        async with self._lock:
+            return self._models.get(name)
+
+    async def first(self) -> ModelInfo | None:
+        async with self._lock:
+            if not self._models:
+                return None
+            return next(iter(self._models.values()))
+
+    async def list_names(self) -> list[str]:
+        async with self._lock:
+            return list(self._models.keys())
+
+    async def remove(self, name: str) -> bool:
+        async with self._lock:
+            return self._models.pop(name, None) is not None

@@ -52,6 +52,24 @@ def main():
         "--callback-server-addr",
         default="",
     )
+    parser.add_argument(
+        "--tool-call-parser",
+        default="qwen",
+    )
+    parser.add_argument(
+        "--reasoning-parser",
+        default="qwen3",
+    )
+    parser.add_argument(
+        "--engine-max-tokens",
+        type=int,
+        default=None,
+    )
+    parser.add_argument(
+        "--chat-template-type",
+        default="hf",
+        choices=("hf", "concat"),
+    )
     args, _ = parser.parse_known_args()
 
     # Resolve the actual serving host (replace 0.0.0.0 with real IP)
@@ -73,6 +91,10 @@ def main():
         admin_api_key=args.admin_api_key,
         callback_server_addr=args.callback_server_addr,
         serving_addr=format_hostport(serving_host, args.port),
+        tool_call_parser=args.tool_call_parser,
+        reasoning_parser=args.reasoning_parser,
+        engine_max_tokens=args.engine_max_tokens,
+        chat_template_type=args.chat_template_type,
     )
     app = create_app(config)
     uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)

@@ -176,6 +176,7 @@ async def online_stack(monkeypatch):
             *,
             session_id: str | None = None,
             admin_api_key: str | None = None,
+            model: str | None = None,
         ) -> str:
             del router_addr, timeout
             payload: dict[str, str] = {}

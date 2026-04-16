@@ -121,14 +121,10 @@ def _make_gateway_controller_config(
     online_mode: bool = False,
     set_reward_finish_timeout: float = 0.0,
 ):
-    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
+    from areal.api.cli_args import SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
-
-    openai_cfg = OpenAIProxyConfig(admin_api_key="test-admin")
-    if online_mode:
-        openai_cfg = OpenAIProxyConfig(mode="online", admin_api_key="test-admin")
 
     return GatewayControllerConfig(
         tokenizer_path=model_path,
@@ -145,7 +141,7 @@ def _make_gateway_controller_config(
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=180.0,
-        openai=openai_cfg,
+        admin_api_key="test-admin",
     )
 
 
@@ -630,8 +626,8 @@ class TestControllerOnlineWorkflow:
         import requests
 
         gateway_url = gateway_controller_online.proxy_gateway_addr
-        assert gateway_controller_online.config.openai is not None
-        admin_key = gateway_controller_online.config.openai.admin_api_key
+        assert gateway_controller_online.config.admin_api_key is not None
+        admin_key = gateway_controller_online.config.admin_api_key
 
         task_id = gateway_controller_online.submit(
             data={},
@@ -687,8 +683,8 @@ class TestControllerOnlineWorkflow:
         self, gateway_controller_with_reward_timeout
     ):
         gateway_url = gateway_controller_with_reward_timeout.proxy_gateway_addr
-        assert gateway_controller_with_reward_timeout.config.openai is not None
-        admin_key = gateway_controller_with_reward_timeout.config.openai.admin_api_key
+        assert gateway_controller_with_reward_timeout.config.admin_api_key is not None
+        admin_key = gateway_controller_with_reward_timeout.config.admin_api_key
 
         grant_resp = httpx.post(
             f"{gateway_url}/grant_capacity",
@@ -790,7 +786,7 @@ def gateway_controller_full_init(model_path, tmp_path_factory):
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
+    from areal.api.cli_args import SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -810,7 +806,7 @@ def gateway_controller_full_init(model_path, tmp_path_factory):
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
-        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
+        admin_api_key="test-admin",
     )
 
     server_args = {
@@ -1079,7 +1075,7 @@ def gateway_controller_full_init_vllm(model_path, tmp_path_factory):
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
+    from areal.api.cli_args import SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -1099,7 +1095,7 @@ def gateway_controller_full_init_vllm(model_path, tmp_path_factory):
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
-        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
+        admin_api_key="test-admin",
     )
 
     server_args = {
@@ -1284,7 +1280,7 @@ def gateway_controller_full_init_vlm_sglang(vlm_model_path, tmp_path_factory):
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
+    from areal.api.cli_args import SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -1304,7 +1300,7 @@ def gateway_controller_full_init_vlm_sglang(vlm_model_path, tmp_path_factory):
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
-        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
+        admin_api_key="test-admin",
     )
 
     local_scheduler = _make_local_scheduler(
@@ -1328,7 +1324,7 @@ def gateway_controller_full_init_vlm_vllm(vlm_model_path, tmp_path_factory):
     if not has_gpu():
         pytest.skip("GPU required")
 
-    from areal.api.cli_args import OpenAIProxyConfig, SchedulingSpec
+    from areal.api.cli_args import SchedulingSpec
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
     )
@@ -1348,7 +1344,7 @@ def gateway_controller_full_init_vlm_vllm(vlm_model_path, tmp_path_factory):
         consumer_batch_size=8,
         max_head_offpolicyness=1024,
         setup_timeout=300.0,
-        openai=OpenAIProxyConfig(admin_api_key="test-admin"),
+        admin_api_key="test-admin",
     )
 
     local_scheduler = _make_local_scheduler(

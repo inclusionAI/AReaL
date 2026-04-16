@@ -20,3 +20,9 @@ class DataProxyConfig:
     # Resolved serving address (host:port) used as node_addr for RTensor shards.
     # Set at startup by __main__.py after the host is resolved.
     serving_addr: str = ""
+
+    # ArealOpenAI client parameters (forwarded from OpenAIProxyConfig)
+    tool_call_parser: str = "qwen"
+    reasoning_parser: str = "qwen3"
+    engine_max_tokens: int | None = None
+    chat_template_type: str = "hf"
