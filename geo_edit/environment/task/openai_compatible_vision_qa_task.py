@@ -280,17 +280,22 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         if not output_text and raw_text and not tool_calls:
             output_text = raw_text
 
+        # Fallback: use text after </think> as answer if no <answer> tag found
         if not tool_calls and not output_text:
-            logger.error("Response content: %s", raw_text)
+            think_match = re.search(r"</think>\s*(.*)", content, re.DOTALL | re.IGNORECASE)
+            if think_match and think_match.group(1).strip():
+                output_text = think_match.group(1).strip()
+
+        if not tool_calls and not output_text:
+            logger.error("Response content: %s", content)
             raise ValueError("Response contained no tool call or final answer.")
 
         if tool_calls and output_text:
             logger.warning("Response contained tool call and final answer; keeping the answer and ignoring tool calls.")
             tool_calls = []
             tool_call_records = []
-            tool_call_items = []
 
-        if tool_call_items:
+        if tool_calls:
             self.contents["input"].extend(tool_call_items)
 
         # Update previous_response_id for OpenAI
@@ -361,6 +366,12 @@ class OpenAICompatibleVisionQATask(VisionQATask):
                         raise ValueError(f"Invalid JSON in tool call arguments: {args}")
                 tool_calls.append(ToolCall(name=tc.function.name, args=args, call_id=tc.id))
                 tool_call_records.append({"id": tc.id, "name": tc.function.name, "args": args})
+
+        # Fallback: use text after </think> as answer if no <answer> tag found
+        if not tool_calls and not output_text:
+            think_match = re.search(r"</think>\s*(.*)", content, re.DOTALL | re.IGNORECASE)
+            if think_match and think_match.group(1).strip():
+                output_text = think_match.group(1).strip()
 
         if not tool_calls and not output_text:
             logger.error("Response content: %s", content)

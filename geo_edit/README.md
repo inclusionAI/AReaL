@@ -281,6 +281,7 @@ Typical deployment: Head node runs vLLM 8-TP inference service, Worker node runs
 
 ```bash
 # Start Ray on Head node
+CUDA_VISIBLE_DEVICES=0,1,2,3
 ray start --head --port=6379 --resources='{"tool_agent": 8}'
 
 # Start vLLM 8-TP inference service

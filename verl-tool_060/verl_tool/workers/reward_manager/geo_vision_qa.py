@@ -19,6 +19,9 @@ def extract_answer(text: str) -> str:
     match = _ANSWER_RE.search(text)
     if match:
         return match.group(1).strip()
+    think_match = re.search(r"</think>\s*(.*)", text, re.DOTALL | re.IGNORECASE)
+    if think_match:
+        return think_match.group(1).strip()
     return ""
 
 
@@ -137,9 +140,9 @@ def _compute_repetition_penalty(text: str) -> float:
         counts = Counter(sentences)
         max_count = counts.most_common(1)[0][1] if counts else 0
         if max_count >= 10:
-            return -2.0
-        if max_count >= 5:
             return -1.5
+        if max_count >= 7:
+            return -1.0
 
     # Moderate: same word repeated 10+ times
     if re.search(r"\b(\w+)(?:\s+\1){9,}\b", text):

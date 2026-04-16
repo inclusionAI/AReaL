@@ -18,8 +18,8 @@ WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl}
 model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/batch_0414/exp2-qwen3vl8b-thinking-5ds}
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
-val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet]"
-run_name="mixed-rl-4node_0415v1"
+val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
+run_name="mixed-rl-4node_0415v3"
 rl_alg=grpo
 
 # ---- Cluster topology ----
@@ -29,7 +29,7 @@ n_nodes=4
 # ---- Batch sizes (scaled for 4 nodes) ----
 n=4
 batch_size=128
-ppo_mini_batch_size=16
+ppo_mini_batch_size=128
 
 # ---- Sequence lengths ----
 max_prompt_length=16384 
@@ -47,7 +47,7 @@ top_p=1.0
 # ---- Agent / tool ----
 enable_agent=True
 action_stop_tokens='</action>'
-max_turns=5
+max_turns=10
 mask_observations=True
 enable_mtrl=True
 additional_eos_token_ids=[151645]
@@ -62,8 +62,8 @@ entropy_coeff=0
 kl_loss_type=low_var_kl
 
 # ---- Per-GPU micro batches ----
-ppo_micro_batch_size_per_gpu=1
-log_prob_micro_batch_size_per_gpu=1
+ppo_micro_batch_size_per_gpu=4
+log_prob_micro_batch_size_per_gpu=16
 
 # ---- Parallelism ----
 tensor_model_parallel_size=1
@@ -181,12 +181,12 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.agent.enable_mtrl=$enable_mtrl \
     actor_rollout_ref.agent.max_action_length=$max_action_length \
     actor_rollout_ref.agent.tool_call_timeout=600 \
-    actor_rollout_ref.agent.max_concurrent_trajectories=512 \
+    actor_rollout_ref.agent.max_concurrent_trajectories=256 \
     actor_rollout_ref.rollout.agent.num_workers=$(expr $n_nodes \* $n_gpus_per_node) \
     actor_rollout_ref.rollout.data_parallel_size=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$tensor_model_parallel_size \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$log_prob_micro_batch_size_per_gpu \
-    actor_rollout_ref.rollout.enforce_eager=True \
+    actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.free_cache_engine=True \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.gpu_memory_utilization=$gpu_memory_utilization \
@@ -198,7 +198,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.rollout.max_num_seqs=32 \
     actor_rollout_ref.rollout.mode=$rollout_mode \
     actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
-    +actor_rollout_ref.rollout.engine_kwargs.vllm.mm-processor-cache-gb=64 \
+    +actor_rollout_ref.rollout.engine_kwargs.vllm.mm-processor-cache-gb=16 \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.ref.fsdp_config.param_offload=$do_offload \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$log_prob_micro_batch_size_per_gpu \
@@ -213,7 +213,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     trainer.logger=['console','wandb'] \
     trainer.project_name=mixed_rl \
     trainer.experiment_name=$run_name \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=$WORKSPACE/checkpoints/$run_name \
     trainer.n_gpus_per_node=$n_gpus_per_node \
@@ -223,6 +223,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
     trainer.total_epochs=$total_epochs \
+    trainer.resume_mode=auto \
     2>&1 | tee $WORKSPACE/logs/$run_name/train.log
 
 echo "Training finished"
