@@ -815,15 +815,14 @@ class MegatronEngine(TrainEngine):
                         f"[MTPTrain] MTP loss is NaN/Inf! value={mtp_loss_value}. "
                         f"Check MTP label construction and model configuration."
                     )
-                elif mtp_loss_value < 0 or mtp_loss_value > 100:
-                    self.logger.warning(
-                        f"[MTPTrain] MTP loss {mtp_loss_value:.6f} outside expected range [0, 100]."
-                    )
                 else:
+                    # Note: mtp_loss_value is the SUM of per-micro-batch
+                    # average MTP losses (accumulated via += in the tracker).
+                    # This is by design in Megatron-Core.  For N micro-batches
+                    # the value ≈ N * per_token_mtp_loss.
                     self.logger.info(
-                        f"[MTPTrain] MTP loss={mtp_loss_value:.6f}, "
+                        f"[MTPTrain] MTP loss (accumulated)={mtp_loss_value:.6f}, "
                         f"scaling_factor={self.mtp_loss_scaling_factor}, "
-                        f"scaled_mtp_loss={mtp_loss_value * self.mtp_loss_scaling_factor:.6f}, "
                         f"is_last_pp_stage={is_last_pp_stage}"
                     )
 
@@ -1009,11 +1008,13 @@ class MegatronEngine(TrainEngine):
                     )
                 else:
                     # -- Training: enable MTP with labels & loss_mask --
-                    # Construct causal-LM labels from padded input_ids.
+                    # Pass raw input_ids as MTP labels (NOT pre-shifted).
+                    # Megatron-Core _postprocess() calls roll_tensor(labels, -1)
+                    # internally for each MTP layer, so MTP layer k predicts
+                    # token at position i+(k+1).  This matches the slime
+                    # implementation which passes batch["tokens"] directly.
                     _input_ids = mb_input.padded_mb["input_ids"]
-                    _mtp_labels = torch.roll(
-                        _input_ids, shifts=-1, dims=-1
-                    )
+                    _mtp_labels = _input_ids
                     # loss_mask carried through pack/pad pipeline;
                     # fall back to None → megatron uses ones_like.
                     _mtp_loss_mask = mb_input.padded_mb.get(
@@ -2031,6 +2032,8 @@ class MegatronEngine(TrainEngine):
         base_model_path: str | None = None,
     ) -> None:
         assert self.model is not None, "Model is not initialized."
+        gc.collect()
+        current_platform.empty_cache()
         os.makedirs(path, exist_ok=True)
 
         if self.bridge_cls == "megatron-bridge":
