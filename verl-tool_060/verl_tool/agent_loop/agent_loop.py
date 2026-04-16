@@ -941,11 +941,12 @@ class AgentLoopManager:
         sub_chunk_size = max(1, original_per_worker // 4)
         num_sub_chunks = math.ceil(total / sub_chunk_size)
         sub_chunks = prompts.chunk(num_sub_chunks)
-        first_wave_count = min(len(sub_chunks) // 2, num_workers)
+        first_wave_count = len(sub_chunks) // 2
+        refill_count = max(1, original_per_worker // 8)
 
         print(f"[WorkQueue] {total} prompts, {num_workers} workers, "
               f"sub_chunk_size={sub_chunk_size}, sub_chunks={len(sub_chunks)}, "
-              f"first_wave={first_wave_count} workers")
+              f"first_wave={first_wave_count} sub-chunks, refill={refill_count} per completion")
 
         pending = {}
         next_idx = 0
@@ -958,9 +959,10 @@ class AgentLoopManager:
             widx = next_idx % num_workers
             ref = self.agent_loop_workers[widx].generate_sequences.remote(sub_chunks[next_idx])
             pending[ref] = widx
-            print(f"[WorkQueue] First wave: sub-chunk {next_idx}/{len(sub_chunks)} "
-                  f"({len(sub_chunks[next_idx])} prompts) -> worker {widx}")
             next_idx += 1
+
+        print(f"[WorkQueue] First wave dispatched: {next_idx} sub-chunks "
+              f"({next_idx * sub_chunk_size} prompts, ~{100 * next_idx // len(sub_chunks)}% of total)")
 
         while pending:
             ready, _ = ray.wait(list(pending.keys()), num_returns=1)
@@ -974,11 +976,11 @@ class AgentLoopManager:
                       f"{completed}/{len(sub_chunks)} sub-chunks | "
                       f"queued={len(pending)} | elapsed={elapsed:.1f}s")
 
-                if next_idx < len(sub_chunks):
+                for _ in range(refill_count):
+                    if next_idx >= len(sub_chunks):
+                        break
                     ref = self.agent_loop_workers[widx].generate_sequences.remote(sub_chunks[next_idx])
                     pending[ref] = widx
-                    print(f"[WorkQueue] Dispatched sub-chunk {next_idx}/{len(sub_chunks)} "
-                          f"({len(sub_chunks[next_idx])} prompts) -> worker {widx}")
                     next_idx += 1
 
         total_time = time.time() - t_start

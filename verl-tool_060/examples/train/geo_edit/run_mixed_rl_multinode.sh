@@ -81,8 +81,8 @@ rollout_mode='async'
 
 # ---- Schedule ----
 total_epochs=3
-save_freq=15
-test_freq=15
+save_freq=10
+test_freq=20
 
 # ============================================================
 export VERL_RUN_ID=$run_name
