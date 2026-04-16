@@ -211,4 +211,4 @@ ______________________________________________________________________
 
 **Questions about the roadmap?** Open a discussion in
 [GitHub Discussions](https://github.com/inclusionAI/AReaL/discussions) or ask in our
-[WeChat group](./assets/wechat_qrcode.png).
+[WeChat group](./assets/figures/wechat_qrcode.png).

@@ -4,13 +4,13 @@
 
 <p align="center">
 | <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://inclusionai.github.io/AReaL/zh/"><b>中文文档</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> | <a href="https://huggingface.co/collections/inclusionAI/"><b>🤗 Models & Data</b></a> |
-<a href="./assets/wechat_qrcode.png" target="_blank"><img src="./assets/wechat_icon.png" width="20" style="vertical-align: middle;"> <b>WeChat (微信) Group</b></a> |
+<a href="./assets/figures/wechat_qrcode.png" target="_blank"><img src="./assets/figures/wechat_icon.png" width="20" style="vertical-align: middle;"> <b>WeChat (微信) Group</b></a> |
   <a href="https://gitcgr.com/inclusionAI/AReaL">
     <img src="https://gitcgr.com/badge/inclusionAI/AReaL.svg" alt="gitcgr" />
   </a>
 </p>
 
-<img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
+<img align="right" alt="ReaL" src="/assets/figures/logo.png" width="20%">
 
 **AReaL** is a reinforcement learning (RL) infrastructure designed to bridge foundation
 model training with modern agent-based applications. It was originally developed by
