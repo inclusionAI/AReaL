@@ -53,7 +53,7 @@ we randomized the answer options.
 
 ### Training Speed Comparison
 
-![throughput_comparision_with_v0.1.0.png](/assets/figures/thpt_comparison.png)
+![throughput_comparison_with_v0.1.0.png](/assets/figures/thpt_comparison.png)
 
 AReaL v0.2.0 features the following system optimizations:
 
