@@ -182,6 +182,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.agent.max_action_length=$max_action_length \
     actor_rollout_ref.agent.tool_call_timeout=600 \
     actor_rollout_ref.agent.max_concurrent_trajectories=256 \
+    +actor_rollout_ref.agent.dispatch_mode=work_queue \
     actor_rollout_ref.rollout.agent.num_workers=$(expr $n_nodes \* $n_gpus_per_node) \
     actor_rollout_ref.rollout.data_parallel_size=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$tensor_model_parallel_size \

@@ -892,13 +892,11 @@ class AgentLoopManager:
             )
 
     def generate_sequences(self, prompts: DataProto) -> DataProto:
-        """Split input batch and dispatch to agent loop workers.
+        """Dispatch prompts to agent loop workers.
 
-        Args:
-            prompts (DataProto): Input batch.
-
-        Returns:
-            DataProto: Output batch.
+        dispatch_mode (from config, default 'static'):
+          - 'static':     equal chunks per worker, wait all (original behavior)
+          - 'work_queue': dynamic sub-chunk dispatch, faster workers get more work
         """
 
         if self.rm_micro_batch_size and len(prompts) % self.rm_micro_batch_size != 0:
@@ -907,24 +905,86 @@ class AgentLoopManager:
             )
         if self.config.actor_rollout_ref.rollout.free_cache_engine:
             self.wake_up()
-        print(f"Dispatching {len(prompts)} prompts to {len(self.agent_loop_workers)} agent loop workers...")
-        chunkes = prompts.chunk(len(self.agent_loop_workers))
-        outputs = ray.get(
-            [
-                worker.generate_sequences.remote(chunk)
-                for worker, chunk in zip(self.agent_loop_workers, chunkes, strict=True)
-            ]
-        )
-        output = DataProto.concat(outputs)
+
+        dispatch_mode = self.config.actor_rollout_ref.agent.get("dispatch_mode", "static")
+
+        if dispatch_mode == "work_queue":
+            output, all_outputs = self._dispatch_work_queue(prompts)
+        else:
+            output, all_outputs = self._dispatch_static(prompts)
+
         if self.config.actor_rollout_ref.rollout.free_cache_engine:
             self.sleep()
 
-        # calculate performance metrics
-        metrics = [output.meta_info.pop("metrics") for output in outputs]  # List[List[Dict[str, str]]]
+        metrics = [output.meta_info.pop("metrics") for output in all_outputs]
         timing = self._performance_metrics(metrics, output)
-
-        output.meta_info = {"timing": timing, **outputs[0].meta_info}
+        output.meta_info = {"timing": timing, **all_outputs[0].meta_info}
         return output
+
+    def _dispatch_static(self, prompts: DataProto):
+        num_workers = len(self.agent_loop_workers)
+        print(f"[Static] Dispatching {len(prompts)} prompts to {num_workers} workers...")
+        chunks = prompts.chunk(num_workers)
+        outputs = ray.get([
+            worker.generate_sequences.remote(chunk)
+            for worker, chunk in zip(self.agent_loop_workers, chunks, strict=True)
+        ])
+        return DataProto.concat(outputs), outputs
+
+    def _dispatch_work_queue(self, prompts: DataProto):
+        import math, time
+        t_start = time.time()
+
+        num_workers = len(self.agent_loop_workers)
+        total = len(prompts)
+        original_per_worker = max(1, total // num_workers)
+        sub_chunk_size = max(1, original_per_worker // 4)
+        num_sub_chunks = math.ceil(total / sub_chunk_size)
+        sub_chunks = prompts.chunk(num_sub_chunks)
+        first_wave_count = min(len(sub_chunks) // 2, num_workers)
+
+        print(f"[WorkQueue] {total} prompts, {num_workers} workers, "
+              f"sub_chunk_size={sub_chunk_size}, sub_chunks={len(sub_chunks)}, "
+              f"first_wave={first_wave_count} workers")
+
+        pending = {}
+        next_idx = 0
+        all_outputs = []
+        completed = 0
+
+        for _ in range(first_wave_count):
+            if next_idx >= len(sub_chunks):
+                break
+            widx = next_idx % num_workers
+            ref = self.agent_loop_workers[widx].generate_sequences.remote(sub_chunks[next_idx])
+            pending[ref] = widx
+            print(f"[WorkQueue] First wave: sub-chunk {next_idx}/{len(sub_chunks)} "
+                  f"({len(sub_chunks[next_idx])} prompts) -> worker {widx}")
+            next_idx += 1
+
+        while pending:
+            ready, _ = ray.wait(list(pending.keys()), num_returns=1)
+            for ref in ready:
+                widx = pending.pop(ref)
+                result = ray.get(ref)
+                all_outputs.append(result)
+                completed += 1
+                elapsed = time.time() - t_start
+                print(f"[WorkQueue] Worker {widx} done | "
+                      f"{completed}/{len(sub_chunks)} sub-chunks | "
+                      f"queued={len(pending)} | elapsed={elapsed:.1f}s")
+
+                if next_idx < len(sub_chunks):
+                    ref = self.agent_loop_workers[widx].generate_sequences.remote(sub_chunks[next_idx])
+                    pending[ref] = widx
+                    print(f"[WorkQueue] Dispatched sub-chunk {next_idx}/{len(sub_chunks)} "
+                          f"({len(sub_chunks[next_idx])} prompts) -> worker {widx}")
+                    next_idx += 1
+
+        total_time = time.time() - t_start
+        print(f"[WorkQueue] All {completed} sub-chunks completed in {total_time:.1f}s")
+
+        return DataProto.concat(all_outputs), all_outputs
 
     def _performance_metrics(self, metrics: list[list[dict[str, str]]], output: DataProto) -> dict[str, float]:
         timing = {}
