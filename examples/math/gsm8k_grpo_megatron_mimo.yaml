@@ -92,7 +92,6 @@ actor:
       env_vars: {}
 
   megatron:
-    distribute_saved_activations: true
     mtp_num_layers: 1
     mtp_loss_scaling_factor: 0.2
     
