@@ -938,11 +938,11 @@ class AgentLoopManager:
         num_workers = len(self.agent_loop_workers)
         total = len(prompts)
         original_per_worker = max(1, total // num_workers)
-        sub_chunk_size = max(1, original_per_worker // 4)
+        sub_chunk_size = max(1, original_per_worker // 8)
         num_sub_chunks = math.ceil(total / sub_chunk_size)
         sub_chunks = prompts.chunk(num_sub_chunks)
-        first_wave_count = len(sub_chunks) // 2
-        refill_count = max(1, original_per_worker // 8)
+        first_wave_per_worker = 4
+        first_wave_count = min(first_wave_per_worker * num_workers, len(sub_chunks))
 
         print(f"[WorkQueue] {total} prompts, {num_workers} workers, "
               f"sub_chunk_size={sub_chunk_size}, sub_chunks={len(sub_chunks)}, "
@@ -976,9 +976,7 @@ class AgentLoopManager:
                       f"{completed}/{len(sub_chunks)} sub-chunks | "
                       f"queued={len(pending)} | elapsed={elapsed:.1f}s")
 
-                for _ in range(refill_count):
-                    if next_idx >= len(sub_chunks):
-                        break
+                if next_idx < len(sub_chunks):
                     ref = self.agent_loop_workers[widx].generate_sequences.remote(sub_chunks[next_idx])
                     pending[ref] = widx
                     next_idx += 1
