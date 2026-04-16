@@ -1002,7 +1002,7 @@ class MegatronEngine(TrainEngine):
                             _saved_mtp_process,
                             _saved_mtp_layers,
                         )
-                    self.logger.info(
+                    self.logger.debug(
                         "[MTPTrain] Disabled MTP in _postprocess for "
                         "inference (forward_only=True)"
                     )
@@ -1159,7 +1159,7 @@ class MegatronEngine(TrainEngine):
                                 (_layer, _orig_ckpt_fwd)
                             )
 
-                        self.logger.info(
+                        self.logger.debug(
                             f"[MTPTrain] Patched _checkpointed_forward on "
                             f"{len(_mtp_ckpt_restore)} MTP layer(s) to fix "
                             f"gradient_checkpointing + PackedSeqParams crash "
