@@ -53,51 +53,5 @@ python src/prefix_tree_visualizer.py \
 ```
 Open `http://localhost:8008`, pick a sample index, and click tokens to inspect their attention rows. `--text-field` defaults to `qwen_text`; `--template-name` defaults to `qwen`. Uses CPU if CUDA is unavailable.***
 
-## Quick Evaluation
-This is a quick evaluation script that runs parallel generation with SGLang. We recommend using the parallel rollout implementation in veRL for evaluation (see [threadweaver_rl/README.md](threadweaver_rl/README.md)).
-
-```bash
-# Replace with your trained model path
-TRAINED_MODEL="ckpts/Q3-8B-131072-SFT"
-
-python src/simple_eval.py --data-type data/mult-10k-par_pq/train.parquet --model_name $TRAINED_MODEL --launch_server --verbose 2 --template-type model --bfloat16 --branching-generate -n 1 --max-context-length 8192
-```
-
-Reference result:
-```
-With strict grading function:
-Pass@1: 0.9377 (93.77)
-```
-
-## Pause-Limit Sweep (4096 ~ 40960)
-To evaluate one checkpoint across multiple `num_tokens_in_the_longest_thread` pause limits and generate a summary report:
-
-```bash
-./eval_pause_sweep.sh <checkpoint_path> --data-type <data_path> [-n <num>] [--bfloat16] [--verbose <level>] [extra args for simple_eval_pause.py]
-```
-
-Example:
-
-```bash
-./eval_pause_sweep.sh ckpts/Q3-8B-131072-SFT --data-type data/mult-10k-par_pq/train.parquet -n 32 --bfloat16 --verbose 2
-```
-
-Data path resolution order:
-- `--data-type` / `-d` CLI argument (recommended)
-- `DATA_TYPE` environment variable
-- interactive terminal prompt if neither is provided
-
-Other optional environment overrides:
-- `N_SAMPLES` (default: `1`, can be overridden by `-n` / `--n-samples`)
-- `MAX_CONTEXT_LENGTH` (default: `40960`)
-- `TEMPLATE_TYPE` (default: `model`)
-- `VERBOSE_LEVEL` (used if `--verbose` is not provided)
-
-This runs `src/simple_eval_pause.py` at pause limits:
-`4096, 8192, 16384, 24576, 32768, 40960`.
-
-Outputs are saved under the checkpoint directory:
-- `eval_pause_outputs/<run_name>/*_metrics.json` (per-run details including `num_tokens_in_longest_thread_list`)
-- `eval_pause_outputs/<run_name>/*_report.md` (per-run human-readable report)
-- `eval_pause_outputs/pause_sweep_report.csv`
-- `eval_pause_outputs/pause_sweep_report.md`
+## Evaluation
+See [EVAL.md](EVAL.md) for detailed evaluation documentation (quick eval, pause-limit sweep).
