@@ -65,15 +65,24 @@ def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
         "PyTorch version >= 2.4 is required for using fully_shard API (FSDP2)"
     )
 
-    default_transformer_cls_names_to_wrap = getattr(model, "_no_split_modules", list())
+    def _normalize_wrap_class_names(value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value if isinstance(value, list) else list(value)
+
+    default_transformer_cls_names_to_wrap = _normalize_wrap_class_names(
+        getattr(model, "_no_split_modules", list())
+    )
     fsdp_transformer_layer_cls_to_wrap = (
         wrap_policy.transformer_layer_cls_to_wrap if wrap_policy is not None else list()
     )
+    fsdp_transformer_layer_cls_to_wrap = _normalize_wrap_class_names(
+        fsdp_transformer_layer_cls_to_wrap
+    )
     if not fsdp_transformer_layer_cls_to_wrap:
         fsdp_transformer_layer_cls_to_wrap = default_transformer_cls_names_to_wrap
-
-    if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
-        fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
 
     assert (
         len(fsdp_transformer_layer_cls_to_wrap) > 0
