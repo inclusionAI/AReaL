@@ -35,7 +35,7 @@ rollout:
 gconfig:
   n_samples: 4
   min_new_tokens: 0
-  max_new_tokens: 2048
+  max_new_tokens: 1024
   greedy: false
   temperature: 1.0
 
@@ -49,7 +49,7 @@ actor:
   gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 5120
+    max_tokens_per_mb: 2048
   optimizer:
     type: adam_bf16
     lr: 3e-6
@@ -95,7 +95,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 5120
+    max_tokens_per_mb: 2048
   optimizer: null
   scheduling_strategy:
     type: colocation
@@ -110,7 +110,7 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 32768
-  mem_fraction_static: 0.7
+  mem_fraction_static: 0.6
 
 
 vllm:
