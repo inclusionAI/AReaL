@@ -24,9 +24,10 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from queue import Queue
 from threading import Lock, Thread
-from typing import Any
+from typing import Annotated, Any
 
 from flask import Blueprint, jsonify, request
+from pydantic import BaseModel, StringConstraints, ValidationError
 
 from areal.api import InferenceEngine, TrainEngine
 from areal.infra.platforms import current_platform
@@ -38,6 +39,36 @@ from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.dynamic_import import import_from_string
 
 logger = logging.getLogger("EngineBP")
+
+
+# ======================================================================================
+# Pydantic Models for Engine API
+# ======================================================================================
+
+# Define the constraint
+NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+
+
+class SetEnvRequest(BaseModel):
+    env: dict[str, Any]
+
+
+class CreateEngineRequest(BaseModel):
+    engine: NonEmptyStr
+    engine_name: NonEmptyStr
+    init_args: list[Any] = []
+    init_kwargs: dict[str, Any] = {}
+
+
+class CallEngineRequest(BaseModel):
+    method: NonEmptyStr
+    engine_name: NonEmptyStr
+    args: list[Any] = []
+    kwargs: dict[str, Any] = {}
+    rpc_meta: dict[str, Any] | None = None
+
+
+# =======================================================================================
 
 
 def _should_broadcast_payload(
@@ -243,29 +274,15 @@ def set_env():
     This endpoint is routed to the engine thread for serial execution.
     """
     try:
-        data = request.get_json()
-        if data is None:
-            return jsonify({"error": "Invalid JSON in request body"}), 400
+        raw_data = request.get_json(silent=True) or {}
 
-        env_payload = data.get("env")
-        if env_payload is None:
-            return jsonify({"error": "Missing 'env' field in request"}), 400
-        if not isinstance(env_payload, dict):
-            return jsonify({"error": "'env' must be a dictionary"}), 400
+        # USE PYDANTIC MODEL FOR VALIDATION
+        try:
+            payload = SetEnvRequest(**raw_data)
+        except ValidationError as e:
+            return jsonify({"error": str(e)}), 400
 
-        for key in env_payload.keys():
-            if not isinstance(key, str):
-                return (
-                    jsonify(
-                        {
-                            "error": (
-                                "Environment variable name must be str, "
-                                f"got {type(key)}"
-                            )
-                        }
-                    ),
-                    400,
-                )
+        env_payload = payload.env
 
         def execute_set_env():
             for key, value in env_payload.items():
@@ -300,28 +317,20 @@ def create_engine():
     global _engines
 
     try:
-        # Parse request in main thread (has Flask request context)
-        data = request.get_json()
-        if data is None:
-            return jsonify({"error": "Invalid JSON in request body"}), 400
+        raw_data = request.get_json(silent=True) or {}
 
-        engine = data.get("engine")
-        engine_name = data.get("engine_name")
-        # Deserialize init_args and init_kwargs (may contain tensors/dataclasses)
-        init_args = deserialize_value(data.get("init_args", []))
-        init_kwargs = deserialize_value(data.get("init_kwargs", {}))
+        # USE PYDANTIC MODEL FOR VALIDATION
+        try:
+            payload = CreateEngineRequest(**raw_data)
+        except ValidationError as e:
+            return jsonify({"error": str(e)}), 400
 
-        if not engine:
-            return (
-                jsonify({"error": "Missing 'engine' field in request"}),
-                400,
-            )
+        engine = payload.engine
+        engine_name = payload.engine_name
 
-        if not engine_name:
-            return (
-                jsonify({"error": "Missing 'engine_name' field in request"}),
-                400,
-            )
+        # Deserialize init_args and init_kwargs
+        init_args = deserialize_value(payload.init_args)
+        init_kwargs = deserialize_value(payload.init_kwargs)
 
         if engine_name in _engines:
             return (
@@ -418,27 +427,19 @@ def call_engine_method():
     global _engines
 
     try:
-        data = request.get_json()
-        if data is None:
-            return jsonify({"error": "Invalid JSON in request body"}), 400
+        raw_data = request.get_json(silent=True) or {}
 
-        method_name = data.get("method")
-        engine_name = data.get("engine_name")
-        raw_args = data.get("args", [])
-        raw_kwargs = data.get("kwargs", {})
-        rpc_meta = data.get("rpc_meta")
+        # USE PYDANTIC MODEL FOR VALIDATION
+        try:
+            payload = CallEngineRequest(**raw_data)
+        except ValidationError as e:
+            return jsonify({"error": str(e)}), 400
 
-        if not method_name:
-            return (
-                jsonify({"error": "Missing 'method' field in request"}),
-                400,
-            )
-
-        if not engine_name:
-            return (
-                jsonify({"error": "Missing 'engine_name' field in request"}),
-                400,
-            )
+        method_name = payload.method
+        engine_name = payload.engine_name
+        raw_args = payload.args
+        raw_kwargs = payload.kwargs
+        rpc_meta = payload.rpc_meta
 
         if engine_name not in _engines:
             return (
