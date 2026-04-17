@@ -86,6 +86,8 @@ class GatewayInferenceController:
             raise ValueError(
                 "GatewayControllerConfig.admin_api_key must be set (not None)"
             )
+        if not config.model:
+            raise ValueError("GatewayControllerConfig.model must not be empty")
         self.config = config
         self.scheduler = scheduler
 
@@ -1178,19 +1180,12 @@ class GatewayInferenceController:
         if extra_body and isinstance(extra_body, dict):
             body.update(extra_body)
 
-        if self.external_mode:
-            body["model"] = self.config.model
-            api_key = (
-                session_api_key
-                if session_api_key is not None
-                else self.config.admin_api_key
-            )
-        else:
-            api_key = (
-                session_api_key
-                if session_api_key is not None
-                else self.config.admin_api_key
-            )
+        body["model"] = self.config.model
+        api_key = (
+            session_api_key
+            if session_api_key is not None
+            else self.config.admin_api_key
+        )
         url = f"{self._gateway_addr}/chat/completions"
         headers = {
             "Content-Type": "application/json",

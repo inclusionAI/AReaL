@@ -469,12 +469,11 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                         yield f"data: {json.dumps({'error': str(exc)})}\n\n".encode()
                     finally:
                         if success and collected_chunks:
-                            ext_session = store.get_session(model_name)
-                            if ext_session is not None and ext_session.is_external_api:
-                                ext_session.add_string_interaction(
-                                    messages,
-                                    "".join(collected_chunks),
-                                )
+                            ext_session = store.get_or_create_session(model_name)
+                            ext_session.add_string_interaction(
+                                messages,
+                                "".join(collected_chunks),
+                            )
 
                 return StreamingResponse(
                     _stream_and_cache(),
@@ -509,9 +508,8 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             response_str = resp.text
 
             if resp.status_code == 200:
-                ext_session = store.get_session(model_name)
-                if ext_session is not None and ext_session.is_external_api:
-                    ext_session.add_string_interaction(messages, response_str)
+                ext_session = store.get_or_create_session(model_name)
+                ext_session.add_string_interaction(messages, response_str)
 
             return RawResponse(
                 content=resp.content,
@@ -584,8 +582,6 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         if not name:
             raise HTTPException(status_code=400, detail="model name is required")
         _registered_models[name] = {"url": url, "model": model, "api_key": api_key}
-        if url:
-            store.register_external_model(name)
         logger.info("Model registered: name=%s url=%s", name, url or "(internal)")
         return {"status": "ok", "name": name}
 

@@ -108,19 +108,14 @@ class SessionData:
       ``export_trajectory``.
     - **Online**: one persistent session → many reward-bounded trajectories
       via repeated ``set_reward`` → ``export_trajectory`` calls.
-    - **External API**: same lifecycle as online mode but interactions
-      store raw request/response strings instead of tokenised data.
-      Set ``is_external_api=True`` at construction time.
     """
 
     def __init__(
         self,
         session_id: str,
         set_reward_finish_timeout: float = 0.0,
-        is_external_api: bool = False,
     ):
         self.session_id = session_id
-        self.is_external_api = is_external_api
         self._set_reward_finish_timeout = set_reward_finish_timeout
         self._last_access_time = time.time()
         self._lock = threading.Lock()
@@ -188,7 +183,7 @@ class SessionData:
             interaction_id=resolved_interaction_id,
             completions=completions,
             created_at=now,
-            needs_online_callback=self.session_id == "__hitl__" or self.is_external_api,
+            needs_online_callback=True,
         )
         self._ready_trajectories[trajectory_id] = ready
         self._active_completions = InteractionCache()
@@ -412,17 +407,16 @@ class SessionStore:
                 self._sessions["__hitl__"] = session
             return session
 
-    def register_external_model(self, name: str) -> SessionData:
+    def get_or_create_session(self, session_id: str) -> SessionData:
+        """Return an existing session or create a new one with the given ID."""
         with self._lock:
-            existing = self._sessions.get(name)
-            if existing is not None and existing.is_external_api:
-                return existing
-            session = SessionData(
-                session_id=name,
-                set_reward_finish_timeout=self._set_reward_finish_timeout,
-                is_external_api=True,
-            )
-            self._sessions[name] = session
+            session = self._sessions.get(session_id)
+            if session is None:
+                session = SessionData(
+                    session_id=session_id,
+                    set_reward_finish_timeout=self._set_reward_finish_timeout,
+                )
+                self._sessions[session_id] = session
             return session
 
     def get_session(self, session_id: str) -> SessionData | None:

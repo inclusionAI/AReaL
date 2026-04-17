@@ -183,17 +183,15 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         if not export_request:
             return None
 
-        session_id = export_request["session_id"]
-        trajectory_id = export_request["trajectory_id"]
-
-        result = await self._export_interactions(
-            http_session, session_id, trajectory_id=trajectory_id
+        interactions = await self._export_interactions(
+            http_session,
+            export_request["session_id"],
+            trajectory_id=export_request["trajectory_id"],
         )
-
-        if not result:
+        if not interactions:
             return None
 
-        last_id = next(reversed(result))
-        last_reward = result[last_id].reward
+        last_id = next(reversed(interactions))
+        last_reward = interactions[last_id].reward
         stats_tracker.get(workflow_context.stat_scope()).scalar(reward=last_reward)
-        return result
+        return interactions

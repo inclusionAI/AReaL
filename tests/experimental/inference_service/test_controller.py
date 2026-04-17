@@ -27,6 +27,7 @@ class TestGatewayControllerConfig:
     def test_defaults(self):
         cfg = GatewayControllerConfig()
         assert cfg.admin_api_key is None
+        assert cfg.model == "default"
         assert cfg.consumer_batch_size == 16
         assert cfg.max_concurrent_rollouts is None
         assert cfg.max_head_offpolicyness == 0
@@ -245,6 +246,11 @@ class TestGatewayInferenceControllerConstruction:
     def test_admin_api_key_none_raises(self):
         cfg = GatewayControllerConfig()
         with pytest.raises(ValueError, match="admin_api_key must be set"):
+            GatewayInferenceController(config=cfg, scheduler=MagicMock())
+
+    def test_model_empty_raises(self):
+        cfg = GatewayControllerConfig(admin_api_key="test-key", model="")
+        with pytest.raises(ValueError, match="model must not be empty"):
             GatewayInferenceController(config=cfg, scheduler=MagicMock())
 
     def test_constructor(self):

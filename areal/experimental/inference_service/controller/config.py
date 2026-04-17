@@ -18,7 +18,7 @@ class GatewayControllerConfig:
     # -- Model / tokenizer -------------------------------------------------
     tokenizer_path: str = ""
     model_path: str = ""
-    model: str = ""
+    model: str = "default"
 
     # -- Routing -----------------------------------------------------------
     routing_strategy: str = "round_robin"
