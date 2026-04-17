@@ -130,7 +130,7 @@ def main() -> None:
     else:
         here = Path(__file__).resolve()
         repo_root = here.parents[3]
-        out_dir = repo_root / "CartoMapQA" / "CartoMapQA_parquet"
+        out_dir = repo_root / "MapBench" / "MapBench_parquet"
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(out_dir / "MapBench_VQA.parquet")
 
