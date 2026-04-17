@@ -29,11 +29,6 @@ import torch
 from pydantic import BaseModel, Field
 
 try:
-    import ray
-except ImportError:  # pragma: no cover - optional in non-ray setups
-    ray = None
-
-try:
     from PIL import Image
     from PIL.Image import Image as ImageObject
 except ImportError:  # pragma: no cover - optional dependency for non-VLM setups
@@ -261,14 +256,14 @@ class SerializedRayObjectRef(BaseModel):
 
     @classmethod
     def from_object_ref(cls, ref: Any) -> "SerializedRayObjectRef":
-        if ray is None:
-            raise RuntimeError("ray is required to serialize ObjectRef")
+        import ray.cloudpickle
+
         payload = ray.cloudpickle.dumps(ref)
         return cls(data=base64.b64encode(payload).decode("utf-8"))
 
     def to_object_ref(self) -> Any:
-        if ray is None:
-            raise RuntimeError("ray is required to deserialize ObjectRef")
+        import ray.cloudpickle
+
         payload = base64.b64decode(self.data.encode("utf-8"))
         return ray.cloudpickle.loads(payload)
 
@@ -596,7 +591,9 @@ def serialize_value(value: Any) -> Any:
 
     # Handle Ray object references when HTTP RPC needs to carry RTensor shard
     # handles across processes.
-    if ray is not None and isinstance(value, ray.ObjectRef):
+    import ray
+
+    if isinstance(value, ray.ObjectRef):
         return SerializedRayObjectRef.from_object_ref(value).model_dump()
 
     # Handle dataclass instances (check before dict, as dataclasses can be dict-like)
