@@ -620,6 +620,8 @@ class AgentLoopWorker:
                 from verl.models.transformers.qwen2_vl import get_rope_index
 
                 images = output.multi_modal_data.get("image", None)
+                if isinstance(images, list) and len(images) == 0:
+                    images = None
                 current_text = self.tokenizer.decode(input_ids.squeeze(0), skip_special_tokens=True)
                 multi_modal_inputs = self.processor(text=[current_text], images=images, return_tensors="pt")
                 multi_modal_inputs.pop("input_ids", None)
@@ -916,9 +918,11 @@ class AgentLoopManager:
         if self.config.actor_rollout_ref.rollout.free_cache_engine:
             self.sleep()
 
-        metrics = [output.meta_info.pop("metrics") for output in all_outputs]
+        metrics = [o.meta_info.pop("metrics") for o in all_outputs]
+        first_meta = all_outputs[0].meta_info
+        del all_outputs
         timing = self._performance_metrics(metrics, output)
-        output.meta_info = {"timing": timing, **all_outputs[0].meta_info}
+        output.meta_info = {"timing": timing, **first_meta}
         return output
 
     def _dispatch_static(self, prompts: DataProto):
