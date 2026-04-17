@@ -5,6 +5,7 @@ import functools
 import gc
 import math
 import os
+import random
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import nullcontext
@@ -837,25 +838,35 @@ class MegatronEngine(TrainEngine):
                             non_mtp_n = 0
                             emb_g = 0.0
                             lmh_g = 0.0
+                            total_params = 0
+                            no_grad_params = 0
                             for module in self.model:
                                 for name, param in module.named_parameters():
-                                    if param.grad is not None:
-                                        g = param.grad.data.float().norm() ** 2
-                                        if ".mtp." in name:
-                                            mtp_g += g.item()
-                                            mtp_n += 1
-                                        else:
-                                            non_mtp_g += g.item()
-                                            non_mtp_n += 1
-                                        if "embedding" in name and ".mtp." not in name:
-                                            emb_g += g.item()
-                                        if "output_layer" in name and ".mtp." not in name:
-                                            lmh_g += g.item()
+                                    total_params += 1
+                                    # Megatron DDP: main_grad > grad
+                                    grad = getattr(param, "main_grad", None)
+                                    if grad is None:
+                                        grad = param.grad
+                                    if grad is None:
+                                        no_grad_params += 1
+                                        continue
+                                    g = grad.data.float().norm() ** 2
+                                    if ".mtp." in name:
+                                        mtp_g += g.item()
+                                        mtp_n += 1
+                                    else:
+                                        non_mtp_g += g.item()
+                                        non_mtp_n += 1
+                                    if "embedding" in name and ".mtp." not in name:
+                                        emb_g += g.item()
+                                    if "output_layer" in name and ".mtp." not in name:
+                                        lmh_g += g.item()
                             self.logger.info(
-                                f"[MTPDetach] Gradient norms: "
-                                f"mtp={mtp_g**0.5:.6f}({mtp_n}), "
-                                f"non_mtp={non_mtp_g**0.5:.6f}({non_mtp_n}), "
-                                f"emb={emb_g**0.5:.6f}, lmh={lmh_g**0.5:.6f}"
+                                f"[MTPDetach] Gradient norms (main_grad): "
+                                f"mtp={mtp_g**0.5:.6f}({mtp_n} params), "
+                                f"non_mtp={non_mtp_g**0.5:.6f}({non_mtp_n} params), "
+                                f"emb={emb_g**0.5:.6f}, lmh={lmh_g**0.5:.6f}, "
+                                f"total={total_params}, no_grad={no_grad_params}"
                             )
                             mtp_stats["mtp_grad_norm"] = mtp_g ** 0.5
                             mtp_stats["non_mtp_grad_norm"] = non_mtp_g ** 0.5
@@ -1400,15 +1411,16 @@ class MegatronEngine(TrainEngine):
                                 f"for embedding gradient isolation (Path 3)"
                             )
 
-                        self.logger.info(
-                            "[MTPDetach] Comprehensive MTP gradient isolation "
-                            f"enabled (mtp_detach_heads={self.mtp_detach_heads}): "
-                            "Path 1 (_MTPGradIsolator for backbone hidden_states), "
-                            "Path 2 (detached output_weight + functional_call for lm_head), "
-                            "Path 3 (detached decoder_input + hidden_states for embedding). "
-                            "MTP CE loss gradients will NOT flow through backbone, "
-                            "lm_head, or embedding parameters."
-                        )
+                        if random.random() < 0.001:
+                            self.logger.info(
+                                "[MTPDetach] Comprehensive MTP gradient isolation "
+                                f"enabled (mtp_detach_heads={self.mtp_detach_heads}): "
+                                "Path 1 (_MTPGradIsolator for backbone hidden_states), "
+                                "Path 2 (detached output_weight + functional_call for lm_head), "
+                                "Path 3 (detached decoder_input + hidden_states for embedding). "
+                                "MTP CE loss gradients will NOT flow through backbone, "
+                                "lm_head, or embedding parameters."
+                            )
                     else:
                         self.logger.info(
                             "[MTPDetach] Gradient isolation DISABLED "
