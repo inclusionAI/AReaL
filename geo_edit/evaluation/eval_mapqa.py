@@ -34,7 +34,7 @@ def _extract_prediction(text: str) -> str:
     m = _THINK_RE.search(text)
     if m and m.group(1).strip():
         return m.group(1).strip()
-    return ""
+    return text.strip()
 
 
 def _normalize(text: str) -> str:

@@ -939,34 +939,23 @@ class AgentLoopManager:
         total = len(prompts)
         original_per_worker = max(1, total // num_workers)
         sub_chunk_size = max(1, original_per_worker // 8)
-
-        per_worker_chunks = prompts.chunk(num_workers)
-        remaining_chunks = []
-        first_wave_dispatches = []
-        for i, chunk in enumerate(per_worker_chunks):
-            num_parts = max(1, len(chunk) // sub_chunk_size)
-            parts = chunk.chunk(num_parts)
-            first_wave_parts = max(1, num_parts // 2)
-            first_wave_dispatches.append((i, DataProto.concat(parts[:first_wave_parts])))
-            remaining_chunks.extend([(i, p) for p in parts[first_wave_parts:]])
-
-        total_sub_chunks = len(first_wave_dispatches) + len(remaining_chunks)
+        num_sub_chunks = math.ceil(total / sub_chunk_size)
+        sub_chunks = prompts.chunk(num_sub_chunks)
 
         print(f"[WorkQueue] {total} prompts, {num_workers} workers, "
-              f"first_wave={len(first_wave_dispatches)} chunks ({sum(len(c) for _, c in first_wave_dispatches)} prompts), "
-              f"remaining={len(remaining_chunks)} sub-chunks (size={sub_chunk_size}), refill=1")
+              f"sub_chunk_size={sub_chunk_size}, sub_chunks={len(sub_chunks)}")
 
         pending = {}
+        next_idx = 0
         all_outputs = []
         completed = 0
 
-        for widx, chunk in first_wave_dispatches:
-            ref = self.agent_loop_workers[widx].generate_sequences.remote(chunk)
+        for widx in range(min(num_workers, len(sub_chunks))):
+            ref = self.agent_loop_workers[widx].generate_sequences.remote(sub_chunks[next_idx])
             pending[ref] = widx
+            next_idx += 1
 
-        next_remaining = 0
-        print(f"[WorkQueue] First wave dispatched: {len(first_wave_dispatches)} chunks "
-              f"(~{100 * sum(len(c) for _, c in first_wave_dispatches) // total}% of total)")
+        print(f"[WorkQueue] Initial dispatch: {next_idx} sub-chunks to {min(num_workers, len(sub_chunks))} workers")
 
         while pending:
             ready, _ = ray.wait(list(pending.keys()), num_returns=1)
@@ -977,17 +966,16 @@ class AgentLoopManager:
                 completed += 1
                 elapsed = time.time() - t_start
                 print(f"[WorkQueue] Worker {widx} done | "
-                      f"{completed}/{total_sub_chunks} chunks | "
+                      f"{completed}/{len(sub_chunks)} | "
                       f"queued={len(pending)} | elapsed={elapsed:.1f}s")
 
-                if next_remaining < len(remaining_chunks):
-                    _, chunk = remaining_chunks[next_remaining]
-                    ref = self.agent_loop_workers[widx].generate_sequences.remote(chunk)
+                if next_idx < len(sub_chunks):
+                    ref = self.agent_loop_workers[widx].generate_sequences.remote(sub_chunks[next_idx])
                     pending[ref] = widx
-                    next_remaining += 1
+                    next_idx += 1
 
         total_time = time.time() - t_start
-        print(f"[WorkQueue] All {completed} chunks completed in {total_time:.1f}s")
+        print(f"[WorkQueue] All {completed} sub-chunks completed in {total_time:.1f}s")
 
         return DataProto.concat(all_outputs), all_outputs
 
