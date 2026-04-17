@@ -210,6 +210,12 @@ def main(
         help="Additional prompt to append to the evaluation prompt.",
     )
     parser.add_argument(
+        "--dataset_name",
+        type=str,
+        default=None,
+        help="Dataset name from task_registry to auto-load judge_prompt.",
+    )
+    parser.add_argument(
         "--compare_with",
         type=str,
         default=None,
@@ -221,6 +227,11 @@ def main(
     os.makedirs(args.output_path, exist_ok=True)
 
     additional_prompt = args.additional_prompt.strip()
+    if not additional_prompt and args.dataset_name:
+        from geo_edit.datasets.task_registry import get_dataset_spec
+
+        spec = get_dataset_spec(args.dataset_name)
+        additional_prompt = spec.get_judge_prompt() or ""
     if additional_prompt:
         global EVAL_QUERY_PROMPT
         EVAL_QUERY_PROMPT += "\n" + additional_prompt + "\n"

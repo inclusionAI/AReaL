@@ -1,4 +1,4 @@
-"""Tests for evaluation parsers - eval_shortest_path.py and eval_stmf_counting.py."""
+"""Tests for evaluation parsers - eval_shortest_path.py and cartomapqa extractors."""
 
 import pytest
 
@@ -91,70 +91,69 @@ class TestGtToStringFunction:
         assert result == "ABC"
 
 
-class TestParseCountingFromLinesFunction:
-    """Test parse_counting_from_lines function from eval_stmf_counting.py."""
+class TestExtractStmfCounting:
 
     def test_parse_counting_simple_number(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
-        result = parse_counting_from_lines("42")
+        result = extract_stmf_counting("42")
         assert result == 42
 
     def test_parse_counting_with_answer_prefix(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
-        result = parse_counting_from_lines("answer: 5")
+        result = extract_stmf_counting("answer: 5")
         assert result == 5
 
     def test_parse_counting_with_final_answer_prefix(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
-        result = parse_counting_from_lines("final answer - 10")
+        result = extract_stmf_counting("final answer - 10")
         assert result == 10
 
     def test_parse_counting_with_negative_number(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
-        result = parse_counting_from_lines("-5")
+        result = extract_stmf_counting("-5")
         assert result == -5
 
     def test_parse_counting_with_positive_sign(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
-        result = parse_counting_from_lines("+3")
+        result = extract_stmf_counting("+3")
         assert result == 3
 
     def test_parse_counting_multiline_returns_first_number(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
         text = "Some text\nanswer: 7\nmore text"
-        result = parse_counting_from_lines(text)
+        result = extract_stmf_counting(text)
         assert result == 7
 
     def test_parse_counting_returns_none_for_no_number(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
-        result = parse_counting_from_lines("no numbers here")
+        result = extract_stmf_counting("no numbers here")
         assert result is None
 
     def test_parse_counting_returns_none_for_empty_string(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
-        result = parse_counting_from_lines("")
+        result = extract_stmf_counting("")
         assert result is None
 
     def test_parse_counting_skips_empty_lines(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
         text = "\n\n\n42\n\n"
-        result = parse_counting_from_lines(text)
+        result = extract_stmf_counting(text)
         assert result == 42
 
     def test_parse_counting_case_insensitive_prefix(self):
-        from geo_edit.evaluation.eval_stmf_counting import parse_counting_from_lines
+        from geo_edit.evaluation.cartomapqa.extractors import extract_stmf_counting
 
-        result = parse_counting_from_lines("ANSWER: 100")
+        result = extract_stmf_counting("ANSWER: 100")
         assert result == 100
 
-        result = parse_counting_from_lines("Final Answer: 200")
+        result = extract_stmf_counting("Final Answer: 200")
         assert result == 200
