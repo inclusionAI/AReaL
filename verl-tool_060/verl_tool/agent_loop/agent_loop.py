@@ -938,19 +938,17 @@ class AgentLoopManager:
         num_workers = len(self.agent_loop_workers)
         total = len(prompts)
         original_per_worker = max(1, total // num_workers)
-        first_wave_size = original_per_worker // 2
         sub_chunk_size = max(1, original_per_worker // 8)
 
-        first_wave_chunks = prompts.chunk(num_workers)
+        per_worker_chunks = prompts.chunk(num_workers)
         remaining_chunks = []
         first_wave_dispatches = []
-        for i, chunk in enumerate(first_wave_chunks):
-            if len(chunk) > first_wave_size:
-                parts = chunk.chunk(max(1, len(chunk) // sub_chunk_size))
-                first_wave_dispatches.append((i, parts[0]))
-                remaining_chunks.extend([(i, p) for p in parts[1:]])
-            else:
-                first_wave_dispatches.append((i, chunk))
+        for i, chunk in enumerate(per_worker_chunks):
+            num_parts = max(1, len(chunk) // sub_chunk_size)
+            parts = chunk.chunk(num_parts)
+            first_wave_parts = max(1, num_parts // 2)
+            first_wave_dispatches.append((i, DataProto.concat(parts[:first_wave_parts])))
+            remaining_chunks.extend([(i, p) for p in parts[first_wave_parts:]])
 
         total_sub_chunks = len(first_wave_dispatches) + len(remaining_chunks)
 

@@ -60,6 +60,9 @@ from geo_edit.datasets.input_template import (
     AIIC_INPUT_TEMPLATE,
     AIIC_NOTOOL_INPUT_TEMPLATE,
     AIIC_SEPARATED_TEMPLATE,
+    VISUAL_PROBE_ANSWER_FORMAT,
+    VISUAL_PROBE_INPUT_TEMPLATE,
+    VISUAL_PROBE_NOTOOL_INPUT_TEMPLATE,
 )
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
@@ -671,6 +674,36 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         template_fields={"question": "question"},
         separated_prompt_template=AIIC_SEPARATED_TEMPLATE,
         answer_format=AIIC_ANSWER_FORMAT,
+    ),
+    "visual_probe_easy": DatasetSpec(
+        name="visual_probe_easy",
+        id_key="id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=VISUAL_PROBE_INPUT_TEMPLATE,
+        notool_prompt_template=VISUAL_PROBE_NOTOOL_INPUT_TEMPLATE,
+        template_fields={"question": "question"},
+        answer_format=VISUAL_PROBE_ANSWER_FORMAT,
+    ),
+    "visual_probe_medium": DatasetSpec(
+        name="visual_probe_medium",
+        id_key="id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=VISUAL_PROBE_INPUT_TEMPLATE,
+        notool_prompt_template=VISUAL_PROBE_NOTOOL_INPUT_TEMPLATE,
+        template_fields={"question": "question"},
+        answer_format=VISUAL_PROBE_ANSWER_FORMAT,
+    ),
+    "visual_probe_hard": DatasetSpec(
+        name="visual_probe_hard",
+        id_key="id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=VISUAL_PROBE_INPUT_TEMPLATE,
+        notool_prompt_template=VISUAL_PROBE_NOTOOL_INPUT_TEMPLATE,
+        template_fields={"question": "question"},
+        answer_format=VISUAL_PROBE_ANSWER_FORMAT,
     ),
 }
 

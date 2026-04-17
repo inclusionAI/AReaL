@@ -379,3 +379,27 @@ Provide a precise answer based on the image.
 """
 
 AIIC_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."
+
+VISUAL_PROBE_INPUT_TEMPLATE = """\
+You are a visual question answering assistant capable of analyzing images in detail.
+
+Look at the image and answer the following question. You can zoom in on specific regions to see details more clearly.
+
+Question: {question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+VISUAL_PROBE_NOTOOL_INPUT_TEMPLATE = """\
+You are a visual question answering assistant capable of analyzing images in detail.
+
+Look at the image carefully and answer the following question.
+
+Question: {question}
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+VISUAL_PROBE_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."
