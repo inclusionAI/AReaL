@@ -1,9 +1,9 @@
 """Evaluation script for MapEval-Visual dataset.
 
 Usage:
-    python geo_edit/evaluation/eval_mapeval_visual.py \
-        --result_path /path/to/inference_output \
-        --output_path /path/to/eval_output
+    python -m geo_edit.evaluation.eval_mapeval_visual \
+        --result_path /storage/openpsi/data/lcy_image_edit/mapeval_visual_test_0417/Qwen3-VL-8B-Thinking_direct  \
+        --output_path /storage/openpsi/data/lcy_image_edit/mapeval_visual_test_0417/Qwen3-VL-8B-Thinking_direct_eval
 """
 
 import argparse
