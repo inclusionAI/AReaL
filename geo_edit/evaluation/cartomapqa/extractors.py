@@ -8,16 +8,26 @@ from geo_edit.utils.text_utils import extract_answer
 
 _NUMERIC_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
 _UNIT_RE = re.compile(
-    r"([-+]?\d[\d,]*(?:\.\d+)?)\s*(m|meters?|ft|feet)", re.IGNORECASE,
+    r"([-+]?\d[\d,]*(?:\.\d+)?)\s*(m|meters?|ft|feet)",
+    re.IGNORECASE,
 )
 _ANSWER_PREFIX_RE = re.compile(
-    r"^(?:answer|final answer)\s*[:\-]\s*", re.IGNORECASE,
+    r"^(?:answer|final answer)\s*[:\-]\s*",
+    re.IGNORECASE,
 )
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_thinking(text: str) -> str:
+    stripped = _THINK_RE.sub("", text).strip()
+    return stripped if stripped else text.strip()
 
 
 def _strip_answer_tag(text: str) -> str:
     extracted = extract_answer(text, "split")
-    return extracted if extracted is not None else text.strip()
+    if extracted is not None:
+        return extracted
+    return _strip_thinking(text)
 
 
 def _clean_lines(text: str) -> str:
@@ -26,6 +36,7 @@ def _clean_lines(text: str) -> str:
 
 
 # ── MFS ──────────────────────────────────────────────────────────────────
+
 
 def extract_mfs(text: str) -> Optional[str]:
     raw = _strip_answer_tag(text).strip()
@@ -37,6 +48,7 @@ def extract_mfs(text: str) -> Optional[str]:
 
 # ── STMF-presence ────────────────────────────────────────────────────────
 
+
 def extract_stmf_presence(text: str) -> Optional[str]:
     raw = _strip_answer_tag(text).strip().lower()
     raw = raw.lstrip("*").strip()
@@ -46,17 +58,37 @@ def extract_stmf_presence(text: str) -> Optional[str]:
         return "yes"
     if first_word.startswith("no"):
         return "no"
+    for word in raw.split():
+        w = word.strip(".,;:!?*\"'()[]")
+        if w in ("yes", "no"):
+            return w
     return None
 
 
 # ── STMF-counting ────────────────────────────────────────────────────────
 
 _TEXT_NUMBERS = {
-    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
-    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
-    "nineteen": 19, "twenty": 20,
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
 }
 
 
@@ -80,8 +112,12 @@ def extract_stmf_counting(text: str) -> Optional[int]:
 # ── STMF-name_listing ────────────────────────────────────────────────────
 
 _UNABLE_PATTERNS = [
-    "there are no", "there is no", "i am unable to",
-    "i'm not able", "none", "no names found",
+    "there are no",
+    "there is no",
+    "i am unable to",
+    "i'm not able",
+    "none",
+    "no names found",
 ]
 
 
@@ -104,6 +140,7 @@ def extract_stmf_name_listing(text: str) -> List[str]:
 
 # ── MTMF ─────────────────────────────────────────────────────────────────
 
+
 def extract_mtmf(text: str) -> Optional[Dict[str, Dict[str, Any]]]:
     raw = _strip_answer_tag(text).strip()
     try:
@@ -120,6 +157,7 @@ def extract_mtmf(text: str) -> Optional[Dict[str, Dict[str, Any]]]:
 
 
 # ── RLE ──────────────────────────────────────────────────────────────────
+
 
 def extract_rle(text: str) -> Optional[Dict[str, Any]]:
     raw = _strip_answer_tag(text).strip()
@@ -144,6 +182,7 @@ def extract_rle(text: str) -> Optional[Dict[str, Any]]:
 
 # ── MML ──────────────────────────────────────────────────────────────────
 
+
 def extract_mml(text: str) -> Optional[Dict[str, str]]:
     raw = _strip_answer_tag(text).strip()
     try:
@@ -164,6 +203,7 @@ def extract_mml(text: str) -> Optional[Dict[str, str]]:
 
 
 # ── SRN ──────────────────────────────────────────────────────────────────
+
 
 def extract_srn(text: str) -> Optional[List[str]]:
     raw = _strip_answer_tag(text).strip()

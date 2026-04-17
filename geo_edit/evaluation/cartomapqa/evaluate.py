@@ -21,12 +21,14 @@ Usage:
         --road_conj_path ./Dataset/road_conjunction \
         --road_dict_path ./Dataset/road_dict
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
 from geo_edit.datasets.task_registry import get_dataset_spec
@@ -70,7 +72,6 @@ def _try_judge_extract(
     output_text: str,
     task_name: str,
     judge: Any,
-    judge_prompt: Optional[str],
 ) -> Optional[str]:
     prompt = (
         f"Extract the final answer from the model's response.\n\n"
@@ -78,55 +79,132 @@ def _try_judge_extract(
         f"Model response: {output_text}\n\n"
         f"Return ONLY the extracted answer, nothing else."
     )
-    if judge_prompt:
-        prompt += f"\n\n{judge_prompt}"
     try:
-        is_correct, raw = judge.judge_correctness(question, "", output_text, additional_prompt=prompt)
-        return raw.strip() if raw else None
+        if judge.api_mode == "chat":
+            resp = judge.client.chat.completions.create(
+                model=judge.model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.choices[0].message.content.strip()
+        resp = judge.client.responses.create(
+            model=judge.model,
+            input=[
+                {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
+            ],
+        )
+        return (resp.output_text or "").strip() or None
     except Exception:
         return None
 
 
+def _extract_with_fallback(
+    task_name: str,
+    text: str,
+    record: dict,
+    judge: Any = None,
+) -> Any:
+    result = extract_structured(task_name, text)
+    if result is None and judge is not None:
+        raw = _try_judge_extract(record.get("question", ""), text, task_name, judge)
+        if raw:
+            result = extract_structured(task_name, raw)
+    return result
+
+
+def _llm_judge_correctness(record: dict, output_text: str, judge: Any) -> bool:
+    question = record.get("question", "")
+    gt = record.get("answer", "")
+    if isinstance(gt, list):
+        gt = ", ".join(str(x) for x in gt)
+    else:
+        gt = str(gt)
+    try:
+        score = judge.judge_correctness(question, gt, output_text)
+        return score == "1"
+    except Exception:
+        return False
+
+
+def _parallel_judge(
+    items: List[tuple],
+    judge: Any,
+    max_workers: int = 64,
+) -> set:
+    corrected: set = set()
+
+    def _judge_one(item: tuple):
+        idx, record, text = item
+        if _llm_judge_correctness(record, text, judge):
+            return idx
+        return None
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_judge_one, it): it[0] for it in items}
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                corrected.add(result)
+    return corrected
+
+
 # ── Per-task evaluation logic ────────────────────────────────────────────
 
+
 def _evaluate_mfs(records: List[dict], **kwargs) -> Dict:
+    judge = kwargs.get("judge")
     true_labels, pred_labels = [], []
     details = []
     for r in records:
         text = _get_output_text(r)
-        pred = extract_structured("cartomapqa_mfs", text)
+        pred = _extract_with_fallback("cartomapqa_mfs", text, r, judge)
         gt = str(r.get("answer", "")).strip().upper()
         if pred is None:
             pred = "?"
         true_labels.append(gt)
         pred_labels.append(pred)
-        details.append({"id": r["_id"], "gt": gt, "pred": pred, "result": 1.0 if gt == pred else 0.0})
+        details.append(
+            {
+                "id": r["_id"],
+                "gt": gt,
+                "pred": pred,
+                "result": 1.0 if gt == pred else 0.0,
+            }
+        )
     summary = exact_match_accuracy(true_labels, pred_labels)
     return {"summary": summary, "details": details}
 
 
 def _evaluate_stmf_presence(records: List[dict], **kwargs) -> Dict:
+    judge = kwargs.get("judge")
     true_labels, pred_labels = [], []
     details = []
     for r in records:
         text = _get_output_text(r)
-        pred = extract_structured("cartomapqa_stmf_presence", text)
+        pred = _extract_with_fallback("cartomapqa_stmf_presence", text, r, judge)
         gt = str(r.get("answer", "")).strip().lower()
         if pred is None:
             pred = "unknown"
         true_labels.append(gt)
         pred_labels.append(pred)
-        details.append({"id": r["_id"], "gt": gt, "pred": pred, "result": 1.0 if gt == pred else 0.0})
+        details.append(
+            {
+                "id": r["_id"],
+                "gt": gt,
+                "pred": pred,
+                "result": 1.0 if gt == pred else 0.0,
+            }
+        )
     summary = binary_prf1(true_labels, pred_labels)
     return {"summary": summary, "details": details}
 
 
 def _evaluate_stmf_counting(records: List[dict], **kwargs) -> Dict:
+    judge = kwargs.get("judge")
     gt_vals, pred_vals = [], []
     details = []
     for r in records:
         text = _get_output_text(r)
-        pred = extract_structured("cartomapqa_stmf_counting", text)
+        pred = _extract_with_fallback("cartomapqa_stmf_counting", text, r, judge)
         try:
             gt = int(r.get("answer", 0))
         except (ValueError, TypeError):
@@ -135,7 +213,14 @@ def _evaluate_stmf_counting(records: List[dict], **kwargs) -> Dict:
             pred = 0
         gt_vals.append(gt)
         pred_vals.append(pred)
-        details.append({"id": r["_id"], "gt": gt, "pred": pred, "result": 1.0 if gt == pred else 0.0})
+        details.append(
+            {
+                "id": r["_id"],
+                "gt": gt,
+                "pred": pred,
+                "result": 1.0 if gt == pred else 0.0,
+            }
+        )
     summary = regression_metrics(gt_vals, pred_vals)
     correct = sum(1 for g, p in zip(gt_vals, pred_vals) if g == p)
     summary["accuracy"] = correct / len(gt_vals) if gt_vals else 0.0
@@ -143,11 +228,14 @@ def _evaluate_stmf_counting(records: List[dict], **kwargs) -> Dict:
 
 
 def _evaluate_stmf_name_listing(records: List[dict], **kwargs) -> Dict:
+    judge = kwargs.get("judge")
     all_prec, all_rec, all_f1 = [], [], []
     details = []
     for r in records:
         text = _get_output_text(r)
-        pred_names = extract_structured("cartomapqa_stmf_name_listing", text)
+        pred_names = _extract_with_fallback(
+            "cartomapqa_stmf_name_listing", text, r, judge
+        )
         gt_raw = r.get("answer", [])
         gt_names = gt_raw if isinstance(gt_raw, list) else [str(gt_raw)]
         gt_names = [n.strip() for n in gt_names if n.strip()]
@@ -166,13 +254,14 @@ def _evaluate_stmf_name_listing(records: List[dict], **kwargs) -> Dict:
 
 
 def _evaluate_mtmf(records: List[dict], **kwargs) -> Dict:
+    judge = kwargs.get("judge")
     count_gt, count_pred = [], []
     all_prec, all_rec, all_f1 = [], [], []
     details = []
 
     for r in records:
         text = _get_output_text(r)
-        pred_data = extract_structured("cartomapqa_mtmf", text)
+        pred_data = _extract_with_fallback("cartomapqa_mtmf", text, r, judge)
         gt_raw = r.get("answer", {})
         if isinstance(gt_raw, str):
             try:
@@ -203,25 +292,36 @@ def _evaluate_mtmf(records: List[dict], **kwargs) -> Dict:
 
     n = len(all_prec)
     summary = {
-        **regression_metrics(count_gt, count_pred),
-        "avg_precision": sum(all_prec) / n if n else 0.0,
-        "avg_recall": sum(all_rec) / n if n else 0.0,
-        "avg_f1": sum(all_f1) / n if n else 0.0,
+        "counting": regression_metrics(count_gt, count_pred),
+        "name_listing": {
+            "avg_precision": sum(all_prec) / n if n else 0.0,
+            "avg_recall": sum(all_rec) / n if n else 0.0,
+            "avg_f1": sum(all_f1) / n if n else 0.0,
+        },
     }
     return {"summary": summary, "details": details}
 
 
 def _evaluate_rle(records: List[dict], **kwargs) -> Dict:
+    judge = kwargs.get("judge")
     groups: Dict[str, Dict[str, List]] = defaultdict(lambda: {"gt": [], "pred": []})
     details = []
 
     for r in records:
         text = _get_output_text(r)
-        pred_data = extract_structured("cartomapqa_rle", text)
+        pred_data = _extract_with_fallback("cartomapqa_rle", text, r, judge)
         gt_raw = r.get("answer", "")
-        meta = r.get("meta_info_extra", {})
+        meta = r.get("meta_info_extra", {}) or {}
         difficulty = meta.get("difficulty", meta.get("Difficulty", "Simple"))
-        measure = meta.get("measure", meta.get("Measure", "meters"))
+        measure = meta.get("measure", meta.get("Measure", ""))
+        if not measure:
+            rid = str(r.get("_id", ""))
+            if rid.endswith("_feet"):
+                measure = "feet"
+            elif rid.endswith("_meters"):
+                measure = "meters"
+            else:
+                measure = "unknown"
 
         gt_val = None
         if isinstance(gt_raw, (int, float)):
@@ -237,13 +337,15 @@ def _evaluate_rle(records: List[dict], **kwargs) -> Dict:
             groups[key]["gt"].append(gt_val)
             groups[key]["pred"].append(pred_val)
 
-        details.append({
-            "id": r["_id"],
-            "gt": gt_val,
-            "pred": pred_val,
-            "difficulty": difficulty,
-            "measure": measure,
-        })
+        details.append(
+            {
+                "id": r["_id"],
+                "gt": gt_val,
+                "pred": pred_val,
+                "difficulty": difficulty,
+                "measure": measure,
+            }
+        )
 
     summary: Dict[str, Any] = {}
     all_gt, all_pred = [], []
@@ -258,6 +360,7 @@ def _evaluate_rle(records: List[dict], **kwargs) -> Dict:
 
 def _extract_rle_value(text: str) -> Optional[float]:
     import re
+
     m = re.search(r"([-+]?\d[\d,]*(?:\.\d+)?)", text)
     if m:
         return float(m.group(1).replace(",", ""))
@@ -265,14 +368,19 @@ def _extract_rle_value(text: str) -> Optional[float]:
 
 
 def _evaluate_mml(records: List[dict], **kwargs) -> Dict:
+    judge = kwargs.get("judge")
     details = []
-    zoom_groups: Dict[str, Dict[str, int]] = defaultdict(lambda: {"correct": 0, "total": 0})
-    color_groups: Dict[str, Dict[str, int]] = defaultdict(lambda: {"correct": 0, "total": 0})
+    zoom_groups: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: {"correct": 0, "total": 0}
+    )
+    color_groups: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: {"correct": 0, "total": 0}
+    )
     total = correct = 0
 
     for r in records:
         text = _get_output_text(r)
-        pred_data = extract_structured("cartomapqa_mml", text)
+        pred_data = _extract_with_fallback("cartomapqa_mml", text, r, judge)
         gt_raw = r.get("answer", {})
         if isinstance(gt_raw, str):
             try:
@@ -286,8 +394,10 @@ def _evaluate_mml(records: List[dict], **kwargs) -> Dict:
         is_correct = False
         if pred_data and isinstance(gt_raw, dict):
             is_correct = mml_match(
-                gt_raw.get("road_1", ""), gt_raw.get("road_2", ""),
-                pred_data.get("road_1", ""), pred_data.get("road_2", ""),
+                gt_raw.get("road_1", ""),
+                gt_raw.get("road_2", ""),
+                pred_data.get("road_1", ""),
+                pred_data.get("road_2", ""),
             )
 
         total += 1
@@ -299,14 +409,16 @@ def _evaluate_mml(records: List[dict], **kwargs) -> Dict:
             zoom_groups[zoom]["correct"] += 1
             color_groups[color]["correct"] += 1
 
-        details.append({
-            "id": r["_id"],
-            "gt": gt_raw,
-            "pred": pred_data,
-            "result": 1.0 if is_correct else 0.0,
-            "zoom_level": zoom,
-            "marker_color": color,
-        })
+        details.append(
+            {
+                "id": r["_id"],
+                "gt": gt_raw,
+                "pred": pred_data,
+                "result": 1.0 if is_correct else 0.0,
+                "zoom_level": zoom,
+                "marker_color": color,
+            }
+        )
 
     summary: Dict[str, Any] = {
         "accuracy": correct / total if total else 0.0,
@@ -325,6 +437,7 @@ def _evaluate_mml(records: List[dict], **kwargs) -> Dict:
 
 
 def _evaluate_srn(records: List[dict], **kwargs) -> Dict:
+    judge = kwargs.get("judge")
     road_conj_path = kwargs.get("road_conj_path")
     road_dict_path = kwargs.get("road_dict_path")
     results = []
@@ -332,7 +445,7 @@ def _evaluate_srn(records: List[dict], **kwargs) -> Dict:
 
     for r in records:
         text = _get_output_text(r)
-        pred_route = extract_structured("cartomapqa_srn", text)
+        pred_route = _extract_with_fallback("cartomapqa_srn", text, r, judge)
         gt_raw = r.get("answer", "")
         meta = r.get("meta_info_extra", {})
         zoom_level = meta.get("zoom_level")
@@ -353,7 +466,9 @@ def _evaluate_srn(records: List[dict], **kwargs) -> Dict:
         pred_norm = normalize_route(pred_route)
 
         is_success, correct_step_count = route_eval(gt_norm, pred_norm)
-        step_accuracy = (correct_step_count - 1) / (len(gt_norm) - 1) if len(gt_norm) > 1 else 0.0
+        step_accuracy = (
+            (correct_step_count - 1) / (len(gt_norm) - 1) if len(gt_norm) > 1 else 0.0
+        )
         step_accuracy = max(0.0, step_accuracy)
 
         is_connected = False
@@ -370,7 +485,9 @@ def _evaluate_srn(records: List[dict], **kwargs) -> Dict:
                         road_dict = json.load(f)
                     origin = meta.get("origin", [])
                     dest = meta.get("destination", [])
-                    is_connected = check_valid_route(origin, dest, pred_norm, conjunction, road_dict)
+                    is_connected = check_valid_route(
+                        origin, dest, pred_norm, conjunction, road_dict
+                    )
                 except Exception:
                     is_connected = False
 
@@ -459,6 +576,14 @@ def main():
     print(f"Loaded {len(records)} records for {args.task}")
 
     kwargs = {}
+    if args.use_judge:
+        from geo_edit.evaluation.openai_as_judge import OpenAIJudge
+
+        kwargs["judge"] = OpenAIJudge(
+            api_key=args.api_key,
+            model=args.judge_model,
+            api_base=args.api_base,
+        )
     if args.task == "cartomapqa_srn":
         kwargs["road_conj_path"] = args.road_conj_path
         kwargs["road_dict_path"] = args.road_dict_path
