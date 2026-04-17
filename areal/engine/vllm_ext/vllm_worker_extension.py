@@ -4,7 +4,6 @@ import traceback
 
 import torch
 import torch.distributed as dist
-
 from vllm.logger import init_logger
 from vllm.lora.lora_model import LoRAModel
 from vllm.lora.peft_helper import PEFTHelper
