@@ -5,6 +5,7 @@
 /areal/api/                 @garrett4wade
 /areal/engine/              @rchardx
 /areal/experimental/inference_service        @nuzant
+/areal/experimental/agent_service/          @CormickKneey
 /areal/infra/               @garrett4wade
 /areal/models/              @rchardx
 /areal/trainer/             @garrett4wade

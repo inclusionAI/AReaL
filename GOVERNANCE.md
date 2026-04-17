@@ -23,6 +23,7 @@ project.
 | Zhiyu Mei    | AReaL Team, Ant Group     | @nuzant       |
 | Xujie Shen   | AReaL Team, Ant Group     | @fishcrap     |
 | Tongkai Yang | AReaL Team, Ant Group     | @fredy12      |
+| Han Jiang    | AReaL Team, Ant Group     | @CormickKneey |
 
 ### Lead Maintainer (BDFL)
 
