@@ -113,31 +113,56 @@ def _run_one_task(task_payload: dict):
     if text_only:
         task_kwargs["text_only"] = True
 
-    task = OpenAICompatibleVisionQATask(
-        task_id=task_id,
-        task_prompt=text_prompt,
-        task_answer=answer,
-        task_image_path=image_path,
-        tool_functions={},
-        save_dir=task_save_dir,
-        **task_kwargs,
-    )
-
     _WORKER_AGENT.reset()
-    try:
-        action, extra_info = _WORKER_AGENT.act(task.contents)
-        _ = task.parse_action(step=1, action=action, extra_info=extra_info)
+    response_validator = task_payload.get("response_validator")
+    max_attempts = 5 if response_validator else 1
 
-        if task.state:
-            return True, task.save_trajectory()
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            shutil.rmtree(task_save_dir, ignore_errors=True)
+            os.makedirs(task_save_dir, exist_ok=True)
 
-        shutil.rmtree(task_save_dir, ignore_errors=True)
-        return False, None
+        task = OpenAICompatibleVisionQATask(
+            task_id=task_id,
+            task_prompt=text_prompt,
+            task_answer=answer,
+            task_image_path=image_path,
+            tool_functions={},
+            save_dir=task_save_dir,
+            **task_kwargs,
+        )
 
-    except Exception as e:
-        logger.error(f"[{task_id}] worker failed: {e}")
-        shutil.rmtree(task_save_dir, ignore_errors=True)
-        return False, None
+        _WORKER_AGENT.reset()
+        try:
+            action, extra_info = _WORKER_AGENT.act(task.contents)
+            _ = task.parse_action(step=1, action=action, extra_info=extra_info)
+
+            if task.state:
+                if response_validator:
+                    output = ""
+                    if hasattr(action, "choices") and action.choices:
+                        output = action.choices[0].message.content or ""
+                    else:
+                        output = getattr(action, "output_text", "") or ""
+                    if not response_validator(output):
+                        logger.warning(f"[{task_id}] Attempt {attempt + 1}/{max_attempts}: response_validator rejected, retrying")
+                        continue
+                return True, task.save_trajectory()
+
+            if attempt < max_attempts - 1:
+                continue
+            shutil.rmtree(task_save_dir, ignore_errors=True)
+            return False, None
+
+        except Exception as e:
+            logger.error(f"[{task_id}] worker failed (attempt {attempt + 1}): {e}")
+            if attempt < max_attempts - 1:
+                continue
+            shutil.rmtree(task_save_dir, ignore_errors=True)
+            return False, None
+
+    shutil.rmtree(task_save_dir, ignore_errors=True)
+    return False, None
 
 
 def main():
@@ -250,6 +275,7 @@ def main():
                     "image_path": image_path,
                     "text_only": text_only,
                     "task_kwargs": dataset_spec.build_task_kwargs(item),
+                    "response_validator": dataset_spec.response_validator,
                 }
 
                 ar = pool.apply_async(_run_one_task, (payload,))

@@ -210,83 +210,107 @@ def _run_one_task(task_payload: dict):
     tool_functions = _WORKER_TOOL_ROUTER.get_available_tools()
     tool_return_types = _WORKER_TOOL_ROUTER.get_tool_return_types()
 
-    task = _WORKER_TASK_CLASS(
-        task_id=task_id,
-        task_prompt=text_prompt,
-        task_answer=answer,
-        task_image_path=image_path,
-        tool_functions=tool_functions,
-        tool_return_types=tool_return_types,
-        save_dir=task_save_dir,
-        **task_kwargs,
-    )
+    response_validator = task_payload.get("response_validator")
+    max_attempts = 5 if response_validator else 1
 
-    _WORKER_AGENT.reset()
-    original_generate_config = _WORKER_AGENT.config.generate_config.copy()
-    try:
-        for i in range(_WORKER_MAX_TOOL_CALLS):
-            action, extra_info = _WORKER_AGENT.act(task.contents)
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            shutil.rmtree(task_save_dir, ignore_errors=True)
+            os.makedirs(task_save_dir, exist_ok=True)
 
-            if hasattr(action, "choices") and action.choices:
-                model_text = action.choices[0].message.content or ""
-            else:
-                model_text = getattr(action, "output_text", "") or ""
-            logger.warning(f"[{task_id}] Step {i + 1} model output:\n{model_text}")
+        task = _WORKER_TASK_CLASS(
+            task_id=task_id,
+            task_prompt=text_prompt,
+            task_answer=answer,
+            task_image_path=image_path,
+            tool_functions=tool_functions,
+            tool_return_types=tool_return_types,
+            save_dir=task_save_dir,
+            **task_kwargs,
+        )
 
-            function_call_part_list = task.parse_action(
-                step=i + 1, action=action, extra_info=extra_info
-            )
+        _WORKER_AGENT.reset()
+        original_generate_config = _WORKER_AGENT.config.generate_config.copy()
+        try:
+            for i in range(_WORKER_MAX_TOOL_CALLS):
+                action, extra_info = _WORKER_AGENT.act(task.contents)
 
-            if not function_call_part_list:
-                break
+                if hasattr(action, "choices") and action.choices:
+                    model_text = action.choices[0].message.content or ""
+                else:
+                    model_text = getattr(action, "output_text", "") or ""
+                logger.warning(f"[{task_id}] Step {i + 1} model output:\n{model_text}")
 
-            contents_before = (
-                len(task.contents) if isinstance(task.contents, list) else 0
-            )
-            task.update_observation_from_action(function_call_part_list)
-            if isinstance(task.contents, list):
-                for msg in task.contents[contents_before:]:
-                    role = msg.get("role", "")
-                    text = (
-                        msg.get("content", "")
-                        if isinstance(msg.get("content"), str)
-                        else ""
-                    )
-                    if role == "tool" and text:
-                        logger.warning(
-                            f"[{task_id}] Step {i + 1} tool result:\n{text[:500]}"
+                function_call_part_list = task.parse_action(
+                    step=i + 1, action=action, extra_info=extra_info
+                )
+
+                if not function_call_part_list:
+                    break
+
+                contents_before = (
+                    len(task.contents) if isinstance(task.contents, list) else 0
+                )
+                task.update_observation_from_action(function_call_part_list)
+                if isinstance(task.contents, list):
+                    for msg in task.contents[contents_before:]:
+                        role = msg.get("role", "")
+                        text = (
+                            msg.get("content", "")
+                            if isinstance(msg.get("content"), str)
+                            else ""
                         )
+                        if role == "tool" and text:
+                            logger.warning(
+                                f"[{task_id}] Step {i + 1} tool result:\n{text[:500]}"
+                            )
 
-        if (
-            task.state
-            and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS
-            and _WORKER_TOOL_ROUTER.tool_mode != "direct"
-        ):
-            logger.info(
-                f"[{task_id}] Max tool calls ({_WORKER_MAX_TOOL_CALLS}), forcing final answer"
-            )
-            force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
-            task.append_prompt(force_prompt)
-            _WORKER_AGENT.config.generate_config = (
-                _WORKER_AGENT_CONFIGS.force_final_generate_config
-            )
-            action, extra_info = _WORKER_AGENT.act(task.contents)
-            _WORKER_AGENT.config.generate_config = original_generate_config
-            task.parse_action(
-                step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info
-            )
+            if (
+                task.state
+                and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS
+                and _WORKER_TOOL_ROUTER.tool_mode != "direct"
+            ):
+                logger.info(
+                    f"[{task_id}] Max tool calls ({_WORKER_MAX_TOOL_CALLS}), forcing final answer"
+                )
+                force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
+                task.append_prompt(force_prompt)
+                _WORKER_AGENT.config.generate_config = (
+                    _WORKER_AGENT_CONFIGS.force_final_generate_config
+                )
+                action, extra_info = _WORKER_AGENT.act(task.contents)
+                _WORKER_AGENT.config.generate_config = original_generate_config
+                task.parse_action(
+                    step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info
+                )
 
-        if task.state:
-            meta_info = task.save_trajectory()
-            return True, meta_info
+            if task.state:
+                if response_validator:
+                    output = ""
+                    if hasattr(action, "choices") and action.choices:
+                        output = action.choices[0].message.content or ""
+                    else:
+                        output = getattr(action, "output_text", "") or ""
+                    if not response_validator(output):
+                        logger.warning(f"[{task_id}] Attempt {attempt + 1}/{max_attempts}: response_validator rejected, retrying")
+                        continue
+                meta_info = task.save_trajectory()
+                return True, meta_info
 
-        shutil.rmtree(task_save_dir, ignore_errors=True)
-        return False, None
+            if attempt < max_attempts - 1:
+                continue
+            shutil.rmtree(task_save_dir, ignore_errors=True)
+            return False, None
 
-    except Exception as e:
-        logging.error(f"[{task_id}] failed: {e}")
-        shutil.rmtree(task_save_dir, ignore_errors=True)
-        return False, None
+        except Exception as e:
+            logging.error(f"[{task_id}] failed (attempt {attempt + 1}): {e}")
+            if attempt < max_attempts - 1:
+                continue
+            shutil.rmtree(task_save_dir, ignore_errors=True)
+            return False, None
+
+    shutil.rmtree(task_save_dir, ignore_errors=True)
+    return False, None
 
 
 def main():
@@ -544,6 +568,7 @@ def main():
                     "image_path": image_path,
                     "text_only": text_only,
                     "task_kwargs": dataset_spec.build_task_kwargs(item),
+                    "response_validator": dataset_spec.response_validator,
                 }
 
                 ar = pool.apply_async(_run_one_task, (payload,))

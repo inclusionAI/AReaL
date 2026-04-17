@@ -241,7 +241,6 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
     answer_format = task_payload.get("answer_format")
     tool_guidance = task_payload.get("tool_guidance")
     judge_prompt = task_payload.get("judge_prompt")
-    response_validator = task_payload.get("response_validator")
     task_category = (
         task_payload.get("task_kwargs", {})
         .get("meta_info_extra", {})
@@ -371,12 +370,6 @@ def _run_one_task_iterative(task_payload: dict) -> Tuple[bool, Optional[dict]]:
                         judge_prompt=judge_prompt,
                         meta_info_extra=task_meta_info_extra,
                     )
-
-                    if is_valid and response_validator and not response_validator(answer_text):
-                        logger.warning(
-                            f"[{task_id}] Round {current_round} response_validator rejected, retrying"
-                        )
-                        is_valid = False
 
                     if is_valid:
                         # MapTrace: substitute model's approximate coordinates with exact GT
@@ -761,7 +754,6 @@ def main():
                     "answer_format": dataset_spec.answer_format,
                     "tool_guidance": dataset_spec.get_tool_guidance(item),
                     "judge_prompt": dataset_spec.get_judge_prompt(item),
-                    "response_validator": dataset_spec.response_validator,
                 }
 
                 ar = pool.apply_async(_run_one_task_iterative, (payload,))
