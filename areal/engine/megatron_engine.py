@@ -197,8 +197,9 @@ class MegatronEngine(TrainEngine):
 
                 self.logger.info(
                     "[MTPTrain] Verified megatron-core MTP module available. "
-                    "Gradient isolation (embedding detach + functional_call lm_head) "
-                    "is handled internally by megatron-core MultiTokenPrediction module."
+                    "Gradient isolation is handled by AReaL monkey-patches: "
+                    "_MTPGradIsolator (backbone), functional_call (lm_head), "
+                    "decoder_input.detach (embedding) when mtp_detach_heads=True."
                 )
             except ImportError:
                 self.logger.error(
@@ -826,6 +827,45 @@ class MegatronEngine(TrainEngine):
                         f"is_last_pp_stage={is_last_pp_stage}"
                     )
 
+                    # Log gradient norms for MTP vs non-MTP parameters
+                    # to verify gradient isolation is working correctly.
+                    if is_last_pp_stage and self.mtp_detach_heads:
+                        try:
+                            mtp_grad_sq = 0.0
+                            non_mtp_grad_sq = 0.0
+                            mtp_cnt = 0
+                            non_mtp_cnt = 0
+                            emb_grad_sq = 0.0
+                            lmhead_grad_sq = 0.0
+                            for module in self.model:
+                                for name, param in module.named_parameters():
+                                    if param.grad is not None:
+                                        g = param.grad.data.float().norm() ** 2
+                                        if ".mtp." in name:
+                                            mtp_grad_sq += g.item()
+                                            mtp_cnt += 1
+                                        else:
+                                            non_mtp_grad_sq += g.item()
+                                            non_mtp_cnt += 1
+                                        if "embedding" in name and ".mtp." not in name:
+                                            emb_grad_sq += g.item()
+                                        if "output_layer" in name and ".mtp." not in name:
+                                            lmhead_grad_sq += g.item()
+                            self.logger.info(
+                                f"[MTPDetach] Gradient norms after backward: "
+                                f"mtp_params={mtp_grad_sq**0.5:.6f} ({mtp_cnt}), "
+                                f"non_mtp_params={non_mtp_grad_sq**0.5:.6f} ({non_mtp_cnt}), "
+                                f"embedding={emb_grad_sq**0.5:.6f}, "
+                                f"lm_head={lmhead_grad_sq**0.5:.6f}. "
+                                f"All non-MTP norms should be ~GRPO scale only."
+                            )
+                            mtp_stats["mtp_grad_norm"] = mtp_grad_sq ** 0.5
+                            mtp_stats["non_mtp_grad_norm"] = non_mtp_grad_sq ** 0.5
+                        except Exception as e:
+                            self.logger.warning(
+                                f"[MTPDetach] Failed to compute gradient norms: {e}"
+                            )
+
                 MTPLossLoggingHelper.clean_loss_in_tracker()
             else:
                 if self.enable_mtp_training:
@@ -933,6 +973,8 @@ class MegatronEngine(TrainEngine):
             extra_block_kwargs = None
             _mtp_restore = None
             _clm_loss_restore = None
+            _postprocess_restore = None  # for _postprocess gradient isolation patch
+            _mtp_get_emb_restore = []  # for _get_embeddings gradient isolation patch
             _mtp_ckpt_restore = []  # (layer, orig_method) pairs
 
             # Defensive guard: even when enable_mtp_training=False, the
@@ -1023,6 +1065,383 @@ class MegatronEngine(TrainEngine):
                     extra_block_kwargs = {"labels": _mtp_labels}
                     if _mtp_loss_mask is not None:
                         extra_block_kwargs["loss_mask"] = _mtp_loss_mask
+
+                    # In Megatron-Core 0.16.0, MTP CE loss gradient leaks to
+                    # backbone through 3 paths:
+                    #
+                    # Path 1: MTP loss → MTPLossAutoScaler → hidden_states → backbone
+                    #   MTPLossAutoScaler.apply(hidden_states, mtp_loss) attaches
+                    #   mtp_loss gradient to main model's hidden_states.
+                    #   Fix: Monkey-patch _postprocess with _MTPGradIsolator.
+                    #
+                    # Path 2: MTP loss → output_layer (lm_head) weights
+                    #   MTP logits use the SHARED output_layer and output_weight.
+                    #   MTP CE loss backpropagates through lm_head weights.
+                    #   Fix: Detach output_weight in _postprocess MTP loop, and
+                    #   use functional_call with detached params for output_layer.
+                    #
+                    # Path 3: MTP loss → embedding weights
+                    #   MTP layers call embedding(input_ids, position_ids) using
+                    #   the SHARED embedding layer. Gradient flows through
+                    #   decoder_input back to embedding weights.
+                    #   Fix: Patch _get_embeddings to detach decoder_input.
+                    # -----------------------------------------------------------
+                    if self.mtp_detach_heads:
+                        _orig_postprocess = _unwrapped._postprocess.__func__
+
+                        class _MTPGradIsolator(torch.autograd.Function):
+                            """Gradient isolator for MTP loss (Path 1).
+
+                            Bridges original hidden_states with MTP-wrapped
+                            hidden_states to prevent MTP CE gradient from
+                            flowing through MTPLossAutoScaler → backbone.
+
+                            MTP params still get gradients because
+                            MTPLossAutoScaler.backward() sends
+                            ones_like(mtp_loss) * scale to mtp_loss regardless
+                            of grad_output.
+                            """
+
+                            @staticmethod
+                            def forward(ctx, original_hs, mtp_wrapped_hs):
+                                return original_hs.clone()
+
+                            @staticmethod
+                            def backward(ctx, grad_output):
+                                return grad_output, torch.zeros_like(grad_output)
+
+                        def _patched_postprocess(
+                            self_model,
+                            hidden_states,
+                            input_ids,
+                            position_ids,
+                            labels,
+                            rotary_pos_emb,
+                            rotary_pos_cos,
+                            rotary_pos_sin,
+                            mtp_in_postprocess=None,
+                            loss_mask=None,
+                            decoder_input=None,
+                            attention_mask=None,
+                            inference_params=None,
+                            packed_seq_params=None,
+                            sequence_len_offset=None,
+                            runtime_gather_output=None,
+                            extra_block_kwargs=None,
+                            inference_context=None,
+                            _orig_fn=_orig_postprocess,
+                            _isolator=_MTPGradIsolator,
+                            _logger=self.logger,
+                        ):
+                            """Patched _postprocess with comprehensive MTP gradient isolation.
+
+                            Identical to original except:
+                            1. _MTPGradIsolator after MTP loss loop (Path 1)
+                            2. output_weight.detach() for MTP loss computation (Path 2)
+                            3. functional_call with detached params for output_layer in MTP (Path 2)
+                            Path 3 (embedding) is handled separately by _get_embeddings patch.
+                            """
+                            from megatron.core.transformer.multi_token_prediction import (
+                                MTPLossAutoScaler,
+                                MTPLossLoggingHelper,
+                            )
+
+                            in_inference_mode = (
+                                inference_context is not None
+                                and not self_model.training
+                            )
+                            if in_inference_mode:
+                                assert runtime_gather_output, (
+                                    "Inference must always gather TP logits"
+                                )
+
+                            output_weight = None
+                            if self_model.share_embeddings_and_output_weights:
+                                output_weight = (
+                                    self_model.shared_embedding_or_output_weight()
+                                )
+
+                            if mtp_in_postprocess:
+                                hidden_states = self_model.mtp(
+                                    input_ids=input_ids,
+                                    position_ids=position_ids,
+                                    hidden_states=hidden_states,
+                                    attention_mask=attention_mask,
+                                    inference_params=inference_params,
+                                    rotary_pos_emb=rotary_pos_emb,
+                                    rotary_pos_cos=rotary_pos_cos,
+                                    rotary_pos_sin=rotary_pos_sin,
+                                    packed_seq_params=packed_seq_params,
+                                    sequence_len_offset=sequence_len_offset,
+                                    embedding=self_model.embedding,
+                                    **(extra_block_kwargs or {}),
+                                )
+
+                            if not self_model.post_process:
+                                return hidden_states
+
+                            if self_model.config.mtp_num_layers is not None:
+                                from megatron.core.tensor_parallel.utils import (
+                                    roll_tensor,
+                                )
+
+                                mtp_labels = labels.clone()
+                                hidden_states_list = torch.chunk(
+                                    hidden_states,
+                                    1 + self_model.config.mtp_num_layers,
+                                    dim=0,
+                                )
+                                # === GRADIENT ISOLATION Path 1: save original ===
+                                _original_hs = hidden_states_list[0]
+                                hidden_states = hidden_states_list[0]
+                                if loss_mask is None:
+                                    loss_mask = torch.ones_like(mtp_labels)
+
+                                # === GRADIENT ISOLATION Path 2: detach output weight ===
+                                # Use detached output_weight for MTP loss computation
+                                # so MTP CE loss does NOT update lm_head weights.
+                                # The main model's logit computation (below) uses the
+                                # ORIGINAL (non-detached) output_weight.
+                                _mtp_output_weight = (
+                                    output_weight.detach()
+                                    if output_weight is not None
+                                    else None
+                                )
+
+                                for mtp_layer_number in range(
+                                    self_model.config.mtp_num_layers
+                                ):
+                                    # Use detached output_weight for MTP logits
+                                    # and functional_call with detached output_layer
+                                    # params to prevent gradient flow to lm_head.
+                                    _mtp_hs = hidden_states_list[
+                                        mtp_layer_number + 1
+                                    ]
+                                    # Path 2 fix: use functional_call with detached
+                                    # output_layer params for MTP logit computation.
+                                    _ol = self_model.output_layer
+                                    _ol_params = {
+                                        k: v.detach()
+                                        for k, v in _ol.named_parameters()
+                                    }
+                                    _ol_buffers = dict(_ol.named_buffers())
+                                    _ol_kwargs = {
+                                        'weight': _mtp_output_weight,
+                                        'runtime_gather_output': runtime_gather_output,
+                                    }
+                                    mtp_logits, _ = torch.func.functional_call(
+                                        _ol,
+                                        {**_ol_params, **_ol_buffers},
+                                        (_mtp_hs,),
+                                        _ol_kwargs,
+                                    )
+
+                                    mtp_labels, _ = roll_tensor(
+                                        mtp_labels,
+                                        shifts=-1,
+                                        dims=-1,
+                                        cp_group=self_model.cp_group,
+                                        packed_seq_params=packed_seq_params,
+                                    )
+                                    loss_mask, num_tokens = roll_tensor(
+                                        loss_mask,
+                                        shifts=-1,
+                                        dims=-1,
+                                        cp_group=self_model.cp_group,
+                                        packed_seq_params=packed_seq_params,
+                                    )
+                                    mtp_loss = (
+                                        self_model.compute_language_model_loss(
+                                            mtp_labels, mtp_logits
+                                        )
+                                    )
+                                    mtp_loss = loss_mask * mtp_loss
+                                    if self_model.training:
+                                        from megatron.core import (
+                                            parallel_state,
+                                        )
+
+                                        MTPLossLoggingHelper.save_loss_to_tracker(
+                                            torch.sum(mtp_loss) / num_tokens,
+                                            mtp_layer_number,
+                                            self_model.config.mtp_num_layers,
+                                            avg_group=parallel_state.get_data_parallel_group(
+                                                with_context_parallel=True
+                                            ),
+                                        )
+                                    mtp_loss_scale = (
+                                        self_model.config.mtp_loss_scaling_factor
+                                        / self_model.config.mtp_num_layers
+                                    )
+                                    if self_model.config.calculate_per_token_loss:
+                                        hidden_states = MTPLossAutoScaler.apply(
+                                            hidden_states,
+                                            mtp_loss_scale * mtp_loss,
+                                        )
+                                    else:
+                                        hidden_states = MTPLossAutoScaler.apply(
+                                            hidden_states,
+                                            mtp_loss_scale
+                                            * mtp_loss
+                                            / num_tokens,
+                                        )
+
+                                # === GRADIENT ISOLATION Path 1: apply isolator ===
+                                hidden_states = _isolator.apply(
+                                    _original_hs, hidden_states
+                                )
+                                _logger.debug(
+                                    "[MTPDetach] Applied gradient isolation in "
+                                    "_postprocess (Path 1: _MTPGradIsolator, "
+                                    "Path 2: detached output_weight + functional_call)"
+                                )
+
+                            # Inference last-token optimization
+                            sequence_parallel_override = False
+                            if (
+                                in_inference_mode
+                                and inference_context.materialize_only_last_token_logits
+                            ):
+                                if inference_context.is_static_batching():
+                                    hidden_states = hidden_states[-1:, :, :]
+                                else:
+                                    if (
+                                        self_model.output_layer.sequence_parallel
+                                    ):
+                                        from megatron.core.tensor_parallel import (
+                                            gather_from_sequence_parallel_region,
+                                        )
+
+                                        hidden_states = gather_from_sequence_parallel_region(
+                                            hidden_states,
+                                            group=self_model.pg_collection.tp,
+                                        )
+                                        self_model.output_layer.sequence_parallel = (
+                                            False
+                                        )
+                                        sequence_parallel_override = True
+                                    hidden_states = (
+                                        inference_context.last_token_logits(
+                                            hidden_states.squeeze(1).unsqueeze(
+                                                0
+                                            )
+                                        ).unsqueeze(1)
+                                    )
+
+                            # Main model logits: use ORIGINAL output_weight
+                            # (non-detached) so GRPO gradient flows to lm_head.
+                            logits, _ = self_model.output_layer(
+                                hidden_states,
+                                weight=output_weight,
+                                runtime_gather_output=runtime_gather_output,
+                            )
+
+                            if sequence_parallel_override:
+                                assert (
+                                    in_inference_mode
+                                    and inference_context.is_dynamic_batching()
+                                    and inference_context.materialize_only_last_token_logits
+                                )
+                                self_model.output_layer.sequence_parallel = (
+                                    True
+                                )
+
+                            if labels is None:
+                                return logits.transpose(0, 1).contiguous()
+
+                            loss = self_model.compute_language_model_loss(
+                                labels, logits
+                            )
+                            return loss
+
+                        import types
+
+                        _unwrapped._postprocess = types.MethodType(
+                            _patched_postprocess, _unwrapped
+                        )
+                        _postprocess_restore = (
+                            _unwrapped,
+                            _orig_postprocess,
+                        )
+
+                        # === GRADIENT ISOLATION Path 3: embedding detach ===
+                        # Patch _get_embeddings on each MTP layer to detach
+                        # decoder_input after embedding computation.
+                        # This prevents MTP CE loss gradient from flowing to
+                        # shared embedding weights.
+                        # Reference: slime adds decoder_input = decoder_input.detach()
+                        # in multi_token_prediction.py _get_embeddings().
+                        _mtp_block = getattr(_unwrapped, 'mtp', None)
+                        if (
+                            _mtp_block is not None
+                            and hasattr(_mtp_block, 'layers')
+                        ):
+                            for _layer in _mtp_block.layers:
+                                _orig_get_emb = _layer._get_embeddings
+
+                                def _patched_get_embeddings(
+                                    input_ids,
+                                    position_ids,
+                                    embedding,
+                                    hidden_states,
+                                    packed_seq_params=None,
+                                    _orig=_orig_get_emb,
+                                ):
+                                    """Patched _get_embeddings that detaches decoder_input.
+
+                                    Prevents MTP CE loss gradient from flowing to
+                                    shared embedding weights. Also uses keep_graph=False
+                                    for hidden_states viewless tensor to break gradient
+                                    connection to backbone.
+                                    """
+                                    result = _orig(
+                                        input_ids=input_ids,
+                                        position_ids=position_ids,
+                                        embedding=embedding,
+                                        hidden_states=hidden_states,
+                                        packed_seq_params=packed_seq_params,
+                                    )
+                                    # result = (input_ids, position_ids, decoder_input, hidden_states)
+                                    _ids, _pos, _dec_input, _hs = result
+                                    # Detach decoder_input to prevent gradient flow to embedding
+                                    _dec_input = _dec_input.detach()
+                                    # Detach hidden_states to prevent gradient flow to backbone
+                                    # (equivalent to slime's keep_graph=False change)
+                                    from megatron.core.utils import make_viewless_tensor
+                                    _hs = make_viewless_tensor(
+                                        inp=_hs.detach(),
+                                        requires_grad=True,
+                                        keep_graph=False,
+                                    )
+                                    return _ids, _pos, _dec_input, _hs
+
+                                _layer._get_embeddings = _patched_get_embeddings
+                                _mtp_get_emb_restore.append(
+                                    (_layer, _orig_get_emb)
+                                )
+
+                            self.logger.debug(
+                                f"[MTPDetach] Patched _get_embeddings on "
+                                f"{len(_mtp_get_emb_restore)} MTP layer(s) "
+                                f"for embedding gradient isolation (Path 3)"
+                            )
+
+                        self.logger.info(
+                            "[MTPDetach] Comprehensive MTP gradient isolation "
+                            f"enabled (mtp_detach_heads={self.mtp_detach_heads}): "
+                            "Path 1 (_MTPGradIsolator for backbone hidden_states), "
+                            "Path 2 (detached output_weight + functional_call for lm_head), "
+                            "Path 3 (detached decoder_input + hidden_states for embedding). "
+                            "MTP CE loss gradients will NOT flow through backbone, "
+                            "lm_head, or embedding parameters."
+                        )
+                    else:
+                        self.logger.info(
+                            "[MTPDetach] Gradient isolation DISABLED "
+                            "(mtp_detach_heads=False). MTP CE loss gradient "
+                            "will flow through all model parameters. This is "
+                            "intended for pre-training, NOT for RL training."
+                        )
 
                     # Monkey-patch: make the LAST call to
                     # compute_language_model_loss (the main CE loss)
@@ -1180,6 +1599,11 @@ class MegatronEngine(TrainEngine):
                     extra_block_kwargs=extra_block_kwargs,
                 )
             finally:
+                if _postprocess_restore is not None:
+                    _uw, _orig_pp = _postprocess_restore
+                    _uw._postprocess = types.MethodType(_orig_pp, _uw)
+                for _layer, _orig_get_emb in _mtp_get_emb_restore:
+                    _layer._get_embeddings = _orig_get_emb
                 if _mtp_restore is not None:
                     _uw, _sm, _sp, _sl = _mtp_restore
                     _uw.mtp = _sm
