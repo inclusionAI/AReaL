@@ -13,6 +13,11 @@ from tests.utils import get_model_path
 
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
 
+try:
+    import ray
+except ImportError:  # pragma: no cover - optional in non-ray setups
+    ray = None
+
 
 @dataclass
 class SampleData:
@@ -175,6 +180,20 @@ class TestSerializationRoundTrip:
         assert deserialized["dataclass"].name == "nested"
         assert torch.equal(deserialized["list"][0], payload["list"][0])
         assert deserialized["meta"]["text"] == "value"
+
+    @pytest.mark.skipif(ray is None, reason="Ray not installed")
+    def test_ray_object_ref_roundtrip(self):
+        """Ray ObjectRef handles should round-trip through RPC serialization."""
+        ray.init(local_mode=True, ignore_reinit_error=True)
+        try:
+            original = ray.put({"value": 123})
+            serialized = serialize_value({"ref": original})
+            assert serialized["ref"]["type"] == "ray_object_ref"
+
+            deserialized = deserialize_value(serialized)
+            assert ray.get(deserialized["ref"]) == {"value": 123}
+        finally:
+            ray.shutdown()
 
     @pytest.mark.skipif(
         not hasattr(torch, "cuda") or not torch.cuda.is_available(),

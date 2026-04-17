@@ -29,6 +29,11 @@ import torch
 from pydantic import BaseModel, Field
 
 try:
+    import ray
+except ImportError:  # pragma: no cover - optional in non-ray setups
+    ray = None
+
+try:
     from PIL import Image
     from PIL.Image import Image as ImageObject
 except ImportError:  # pragma: no cover - optional dependency for non-VLM setups
@@ -246,6 +251,26 @@ class SerializedPILImage(BaseModel):
             image = image.convert(self.mode)
 
         return image
+
+
+class SerializedRayObjectRef(BaseModel):
+    """Pydantic model for serialized ray.ObjectRef handles."""
+
+    type: Literal["ray_object_ref"] = Field(default="ray_object_ref")
+    data: str
+
+    @classmethod
+    def from_object_ref(cls, ref: Any) -> "SerializedRayObjectRef":
+        if ray is None:
+            raise RuntimeError("ray is required to serialize ObjectRef")
+        payload = ray.cloudpickle.dumps(ref)
+        return cls(data=base64.b64encode(payload).decode("utf-8"))
+
+    def to_object_ref(self) -> Any:
+        if ray is None:
+            raise RuntimeError("ray is required to deserialize ObjectRef")
+        payload = base64.b64decode(self.data.encode("utf-8"))
+        return ray.cloudpickle.loads(payload)
 
 
 class SerializedDataclass(BaseModel):
@@ -569,6 +594,11 @@ def serialize_value(value: Any) -> Any:
     if ImageObject is not None and isinstance(value, ImageObject):
         return SerializedPILImage.from_image(value).model_dump()
 
+    # Handle Ray object references when HTTP RPC needs to carry RTensor shard
+    # handles across processes.
+    if ray is not None and isinstance(value, ray.ObjectRef):
+        return SerializedRayObjectRef.from_object_ref(value).model_dump()
+
     # Handle dataclass instances (check before dict, as dataclasses can be dict-like)
     # Note: is_dataclass returns True for both classes and instances, so check it's not a type
     if is_dataclass(value) and not isinstance(value, type):
@@ -696,6 +726,16 @@ def deserialize_value(value: Any) -> Any:
             except Exception as e:
                 logger.warning(
                     f"Failed to deserialize PIL image, treating as regular dict: {e}"
+                )
+
+        # Check for SerializedRayObjectRef marker
+        if value.get("type") == "ray_object_ref":
+            try:
+                serialized_ref = SerializedRayObjectRef.model_validate(value)
+                return serialized_ref.to_object_ref()
+            except Exception as e:
+                logger.warning(
+                    f"Failed to deserialize ray.ObjectRef, treating as regular dict: {e}"
                 )
 
         # Check for SerializedTensor marker
