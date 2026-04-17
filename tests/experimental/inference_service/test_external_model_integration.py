@@ -351,7 +351,7 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
 
             set_reward = await gateway_client.post(
                 "/rl/set_reward",
-                json={"reward": 1.0, "model": "ext-1"},
+                json={"reward": 1.0},
                 headers=admin_headers(),
             )
             assert set_reward.status_code == 200
@@ -359,7 +359,7 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
 
             exported = await gateway_client.post(
                 "/export_trajectories",
-                json={"model": "ext-1"},
+                json={"session_id": "__hitl__"},
                 headers=admin_headers(),
             )
             assert exported.status_code == 200

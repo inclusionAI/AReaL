@@ -357,23 +357,12 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     @app.post("/rl/set_reward")
     async def set_reward(body: SetRewardRequest, request: Request):
         store: SessionStore = app.state.session_store
-
-        if body.model:
-            session = store.get_session(body.model)
-            if session is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Session for model '{body.model}' not found. "
-                    "Ensure the external model has been registered.",
-                )
-        else:
-            token = _extract_bearer_token(request)
-            session = _resolve_session_from_token(token, store)
-            if session is None:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid or expired session API key.",
-                )
+        token = _extract_bearer_token(request)
+        session = _resolve_session_from_token(token, store)
+        if session is None:
+            raise HTTPException(
+                status_code=401, detail="Invalid or expired session API key."
+            )
 
         try:
             reward_result = session.set_reward(
@@ -410,6 +399,11 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
         model_name = body_json.get("model")
         store: SessionStore = app.state.session_store
+
+        token = _try_extract_bearer_token(request)
+        session = _resolve_session_from_token(token, store)
+        if session is not None:
+            session.update_last_access()
 
         # -----------------------------------------------------------------
         # External model path: model is a registered external model name
@@ -468,9 +462,8 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                         )
                         yield f"data: {json.dumps({'error': str(exc)})}\n\n".encode()
                     finally:
-                        if success and collected_chunks:
-                            ext_session = store.get_or_create_session(model_name)
-                            ext_session.add_string_interaction(
+                        if success and collected_chunks and session is not None:
+                            session.add_string_interaction(
                                 messages,
                                 "".join(collected_chunks),
                             )
@@ -507,9 +500,8 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
             response_str = resp.text
 
-            if resp.status_code == 200:
-                ext_session = store.get_or_create_session(model_name)
-                ext_session.add_string_interaction(messages, response_str)
+            if resp.status_code == 200 and session is not None:
+                session.add_string_interaction(messages, response_str)
 
             return RawResponse(
                 content=resp.content,
@@ -522,19 +514,20 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         # -----------------------------------------------------------------
         areal_client: ArealOpenAI = app.state.areal_client
 
-        token = _try_extract_bearer_token(request)
-        session = _resolve_session_from_token(token, store)
         if session is not None:
-            session.update_last_access()
             areal_cache: Any = session.active_completions
         else:
             areal_cache = None
 
+        # Build kwargs from request body
         kwargs = dict(body_json)
+        # Remove model (ArealOpenAI ignores it)
         kwargs.pop("model", None)
 
+        # Determine streaming
         is_streaming = kwargs.get("stream", False) or False
 
+        # Apply defaults for temperature/top_p if not set
         if "temperature" not in kwargs:
             kwargs["temperature"] = 1.0
         if "top_p" not in kwargs:
@@ -553,6 +546,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
         if is_streaming:
+            # result is an async generator of ChatCompletionChunk
 
             async def _sse_stream():
                 async for chunk in result:
@@ -616,15 +610,19 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         if body.remove_session:
             store.remove_session(body.session_id)
 
+        # Serialize for HTTP transport, storing tensors locally as RTensor shards
         from areal.infra.rpc.rtensor import RTensor
 
         for item in interactions.values():
             if item.has_tensor_data:
+                # Set the internal cache
                 item.to_tensor_dict()
+                # Remotize the tensor dict cache
                 item._cache = RTensor.remotize(
                     item._cache, node_addr=config.serving_addr
                 )
 
+        # serialize RTensors
         serialized = serialize_interactions(interactions)
         return ExportTrajectoriesResponse(interactions=serialized)
 

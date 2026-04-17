@@ -484,27 +484,29 @@ class TestDataProxyExternalEndpoints:
         resp = await data_proxy_client.post(
             "/chat/completions",
             json={"model": "ext-1", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer areal-admin-key"},
         )
         assert resp.status_code == 200
         assert resp.json()["id"] == "ext-1-response"
 
         not_ready = await data_proxy_client.post(
             "/export_trajectories",
-            json={"session_id": "ext-1"},
+            json={"session_id": "__hitl__"},
             headers={"Authorization": "Bearer areal-admin-key"},
         )
         assert not_ready.status_code == 409
 
         set_reward = await data_proxy_client.post(
             "/rl/set_reward",
-            json={"reward": 1.0, "model": "ext-1"},
+            json={"reward": 1.0},
+            headers={"Authorization": "Bearer areal-admin-key"},
         )
         assert set_reward.status_code == 200
         assert set_reward.json()["trajectory_ready"] is True
 
         exported = await data_proxy_client.post(
             "/export_trajectories",
-            json={"session_id": "ext-1"},
+            json={"session_id": "__hitl__"},
             headers={"Authorization": "Bearer areal-admin-key"},
         )
         assert exported.status_code == 200
@@ -566,20 +568,22 @@ class TestDataProxyExternalEndpoints:
                 "messages": [{"role": "user", "content": "hi"}],
                 "stream": True,
             },
+            headers={"Authorization": "Bearer areal-admin-key"},
         )
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers["content-type"]
 
         set_reward = await data_proxy_client.post(
             "/rl/set_reward",
-            json={"reward": 1.0, "model": "ext-1"},
+            json={"reward": 1.0},
+            headers={"Authorization": "Bearer areal-admin-key"},
         )
         assert set_reward.status_code == 200
         assert set_reward.json()["trajectory_ready"] is True
 
         exported = await data_proxy_client.post(
             "/export_trajectories",
-            json={"session_id": "ext-1"},
+            json={"session_id": "__hitl__"},
             headers={"Authorization": "Bearer areal-admin-key"},
         )
         assert exported.status_code == 200
@@ -588,7 +592,7 @@ class TestDataProxyExternalEndpoints:
 
         exported_again = await data_proxy_client.post(
             "/export_trajectories",
-            json={"session_id": "ext-1"},
+            json={"session_id": "__hitl__"},
             headers={"Authorization": "Bearer areal-admin-key"},
         )
         assert exported_again.status_code == 409

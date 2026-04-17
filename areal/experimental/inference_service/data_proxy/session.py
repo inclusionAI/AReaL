@@ -294,6 +294,30 @@ class SessionData:
         style: str,
         trajectory_id: int | None = None,
     ) -> tuple[int, dict[str, InteractionWithTokenLogpReward]]:
+        """Export a ready trajectory.
+
+        Parameters
+        ----------
+        discount : float
+            Reward discount factor passed to
+            :pymethod:`InteractionCache.export_interactions`.
+        style : str
+            Export style (``"individual"`` or ``"concat"``).
+        trajectory_id : int | None
+            Specific trajectory to export.  When ``None``, the latest
+            ready trajectory is exported.
+
+        Returns
+        -------
+        tuple[int, dict[str, InteractionWithTokenLogpReward]]
+            ``(trajectory_id, interactions)``
+
+        Raises
+        ------
+        KeyError
+            If no ready trajectories exist, or the requested
+            ``trajectory_id`` is not found.
+        """
         with self._lock:
             if not self._ready_trajectories:
                 raise KeyError(f"No ready trajectories for session {self.session_id}")
@@ -405,18 +429,6 @@ class SessionStore:
                     set_reward_finish_timeout=self._set_reward_finish_timeout,
                 )
                 self._sessions["__hitl__"] = session
-            return session
-
-    def get_or_create_session(self, session_id: str) -> SessionData:
-        """Return an existing session or create a new one with the given ID."""
-        with self._lock:
-            session = self._sessions.get(session_id)
-            if session is None:
-                session = SessionData(
-                    session_id=session_id,
-                    set_reward_finish_timeout=self._set_reward_finish_timeout,
-                )
-                self._sessions[session_id] = session
             return session
 
     def get_session(self, session_id: str) -> SessionData | None:
