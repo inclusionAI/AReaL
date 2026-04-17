@@ -96,6 +96,10 @@ class DatasetSpec:
     # Additional prompt appended to LLM judge query for task-specific evaluation hints.
     # Can be a static string or a callable(item) -> Optional[str] for per-item hints.
     judge_prompt: "Optional[str | Callable[[Mapping[str, Any]], Optional[str]]]" = None
+    # Optional callable that checks if model output is extractable/valid.
+    # If set, inference loop retries generation when validator returns False.
+    # Signature: (output_text: str) -> bool
+    response_validator: Optional[Callable[[str], bool]] = None
 
     def prepare_images(self, dataset, output_dir: str) -> Tuple:
         """Pre-save deduplicated images to disk, return (dataset, image_map).
@@ -330,6 +334,14 @@ CARTOMAPQA_STMF_NAME_LISTING_JUDGE_PROMPT = (
     "- The order of names does NOT matter.\n"
     "- Minor spelling variations or abbreviations are acceptable."
 )
+
+
+def _mapbench_response_validator(text: str) -> bool:
+    import re
+    for line in text.split("\n"):
+        if len(re.findall(r"->", line)) == 1:
+            return True
+    return False
 
 
 DATASET_SPECS: Dict[str, DatasetSpec] = {
@@ -734,6 +746,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         separated_prompt_template=MAPBENCH_VQA_SEPARATED_TEMPLATE,
         answer_format=MAPBENCH_VQA_ANSWER_FORMAT,
         image_dedup_key="image_id",
+        response_validator=_mapbench_response_validator,
     ),
 }
 
