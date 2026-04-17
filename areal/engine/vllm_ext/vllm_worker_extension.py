@@ -57,12 +57,13 @@ class VLLMWorkerExtension:
         )
         try:
             # load lora weight
-            self.model_runner.lora_manager.remove_adapter(lora_int_id)
+            adapter_ids = self.model_runner.lora_manager.list_adapters()
             lora_request = LoRARequest(
                 lora_name=lora_name,
                 lora_int_id=lora_int_id,
                 lora_path=lora_model_path,
                 base_model_name=base_model_name,
+                load_inplace=lora_int_id in adapter_ids,
             )
             logger.info(f"Reloading lora weights with request {lora_request}")
             self.model_runner.add_lora(lora_request)
@@ -171,24 +172,17 @@ class VLLMWorkerExtension:
         lora_int_id = self.areal_lora_int_id
 
         try:
-            # Check if LoRA manager and adapter exist
+            # Check if LoRA manager is initialized.
             if self.model_runner.lora_manager is None:
                 raise RuntimeError("LoRA manager is not initialized")
 
-            # Check if the LoRA adapter exists
             adapter_ids = self.model_runner.lora_manager.list_adapters()
             if lora_int_id not in adapter_ids:
-                raise RuntimeError(
-                    f"LoRA adapter {lora_int_id} not found. Available: {adapter_ids}"
+                logger.info(
+                    "LoRA adapter %s not found. Available: %s. Creating a new adapter slot.",
+                    lora_int_id,
+                    adapter_ids,
                 )
-
-            # Get the currently registered LoRA model (used for diagnostics).
-            lora_model = (
-                self.model_runner.lora_manager._adapter_manager._registered_adapters[
-                    lora_int_id
-                ]
-            )
-            logger.info(f"Found LoRA model with {len(lora_model.loras)} LoRA modules")
 
             # Receive all weights via XCCL broadcast
             logger.info(f"Receiving {len(names)} LoRA parameters via XCCL")
@@ -267,7 +261,8 @@ class VLLMWorkerExtension:
                 ),
             )
 
-            self.model_runner.lora_manager.remove_adapter(lora_int_id)
+            if lora_int_id in adapter_ids:
+                self.model_runner.lora_manager.remove_adapter(lora_int_id)
 
             self.model_runner.lora_manager._adapter_manager._add_adapter(new_lora_model)
             self.model_runner.lora_manager._adapter_manager.activate_adapter(
@@ -277,11 +272,6 @@ class VLLMWorkerExtension:
                 f"Updated New LoRA model with {len(new_lora_model.loras)} LoRA modules "
                 f"from {len(merged_weights)} tensors across {len(self.weight_update_groups)} groups"
             )
-            if len(new_lora_model.loras) != len(lora_model.loras):
-                logger.warning(
-                    f"Number of modules in the new LoRA model ({len(new_lora_model.loras)}) "
-                    f"does not match the old LoRA model ({len(lora_model.loras)})."
-                )
 
             self.sync()
             return True, "Success"

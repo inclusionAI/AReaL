@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import re
+from collections import OrderedDict
 from http import HTTPStatus
 
 import uvloop
@@ -31,6 +33,7 @@ logger.setLevel(logging.INFO)
 # Global event to control generation resume/pause
 _generation_run_event = asyncio.Event()
 _generation_run_event.set()  # Initially not paused
+_LORA_VERSION_PATTERN = re.compile(r"^(?P<base>.+)-v(?P<version>\d+)$")
 
 
 class UpdateWeightsRequest(OpenAIBaseModel):
@@ -48,7 +51,7 @@ class UpdateWeightsRequestLora(OpenAIBaseModel):
     # The name of lora adaptor
     lora_name: str
     # The id of the lora adaptor in vllm
-    lora_int_id: int
+    lora_int_id: int | None = None
     # The name of the base model for lora adaptors
     base_model_name: str
     # The format to load the weights
@@ -78,7 +81,7 @@ class UpdateWeightsFromXcclRequestLora(OpenAIBaseModel):
     dtypes: list[str]
     shapes: list[list[int]]
     lora_name: str
-    lora_int_id: int
+    lora_int_id: int | None = None
     lora_target_modules: list[str] | str
     lora_rank: int
     lora_alpha: int
@@ -122,12 +125,95 @@ def _infer_runtime_lora_path(serving_models, lora_name: str, lora_int_id: int) -
     return f"xccl://{lora_name}"
 
 
+def _split_versioned_lora_name(lora_name: str) -> tuple[str, int | None]:
+    match = _LORA_VERSION_PATTERN.fullmatch(lora_name)
+    if match is None:
+        return lora_name, None
+    return match.group("base"), int(match.group("version"))
+
+
+def _get_runtime_lora_capacity(app) -> int:
+    max_loras = getattr(getattr(app.state, "args", None), "max_loras", 1)
+    return max(1, int(max_loras))
+
+
+def _get_runtime_lora_state(
+    app,
+) -> tuple[OrderedDict[str, int], dict[str, tuple[int, str | None]]]:
+    if not hasattr(app.state, "_areal_runtime_lora_slots"):
+        serving_models = getattr(app.state, "openai_serving_models", None)
+        loaded = OrderedDict()
+        if serving_models is not None:
+            for name, request in serving_models.lora_requests.items():
+                loaded[name] = request.lora_int_id
+        app.state._areal_runtime_lora_slots = loaded
+        app.state._areal_runtime_lora_pending_slots = {}
+    return (
+        app.state._areal_runtime_lora_slots,
+        app.state._areal_runtime_lora_pending_slots,
+    )
+
+
+def _choose_eviction_candidate(
+    slots: OrderedDict[str, int], incoming_lora_name: str
+) -> tuple[str, int]:
+    incoming_base, _ = _split_versioned_lora_name(incoming_lora_name)
+    for name, slot in slots.items():
+        base, _ = _split_versioned_lora_name(name)
+        if base == incoming_base:
+            return name, slot
+    return next(iter(slots.items()))
+
+
+def _reserve_runtime_lora_slot(app, lora_name: str) -> tuple[int, str | None]:
+    slots, pending = _get_runtime_lora_state(app)
+    if lora_name in pending:
+        return pending[lora_name]
+    if lora_name in slots:
+        slots.move_to_end(lora_name)
+        reservation = (slots[lora_name], None)
+        pending[lora_name] = reservation
+        return reservation
+
+    capacity = _get_runtime_lora_capacity(app)
+    used_slots = set(slots.values())
+    free_slots = [slot for slot in range(1, capacity + 1) if slot not in used_slots]
+    if free_slots:
+        reservation = (free_slots[0], None)
+    else:
+        evicted_name, evicted_slot = _choose_eviction_candidate(slots, lora_name)
+        reservation = (evicted_slot, evicted_name)
+    pending[lora_name] = reservation
+    return reservation
+
+
+def _finalize_runtime_lora_slot(
+    app,
+    *,
+    lora_name: str,
+    lora_int_id: int,
+    replaced_lora_name: str | None,
+) -> None:
+    slots, pending = _get_runtime_lora_state(app)
+    pending.pop(lora_name, None)
+    if replaced_lora_name is not None and replaced_lora_name != lora_name:
+        slots.pop(replaced_lora_name, None)
+    slots[lora_name] = lora_int_id
+    slots.move_to_end(lora_name)
+
+
+def _clear_runtime_lora_reservation(app, lora_name: str) -> None:
+    _, pending = _get_runtime_lora_state(app)
+    pending.pop(lora_name, None)
+
+
 def _register_runtime_lora_name(
     app,
     *,
     lora_name: str,
     lora_int_id: int,
     base_model_name: str | None,
+    replaced_lora_name: str | None = None,
 ) -> None:
     serving_models = getattr(app.state, "openai_serving_models", None)
     if serving_models is None:
@@ -140,8 +226,9 @@ def _register_runtime_lora_name(
     requests = serving_models.lora_requests
     runtime_lora_path = _infer_runtime_lora_path(serving_models, lora_name, lora_int_id)
 
-    # Keep at most one public name per adapter id so /v1/models and request
-    # routing reflect the current versioned adapter name.
+    if replaced_lora_name is not None and replaced_lora_name != lora_name:
+        requests.pop(replaced_lora_name, None)
+
     for name, request in list(requests.items()):
         if getattr(request, "lora_int_id", None) == lora_int_id and name != lora_name:
             del requests[name]
@@ -154,6 +241,12 @@ def _register_runtime_lora_name(
     if base_model_name is not None:
         lora_request.base_model_name = base_model_name
     requests[lora_name] = lora_request
+    _finalize_runtime_lora_slot(
+        app,
+        lora_name=lora_name,
+        lora_int_id=lora_int_id,
+        replaced_lora_name=replaced_lora_name,
+    )
     logger.info(
         "Registered runtime LoRA adapter name '%s' for adapter id %s",
         lora_name,
@@ -181,8 +274,11 @@ async def areal_update_weight(request: UpdateWeightsRequest, raw_request: Reques
 async def areal_update_weight_lora(
     request: UpdateWeightsRequestLora, raw_request: Request
 ):
+    lora_int_id, replaced_lora_name = _reserve_runtime_lora_slot(
+        raw_request.app, request.lora_name
+    )
     logger.info(
-        f"API server starts areal_update_weight_lora, lora_model_path-{request.lora_model_path}, lora_name-{request.lora_name}, lora_int_id-{request.lora_int_id}, base_model_name-{request.base_model_name}"
+        f"API server starts areal_update_weight_lora, lora_model_path-{request.lora_model_path}, lora_name-{request.lora_name}, lora_int_id-{lora_int_id}, base_model_name-{request.base_model_name}"
     )
     llm = raw_request.app.state.engine_client
     await llm.pause_generation(wait_for_inflight_requests=False, clear_cache=True)
@@ -194,10 +290,23 @@ async def areal_update_weight_lora(
             args=(
                 request.lora_model_path,
                 request.lora_name,
-                request.lora_int_id,
+                lora_int_id,
                 request.base_model_name,
             ),
         )
+        if all(success for success, _ in ret_list):
+            _register_runtime_lora_name(
+                raw_request.app,
+                lora_name=request.lora_name,
+                lora_int_id=lora_int_id,
+                base_model_name=request.base_model_name,
+                replaced_lora_name=replaced_lora_name,
+            )
+        else:
+            _clear_runtime_lora_reservation(raw_request.app, request.lora_name)
+    except Exception:
+        _clear_runtime_lora_reservation(raw_request.app, request.lora_name)
+        raise
     finally:
         await llm.resume_generation()
 
@@ -221,6 +330,9 @@ async def areal_update_weight_xccl(raw_request: Request):
 async def areal_update_weight_lora_xccl(
     request: UpdateWeightsFromXcclRequestLora, raw_request: Request
 ):
+    lora_int_id, replaced_lora_name = _reserve_runtime_lora_slot(
+        raw_request.app, request.lora_name
+    )
     logger.info("API server starts areal_update_weight_lora_xccl")
     llm = raw_request.app.state.engine_client
     await llm.pause_generation(wait_for_inflight_requests=False, clear_cache=True)
@@ -232,9 +344,15 @@ async def areal_update_weight_lora_xccl(
             _register_runtime_lora_name(
                 raw_request.app,
                 lora_name=request.lora_name,
-                lora_int_id=request.lora_int_id,
+                lora_int_id=lora_int_id,
                 base_model_name=request.base_model_name,
+                replaced_lora_name=replaced_lora_name,
             )
+        else:
+            _clear_runtime_lora_reservation(raw_request.app, request.lora_name)
+    except Exception:
+        _clear_runtime_lora_reservation(raw_request.app, request.lora_name)
+        raise
     finally:
         await llm.resume_generation()
 
@@ -283,8 +401,9 @@ async def areal_set_weight_meta_xccl(
 async def areal_set_weight_meta_xccl_lora(
     request: UpdateWeightsFromXcclRequestLora, raw_request: Request
 ):
+    lora_int_id, _ = _reserve_runtime_lora_slot(raw_request.app, request.lora_name)
     logger.info(
-        f"API server starts areal_set_update_weight_meta_lora for {request.lora_name} with id {request.lora_int_id}"
+        f"API server starts areal_set_update_weight_meta_lora for {request.lora_name} with id {lora_int_id}"
     )
     llm = raw_request.app.state.engine_client
     ret_list = await llm.collective_rpc(
@@ -295,7 +414,7 @@ async def areal_set_weight_meta_xccl_lora(
             request.shapes,
             request.group_name,
             request.lora_name,
-            request.lora_int_id,
+            lora_int_id,
             request.lora_target_modules,
             request.lora_rank,
             request.lora_alpha,
