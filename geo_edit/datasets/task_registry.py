@@ -63,6 +63,10 @@ from geo_edit.datasets.input_template import (
     VISUAL_PROBE_ANSWER_FORMAT,
     VISUAL_PROBE_INPUT_TEMPLATE,
     VISUAL_PROBE_NOTOOL_INPUT_TEMPLATE,
+    MAPBENCH_VQA_ANSWER_FORMAT,
+    MAPBENCH_VQA_INPUT_TEMPLATE,
+    MAPBENCH_VQA_NOTOOL_INPUT_TEMPLATE,
+    MAPBENCH_VQA_SEPARATED_TEMPLATE,
 )
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
@@ -704,6 +708,32 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         notool_prompt_template=VISUAL_PROBE_NOTOOL_INPUT_TEMPLATE,
         template_fields={"question": "question"},
         answer_format=VISUAL_PROBE_ANSWER_FORMAT,
+    ),
+    # -- MapBench VQA (map navigation path-finding) --
+    # HF dataset shuoxing/MapBench_VQA must be flattened first:
+    # each raw row = 1 map with N queries; flatten to 1 row per query.
+    # See convert_mapbench_to_parquet() for preprocessing.
+    "mapbench_vqa": DatasetSpec(
+        name="mapbench_vqa",
+        id_key="id",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=MAPBENCH_VQA_INPUT_TEMPLATE,
+        notool_prompt_template=MAPBENCH_VQA_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "start": "start",
+            "destination": "destination",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "map_class": item.get("map_class", ""),
+                "image_id": item.get("image_id", ""),
+                "graph_json": item.get("graph_json", ""),
+            },
+        },
+        separated_prompt_template=MAPBENCH_VQA_SEPARATED_TEMPLATE,
+        answer_format=MAPBENCH_VQA_ANSWER_FORMAT,
+        image_dedup_key="image_id",
     ),
 }
 

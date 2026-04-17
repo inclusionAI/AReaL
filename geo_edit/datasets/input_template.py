@@ -403,3 +403,30 @@ Please provide your final answer in <answer></answer> tags.
 """
 
 VISUAL_PROBE_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."
+
+MAPBENCH_VQA_INPUT_TEMPLATE = """\
+Please provide the simplest direct path from {start} to {destination}, focusing only on visible landmarks and roads.
+Provide the instructions in the format: "Start Node Name -> Next Node Name (from Direction, moving along Road Name/Landmark Name) \\n ... \\nNode Name -> Destination Node Name (from Direction, moving along Road Name/Landmark Name) \\n", and ensure the instructions are clear and direct.
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+MAPBENCH_VQA_NOTOOL_INPUT_TEMPLATE = """\
+Please provide the simplest direct path from {start} to {destination}, focusing only on visible landmarks and roads.
+Provide the instructions in the format: "Start Node Name -> Next Node Name (from Direction, moving along Road Name/Landmark Name) \\n ... \\nNode Name -> Destination Node Name (from Direction, moving along Road Name/Landmark Name) \\n", and ensure the instructions are clear and direct.
+
+Please provide your final answer in <answer></answer> tags.
+"""
+
+MAPBENCH_VQA_SEPARATED_TEMPLATE = """\
+Please provide the simplest direct path from {start} to {destination}, focusing only on visible landmarks and roads.
+Provide the instructions in the format: "Start Node Name -> Next Node Name (from Direction, moving along Road Name/Landmark Name) \\n ... \\nNode Name -> Destination Node Name (from Direction, moving along Road Name/Landmark Name) \\n", and ensure the instructions are clear and direct.
+"""
+
+MAPBENCH_VQA_ANSWER_FORMAT = (
+    "Provide your final answer in <answer></answer> tags. "
+    "Each step on a separate line in the format: "
+    '"Node A -> Node B (from Direction, moving along Road/Landmark Name)"'
+)
