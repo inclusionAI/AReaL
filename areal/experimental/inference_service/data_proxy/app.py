@@ -9,11 +9,10 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-import orjson
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.wsgi import WSGIMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.responses import Response as RawResponse
+from fastapi.responses import StreamingResponse
 from flask import Flask
 
 from areal.experimental.inference_service.data_proxy.backend import (
@@ -567,7 +566,6 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
     @app.post("/register_model")
     async def register_model(request: Request):
-        store: SessionStore = app.state.session_store
         body = await request.json()
         name = body.get("name") or body.get("model")
         url = body.get("url", "")
