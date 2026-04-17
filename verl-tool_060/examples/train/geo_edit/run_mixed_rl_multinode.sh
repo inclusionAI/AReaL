@@ -81,12 +81,13 @@ rollout_mode='async'
 
 # ---- Schedule ----
 total_epochs=3
-save_freq=10
+save_freq=5
 test_freq=20
 
 # ============================================================
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=WARN
+export WANDB_DIR=$WORKSPACE/logs/$run_name
 unset ROCR_VISIBLE_DEVICES
 mkdir -p $WORKSPACE/logs/$run_name
 

@@ -98,7 +98,10 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
     if not station_1 or not station_2 or not metro_data:
         return compute_score(prediction, ground_truth)
 
-    score, _ = reason_map_score(prediction, station_1, station_2, metro_data)
+    try:
+        score, _ = reason_map_score(prediction, station_1, station_2, metro_data)
+    except Exception:
+        return 0.0
     return score
 
 
@@ -106,7 +109,10 @@ def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.1, hi: f
     """MapTrace: linear reward based on NDTW distance. 1.0 if ndtw<=lo, 0.0 if ndtw>=hi, linear between."""
     from geo_edit.evaluation.map_trace_verifier import map_trace_score
 
-    ndtw, is_success, _ = map_trace_score(response, str(ground_truth))
+    try:
+        ndtw, is_success, _ = map_trace_score(response, str(ground_truth))
+    except (ValueError, TypeError):
+        return 0.0
     if not is_success:
         return 0.0
     if ndtw <= lo:
