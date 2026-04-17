@@ -17,7 +17,10 @@ from areal.engine.megatron_utils.fp8 import (
     get_block_size_from_config,
     quantize_params,
 )
-from areal.engine.megatron_utils.megatron_lora import convert_qwen3_lora_to_hf
+from areal.engine.megatron_utils.megatron_lora import (
+    convert_qwen3_lora_to_hf,
+    convert_qwen3_moe_lora_to_hf,
+)
 
 
 def _all_gather_and_concat(
@@ -763,6 +766,7 @@ def convert_bailingmoe_to_hf(
 _CONVERSION_FN_REGISTRY = {
     "qwen3_lora": convert_qwen3_lora_to_hf,
     "qwen2_lora": convert_qwen3_lora_to_hf,
+    "qwen3_moe_lora": convert_qwen3_moe_lora_to_hf,
     "qwen3_moe": convert_qwen3moe_to_hf,
     "qwen2": convert_qwen2_to_hf,
     "qwen3": convert_qwen2_to_hf,
