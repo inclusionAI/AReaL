@@ -14,10 +14,9 @@ def main(args: list[str]) -> None:
         sys.path.insert(0, str(repo_root))
 
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--external-url", default=None)
-    parser.add_argument("--external-api-key", default=None)
-    parser.add_argument("--external-model", default=None)
-    parser.add_argument("--external-name", default="ext-model")
+    parser.add_argument("--api-url", default=None)
+    parser.add_argument("--provider-api-key", default=None)
+    parser.add_argument("--model", default=None)
     ext_args, remaining = parser.parse_known_args(args)
 
     from areal.api.cli_args import PPOConfig, load_expr_config
@@ -53,7 +52,7 @@ def main(args: list[str]) -> None:
     else:
         raise NotImplementedError(f"Unknown scheduler type: {sched_type}")
 
-    is_external = ext_args.external_url is not None
+    is_external = ext_args.api_url is not None
 
     ctrl_config = GatewayControllerConfig(
         tokenizer_path=config.tokenizer_path,
@@ -75,10 +74,11 @@ def main(args: list[str]) -> None:
         turn_discount=openai_cfg.turn_discount,
         export_style=openai_cfg.export_style,
     )
+    if ext_args.model:
+        ctrl_config.model = ext_args.model
     if is_external:
-        ctrl_config.api_url = ext_args.external_url
-        ctrl_config.provider_api_key = ext_args.external_api_key
-        ctrl_config.model = ext_args.external_model or ext_args.external_name
+        ctrl_config.api_url = ext_args.api_url
+        ctrl_config.provider_api_key = ext_args.provider_api_key
         server_args = None
     else:
         from areal.api.alloc_mode import ModelAllocation
@@ -100,14 +100,9 @@ def main(args: list[str]) -> None:
 
         logger.info("Proxy gateway available at %s", ctrl.proxy_gateway_addr)
 
-        if is_external:
-            logger.info(
-                "External mode: url=%s model=%s name=%s",
-                ext_args.external_url,
-                ext_args.external_model,
-                ext_args.external_name,
-            )
-
+        # Online mode: pass None for both data and workflow so the
+        # controller creates empty-dict placeholders and uses the
+        # online InferenceServiceWorkflow (no agent).
         result = ctrl.rollout_batch(
             data=None,
             batch_size=config.train_dataset.batch_size,
@@ -117,20 +112,27 @@ def main(args: list[str]) -> None:
         if is_external:
             logger.info("Rollout complete (%d trajectories)", len(result))
             for i, traj in enumerate(result):
-                interactions = traj.get("interactions", [])
-                for j, interaction in enumerate(interactions):
+                for j, interaction in enumerate(traj.get("interactions", [])):
+                    request_msgs = interaction.get("request", [])
+                    request = (
+                        request_msgs[-1].get("content", "") if request_msgs else ""
+                    )
+                    response = interaction.get("response", "")
                     logger.info(
-                        "Trajectory %d, interaction %d:\n  request:  %s\n  response: %s",
+                        "Trajectory %d, interaction %d:\n"
+                        "  request:  %s\n  response: %s",
                         i,
                         j,
-                        interaction.get("request", "")[:300],
-                        interaction.get("response", "")[:300],
+                        request[:300],
+                        response[:300],
                     )
         else:
             import torch
 
             from areal.infra.rpc.rtensor import RTensor
 
+            # Localize RTensor references into real torch tensors so we
+            # can compute aggregate reward statistics.
             localized_rewards = [RTensor.localize(traj)["rewards"] for traj in result]
             all_rewards = torch.cat(localized_rewards, dim=0)
             logger.info(

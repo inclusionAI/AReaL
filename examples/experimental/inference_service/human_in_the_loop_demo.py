@@ -102,23 +102,15 @@ def _restore_zeroclaw_config(config_path: Path, backup: Path) -> None:
 # ── Reward submission ──────────────────────────────────────────────────────
 
 
-def _set_reward(
-    gateway_addr: str,
-    api_key: str,
-    reward: float,
-    model: str | None = None,
-) -> None:
+def _set_reward(gateway_addr: str, api_key: str, reward: float) -> None:
     print(f"    Setting reward={reward}")
-    payload = {"reward": reward}
-    if model:
-        payload["model"] = model
     resp = requests.post(
         f"{gateway_addr}/rl/set_reward",
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
         },
-        json=payload,
+        json={"reward": reward},
         timeout=10,
     )
     resp.raise_for_status()
@@ -132,7 +124,6 @@ def _do_round(
     api_key: str,
     question: str,
     label: str,
-    model: str | None = None,
 ) -> None:
     session_file = tempfile.mktemp(suffix=".json", prefix="zeroclaw_session_")
 
@@ -163,7 +154,7 @@ def _do_round(
 
     if CORRECT_ANSWER_RE.search(resp_text):
         print("  ✔ Correct on first try.")
-        _set_reward(gateway_addr, api_key, 1.0, model=model)
+        _set_reward(gateway_addr, api_key, 1.0)
         Path(session_file).unlink(missing_ok=True)
         return
 
@@ -196,10 +187,10 @@ def _do_round(
 
     if CORRECT_ANSWER_RE.search(resp_text):
         print("  ✔ Correct on second try.")
-        _set_reward(gateway_addr, api_key, 1.0, model=model)
+        _set_reward(gateway_addr, api_key, 1.0)
     else:
         print("  ✘ Still wrong after two attempts — setting reward to 0.")
-        _set_reward(gateway_addr, api_key, 0.0, model=model)
+        _set_reward(gateway_addr, api_key, 0.0)
 
     Path(session_file).unlink(missing_ok=True)
 
@@ -237,19 +228,19 @@ def main() -> None:
         help="Inference backend used by online_rollout.py",
     )
     parser.add_argument(
-        "--external-url",
+        "--api-url",
         default=None,
         help="External API URL (enables external model mode)",
     )
     parser.add_argument(
-        "--external-api-key",
+        "--provider-api-key",
         default=None,
         help="API key for the external provider",
     )
     parser.add_argument(
-        "--external-model",
+        "--model",
         default=None,
-        help="Model name sent to the external API",
+        help="Model name for the gateway controller",
     )
     args = parser.parse_args()
 
@@ -295,13 +286,12 @@ def main() -> None:
             f"rollout.openai.admin_api_key={args.admin_key}",
             f"rollout.request_timeout={args.request_timeout}",
         ]
-        if args.external_url:
-            rollout_cmd.extend(["--external-url", args.external_url])
-        if args.external_api_key:
-            rollout_cmd.extend(["--external-api-key", args.external_api_key])
-        if args.external_model:
-            rollout_cmd.extend(["--external-model", args.external_model])
-
+        if args.api_url:
+            rollout_cmd.extend(["--api-url", args.api_url])
+        if args.provider_api_key:
+            rollout_cmd.extend(["--provider-api-key", args.provider_api_key])
+        if args.model:
+            rollout_cmd.extend(["--model", args.model])
         rollout_proc = subprocess.Popen(
             rollout_cmd,
             stdout=log_fh,
@@ -337,45 +327,20 @@ def main() -> None:
             sys.exit(1)
         print(f"  Gateway: {gateway_addr}")
 
-        is_external = args.external_url is not None
-        if is_external:
-            _print_header("External model mode")
-            print(f"  URL:   {args.external_url}")
-            print(f"  Model: {args.external_model}")
-
-        # The gateway always authenticates with the admin key, even in
-        # external mode.  The external provider API key is only used by
-        # online_rollout.py when forwarding requests to the external API.
-        gateway_api_key = args.admin_key
-
-        # Model name registered by online_rollout.py matches
-        # ``ext_args.external_model or ext_args.external_name``
-        # (--external-name defaults to "ext-model").
-        ext_model_name = (args.external_model or "ext-model") if is_external else None
-
         # ── Step 2: Patch zeroclaw config ──
         _print_header("Step 2: Update ~/.zeroclaw/config.toml")
         zeroclaw_backup = _patch_zeroclaw_config(
-            zeroclaw_config,
-            gateway_addr,
-            gateway_api_key,
-            model=ext_model_name,
+            zeroclaw_config, gateway_addr, args.admin_key, model=args.model
         )
         print("  Done.")
 
         # ── Steps 3–4: HITL rounds ──
         _print_header(f"Steps 3–4  ({BATCH_SIZE} HITL rounds)")
         for i in range(BATCH_SIZE):
-            _do_round(
-                gateway_addr,
-                gateway_api_key,
-                args.question,
-                f"Trajectory {i}",
-                model=ext_model_name,
-            )
+            _do_round(gateway_addr, args.admin_key, args.question, f"Trajectory {i}")
 
-        # ── Verify rollout completion ──
-        _print_header("Check online_rollout output")
+        # ── Step 5: Verify rollout completion ──
+        _print_header("Step 5: Check online_rollout output for databatch")
         print("  Waiting for rollout to process ...")
         wait_deadline = time.monotonic() + ROLLOUT_COMPLETE_WAIT_SECS
         found = False
@@ -395,13 +360,8 @@ def main() -> None:
         if found:
             for line in rollout_log.read_text().splitlines():
                 if "Rollout complete" in line:
-                    print(f"  ✔ Detected:\n  {line}")
+                    print(f"  ✔ Databatch detected:\n  {line}")
                     break
-            if is_external:
-                print()
-                for line in rollout_log.read_text().splitlines():
-                    if "request:" in line or "response:" in line:
-                        print(f"  {line.strip()}")
         else:
             print("  ✘ No 'Rollout complete' message found yet.")
             print("    The rollout may still be collecting trajectories.")
