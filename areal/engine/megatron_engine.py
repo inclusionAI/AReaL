@@ -831,39 +831,37 @@ class MegatronEngine(TrainEngine):
                     # to verify gradient isolation is working correctly.
                     if is_last_pp_stage and self.mtp_detach_heads:
                         try:
-                            mtp_grad_sq = 0.0
-                            non_mtp_grad_sq = 0.0
-                            mtp_cnt = 0
-                            non_mtp_cnt = 0
-                            emb_grad_sq = 0.0
-                            lmhead_grad_sq = 0.0
+                            mtp_g = 0.0
+                            non_mtp_g = 0.0
+                            mtp_n = 0
+                            non_mtp_n = 0
+                            emb_g = 0.0
+                            lmh_g = 0.0
                             for module in self.model:
                                 for name, param in module.named_parameters():
                                     if param.grad is not None:
                                         g = param.grad.data.float().norm() ** 2
                                         if ".mtp." in name:
-                                            mtp_grad_sq += g.item()
-                                            mtp_cnt += 1
+                                            mtp_g += g.item()
+                                            mtp_n += 1
                                         else:
-                                            non_mtp_grad_sq += g.item()
-                                            non_mtp_cnt += 1
+                                            non_mtp_g += g.item()
+                                            non_mtp_n += 1
                                         if "embedding" in name and ".mtp." not in name:
-                                            emb_grad_sq += g.item()
+                                            emb_g += g.item()
                                         if "output_layer" in name and ".mtp." not in name:
-                                            lmhead_grad_sq += g.item()
+                                            lmh_g += g.item()
                             self.logger.info(
-                                f"[MTPDetach] Gradient norms after backward: "
-                                f"mtp_params={mtp_grad_sq**0.5:.6f} ({mtp_cnt}), "
-                                f"non_mtp_params={non_mtp_grad_sq**0.5:.6f} ({non_mtp_cnt}), "
-                                f"embedding={emb_grad_sq**0.5:.6f}, "
-                                f"lm_head={lmhead_grad_sq**0.5:.6f}. "
-                                f"All non-MTP norms should be ~GRPO scale only."
+                                f"[MTPDetach] Gradient norms: "
+                                f"mtp={mtp_g**0.5:.6f}({mtp_n}), "
+                                f"non_mtp={non_mtp_g**0.5:.6f}({non_mtp_n}), "
+                                f"emb={emb_g**0.5:.6f}, lmh={lmh_g**0.5:.6f}"
                             )
-                            mtp_stats["mtp_grad_norm"] = mtp_grad_sq ** 0.5
-                            mtp_stats["non_mtp_grad_norm"] = non_mtp_grad_sq ** 0.5
+                            mtp_stats["mtp_grad_norm"] = mtp_g ** 0.5
+                            mtp_stats["non_mtp_grad_norm"] = non_mtp_g ** 0.5
                         except Exception as e:
                             self.logger.warning(
-                                f"[MTPDetach] Failed to compute gradient norms: {e}"
+                                f"[MTPDetach] Grad norm logging failed: {e}"
                             )
 
                 MTPLossLoggingHelper.clean_loss_in_tracker()
@@ -1133,17 +1131,13 @@ class MegatronEngine(TrainEngine):
                             _isolator=_MTPGradIsolator,
                             _logger=self.logger,
                         ):
-                            """Patched _postprocess with comprehensive MTP gradient isolation.
-
-                            Identical to original except:
-                            1. _MTPGradIsolator after MTP loss loop (Path 1)
-                            2. output_weight.detach() for MTP loss computation (Path 2)
-                            3. functional_call with detached params for output_layer in MTP (Path 2)
-                            Path 3 (embedding) is handled separately by _get_embeddings patch.
+                            """Patched _postprocess with comprehensive MTP
+                            gradient isolation (Paths 1, 2, 3).
                             """
                             from megatron.core.transformer.multi_token_prediction import (
                                 MTPLossAutoScaler,
                                 MTPLossLoggingHelper,
+                                roll_tensor,
                             )
 
                             in_inference_mode = (
@@ -1181,27 +1175,19 @@ class MegatronEngine(TrainEngine):
                                 return hidden_states
 
                             if self_model.config.mtp_num_layers is not None:
-                                from megatron.core.tensor_parallel.utils import (
-                                    roll_tensor,
-                                )
-
                                 mtp_labels = labels.clone()
                                 hidden_states_list = torch.chunk(
                                     hidden_states,
                                     1 + self_model.config.mtp_num_layers,
                                     dim=0,
                                 )
-                                # === GRADIENT ISOLATION Path 1: save original ===
+                                # Path 1: save original hidden_states
                                 _original_hs = hidden_states_list[0]
                                 hidden_states = hidden_states_list[0]
                                 if loss_mask is None:
                                     loss_mask = torch.ones_like(mtp_labels)
 
-                                # === GRADIENT ISOLATION Path 2: detach output weight ===
-                                # Use detached output_weight for MTP loss computation
-                                # so MTP CE loss does NOT update lm_head weights.
-                                # The main model's logit computation (below) uses the
-                                # ORIGINAL (non-detached) output_weight.
+                                # Path 2: detach output weight for MTP
                                 _mtp_output_weight = (
                                     output_weight.detach()
                                     if output_weight is not None
@@ -1211,14 +1197,11 @@ class MegatronEngine(TrainEngine):
                                 for mtp_layer_number in range(
                                     self_model.config.mtp_num_layers
                                 ):
-                                    # Use detached output_weight for MTP logits
-                                    # and functional_call with detached output_layer
-                                    # params to prevent gradient flow to lm_head.
+                                    # Path 2: functional_call with detached
+                                    # output_layer params for MTP logits
                                     _mtp_hs = hidden_states_list[
                                         mtp_layer_number + 1
                                     ]
-                                    # Path 2 fix: use functional_call with detached
-                                    # output_layer params for MTP logit computation.
                                     _ol = self_model.output_layer
                                     _ol_params = {
                                         k: v.detach()
@@ -1227,7 +1210,9 @@ class MegatronEngine(TrainEngine):
                                     _ol_buffers = dict(_ol.named_buffers())
                                     _ol_kwargs = {
                                         'weight': _mtp_output_weight,
-                                        'runtime_gather_output': runtime_gather_output,
+                                        'runtime_gather_output': (
+                                            runtime_gather_output
+                                        ),
                                     }
                                     mtp_logits, _ = torch.func.functional_call(
                                         _ol,
@@ -1286,14 +1271,13 @@ class MegatronEngine(TrainEngine):
                                             / num_tokens,
                                         )
 
-                                # === GRADIENT ISOLATION Path 1: apply isolator ===
+                                # Path 1: apply gradient isolator
                                 hidden_states = _isolator.apply(
                                     _original_hs, hidden_states
                                 )
                                 _logger.debug(
-                                    "[MTPDetach] Applied gradient isolation in "
-                                    "_postprocess (Path 1: _MTPGradIsolator, "
-                                    "Path 2: detached output_weight + functional_call)"
+                                    "[MTPDetach] Applied gradient isolation "
+                                    "in _postprocess (Paths 1+2)"
                                 )
 
                             # Inference last-token optimization
@@ -1328,8 +1312,7 @@ class MegatronEngine(TrainEngine):
                                         ).unsqueeze(1)
                                     )
 
-                            # Main model logits: use ORIGINAL output_weight
-                            # (non-detached) so GRPO gradient flows to lm_head.
+                            # Main logits: ORIGINAL output_weight (GRPO grad flows)
                             logits, _ = self_model.output_layer(
                                 hidden_states,
                                 weight=output_weight,
@@ -1364,13 +1347,7 @@ class MegatronEngine(TrainEngine):
                             _orig_postprocess,
                         )
 
-                        # === GRADIENT ISOLATION Path 3: embedding detach ===
-                        # Patch _get_embeddings on each MTP layer to detach
-                        # decoder_input after embedding computation.
-                        # This prevents MTP CE loss gradient from flowing to
-                        # shared embedding weights.
-                        # Reference: slime adds decoder_input = decoder_input.detach()
-                        # in multi_token_prediction.py _get_embeddings().
+                        # Path 3: patch _get_embeddings for embedding detach
                         _mtp_block = getattr(_unwrapped, 'mtp', None)
                         if (
                             _mtp_block is not None
@@ -1387,12 +1364,9 @@ class MegatronEngine(TrainEngine):
                                     packed_seq_params=None,
                                     _orig=_orig_get_emb,
                                 ):
-                                    """Patched _get_embeddings that detaches decoder_input.
-
-                                    Prevents MTP CE loss gradient from flowing to
-                                    shared embedding weights. Also uses keep_graph=False
-                                    for hidden_states viewless tensor to break gradient
-                                    connection to backbone.
+                                    """Detach decoder_input and hidden_states
+                                    to prevent MTP gradient from flowing to
+                                    shared embedding and backbone parameters.
                                     """
                                     result = _orig(
                                         input_ids=input_ids,
@@ -1401,13 +1375,11 @@ class MegatronEngine(TrainEngine):
                                         hidden_states=hidden_states,
                                         packed_seq_params=packed_seq_params,
                                     )
-                                    # result = (input_ids, position_ids, decoder_input, hidden_states)
                                     _ids, _pos, _dec_input, _hs = result
-                                    # Detach decoder_input to prevent gradient flow to embedding
                                     _dec_input = _dec_input.detach()
-                                    # Detach hidden_states to prevent gradient flow to backbone
-                                    # (equivalent to slime's keep_graph=False change)
-                                    from megatron.core.utils import make_viewless_tensor
+                                    from megatron.core.utils import (
+                                        make_viewless_tensor,
+                                    )
                                     _hs = make_viewless_tensor(
                                         inp=_hs.detach(),
                                         requires_grad=True,
@@ -1415,7 +1387,9 @@ class MegatronEngine(TrainEngine):
                                     )
                                     return _ids, _pos, _dec_input, _hs
 
-                                _layer._get_embeddings = _patched_get_embeddings
+                                _layer._get_embeddings = (
+                                    _patched_get_embeddings
+                                )
                                 _mtp_get_emb_restore.append(
                                     (_layer, _orig_get_emb)
                                 )
@@ -1600,8 +1574,9 @@ class MegatronEngine(TrainEngine):
                 )
             finally:
                 if _postprocess_restore is not None:
+                    import types as _types_mod
                     _uw, _orig_pp = _postprocess_restore
-                    _uw._postprocess = types.MethodType(_orig_pp, _uw)
+                    _uw._postprocess = _types_mod.MethodType(_orig_pp, _uw)
                 for _layer, _orig_get_emb in _mtp_get_emb_restore:
                     _layer._get_embeddings = _orig_get_emb
                 if _mtp_restore is not None:
