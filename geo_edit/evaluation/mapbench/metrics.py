@@ -21,6 +21,8 @@ FAILURE_PARSE = -4
 
 def load_graph_from_json(graph_json: str) -> nx.Graph:
     data = json.loads(graph_json)
+    if "edges" in data and "links" not in data:
+        data["links"] = data.pop("edges")
     G = nx.node_link_graph(data)
     converted = nx.Graph()
     for node, attrs in G.nodes(data=True):

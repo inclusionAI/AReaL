@@ -861,11 +861,6 @@ class VerlToolAgentLoop(AgentLoopBase):
             },
         )
 
-        # Release large objects held by local variables.
-        # The data we need is already copied into AgentLoopOutput above;
-        # clearing these prevents the async coroutine frame from holding
-        # references to potentially large PIL images and observation strings
-        # until the coroutine object itself is garbage-collected.
         if running_image_data is not None:
             running_image_data.clear()
         if running_audio_data is not None:

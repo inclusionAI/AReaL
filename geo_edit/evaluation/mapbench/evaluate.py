@@ -30,18 +30,20 @@ def evaluate_mapbench(records: List[dict]) -> Dict:
     success_count = 0
     path_score_sum = 0.0
     failure_counts: Dict[int, int] = defaultdict(int)
-    per_class: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"total": 0, "success": 0, "path_score_sum": 0.0})
+    per_class: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {"total": 0, "success": 0, "path_score_sum": 0.0}
+    )
     details = []
 
     for r in records:
         total += 1
         text = _get_output_text(r)
         nav_steps = extract_navigation_steps(text)
-        meta = r.get("meta_info_extra", {})
+        meta = r.get("meta_info_extra", {}) or {}
         start = r.get("start", meta.get("start", ""))
         destination = r.get("destination", meta.get("destination", ""))
-        map_class = meta.get("map_class", "unknown")
-        graph_json = meta.get("graph_json", "")
+        map_class = r.get("map_class", meta.get("map_class", "unknown"))
+        graph_json = r.get("graph_json", meta.get("graph_json", ""))
         record_id = r.get("_id", "")
 
         entry = {
@@ -111,7 +113,9 @@ def _load_records_from_result_path(result_path: str) -> List[dict]:
 def _write_outputs(output_path: str, result: Dict) -> None:
     os.makedirs(output_path, exist_ok=True)
 
-    with open(os.path.join(output_path, "eval_result.jsonl"), "w", encoding="utf-8") as f:
+    with open(
+        os.path.join(output_path, "eval_result.jsonl"), "w", encoding="utf-8"
+    ) as f:
         for item in result["details"]:
             f.write(json.dumps(item, ensure_ascii=False, default=str) + "\n")
 
@@ -129,8 +133,10 @@ def _print_summary(summary: dict) -> None:
         print(f"Failures: {summary['failure_breakdown']}")
     print()
     for cls, data in summary.get("per_map_class", {}).items():
-        print(f"  {cls}: success={data['success_rate']:.3f} ({data['success_count']}/{data['total']}), "
-              f"path_score={data['avg_path_score']:.3f}")
+        print(
+            f"  {cls}: success={data['success_rate']:.3f} ({data['success_count']}/{data['total']}), "
+            f"path_score={data['avg_path_score']:.3f}"
+        )
 
 
 def main():

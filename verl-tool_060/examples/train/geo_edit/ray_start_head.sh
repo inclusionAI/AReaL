@@ -12,6 +12,7 @@ done
 ray stop --force 2>/dev/null
 ray start --head \
     --port=$HEAD_PORT \
+    --object-store-memory=260000000000 \
     --disable-usage-stats
 
 echo "============================================"
