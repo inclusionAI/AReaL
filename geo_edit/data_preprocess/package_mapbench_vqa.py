@@ -75,9 +75,6 @@ def package_mapbench_vqa(
 
         if (map_idx + 1) % 10 == 0:
             print(f"  processed {map_idx + 1}/{len(ds)} maps, {len(rows)} rows so far")
-                    "graph_json": graph_json,
-                }
-            )
 
     if missing_graphs:
         print(f"WARNING: {len(missing_graphs)} pkl files not found, graph_json will be empty for those maps.")
