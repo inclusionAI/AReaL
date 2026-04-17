@@ -2,6 +2,7 @@
 
 Ported from CartoMapQA/eval.py to match the exact metrics reported in the paper.
 """
+
 from __future__ import annotations
 
 import math
@@ -22,8 +23,10 @@ from sklearn.metrics import (
 # Regression metrics (STMF-counting, RLE, MTMF-counting)
 # ---------------------------------------------------------------------------
 
+
 def regression_metrics(
-    true: Sequence[float], pred: Sequence[float],
+    true: Sequence[float],
+    pred: Sequence[float],
 ) -> Dict[str, float]:
     if not true:
         return {"rmse": 0.0, "mae": 0.0, "mape": 0.0, "r2": 0.0}
@@ -39,8 +42,10 @@ def regression_metrics(
 # Binary classification metrics (STMF-presence)
 # ---------------------------------------------------------------------------
 
+
 def binary_prf1(
-    true: Sequence[str], pred: Sequence[str],
+    true: Sequence[str],
+    pred: Sequence[str],
 ) -> Dict[str, float]:
     label_map = {"yes": 1, "no": 0}
     true_num = [label_map[t] for t in true if t in label_map]
@@ -52,7 +57,9 @@ def binary_prf1(
     correct = sum(1 for t, p in zip(true_num, pred_num) if t == p)
     return {
         "accuracy": correct / n,
-        "precision": precision_score(true_num, pred_num, average="macro", zero_division=0),
+        "precision": precision_score(
+            true_num, pred_num, average="macro", zero_division=0
+        ),
         "recall": recall_score(true_num, pred_num, average="macro", zero_division=0),
         "f1": f1_score(true_num, pred_num, average="macro", zero_division=0),
     }
@@ -62,15 +69,21 @@ def binary_prf1(
 # Set-based name listing metrics (STMF-name_listing, MTMF)
 # ---------------------------------------------------------------------------
 
+
 def name_listing_prf1(
-    true: Sequence[str], pred: Sequence[str],
+    true: Sequence[str],
+    pred: Sequence[str],
 ) -> Dict[str, float]:
     true_set = {t.strip() for t in true if t.strip()}
     pred_set = {p.strip() for p in pred if p.strip()}
     tp = len(true_set & pred_set)
     precision = tp / len(pred_set) if pred_set else (1.0 if not true_set else 0.0)
     recall = tp / len(true_set) if true_set else (1.0 if not true_set else 0.0)
-    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    f1 = (
+        (2 * precision * recall / (precision + recall))
+        if (precision + recall) > 0
+        else 0.0
+    )
     return {"precision": precision, "recall": recall, "f1": f1}
 
 
@@ -78,24 +91,51 @@ def name_listing_prf1(
 # MFS / MML accuracy
 # ---------------------------------------------------------------------------
 
+
 def exact_match_accuracy(
-    true: Sequence[str], pred: Sequence[str],
+    true: Sequence[str],
+    pred: Sequence[str],
 ) -> Dict[str, float]:
     if not true:
         return {"accuracy": 0.0, "correct": 0, "total": 0}
-    correct = sum(1 for t, p in zip(true, pred) if t.strip().lower() == p.strip().lower())
+    correct = sum(
+        1 for t, p in zip(true, pred) if t.strip().lower() == p.strip().lower()
+    )
     return {"accuracy": correct / len(true), "correct": correct, "total": len(true)}
+
+
+def _levenshtein_ratio(a: str, b: str) -> float:
+    if a == b:
+        return 1.0
+    la, lb = len(a), len(b)
+    if la == 0 or lb == 0:
+        return 0.0
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        curr = [i] + [0] * lb
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            curr[j] = min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
+        prev = curr
+    return 1.0 - prev[lb] / max(la, lb)
+
+
+def _road_similar(a: str, b: str, threshold: float = 0.85) -> bool:
+    return a == b or _levenshtein_ratio(a, b) >= threshold
 
 
 def mml_match(gt_road1: str, gt_road2: str, pred_road1: str, pred_road2: str) -> bool:
     g1, g2 = gt_road1.strip().lower(), gt_road2.strip().lower()
     p1, p2 = pred_road1.strip().lower(), pred_road2.strip().lower()
-    return (g1 == p1 and g2 == p2) or (g1 == p2 and g2 == p1)
+    return (_road_similar(g1, p1) and _road_similar(g2, p2)) or (
+        _road_similar(g1, p2) and _road_similar(g2, p1)
+    )
 
 
 # ---------------------------------------------------------------------------
 # SRN route evaluation
 # ---------------------------------------------------------------------------
+
 
 def normalize_route(route: List[str]) -> List[str]:
     route = list(route)
@@ -127,7 +167,9 @@ def calculate_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> flo
     lat2, lon2 = math.radians(lat2), math.radians(lon2)
     d_lon = lon2 - lon1
     x = math.sin(d_lon) * math.cos(lat2)
-    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(d_lon)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(
+        d_lon
+    )
     return (math.degrees(math.atan2(x, y)) + 360) % 360
 
 
@@ -143,7 +185,8 @@ def get_turn_direction(bearing1: float, bearing2: float) -> str:
 
 
 def generate_route_directions(
-    route: List, road_names: List[str],
+    route: List,
+    road_names: List[str],
 ) -> List[str]:
     output = ["blue"]
     current_bearing = 0.0
@@ -190,9 +233,9 @@ def check_valid_route(
 
     action_keywords = ["left", "right", "straight", "u-turn"]
     street_names = [
-        item for item in path
-        if item not in ("blue", "red")
-        and not any(kw in item for kw in action_keywords)
+        item
+        for item in path
+        if item not in ("blue", "red") and not any(kw in item for kw in action_keywords)
     ]
 
     if len(street_names) <= 1:
