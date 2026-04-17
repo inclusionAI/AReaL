@@ -211,9 +211,7 @@ class DatasetSpec:
 # =============================================================================
 # Per-dataset tool guidance
 # =============================================================================
-VISWORLD_TOOL_GUIDANCE = {
-    
-}
+VISWORLD_TOOL_GUIDANCE = {}
 
 
 def _get_visworld_tool_guidance(item: Mapping[str, Any]) -> Optional[str]:
@@ -729,6 +727,8 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
                 "map_class": item.get("map_class", ""),
                 "image_id": item.get("image_id", ""),
                 "graph_json": item.get("graph_json", ""),
+                "start": item.get("start", ""),
+                "destination": item.get("destination", ""),
             },
         },
         separated_prompt_template=MAPBENCH_VQA_SEPARATED_TEMPLATE,

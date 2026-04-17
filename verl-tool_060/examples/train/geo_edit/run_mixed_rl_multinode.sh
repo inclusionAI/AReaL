@@ -82,7 +82,7 @@ rollout_mode='async'
 # ---- Schedule ----
 total_epochs=3
 save_freq=5
-test_freq=20
+test_freq=10
 
 # ============================================================
 export VERL_RUN_ID=$run_name
@@ -221,7 +221,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     trainer.n_gpus_per_node=$n_gpus_per_node \
     trainer.rollout_data_dir=$WORKSPACE/logs/$run_name/step_records \
     trainer.nnodes=$n_nodes \
-    +trainer.remove_previous_ckpt_in_save=True \
+    +trainer.max_actor_ckpt_to_keep=20 \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
     trainer.total_epochs=$total_epochs \
