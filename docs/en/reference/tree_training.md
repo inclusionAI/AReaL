@@ -50,8 +50,10 @@ actor:
 | `pad_to_maximum`            | bool | Yes      | Must be `true` for tree training   |
 | `mb_spec.max_tokens_per_mb` | int  | Yes      | Max tokens per tree (must be set)  |
 
-NOTE: When tree training is enabled `max_tokens_per_mb` must be a multiple of
-`BLOCK_SIZE` (128).
+NOTE: When tree training is enabled, `max_tokens_per_mb` must be a multiple of
+`lcm(BLOCK_SIZE, parallel_size)`, where `BLOCK_SIZE` is 128 and
+`parallel_size = tp_size × sp_size`. In most configurations where `parallel_size`
+divides 128, this simplifies to a multiple of 128.
 
 ## Implementation
 
@@ -72,7 +74,7 @@ Seq2: [A, G, H]                [B] [G]                  tokens can attend to
 The tree building process:
 
 1. **Extract sequences**: Parse input_ids using attention_mask to get actual tokens
-1. **Greedy packing**: Insert sequences into tries using first-fit decreasing strategy
+1. **Greedy packing**: Insert sequences into tries using a first-fit strategy
 1. **Trie compression**: Merge linear chains into single compressed nodes
 1. **Mask generation**: Build block masks for efficient FlexAttention computation
 
