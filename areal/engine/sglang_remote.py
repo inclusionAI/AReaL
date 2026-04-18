@@ -94,16 +94,27 @@ class SGLangBackend:
         stop_reason = finish_reason["type"]
         stop_message = finish_reason.get("message", "")
 
-        # Extract routed_experts information if available
+        # Extract routed_experts information if available.
+        # sglang v0.5.9 with skip_tokenizer_init=True bypasses the
+        # detokenizer where base64 encoding normally happens, so
+        # routed_experts may arrive as a raw nested list/dict instead
+        # of a base64-encoded string.  Handle both formats.
         routed_experts = meta_info.get("routed_experts", None)
         if routed_experts is not None:
             num_sgl_token = (
                 meta_info["prompt_tokens"] + meta_info["completion_tokens"] - 1
             )
-            # Extract expert_id and reshape to (num_sgl_token, num_layers*expert_top_k)
-            routed_experts = np.frombuffer(
-                pybase64.b64decode(routed_experts.encode("utf-8")), dtype=np.int32
-            ).reshape(num_sgl_token, -1)
+            if isinstance(routed_experts, str):
+                # Normal path: base64-encoded int32 bytes
+                routed_experts = np.frombuffer(
+                    pybase64.b64decode(routed_experts.encode("utf-8")),
+                    dtype=np.int32,
+                ).reshape(num_sgl_token, -1)
+            else:
+                # skip_tokenizer_init=True on sglang<=0.5.9: raw list/dict
+                routed_experts = np.asarray(
+                    routed_experts, dtype=np.int32
+                ).reshape(num_sgl_token, -1)
 
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):
             return HttpGenerationResult(
