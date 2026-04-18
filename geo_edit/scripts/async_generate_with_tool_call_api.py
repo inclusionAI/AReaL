@@ -536,6 +536,9 @@ def main():
                             Image.open(BytesIO(img["bytes"])).save(path)
                         elif isinstance(img, bytes):
                             Image.open(BytesIO(img)).save(path)
+                        elif isinstance(img, str) and os.path.exists(img):
+                            import shutil
+                            shutil.copy2(img, path)
                         else:
                             raise ValueError(f"Invalid image type: {type(img)}")
 

@@ -25,10 +25,35 @@ def extract_answer(text: str) -> str:
     return ""
 
 
+_YES_VARIANTS = frozenset({"yes", "yeah", "yep", "yup", "true", "correct"})
+_NO_VARIANTS = frozenset({"no", "nope", "nah", "false", "incorrect"})
+_NA_VARIANTS = frozenset({"n/a", "na", "none", "not available", "not applicable"})
+
+
 def _normalize_answer(text: str) -> str:
-    """Strip trailing punctuation and whitespace for answer comparison."""
     text = re.sub(r"\\boxed\{(.*?)\}", r"\1", text)
     return text.strip().lower().rstrip(".")
+
+
+def _parse_number(s: str):
+    s = s.strip().replace(",", "")
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_items_as_set(text: str) -> frozenset | None:
+    items = [item.strip() for item in text.split(",")]
+    items = [i for i in items if i]
+    return frozenset(items) if items else None
+
+
+def _parse_range(text: str):
+    m = re.match(r"^([\d.]+)%?\s*[-–]\s*([\d.]+)%?$", text.strip())
+    if m:
+        return (float(m.group(1)), float(m.group(2)))
+    return None
 
 
 def compute_score(prediction: str, ground_truth) -> float:
@@ -41,11 +66,30 @@ def compute_score(prediction: str, ground_truth) -> float:
     if pred_norm == gt_norm:
         return 1.0
 
-    try:
-        if abs(float(pred_norm) - float(gt_norm)) < 1e-6:
+    if gt_norm in _YES_VARIANTS and pred_norm in _YES_VARIANTS:
+        return 1.0
+    if gt_norm in _NO_VARIANTS and pred_norm in _NO_VARIANTS:
+        return 1.0
+    if gt_norm in _NA_VARIANTS and pred_norm in _NA_VARIANTS:
+        return 1.0
+
+    if "," in gt_norm:
+        gt_set = _parse_items_as_set(gt_norm)
+        pred_set = _parse_items_as_set(pred_norm)
+        if gt_set and pred_set and gt_set == pred_set:
             return 1.0
-    except (ValueError, TypeError):
-        pass
+
+    gt_num = _parse_number(gt_norm)
+    pred_num = _parse_number(pred_norm)
+    if gt_num is not None and pred_num is not None:
+        if abs(gt_num - pred_num) < 1e-6:
+            return 1.0
+
+    gt_range = _parse_range(gt_norm)
+    pred_range = _parse_range(pred_norm)
+    if gt_range is not None and pred_range is not None:
+        if gt_range == pred_range:
+            return 1.0
 
     return 0.0
 
