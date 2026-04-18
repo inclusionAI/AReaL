@@ -85,45 +85,55 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
                 detail=f"Dataset {body.dataset_id} is already loaded",
             )
 
-        tokenizer = None
-        processor = None
-        if body.tokenizer_or_processor_path:
-            processor, tokenizer = load_hf_processor_and_tokenizer(
-                body.tokenizer_or_processor_path
+        logger.info(
+            "Loading dataset %s (path=%s, type=%s)",
+            body.dataset_id,
+            body.dataset_path,
+            body.dataset_type,
+        )
+
+        def _load_sync():
+            _tokenizer = None
+            _processor = None
+            if body.tokenizer_or_processor_path:
+                _processor, _tokenizer = load_hf_processor_and_tokenizer(
+                    body.tokenizer_or_processor_path
+                )
+
+            seeding.set_random_seed(body.seed, key=f"data_worker_{config.rank}")
+
+            _dataset = _get_custom_dataset(
+                path=body.dataset_path,
+                type=body.dataset_type,
+                split=body.split,
+                max_length=body.max_length,
+                tokenizer=_tokenizer,
+                processor=_processor,
+                **body.dataset_kwargs,
             )
 
-        seeding.set_random_seed(body.seed, key=f"data_worker_{config.rank}")
+            _sampler_cls = (
+                DistributedSampler if body.drop_last else EvalDistributedSampler
+            )
+            _sampler = _sampler_cls(
+                _dataset,
+                num_replicas=config.world_size,
+                rank=config.rank,
+                shuffle=body.shuffle,
+                drop_last=body.drop_last,
+            )
 
-        # Workers must load real datasets, not RDataset proxies.
-        # Call _get_custom_dataset directly to bypass the is_single_controller()
-        # gate in get_custom_dataset() that would create an RDataset.
-        dataset = _get_custom_dataset(
-            path=body.dataset_path,
-            type=body.dataset_type,
-            split=body.split,
-            max_length=body.max_length,
-            tokenizer=tokenizer,
-            processor=processor,
-            **body.dataset_kwargs,
-        )
+            _dataloader = StatefulDataLoader(
+                _dataset,
+                batch_size=1,
+                num_workers=config.dataloader_num_workers,
+                sampler=_sampler,
+                drop_last=False,
+                collate_fn=_identity_collate,
+            )
+            return _dataset, _sampler, _dataloader
 
-        sampler_cls = DistributedSampler if body.drop_last else EvalDistributedSampler
-        sampler = sampler_cls(
-            dataset,
-            num_replicas=config.world_size,
-            rank=config.rank,
-            shuffle=body.shuffle,
-            drop_last=body.drop_last,
-        )
-
-        dataloader = StatefulDataLoader(
-            dataset,
-            batch_size=1,
-            num_workers=config.dataloader_num_workers,
-            sampler=sampler,
-            drop_last=False,
-            collate_fn=_identity_collate,
-        )
+        dataset, sampler, dataloader = await asyncio.to_thread(_load_sync)
 
         datasets[body.dataset_id] = _DatasetState(
             dataset_id=body.dataset_id,
@@ -133,6 +143,13 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
             epoch=0,
             exhausted=False,
             seed=body.seed,
+        )
+
+        logger.info(
+            "Dataset %s loaded: size=%d, steps=%d",
+            body.dataset_id,
+            sampler.num_samples,
+            len(dataloader),
         )
 
         return {

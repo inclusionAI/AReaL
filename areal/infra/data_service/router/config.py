@@ -10,3 +10,4 @@ class RouterConfig:
     admin_api_key: str = "areal-data-admin"
     poll_interval: float = 5.0
     worker_health_timeout: float = 3.0
+    worker_health_fail_threshold: int = 3
