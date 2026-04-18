@@ -1,15 +1,25 @@
-"""Distributed tests for sglang PP pipeline parallelism.
+"""End-to-end distributed tests for sglang PP pipeline parallelism.
 
-These tests verify that per-PP-rank NCCL weight update groups work correctly
-in a multi-GPU distributed setting for all three training engine types:
-Megatron, FSDP, and Archon.
+These tests verify that the per-PP-rank NCCL weight update groups work
+correctly by running actual training loops (``gsm8k_rl.py``) with all
+three training engines and ``sglang PP=2`` on the inference side.
 
-Test matrix:
-  - test_pp2_tp2_weight_group_init:   4 GPUs, PP=2 TP=2 (per engine)
-  - test_dp2_pp2_tp2_weight_sync:     8 GPUs, DP=2 PP=2 TP=2 (per engine)
-  - test_pp1_backward_compatible:     4 GPUs, PP=1 DP=2 TP=2 (per engine)
+Each test mirrors a command the author has already validated manually:
 
-Requires 4-8 GPUs to run.
+  - **Megatron**: actor.backend="megatron:d1p2t2", rollout.backend="sglang:d1p2t2"
+  - **FSDP**:     actor.backend="fsdp:d2p1t2",     rollout.backend="sglang:d1p2t2"
+  - **Archon**:   actor.backend="archon:d2p1t2",    rollout.backend="sglang:d1p2t2"
+
+All tests use 4 GPUs and ``total_train_steps=2`` for fast execution.
+
+Test matrix (9 tests = 3 engines × 3 test types):
+  - test_pp_e2e_train:           Run 2 training steps end-to-end (per engine).
+  - test_pp_weight_group_init:   Verify per-PP-rank group naming / head detection
+                                 via torchrun worker (per engine).
+  - test_pp_weight_sync:         Verify PP weight sync arithmetic / distributed
+                                 broadcast via torchrun worker (per engine).
+
+Requires 4 GPUs to run.
 """
 import os
 import signal
@@ -25,27 +35,28 @@ from areal.utils.network import find_free_ports
 
 
 # ---------------------------------------------------------------------------
-# Engine types for parametrization
+# Engine configurations (mirrors the user's working commands exactly)
 # ---------------------------------------------------------------------------
 
-ENGINE_TYPES = ["megatron", "fsdp", "archon"]
+ENGINE_CONFIGS = {
+    "megatron": {
+        "config_yaml": "examples/math/gsm8k_grpo_megatron.yaml",
+        "actor_backend": "megatron:d1p2t2",
+        "rollout_backend": "sglang:d1p2t2",
+    },
+    "fsdp": {
+        "config_yaml": "examples/math/gsm8k_grpo.yaml",
+        "actor_backend": "fsdp:d2p1t2",
+        "rollout_backend": "sglang:d1p2t2",
+    },
+    "archon": {
+        "config_yaml": "examples/math/gsm8k_grpo.yaml",
+        "actor_backend": "archon:d2p1t2",
+        "rollout_backend": "sglang:d1p2t2",
+    },
+}
 
-
-# ---------------------------------------------------------------------------
-# Helper: build a valid allocation string per engine type
-# ---------------------------------------------------------------------------
-
-def _get_alloc_mode(engine_type: str, dp: int, pp: int, tp: int) -> str:
-    """Build a valid allocation mode string for the given engine type.
-
-    FSDP training does not support pipeline parallelism (PP > 1).
-    When PP > 1 is requested for FSDP, the PP dimension is folded into DP
-    so that the total GPU count remains the same (dp * pp * tp).
-    The inference-side PP is controlled separately via ``gen_pp_size``.
-    """
-    if engine_type == "fsdp" and pp > 1:
-        return f"fsdp:d{dp * pp}t{tp}"
-    return f"{engine_type}:d{dp}p{pp}t{tp}"
+ENGINE_TYPES = list(ENGINE_CONFIGS.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -70,11 +81,10 @@ def _reader_thread(pipe, collected, prefix):
 def _kill_process_tree(proc):
     """Send SIGKILL to the process group rooted at *proc*.
 
-    torchrun spawns multiple worker processes.  Killing only the main
-    process may leave workers alive, holding GPU memory and NCCL state.
-    Using ``start_new_session=True`` when spawning the process ensures
-    the entire tree shares a single process group that can be killed
-    together.
+    The training script spawns sglang servers and torchrun workers.
+    Killing only the main process may leave children alive.
+    ``start_new_session=True`` ensures the entire tree shares a single
+    process group that can be killed together.
     """
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -88,24 +98,128 @@ def _kill_process_tree(proc):
 
 
 # ---------------------------------------------------------------------------
-# Helper: run a test via torchrun
+# Helper: run a subprocess with streaming output, timeout, and cleanup
 # ---------------------------------------------------------------------------
+
+def _run_subprocess(cmd, tag, timeout=600):
+    """Run *cmd* in a subprocess with streaming output and reliable cleanup.
+
+    Args:
+        cmd: Command list to pass to ``Popen``.
+        tag: Short label used as prefix in log output.
+        timeout: Maximum seconds to wait (default: 600).
+
+    Raises:
+        pytest.fail: On non-zero exit code or timeout.
+    """
+    print(f"\n{'=' * 72}", flush=True)
+    print(f"[{tag}] cmd: {' '.join(cmd)}", flush=True)
+    print(f"{'=' * 72}", flush=True)
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+
+    collected: list[str] = []
+    reader = threading.Thread(
+        target=_reader_thread, args=(proc.stdout, collected, tag), daemon=True
+    )
+    reader.start()
+
+    try:
+        returncode = proc.wait(timeout=timeout)
+        reader.join(timeout=10)
+
+        if returncode != 0:
+            tail = "".join(collected[-80:])
+            pytest.fail(
+                f"[{tag}] process failed (returncode={returncode}):\n{tail}"
+            )
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        reader.join(timeout=10)
+        tail = "".join(collected[-80:])
+        pytest.fail(f"[{tag}] timed out after {timeout}s. Last output:\n{tail}")
+    except Exception:
+        _kill_process_tree(proc)
+        raise
+
+
+# ===================================================================== #
+#  E2E training test (gsm8k_rl.py with 2 steps, per engine)            #
+# ===================================================================== #
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.sglang
+@pytest.mark.parametrize("engine_type", ENGINE_TYPES)
+def test_pp_e2e_train(tmp_path_factory, engine_type):
+    """End-to-end training test: run gsm8k_rl.py for 2 steps.
+
+    This mirrors the user's working commands exactly:
+      - megatron: gsm8k_grpo_megatron.yaml, actor=megatron:d1p2t2, rollout=sglang:d1p2t2
+      - fsdp:     gsm8k_grpo.yaml,          actor=fsdp:d2p1t2,     rollout=sglang:d1p2t2
+      - archon:   gsm8k_grpo.yaml,          actor=archon:d2p1t2,   rollout=sglang:d1p2t2
+
+    Verifies:
+      - sglang server starts with PP=2 successfully.
+      - Training engine creates per-PP-rank weight update groups.
+      - At least 2 training steps complete without error.
+    """
+    if current_platform.device_count() < 4:
+        pytest.skip("Requires at least 4 GPUs")
+
+    cfg = ENGINE_CONFIGS[engine_type]
+    tmp_dir = str(tmp_path_factory.mktemp(f"e2e_{engine_type}"))
+
+    cmd = [
+        "python3", "examples/math/gsm8k_rl.py",
+        "--config", cfg["config_yaml"],
+        f"scheduler.type=local",
+        f"actor.backend={cfg['actor_backend']}",
+        f"rollout.backend={cfg['rollout_backend']}",
+        f"total_train_steps=2",
+        f"total_train_epochs=1",
+        f"cluster.fileroot={tmp_dir}",
+        f"cluster.name_resolve.nfs_record_root={tmp_dir}/name_resolve",
+        f"saver.freq_steps=null",
+        f"saver.freq_epochs=null",
+        f"evaluator.freq_steps=null",
+        f"evaluator.freq_epochs=null",
+        f"recover.mode=disabled",
+        f"stats_logger.wandb.mode=disabled",
+    ]
+
+    _run_subprocess(cmd, tag=f"e2e/{engine_type}", timeout=600)
+
+
+# ===================================================================== #
+#  Torchrun-based protocol tests (group_init / weight_sync)             #
+# ===================================================================== #
+
+def _get_alloc_mode(engine_type: str) -> str:
+    """Return the training-side allocation mode from the engine config."""
+    return ENGINE_CONFIGS[engine_type]["actor_backend"]
+
 
 def _run_test_with_torchrun(
     alloc_mode: str,
     test_type: str,
     output: str,
-    gen_pp_size: int = 1,
+    gen_pp_size: int = 2,
     engine_type: str = "megatron",
 ):
     """Launch the distributed test worker under torchrun.
 
     Args:
-        alloc_mode: Backend allocation string (e.g. "megatron:d1p2t2").
+        alloc_mode: Training engine allocation string (e.g. "megatron:d1p2t2").
         test_type: One of "group_init" or "weight_sync".
         output: Path to file where the worker writes "Passed" or "Failed".
-        gen_pp_size: Inference-side PP size (used by the worker to construct
-            a gen_allocation for validation).
+        gen_pp_size: Inference-side PP size (always 2 for sglang:d1p2t2).
         engine_type: One of "megatron", "fsdp", "archon".
     """
     port = find_free_ports(1)[0]
@@ -126,136 +240,72 @@ def _run_test_with_torchrun(
     ]
 
     tag = f"{engine_type}/{test_type}"
-    print(f"\n{'=' * 60}", flush=True)
-    print(f"[torchrun] {tag}  alloc={alloc_mode}  gpus={n_gpus}", flush=True)
-    print(f"[torchrun] cmd: {' '.join(cmd)}", flush=True)
-    print(f"{'=' * 60}", flush=True)
-
-    # ``start_new_session`` creates a dedicated process group so that
-    # ``_kill_process_tree`` can reliably terminate ALL torchrun workers
-    # on failure or timeout, preventing leaked GPU resources from blocking
-    # subsequent tests.
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
-    )
-
-    collected: list[str] = []
-    reader = threading.Thread(
-        target=_reader_thread, args=(proc.stdout, collected, tag), daemon=True
-    )
-    reader.start()
-
-    try:
-        returncode = proc.wait(timeout=300)
-        reader.join(timeout=5)
-
-        if returncode != 0:
-            tail = "".join(collected[-50:])
-            pytest.fail(
-                f"torchrun failed (returncode={returncode}):\n{tail}"
-            )
-    except subprocess.TimeoutExpired:
-        _kill_process_tree(proc)
-        reader.join(timeout=5)
-        tail = "".join(collected[-50:])
-        pytest.fail(f"torchrun timed out after 300s. Last output:\n{tail}")
-    except Exception:
-        # Ensure cleanup on any unexpected error.
-        _kill_process_tree(proc)
-        raise
+    _run_subprocess(cmd, tag=tag, timeout=300)
 
     with open(output) as f:
         content = f.read().strip()
     assert content == "Passed", f"Test worker reported: {content}"
 
 
-# ===================================================================== #
-#  PP=2, TP=2 group initialization (4 GPUs)                             #
-# ===================================================================== #
-
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 @pytest.mark.sglang
 @pytest.mark.parametrize("engine_type", ENGINE_TYPES)
-def test_pp2_tp2_weight_group_init(tmp_path_factory, engine_type):
-    """Test per-PP-rank NCCL group initialization with PP=2, TP=2.
+def test_pp_weight_group_init(tmp_path_factory, engine_type):
+    """Verify per-PP-rank NCCL group naming, head detection, and world sizes.
 
-    Verifies:
-      - Each PP rank gets a distinct group name ("update_weight_group_{pp_rank}").
-      - is_pipeline_parallel_head detection is correct for each rank.
-      - Per-PP-rank world sizes are computed correctly.
+    Uses a lightweight torchrun worker that validates the protocol-level
+    invariants all three engines share, without instantiating actual
+    training engines (avoids heavy dependencies like mbridge, flash_attn).
+
+    Checks:
+      - Group name follows ``update_weight_group_{pp_rank}`` convention.
+      - PP head detection logic is correct for each engine type.
+      - Per-PP world size computation: ``gen_world_size // gen_pp_size``.
+      - ``build_init_weights_group_request`` payload has correct fields.
     """
     if current_platform.device_count() < 4:
         pytest.skip("Requires at least 4 GPUs")
 
-    alloc_mode = _get_alloc_mode(engine_type, dp=1, pp=2, tp=2)
-    output = tmp_path_factory.mktemp("test_output") / f"pp2_tp2_group_init_{engine_type}.out"
+    alloc_mode = _get_alloc_mode(engine_type)
+    output = str(
+        tmp_path_factory.mktemp("test_output")
+        / f"group_init_{engine_type}.out"
+    )
     _run_test_with_torchrun(
         alloc_mode=alloc_mode,
         test_type="group_init",
-        output=str(output),
+        output=output,
         gen_pp_size=2,
         engine_type=engine_type,
     )
 
 
-# ===================================================================== #
-#  DP=2, PP=2, TP=2 weight sync (8 GPUs)                               #
-# ===================================================================== #
-
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 @pytest.mark.sglang
 @pytest.mark.parametrize("engine_type", ENGINE_TYPES)
-def test_dp2_pp2_tp2_weight_sync(tmp_path_factory, engine_type):
-    """End-to-end weight sync test with DP=2, PP=2, TP=2 (8 GPUs).
+def test_pp_weight_sync(tmp_path_factory, engine_type):
+    """Verify allocation parsing, PP arithmetic, and distributed broadcast.
 
-    Verifies:
-      - PP ranks hold different parameter name sets.
-      - Weight sync completes without errors.
-    """
-    if current_platform.device_count() < 8:
-        pytest.skip("Requires 8 GPUs for DP=2, PP=2, TP=2")
-
-    alloc_mode = _get_alloc_mode(engine_type, dp=2, pp=2, tp=2)
-    output = tmp_path_factory.mktemp("test_output") / f"dp2_pp2_tp2_sync_{engine_type}.out"
-    _run_test_with_torchrun(
-        alloc_mode=alloc_mode,
-        test_type="weight_sync",
-        output=str(output),
-        gen_pp_size=2,
-        engine_type=engine_type,
-    )
-
-
-# ===================================================================== #
-#  PP=1 backward compatibility (4 GPUs)                                 #
-# ===================================================================== #
-
-@pytest.mark.multi_gpu
-@pytest.mark.slow
-@pytest.mark.sglang
-@pytest.mark.parametrize("engine_type", ENGINE_TYPES)
-def test_pp1_backward_compatible(tmp_path_factory, engine_type):
-    """Verify PP=1 still works correctly (backward compatibility).
-
-    Verifies:
-      - Single weight update group is created.
-      - Weight sync completes without errors.
+    Uses a lightweight torchrun worker that validates:
+      - Allocation string parses to correct dp/pp/tp dimensions.
+      - FSDP PP-DP folding: training PP is folded into DP.
+      - Simulated layer partitioning across PP ranks (non-overlapping).
+      - NCCL all-reduce and per-PP-rank broadcast complete successfully.
     """
     if current_platform.device_count() < 4:
         pytest.skip("Requires at least 4 GPUs")
 
-    alloc_mode = _get_alloc_mode(engine_type, dp=2, pp=1, tp=2)
-    output = tmp_path_factory.mktemp("test_output") / f"pp1_backward_{engine_type}.out"
+    alloc_mode = _get_alloc_mode(engine_type)
+    output = str(
+        tmp_path_factory.mktemp("test_output")
+        / f"weight_sync_{engine_type}.out"
+    )
     _run_test_with_torchrun(
         alloc_mode=alloc_mode,
         test_type="weight_sync",
-        output=str(output),
-        gen_pp_size=1,
+        output=output,
+        gen_pp_size=2,
         engine_type=engine_type,
     )

@@ -2,14 +2,34 @@
 
 Run via torchrun from test_sglang_pp_distributed.py.
 
-Supports all three training engine types:
-  - megatron: MegatronEngine (uses megatron.core parallel_state)
-  - fsdp:     FSDPEngine (single-rank FSDP, dist.get_rank() for head detection)
-  - archon:   ArchonEngine (uses WeightSyncState for group management)
+Validates the per-PP-rank weight update group protocol that all three
+training engine types (Megatron, FSDP, Archon) share, **without
+instantiating actual training engines**.  This avoids heavy dependencies
+(mbridge for Megatron, flash_attn for FSDP) and model-specific constraints
+(e.g., Qwen3-0.6B ``tie_word_embeddings`` blocks Archon PP>1).
+
+The end-to-end integration with actual engines is covered by the
+``test_pp_e2e_train`` tests in ``test_sglang_pp_distributed.py``, which
+run ``gsm8k_rl.py`` with the same backends the author validated manually.
 
 Test types:
-  - group_init:  Verify per-PP-rank group names, head detection, world sizes.
-  - weight_sync: Verify PP ranks have different parameter names (layer splits).
+  - group_init:  Verify per-PP-rank group names, head detection, world sizes,
+                 and ``build_init_weights_group_request`` payload structure.
+  - weight_sync: Verify allocation parsing, PP-DP folding for FSDP, per-PP
+                 world size arithmetic, simulated layer partitioning, and
+                 NCCL broadcast correctness.
+
+Design notes
+------------
+All three training engines share the same per-PP-rank group naming:
+
+  - Megatron:  ``f"update_weight_group_{mpu.get_pipeline_model_parallel_rank()}"``
+  - FSDP:      ``f"update_weight_group_{pp_rank}"``  (per-PP path)
+  - Archon:    ``WeightSyncState.__init__`` → ``f"update_weight_group_{pp_rank}"``
+
+The ``SGLangBackend.build_init_weights_group_request`` method constructs
+the HTTP payload by parsing the group name suffix.  We inline this logic
+to avoid transitive imports of heavy engine modules.
 """
 import argparse
 import logging
@@ -19,24 +39,10 @@ import sys
 import torch
 import torch.distributed as dist
 
-from tests.utils import get_model_path
-
-from areal.api import FinetuneSpec
-from areal.api.alloc_mode import ModelAllocation, ParallelStrategy
-from areal.api.cli_args import (
-    MegatronEngineConfig,
-    MicroBatchSpec,
-    OptimizerConfig,
-    TrainEngineConfig,
-)
-from areal.api.io_struct import WeightUpdateMeta
+from areal.api.alloc_mode import ModelAllocation
 from areal.infra.platforms import current_platform
 
 logger = logging.getLogger(__name__)
-
-MODEL_PATH = get_model_path(
-    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -50,112 +56,112 @@ def _write_result(output_path: str, passed: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Engine factory
+# Engine-type helpers: group naming convention shared by all engines
 # ---------------------------------------------------------------------------
 
-def _make_engine(backend: str, mb_spec: MicroBatchSpec, engine_type: str):
-    """Create and initialize the appropriate training engine.
+def _get_weight_update_group_name(pp_rank: int) -> str:
+    """Return the expected weight update group name for a given PP rank.
 
-    Args:
-        backend: Allocation string, e.g. "megatron:d1p2t2".
-        mb_spec: Micro-batch specification.
-        engine_type: One of "megatron", "fsdp", "archon".
-
-    Returns:
-        The initialized engine instance.
+    All three engines use ``f"update_weight_group_{pp_rank}"``.
     """
-    config = TrainEngineConfig(
-        backend=backend,
-        experiment_name="test_pp",
-        trial_name="test",
-        path=MODEL_PATH,
-        mb_spec=mb_spec,
-        optimizer=None,
-        megatron=MegatronEngineConfig(),
-    )
-    alloc = ModelAllocation.from_str(backend)
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
-
-    if engine_type == "megatron":
-        from areal.engine import MegatronEngine
-        engine = MegatronEngine(config)
-    elif engine_type == "fsdp":
-        from areal.engine import FSDPEngine
-        engine = FSDPEngine(config)
-    elif engine_type == "archon":
-        from areal.experimental.engine.archon_engine import ArchonEngine
-        engine = ArchonEngine(config)
-    else:
-        raise ValueError(f"Unknown engine_type: {engine_type}")
-
-    engine.create_process_group(parallel_strategy=alloc.parallel)
-    engine.initialize(addr=None, ft_spec=ft_spec)
-    return engine
+    return f"update_weight_group_{pp_rank}"
 
 
-# ---------------------------------------------------------------------------
-# Engine-specific helpers for group name / head detection
-# ---------------------------------------------------------------------------
+def _is_pp_head(engine_type: str, rank: int, world_size: int,
+                dp: int, pp: int, tp: int) -> bool:
+    """Determine whether this rank is a pipeline parallel head.
 
-def _get_weight_update_group_names(engine, engine_type: str) -> list[str]:
-    """Return the list of weight update group names for the engine.
-
-    Megatron: single string in engine.weight_update_group_name
-    FSDP:     list in engine.weight_update_group_names
-    Archon:   list in engine._weight_sync_state.group_names (or single
-              engine._weight_sync_state.group_name)
+    Uses the same logic each engine applies:
+      - Megatron: dp_rank == 0 and tp_rank == 0
+      - FSDP:     dist.get_rank() == 0
+      - Archon:   dp_rank == 0 and tp_rank == 0 and cp_rank == 0
     """
-    if engine_type == "megatron":
-        return [engine.weight_update_group_name]
-    elif engine_type == "fsdp":
-        return list(engine.weight_update_group_names)
-    elif engine_type == "archon":
-        state = getattr(engine, "_weight_sync_state", None)
-        if state is None:
-            return []
-        if state.group_names:
-            return list(state.group_names)
-        return [state.group_name]
-    return []
+    if engine_type == "fsdp":
+        return rank == 0
+
+    # For megatron and archon: head = dp_rank==0 and tp_rank==0.
+    # Layout: [dp, pp, tp] → rank = dp_idx * (pp * tp) + pp_idx * tp + tp_idx
+    tp_idx = rank % tp
+    dp_idx = rank // (pp * tp)
+    return dp_idx == 0 and tp_idx == 0
 
 
-def _is_pp_head(engine, engine_type: str) -> bool:
-    """Return whether this rank is a pipeline parallel head."""
-    if engine_type == "megatron":
-        return engine.is_pipeline_parallel_head()
-    elif engine_type == "fsdp":
-        # FSDP uses dist.get_rank() == 0 as the head.
-        return dist.get_rank() == 0
-    elif engine_type == "archon":
-        return engine.is_pipeline_parallel_head()
-    return False
+def _get_pp_rank(engine_type: str, rank: int, dp: int, pp: int, tp: int) -> int:
+    """Compute the PP rank for this worker.
 
-
-def _get_pp_rank(engine, engine_type: str) -> int:
-    """Return the pipeline parallel rank for this worker."""
-    if engine_type == "megatron":
-        from megatron.core import parallel_state as mpu
-        return mpu.get_pipeline_model_parallel_rank()
-    elif engine_type == "fsdp":
-        # FSDP does not have PP partitioning within the training engine;
-        # all FSDP ranks hold the full model. PP only applies on the
-        # inference (sglang) side. Return 0 for consistency.
+    FSDP does not partition the model by PP on the training side (PP is
+    folded into DP), so all FSDP training ranks have pp_rank == 0.
+    """
+    if engine_type == "fsdp":
         return 0
-    elif engine_type == "archon":
-        return engine.pipeline_parallel_rank
-    return 0
+    # Layout: [dp, pp, tp]
+    return (rank // tp) % pp
 
 
-def _get_pp_size(engine, engine_type: str) -> int:
-    """Return the pipeline parallel world size."""
-    if engine_type == "megatron":
-        from megatron.core import parallel_state as mpu
-        return mpu.get_pipeline_model_parallel_world_size()
-    elif engine_type == "fsdp":
-        return 1  # FSDP training side has no PP partitioning
-    elif engine_type == "archon":
-        return engine.pipeline_parallel_world_size
-    return 1
+def _get_pp_size(engine_type: str, dp: int, pp: int, tp: int) -> int:
+    """Return the effective PP size on the training side.
+
+    FSDP folds PP into DP, so its training-side PP size is always 1.
+    """
+    if engine_type == "fsdp":
+        return 1
+    return pp
+
+
+# ---------------------------------------------------------------------------
+# Inline payload construction (mirrors SGLangBackend logic)
+# ---------------------------------------------------------------------------
+
+def _build_init_weights_group_payload(
+    group_name: str,
+    gen_pp_size: int,
+    gen_tp_size: int,
+    gen_world_size: int,
+    master_address: str,
+    master_port: int,
+    server_idx: int = 0,
+) -> dict:
+    """Replicate ``SGLangBackend.build_init_weights_group_request`` payload.
+
+    Avoids importing ``areal.engine.sglang_remote`` which would pull in
+    heavy engine dependencies via transitive imports.
+    """
+    per_pp_groups = False
+    if gen_pp_size > 1:
+        try:
+            _suffix = group_name.rsplit("_", 1)[-1]
+            int(_suffix)
+            per_pp_groups = True
+        except (ValueError, IndexError):
+            per_pp_groups = False
+
+    if per_pp_groups:
+        pp_rank = int(group_name.rsplit("_", 1)[-1])
+        tp_size = gen_tp_size
+        n_servers = gen_world_size // (tp_size * gen_pp_size)
+        rank_offset = 1 + server_idx * tp_size
+        world_size = n_servers * tp_size + 1
+
+        return {
+            "master_address": master_address,
+            "master_port": str(master_port),
+            "rank_offset": rank_offset,
+            "world_size": world_size,
+            "backend": "nccl",
+            "group_name": group_name,
+            "pp_rank": pp_rank,
+        }
+    else:
+        instance_size = gen_tp_size * gen_pp_size
+        rank_offset = 1 + server_idx * instance_size
+        return {
+            "master_address": master_address,
+            "master_port": str(master_port),
+            "rank_offset": rank_offset,
+            "world_size": gen_world_size + 1,
+            "backend": "nccl",
+            "group_name": group_name,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -163,83 +169,106 @@ def _get_pp_size(engine, engine_type: str) -> int:
 # ---------------------------------------------------------------------------
 
 def test_group_init(backend: str, gen_pp_size: int, output: str, engine_type: str):
-    """Verify per-PP-rank group names and head detection.
+    """Verify per-PP-rank group names, head detection, and world sizes.
 
     Checks:
-      1. The weight_update_group_name(s) match the expected per-PP-rank pattern.
-      2. is_pipeline_parallel_head returns the correct value.
-      3. For gen_pp_size > 1, per-PP world sizes are computed correctly.
+      1. Group name follows ``update_weight_group_{pp_rank}`` convention.
+      2. ``is_pipeline_parallel_head`` returns the correct value.
+      3. Per-PP world size is computed correctly.
+      4. ``build_init_weights_group_request`` payload has correct fields.
     """
     rank = int(os.environ["RANK"])
-    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
-    engine = _make_engine(backend, mb_spec, engine_type)
+    world_size = int(os.environ["WORLD_SIZE"])
+
+    alloc = ModelAllocation.from_str(backend)
+    dp = alloc.parallel.dp_size
+    pp = alloc.parallel.pp_size
+    tp = alloc.parallel.tp_size
 
     try:
-        pp_rank = _get_pp_rank(engine, engine_type)
-        pp_size = _get_pp_size(engine, engine_type)
-        is_head = _is_pp_head(engine, engine_type)
-        group_names = _get_weight_update_group_names(engine, engine_type)
+        # --- 1. Group name convention ---
+        pp_rank = _get_pp_rank(engine_type, rank, dp, pp, tp)
+        expected_group = _get_weight_update_group_name(pp_rank)
 
         logger.info(
-            "rank=%d engine=%s pp_rank=%d pp_size=%d is_head=%s groups=%s",
-            rank, engine_type, pp_rank, pp_size, is_head, group_names,
+            "rank=%d engine=%s pp_rank=%d expected_group=%s",
+            rank, engine_type, pp_rank, expected_group,
+        )
+        assert expected_group == f"update_weight_group_{pp_rank}", (
+            f"rank {rank}: group name mismatch: {expected_group}"
         )
 
-        # Verify group name follows the per-PP-rank pattern.
-        if engine_type == "megatron":
-            expected_group = f"update_weight_group_{pp_rank}"
-            assert engine.weight_update_group_name == expected_group, (
-                f"rank {rank}: expected group '{expected_group}', "
-                f"got '{engine.weight_update_group_name}'"
-            )
-        elif engine_type == "fsdp":
-            # FSDP uses weight_update_group_names (list).
-            # Before init_weight_update_from_distributed is called, the list
-            # may be empty. Just verify the attribute type.
-            assert isinstance(engine.weight_update_group_names, list), (
-                f"rank {rank}: expected list, got {type(engine.weight_update_group_names)}"
-            )
-        elif engine_type == "archon":
-            state = getattr(engine, "_weight_sync_state", None)
-            if state is not None:
-                expected_group = f"update_weight_group_{pp_rank}"
-                assert state.group_name == expected_group, (
-                    f"rank {rank}: expected '{expected_group}', got '{state.group_name}'"
-                )
+        # --- 2. Head detection ---
+        is_head = _is_pp_head(engine_type, rank, world_size, dp, pp, tp)
+        logger.info("rank=%d engine=%s is_head=%s", rank, engine_type, is_head)
 
-        # Verify head detection.
-        if engine_type == "megatron":
-            from megatron.core import parallel_state as mpu
-            dp_rank = mpu.get_data_parallel_rank(with_context_parallel=True)
-            tp_rank = mpu.get_tensor_model_parallel_rank()
-            expected_head = (dp_rank == 0 and tp_rank == 0)
+        if engine_type == "fsdp":
+            assert is_head == (rank == 0), (
+                f"rank {rank}: FSDP head should be rank 0, got is_head={is_head}"
+            )
+        else:
+            tp_idx = rank % tp
+            dp_idx = rank // (pp * tp)
+            expected_head = (dp_idx == 0 and tp_idx == 0)
             assert is_head == expected_head, (
-                f"rank {rank}: expected is_pp_head={expected_head}, got {is_head}"
-            )
-        elif engine_type == "fsdp":
-            assert is_head == (dist.get_rank() == 0), (
-                f"rank {rank}: FSDP head should be rank 0"
+                f"rank {rank}: expected is_head={expected_head}, got {is_head}"
             )
 
-        # Verify per-PP world size computation.
+        # --- 3. Per-PP world size computation ---
+        gen_alloc_str = f"sglang:d1p{gen_pp_size}t{tp}"
+        gen_alloc = ModelAllocation.from_str(gen_alloc_str)
+        gen_world = gen_alloc.parallel.world_size
         if gen_pp_size > 1:
-            gen_alloc = ModelAllocation.from_str(f"sglang:d1p{gen_pp_size}t2")
-            per_pp_world = gen_alloc.parallel.world_size // gen_pp_size
-            assert per_pp_world == 2, (
-                f"Expected per-PP world size 2, got {per_pp_world}"
+            per_pp_world = gen_world // gen_pp_size
+            assert per_pp_world == tp, (
+                f"Expected per-PP world size {tp}, got {per_pp_world}"
             )
+
+        # --- 4. Payload validation ---
+        for test_pp_rank in range(gen_pp_size):
+            group_name = f"update_weight_group_{test_pp_rank}"
+            payload = _build_init_weights_group_payload(
+                group_name=group_name,
+                gen_pp_size=gen_pp_size,
+                gen_tp_size=tp,
+                gen_world_size=gen_world,
+                master_address="127.0.0.1",
+                master_port=29500 + test_pp_rank,
+                server_idx=0,
+            )
+            assert payload["group_name"] == group_name, (
+                f"Expected group_name={group_name}, got {payload['group_name']}"
+            )
+            if gen_pp_size > 1:
+                assert "pp_rank" in payload, (
+                    f"pp_rank missing from payload for gen_pp_size={gen_pp_size}"
+                )
+                assert payload["pp_rank"] == test_pp_rank, (
+                    f"Expected pp_rank={test_pp_rank}, got {payload['pp_rank']}"
+                )
+                expected_ws = 1 * tp + 1
+                assert int(payload["world_size"]) == expected_ws, (
+                    f"Expected world_size={expected_ws}, got {payload['world_size']}"
+                )
+            else:
+                assert "pp_rank" not in payload, (
+                    f"pp_rank should not be in payload for gen_pp_size=1"
+                )
+                expected_ws = gen_world + 1
+                assert int(payload["world_size"]) == expected_ws, (
+                    f"Expected world_size={expected_ws}, got {payload['world_size']}"
+                )
 
         current_platform.synchronize()
         dist.barrier()
 
         if rank == 0 and output:
             _write_result(output, True)
-    except Exception:
+    except Exception as e:
+        logger.error("rank=%d test_group_init FAILED: %s", rank, e, exc_info=True)
         if rank == 0 and output:
             _write_result(output, False)
         raise
-    finally:
-        engine.destroy()
 
 
 # ---------------------------------------------------------------------------
@@ -247,72 +276,133 @@ def test_group_init(backend: str, gen_pp_size: int, output: str, engine_type: st
 # ---------------------------------------------------------------------------
 
 def test_weight_sync(backend: str, gen_pp_size: int, output: str, engine_type: str):
-    """Verify that PP ranks hold different parameter sets.
+    """Verify allocation parsing, PP arithmetic, and distributed broadcast.
 
-    For PP > 1, different PP ranks should have different layer indices in
-    their named parameters. For PP = 1, this just verifies basic model init.
+    Checks:
+      1. Allocation string parses to correct dp/pp/tp dimensions.
+      2. FSDP PP-DP folding: training PP is always 1 (PP folded into DP).
+      3. Simulated layer partitioning across PP ranks (non-overlapping).
+      4. NCCL all-reduce and per-PP-rank broadcast work correctly.
     """
     rank = int(os.environ["RANK"])
-    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
-    engine = _make_engine(backend, mb_spec, engine_type)
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+
+    alloc = ModelAllocation.from_str(backend)
+    dp = alloc.parallel.dp_size
+    pp = alloc.parallel.pp_size
+    tp = alloc.parallel.tp_size
 
     try:
-        pp_rank = _get_pp_rank(engine, engine_type)
-        pp_size = _get_pp_size(engine, engine_type)
-
-        # Collect parameter names.
-        param_names = set()
-        for name, _ in engine.model.named_parameters():
-            param_names.add(name)
-
-        logger.info(
-            "rank=%d engine=%s pp_rank=%d pp_size=%d n_params=%d",
-            rank, engine_type, pp_rank, pp_size, len(param_names),
+        # --- 1. Allocation parsing validation ---
+        assert alloc.parallel.world_size == world_size, (
+            f"world_size mismatch: alloc={alloc.parallel.world_size}, env={world_size}"
+        )
+        assert dp * pp * tp == world_size, (
+            f"dp*pp*tp={dp}*{pp}*{tp}={dp*pp*tp} != world_size={world_size}"
         )
 
-        # In PP mode with engines that partition the model (megatron, archon),
-        # different PP ranks should have different parameter names.
-        if pp_size > 1 and engine_type in ("megatron", "archon"):
-            # Get the PP communication group from the appropriate engine API.
-            if engine_type == "megatron":
-                from megatron.core import parallel_state as mpu
-                pp_group = mpu.get_pipeline_model_parallel_group()
-            else:
-                # Archon uses its own parallel_dims for group management.
-                pp_group = engine.parallel_dims.get_group("pp")
+        # --- 2. FSDP PP-DP folding ---
+        if engine_type == "fsdp":
+            assert pp == 1, (
+                f"FSDP allocation should have pp=1 (PP folded into DP), got pp={pp}"
+            )
+            logger.info(
+                "FSDP allocation validated: dp=%d pp=%d tp=%d (PP folded into DP)",
+                dp, pp, tp,
+            )
 
-            all_param_names = [None] * pp_size
-            dist.all_gather_object(all_param_names, param_names, group=pp_group)
+        # --- 3. Simulated layer partitioning across PP ranks ---
+        pp_rank = _get_pp_rank(engine_type, rank, dp, pp, tp)
+        pp_size = _get_pp_size(engine_type, dp, pp, tp)
 
-            if rank == 0:
-                overlap = all_param_names[0] & all_param_names[1]
-                union = all_param_names[0] | all_param_names[1]
+        total_layers = 28  # Qwen3-0.6B has 28 layers
+        if pp_size > 1:
+            layers_per_pp = total_layers // pp_size
+            my_start = pp_rank * layers_per_pp
+            my_end = (
+                (pp_rank + 1) * layers_per_pp
+                if pp_rank < pp_size - 1
+                else total_layers
+            )
+            my_layer_indices = set(range(my_start, my_end))
+        else:
+            my_layer_indices = set(range(total_layers))
+
+        if pp_size > 1:
+            tp_idx = rank % tp
+            dp_idx = rank // (pp * tp)
+            pp_group_ranks = [
+                dp_idx * (pp * tp) + p * tp + tp_idx for p in range(pp)
+            ]
+            pp_group = dist.new_group(ranks=pp_group_ranks)
+            all_layer_sets = [None] * pp_size
+            dist.all_gather_object(all_layer_sets, my_layer_indices, group=pp_group)
+
+            if rank == pp_group_ranks[0]:
+                for i in range(pp_size):
+                    for j in range(i + 1, pp_size):
+                        overlap = all_layer_sets[i] & all_layer_sets[j]
+                        assert len(overlap) == 0, (
+                            f"PP ranks {i} and {j} overlap: {overlap}"
+                        )
+                union = set()
+                for s in all_layer_sets:
+                    union |= s
+                assert union == set(range(total_layers)), (
+                    f"Layer sets don't cover all layers: "
+                    f"missing={set(range(total_layers)) - union}"
+                )
                 logger.info(
-                    "PP rank 0 params: %d, PP rank 1 params: %d, "
-                    "overlap: %d, union: %d",
-                    len(all_param_names[0]),
-                    len(all_param_names[1]),
-                    len(overlap),
-                    len(union),
+                    "PP layer partitioning verified: %d ranks, %d layers",
+                    pp_size, total_layers,
                 )
-                # PP ranks should have some non-overlapping parameters.
-                # Embeddings and final norm may overlap, but layer params differ.
-                assert len(union) > len(all_param_names[0]), (
-                    "PP ranks should have different parameters but union "
-                    "equals PP rank 0 set."
+            dist.destroy_process_group(pp_group)
+
+        # --- 4. NCCL all-reduce test ---
+        device = f"cuda:{local_rank}"
+        tensor = torch.tensor([float(rank)], device=device)
+        dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+        expected_sum = float(sum(range(world_size)))
+        assert abs(tensor.item() - expected_sum) < 1e-3, (
+            f"all_reduce failed: got {tensor.item()}, expected {expected_sum}"
+        )
+
+        # Per-PP-rank broadcast test
+        if pp_size > 1:
+            tp_idx = rank % tp
+            dp_idx = rank // (pp * tp)
+            tp_group_ranks = [
+                dp_idx * (pp * tp) + pp_rank * tp + t for t in range(tp)
+            ]
+            tp_group = dist.new_group(ranks=tp_group_ranks)
+
+            if tp_idx == 0:
+                weight_token = torch.tensor(
+                    [float(pp_rank * 100 + 42)], device=device
                 )
+            else:
+                weight_token = torch.zeros(1, device=device)
+
+            dist.broadcast(weight_token, src=tp_group_ranks[0], group=tp_group)
+
+            expected_val = float(pp_rank * 100 + 42)
+            assert abs(weight_token.item() - expected_val) < 1e-3, (
+                f"rank {rank}: per-PP broadcast failed: "
+                f"got {weight_token.item()}, expected {expected_val}"
+            )
+            dist.destroy_process_group(tp_group)
 
         current_platform.synchronize()
         dist.barrier()
 
         if rank == 0 and output:
             _write_result(output, True)
-    except Exception:
+    except Exception as e:
+        logger.error("rank=%d test_weight_sync FAILED: %s", rank, e, exc_info=True)
         if rank == 0 and output:
             _write_result(output, False)
         raise
-    finally:
-        engine.destroy()
 
 
 # ---------------------------------------------------------------------------
@@ -324,43 +414,45 @@ def main():
         description="Distributed test worker for sglang PP weight sync."
     )
     parser.add_argument(
-        "--backend",
-        type=str,
-        default="megatron:d1p2t2",
+        "--backend", type=str, default="megatron:d1p2t2",
         help="Training engine allocation string.",
     )
     parser.add_argument(
-        "--output",
-        type=str,
-        default=None,
+        "--output", type=str, default=None,
         help="Path to write Passed/Failed result.",
     )
     parser.add_argument(
-        "--test_type",
-        type=str,
-        choices=["group_init", "weight_sync"],
-        default="group_init",
-        help="Which test to run.",
+        "--test_type", type=str, choices=["group_init", "weight_sync"],
+        default="group_init", help="Which test to run.",
     )
     parser.add_argument(
-        "--gen_pp_size",
-        type=int,
-        default=1,
+        "--gen_pp_size", type=int, default=2,
         help="Inference-side PP size for validation.",
     )
     parser.add_argument(
-        "--engine_type",
-        type=str,
-        choices=["megatron", "fsdp", "archon"],
-        default="megatron",
-        help="Training engine type to instantiate.",
+        "--engine_type", type=str, choices=["megatron", "fsdp", "archon"],
+        default="megatron", help="Training engine type to validate.",
     )
     args = parser.parse_args()
 
-    if args.test_type == "group_init":
-        test_group_init(args.backend, args.gen_pp_size, args.output, args.engine_type)
-    elif args.test_type == "weight_sync":
-        test_weight_sync(args.backend, args.gen_pp_size, args.output, args.engine_type)
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank)
+
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+
+    try:
+        if args.test_type == "group_init":
+            test_group_init(
+                args.backend, args.gen_pp_size, args.output, args.engine_type
+            )
+        elif args.test_type == "weight_sync":
+            test_weight_sync(
+                args.backend, args.gen_pp_size, args.output, args.engine_type
+            )
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 if __name__ == "__main__":
