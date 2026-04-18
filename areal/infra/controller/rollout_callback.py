@@ -178,3 +178,44 @@ class RolloutCallback:
         This is synchronous as it should complete before returning control.
         """
         self._post("/callback/continue_generation")
+
+    def update_weights_from_tensor(
+        self,
+        named_tensors: list | None = None,
+        tp_size: int = 1,
+        flush_cache: bool = True,
+        serialized_payload: dict | None = None,
+    ) -> None:
+        """Callback to controller to update EAGLE draft model MTP weights.
+
+        In single-controller mode, tensor data is pre-serialized by the
+        MegatronEngine before calling this method. The serialized payload
+        (base64-encoded CUDA IPC handles) travels through the HTTP callback
+        chain to the RolloutController, which delegates to the inference
+        engine workers.
+
+        This is synchronous (blocking) because the MTP tensor update
+        happens AFTER the main NCCL weight sync (within the pause window),
+        so there is no deadlock risk from blocking.
+
+        Parameters
+        ----------
+        named_tensors : list, optional
+            Ignored in callback mode — tensors must be pre-serialized.
+        tp_size : int
+            Ignored in callback mode — encoded in serialized_payload.
+        flush_cache : bool
+            Whether to flush KV cache after update.
+        serialized_payload : dict, optional
+            Pre-serialized payload for /update_weights_from_tensor endpoint.
+        """
+        if serialized_payload is None:
+            raise ValueError(
+                "RolloutCallback.update_weights_from_tensor requires "
+                "serialized_payload (pre-serialized tensor data). "
+                "Raw tensor mode is not supported through the callback chain."
+            )
+        payload = {
+            "serialized_payload": serialize_value(serialized_payload),
+        }
+        self._post("/callback/update_weights_tensor", payload)

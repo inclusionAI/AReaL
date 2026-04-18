@@ -582,6 +582,17 @@ class RolloutController:
             self._callback_loop.run_until_complete(self.continue_generation())
             return jsonify({"status": "ok"})
 
+        @app.route("/callback/update_weights_tensor", methods=["POST"])
+        def update_weights_tensor():
+            payload = request.get_json() or {}
+            serialized_payload = deserialize_value(
+                payload.get("serialized_payload")
+            )
+            self._callback_loop.run_until_complete(
+                self.update_weights_from_tensor(serialized_payload)
+            )
+            return jsonify({"status": "ok"})
+
         @app.route("/callback/rollout_complete", methods=["POST"])
         def rollout_complete():
             payload = request.get_json() or {}
@@ -1036,6 +1047,26 @@ class RolloutController:
 
     async def continue_generation(self):
         await self._collective_rpc_async("continue_generation")
+
+    async def update_weights_from_tensor(
+        self, serialized_payload: dict
+    ) -> None:
+        """Update EAGLE draft model MTP weights via tensor update path.
+
+        Receives pre-serialized tensor data from the training side and
+        delegates to inference engine workers which send the serialized
+        payload directly to the SGLang server's /update_weights_from_tensor
+        endpoint.
+
+        Parameters
+        ----------
+        serialized_payload : dict
+            Pre-serialized payload for /update_weights_from_tensor.
+        """
+        await self._collective_rpc_async(
+            "update_weights_from_tensor_serialized",
+            serialized_payload=serialized_payload,
+        )
 
     def set_version(self, version: int) -> None:
         with self._version_lock:

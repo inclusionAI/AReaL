@@ -1013,8 +1013,6 @@ class RemoteInfEngine(InferenceEngine):
         path, which routes to draft_worker (EAGLEWorker) when speculative
         decoding is enabled. EAGLEWorker updates both draft and target models.
 
-        Borrowed from slime/verl approach for MTP draft weight sync.
-
         Parameters
         ----------
         named_tensors : list
@@ -1026,6 +1024,30 @@ class RemoteInfEngine(InferenceEngine):
         """
         http_req = self.backend.build_tensor_weight_update_request(
             named_tensors, tp_size, flush_cache
+        )
+        self._run_request_on_all_servers(http_req)
+
+    def update_weights_from_tensor_serialized(
+        self,
+        serialized_payload: dict,
+    ):
+        """Update EAGLE draft model weights with pre-serialized tensor data.
+
+        Accepts a pre-serialized payload dict (with 'serialized_named_tensors'
+        and 'flush_cache' keys) and sends it directly to the SGLang server's
+        /update_weights_from_tensor endpoint. Used in single-controller mode
+        where tensor serialization happens on the training side.
+
+        Parameters
+        ----------
+        serialized_payload : dict
+            Pre-serialized payload for /update_weights_from_tensor endpoint.
+            Must contain 'serialized_named_tensors' (list of base64 strings)
+            and optionally 'flush_cache' (bool).
+        """
+        http_req = HttpRequest(
+            endpoint="/update_weights_from_tensor",
+            payload=serialized_payload,
         )
         self._run_request_on_all_servers(http_req)
 

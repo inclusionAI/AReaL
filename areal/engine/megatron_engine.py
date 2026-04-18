@@ -632,7 +632,7 @@ class MegatronEngine(TrainEngine):
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
             )
         self.rollout_engine = engine
-        # Check if engine supports tensor weight updates (MTP draft sync)
+        # Check if engine supports tensor weight updates (MTP draft sync).
         self._engine_supports_tensor_update = hasattr(
             engine, "update_weights_from_tensor"
         )
@@ -2337,6 +2337,72 @@ class MegatronEngine(TrainEngine):
 
             self.engine_lock.release()
 
+    def _serialize_mtp_tensors_for_update(
+        self,
+        mtp_hf_tensors: list[tuple[str, "torch.Tensor"]],
+        tp_size: int,
+    ) -> dict:
+        """Serialize MTP tensors for /update_weights_from_tensor transport.
+
+        Pre-serializes tensor data using SGLang's MultiprocessingSerializer
+        with CUDA IPC handles, then base64-encodes for JSON/HTTP transport.
+        This is required for single-controller mode where the engine proxy
+        (RolloutCallback) communicates via HTTP.
+
+        Args:
+            mtp_hf_tensors: List of (name, tensor) pairs in HF format.
+            tp_size: Tensor parallel size of inference engine.
+
+        Returns:
+            Dict with 'serialized_named_tensors' and 'flush_cache' keys,
+            ready for /update_weights_from_tensor endpoint.
+        """
+        try:
+            from sglang.srt.utils import MultiprocessingSerializer
+            from sglang.srt.utils.patch_torch import monkey_patch_torch_reductions
+        except ImportError:
+            raise ImportError(
+                "SGLang >= 0.5.9 is required for tensor weight updates. "
+                "Install sglang to use MTP draft weight sync."
+            )
+        try:
+            from sglang.srt.model_executor.model_runner import LocalSerializedTensor
+        except ImportError:
+            raise ImportError(
+                "Cannot import LocalSerializedTensor from SGLang. "
+                "Ensure sglang >= 0.5.9 is installed."
+            )
+
+        monkey_patch_torch_reductions()
+
+        # Inner serialization: each tensor → CUDA IPC handle bytes
+        serialized_pairs = [
+            (name, MultiprocessingSerializer.serialize(tensor.detach()))
+            for name, tensor in mtp_hf_tensors
+        ]
+
+        # Wrap in LocalSerializedTensor: one entry per TP rank.
+        # All TP ranks get the same data; SGLang load_weights() handles slicing.
+        per_rank_named_tensors = [
+            (name, LocalSerializedTensor(values=[data] * tp_size))
+            for name, data in serialized_pairs
+        ]
+
+        # Outer serialization + base64 for JSON transport
+        import base64
+
+        serialized_named_tensors = [
+            base64.b64encode(
+                MultiprocessingSerializer.serialize(per_rank_named_tensors)
+            ).decode("utf-8")
+            for _ in range(tp_size)
+        ]
+
+        return {
+            "serialized_named_tensors": serialized_named_tensors,
+            "flush_cache": True,
+        }
+
     @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:
         DeviceRuntimeInfo.get_current().log("_update_weights_from_distributed start")
@@ -2450,9 +2516,15 @@ class MegatronEngine(TrainEngine):
                     f"via /update_weights_from_tensor "
                     f"(tp_size={tp_size}, version={meta.version})"
                 )
+                # Serialize tensors on the training side. This is required
+                # for single-controller mode where the engine is a
+                # RolloutCallback proxy — tensor data must be serialized
+                # before it can travel through the HTTP callback chain.
+                serialized_payload = self._serialize_mtp_tensors_for_update(
+                    mtp_hf_tensors, tp_size
+                )
                 self.rollout_engine.update_weights_from_tensor(
-                    named_tensors=mtp_hf_tensors,
-                    tp_size=tp_size,
+                    serialized_payload=serialized_payload,
                     flush_cache=True,
                 )
                 self.logger.info(
@@ -2463,7 +2535,8 @@ class MegatronEngine(TrainEngine):
                 self.logger.error(
                     f"[MTPTrain] Failed to update EAGLE draft model "
                     f"MTP weights via tensor update: {e}. "
-                    f"Draft model spec_accept_rate will degrade!"
+                    f"Draft model spec_accept_rate will degrade!",
+                    exc_info=True,
                 )
         elif (
             self.enable_mtp_training

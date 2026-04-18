@@ -425,13 +425,44 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def update_weights_from_tensor(
         self,
-        named_tensors: list[tuple[str, torch.Tensor]],
+        named_tensors: list[tuple[str, torch.Tensor]] | None = None,
         tp_size: int = 1,
         flush_cache: bool = True,
+        serialized_payload: dict | None = None,
     ):
-        """Update EAGLE draft model weights via tensor update path."""
-        return self._engine.update_weights_from_tensor(
-            named_tensors, tp_size, flush_cache
+        """Update EAGLE draft model weights via tensor update path.
+
+        Supports two modes:
+        1. Raw tensors: pass named_tensors + tp_size (original path)
+        2. Pre-serialized: pass serialized_payload dict (callback chain path)
+
+        In single-controller mode, MegatronEngine pre-serializes the tensors
+        and passes serialized_payload to avoid GPU tensor serialization issues
+        when crossing process boundaries via RolloutCallback.
+        """
+        if serialized_payload is not None:
+            # Pre-serialized path: send directly to SGLang server
+            return self._engine.update_weights_from_tensor_serialized(
+                serialized_payload
+            )
+        else:
+            # Raw tensor path: build request from tensors
+            return self._engine.update_weights_from_tensor(
+                named_tensors, tp_size, flush_cache
+            )
+
+    def update_weights_from_tensor_serialized(
+        self,
+        serialized_payload: dict,
+    ):
+        """Update EAGLE draft model weights with pre-serialized tensor data.
+
+        Used in single-controller mode where the RolloutController
+        delegates to this method after receiving serialized data from
+        the training side via the callback chain.
+        """
+        return self._engine.update_weights_from_tensor_serialized(
+            serialized_payload
         )
 
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
