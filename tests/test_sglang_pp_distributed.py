@@ -110,6 +110,8 @@ async def run_example(
         while True:
             try:
                 line = await asyncio.wait_for(process.stdout.readline(), timeout=0.1)
+                if not line:
+                    break
                 line = line.decode().rstrip()
                 if line:
                     logger.info(f"[Example Output] {line}")
