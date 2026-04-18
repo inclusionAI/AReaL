@@ -1,3 +1,4 @@
+import logging
 import os
 import subprocess
 import sys
@@ -32,6 +33,8 @@ from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
 from areal.utils import perf_tracer, stats_tracker
 from areal.utils.network import format_host_for_url
+
+logger = logging.getLogger(__name__)
 
 
 class SGLangBackend:
@@ -95,25 +98,29 @@ class SGLangBackend:
         stop_message = finish_reason.get("message", "")
 
         # Extract routed_experts information if available.
-        # sglang v0.5.9 with skip_tokenizer_init=True bypasses the
-        # detokenizer where base64 encoding normally happens, so
-        # routed_experts may arrive as a raw nested list/dict instead
-        # of a base64-encoded string.  Handle both formats.
+        # Requires skip_tokenizer_init=False so that sglang v0.5.9 routes
+        # through the DetokenizerManager which base64-encodes the tensor.
+        # When skip_tokenizer_init=True on v0.5.9 the raw tensor is lost
+        # during JSON serialization (becomes {}).
         routed_experts = meta_info.get("routed_experts", None)
         if routed_experts is not None:
-            num_sgl_token = (
-                meta_info["prompt_tokens"] + meta_info["completion_tokens"] - 1
-            )
-            if isinstance(routed_experts, str):
-                # Normal path: base64-encoded int32 bytes
+            if not isinstance(routed_experts, str):
+                logger.warning(
+                    "[R3] routed_experts is %s instead of base64 str "
+                    "(skip_tokenizer_init must be False for sglang<=0.5.9); "
+                    "discarding.",
+                    type(routed_experts).__name__,
+                )
+                routed_experts = None
+            else:
+                num_sgl_token = (
+                    meta_info["prompt_tokens"]
+                    + meta_info["completion_tokens"]
+                    - 1
+                )
                 routed_experts = np.frombuffer(
                     pybase64.b64decode(routed_experts.encode("utf-8")),
                     dtype=np.int32,
-                ).reshape(num_sgl_token, -1)
-            else:
-                # skip_tokenizer_init=True on sglang<=0.5.9: raw list/dict
-                routed_experts = np.asarray(
-                    routed_experts, dtype=np.int32
                 ).reshape(num_sgl_token, -1)
 
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):
