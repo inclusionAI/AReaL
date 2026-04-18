@@ -678,9 +678,18 @@ class VerlToolAgentLoop(AgentLoopBase):
                     obs_token_ids = self.mtrl_sep_prefix_ids + obs_token_ids + self.mtrl_sep_suffix_ids
                 # update stats
                 stats_dict["obs_lengths"].append(len(obs_token_ids))
-                obs_hash_val = hashlib.md5(obs_text.encode("utf-8")).hexdigest()
+                hash_input = obs_text
+                if tool_results.get('image'):
+                    img_data = tool_results['image']
+                    if isinstance(img_data, list):
+                        img_data = img_data[0] if img_data else ""
+                    if isinstance(img_data, str) and len(img_data) > 100:
+                        hash_input += img_data[:1024]
+                    elif isinstance(img_data, bytes):
+                        hash_input += img_data[:1024].hex()
+                obs_hash_val = hashlib.md5(hash_input.encode("utf-8", errors="replace")).hexdigest()
                 stats_dict["obs_hashes"].append(obs_hash_val)
-                stats_dict["obs_texts"].append(obs_text[:2000])
+                stats_dict["obs_texts"].append(obs_text[:4096])
                 if 'reward' in tool_results and tool_results['reward'] is not None:
                     stats_dict["rewards"].append(tool_results['reward'] if 'reward' in tool_results else 0.0)
                 stats_dict["valid_action"] += tool_results['valid_action'] if 'valid_action' in tool_results else 0

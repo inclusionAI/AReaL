@@ -122,35 +122,31 @@ def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.1, hi: f
     return (hi - ndtw) / (hi - lo)
 
 
-def _compute_repetition_penalty(text: str) -> float:
-    """R_rep ∈ {-3.0, -2.0, -1.5, 0.0} — penalise contiguous repetition."""
+def _compute_repetition_penalty(text: str, num_turns: int = 2) -> float:
     if not text or len(text) < 20:
         return 0.0
 
-    # Character-level: same char repeated 50+ times (e.g. "aaa...a")
+    num_turns = max(num_turns, 2)
+
     if re.search(r"(.)\1{49,}", text):
         return -3.0
 
-    # Token/word-level: same word repeated 20+ times contiguously
     if re.search(r"\b(\w+)(?:\s+\1){19,}\b", text):
         return -3.0
 
-    # Phrase-level: 4+ word phrase repeated 10+ times
     if re.search(r"(\b\w+(?:\s+\w+){3,})(?:\s+\1){9,}", text):
         return -2.0
 
-    # Sentence-level: identical sentence repeated 5+ times
     sentences = re.split(r"[.!?\n]+", text)
     sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
     if sentences:
         counts = Counter(sentences)
         max_count = counts.most_common(1)[0][1] if counts else 0
         if max_count >= 10:
-            return -1.5
+            return -1.5 * 2 / num_turns
         if max_count >= 7:
-            return -1.0
+            return -1.0 * 2 / num_turns
 
-    # Moderate: same word repeated 10+ times
     if re.search(r"\b(\w+)(?:\s+\1){9,}\b", text):
         return -1.5
 
@@ -287,8 +283,10 @@ class GeoVisionQARewardManager:
             ground_truth = data_item.non_tensor_batch["reward_model"]["ground_truth"]
             data_source = data_item.non_tensor_batch.get(self.reward_fn_key, "unknown")
 
-            # R_rep: repetition penalty
-            r_rep = _compute_repetition_penalty(response_str)
+            num_turns = data_item.non_tensor_batch.get("__num_turns__", 2)
+            if hasattr(num_turns, '__len__'):
+                num_turns = int(num_turns[0]) if len(num_turns) > 0 else 2
+            r_rep = _compute_repetition_penalty(response_str, int(num_turns))
 
             # R_format: format compliance
             r_format = _compute_format_reward(response_str)

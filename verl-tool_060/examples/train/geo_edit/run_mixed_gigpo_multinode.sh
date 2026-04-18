@@ -154,6 +154,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.05 \
+    +actor_rollout_ref.actor.optim.lr_scheduler_type=cosine \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.actor.checkpoint.save_contents=['model','optimizer','extra','hf_model'] \
