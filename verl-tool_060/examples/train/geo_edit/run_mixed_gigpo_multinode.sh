@@ -19,7 +19,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/ba
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-rl-4node_0415v3"
+run_name="mixed-gigpo-4node_0418v1"
 rl_alg=grpo
 
 # ---- Cluster topology ----
@@ -136,7 +136,10 @@ ray.shutdown()
 #       --runtime-env-json='{"env_vars":{"JUDGE_API_KEY":"xxx","WANDB_API_KEY":"xxx"}}'
 
 PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
-    algorithm.adv_estimator=$rl_alg \
+    algorithm.adv_estimator=gigpo \
+    +algorithm.gigpo_omega=1.0 \
+    +algorithm.gigpo_gamma=0.99 \
+    +algorithm.gigpo_sim_threshold=0.9 \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
@@ -213,7 +216,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     critic.ulysses_sequence_parallel_size=$ulysses_sequence_parallel_size \
     algorithm.kl_ctrl.kl_coef=$kl_coef \
     trainer.logger=['console','wandb'] \
-    trainer.project_name=mixed_rl \
+    trainer.project_name=mixed_gigpo \
     trainer.experiment_name=$run_name \
     trainer.val_before_train=False \
     trainer.default_hdfs_dir=null \

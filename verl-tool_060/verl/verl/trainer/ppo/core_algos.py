@@ -366,19 +366,23 @@ def compute_gigpo_outcome_advantage(
     norm_adv_by_std_in_grpo: bool = True,
     config: Optional[AlgoConfig] = None,
     obs_hashes: Optional[np.ndarray] = None,
+    obs_texts: Optional[np.ndarray] = None,
     turn_boundaries: Optional[np.ndarray] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """GIGPO: two-level advantage = episode-level + omega * step-level.
 
     Args:
         obs_hashes: array of shape (bs,) where each element is a list of obs hash strings per turn.
+        obs_texts: array of shape (bs,) where each element is a list of obs text strings per turn.
         turn_boundaries: array of shape (bs,) where each element is a list of (start, end) token indices per turn.
     """
     gigpo_omega = 1.0
     gigpo_gamma = 0.99
+    gigpo_sim_threshold = 0.9
     if config is not None:
         gigpo_omega = config.get("gigpo_omega", 1.0)
         gigpo_gamma = config.get("gigpo_gamma", 0.99)
+        gigpo_sim_threshold = config.get("gigpo_sim_threshold", 0.9)
 
     scores = token_level_rewards.sum(dim=-1)  # (bs,)
     bs, seq_len = token_level_rewards.shape
@@ -409,31 +413,28 @@ def compute_gigpo_outcome_advantage(
             else:
                 episode_advantages[i] = scores[i] - id2mean[index[i]]
 
-        # === Step-level advantage via obs_hash grouping ===
+        # === Step-level advantage via similarity-based grouping ===
         step_advantages = torch.zeros(bs, seq_len, device=token_level_rewards.device)
 
         if obs_hashes is not None and turn_boundaries is not None:
-            # Build per-turn discounted returns for each trajectory
-            # turn_boundaries[i] = [(start0, end0), (start1, end1), ...]
-            # obs_hashes[i] = [hash0, hash1, ...]
+            from difflib import SequenceMatcher
 
-            # Collect step-level returns grouped by obs_hash
-            hash2returns = defaultdict(list)  # obs_hash -> [(traj_idx, turn_idx, discounted_return)]
+            use_similarity = obs_texts is not None and gigpo_sim_threshold < 1.0
 
+            # Phase 1: collect all (traj_idx, turn_idx, hash, text, return, bounds)
+            all_entries = []
             for i in range(bs):
                 hashes_i = obs_hashes[i] if obs_hashes[i] is not None else []
+                texts_i = (obs_texts[i] if obs_texts is not None and obs_texts[i] is not None else []) if use_similarity else []
                 bounds_i = turn_boundaries[i] if turn_boundaries[i] is not None else []
 
                 if not hashes_i or not bounds_i:
                     continue
 
-                # Compute per-turn rewards
                 turn_rewards = []
                 for start, end in bounds_i:
-                    turn_reward = token_level_rewards[i, start:end].sum().item()
-                    turn_rewards.append(turn_reward)
+                    turn_rewards.append(token_level_rewards[i, start:end].sum().item())
 
-                # Compute discounted returns from each turn
                 n_turns = len(turn_rewards)
                 discounted_returns = [0.0] * n_turns
                 running_return = 0.0
@@ -441,20 +442,55 @@ def compute_gigpo_outcome_advantage(
                     running_return = turn_rewards[t] + gigpo_gamma * running_return
                     discounted_returns[t] = running_return
 
+                prompt_idx = index[i]
                 for t, obs_hash in enumerate(hashes_i):
                     if t < len(discounted_returns):
-                        hash2returns[obs_hash].append((i, t, discounted_returns[t], bounds_i[t]))
+                        text = texts_i[t] if t < len(texts_i) else ""
+                        group_hash = f"{prompt_idx}_{obs_hash}"
+                        all_entries.append((i, t, group_hash, text, discounted_returns[t], bounds_i[t]))
 
-            # Compute step-level advantage within each obs_hash group
-            for obs_hash, entries in hash2returns.items():
-                if len(entries) <= 1:
+            # Phase 2: group by exact hash first
+            hash2group = defaultdict(list)
+            for entry in all_entries:
+                hash2group[entry[2]].append(entry)
+
+            # Phase 3: merge groups by LCS similarity if enabled
+            if use_similarity and len(hash2group) > 1:
+                group_keys = list(hash2group.keys())
+                representatives = {k: hash2group[k][0][3] for k in group_keys}
+                merged = {}
+                canonical_map = {}
+
+                for k in group_keys:
+                    matched = False
+                    for canon_k in merged:
+                        rep_a = representatives[canon_k]
+                        rep_b = representatives[k]
+                        if rep_a and rep_b:
+                            sim = SequenceMatcher(None, rep_a, rep_b).ratio()
+                            if sim >= gigpo_sim_threshold:
+                                merged[canon_k].extend(hash2group[k])
+                                canonical_map[k] = canon_k
+                                matched = True
+                                break
+                    if not matched:
+                        merged[k] = list(hash2group[k])
+                        canonical_map[k] = k
+
+                final_groups = merged
+            else:
+                final_groups = hash2group
+
+            # Phase 4: compute step-level advantage within each group
+            for group_entries in final_groups.values():
+                if len(group_entries) <= 1:
                     continue
 
-                returns_in_group = torch.tensor([e[2] for e in entries], device=token_level_rewards.device)
+                returns_in_group = torch.tensor([e[4] for e in group_entries], device=token_level_rewards.device)
                 group_mean = returns_in_group.mean()
                 group_std = returns_in_group.std()
 
-                for traj_idx, turn_idx, ret, (start, end) in entries:
+                for traj_idx, turn_idx, _, _, ret, (start, end) in group_entries:
                     if norm_adv_by_std_in_grpo:
                         step_adv = (ret - group_mean) / (group_std + epsilon)
                     else:
@@ -464,7 +500,18 @@ def compute_gigpo_outcome_advantage(
         # Combine: A = A_episode + omega * A_step
         combined = episode_advantages.unsqueeze(-1) * response_mask + gigpo_omega * step_advantages
 
-    return combined, combined
+        n_groups_with_step_adv = sum(1 for g in final_groups.values() if len(g) > 1)
+        n_entries_with_step_adv = sum(len(g) for g in final_groups.values() if len(g) > 1)
+        step_adv_nonzero = (step_advantages != 0).any(dim=-1).sum().item()
+        gigpo_metrics = {
+            "gigpo/groups_total": len(final_groups),
+            "gigpo/groups_with_step_adv": n_groups_with_step_adv,
+            "gigpo/trajs_with_step_adv": int(step_adv_nonzero),
+            "gigpo/trajs_without_step_adv": bs - int(step_adv_nonzero),
+            "gigpo/step_adv_ratio": step_adv_nonzero / bs if bs > 0 else 0.0,
+        }
+
+    return combined, combined, gigpo_metrics if obs_hashes is not None and turn_boundaries is not None else {}
 
 
 @register_adv_est(AdvantageEstimator.GRPO_PASSK)  # or simply: @register_adv_est("grpo_passk")

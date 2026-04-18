@@ -473,6 +473,7 @@ class VerlToolAgentLoop(AgentLoopBase):
             "action_logps": [],
             "obs_lengths": [],
             "obs_hashes": [],
+            "obs_texts": [],
             "turn_boundaries": [],
             "rewards": [],
             "tool_interact_info": [],
@@ -679,6 +680,7 @@ class VerlToolAgentLoop(AgentLoopBase):
                 stats_dict["obs_lengths"].append(len(obs_token_ids))
                 obs_hash_val = hashlib.md5(obs_text.encode("utf-8")).hexdigest()
                 stats_dict["obs_hashes"].append(obs_hash_val)
+                stats_dict["obs_texts"].append(obs_text[:2000])
                 if 'reward' in tool_results and tool_results['reward'] is not None:
                     stats_dict["rewards"].append(tool_results['reward'] if 'reward' in tool_results else 0.0)
                 stats_dict["valid_action"] += tool_results['valid_action'] if 'valid_action' in tool_results else 0
@@ -857,6 +859,7 @@ class VerlToolAgentLoop(AgentLoopBase):
                 "traj_stop_reason": traj_stop_reason,
                 "verl_tool_metrics": verl_tool_metrics,
                 "obs_hashes": stats_dict.get("obs_hashes", []),
+                "obs_texts": stats_dict.get("obs_texts", []),
                 "turn_boundaries": stats_dict.get("turn_boundaries", []),
             },
         )

@@ -265,11 +265,18 @@ def compute_advantage(
         if adv_estimator == "gigpo" or adv_estimator == AdvantageEstimator.GIGPO:
             if "obs_hashes" in data.non_tensor_batch:
                 adv_kwargs["obs_hashes"] = data.non_tensor_batch["obs_hashes"]
+            if "obs_texts" in data.non_tensor_batch:
+                adv_kwargs["obs_texts"] = data.non_tensor_batch["obs_texts"]
             if "turn_boundaries" in data.non_tensor_batch:
                 adv_kwargs["turn_boundaries"] = data.non_tensor_batch["turn_boundaries"]
 
         # calculate advantage estimator
-        advantages, returns = adv_estimator_fn(**adv_kwargs)
+        result = adv_estimator_fn(**adv_kwargs)
+        if len(result) == 3:
+            advantages, returns, gigpo_metrics = result
+            data.non_tensor_batch["gigpo_metrics"] = gigpo_metrics
+        else:
+            advantages, returns = result
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
     return data
@@ -1330,6 +1337,8 @@ class RayPPOTrainer:
                 # collect metrics
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
+                if "gigpo_metrics" in batch.non_tensor_batch:
+                    metrics.update(batch.non_tensor_batch["gigpo_metrics"])
                 # TODO: implement actual tflpo and theoretical tflpo
                 n_gpus = self.resource_pool_manager.get_n_gpus()
                 metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
