@@ -20,8 +20,8 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/ba
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
 run_name="mixed-gigpo-4node_0418v1"
-rl_alg=grpo
-
+rl_alg=gigpo
+ 
 # ---- Cluster topology ----
 n_gpus_per_node=8
 n_nodes=4
@@ -136,9 +136,9 @@ ray.shutdown()
 #       --runtime-env-json='{"env_vars":{"JUDGE_API_KEY":"xxx","WANDB_API_KEY":"xxx"}}'
 
 PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
-    algorithm.adv_estimator=gigpo \
-    +algorithm.gigpo_omega=1.0 \
-    +algorithm.gigpo_gamma=0.99 \
+    algorithm.adv_estimator=$rl_alg  \
+    algorithm.gigpo_omega=1.0 \
+    algorithm.gigpo_gamma=0.99 \
     +algorithm.gigpo_sim_threshold=0.9 \
     data.train_files=$train_data \
     data.val_files=$val_data \
@@ -154,7 +154,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.05 \
-    +actor_rollout_ref.actor.optim.lr_scheduler_type=cosine \
+    actor_rollout_ref.actor.optim.lr_scheduler_type=cosine \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.actor.checkpoint.save_contents=['model','optimizer','extra','hf_model'] \
