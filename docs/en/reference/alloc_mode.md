@@ -30,17 +30,18 @@ rollout:
 actor:
   backend: "fsdp:d8"
 
-# Critic engine (falls back to actor.backend if empty)
+# Critic engine (use YAML interpolation to share actor's backend)
 critic:
-  backend: ""
+  backend: "${actor.backend}"
 
-# Ref engine (falls back to actor.backend if empty)
+# Ref engine (use YAML interpolation to share actor's backend)
 ref:
-  backend: ""
+  backend: "${actor.backend}"
 ```
 
-When `critic.backend` or `ref.backend` is empty, it automatically inherits from
-`actor.backend`.
+The `backend` field is required for all engines. To reuse the actor's backend
+configuration, use OmegaConf interpolation `${actor.backend}` as shown above.
+There is no implicit fallback—an empty or missing `backend` value will raise an error.
 
 > **Note:** The top-level `allocation_mode` config field is deprecated and only retained
 > for backward compatibility with legacy SPMD launchers (local/ray/slurm). It is ignored
