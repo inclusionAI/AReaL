@@ -95,6 +95,9 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
 
             seeding.set_random_seed(body.seed, key=f"data_worker_{config.rank}")
 
+            # Workers must load real datasets, not RDataset proxies.
+            # Call _get_custom_dataset directly to bypass the is_single_controller()
+            # gate in get_custom_dataset() that would create an RDataset.
             _dataset = _get_custom_dataset(
                 path=body.dataset_path,
                 type=body.dataset_type,

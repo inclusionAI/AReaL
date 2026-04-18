@@ -85,6 +85,7 @@ class DataController:
                 "DataServiceConfig.scheduling_spec must be set to launch data service workers"
             )
 
+        # Use sys.executable as the interpreter; don't mutate cfg.scheduling_spec
         cmd = spec.cmd
         if not cmd:
             raise ValueError(
@@ -121,6 +122,7 @@ class DataController:
 
         try:
             async with aiohttp.ClientSession(trust_env=False) as session:
+                # Wave 1: Fork all DataWorkers + Router in parallel
                 worker_tasks = [
                     self._async_fork_on_guard(
                         session,
@@ -166,6 +168,7 @@ class DataController:
                 logger.info("DataWorkers: %s", self._worker_addrs)
                 logger.info("Router: %s", self._router_addr)
 
+                # Wave 2: Fork Gateway + Register workers with Router
                 async def _register_workers() -> None:
                     for worker_addr in self._worker_addrs:
                         async with session.post(
@@ -201,10 +204,12 @@ class DataController:
                 self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
                 logger.info("Gateway: %s", self._gateway_addr)
         except Exception:
+            # Rollback: kill forked services and delete scheduler workers
             logger.error(
                 "DataController initialization failed, rolling back",
                 exc_info=True,
             )
+            # Kill forked services concurrently
             if self._forked_services:
                 await self._async_kill_forked_services(
                     list(reversed(self._forked_services))

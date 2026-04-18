@@ -73,6 +73,7 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
     app = FastAPI(title="AReaL Data Gateway")
     registry = DatasetKeyRegistry(config.admin_api_key)
 
+    # Helper: resolve dataset key to dataset_id, raise if invalid
     def _resolve_dataset_key(token: str) -> str:
         dataset_id = registry.resolve(token)
         if dataset_id is None:
@@ -93,10 +94,12 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
                 ),
             )
 
+    # ===== Health =====
     @app.get("/health")
     async def health():
         return {"status": "ok", "router_addr": config.router_addr}
 
+    # ===== Admin: Register Dataset =====
     @app.post("/v1/datasets/register")
     async def register_dataset(request: Request):
         require_admin_key(request, config.admin_api_key)
@@ -167,6 +170,7 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
             "num_workers": len(worker_addrs),
         }
 
+    # ===== Admin: Unregister Dataset =====
     @app.post("/v1/datasets/unregister")
     async def unregister_dataset(request: Request):
         require_admin_key(request, config.admin_api_key)
@@ -190,6 +194,7 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
         registry.revoke(dataset_id)
         return {"status": "ok"}
 
+    # ===== Admin: Shutdown =====
     @app.post("/v1/shutdown")
     async def shutdown(request: Request):
         require_admin_key(request, config.admin_api_key)
@@ -212,6 +217,7 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
             logger.warning("Error during shutdown broadcast: %s", exc)
         return {"status": "ok"}
 
+    # ===== Admin: Workers =====
     @app.get("/v1/workers")
     async def list_workers(request: Request):
         require_admin_key(request, config.admin_api_key)
@@ -222,6 +228,7 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
         )
         return {"workers": [{"addr": addr} for addr in worker_addrs]}
 
+    # ===== Consumer: Fetch Samples by Index =====
     @app.post("/v1/samples/fetch")
     async def fetch_samples(request: Request):
         token = extract_bearer_token(request)
@@ -249,6 +256,7 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
                     )
                 return await resp.json()
 
+    # ===== Consumer: Epoch Advance =====
     @app.post("/v1/epochs/advance")
     async def epoch_advance(request: Request):
         token = extract_bearer_token(request)
@@ -275,6 +283,7 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
             "workers_reset": sum(1 for result in results if result["status"] == 200),
         }
 
+    # ===== Consumer: State Save =====
     @app.post("/v1/state/save")
     async def state_save(request: Request):
         token = extract_bearer_token(request)
@@ -296,6 +305,7 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
         _check_broadcast_results(results, "state_save")
         return {"status": "ok", "path": path}
 
+    # ===== Consumer: State Load =====
     @app.post("/v1/state/load")
     async def state_load(request: Request):
         token = extract_bearer_token(request)
@@ -317,6 +327,7 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
         _check_broadcast_results(results, "state_load")
         return {"status": "ok"}
 
+    # ===== Consumer: Status =====
     @app.get("/v1/status")
     async def status(request: Request):
         token = extract_bearer_token(request)
