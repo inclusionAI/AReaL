@@ -27,6 +27,7 @@ def extract_answer(text: str) -> str:
 
 def _normalize_answer(text: str) -> str:
     """Strip trailing punctuation and whitespace for answer comparison."""
+    text = re.sub(r"\\boxed\{(.*?)\}", r"\1", text)
     return text.strip().lower().rstrip(".")
 
 
@@ -56,6 +57,7 @@ def _compute_reasonmap_plus_score(prediction: str, ground_truth, qtype: str = ""
 
     gt_str = str(ground_truth).strip()
     pred = prediction.strip().lower()
+    pred = re.sub(r"\\boxed\{(.*?)\}", r"\1", pred)
 
     if qtype.startswith("TorF"):
         try:

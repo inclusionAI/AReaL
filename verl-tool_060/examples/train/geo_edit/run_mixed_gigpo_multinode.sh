@@ -88,6 +88,8 @@ test_freq=10
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=WARN
 export WANDB_DIR=$WORKSPACE/logs/$run_name
+export WANDB_RESUME=allow
+export WANDB_RUN_ID=$run_name
 unset ROCR_VISIBLE_DEVICES
 mkdir -p $WORKSPACE/logs/$run_name
 
@@ -217,7 +219,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     critic.ulysses_sequence_parallel_size=$ulysses_sequence_parallel_size \
     algorithm.kl_ctrl.kl_coef=$kl_coef \
     trainer.logger=['console','wandb'] \
-    trainer.project_name=mixed_gigpo \
+    trainer.project_name=mixed_rl \
     trainer.experiment_name=$run_name \
     trainer.val_before_train=False \
     trainer.default_hdfs_dir=null \
