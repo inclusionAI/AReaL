@@ -395,8 +395,7 @@ def setup_per_microbatch_replay_forward(
     )
     routed_experts = routed_experts.to(torch.int32)
     set_router_replay_data(routed_experts, attention_mask, tf_config, vp_rank)
-    RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
-    logger.debug("[R3] Forward replay mode set for micro-batch.")
+    logger.debug("[R3] Replay data distributed to router instances for micro-batch.")
 
 
 def setup_per_microbatch_replay_backward() -> None:

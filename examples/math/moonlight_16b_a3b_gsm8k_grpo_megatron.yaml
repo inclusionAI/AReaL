@@ -136,6 +136,7 @@ sglang:
   # during inference. This is auto-set by rl_trainer when
   # rollout.return_routed_experts=true, but explicitly declared here for clarity.
   enable_return_routed_experts: true
+  chunked_prefill_size: 2048
 
 vllm:
   model: ${actor.path}

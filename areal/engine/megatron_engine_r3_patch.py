@@ -383,8 +383,9 @@ def _r3_forward_backward_batch(
     ``setup_per_microbatch_replay_forward``, aligns the seq dimension
     to match the attention_mask's seq dimension.
     """
-    from areal.engine.router_replay_patch import RouterReplay
+    from areal.engine.router_replay_patch import RouterReplay, RouterReplayAction
     from areal.engine.router_replay_utils import (
+        RouterReplayHelper,
         clear_router_replay,
         setup_per_microbatch_replay_forward,
     )
@@ -458,20 +459,13 @@ def _r3_forward_backward_batch(
     model_config = self.tf_config
 
     # ------------------------------------------------------------------
-    # 2b. Set PP size on RouterReplay for backward recompute remapping.
-    #     Reset call counters so each forward_backward_batch starts clean.
+    # 2b. Set initial replay action to REPLAY_FORWARD.
+    #     The forward_step wrapper will toggle between REPLAY_FORWARD
+    #     and REPLAY_BACKWARD for each micro-batch.
     # ------------------------------------------------------------------
-    try:
-        from megatron.core import parallel_state as mpu
-        pp_size = mpu.get_pipeline_model_parallel_world_size()
-    except Exception:
-        pp_size = getattr(model_config, "pipeline_model_parallel_size", 1)
-    RouterReplay.pp_size = pp_size
-    RouterReplay.reset_all_call_counters()
+    RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
     logger.debug(
-        "[R3] Set RouterReplay.pp_size=%d, reset all call counters "
-        "(%d instances).",
-        pp_size,
+        "[R3] Set initial REPLAY_FORWARD action on %d router instances.",
         len(RouterReplay.router_instances),
     )
 
@@ -479,17 +473,20 @@ def _r3_forward_backward_batch(
     # 3. Wrap the MicroBatchList iterator on the INSTANCE level
     #
     #    The iterator injects R3 setup before each micro-batch's forward.
-    #    The call-counter mechanism in RouterReplay handles backward
-    #    recompute correctly for both PP=1 and PP>1 scenarios:
+    #    The iterator wrapper also handles
+    #    the REPLAY_FORWARD / REPLAY_BACKWARD toggle per micro-batch:
     #
-    #    - PP=1 (forward_backward_no_pipelining): all forwards first,
-    #      then all backwards in REVERSE order. The call counter tracks
-    #      which MB's data to use: forward calls [0..N-1], backward
-    #      recompute calls [N..2N-1] remapped as [N-1..0].
+    #    - At the START of each forward_step (when next() is called):
+    #      1. If action is REPLAY_BACKWARD, switch to REPLAY_FORWARD
+    #         (this handles backward recompute -> next forward transition)
+    #      2. Set the replay data for this micro-batch via
+    #         setup_per_microbatch_replay_forward()
     #
-    #    - PP>1 (1F1B): interleaved forward-backward. Each MB's backward
-    #      follows its forward closely. The call counter handles this
-    #      with same-order remapping.
+    #    - At the END of each forward_step (via model forward hook):
+    #      switch to REPLAY_BACKWARD so that the subsequent backward
+    #      recompute (activation checkpointing) uses
+    #      replay_backward_list.pop(0).
+    #
     # ------------------------------------------------------------------
     engine_ref = self
 
@@ -512,6 +509,18 @@ def _r3_forward_backward_batch(
                 if idx < len(engine_ref._r3_per_mb_experts)
                 else None
             )
+
+            # When backward recompute (activation checkpointing) finishes
+            # and the next forward starts, the action is REPLAY_BACKWARD.
+            # Switch it back to REPLAY_FORWARD before setting new data.
+            if RouterReplayHelper.is_replay_backward_action(model_config):
+                router_list = RouterReplayHelper.get_micro_batch_router_list(
+                    model_config
+                )
+                for router in router_list:
+                    router.set_router_replay_action(
+                        RouterReplayAction.REPLAY_FORWARD
+                    )
 
             if re is not None:
                 # Problem 5 fix: reconstruct attention_mask from cu_seqlens
@@ -560,26 +569,53 @@ def _r3_forward_backward_batch(
 
     mb_list.__class__.__iter__ = _r3_iter
 
+    # ------------------------------------------------------------------
+    # 4. Register a forward hook on each model chunk for the
+    #    REPLAY_FORWARD -> REPLAY_BACKWARD toggle at the END of each
+    #    forward_step.
+    # ------------------------------------------------------------------
+    hook_handles = []
+
+    def _r3_post_forward_hook(module, input, output):
+        """Switch from REPLAY_FORWARD to REPLAY_BACKWARD after model forward."""
+        if RouterReplayHelper.is_replay_forward_action(model_config):
+            router_list = RouterReplayHelper.get_micro_batch_router_list(
+                model_config
+            )
+            for router in router_list:
+                router.set_router_replay_action(
+                    RouterReplayAction.REPLAY_BACKWARD
+                )
+
+    for model_chunk in self.model:
+        handle = model_chunk.register_forward_hook(_r3_post_forward_hook)
+        hook_handles.append(handle)
+
+    logger.debug(
+        "[R3] Registered forward hooks on %d model chunks for "
+        "FORWARD->BACKWARD toggle.",
+        len(hook_handles),
+    )
+
     try:
         # Megatron's forward_backward_func (e.g. 1F1B schedule) internally
         # interleaves forward and backward for each micro-batch.
         #
-        # The call-counter mechanism in RouterReplay handles backward
-        # recompute (activation checkpointing) correctly:
-        # - Each RouterReplay instance tracks how many times its routing
-        #   function is called via routing_call_count.
-        # - Forward calls (call_idx < N) use routing_data_list[call_idx].
-        # - Backward recompute calls (call_idx >= N) are remapped based
-        #   on pp_size:
-        #   * PP=1: reverse order (N-1-recompute_idx)
-        #   * PP>1: same order (recompute_idx)
-        #
-        # This replaces the previous design that relied on target_topk_idx
-        # (which got overwritten by subsequent MBs in PP=1 multi-MB case).
+        # Per-forward-step toggle handles
+        # backward recompute (activation checkpointing) correctly:
+        # - The iterator wrapper (above) switches REPLAY_BACKWARD ->
+        #   REPLAY_FORWARD at the START of each forward_step.
+        # - The model forward hook (above) switches REPLAY_FORWARD ->
+        #   REPLAY_BACKWARD at the END of each forward_step.
+        # - Forward uses target_topk_idx; backward recompute pops from
+        #   replay_backward_list.
         self._r3_original_forward_backward_batch(
             mb_list, process_output_fn, forward_only=forward_only
         )
     finally:
+        # Remove forward hooks
+        for handle in hook_handles:
+            handle.remove()
         # Restore original class __iter__ and clean up R3 state
         mb_list.__class__.__iter__ = original_class_iter
         clear_router_replay()
