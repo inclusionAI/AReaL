@@ -5,10 +5,11 @@ import hmac
 import importlib
 from contextlib import asynccontextmanager
 
+import aiohttp
+
 from areal.infra.data_service.router.config import RouterConfig
 from areal.utils import logging
 
-httpx = importlib.import_module("httpx")
 _fastapi = importlib.import_module("fastapi")
 FastAPI = _fastapi.FastAPI
 HTTPException = _fastapi.HTTPException
@@ -53,11 +54,13 @@ def create_router_app(config: RouterConfig) -> FastAPI:
         while True:
             for addr in list(registered_workers):
                 try:
-                    async with httpx.AsyncClient(
-                        timeout=config.worker_health_timeout
-                    ) as client:
-                        resp = await client.get(f"{addr}/health")
-                        worker_healthy[addr] = resp.status_code == 200
+                    async with aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(
+                            total=config.worker_health_timeout
+                        )
+                    ) as session:
+                        async with session.get(f"{addr}/health") as resp:
+                            worker_healthy[addr] = resp.status == 200
                 except Exception:
                     worker_healthy[addr] = False
             await asyncio.sleep(config.poll_interval)

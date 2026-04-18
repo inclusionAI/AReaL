@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import httpx
+import aiohttp
 from fastapi import FastAPI, HTTPException, Request
 
 from areal.infra.data_service.gateway.auth import (
@@ -17,45 +17,51 @@ logger = logging.getLogger("DataGateway")
 
 
 async def _query_router(router_addr: str, admin_key: str, timeout: float) -> str:
-    """Get a worker address from the router via round-robin."""
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout)
+    ) as session:
+        async with session.post(
             f"{router_addr}/route",
+            json={},
             headers={"Authorization": f"Bearer {admin_key}"},
-        )
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Router error: {resp.text}")
-        return resp.json()["worker_addr"]
+        ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise HTTPException(status_code=502, detail=f"Router error: {text}")
+            return (await resp.json())["worker_addr"]
 
 
 async def _get_all_worker_addrs(
     router_addr: str, admin_key: str, timeout: float
 ) -> list[str]:
-    """Get all worker addresses from the router."""
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout)
+    ) as session:
+        async with session.get(
             f"{router_addr}/workers",
             headers={"Authorization": f"Bearer {admin_key}"},
-        )
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Router error: {resp.text}")
-        return [w["addr"] for w in resp.json()["workers"]]
+        ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise HTTPException(status_code=502, detail=f"Router error: {text}")
+            return [w["addr"] for w in (await resp.json())["workers"]]
 
 
 async def _broadcast_to_workers(
     worker_addrs: list[str], endpoint: str, payload: dict, timeout: float
 ) -> list[dict]:
-    """Broadcast a POST request to all workers and collect responses."""
     results: list[dict] = []
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout)
+    ) as session:
         for addr in worker_addrs:
             try:
-                resp = await client.post(f"{addr}{endpoint}", json=payload)
-                try:
-                    data = resp.json()
-                except Exception:
-                    data = {"raw": resp.text}
-                results.append({"addr": addr, "status": resp.status_code, "data": data})
+                async with session.post(f"{addr}{endpoint}", json=payload) as resp:
+                    try:
+                        data = await resp.json()
+                    except Exception:
+                        data = {"raw": await resp.text()}
+                    results.append({"addr": addr, "status": resp.status, "data": data})
             except Exception as exc:
                 results.append({"addr": addr, "status": 500, "error": str(exc)})
     return results
@@ -234,17 +240,20 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
             config.admin_api_key,
             config.router_timeout,
         )
-        async with httpx.AsyncClient(timeout=config.forward_timeout) as client:
-            resp = await client.post(
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=config.forward_timeout)
+        ) as session:
+            async with session.post(
                 f"{worker_addr}/v1/samples/fetch",
                 json={"dataset_id": dataset_id, "indices": indices},
-            )
-            if resp.status_code != 200:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Worker fetch_samples error: {resp.text}",
-                )
-            return resp.json()
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Worker fetch_samples error: {text}",
+                    )
+                return await resp.json()
 
     # ===== Consumer: Epoch Advance =====
     @app.post("/v1/epochs/advance")
@@ -329,12 +338,14 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 config.router_timeout,
             )
-            async with httpx.AsyncClient(timeout=config.forward_timeout) as client:
-                resp = await client.get(f"{worker_addr}/health")
-                if resp.status_code == 200:
-                    payload = resp.json()
-                    payload["dataset_id"] = dataset_id
-                    return payload
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=config.forward_timeout)
+            ) as session:
+                async with session.get(f"{worker_addr}/health") as resp:
+                    if resp.status == 200:
+                        payload = await resp.json()
+                        payload["dataset_id"] = dataset_id
+                        return payload
         except Exception:
             pass
         return {"status": "ok", "dataset_id": dataset_id}
