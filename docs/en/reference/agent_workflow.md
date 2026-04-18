@@ -223,8 +223,8 @@ that implement OpenAI-compatible endpoints.
 │                                                                 │
 │  ┌──────────────┐     ┌──────────────┐                          │
 │  │   Rollout    │     │    Proxy     │  FastAPI server          │
-│  │   Worker     │◄────│    Worker    │  /v1/chat/completions    │
-│  │              │     │              │  /v1/responses           │
+│  │   Worker     │◄────│    Worker    │  /chat/completions       │
+│  │              │     │              │  /responses              │
 │  │ SGLang/vLLM  │     │              │  /v1/messages            │
 │  └──────────────┘     └──────────────┘                          │
 └─────────────────────────────────────────────────────────────────┘
@@ -337,8 +337,8 @@ lifecycle with the proxy server. Key interactions include:
 | --------------------------- | -------------------------------- | -------------------------------- |
 | `POST /grant_capacity`      | Admin key                        | Reserve slot (staleness control) |
 | `POST /rl/start_session`    | Admin key                        | Create unique session ID         |
-| `POST /v1/chat/completions` | Session key                      | OpenAI chat completions API      |
-| `POST /v1/responses`        | Session key                      | OpenAI responses API             |
+| `POST /chat/completions`    | Session key                      | OpenAI chat completions API      |
+| `POST /responses`           | Session key                      | OpenAI responses API             |
 | `POST /v1/messages`         | Session key                      | Anthropic Messages API           |
 | `POST /rl/set_reward`       | Session key                      | Assign reward to interaction     |
 | `POST /rl/end_session`      | Session key                      | Mark session complete            |
@@ -356,7 +356,7 @@ Each agent execution follows this lifecycle:
    POST /rl/start_session → Returns session_id and unique API key
 
 3. Agent execution (multiple LLM calls)
-   POST /v1/chat/completions (with session API key in Authorization header)
+   POST /chat/completions (with session API key in Authorization header)
      → Proxy tokenizes messages
      → Engine generates tokens with logprobs
      → Response stored in InteractionCache

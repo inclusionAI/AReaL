@@ -232,9 +232,9 @@ RolloutController.export_stats()                 │
                          ▼
               StatsLogger.commit(stats)
                          │
-            ┌────────────┼────────────┐
-            ▼            ▼            ▼
-          wandb     tensorboard    swanlab
+            ┌────────────┼────────────┬────────────┐
+            ▼            ▼            ▼            ▼
+          wandb     tensorboard    swanlab      trackio
 ```
 
 ## StatsLogger: Logging Backends
@@ -246,11 +246,12 @@ sends aggregated metrics to external logging backends. It is automatically manag
 
 ### Supported Backends
 
-| Backend              | Configuration                     | Description                     |
-| -------------------- | --------------------------------- | ------------------------------- |
-| **Weights & Biases** | `config.stats_logger.wandb`       | Cloud-based experiment tracking |
-| **SwanLab**          | `config.stats_logger.swanlab`     | Alternative experiment tracking |
-| **TensorBoard**      | `config.stats_logger.tensorboard` | Local visualization             |
+| Backend              | Configuration                     | Description                                  |
+| -------------------- | --------------------------------- | -------------------------------------------- |
+| **Weights & Biases** | `config.stats_logger.wandb`       | Cloud-based experiment tracking              |
+| **SwanLab**          | `config.stats_logger.swanlab`     | Alternative experiment tracking              |
+| **Trackio**          | `config.stats_logger.trackio`     | Hugging Face experiment tracking (HF Spaces) |
+| **TensorBoard**      | `config.stats_logger.tensorboard` | Local visualization                          |
 
 ### Integration with PPOTrainer
 
@@ -306,8 +307,13 @@ stats_logger:
     entity: "my-team"
 
   swanlab:
+    mode: "cloud"  # "cloud", "local", "offline", or "disabled"
+    project: "my-project"
+
+  trackio:
     mode: "online"  # "online", "local", or "disabled"
     project: "my-project"
+    space_id: ""  # Optional: Hugging Face Spaces ID
 
   tensorboard:
     path: "/path/to/tensorboard/logs"  # null to disable

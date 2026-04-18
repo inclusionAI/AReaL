@@ -1095,7 +1095,7 @@ class TrainEngineConfig:
     use_lora: bool = field(
         default=False,
         metadata={
-            "help": "Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang."
+            "help": "Whether to use LoRA. Supports FSDP and Megatron (requires megatron-bridge). Must be enabled together with vLLM/SGLang."
         },
     )
     lora_rank: int = field(default=32, metadata={"help": "lora rank"})

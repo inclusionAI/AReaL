@@ -56,4 +56,6 @@ For Megatron + vLLM, AReaL now supports:
 
 - Start with `r=16` or `r=32` for most models, then tune upward only if needed.
 - Keep `target_modules` consistent with your model architecture naming.
-- For Megatron backend, LoRA requires `megatron-bridge` instead of `mbridge`.
+- For Megatron backend, LoRA requires `bridge_type: megatron-bridge` (not `mbridge`).
+- SGLang LoRA requires `weight_update_mode: disk`. The distributed/NCCL weight update
+  path does not support LoRA adapters.

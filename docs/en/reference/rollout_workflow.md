@@ -123,13 +123,13 @@ rollout:
 Trajectories are saved to:
 
 ```
-{fileroot}/{experiment_name}/{trial_name}/[rollout|eval-rollout]/{version}/{task_id}.jsonl
+{fileroot}/logs/{user}/{experiment_name}/{trial_name}/[rollout|eval-rollout]/{version}/{task_id}.jsonl
 ```
 
 Example:
 
 ```
-/tmp/areal/my_exp/trial1/rollout/5/42.jsonl
+/tmp/areal/logs/john/my_exp/trial1/rollout/5/42.jsonl
 ```
 
 ### Output Format
@@ -167,13 +167,6 @@ engine.submit(
     workflow_kwargs={...},
     group_size=4,  # Run workflow 4 times per input
 )
-```
-
-Or via CLI:
-
-```yaml
-rollout:
-  group_size: 4
 ```
 
 ### How It Works
