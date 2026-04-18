@@ -98,6 +98,27 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
         metro_data = metro_raw if isinstance(metro_raw, dict) else {}
 
     if not station_1 or not station_2 or not metro_data:
+        gt_str = str(ground_truth).strip()
+        pred_lower = prediction.strip().lower()
+        try:
+            gt_data = json.loads(gt_str) if isinstance(gt_str, str) else gt_str
+            if isinstance(gt_data, dict):
+                matched = 0
+                total_routes = 0
+                for routes in gt_data.values():
+                    if not isinstance(routes, list):
+                        continue
+                    for route in routes:
+                        total_routes += 1
+                        rn = route.get("route_name", "").lower()
+                        dep = route.get("departure_stop", "").lower()
+                        arr = route.get("arrival_stop", "").lower()
+                        if rn and dep and arr and rn in pred_lower and dep in pred_lower and arr in pred_lower:
+                            matched += 1
+                if total_routes > 0:
+                    return matched / total_routes
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
         return compute_score(prediction, ground_truth)
 
     try:

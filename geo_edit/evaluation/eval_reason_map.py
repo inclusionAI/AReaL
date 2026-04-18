@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 from collections import defaultdict
 
@@ -35,6 +36,53 @@ def _parse_metro_data(record: dict) -> dict:
         except (json.JSONDecodeError, TypeError):
             return {}
     return raw if isinstance(raw, dict) else {}
+
+
+_ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
+_THINK_RE = re.compile(r"</think>\s*(.*)", re.DOTALL | re.IGNORECASE)
+
+
+def _extract_prediction(text: str) -> str:
+    m = _ANSWER_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    m = _THINK_RE.search(text)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    return text.strip()
+
+
+def _simple_score(prediction: str, ground_truth: str) -> float:
+    pred = prediction.strip().lower().rstrip(".")
+    gt = ground_truth.strip().lower().rstrip(".")
+    pred = re.sub(r"\\boxed\{(.*?)\}", r"\1", pred)
+    if pred == gt:
+        return 1.0
+    try:
+        if abs(float(pred) - float(gt)) < 1e-6:
+            return 1.0
+    except (ValueError, TypeError):
+        pass
+    try:
+        gt_data = json.loads(gt) if isinstance(gt, str) else gt
+        if isinstance(gt_data, dict):
+            matched = 0
+            total_routes = 0
+            for key, routes in gt_data.items():
+                if not isinstance(routes, list):
+                    continue
+                for route in routes:
+                    total_routes += 1
+                    rn = route.get("route_name", "").lower()
+                    dep = route.get("departure_stop", "").lower()
+                    arr = route.get("arrival_stop", "").lower()
+                    if rn and dep and arr and rn in pred and dep in pred and arr in pred:
+                        matched += 1
+            if total_routes > 0:
+                return matched / total_routes
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        pass
+    return 0.0
 
 
 def _get_field(record: dict, key: str, default: str = "") -> str:
@@ -86,18 +134,23 @@ def main() -> None:
                 country = _get_field(record, "country")
 
                 if not station_1 or not station_2 or not metro_data:
-                    filtered += 1
+                    ground_truth = str(record.get("answer", ""))
+                    prediction = _extract_prediction(output_str)
+                    score = _simple_score(prediction, ground_truth)
                     eval_item = {
                         "id": record_id,
-                        "result": 0.0,
-                        "error": "missing_station_or_metro_data",
+                        "result": score,
+                        "prediction": prediction,
+                        "ground_truth": ground_truth,
+                        "fallback": "simple_match",
                         "country": country,
                         "city": city,
-                        "station_1": station_1,
-                        "station_2": station_2,
                         "difficulty_city": difficulty_city,
                         "difficulty_question": difficulty_question,
                     }
+                    total += 1
+                    if score > 0:
+                        correct += 1
                     out_f.write(json.dumps(eval_item, ensure_ascii=False) + "\n")
                     continue
 

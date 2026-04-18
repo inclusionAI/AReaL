@@ -88,6 +88,8 @@ test_freq=10
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=WARN
 export WANDB_DIR=$WORKSPACE/logs/$run_name
+export WANDB_RESUME=allow
+export WANDB_RUN_ID=$run_name
 unset ROCR_VISIBLE_DEVICES
 mkdir -p $WORKSPACE/logs/$run_name
 
