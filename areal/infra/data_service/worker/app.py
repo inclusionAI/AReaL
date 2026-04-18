@@ -85,13 +85,6 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
                 detail=f"Dataset {body.dataset_id} is already loaded",
             )
 
-        logger.info(
-            "Loading dataset %s (path=%s, type=%s)",
-            body.dataset_id,
-            body.dataset_path,
-            body.dataset_type,
-        )
-
         def _load_sync():
             _tokenizer = None
             _processor = None
@@ -143,13 +136,6 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
             epoch=0,
             exhausted=False,
             seed=body.seed,
-        )
-
-        logger.info(
-            "Dataset %s loaded: size=%d, steps=%d",
-            body.dataset_id,
-            sampler.num_samples,
-            len(dataloader),
         )
 
         return {

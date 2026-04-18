@@ -16,80 +16,55 @@ from areal.utils import logging
 logger = logging.getLogger("DataGateway")
 
 
-def _make_session(timeout: float) -> aiohttp.ClientSession:
-    return aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=timeout),
-        trust_env=False,
-    )
-
-
 async def _query_router(router_addr: str, admin_key: str, timeout: float) -> str:
-    logger.debug("Querying router %s/route", router_addr)
-    async with _make_session(timeout) as session:
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout), trust_env=False
+    ) as session:
         async with session.post(
             f"{router_addr}/route",
             json={},
             headers={"Authorization": f"Bearer {admin_key}"},
         ) as resp:
             if resp.status != 200:
-                text = await resp.text()
-                logger.error("Router /route returned %d: %s", resp.status, text[:500])
-                raise HTTPException(status_code=502, detail=f"Router error: {text}")
-            result = (await resp.json())["worker_addr"]
-            logger.debug("Router selected worker: %s", result)
-            return result
+                raise HTTPException(
+                    status_code=502, detail=f"Router error: {await resp.text()}"
+                )
+            return (await resp.json())["worker_addr"]
 
 
 async def _get_all_worker_addrs(
     router_addr: str, admin_key: str, timeout: float
 ) -> list[str]:
-    logger.debug("Querying router %s/workers", router_addr)
-    async with _make_session(timeout) as session:
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout), trust_env=False
+    ) as session:
         async with session.get(
             f"{router_addr}/workers",
             headers={"Authorization": f"Bearer {admin_key}"},
         ) as resp:
             if resp.status != 200:
-                text = await resp.text()
-                logger.error("Router /workers returned %d: %s", resp.status, text[:500])
-                raise HTTPException(status_code=502, detail=f"Router error: {text}")
-            addrs = [w["addr"] for w in (await resp.json())["workers"]]
-            logger.debug("Router returned %d workers: %s", len(addrs), addrs)
-            return addrs
+                raise HTTPException(
+                    status_code=502, detail=f"Router error: {await resp.text()}"
+                )
+            return [w["addr"] for w in (await resp.json())["workers"]]
 
 
 async def _broadcast_to_workers(
     worker_addrs: list[str], endpoint: str, payload: dict, timeout: float
 ) -> list[dict]:
     results: list[dict] = []
-    logger.debug(
-        "Broadcasting %s to %d workers: %s", endpoint, len(worker_addrs), worker_addrs
-    )
-    async with _make_session(timeout) as session:
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout), trust_env=False
+    ) as session:
         for addr in worker_addrs:
-            url = f"{addr}{endpoint}"
             try:
-                async with session.post(url, json=payload) as resp:
+                async with session.post(f"{addr}{endpoint}", json=payload) as resp:
                     try:
                         data = await resp.json()
                     except Exception:
                         data = {"raw": await resp.text()}
-                    logger.debug(
-                        "Worker %s %s returned %d: %s",
-                        addr,
-                        endpoint,
-                        resp.status,
-                        str(data)[:500],
-                    )
                     results.append({"addr": addr, "status": resp.status, "data": data})
             except Exception as exc:
-                logger.error(
-                    "Worker %s %s request failed: %s: %s",
-                    addr,
-                    endpoint,
-                    type(exc).__name__,
-                    exc,
-                )
                 results.append({"addr": addr, "status": 500, "error": str(exc)})
     return results
 
@@ -131,7 +106,6 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
             "dataset_id",
             f"{body.get('split', 'train')}-{body.get('dataset_path', 'unknown').split('/')[-1]}",
         )
-        logger.info("Registering dataset %s via gateway", dataset_id)
 
         worker_addrs = await _get_all_worker_addrs(
             config.router_addr,
@@ -186,12 +160,6 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
                 d = result.get("data", {})
                 total_size += d.get("dataset_size", 0)
 
-        logger.info(
-            "Dataset %s registered: size=%d, workers=%d",
-            dataset_id,
-            total_size,
-            len(worker_addrs),
-        )
         return {
             "api_key": api_key,
             "dataset_id": dataset_id,
@@ -266,16 +234,18 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
             config.admin_api_key,
             config.router_timeout,
         )
-        async with _make_session(config.forward_timeout) as session:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=config.forward_timeout),
+            trust_env=False,
+        ) as session:
             async with session.post(
                 f"{worker_addr}/v1/samples/fetch",
                 json={"dataset_id": dataset_id, "indices": indices},
             ) as resp:
                 if resp.status != 200:
-                    text = await resp.text()
                     raise HTTPException(
                         status_code=502,
-                        detail=f"Worker fetch_samples error: {text}",
+                        detail=f"Worker fetch_samples error: {await resp.text()}",
                     )
                 return await resp.json()
 
@@ -358,7 +328,10 @@ def create_gateway_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 config.router_timeout,
             )
-            async with _make_session(config.forward_timeout) as session:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=config.forward_timeout),
+                trust_env=False,
+            ) as session:
                 async with session.get(f"{worker_addr}/health") as resp:
                     if resp.status == 200:
                         payload = await resp.json()

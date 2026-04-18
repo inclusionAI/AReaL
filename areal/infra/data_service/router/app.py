@@ -47,7 +47,6 @@ class UnregisterWorkerRequest(BaseModel):
 def create_router_app(config: RouterConfig) -> FastAPI:
     registered_workers: list[str] = []
     worker_healthy: dict[str, bool] = {}
-    worker_fail_count: dict[str, int] = {}
     rr_idx: int = 0
     lock = asyncio.Lock()
 
@@ -62,39 +61,9 @@ def create_router_app(config: RouterConfig) -> FastAPI:
                         trust_env=False,
                     ) as session:
                         async with session.get(f"{addr}/health") as resp:
-                            prev = worker_healthy.get(addr)
                             worker_healthy[addr] = resp.status == 200
-                            worker_fail_count[addr] = 0
-                            if prev != worker_healthy[addr]:
-                                logger.info(
-                                    "Worker %s health changed: %s -> %s",
-                                    addr,
-                                    prev,
-                                    worker_healthy[addr],
-                                )
-                except Exception as exc:
-                    fail_count = worker_fail_count.get(addr, 0) + 1
-                    worker_fail_count[addr] = fail_count
-                    prev = worker_healthy.get(addr)
-                    if fail_count < config.worker_health_fail_threshold:
-                        logger.debug(
-                            "Worker %s health check failed (%d/%d): %s: %s",
-                            addr,
-                            fail_count,
-                            config.worker_health_fail_threshold,
-                            type(exc).__name__,
-                            exc,
-                        )
-                    else:
-                        worker_healthy[addr] = False
-                        if prev is not False:
-                            logger.warning(
-                                "Worker %s marked unhealthy after %d consecutive failures: %s: %s",
-                                addr,
-                                fail_count,
-                                type(exc).__name__,
-                                exc,
-                            )
+                except Exception:
+                    worker_healthy[addr] = False
             await asyncio.sleep(config.poll_interval)
 
     @asynccontextmanager
@@ -141,7 +110,6 @@ def create_router_app(config: RouterConfig) -> FastAPI:
             if body.worker_addr in registered_workers:
                 registered_workers.remove(body.worker_addr)
                 worker_healthy.pop(body.worker_addr, None)
-                worker_fail_count.pop(body.worker_addr, None)
                 logger.info("Worker unregistered: %s", body.worker_addr)
         return {"status": "ok"}
 
@@ -154,15 +122,6 @@ def create_router_app(config: RouterConfig) -> FastAPI:
                 addr for addr in registered_workers if worker_healthy.get(addr, False)
             ]
             if not healthy:
-                logger.warning(
-                    "No healthy workers available (registered=%d, unhealthy: %s)",
-                    len(registered_workers),
-                    [
-                        addr
-                        for addr in registered_workers
-                        if not worker_healthy.get(addr, False)
-                    ],
-                )
                 raise HTTPException(
                     status_code=503,
                     detail="No healthy workers available",
@@ -176,11 +135,7 @@ def create_router_app(config: RouterConfig) -> FastAPI:
         _require_admin_key(request, config.admin_api_key)
         return {
             "workers": [
-                {
-                    "addr": addr,
-                    "healthy": worker_healthy.get(addr, False),
-                    "fail_count": worker_fail_count.get(addr, 0),
-                }
+                {"addr": addr, "healthy": worker_healthy.get(addr, False)}
                 for addr in registered_workers
             ]
         }
