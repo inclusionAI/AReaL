@@ -7,6 +7,7 @@ from concurrent.futures import Future
 from typing import Any
 
 import numpy as np
+import torch
 import pybase64
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -200,6 +201,97 @@ class SGLangBackend:
             ]
         )
 
+    def build_tensor_weight_update_request(
+        self,
+        named_tensors: list[tuple[str, torch.Tensor]],
+        tp_size: int = 1,
+        flush_cache: bool = True,
+    ) -> HttpRequest:
+        """Build HTTP request for /update_weights_from_tensor.
+
+        Used to update EAGLE draft model weights (e.g., MTP layers)
+        that are not correctly routed by /update_weights_from_distributed.
+        Borrowed from slime/verl: both use /update_weights_from_tensor
+        to update draft_worker (EAGLEWorker) which syncs BOTH models.
+
+        In SGLang v0.5.9:
+        - /update_weights_from_distributed -> tp_worker ONLY
+        - /update_weights_from_tensor -> draft_worker or tp_worker
+        EAGLEWorker.update_weights_from_tensor() updates both
+        self.model_runner (draft/MiMoMTP) and
+        self.target_worker.model_runner (target/MiMoForCausalLM).
+        Each model's load_weights() silently skips non-matching names.
+
+        Args:
+            named_tensors: (name, tensor) pairs in HF format on GPU.
+            tp_size: Tensor parallel size of inference engine.
+            flush_cache: Whether to flush KV cache after update.
+
+        Returns:
+            HttpRequest for /update_weights_from_tensor endpoint.
+        """
+        try:
+            from sglang.srt.utils import MultiprocessingSerializer
+            from sglang.srt.utils.patch_torch import (
+                monkey_patch_torch_reductions,
+            )
+        except ImportError:
+            raise ImportError(
+                "SGLang >= 0.5.9 is required for tensor weight updates. "
+                "Install sglang to use MTP draft weight sync."
+            )
+
+        monkey_patch_torch_reductions()
+
+        # Serialize each tensor via CUDA IPC (shared memory handles).
+        # Same approach used by verl/slime for colocated weight sync.
+        serialized_pairs = [
+            (name, MultiprocessingSerializer.serialize(tensor.detach()))
+            for name, tensor in named_tensors
+        ]
+
+        # Wrap in LocalSerializedTensor format expected by SGLang.
+        # Each TP rank receives the same full tensors; SGLang's
+        # model_runner.load_weights() handles TP slicing internally.
+        try:
+            from sglang.srt.model_executor.model_runner import (
+                LocalSerializedTensor,
+            )
+        except ImportError:
+            raise ImportError(
+                "Cannot import LocalSerializedTensor from SGLang. "
+                "Ensure sglang >= 0.5.9 is installed."
+            )
+
+        per_rank_named_tensors = [
+            (
+                name,
+                LocalSerializedTensor(
+                    values=[serialized_data] * tp_size
+                ),
+            )
+            for name, serialized_data in serialized_pairs
+        ]
+
+        # Serialize the full named_tensors list per TP rank and
+        # base64-encode for JSON transport over HTTP.
+        import base64
+
+        serialized_named_tensors = [
+            base64.b64encode(
+                MultiprocessingSerializer.serialize(per_rank_named_tensors)
+            ).decode("utf-8")
+            for _ in range(tp_size)
+        ]
+
+        return HttpRequest(
+            endpoint="/update_weights_from_tensor",
+            payload={
+                "serialized_named_tensors": serialized_named_tensors,
+                "flush_cache": flush_cache,
+            },
+        )
+
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
@@ -330,6 +422,17 @@ class RemoteSGLangEngine(InferenceEngine):
     ) -> Future[None]:
         """Update weights from distributed memory."""
         return self._engine.update_weights_from_distributed(meta, param_specs)
+
+    def update_weights_from_tensor(
+        self,
+        named_tensors: list[tuple[str, torch.Tensor]],
+        tp_size: int = 1,
+        flush_cache: bool = True,
+    ):
+        """Update EAGLE draft model weights via tensor update path."""
+        return self._engine.update_weights_from_tensor(
+            named_tensors, tp_size, flush_cache
+        )
 
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""

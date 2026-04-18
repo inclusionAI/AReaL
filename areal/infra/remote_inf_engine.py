@@ -210,6 +210,33 @@ class RemoteInfBackendProtocol(Protocol):
         """
         ...
 
+    def build_tensor_weight_update_request(
+        self,
+        named_tensors: list,
+        tp_size: int = 1,
+        flush_cache: bool = True,
+    ) -> "HttpRequest":
+        """Build HTTP request for /update_weights_from_tensor.
+
+        Used to update EAGLE draft model weights that are not
+        correctly routed by /update_weights_from_distributed.
+
+        Parameters
+        ----------
+        named_tensors : list
+            (name, tensor) pairs in HF format
+        tp_size : int
+            Tensor parallel size
+        flush_cache : bool
+            Whether to flush KV cache after update
+
+        Returns
+        -------
+        HttpRequest
+            The HTTP request for tensor weight update
+        """
+        ...
+
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
@@ -973,6 +1000,34 @@ class RemoteInfEngine(InferenceEngine):
         )
 
         return fut
+
+    def update_weights_from_tensor(
+        self,
+        named_tensors: list,
+        tp_size: int = 1,
+        flush_cache: bool = True,
+    ):
+        """Update EAGLE draft model weights via /update_weights_from_tensor.
+
+        Sends MTP layer weights to SGLang server using the tensor update
+        path, which routes to draft_worker (EAGLEWorker) when speculative
+        decoding is enabled. EAGLEWorker updates both draft and target models.
+
+        Borrowed from slime/verl approach for MTP draft weight sync.
+
+        Parameters
+        ----------
+        named_tensors : list
+            (name, tensor) pairs in HF format on GPU
+        tp_size : int
+            Tensor parallel size of the inference engine
+        flush_cache : bool
+            Whether to flush KV cache after update
+        """
+        http_req = self.backend.build_tensor_weight_update_request(
+            named_tensors, tp_size, flush_cache
+        )
+        self._run_request_on_all_servers(http_req)
 
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights in the inference engine from disk.

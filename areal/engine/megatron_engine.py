@@ -186,6 +186,7 @@ class MegatronEngine(TrainEngine):
         self.mtp_detach_heads: bool = getattr(self.config, "mtp_detach_heads", True)
         self._mtp_loss_value: float = 0.0
         self._mtp_layers_verified: bool = False
+        self._mtp_tensor_update_warned: bool = False
         if self.enable_mtp_training:
             self.logger.info(
                 f"[MTPTrain] MTP online training ENABLED: "
@@ -631,6 +632,15 @@ class MegatronEngine(TrainEngine):
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
             )
         self.rollout_engine = engine
+        # Check if engine supports tensor weight updates (MTP draft sync)
+        self._engine_supports_tensor_update = hasattr(
+            engine, "update_weights_from_tensor"
+        )
+        if self.enable_mtp_training and self._engine_supports_tensor_update:
+            self.logger.info(
+                "[MTPTrain] Inference engine supports update_weights_from_tensor. "
+                "MTP draft model weights will be synced via tensor update path."
+            )
         self.rollout_coordinator = DistRolloutCoordinator(
             rollout_engine=engine, train_engine=self
         )
@@ -2348,12 +2358,35 @@ class MegatronEngine(TrainEngine):
 
         mtp_param_count = 0
         mtp_param_bytes = 0
+        # Collect MTP weights in HF format for draft model tensor update
+        mtp_hf_tensors = []
+        _collect_mtp_for_draft = (
+            self.enable_mtp_training
+            and getattr(self, "_engine_supports_tensor_update", False)
+            and self.is_pipeline_parallel_head()
+        )
         for name, param in get_named_parameters(self.model, num_moe_experts):
             if ".experts." in name:
                 continue
             if ".mtp." in name:
                 mtp_param_count += 1
                 mtp_param_bytes += param.numel() * param.element_size()
+                if _collect_mtp_for_draft:
+                    # Collect and all-gather MTP param, then convert to HF
+                    # format. _collect_param handles TP all-gather, padding
+                    # removal, and FP8 dequant (same as NCCL path).
+                    _mtp_param, _ = self._collect_param(name, param)
+                    _mtp_model_name = self.hf_config.model_type
+                    mtp_hf_tensors.extend(
+                        convert_to_hf(
+                            self.tf_config,
+                            _mtp_model_name,
+                            name,
+                            _mtp_param,
+                            quantization_config=self.quantization_config,
+                            fp8_direct_convert=self.fp8_direct_convert,
+                        )
+                    )
             if self.config.use_lora and (
                 ".adapter." not in name or not getattr(param, "requires_grad", False)
             ):
@@ -2388,6 +2421,63 @@ class MegatronEngine(TrainEngine):
                 f"during weight sync at version={meta.version}. "
                 f"MTP draft model weights will NOT be updated!"
             )
+
+        # --- MTP Draft Model Weight Update via /update_weights_from_tensor ---
+        # SGLang v0.5.9 /update_weights_from_distributed routes ONLY to
+        # tp_worker, which does NOT update the draft_worker (EAGLEWorker).
+        # MTP weights sent via NCCL are silently dropped by
+        # MiMoForCausalLM.load_weights() ("if mtp_layers in name: continue").
+        #
+        # use /update_weights_from_tensor
+        # which routes to draft_worker. EAGLEWorker.update_weights_from_tensor()
+        # updates BOTH self.model_runner (draft/MiMoMTP) and
+        # self.target_worker.model_runner (target/MiMoForCausalLM).
+        # Each model's load_weights() silently skips non-matching names.
+        if _collect_mtp_for_draft and mtp_hf_tensors and dist.get_rank() == 0:
+            try:
+                tp_size = (
+                    meta.gen_allocation.parallel.tp_size
+                    if meta.gen_allocation is not None
+                    else 1
+                )
+                _mtp_bytes = sum(
+                    t.numel() * t.element_size()
+                    for _, t in mtp_hf_tensors
+                )
+                self.logger.info(
+                    f"[MTPTrain] Sending {len(mtp_hf_tensors)} MTP tensors "
+                    f"({_mtp_bytes / 1024 / 1024:.2f} MB) to EAGLE draft model "
+                    f"via /update_weights_from_tensor "
+                    f"(tp_size={tp_size}, version={meta.version})"
+                )
+                self.rollout_engine.update_weights_from_tensor(
+                    named_tensors=mtp_hf_tensors,
+                    tp_size=tp_size,
+                    flush_cache=True,
+                )
+                self.logger.info(
+                    f"[MTPTrain] Successfully updated EAGLE draft model "
+                    f"MTP weights at version={meta.version}"
+                )
+            except Exception as e:
+                self.logger.error(
+                    f"[MTPTrain] Failed to update EAGLE draft model "
+                    f"MTP weights via tensor update: {e}. "
+                    f"Draft model spec_accept_rate will degrade!"
+                )
+        elif (
+            self.enable_mtp_training
+            and not getattr(self, "_engine_supports_tensor_update", False)
+            and not self._mtp_tensor_update_warned
+        ):
+            self._mtp_tensor_update_warned = True
+            self.logger.warning(
+                "[MTPTrain] Inference engine does not support "
+                "update_weights_from_tensor. EAGLE draft model MTP weights "
+                "will NOT be updated, causing spec_accept_rate degradation. "
+                "Ensure SGLang backend is used with speculative decoding."
+            )
+
         dist.barrier(group=self.cpu_group)
 
         buffer_size = 0

@@ -128,7 +128,7 @@ sglang:
   speculative_eagle_topk: 1
   speculative_num_draft_tokens: 4
   speculative_attention_mode: null
-  enable_draft_weights_cpu_backup: false
+  enable_draft_weights_cpu_backup: true
   
 
 vllm:
