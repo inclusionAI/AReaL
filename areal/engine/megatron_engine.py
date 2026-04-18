@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 import dataclasses
@@ -7,7 +9,7 @@ import math
 import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -93,8 +95,10 @@ from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
     broadcast_tensor,
+    concat_batch,
     pack_tensor_dict,
     pad_mb_list,
+    split_batch,
     split_padded_tensor_dict_into_mb_list,
     unpad_logits,
 )
@@ -567,20 +571,14 @@ class MegatronEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
-        if meta.type == "xccl":
-            assert self.weight_update_group_initialized
-            # In offload mode, wakes up parameters as needed to perform the update.
-            tms_context = (
-                torch_memory_saver.disable()
-                if self.is_offload and not torch.version.hip
-                else nullcontext()
-            )
-            with tms_context:
+        with self._offload_aware_context():
+            if meta.type == "xccl":
+                assert self.weight_update_group_initialized
                 self._update_weights_from_distributed(meta)
-        elif meta.type == "disk":
-            self._update_weights_from_disk(meta)
-        else:
-            raise ValueError(f"Unknown weight update type {meta.type}")
+            elif meta.type == "disk":
+                self._update_weights_from_disk(meta)
+            else:
+                raise ValueError(f"Unknown weight update type {meta.type}")
 
     def set_version(self, version: int):
         self._version = version
@@ -589,45 +587,65 @@ class MegatronEngine(TrainEngine):
         return self._version
 
     def save(self, meta: SaveLoadMeta):
-        if meta.weight_format == "hf":
-            if meta.with_optim:
-                raise ValueError(
-                    "HF format does not support optimizer state saving, please use DCP format instead."
+        with self._offload_aware_context():
+            if meta.weight_format == "hf":
+                if meta.with_optim:
+                    raise ValueError(
+                        "HF format does not support optimizer state saving, please use DCP format instead."
+                    )
+                self._save_model_to_hf(
+                    meta.path,
+                    tokenizer=meta.tokenizer,
+                    processor=meta.processor,
+                    base_model_path=meta.base_model_path,
                 )
-            self._save_model_to_hf(
-                meta.path,
-                tokenizer=meta.tokenizer,
-                processor=meta.processor,
-                base_model_path=meta.base_model_path,
-            )
-        elif meta.weight_format == "dcp":
-            if self.checkpointer is None:
-                raise NotImplementedError(
-                    "DCP checkpoint save is not available for this Megatron configuration "
-                    "(e.g., LoRA path without distributed optimizer support). "
-                    "Please use weight_format='hf' for adapter/full-model export."
+            elif meta.weight_format == "dcp":
+                if self.checkpointer is None:
+                    raise NotImplementedError(
+                        "DCP checkpoint save is not available for this Megatron configuration "
+                        "(e.g., LoRA path without distributed optimizer support). "
+                        "Please use weight_format='hf' for adapter/full-model export."
+                    )
+                self.checkpointer.save_checkpoint(
+                    meta.path, with_optimizer=meta.with_optim
                 )
-            self.checkpointer.save_checkpoint(meta.path, with_optimizer=meta.with_optim)
-        else:
-            raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+            else:
+                raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
     def load(self, meta: SaveLoadMeta):
-        if meta.weight_format == "hf":
-            if meta.with_optim:
-                raise ValueError(
-                    "HF format does not support optimizer state loading, please use DCP format instead."
+        with self._offload_aware_context():
+            if meta.weight_format == "hf":
+                if meta.with_optim:
+                    raise ValueError(
+                        "HF format does not support optimizer state loading, please use DCP format instead."
+                    )
+                self._load_model_from_hf(meta.path)
+            elif meta.weight_format == "dcp":
+                if self.checkpointer is None:
+                    raise NotImplementedError(
+                        "DCP checkpoint load is not available for this Megatron configuration "
+                        "(e.g., LoRA path without distributed optimizer support). "
+                        "Please use weight_format='hf' for adapter/full-model load."
+                    )
+                self.checkpointer.load_checkpoint(
+                    meta.path, with_optimizer=meta.with_optim
                 )
-            self._load_model_from_hf(meta.path)
-        elif meta.weight_format == "dcp":
-            if self.checkpointer is None:
-                raise NotImplementedError(
-                    "DCP checkpoint load is not available for this Megatron configuration "
-                    "(e.g., LoRA path without distributed optimizer support). "
-                    "Please use weight_format='hf' for adapter/full-model load."
-                )
-            self.checkpointer.load_checkpoint(meta.path, with_optimizer=meta.with_optim)
-        else:
-            raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+            else:
+                raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+
+    @contextmanager
+    def _offload_aware_context(self):
+        """Temporarily onload parameters for offload-unsafe operations."""
+        if not self.is_offload:
+            with nullcontext():
+                yield
+            return
+
+        self.onload()
+        try:
+            yield
+        finally:
+            self.offload()
 
     def optimizer_zero_grad(self):
         assert self.optimizer is not None, "Optimizer is not initialized."
@@ -729,15 +747,17 @@ class MegatronEngine(TrainEngine):
 
     def train_batch(
         self,
-        input_: dict[str, Any],
+        input_: list[dict[str, Any]] | dict[str, Any],
         loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         self._ensure_ready()
         self.optimizer_zero_grad()
 
+        input_batched, _ = self._normalize_batch_input(input_)
+
         # Step 1: Prepare micro-batches
-        mb_list = self._prepare_mb_list(input_).to(self.device)
+        mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
         # Step 2: Compute total loss weight
         total_loss_weight = compute_total_loss_weight(
@@ -769,14 +789,16 @@ class MegatronEngine(TrainEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: dict[str, Any],
+        input_: list[dict[str, Any]] | dict[str, Any],
         loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         self._ensure_ready()
 
+        input_batched, _ = self._normalize_batch_input(input_)
+
         # Step 1: Prepare micro-batches
-        mb_list = self._prepare_mb_list(input_).to(self.device)
+        mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
         # Step 2: Compute total loss weight
         total_loss_weight = compute_total_loss_weight(
@@ -805,21 +827,33 @@ class MegatronEngine(TrainEngine):
     @torch.no_grad()
     def forward_batch(
         self,
-        input_: dict[str, Any],
+        input_: list[dict[str, Any]] | dict[str, Any],
         output_seqlens: list[int] | None = None,
-        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
-    ) -> torch.Tensor:
+        aggregate_fn: Callable[[list[torch.Tensor]], torch.Tensor] = torch.cat,
+    ) -> torch.Tensor | list[torch.Tensor]:
         self._ensure_ready()
 
+        input_batched, meta = self._normalize_batch_input(input_)
+
         # Step 1: Prepare sequence lengths
-        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
+        if meta is not None:
+            assert isinstance(input_, list)
+            inferred_seqlens = [d["attention_mask"].shape[-1] for d in input_]
+            if output_seqlens is not None and output_seqlens != inferred_seqlens:
+                raise ValueError(
+                    f"output_seqlens mismatch for list input: "
+                    f"given {output_seqlens}, "
+                    f"inferred {inferred_seqlens} from attention_mask shapes."
+                )
+            output_seqlens = inferred_seqlens
+        cu_seqlens = pack_tensor_dict(input_batched)["cu_seqlens"]
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
         assert output_seqlens is not None
         batch_size = len(output_seqlens)
 
         # Step 2: Prepare micro-batches
-        mb_list = self._prepare_mb_list(input_).to(self.device)
+        mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
         # Step 3: Forward using Megatron's pipeline function, collecting results
         outputs: list[torch.Tensor] = []
@@ -845,10 +879,15 @@ class MegatronEngine(TrainEngine):
             src_rank=mpu.get_pipeline_model_parallel_last_rank(),
             group=mpu.get_pipeline_model_parallel_group(),
         )
-        return res
+        if meta is None:
+            return res
+        return split_batch(res, meta)
 
     def export_stats(self) -> dict[str, float]:
-        data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        with self._offload_aware_context():
+            data = stats_tracker.export_all(
+                reduce_group=self.data_parallel_group,
+            )
         if mpu.get_pipeline_model_parallel_world_size() > 1:
             # Some log info only exist in last pipeline rank
             data_list = [data]
@@ -865,6 +904,10 @@ class MegatronEngine(TrainEngine):
 
         Ref: https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
         """
+        if not is_tms_enabled():
+            raise RuntimeError(
+                "torch_memory_saver requires `enable_offload=True` in yaml config."
+            )
 
         self.get_device_stats().log("before offload model")
         current_platform.clear_memory()
@@ -1113,6 +1156,14 @@ class MegatronEngine(TrainEngine):
                 "Rollout engine not connected. Call connect_engine()"
                 " before using rollout/update_weight methods."
             )
+
+    @staticmethod
+    def _normalize_batch_input(
+        input_: list[dict[str, Any]] | dict[str, Any],
+    ) -> tuple[dict[str, Any], Any | None]:
+        if isinstance(input_, list):
+            return concat_batch(input_)
+        return input_, None
 
     def _ensure_ready(self) -> None:
         if self.is_offload:
@@ -1405,7 +1456,7 @@ class MegatronEngine(TrainEngine):
         converted_named_tensors = []
 
         for name, param in get_named_parameters(self.model, num_moe_experts):
-            if ".experts." in name:
+            if ".experts." in name and not self.config.use_lora:
                 continue
             if self.config.use_lora and (
                 ".adapter." not in name or not getattr(param, "requires_grad", False)
@@ -1423,7 +1474,7 @@ class MegatronEngine(TrainEngine):
         # Only pipeline parallel heads CAN contain named tensors here
         if converted_named_tensors:
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
-        elif self.is_pipeline_parallel_head() and not self.config.use_lora:
+        elif self.config.use_lora and self.is_pipeline_parallel_head():
             self.logger.warning(
                 "No tensors were collected for distributed update at version %s.",
                 meta.version,
@@ -1463,6 +1514,7 @@ class MegatronEngine(TrainEngine):
         fut = Future()
 
         if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
             fut = self.rollout_engine.update_weights_from_disk(meta)
 
         self._save_model_to_hf(meta.path, self.tokenizer, None)
@@ -1479,7 +1531,7 @@ class MegatronEngine(TrainEngine):
             )
 
             fut.result()
-
+            self.rollout_engine.continue_generation()
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
 
@@ -1769,6 +1821,15 @@ class MegatronPPOActor(MegatronEngine):
 
     @classmethod
     def as_controller(cls, config: PPOActorConfig, scheduler: Scheduler):
+        if config._version == "v2":
+            from areal.trainer.ppo.actor import PPOActorControllerV2
+
+            return PPOActorControllerV2(
+                train_engine=cls,
+                config=config,
+                scheduler=scheduler,
+            )
+
         from areal.trainer.ppo.actor import PPOActorController
 
         return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1792,6 +1853,15 @@ class MegatronPPOCritic(MegatronEngine):
 
     @classmethod
     def as_controller(cls, config: PPOCriticConfig, scheduler: Scheduler):
+        if config._version == "v2":
+            from areal.trainer.ppo.critic import PPOCriticControllerV2
+
+            return PPOCriticControllerV2(
+                train_engine=cls,
+                config=config,
+                scheduler=scheduler,
+            )
+
         from areal.trainer.ppo.critic import PPOCriticController
 
         return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1814,6 +1884,15 @@ class MegatronLMEngine(MegatronEngine):
 
     @classmethod
     def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
+        if config._version == "v2":
+            from areal.trainer.sft.lm_engine import LMControllerV2
+
+            return LMControllerV2(
+                train_engine=cls,
+                config=config,
+                scheduler=scheduler,
+            )
+
         from areal.trainer.sft.lm_engine import LMController
 
         return LMController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1843,6 +1922,11 @@ class MegatronRWEngine(MegatronEngine):
 
     @classmethod
     def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
+        if config._version == "v2":
+            from areal.trainer.rw.rw_engine import RWControllerV2
+
+            return RWControllerV2(train_engine=cls, config=config, scheduler=scheduler)
+
         from areal.trainer.rw.rw_engine import RWController
 
         return RWController(train_engine=cls, config=config, scheduler=scheduler)

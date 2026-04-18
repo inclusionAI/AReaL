@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Session lifecycle management for the data proxy."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """DataWorker FastAPI app — serves dataset samples over HTTP."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Pause/resume state management for generation coordination.
 
 The controller calls POST /pause on the data proxy to:

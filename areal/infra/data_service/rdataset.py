@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """RDataset — remote dataset proxy, analogous to RTensor for tensors.
 
 Provides a map-style dataset interface backed by remote data workers.

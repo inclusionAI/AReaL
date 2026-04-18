@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """CLI entrypoint for the inference gateway: ``python -m areal.experimental.inference_service.gateway``."""
 
 from __future__ import annotations

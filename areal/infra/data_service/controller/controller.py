@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """DataController — orchestrator for the distributed data loading service.
 
 Manages the full lifecycle: create RPCGuard workers → fork DataWorkers,

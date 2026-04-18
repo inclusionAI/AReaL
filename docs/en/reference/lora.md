@@ -29,12 +29,18 @@ The current LoRA support matrix in AReaL is:
 | Megatron | ✅   | ❌     |
 | Archon   | ❌   | ❌     |
 
-Example scripts:
+**Example scripts:**
 
-| Engine   | Example script                                |
-| -------- | --------------------------------------------- |
-| FSDP2    | `examples/math/gsm8k_grpo_lora.yaml`          |
-| Megatron | `examples/math/gsm8k_grpo_megatron_lora.yaml` |
+| Engine       | Example script                                    |
+| ------------ | ------------------------------------------------- |
+| FSDP2        | `examples/math/gsm8k_grpo_lora.yaml`              |
+| Megatron     | `examples/math/gsm8k_grpo_megatron_lora.yaml`     |
+| Megatron MoE | `examples/math/gsm8k_grpo_megatron_lora_moe.yaml` |
+
+For Megatron + vLLM, AReaL now supports:
+
+- LoRA fine-tuning on MoE architectures such as Qwen3 MoE with XCCL-based LoRA weight.
+- Cross-node LoRA training when the Megatron and rollout groups span multiple nodes.
 
 ## Core LoRA Parameters
 
@@ -50,5 +56,4 @@ Example scripts:
 
 - Start with `r=16` or `r=32` for most models, then tune upward only if needed.
 - Keep `target_modules` consistent with your model architecture naming.
-- Currently only dense models (non MoE) are supported.
 - For Megatron backend, LoRA requires `megatron-bridge` instead of `mbridge`.

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import torch
 
 VALID_VISION_MODELS = [
@@ -34,6 +36,8 @@ def is_gemma3_model(model_type: str) -> bool:
 
 VALID_MOE_MODELS = [
     "qwen3_moe",
+    "qwen3_5_moe",
+    "qwen3_5_moe_text",
     "bailing_moe_v2",
     "bailing_moe_linear",
     "bailing_hybrid",
@@ -47,6 +51,10 @@ def is_moe_model(model_type: str) -> bool:
 
 def is_qwen3_moe_model(model_type: str) -> bool:
     return model_type in ["qwen3_moe"]
+
+
+def is_qwen3_5_model(model_type: str) -> bool:
+    return model_type in ["qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text"]
 
 
 # Copied from trl

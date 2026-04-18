@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Configuration for the GatewayInferenceController."""
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ class GatewayControllerConfig:
     backend: str = "sglang:d1"
     scheduling_spec: tuple = field(default_factory=tuple)
     pause_grace_period: float = 0.5
+    n_gpus_per_node: int | None = None  # GPUs per physical node; None = single-node
 
     # -- OpenAI proxy configuration (for agent-like workflows) ---------------
     openai: OpenAIProxyConfig = field(default_factory=lambda: OpenAIProxyConfig())

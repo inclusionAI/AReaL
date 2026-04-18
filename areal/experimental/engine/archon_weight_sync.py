@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 import os
@@ -219,6 +221,7 @@ def update_weights_from_disk(
     fut: Future | None = None
 
     if dist.get_rank() == 0:
+        engine.rollout_engine.pause_generation()
         fut = engine.rollout_engine.update_weights_from_disk(meta)
 
     assert meta.path is not None
@@ -236,6 +239,7 @@ def update_weights_from_disk(
 
         assert fut is not None
         fut.result()
+        engine.rollout_engine.continue_generation()
 
     current_platform.synchronize()
     dist.barrier(group=engine.cpu_group)

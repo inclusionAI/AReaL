@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import asyncio
 import atexit
 import concurrent.futures
@@ -5,6 +7,7 @@ import inspect
 import threading
 import weakref
 from functools import partial
+from typing import Any
 
 from areal.utils import logging
 
@@ -67,6 +70,21 @@ def run_async_task(func, *args, **kwargs):
     else:
         # Not in async context, use asyncio.run directly
         return asyncio.run(func(*args, **kwargs))
+
+
+def call_maybe_async(method, *args, **kwargs) -> None:
+    """Call a callable and await it if it returns an awaitable.
+
+    This helper lets sync call-sites invoke methods that may be implemented as
+    either sync or async without branching at every call site.
+    """
+    result: Any = method(*args, **kwargs)
+    if inspect.isawaitable(result):
+
+        async def _wait_result() -> None:
+            await result
+
+        run_async_task(_wait_result)
 
 
 # ============================================================================

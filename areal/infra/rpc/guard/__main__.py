@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """CLI entrypoint: ``python -m areal.infra.rpc.guard``
 
 Starts a standalone Guard process with only process-management

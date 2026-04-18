@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Data Service Gateway — thin HTTP proxy with auth, routing, and forwarding."""
 
 from __future__ import annotations

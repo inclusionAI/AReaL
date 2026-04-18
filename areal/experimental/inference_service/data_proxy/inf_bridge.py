@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """InfBridge -- HTTP client implementing _AsyncGenerateEngine protocol.
 
 Supports pluggable backends (SGLang, vLLM, etc.) via the InfBridgeBackend protocol.
