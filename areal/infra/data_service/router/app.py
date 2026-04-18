@@ -57,12 +57,29 @@ def create_router_app(config: RouterConfig) -> FastAPI:
                     async with aiohttp.ClientSession(
                         timeout=aiohttp.ClientTimeout(
                             total=config.worker_health_timeout
-                        )
+                        ),
+                        trust_env=False,
                     ) as session:
                         async with session.get(f"{addr}/health") as resp:
+                            prev = worker_healthy.get(addr)
                             worker_healthy[addr] = resp.status == 200
-                except Exception:
+                            if prev != worker_healthy[addr]:
+                                logger.info(
+                                    "Worker %s health changed: %s -> %s",
+                                    addr,
+                                    prev,
+                                    worker_healthy[addr],
+                                )
+                except Exception as exc:
+                    prev = worker_healthy.get(addr)
                     worker_healthy[addr] = False
+                    if prev is not False:
+                        logger.warning(
+                            "Worker %s health check failed: %s: %s",
+                            addr,
+                            type(exc).__name__,
+                            exc,
+                        )
             await asyncio.sleep(config.poll_interval)
 
     @asynccontextmanager

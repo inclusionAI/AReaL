@@ -28,6 +28,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger("DataController")
 
 
+def _make_session(timeout: float | None = None) -> aiohttp.ClientSession:
+    return aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout) if timeout else None,
+        trust_env=False,
+    )
+
+
 class DataController:
     """Controller for the distributed data loading service.
 
@@ -85,7 +92,6 @@ class DataController:
                 "DataServiceConfig.scheduling_spec must be set to launch data service workers"
             )
 
-        # Use sys.executable as the interpreter; don't mutate cfg.scheduling_spec
         cmd = spec.cmd
         if not cmd:
             raise ValueError(
@@ -121,8 +127,7 @@ class DataController:
         guard_addr_0 = guard_addrs[0]
 
         try:
-            async with aiohttp.ClientSession() as session:
-                # Wave 1: Fork all DataWorkers + Router in parallel
+            async with _make_session() as session:
                 worker_tasks = [
                     self._async_fork_on_guard(
                         session,
@@ -168,7 +173,6 @@ class DataController:
                 logger.info("DataWorkers: %s", self._worker_addrs)
                 logger.info("Router: %s", self._router_addr)
 
-                # Wave 2: Fork Gateway + Register workers with Router
                 async def _register_workers() -> None:
                     for worker_addr in self._worker_addrs:
                         async with session.post(
@@ -204,7 +208,6 @@ class DataController:
                 self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
                 logger.info("Gateway: %s", self._gateway_addr)
         except Exception:
-            # Rollback: kill forked services and delete scheduler workers
             logger.error(
                 "DataController initialization failed, rolling back",
                 exc_info=True,
@@ -263,6 +266,13 @@ class DataController:
 
         from areal.infra.utils.concurrent import run_async_task
 
+        logger.info(
+            "Registering dataset %s (path=%s, type=%s) via gateway %s",
+            dataset_id,
+            dataset_path,
+            dataset_type,
+            self._gateway_addr,
+        )
         data = run_async_task(
             self._async_gateway_post,
             "/v1/datasets/register",
@@ -338,7 +348,7 @@ class DataController:
             except Exception:
                 logger.debug("Failed to clear batches on %s", addr)
 
-        async with aiohttp.ClientSession() as session:
+        async with _make_session() as session:
             await asyncio.gather(
                 *(_clear_one(session, addr) for addr in self._worker_addrs),
                 return_exceptions=True,
@@ -365,7 +375,6 @@ class DataController:
                     exc,
                 )
 
-        # Kill forked services concurrently
         if self._forked_services:
             run_async_task(
                 self._async_kill_forked_services,
@@ -486,7 +495,7 @@ class DataController:
                     exc,
                 )
 
-        async with aiohttp.ClientSession() as session:
+        async with _make_session() as session:
             await asyncio.gather(
                 *(_kill_one(session, *svc) for svc in services),
                 return_exceptions=True,
@@ -511,9 +520,7 @@ class DataController:
     ) -> dict[str, Any]:
         url = f"{self._gateway_addr}{endpoint}"
         try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=timeout)
-            ) as session:
+            async with _make_session(timeout) as session:
                 async with session.post(
                     url,
                     json=payload,
@@ -521,9 +528,21 @@ class DataController:
                 ) as resp:
                     if resp.status >= 400:
                         text = await resp.text()
+                        logger.error(
+                            "Gateway %s returned %d: %s",
+                            endpoint,
+                            resp.status,
+                            text[:1000],
+                        )
                         raise RuntimeError(
                             f"Gateway {endpoint} returned {resp.status}: {text}"
                         )
                     return await resp.json()
         except aiohttp.ClientError as exc:
+            logger.error(
+                "Failed to POST gateway %s: %s: %s",
+                endpoint,
+                type(exc).__name__,
+                exc,
+            )
             raise RuntimeError(f"Failed to POST {endpoint}: {exc}") from exc
