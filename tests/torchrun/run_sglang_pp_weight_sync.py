@@ -31,10 +31,10 @@ The ``SGLangBackend.build_init_weights_group_request`` method constructs
 the HTTP payload by parsing the group name suffix.  We inline this logic
 to avoid transitive imports of heavy engine modules.
 """
+
 import argparse
 import logging
 import os
-import sys
 
 import torch
 import torch.distributed as dist
@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 # Result writer
 # ---------------------------------------------------------------------------
 
+
 def _write_result(output_path: str, passed: bool) -> None:
     if output_path:
         with open(output_path, "w") as f:
@@ -59,6 +60,7 @@ def _write_result(output_path: str, passed: bool) -> None:
 # Engine-type helpers: group naming convention shared by all engines
 # ---------------------------------------------------------------------------
 
+
 def _get_weight_update_group_name(pp_rank: int) -> str:
     """Return the expected weight update group name for a given PP rank.
 
@@ -67,8 +69,9 @@ def _get_weight_update_group_name(pp_rank: int) -> str:
     return f"update_weight_group_{pp_rank}"
 
 
-def _is_pp_head(engine_type: str, rank: int, world_size: int,
-                dp: int, pp: int, tp: int) -> bool:
+def _is_pp_head(
+    engine_type: str, rank: int, world_size: int, dp: int, pp: int, tp: int
+) -> bool:
     """Determine whether this rank is a pipeline parallel head.
 
     Uses the same logic each engine applies:
@@ -111,6 +114,7 @@ def _get_pp_size(engine_type: str, dp: int, pp: int, tp: int) -> int:
 # ---------------------------------------------------------------------------
 # Inline payload construction (mirrors SGLangBackend logic)
 # ---------------------------------------------------------------------------
+
 
 def _build_init_weights_group_payload(
     group_name: str,
@@ -168,6 +172,7 @@ def _build_init_weights_group_payload(
 # Test: group_init
 # ---------------------------------------------------------------------------
 
+
 def test_group_init(backend: str, gen_pp_size: int, output: str, engine_type: str):
     """Verify per-PP-rank group names, head detection, and world sizes.
 
@@ -192,7 +197,10 @@ def test_group_init(backend: str, gen_pp_size: int, output: str, engine_type: st
 
         logger.info(
             "rank=%d engine=%s pp_rank=%d expected_group=%s",
-            rank, engine_type, pp_rank, expected_group,
+            rank,
+            engine_type,
+            pp_rank,
+            expected_group,
         )
         assert expected_group == f"update_weight_group_{pp_rank}", (
             f"rank {rank}: group name mismatch: {expected_group}"
@@ -209,7 +217,7 @@ def test_group_init(backend: str, gen_pp_size: int, output: str, engine_type: st
         else:
             tp_idx = rank % tp
             dp_idx = rank // (pp * tp)
-            expected_head = (dp_idx == 0 and tp_idx == 0)
+            expected_head = dp_idx == 0 and tp_idx == 0
             assert is_head == expected_head, (
                 f"rank {rank}: expected is_head={expected_head}, got {is_head}"
             )
@@ -252,7 +260,7 @@ def test_group_init(backend: str, gen_pp_size: int, output: str, engine_type: st
                 )
             else:
                 assert "pp_rank" not in payload, (
-                    f"pp_rank should not be in payload for gen_pp_size=1"
+                    "pp_rank should not be in payload for gen_pp_size=1"
                 )
                 expected_ws = gen_world + 1
                 assert int(payload["world_size"]) == expected_ws, (
@@ -274,6 +282,7 @@ def test_group_init(backend: str, gen_pp_size: int, output: str, engine_type: st
 # ---------------------------------------------------------------------------
 # Test: weight_sync
 # ---------------------------------------------------------------------------
+
 
 def test_weight_sync(backend: str, gen_pp_size: int, output: str, engine_type: str):
     """Verify allocation parsing, PP arithmetic, and distributed broadcast.
@@ -299,7 +308,7 @@ def test_weight_sync(backend: str, gen_pp_size: int, output: str, engine_type: s
             f"world_size mismatch: alloc={alloc.parallel.world_size}, env={world_size}"
         )
         assert dp * pp * tp == world_size, (
-            f"dp*pp*tp={dp}*{pp}*{tp}={dp*pp*tp} != world_size={world_size}"
+            f"dp*pp*tp={dp}*{pp}*{tp}={dp * pp * tp} != world_size={world_size}"
         )
 
         # --- 2. FSDP PP-DP folding ---
@@ -309,7 +318,9 @@ def test_weight_sync(backend: str, gen_pp_size: int, output: str, engine_type: s
             )
             logger.info(
                 "FSDP allocation validated: dp=%d pp=%d tp=%d (PP folded into DP)",
-                dp, pp, tp,
+                dp,
+                pp,
+                tp,
             )
 
         # --- 3. Simulated layer partitioning across PP ranks ---
@@ -321,21 +332,39 @@ def test_weight_sync(backend: str, gen_pp_size: int, output: str, engine_type: s
             layers_per_pp = total_layers // pp_size
             my_start = pp_rank * layers_per_pp
             my_end = (
-                (pp_rank + 1) * layers_per_pp
-                if pp_rank < pp_size - 1
-                else total_layers
+                (pp_rank + 1) * layers_per_pp if pp_rank < pp_size - 1 else total_layers
             )
             my_layer_indices = set(range(my_start, my_end))
         else:
             my_layer_indices = set(range(total_layers))
 
         if pp_size > 1:
-            tp_idx = rank % tp
-            dp_idx = rank // (pp * tp)
-            pp_group_ranks = [
-                dp_idx * (pp * tp) + p * tp + tp_idx for p in range(pp)
-            ]
-            pp_group = dist.new_group(ranks=pp_group_ranks)
+            # Compute ALL PP sub-groups in a deterministic order so that
+            # every rank calls ``dist.new_group`` the same number of times
+            # and in the same sequence.  ``dist.new_group`` is a collective
+            # on the default group — ALL ranks must participate in every
+            # call, even if they are not members of that sub-group.
+            all_pp_group_ranks = []
+            for d in range(dp):
+                for t in range(tp):
+                    ranks_in_group = sorted(
+                        d * (pp * tp) + p * tp + t for p in range(pp)
+                    )
+                    all_pp_group_ranks.append(ranks_in_group)
+
+            pp_group_objects = []
+            for ranks_in_group in all_pp_group_ranks:
+                g = dist.new_group(ranks=ranks_in_group)
+                pp_group_objects.append(g)
+
+            my_pp_group_idx = next(
+                i
+                for i, ranks_in_group in enumerate(all_pp_group_ranks)
+                if rank in ranks_in_group
+            )
+            pp_group = pp_group_objects[my_pp_group_idx]
+            pp_group_ranks = all_pp_group_ranks[my_pp_group_idx]
+
             all_layer_sets = [None] * pp_size
             dist.all_gather_object(all_layer_sets, my_layer_indices, group=pp_group)
 
@@ -355,9 +384,9 @@ def test_weight_sync(backend: str, gen_pp_size: int, output: str, engine_type: s
                 )
                 logger.info(
                     "PP layer partitioning verified: %d ranks, %d layers",
-                    pp_size, total_layers,
+                    pp_size,
+                    total_layers,
                 )
-            dist.destroy_process_group(pp_group)
 
         # --- 4. NCCL all-reduce test ---
         device = f"cuda:{local_rank}"
@@ -370,17 +399,31 @@ def test_weight_sync(backend: str, gen_pp_size: int, output: str, engine_type: s
 
         # Per-PP-rank broadcast test
         if pp_size > 1:
+            # Same pattern: create ALL TP sub-groups in deterministic order.
+            all_tp_group_ranks = []
+            for d in range(dp):
+                for p in range(pp):
+                    ranks_in_group = sorted(
+                        d * (pp * tp) + p * tp + t for t in range(tp)
+                    )
+                    all_tp_group_ranks.append(ranks_in_group)
+
+            tp_group_objects = []
+            for ranks_in_group in all_tp_group_ranks:
+                g = dist.new_group(ranks=ranks_in_group)
+                tp_group_objects.append(g)
+
+            my_tp_group_idx = next(
+                i
+                for i, ranks_in_group in enumerate(all_tp_group_ranks)
+                if rank in ranks_in_group
+            )
+            tp_group = tp_group_objects[my_tp_group_idx]
+            tp_group_ranks = all_tp_group_ranks[my_tp_group_idx]
             tp_idx = rank % tp
-            dp_idx = rank // (pp * tp)
-            tp_group_ranks = [
-                dp_idx * (pp * tp) + pp_rank * tp + t for t in range(tp)
-            ]
-            tp_group = dist.new_group(ranks=tp_group_ranks)
 
             if tp_idx == 0:
-                weight_token = torch.tensor(
-                    [float(pp_rank * 100 + 42)], device=device
-                )
+                weight_token = torch.tensor([float(pp_rank * 100 + 42)], device=device)
             else:
                 weight_token = torch.zeros(1, device=device)
 
@@ -391,7 +434,6 @@ def test_weight_sync(backend: str, gen_pp_size: int, output: str, engine_type: s
                 f"rank {rank}: per-PP broadcast failed: "
                 f"got {weight_token.item()}, expected {expected_val}"
             )
-            dist.destroy_process_group(tp_group)
 
         current_platform.synchronize()
         dist.barrier()
@@ -409,29 +451,42 @@ def test_weight_sync(backend: str, gen_pp_size: int, output: str, engine_type: s
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Distributed test worker for sglang PP weight sync."
     )
     parser.add_argument(
-        "--backend", type=str, default="megatron:d1p2t2",
+        "--backend",
+        type=str,
+        default="megatron:d1p2t2",
         help="Training engine allocation string.",
     )
     parser.add_argument(
-        "--output", type=str, default=None,
+        "--output",
+        type=str,
+        default=None,
         help="Path to write Passed/Failed result.",
     )
     parser.add_argument(
-        "--test_type", type=str, choices=["group_init", "weight_sync"],
-        default="group_init", help="Which test to run.",
+        "--test_type",
+        type=str,
+        choices=["group_init", "weight_sync"],
+        default="group_init",
+        help="Which test to run.",
     )
     parser.add_argument(
-        "--gen_pp_size", type=int, default=2,
+        "--gen_pp_size",
+        type=int,
+        default=2,
         help="Inference-side PP size for validation.",
     )
     parser.add_argument(
-        "--engine_type", type=str, choices=["megatron", "fsdp", "archon"],
-        default="megatron", help="Training engine type to validate.",
+        "--engine_type",
+        type=str,
+        choices=["megatron", "fsdp", "archon"],
+        default="megatron",
+        help="Training engine type to validate.",
     )
     args = parser.parse_args()
 
