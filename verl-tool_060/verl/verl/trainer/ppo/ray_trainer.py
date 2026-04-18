@@ -272,14 +272,14 @@ def compute_advantage(
 
         # calculate advantage estimator
         result = adv_estimator_fn(**adv_kwargs)
+        gigpo_metrics = {}
         if len(result) == 3:
             advantages, returns, gigpo_metrics = result
-            data.non_tensor_batch["gigpo_metrics"] = gigpo_metrics
         else:
             advantages, returns = result
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
-    return data
+    return data, gigpo_metrics
 
 
 class RayPPOTrainer:
@@ -1247,7 +1247,7 @@ class RayPPOTrainer:
                             "norm_adv_by_std_in_grpo", True
                         )  # GRPO adv normalization factor
 
-                        batch = compute_advantage(
+                        batch, gigpo_metrics = compute_advantage(
                             batch,
                             adv_estimator=self.config.algorithm.adv_estimator,
                             gamma=self.config.algorithm.gamma,
@@ -1337,8 +1337,8 @@ class RayPPOTrainer:
                 # collect metrics
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
-                if "gigpo_metrics" in batch.non_tensor_batch:
-                    metrics.update(batch.non_tensor_batch["gigpo_metrics"])
+                if gigpo_metrics:
+                    metrics.update(gigpo_metrics)
                 # TODO: implement actual tflpo and theoretical tflpo
                 n_gpus = self.resource_pool_manager.get_n_gpus()
                 metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
