@@ -1,5 +1,5 @@
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import requests
@@ -29,6 +29,26 @@ class RolloutCallback:
     controller_addr: str
     request_timeout: float = 600.0
 
+    # Bypass HTTP_PROXY / HTTPS_PROXY for all internal callback requests.
+    # In environments where a corporate HTTP proxy is configured (e.g.,
+    # HTTP_PROXY=http://sys-proxy-rd-relay.byted.org:8118), Python's
+    # requests library auto-routes through the proxy. When the callback
+    # server's address (e.g., an IPv6 pod IP) is not listed in NO_PROXY,
+    # the proxy intercepts the request and applies its own timeout (~60s),
+    # causing 504 Gateway Timeout on long-running NCCL weight updates
+    # before the operation completes. Using a Session with trust_env=False
+    # ensures direct connection to the callback server.
+    _no_proxy_session: requests.Session | None = field(default=None, init=False, repr=False)
+
+    @property
+    def _session(self) -> requests.Session:
+        """Lazily create a requests.Session that bypasses env proxy settings."""
+        if self._no_proxy_session is None:
+            s = requests.Session()
+            s.trust_env = False  # Ignore HTTP_PROXY / HTTPS_PROXY / NO_PROXY
+            object.__setattr__(self, "_no_proxy_session", s)
+        return self._no_proxy_session
+
     def _post(self, endpoint: str, payload: dict[str, Any] | None = None) -> dict:
         """Make synchronous HTTP POST to controller callback endpoint.
 
@@ -46,7 +66,7 @@ class RolloutCallback:
         """
         url = f"http://{self.controller_addr}{endpoint}"
         try:
-            resp = requests.post(
+            resp = self._session.post(
                 url,
                 json=payload or {},
                 timeout=self.request_timeout,
@@ -218,4 +238,19 @@ class RolloutCallback:
         payload = {
             "serialized_payload": serialize_value(serialized_payload),
         }
-        self._post("/callback/update_weights_tensor", payload)
+        # Use non-blocking POST as defense-in-depth. Even with proxy bypass,
+        # large MTP tensor payloads may take time to transmit. The fire-and-
+        # forget callback pattern ensures the HTTP layer does not block.
+        fut = self._post_nowait_void("/callback/update_weights_tensor", payload)
+        try:
+            fut.result(timeout=120)
+        except TimeoutError:
+            logger.warning(
+                "update_weights_from_tensor callback timed out. "
+                "Tensor update dispatched via fire-and-forget."
+            )
+        except Exception as e:
+            logger.warning(
+                f"update_weights_from_tensor callback error: {e}. "
+                "Tensor update dispatched via fire-and-forget."
+            )

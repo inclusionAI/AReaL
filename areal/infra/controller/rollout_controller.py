@@ -552,7 +552,9 @@ class RolloutController:
         def init_weights_group():
             payload = request.get_json() or {}
             meta = deserialize_value(payload.get("meta"))
-            self._callback_loop.run_until_complete(self.init_weights_update_group(meta))
+            asyncio.run_coroutine_threadsafe(
+                self.init_weights_update_group(meta), self._callback_loop
+            ).result()
             return jsonify({"status": "ok"})
 
         @app.route("/callback/update_weights_xccl", methods=["POST"])
@@ -560,8 +562,15 @@ class RolloutController:
             payload = request.get_json() or {}
             meta = deserialize_value(payload.get("meta"))
             param_specs = deserialize_value(payload.get("param_specs"))
-            self._callback_loop.run_until_complete(
-                self.update_weights_from_distributed(meta, param_specs)
+            # Fire-and-forget: schedule the NCCL weight update as a background
+            # task and return HTTP 200 immediately. This prevents infrastructure
+            # proxy timeouts (504) since the full NCCL transfer chain can take
+            # >60s. NCCL broadcast is collective — when the training side's
+            # broadcast handle completes, the receive side has the data.
+            # Inspired by verl's pattern of decoupling HTTP from NCCL ops.
+            asyncio.run_coroutine_threadsafe(
+                self.update_weights_from_distributed(meta, param_specs),
+                self._callback_loop,
             )
             return jsonify({"status": "ok"})
 
@@ -569,17 +578,23 @@ class RolloutController:
         def update_weights_disk():
             payload = request.get_json() or {}
             meta = deserialize_value(payload.get("meta"))
-            self._callback_loop.run_until_complete(self.update_weights_from_disk(meta))
+            asyncio.run_coroutine_threadsafe(
+                self.update_weights_from_disk(meta), self._callback_loop
+            ).result()
             return jsonify({"status": "ok"})
 
         @app.route("/callback/pause_generation", methods=["POST"])
         def pause_generation():
-            self._callback_loop.run_until_complete(self.pause_generation())
+            asyncio.run_coroutine_threadsafe(
+                self.pause_generation(), self._callback_loop
+            ).result()
             return jsonify({"status": "ok"})
 
         @app.route("/callback/continue_generation", methods=["POST"])
         def continue_generation():
-            self._callback_loop.run_until_complete(self.continue_generation())
+            asyncio.run_coroutine_threadsafe(
+                self.continue_generation(), self._callback_loop
+            ).result()
             return jsonify({"status": "ok"})
 
         @app.route("/callback/update_weights_tensor", methods=["POST"])
@@ -588,8 +603,10 @@ class RolloutController:
             serialized_payload = deserialize_value(
                 payload.get("serialized_payload")
             )
-            self._callback_loop.run_until_complete(
-                self.update_weights_from_tensor(serialized_payload)
+            # Fire-and-forget: same pattern as update_weights_xccl.
+            asyncio.run_coroutine_threadsafe(
+                self.update_weights_from_tensor(serialized_payload),
+                self._callback_loop,
             )
             return jsonify({"status": "ok"})
 
@@ -627,12 +644,28 @@ class RolloutController:
         werkzeug_logger = stdlib_logging.getLogger("werkzeug")
         werkzeug_logger.setLevel(stdlib_logging.WARNING)
 
-        def serve_forever():
-            # Create and set event loop for this thread
+        def run_async_loop():
+            """Run a dedicated asyncio event loop in a background thread.
+
+            This loop processes coroutines scheduled via
+            asyncio.run_coroutine_threadsafe(). Unlike the original design
+            which used run_until_complete() from the werkzeug handler thread,
+            a dedicated running loop supports both blocking (.result()) and
+            fire-and-forget patterns — critical for avoiding proxy/infra
+            timeouts on long-running NCCL weight transfers.
+            """
             self._callback_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._callback_loop)
-            # Signal that the loop is ready
             self._callback_loop_ready.set()
+            self._callback_loop.run_forever()
+
+        self._callback_loop_thread = threading.Thread(
+            target=run_async_loop, daemon=True
+        )
+        self._callback_loop_thread.start()
+        self._callback_loop_ready.wait()
+
+        def serve_forever():
             logger.info(
                 f"Callback server started on {format_hostport(self._callback_host, self._callback_port)}"
             )
@@ -642,8 +675,6 @@ class RolloutController:
             target=serve_forever, daemon=True
         )
         self._callback_server_thread.start()
-        # Wait for loop to be created
-        self._callback_loop_ready.wait()
 
     def _stop_callback_server(self):
         """Stop the callback server if running."""
@@ -651,6 +682,7 @@ class RolloutController:
             logger.info("Stopping callback server...")
             self._callback_server.shutdown()
             if self._callback_loop is not None:
+                self._callback_loop.call_soon_threadsafe(self._callback_loop.stop)
                 self._callback_loop.close()
             self._callback_server = None
             self._callback_app = None

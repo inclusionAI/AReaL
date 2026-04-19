@@ -2114,7 +2114,24 @@ class MegatronEngine(TrainEngine):
         for handle in handles:
             handle.wait()
 
-        fut.result()
+        # The callback server now returns HTTP 200 immediately (fire-and-forget)
+        # before the NCCL transfer completes on the inference side. Since NCCL
+        # broadcast is collective, handle.wait() above already guarantees BOTH
+        # sides have completed the data transfer. fut.result() only confirms
+        # the HTTP POST was accepted. Use a short timeout to catch delivery
+        # errors without blocking on infrastructure proxy timeouts (504).
+        try:
+            fut.result(timeout=30)
+        except TimeoutError:
+            self.logger.warning(
+                "Callback response timed out, but NCCL broadcast "
+                "completed successfully. Continuing weight update."
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"Callback response error: {e}. NCCL broadcast "
+                "completed successfully. Continuing weight update."
+            )
 
         converted_named_tensors.clear()
 
