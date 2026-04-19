@@ -61,6 +61,65 @@ from areal.utils import stats_tracker
 logger = logging.getLogger(__name__)
 
 
+def _resolve_to_tensor(obj: Any) -> torch.Tensor | None:
+    """Resolve *obj* to a ``torch.Tensor``, handling RTensor and numpy.
+
+    Returns ``None`` if *obj* is ``None`` or cannot be converted.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, torch.Tensor):
+        return obj
+    try:
+        from areal.infra.rpc.rtensor import RTensor
+
+        if isinstance(obj, RTensor):
+            return obj.to_local()
+    except ImportError:
+        pass
+    try:
+        return torch.as_tensor(obj)
+    except Exception:
+        logger.warning(
+            "[R3] Failed to resolve %s to torch.Tensor.",
+            type(obj).__name__,
+            exc_info=True,
+        )
+        return None
+
+
+def _ensure_tensor_routed_experts(data: dict[str, Any]) -> torch.Tensor | None:
+    """Extract ``routed_experts`` from *data*, converting to Tensor if needed.
+
+    Handles the case where SGLang returns routed_experts as a numpy array,
+    RTensor, or other array-like type instead of a ``torch.Tensor``.
+    Logs a warning when a conversion is performed so that upstream data
+    pipelines can be diagnosed.
+    """
+    re = data.get("routed_experts")
+    if re is None:
+        return None
+    if isinstance(re, torch.Tensor):
+        return re
+
+    re_tensor = _resolve_to_tensor(re)
+    if re_tensor is not None:
+        logger.info(
+            "[R3] routed_experts was %s (shape=%s); resolved to torch.Tensor "
+            "(shape=%s, dtype=%s).",
+            type(re).__name__,
+            getattr(re, "shape", "unknown"),
+            re_tensor.shape,
+            re_tensor.dtype,
+        )
+    else:
+        logger.warning(
+            "[R3] Failed to resolve routed_experts from %s to torch.Tensor.",
+            type(re).__name__,
+        )
+    return re_tensor
+
+
 def log_r3_data_stats(
     data: dict[str, Any],
     scope: str = "r3",
@@ -75,7 +134,7 @@ def log_r3_data_stats(
         data: The training data dict that may contain ``"routed_experts"``.
         scope: Stats-tracker scope prefix.
     """
-    re = data.get("routed_experts")
+    re = _ensure_tensor_routed_experts(data)
     if re is None:
         return
 
@@ -90,10 +149,7 @@ def log_r3_data_stats(
                 r3_max_expert_id=re.max().item() if re.numel() > 0 else 0,
             )
 
-            # Compute R3 effectiveness metrics
             _log_r3_effectiveness_metrics(re)
-        else:
-            stats_tracker.scalar(r3_present=0)
 
 
 def split_routed_experts_for_minibatches(
@@ -406,14 +462,14 @@ def log_moe_routing_metrics(
             of shape ``(bs, seq_len, num_moe_layers, topk)``.
         scope: Stats-tracker scope prefix.
     """
-    re = data.get("routed_experts")
+    re = _ensure_tensor_routed_experts(data)
     if re is None:
         return
     if not isinstance(re, torch.Tensor) or re.dim() < 4:
         return
 
     bs, seq_len, num_layers, topk = re.shape
-    attn_mask = data.get("attention_mask")
+    attn_mask = _resolve_to_tensor(data.get("attention_mask"))
 
     with stats_tracker.scope(scope):
         # ------------------------------------------------------------------
@@ -426,9 +482,16 @@ def log_moe_routing_metrics(
         # ------------------------------------------------------------------
         # 2. Expert utilization and load balance (per-layer)
         # ------------------------------------------------------------------
-        if attn_mask is not None:
+        if attn_mask is not None and attn_mask.shape[1] == seq_len:
             real_mask = attn_mask.bool()  # (bs, seq_len)
         else:
+            if attn_mask is not None:
+                logger.warning(
+                    "[R3] attn_mask seq_len (%d) != routed_experts seq_len (%d); "
+                    "falling back to all-ones mask.",
+                    attn_mask.shape[1],
+                    seq_len,
+                )
             real_mask = torch.ones(bs, seq_len, dtype=torch.bool, device=re.device)
 
         # Expand mask for layers and topk: (bs, seq_len, 1, 1)

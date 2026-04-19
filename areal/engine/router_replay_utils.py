@@ -251,19 +251,31 @@ def set_router_replay_data(
 
     with torch.no_grad():
         device = torch.cuda.current_device()
-        bs, max_seq_len = attention_mask.shape[:2]
+        bs_re = layers_topk_idx.shape[0]
+        bs_mask, max_seq_len = attention_mask.shape[:2]
+
+        if bs_re != bs_mask:
+            logger.warning(
+                "[R3] set_router_replay_data: batch size mismatch! "
+                "layers_topk_idx.shape[0]=%d != attention_mask.shape[0]=%d. "
+                "Clamping iteration to min=%d.",
+                bs_re, bs_mask, min(bs_re, bs_mask),
+            )
+        bs = min(bs_re, bs_mask)
 
         logger.debug(
             "[R3] set_router_replay_data: input layers_topk_idx=%s, "
-            "attention_mask=%s, bs=%d, max_seq_len=%d.",
+            "attention_mask=%s, bs=%d (re_bs=%d, mask_bs=%d), max_seq_len=%d.",
             layers_topk_idx.shape,
             attention_mask.shape,
             bs,
+            bs_re,
+            bs_mask,
             max_seq_len,
         )
 
         # Step 1: Remove left-padding -> flat (total_real_tokens, num_layers, topk)
-        seq_lens = attention_mask.sum(dim=1).long()  # (bs,)
+        seq_lens = attention_mask.sum(dim=1).long()  # (bs_mask,)
         pieces = []
         for i in range(bs):
             slen = int(seq_lens[i].item())

@@ -98,30 +98,49 @@ class SGLangBackend:
         stop_message = finish_reason.get("message", "")
 
         # Extract routed_experts information if available.
-        # Requires skip_tokenizer_init=False so that sglang v0.5.9 routes
-        # through the DetokenizerManager which base64-encodes the tensor.
-        # When skip_tokenizer_init=True on v0.5.9 the raw tensor is lost
-        # during JSON serialization (becomes {}).
+        # SGLang may return routed_experts in two formats:
+        # 1. Base64-encoded string (skip_tokenizer_init=False, normal path)
+        # 2. Raw list/dict (skip_tokenizer_init=True or newer SGLang versions)
         routed_experts = meta_info.get("routed_experts", None)
         if routed_experts is not None:
-            if not isinstance(routed_experts, str):
-                logger.warning(
-                    "[R3] routed_experts is %s instead of base64 str "
-                    "(skip_tokenizer_init must be False for sglang<=0.5.9); "
-                    "discarding.",
-                    type(routed_experts).__name__,
-                )
-                routed_experts = None
+            num_sgl_token = (
+                meta_info["prompt_tokens"] + meta_info["completion_tokens"] - 1
+            )
+            if isinstance(routed_experts, str):
+                try:
+                    routed_experts = np.frombuffer(
+                        pybase64.b64decode(routed_experts.encode("utf-8")),
+                        dtype=np.int32,
+                    ).reshape(num_sgl_token, -1)
+                except Exception:
+                    logger.warning(
+                        "[R3] Failed to decode base64 routed_experts "
+                        "(num_sgl_token=%d): %s",
+                        num_sgl_token,
+                        exc_info=True,
+                    )
+                    routed_experts = None
             else:
-                num_sgl_token = (
-                    meta_info["prompt_tokens"]
-                    + meta_info["completion_tokens"]
-                    - 1
-                )
-                routed_experts = np.frombuffer(
-                    pybase64.b64decode(routed_experts.encode("utf-8")),
-                    dtype=np.int32,
-                ).reshape(num_sgl_token, -1)
+                try:
+                    routed_experts = np.asarray(
+                        routed_experts, dtype=np.int32
+                    ).reshape(num_sgl_token, -1)
+                    logger.info(
+                        "[R3] Converted routed_experts from %s to numpy array "
+                        "(shape=%s, num_sgl_token=%d).",
+                        type(meta_info.get("routed_experts")).__name__,
+                        routed_experts.shape,
+                        num_sgl_token,
+                    )
+                except Exception:
+                    logger.warning(
+                        "[R3] Failed to convert routed_experts from %s "
+                        "(num_sgl_token=%d): %s",
+                        type(meta_info.get("routed_experts")).__name__,
+                        num_sgl_token,
+                        exc_info=True,
+                    )
+                    routed_experts = None
 
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):
             return HttpGenerationResult(

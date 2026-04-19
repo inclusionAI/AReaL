@@ -162,6 +162,7 @@ class MegatronEngine(TrainEngine):
         self.seed: int = 0
         self.own_global_group: bool = False
         self.is_offload: bool = False
+        self._r3_enabled: bool = getattr(config.megatron, "enable_router_replay", False)
         self.enable_tree_training: bool = self.config.enable_tree_training
         # FP8 configuration
         self.fp8_config = self.mcore_config.fp8_config
@@ -285,8 +286,14 @@ class MegatronEngine(TrainEngine):
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
-        # R3: Check early so the variable is always defined.
-        _r3_enabled = getattr(self.config, "_r3_enable_router_replay", False)
+        # R3: _r3_enabled was set in __init__ from config.megatron.enable_router_replay.
+        self.logger.info(
+            "[R3] enable_router_replay=%s (config.megatron type=%s, "
+            "config type=%s).",
+            self._r3_enabled,
+            type(self.config.megatron).__name__,
+            type(self.config).__name__,
+        )
         with patch_bridge_for_tree_training(
             self.enable_tree_training and self.bridge_cls == "mbridge"
         ):
@@ -311,7 +318,7 @@ class MegatronEngine(TrainEngine):
 
             # R3: Apply Router Replay patch BEFORE model creation so that
             # TopKRouter.__init__ and TransformerConfig.__init__ are patched.
-            if _r3_enabled:
+            if self._r3_enabled:
                 from areal.engine.router_replay_patch import apply_router_replay_patch
                 apply_router_replay_patch()
                 self.tf_config.enable_routing_replay = True
@@ -410,7 +417,7 @@ class MegatronEngine(TrainEngine):
         self._create_optimizer(ft_spec)
 
         # R3: Apply engine-level patch after model and optimizer are ready.
-        if _r3_enabled:
+        if self._r3_enabled:
             from areal.engine.megatron_engine_r3_patch import patch_megatron_engine_for_r3
             patch_megatron_engine_for_r3(self, enable_router_replay=True)
             self.logger.info("[R3] Router Replay enabled on MegatronEngine.")

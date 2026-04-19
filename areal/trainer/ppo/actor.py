@@ -322,6 +322,11 @@ class PPOActor:
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
         _r3_routed_experts = data.pop("routed_experts", None)
+        if _r3_routed_experts is not None and not isinstance(
+            _r3_routed_experts, torch.Tensor
+        ):
+            from areal.trainer.ppo.actor_r3_patch import _resolve_to_tensor
+            _r3_routed_experts = _resolve_to_tensor(_r3_routed_experts)
 
         mb_inputs = split_padded_tensor_dict_into_mb_list(
             data,
@@ -349,12 +354,20 @@ class PPOActor:
             for i, mb in enumerate(mb_inputs.mbs):
                 # deliver routed_experts via engine side-channel
                 # to bypass pack_tensor_dict corruption and ensure correct per-mini-batch data.
-                if _r3_split is not None and hasattr(self.engine, '_r3_enabled'):
-                    self.engine._r3_pending_routed_experts = (
-                        _r3_split[i]
-                        if i < len(_r3_split) and _r3_split[i] is not None
-                        else None
-                    )
+                if _r3_split is not None:
+                    if hasattr(self.engine, "_r3_enabled"):
+                        self.engine._r3_pending_routed_experts = (
+                            _r3_split[i]
+                            if i < len(_r3_split) and _r3_split[i] is not None
+                            else None
+                        )
+                    else:
+                        logger.warning(
+                            "[R3] routed_experts available but engine._r3_enabled "
+                            "attribute missing (R3 engine patch not applied). "
+                            "Check that config.actor.megatron.enable_router_replay "
+                            "is set before engine creation.",
+                        )
 
                 train_stat = self.engine.train_batch(
                     mb,

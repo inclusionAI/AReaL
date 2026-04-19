@@ -251,6 +251,23 @@ def _patched_topk_routing_with_score_function(
                     "falling back to normal routing."
                 )
                 return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
+
+            # Compute natural topk for Router Agreement Rate metric.
+            # This measures how much the training router's natural selection
+            # diverges from the replayed inference routing.
+            with torch.no_grad():
+                _, natural_indices = _compute_topk(
+                    scores, topk, num_groups=num_groups, group_topk=group_topk
+                )
+                replay_indices = router_replay.target_topk_idx.to(scores.device)
+                natural_sorted = natural_indices.sort(dim=-1).values
+                replay_sorted = replay_indices.sort(dim=-1).values
+                matches = (natural_sorted == replay_sorted).all(dim=-1).float()
+                agreement_rate = matches.mean().item()
+                from areal.utils import stats_tracker
+                with stats_tracker.scope("r3"):
+                    stats_tracker.scalar(router_agreement_rate=agreement_rate)
+
             # Use the provided indices for replay
             top_indices = router_replay.target_topk_idx
             top_indices = top_indices.to(scores.device)

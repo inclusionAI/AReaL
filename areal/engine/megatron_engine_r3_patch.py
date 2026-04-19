@@ -144,6 +144,14 @@ def _align_routed_experts_to_mask(
     the post-pack ``attention_mask`` is LEFT-aligned (real tokens first,
     no left-padding).
 
+    **Batch size alignment**: ``pad_packed_tensor_dict`` appends one extra
+    cu_seqlens entry (a padding sequence) to fill the micro-batch to
+    ``pad_to_length``.  This makes ``attention_mask`` have one more row
+    than the original ``routed_experts``.  We zero-pad the batch dimension
+    so that ``set_router_replay_data`` sees matching batch sizes; the
+    padding sample's zero routing indices are harmless because the model
+    ignores those dummy tokens.
+
     This function extracts the right-most ``actual_len`` tokens from each
     sample's left-padded ``routed_experts`` and places them at the
     left-aligned positions expected by ``attention_mask``.
@@ -155,10 +163,34 @@ def _align_routed_experts_to_mask(
             Left-aligned mask (1 for real tokens, 0 for padding).
 
     Returns:
-        ``(bs, mb_max_seqlen, num_moe_layers, topk)`` aligned tensor.
+        ``(bs_aligned, mb_max_seqlen, num_moe_layers, topk)`` aligned tensor.
     """
-    bs, re_seqlen = routed_experts.shape[:2]
-    _, mask_seqlen = attention_mask.shape[:2]
+    re_bs, re_seqlen = routed_experts.shape[:2]
+    mask_bs, mask_seqlen = attention_mask.shape[:2]
+
+    if re_bs < mask_bs:
+        extra_dims = routed_experts.shape[2:]
+        padded_re = torch.zeros(
+            mask_bs, re_seqlen, *extra_dims,
+            dtype=routed_experts.dtype,
+            device=routed_experts.device,
+        )
+        padded_re[:re_bs] = routed_experts
+        routed_experts = padded_re
+        logger.info(
+            "[R3] _align_routed_experts_to_mask: padded routed_experts batch "
+            "from %d to %d samples (pad_mb_list added %d padding sequence(s)).",
+            re_bs, mask_bs, mask_bs - re_bs,
+        )
+    elif re_bs > mask_bs:
+        routed_experts = routed_experts[:mask_bs]
+        logger.warning(
+            "[R3] _align_routed_experts_to_mask: truncated routed_experts batch "
+            "from %d to %d samples.",
+            re_bs, mask_bs,
+        )
+
+    bs = routed_experts.shape[0]
 
     if re_seqlen == mask_seqlen:
         # No alignment needed

@@ -898,6 +898,17 @@ class MegatronEngineConfig:
         },
     )
 
+    enable_router_replay: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable Router Replay (R3) for MoE models. "
+            "When True, the training forward pass replays the expert routing "
+            "decisions from the inference engine to reduce train-inference "
+            "routing discrepancy. Automatically set by the trainer when "
+            "rollout.return_routed_experts=True."
+        },
+    )
+
 
 class SchedulingStrategyType(str, Enum):
     separation = "separation"
