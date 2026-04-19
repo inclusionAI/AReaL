@@ -54,6 +54,7 @@ _WORKER_AGENT: APIBasedAgent | None = None
 _WORKER_OUTPUT_PATH: str | None = None
 _WORKER_MODEL_TYPE: str | None = None
 _WORKER_API_MODE: str | None = None
+_WORKER_NO_IMAGE_COMPRESSION: bool = False
 
 
 def _init_worker(
@@ -62,8 +63,11 @@ def _init_worker(
     api_base: str,
     api_mode: str,
     api_key: str | None,
+    no_image_compression: bool = False,
 ):
-    global _WORKER_AGENT, _WORKER_OUTPUT_PATH, _WORKER_MODEL_TYPE, _WORKER_API_MODE
+    global _WORKER_AGENT, _WORKER_OUTPUT_PATH, _WORKER_MODEL_TYPE, _WORKER_API_MODE, _WORKER_NO_IMAGE_COMPRESSION
+
+    _WORKER_NO_IMAGE_COMPRESSION = no_image_compression
 
     tool_router = ToolRouter(tool_mode="direct")
     agent_configs = build_api_agent_configs(
@@ -110,6 +114,8 @@ def _run_one_task(task_payload: dict):
     extra_kwargs = task_payload.get("task_kwargs")
     if isinstance(extra_kwargs, dict):
         task_kwargs.update(extra_kwargs)
+    if _WORKER_NO_IMAGE_COMPRESSION:
+        task_kwargs["max_image_base64_bytes"] = None
     if text_only:
         task_kwargs["text_only"] = True
 
@@ -179,6 +185,11 @@ def main():
     parser.add_argument("--api_key", type=str, default=None, help="API key (optional for vLLM/SGLang).")
     parser.add_argument("--sample_rate", type=float, default=1.0, help="Dataset sampling rate.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes.")
+    parser.add_argument(
+        "--no_image_compression",
+        action="store_true",
+        help="Disable image compression (send original quality to API). Default: compress to 4MB base64.",
+    )
     args = parser.parse_args()
 
     if args.model_type == "OpenAI" and not args.api_key:
@@ -221,7 +232,7 @@ def main():
     with ctx.Pool(
         processes=n_workers,
         initializer=_init_worker,
-        initargs=(args.model_name_or_path, args.model_type, args.api_base, args.api_mode, args.api_key),
+        initargs=(args.model_name_or_path, args.model_type, args.api_base, args.api_mode, args.api_key, args.no_image_compression),
     ) as pool:
         inflight = []
         submit_idx = 0

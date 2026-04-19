@@ -49,6 +49,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         model_type: Literal["openai", "vllm", "sglang"] = "openai",
         api_mode: Literal["responses", "chat_completions"] = "responses",
         action_tag_mode: bool = False,
+        max_image_base64_bytes: int | None = 4 * 1024 * 1024,
         **kwargs,
     ):
         super().__init__(
@@ -64,6 +65,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         )
 
         self.action_tag_mode = action_tag_mode
+        self._max_image_base64_bytes = max_image_base64_bytes
 
         # Determine content format based on api_mode
         # responses API: uses "input_text", "input_image"
@@ -85,7 +87,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         if self._use_responses_format:
             content = []
             for idx, image in enumerate(self.image_list):
-                image_url = image_to_data_url(image)
+                image_url = image_to_data_url(image, max_base64_bytes=self._max_image_base64_bytes)
                 img_path = self.image_path_map.get(id(image))
                 if img_path:
                     self.image_url_map[image_url] = img_path
@@ -98,7 +100,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         else:
             content = []
             for idx, image in enumerate(self.image_list):
-                image_url = image_to_data_url(image)
+                image_url = image_to_data_url(image, max_base64_bytes=self._max_image_base64_bytes)
                 img_path = self.image_path_map.get(id(image))
                 if img_path:
                     self.image_url_map[image_url] = img_path
@@ -429,7 +431,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         image_bytes: bytes,
         image_index: int,
     ) -> None:
-        image_url = image_to_data_url(image)
+        image_url = image_to_data_url(image, max_base64_bytes=self._max_image_base64_bytes)
         self.image_url_map[image_url] = image_path
 
         if self._use_responses_format:

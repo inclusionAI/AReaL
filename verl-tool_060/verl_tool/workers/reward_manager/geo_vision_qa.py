@@ -52,7 +52,10 @@ def _parse_items_as_set(text: str) -> frozenset | None:
 def _parse_range(text: str):
     m = re.match(r"^([\d.]+)%?\s*[-–]\s*([\d.]+)%?$", text.strip())
     if m:
-        return (float(m.group(1)), float(m.group(2)))
+        try:
+            return (float(m.group(1)), float(m.group(2)))
+        except ValueError:
+            return None
     return None
 
 

@@ -42,6 +42,7 @@ _WORKER_SYSTEM_PROMPT: "str | None" = None
 _WORKER_API_MODE: "str | None" = None
 _WORKER_TOOL_ROUTER: "ToolRouter | None" = None
 _WORKER_ACTION_TAG_MODE: bool = False
+_WORKER_NO_IMAGE_COMPRESSION: bool = False
 
 
 def _init_worker(
@@ -55,6 +56,7 @@ def _init_worker(
     use_tools: str,  # "auto", "force", or "direct"
     enable_tools: "list | None" = None,
     enabled_agent_names: "list | None" = None,
+    no_image_compression: bool = False,
 ):
     from typing import cast, Literal
 
@@ -69,7 +71,10 @@ def _init_worker(
         _WORKER_SYSTEM_PROMPT, \
         _WORKER_API_MODE, \
         _WORKER_TOOL_ROUTER, \
-        _WORKER_ACTION_TAG_MODE
+        _WORKER_ACTION_TAG_MODE, \
+        _WORKER_NO_IMAGE_COMPRESSION
+
+    _WORKER_NO_IMAGE_COMPRESSION = no_image_compression
 
     # Create ToolRouter WITHOUT initializing Ray actors (main process already did that)
     _WORKER_TOOL_ROUTER = ToolRouter(
@@ -199,6 +204,8 @@ def _run_one_task(task_payload: dict):
         task_kwargs["api_mode"] = _WORKER_API_MODE
     if _WORKER_ACTION_TAG_MODE:
         task_kwargs["action_tag_mode"] = True
+    if _WORKER_NO_IMAGE_COMPRESSION:
+        task_kwargs["max_image_base64_bytes"] = None
     extra_kwargs = task_payload.get("task_kwargs")
     if isinstance(extra_kwargs, dict):
         task_kwargs.update(extra_kwargs)
@@ -400,6 +407,11 @@ def main():
         default=DEFAULT_MAX_TOOL_CALLS,
         help=f"Maximum number of tool calls per task (default: {DEFAULT_MAX_TOOL_CALLS}).",
     )
+    parser.add_argument(
+        "--no_image_compression",
+        action="store_true",
+        help="Disable image compression (send original quality to API). Default: compress to 4MB base64.",
+    )
     args = parser.parse_args()
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
@@ -481,6 +493,7 @@ def main():
             tool_mode,
             args.enable_tools,
             enabled_agent_names,
+            args.no_image_compression,
         ),
     ) as pool:
         inflight = []  # list[(task_id, AsyncResult)]
