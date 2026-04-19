@@ -111,10 +111,24 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
                 isinstance(v, InteractionWithTokenLogpReward) for v in first.values()
             )
         ):
-            # Merge dicts - each result is {completion_id: InteractionWithTokenLogpReward}
-            merged: dict[str, InteractionWithTokenLogpReward] = {}
+            # [MARL] separate by norm_group
+            agent_interactions = {}  # {norm_group:{key:interaction}}
             for result in valid_results:
-                merged.update(result)
+                for key, interaction in result.items():
+                    if hasattr(interaction, 'norm_group') and interaction.norm_group is not None:
+                        group_id = interaction.norm_group
+                    else:
+                        group_id = "group_1"
+                    
+                    if group_id not in agent_interactions:
+                        agent_interactions[group_id] = {}
+                    agent_interactions[group_id][key] = interaction
+
+            # merge in sorted order by group_id for deterministic ordering
+            # this ensure that agent1's all interactions, then agent2's then agent3's etc.
+            merged: dict[str, InteractionWithTokenLogpReward] = {}
+            for group_id in sorted(agent_interactions.keys()):
+                merged.update(agent_interactions[group_id])
             return merged if merged else None
 
         # Otherwise, tensor dicts - concatenate
