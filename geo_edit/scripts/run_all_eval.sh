@@ -22,6 +22,7 @@ DATASET_PATHS=(
     ["map_trace"]="/storage/openpsi/data/lcy_image_edit/maptrace_val_2851.parquet"
     ["reason_map"]="/storage/openpsi/data/ReasonMap/reasonmap_base_validation_dataset.parquet"
     ["reason_map_plus"]="/storage/openpsi/data/ReasonMap_plus/reasonmap_plus_test.parquet"
+    ["mapqa"]="/storage/openpsi/data/lcy_image_edit/MapQA_all/mapqa_test_0418.parquet"
 )
 
 declare -A DATASET_NAMES
@@ -32,9 +33,10 @@ DATASET_NAMES=(
     ["map_trace"]="map_trace"
     ["reason_map"]="reason_map"
     ["reason_map_plus"]="reason_map_plus"
+    ["mapqa"]="mm_mapqa"
 )
 
-DATASETS=${DATASETS:-"visual_probe_easy visual_probe_medium visual_probe_hard map_trace reason_map reason_map_plus"}
+DATASETS=${DATASETS:-"visual_probe_easy visual_probe_medium visual_probe_hard map_trace reason_map reason_map_plus mapqa"}
 
 EXTRA_ARGS=""
 if [ -n "$NO_IMAGE_COMPRESSION" ]; then

@@ -150,7 +150,6 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
         try:
             gt_data = json.loads(gt_str) if isinstance(gt_str, str) else gt_str
             if isinstance(gt_data, dict):
-                matched = 0
                 total_routes = 0
                 for routes in gt_data.values():
                     if not isinstance(routes, list):
@@ -160,10 +159,10 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
                         rn = route.get("route_name", "").lower()
                         dep = route.get("departure_stop", "").lower()
                         arr = route.get("arrival_stop", "").lower()
-                        if rn and dep and arr and rn in pred_lower and dep in pred_lower and arr in pred_lower:
-                            matched += 1
+                        if not (rn and dep and arr and rn in pred_lower and dep in pred_lower and arr in pred_lower):
+                            return 0.0
                 if total_routes > 0:
-                    return matched / total_routes
+                    return 1.0
         except (json.JSONDecodeError, TypeError, AttributeError):
             pass
         return compute_score(prediction, ground_truth)

@@ -27,6 +27,29 @@ _STATION_ANNOTATIONS = re.compile(
     r"[）)]\s*"
 )
 _SUFFIX_STATION = re.compile(r"站$")
+_PARENS = re.compile(r"[（(].+?[）)]")
+_NUMBER_RE = re.compile(r"\d+")
+_CN_DIGITS = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5",
+              "六": "6", "七": "7", "八": "8", "九": "9", "十": "10",
+              "十一": "11", "十二": "12", "十三": "13", "十四": "14",
+              "十五": "15", "十六": "16", "十七": "17", "十八": "18",
+              "十九": "19", "二十": "20"}
+
+
+def _normalize_line_name(name: str) -> str:
+    """Normalise a metro line name for fuzzy comparison.
+
+    Handles multiple formats: ``Line 1``, ``1号线``, ``一号线``,
+    ``4号线(Line 4)``, ``8号线 (Line 8)``, etc.
+    """
+    name = _PARENS.sub("", name)
+    name = unicodedata.normalize("NFKC", name)
+    name = name.strip().lower()
+    for cn, digit in sorted(_CN_DIGITS.items(), key=lambda x: -len(x[0])):
+        name = name.replace(cn, digit)
+    name = re.sub(r"\s*(号线|line|号|线)\s*", " ", name).strip()
+    name = re.sub(r"\s+", " ", name)
+    return name
 
 
 def clean_station_name(name: str) -> str:

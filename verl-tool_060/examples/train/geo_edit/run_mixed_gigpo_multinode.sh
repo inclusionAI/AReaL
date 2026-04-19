@@ -37,7 +37,7 @@ max_response_length=32768
 max_action_length=4096
 max_obs_length=8192
 max_obs_length_image=8192 
-max_obs_length_text=8192
+max_obs_length_text=6144
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
 # ---- Sampling ----
@@ -145,7 +145,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
-    data.val_batch_size=512 \
+    data.val_batch_size=256 \
     data.dataloader_num_workers=64 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
@@ -203,7 +203,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.rollout.top_k=-1 \
     actor_rollout_ref.rollout.n=$n \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
-    actor_rollout_ref.rollout.max_num_seqs=32 \
+    actor_rollout_ref.rollout.max_num_seqs=16 \
     actor_rollout_ref.rollout.mode=$rollout_mode \
     actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
     +actor_rollout_ref.rollout.engine_kwargs.vllm.mm-processor-cache-gb=8 \
