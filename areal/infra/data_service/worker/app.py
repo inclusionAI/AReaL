@@ -45,15 +45,16 @@ class _DatasetState:
     sampler: DistributedSampler | None
     epoch: int
     exhausted: bool
-    seed: int
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 def create_worker_app(config: DataWorkerConfig) -> FastAPI:
     datasets: dict[str, _DatasetState] = {}
+    datasets_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(app: Any):
+        seeding.set_random_seed(config.seed, key=f"data_worker_{config.rank}")
         app.state.config = config
         app.state.datasets = datasets
         try:
@@ -81,12 +82,6 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
 
     @app.post("/datasets/load")
     async def load_dataset(body: WorkerLoadDatasetRequest):
-        if body.dataset_id in datasets:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Dataset {body.dataset_id} is already loaded",
-            )
-
         def _load_sync():
             _tokenizer = None
             _processor = None
@@ -95,11 +90,6 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
                     body.tokenizer_or_processor_path
                 )
 
-            seeding.set_random_seed(body.seed, key=f"data_worker_{config.rank}")
-
-            # Workers must load real datasets, not RDataset proxies.
-            # Call _get_custom_dataset directly to bypass the is_single_controller()
-            # gate in get_custom_dataset() that would create an RDataset.
             _dataset = _get_custom_dataset(
                 path=body.dataset_path,
                 type=body.dataset_type,
@@ -131,17 +121,23 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
             )
             return _dataset, _sampler, _dataloader
 
-        dataset, sampler, dataloader = await asyncio.to_thread(_load_sync)
+        async with datasets_lock:
+            if body.dataset_id in datasets:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Dataset {body.dataset_id} is already loaded",
+                )
 
-        datasets[body.dataset_id] = _DatasetState(
-            dataset_id=body.dataset_id,
-            raw_dataset=dataset,
-            dataloader=dataloader,
-            sampler=sampler,
-            epoch=0,
-            exhausted=False,
-            seed=body.seed,
-        )
+            dataset, sampler, dataloader = await asyncio.to_thread(_load_sync)
+
+            datasets[body.dataset_id] = _DatasetState(
+                dataset_id=body.dataset_id,
+                raw_dataset=dataset,
+                dataloader=dataloader,
+                sampler=sampler,
+                epoch=0,
+                exhausted=False,
+            )
 
         return {
             "status": "ok",
@@ -157,8 +153,12 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
 
     @app.post("/datasets/unload")
     async def unload_dataset(body: WorkerUnloadDatasetRequest):
-        state = _require_dataset(body.dataset_id)
-        async with state.lock:
+        async with datasets_lock:
+            if body.dataset_id not in datasets:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Unknown dataset_id: {body.dataset_id}",
+                )
             del datasets[body.dataset_id]
         return {"status": "ok"}
 
@@ -166,7 +166,6 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
     async def reset_epoch(body: WorkerEpochResetRequest):
         state = _require_dataset(body.dataset_id)
         async with state.lock:
-            seeding.set_random_seed(state.seed, key=f"data_worker_{config.rank}")
             state.epoch = body.epoch
             state.exhausted = False
             if state.sampler is not None:

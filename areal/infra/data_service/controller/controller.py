@@ -141,6 +141,8 @@ class DataController:
                             str(num_dataset_workers),
                             "--dataloader-num-workers",
                             str(cfg.dataloader_num_workers),
+                            "--seed",
+                            str(cfg.seed),
                         ],
                     )
                     for rank in range(num_dataset_workers)
@@ -241,7 +243,6 @@ class DataController:
         dataset_kwargs: dict[str, Any] | None = None,
         tokenizer_or_processor_path: str = "",
         split: str = "train",
-        seed: int = 42,
         shuffle: bool = True,
         drop_last: bool = True,
         max_length: int | None = None,
@@ -257,7 +258,6 @@ class DataController:
             "dataset_type": dataset_type,
             "split": split,
             "tokenizer_or_processor_path": tokenizer_or_processor_path,
-            "seed": seed,
             "max_length": max_length,
             "shuffle": shuffle,
             "drop_last": drop_last,
