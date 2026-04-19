@@ -239,19 +239,9 @@ class RolloutCallback:
         payload = {
             "serialized_payload": serialize_value(serialized_payload),
         }
-        # Use non-blocking POST as defense-in-depth. Even with proxy bypass,
-        # large MTP tensor payloads may take time to transmit. The fire-and-
-        # forget callback pattern ensures the HTTP layer does not block.
-        fut = self._post_nowait_void("/callback/update_weights_tensor", payload)
-        try:
-            fut.result(timeout=120)
-        except TimeoutError:
-            logger.warning(
-                "update_weights_from_tensor callback timed out. "
-                "Tensor update dispatched via fire-and-forget."
-            )
-        except Exception as e:
-            logger.warning(
-                f"update_weights_from_tensor callback error: {e}. "
-                "Tensor update dispatched via fire-and-forget."
-            )
+        # Synchronous (blocking) POST: the callback server handler now
+        # blocks until SGLang actually completes the tensor update, so the
+        # HTTP response guarantees the update is done. This ensures training
+        # does not proceed to continue_generation before the tensor update
+        # finishes, preventing worker RPC server contention and hangs.
+        self._post("/callback/update_weights_tensor", payload)

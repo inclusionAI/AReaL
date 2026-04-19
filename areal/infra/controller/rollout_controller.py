@@ -603,11 +603,10 @@ class RolloutController:
             serialized_payload = deserialize_value(
                 payload.get("serialized_payload")
             )
-            # Fire-and-forget: same pattern as update_weights_xccl.
             asyncio.run_coroutine_threadsafe(
                 self.update_weights_from_tensor(serialized_payload),
                 self._callback_loop,
-            )
+            ).result()
             return jsonify({"status": "ok"})
 
         @app.route("/callback/rollout_complete", methods=["POST"])
