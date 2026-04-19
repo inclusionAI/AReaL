@@ -39,6 +39,40 @@ TASK_PROMPTS = {
 }
 
 
+_NUM_PLACEHOLDER = re.compile(r"\d+")
+
+
+def _truncate_repetitions(text: str, max_template_streak: int = 50) -> str:
+    """Truncate incrementing-number hallucinations in model output.
+
+    Replaces digits with a placeholder to extract a per-line template,
+    then truncates when consecutive lines share the same template for
+    more than ``max_template_streak`` lines.
+    e.g. "3号线 Line 3" and "127号线 Line 127" both map to
+    "{N}号线 Line {N}" — same template, streak increments.
+    """
+    if not text:
+        return text
+    lines = text.splitlines()
+    if not lines:
+        return text
+
+    result = []
+    prev_template = None
+    streak = 0
+    for line in lines:
+        tmpl = _NUM_PLACEHOLDER.sub("{N}", line.strip())
+        if tmpl == prev_template and "{N}" in tmpl:
+            streak += 1
+        else:
+            prev_template = tmpl
+            streak = 0
+        if streak < max_template_streak:
+            result.append(line)
+
+    return "\n".join(result)
+
+
 class PaddleOCRActor(BaseToolModelActor):
     """PaddleOCR Actor using PaddleOCR-VL-1.5 with vLLM for high-performance inference."""
 
@@ -150,11 +184,10 @@ class PaddleOCRActor(BaseToolModelActor):
                 }
             ]
 
-            # Create sampling parameters with repetition penalty to prevent loops
             sampling_params = SamplingParams(
                 temperature=temperature,
                 max_tokens=self.max_new_tokens,
-                repetition_penalty=1.2,  # Penalize repeated tokens
+                repetition_penalty=1.2,
             )
 
             # Run inference with vLLM
@@ -163,8 +196,7 @@ class PaddleOCRActor(BaseToolModelActor):
                 sampling_params=sampling_params,
             )
 
-            # Extract result from vLLM output
-            result = outputs[0].outputs[0].text
+            result = _truncate_repetitions(outputs[0].outputs[0].text)
 
             if task == "spotting":
                 loc_re = re.compile(r"<\|LOC_(\d+)\|>")
