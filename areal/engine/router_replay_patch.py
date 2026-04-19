@@ -276,14 +276,14 @@ def _patched_topk_routing_with_score_function(
                 _patched_topk_routing_with_score_function._r3_verify_count = 0
             _patched_topk_routing_with_score_function._r3_verify_count += 1
             if _patched_topk_routing_with_score_function._r3_verify_count <= 3:
-                logger.info(
-                    "[R3-VERIFY] Megatron REPLAY_FORWARD #%d: "
-                    "top_indices shape=%s, first3_nonzero=%s, "
-                    "agreement_rate=%.4f",
-                    _patched_topk_routing_with_score_function._r3_verify_count,
-                    top_indices.shape,
-                    top_indices[top_indices > 0].flatten()[:3].tolist(),
-                    agreement_rate,
+                _nz = top_indices[top_indices > 0].flatten()[:3].tolist()
+                print(
+                    f"[R3-VERIFY] Megatron REPLAY_FORWARD "
+                    f"#{_patched_topk_routing_with_score_function._r3_verify_count}: "
+                    f"top_indices shape={top_indices.shape}, "
+                    f"first3_nonzero={_nz}, "
+                    f"agreement_rate={agreement_rate:.4f}",
+                    flush=True,
                 )
             return probs, top_indices
 
