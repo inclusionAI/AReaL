@@ -486,9 +486,10 @@ def log_moe_routing_metrics(
             real_mask = attn_mask.bool()  # (bs, seq_len)
         else:
             if attn_mask is not None:
-                logger.warning(
+                logger.debug(
                     "[R3] attn_mask seq_len (%d) != routed_experts seq_len (%d); "
-                    "falling back to all-ones mask.",
+                    "falling back to all-ones mask (expected: SGLang uses "
+                    "prompt+completion-1, training uses packed seqlen).",
                     attn_mask.shape[1],
                     seq_len,
                 )
