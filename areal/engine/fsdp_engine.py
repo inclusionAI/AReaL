@@ -213,6 +213,8 @@ class FSDPEngine(TrainEngine):
     def from_pretrained(
         cls,
         model: str,
+        experiment_name: str,
+        trial_name: str,
         dp_size: int = 1,
         tp_size: int = 1,
         dtype: str = "bfloat16",
@@ -228,6 +230,8 @@ class FSDPEngine(TrainEngine):
         ----------
         model : str
             Path to HuggingFace checkpoint or model.
+        experiment_name: str
+        trial_name: str
         dp_size: int
             Data parallel size, default 1.
         tp_size: int
@@ -244,6 +248,8 @@ class FSDPEngine(TrainEngine):
         )
         config = TrainEngineConfig(
             path=model,
+            experiment_name=experiment_name,
+            trial_name=trial_name,
             backend=f"fsdp:d{dp_size}t{tp_size}",
             dtype=dtype,
             optimizer=optimizer_config,
