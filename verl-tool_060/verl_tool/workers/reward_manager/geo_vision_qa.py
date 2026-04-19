@@ -349,7 +349,14 @@ class GeoVisionQARewardManager:
             prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=True)
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=True)
 
-            ground_truth = data_item.non_tensor_batch["reward_model"]["ground_truth"]
+            reward_model = data_item.non_tensor_batch.get("reward_model")
+            if not isinstance(reward_model, dict) or "ground_truth" not in reward_model:
+                logger.warning("Sample %d missing ground_truth, skipping reward calculation", i)
+                continue
+            ground_truth = reward_model["ground_truth"]
+            if ground_truth is None:
+                logger.warning("Sample %d has None ground_truth, skipping reward calculation", i)
+                continue
             data_source = data_item.non_tensor_batch.get(self.reward_fn_key, "unknown")
 
             num_turns = data_item.non_tensor_batch.get("__num_turns__", 2)

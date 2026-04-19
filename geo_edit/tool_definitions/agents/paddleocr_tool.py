@@ -40,22 +40,35 @@ TASK_PROMPTS = {
 
 
 _NUM_PLACEHOLDER = re.compile(r"\d+")
+# Matches a CJK substring of 2-30 chars that repeats 5+ times consecutively
+_INLINE_REPEAT = re.compile(r"([\u4e00-\u9fff]{4,30}?)\1{4,}")
+
+
+def _collapse_inline_repeats(text: str, keep: int = 3) -> str:
+    """Replace long runs of repeated substrings within a line.
+
+    e.g. "东莞南北东莞南北东莞南北...×200" → "东莞南北东莞南北东莞南北"
+    Keeps ``keep`` copies of the repeated unit.
+    """
+    def _replace(m: re.Match) -> str:
+        return m.group(1) * keep
+
+    return _INLINE_REPEAT.sub(_replace, text)
 
 
 def _truncate_repetitions(text: str, max_template_streak: int = 50) -> str:
-    """Truncate incrementing-number hallucinations in model output.
+    """Clean repetitive model output.
 
-    Replaces digits with a placeholder to extract a per-line template,
-    then truncates when consecutive lines share the same template for
-    more than ``max_template_streak`` lines.
-    e.g. "3号线 Line 3" and "127号线 Line 127" both map to
-    "{N}号线 Line {N}" — same template, streak increments.
+    Two passes:
+      1. Collapse inline substring loops within each line
+         (e.g. "东莞南北" ×200 → ×3).
+      2. Truncate cross-line incrementing-number hallucinations
+         (e.g. "1号线 Line 1" ... "836号线 Line 836" → keep first 50).
     """
     if not text:
         return text
-    lines = text.splitlines()
-    if not lines:
-        return text
+
+    lines = [_collapse_inline_repeats(line) for line in text.splitlines()]
 
     result = []
     prev_template = None
