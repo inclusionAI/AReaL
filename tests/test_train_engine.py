@@ -405,3 +405,20 @@ def test_fsdp_engine_config_construction():
     assert engine.config.backend == engine2.config.backend
     assert engine.config.optimizer.lr == engine2.config.optimizer.lr
     assert engine.config.use_lora == engine2.config.use_lora
+
+def test_fsdp_engine_alloc_mode_construction():
+    """Test that FSDPEngine.from_pretrained builds a valid config."""
+    import areal.engine.fsdp_engine as fsdp_module
+
+    engine = fsdp_module.FSDPEngine.from_pretrained(
+        model="Qwen/Qwen2.5-1.5B-Instruct",
+        dp_size=2,
+        tp_size=2,
+        learning_rate=1e-5,
+        use_lora=True,
+    )
+    
+    engine.create_process_group()
+
+    assert engine.parallel_helper.dp_size == 2
+    assert engine.parallel_helper.tp_size == 2
