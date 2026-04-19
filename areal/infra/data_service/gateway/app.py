@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import aiohttp
 from fastapi import FastAPI, HTTPException, Request
 
@@ -54,21 +56,23 @@ async def _get_all_worker_addrs(
 async def _broadcast_to_workers(
     worker_addrs: list[str], endpoint: str, payload: dict, timeout: float
 ) -> list[dict]:
-    results: list[dict] = []
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=timeout), trust_env=False
     ) as session:
-        for addr in worker_addrs:
+
+        async def _send_post(addr: str) -> dict:
             try:
                 async with session.post(f"{addr}{endpoint}", json=payload) as resp:
                     try:
                         data = await resp.json()
                     except Exception:
                         data = {"raw": await resp.text()}
-                    results.append({"addr": addr, "status": resp.status, "data": data})
+                    return {"addr": addr, "status": resp.status, "data": data}
             except Exception as exc:
-                results.append({"addr": addr, "status": 500, "error": str(exc)})
-    return results
+                return {"addr": addr, "status": 500, "error": str(exc)}
+
+        results = await asyncio.gather(*(_send_post(addr) for addr in worker_addrs))
+    return list(results)
 
 
 def create_gateway_app(config: GatewayConfig) -> FastAPI:

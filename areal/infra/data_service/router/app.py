@@ -53,20 +53,23 @@ def create_router_app(config: RouterConfig) -> FastAPI:
     lock = asyncio.Lock()
 
     async def _poll_workers() -> None:
-        while True:
-            for addr in list(registered_workers):
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=config.worker_health_timeout),
+            trust_env=False,
+        ) as session:
+
+            async def _check_health(addr: str) -> None:
                 try:
-                    async with aiohttp.ClientSession(
-                        timeout=aiohttp.ClientTimeout(
-                            total=config.worker_health_timeout
-                        ),
-                        trust_env=False,
-                    ) as session:
-                        async with session.get(f"{addr}/health") as resp:
-                            worker_healthy[addr] = resp.status == 200
+                    async with session.get(f"{addr}/health") as resp:
+                        worker_healthy[addr] = resp.status == 200
                 except Exception:
                     worker_healthy[addr] = False
-            await asyncio.sleep(config.poll_interval)
+
+            while True:
+                await asyncio.gather(
+                    *(_check_health(addr) for addr in list(registered_workers))
+                )
+                await asyncio.sleep(config.poll_interval)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
