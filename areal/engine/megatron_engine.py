@@ -163,6 +163,16 @@ class MegatronEngine(TrainEngine):
         self.own_global_group: bool = False
         self.is_offload: bool = False
         self._r3_enabled: bool = getattr(config.megatron, "enable_router_replay", False)
+        if not self._r3_enabled:
+            self._r3_enabled = getattr(config, "_r3_enable_router_replay", False)
+        self.logger.info(
+            "[R3] __init__: _r3_enabled=%s, config.megatron.enable_router_replay=%s, "
+            "config._r3_enable_router_replay=%s, config.megatron type=%s",
+            self._r3_enabled,
+            getattr(config.megatron, "enable_router_replay", "<MISSING>"),
+            getattr(config, "_r3_enable_router_replay", "<MISSING>"),
+            type(config.megatron).__name__,
+        )
         self.enable_tree_training: bool = self.config.enable_tree_training
         # FP8 configuration
         self.fp8_config = self.mcore_config.fp8_config
