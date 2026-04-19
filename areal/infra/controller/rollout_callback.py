@@ -1,5 +1,5 @@
 from concurrent.futures import Future
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -10,6 +10,11 @@ from areal.infra.utils.concurrent import get_executor
 from areal.utils import logging
 
 logger = logging.getLogger(__name__)
+
+# Direct-connect proxy setting: tells requests to bypass all env proxies.
+# This is used for every callback HTTP request to avoid corporate proxy
+# interference (504 Gateway Timeout) on internal pod-to-pod communication.
+_NO_PROXY = {"http": None, "https": None}
 
 
 @dataclass
@@ -29,28 +34,23 @@ class RolloutCallback:
     controller_addr: str
     request_timeout: float = 600.0
 
-    # Bypass HTTP_PROXY / HTTPS_PROXY for all internal callback requests.
-    # In environments where a corporate HTTP proxy is configured (e.g.,
-    # HTTP_PROXY=http://sys-proxy-rd-relay.byted.org:8118), Python's
-    # requests library auto-routes through the proxy. When the callback
-    # server's address (e.g., an IPv6 pod IP) is not listed in NO_PROXY,
-    # the proxy intercepts the request and applies its own timeout (~60s),
-    # causing 504 Gateway Timeout on long-running NCCL weight updates
-    # before the operation completes. Using a Session with trust_env=False
-    # ensures direct connection to the callback server.
-    _no_proxy_session: requests.Session | None = field(default=None, init=False, repr=False)
-
-    @property
-    def _session(self) -> requests.Session:
-        """Lazily create a requests.Session that bypasses env proxy settings."""
-        if self._no_proxy_session is None:
-            s = requests.Session()
-            s.trust_env = False  # Ignore HTTP_PROXY / HTTPS_PROXY / NO_PROXY
-            object.__setattr__(self, "_no_proxy_session", s)
-        return self._no_proxy_session
-
     def _post(self, endpoint: str, payload: dict[str, Any] | None = None) -> dict:
         """Make synchronous HTTP POST to controller callback endpoint.
+
+        Uses ``proxies=_NO_PROXY`` to bypass environment proxy variables
+        (HTTP_PROXY / HTTPS_PROXY / NO_PROXY).  In environments where a
+        corporate HTTP proxy is configured (e.g.,
+        HTTP_PROXY=http://sys-proxy-rd-relay.byted.org:8118), Python's
+        ``requests`` library auto-routes through the proxy.  When the
+        callback server address (e.g., an IPv6 pod IP) is not listed in
+        NO_PROXY, the proxy intercepts the request and applies its own
+        timeout (~60 s), causing 504 Gateway Timeout on long-running NCCL
+        weight updates.  Passing ``proxies={"http": None, "https": None}``
+        ensures a direct connection to the callback server on every call,
+        with zero extra state — which is critical because this dataclass is
+        serialized across RPC boundaries by AReaL's ``serialize_value`` /
+        ``deserialize_value`` (adding non-init fields would break
+        deserialization).
 
         Parameters
         ----------
@@ -66,10 +66,11 @@ class RolloutCallback:
         """
         url = f"http://{self.controller_addr}{endpoint}"
         try:
-            resp = self._session.post(
+            resp = requests.post(
                 url,
                 json=payload or {},
                 timeout=self.request_timeout,
+                proxies=_NO_PROXY,
             )
             resp.raise_for_status()
             return resp.json()
