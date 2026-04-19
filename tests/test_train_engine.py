@@ -389,13 +389,13 @@ def test_fsdp_engine_config_construction():
     import areal.engine.fsdp_engine as fsdp_module
 
     engine = fsdp_module.FSDPEngine.from_pretrained(
-        model="Qwen/Qwen2.5-1.5B-Instruct",
+        model=MODEL_PATH,
         dp_size=1,
         learning_rate=1e-5,
         use_lora=True,
     )
     config = TrainEngineConfig(
-        path="Qwen/Qwen2.5-1.5B-Instruct",
+        path=MODEL_PATH,
         backend="fsdp:d1t1",
         optimizer=OptimizerConfig(lr=1e-5),
         use_lora=True,
@@ -407,11 +407,16 @@ def test_fsdp_engine_config_construction():
     assert engine.config.use_lora == engine2.config.use_lora
 
 def test_fsdp_engine_alloc_mode_construction():
-    """Test that FSDPEngine.from_pretrained builds a valid config."""
+    """
+    Test that FSDPEngine.from_pretrained builds a valid config.
+
+    Run with 4 processes (required for dp_size=2, tp_size=2):
+        torchrun --nproc_per_node=4 -m pytest tests/test_train_engine.py -v -k test_fsdp_engine_alloc_mode_construction
+    """
     import areal.engine.fsdp_engine as fsdp_module
 
     engine = fsdp_module.FSDPEngine.from_pretrained(
-        model="Qwen/Qwen2.5-1.5B-Instruct",
+        model=MODEL_PATH,
         dp_size=2,
         tp_size=2,
         learning_rate=1e-5,
@@ -420,5 +425,9 @@ def test_fsdp_engine_alloc_mode_construction():
     
     engine.create_process_group()
 
+    dist.barrier()
+
     assert engine.parallel_helper.dp_size == 2
     assert engine.parallel_helper.tp_size == 2
+
+    engine.destroy()

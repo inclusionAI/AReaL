@@ -272,7 +272,7 @@ class FSDPEngine(TrainEngine):
         # FSDP-specific process group setup
         if parallel_strategy is None:
             if self.config.backend:
-                parallel_strategy = ModelAllocation.from_str(self.config.backend)
+                parallel_strategy = ModelAllocation.from_str(self.config.backend).parallel
             else:
                 parallel_strategy = ParallelStrategy()
 
