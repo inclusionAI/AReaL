@@ -262,8 +262,8 @@ def _patched_topk_routing_with_score_function(
                 replay_indices = router_replay.target_topk_idx.to(scores.device)
                 natural_sorted = natural_indices.sort(dim=-1).values
                 replay_sorted = replay_indices.sort(dim=-1).values
-                matches = (natural_sorted == replay_sorted).all(dim=-1).float()
-                agreement_rate = matches.mean().item()
+                per_token_matches = (natural_sorted == replay_sorted).float().sum(dim=-1)
+                agreement_rate = (per_token_matches / topk).mean().item()
                 from areal.utils import stats_tracker
                 with stats_tracker.scope("r3"):
                     stats_tracker.scalar(router_agreement_rate=agreement_rate)
