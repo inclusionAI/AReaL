@@ -19,6 +19,7 @@ from areal.api import (
     Scheduler,
     WeightUpdateMeta,
     WorkflowLike,
+    ModelAllocation,
 )
 from areal.api.cli_args import InferenceEngineConfig, PerfTracerConfig, SGLangConfig
 from areal.api.io_struct import (
@@ -265,9 +266,8 @@ class RemoteSGLangEngine(InferenceEngine):
     @classmethod
     def from_pretrained(
         cls,
-        model: str,
+        tokenizer_path: str | None = None,
         dp_size: int = 1,
-        tp_size: int = 1,
         max_concurrent_rollouts: int | None = None,
         **kwargs,
     ) -> "RemoteInfEngine":
@@ -275,12 +275,10 @@ class RemoteSGLangEngine(InferenceEngine):
         
         Parameters
         ----------
-        model : str
-            Path to the pretrained model
+        tokenizer_path: str | None = None
+            Path to the tokenizer
         dp_size : int
             Data parallelism size  
-        tp_size : int
-            Tensor parallelism size
         max_concurrent_rollouts : int | None
             Maximum concurrent rollouts
         **kwargs : dict
@@ -291,12 +289,12 @@ class RemoteSGLangEngine(InferenceEngine):
         RemoteInfEngine
         """
 
-        backend_str =f"sglang:d{dp_size}t{tp_size}"
+        backend_str =f"sglang:d{dp_size}"
         
         config = InferenceEngineConfig(
             backend=backend_str,
             max_concurrent_rollouts=max_concurrent_rollouts,
-            tokenizer_path=model,
+            tokenizer_path=tokenizer_path,
             **kwargs,
         )
         
@@ -312,6 +310,10 @@ class RemoteSGLangEngine(InferenceEngine):
         train_data_parallel_size: int | None = None,
     ):
         """Initialize the engine by discovering and connecting to servers."""
+        if train_data_parallel_size is None:
+            train_data_parallel_size=ModelAllocation.from_str(
+            self.config.backend, name="rollout"
+        ).parallel.data_parallel_size
         return self._engine.initialize(engine_id, addr, train_data_parallel_size)
 
     def destroy(self):

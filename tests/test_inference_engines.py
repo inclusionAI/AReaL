@@ -113,7 +113,7 @@ def inference_engine(request):
         server_manager = engine_class(temp_config)
     else:
         server_manager = engine_class.from_pretrained(
-            model=MODEL_PATH,
+            tokenizer_path=MODEL_PATH,
             dp_size=1,
             experiment_name=expr_name,
             trial_name=trial_name,
@@ -409,3 +409,24 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine
         if inf_engine is not None:
             inf_engine.destroy()
         assert not dist.is_initialized()
+
+def test_RemoteSGLangEngine_alloc_mode_construction():
+    """
+    Test that RemoteSGLangEngine.from_pretrained builds a valid config.
+
+    Run with 4 processes (required for dp_size=4):
+        torchrun --nproc_per_node=4 -m pytest tests/test_inference_engines.py -v -k test_RemoteSGLangEngine_alloc_mode_construction
+    """
+    from areal.engine.sglang_remote import RemoteSGLangEngine
+
+    engine = RemoteSGLangEngine.from_pretrained(
+            tokenizer_path=MODEL_PATH,
+            dp_size=1,
+            setup_timeout=360,
+        )
+    
+    engine.initialize()
+
+    dist.barrier()
+
+    engine.destroy()
