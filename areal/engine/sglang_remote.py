@@ -112,6 +112,13 @@ class SGLangBackend:
                         pybase64.b64decode(routed_experts.encode("utf-8")),
                         dtype=np.int32,
                     ).reshape(num_sgl_token, -1)
+                    logger.info(
+                        "[R3-VERIFY] SGLang decoded routed_experts: "
+                        "shape=%s, first3=%s, hash=%d",
+                        routed_experts.shape,
+                        routed_experts.flat[:3].tolist(),
+                        hash(routed_experts.tobytes()),
+                    )
                 except Exception:
                     logger.warning(
                         "[R3] Failed to decode base64 routed_experts "
@@ -126,11 +133,11 @@ class SGLangBackend:
                         routed_experts, dtype=np.int32
                     ).reshape(num_sgl_token, -1)
                     logger.info(
-                        "[R3] Converted routed_experts from %s to numpy array "
-                        "(shape=%s, num_sgl_token=%d).",
-                        type(meta_info.get("routed_experts")).__name__,
+                        "[R3-VERIFY] SGLang converted routed_experts: "
+                        "shape=%s, first3=%s, hash=%d",
                         routed_experts.shape,
-                        num_sgl_token,
+                        routed_experts.flat[:3].tolist(),
+                        hash(routed_experts.tobytes()),
                     )
                 except Exception:
                     logger.warning(
