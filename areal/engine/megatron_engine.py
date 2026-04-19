@@ -165,7 +165,7 @@ class MegatronEngine(TrainEngine):
         self._r3_enabled: bool = getattr(config.megatron, "enable_router_replay", False)
         if not self._r3_enabled:
             self._r3_enabled = getattr(config, "_r3_enable_router_replay", False)
-        self.logger.info(
+        logging.getLogger("[MegatronEngine]").info(
             "[R3] __init__: _r3_enabled=%s, config.megatron.enable_router_replay=%s, "
             "config._r3_enable_router_replay=%s, config.megatron type=%s",
             self._r3_enabled,

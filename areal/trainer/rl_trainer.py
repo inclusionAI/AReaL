@@ -133,6 +133,12 @@ class PPOTrainer:
         # (not a dynamic attribute) to survive Ray serialization.
         if getattr(config.rollout, "return_routed_experts", False):
             config.actor.megatron.enable_router_replay = True
+            logger.info(
+                "[R3] Set config.actor.megatron.enable_router_replay=True "
+                "(config.rollout.return_routed_experts=True). "
+                "config.actor.megatron type=%s",
+                type(config.actor.megatron).__name__,
+            )
 
         # Create models: actor, critic, ref — each with its own allocation.
         self.actor = self._create_train_engine(config.actor, self.actor_alloc)
