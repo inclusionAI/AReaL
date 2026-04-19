@@ -480,7 +480,10 @@ class MegatronEngine(TrainEngine):
             # Non-last stages legitimately have 0 MTP params.
             is_last_stage = True
             try:
-                if mpu.is_initialized() and mpu.get_pipeline_model_parallel_world_size() > 1:
+                if (
+                    mpu.is_initialized()
+                    and mpu.get_pipeline_model_parallel_world_size() > 1
+                ):
                     is_last_stage = mpu.is_pipeline_last_stage()
             except Exception:
                 pass
@@ -878,8 +881,8 @@ class MegatronEngine(TrainEngine):
                                 f"emb={emb_g**0.5:.6f}, lmh={lmh_g**0.5:.6f}, "
                                 f"total={total_params}, no_grad={no_grad_params}"
                             )
-                            mtp_stats["mtp_grad_norm"] = mtp_g ** 0.5
-                            mtp_stats["non_mtp_grad_norm"] = non_mtp_g ** 0.5
+                            mtp_stats["mtp_grad_norm"] = mtp_g**0.5
+                            mtp_stats["non_mtp_grad_norm"] = non_mtp_g**0.5
                         except Exception as e:
                             self.logger.warning(
                                 f"[MTPDetach] Grad norm logging failed: {e}"
@@ -1004,15 +1007,11 @@ class MegatronEngine(TrainEngine):
             # labels is None.  Disable MTP at runtime in this case.
             if not self.enable_mtp_training and forward_only:
                 _unwrapped_def = model
-                while hasattr(_unwrapped_def, 'module'):
+                while hasattr(_unwrapped_def, "module"):
                     _unwrapped_def = _unwrapped_def.module
-                _def_mtp = getattr(_unwrapped_def, 'mtp', None)
-                _def_mtp_process = getattr(
-                    _unwrapped_def, 'mtp_process', False
-                )
-                _def_mtp_layers = getattr(
-                    _unwrapped_def.config, 'mtp_num_layers', None
-                )
+                _def_mtp = getattr(_unwrapped_def, "mtp", None)
+                _def_mtp_process = getattr(_unwrapped_def, "mtp_process", False)
+                _def_mtp_layers = getattr(_unwrapped_def.config, "mtp_num_layers", None)
                 if (
                     _def_mtp is not None
                     or _def_mtp_process
@@ -1037,17 +1036,15 @@ class MegatronEngine(TrainEngine):
 
             if self.enable_mtp_training:
                 _unwrapped = model
-                while hasattr(_unwrapped, 'module'):
+                while hasattr(_unwrapped, "module"):
                     _unwrapped = _unwrapped.module
 
                 if forward_only:
                     # -- Inference: disable MTP to avoid crash --
-                    _saved_mtp = getattr(_unwrapped, 'mtp', None)
-                    _saved_mtp_process = getattr(
-                        _unwrapped, 'mtp_process', None
-                    )
+                    _saved_mtp = getattr(_unwrapped, "mtp", None)
+                    _saved_mtp_process = getattr(_unwrapped, "mtp_process", None)
                     _saved_mtp_layers = getattr(
-                        _unwrapped.config, 'mtp_num_layers', None
+                        _unwrapped.config, "mtp_num_layers", None
                     )
                     if (
                         _saved_mtp is not None
@@ -1078,9 +1075,7 @@ class MegatronEngine(TrainEngine):
                     _mtp_labels = _input_ids
                     # loss_mask carried through pack/pad pipeline;
                     # fall back to None → megatron uses ones_like.
-                    _mtp_loss_mask = mb_input.padded_mb.get(
-                        "loss_mask", None
-                    )
+                    _mtp_loss_mask = mb_input.padded_mb.get("loss_mask", None)
                     extra_block_kwargs = {"labels": _mtp_labels}
                     if _mtp_loss_mask is not None:
                         extra_block_kwargs["loss_mask"] = _mtp_loss_mask
@@ -1220,18 +1215,15 @@ class MegatronEngine(TrainEngine):
                                 ):
                                     # Path 2: functional_call with detached
                                     # output_layer params for MTP logits
-                                    _mtp_hs = hidden_states_list[
-                                        mtp_layer_number + 1
-                                    ]
+                                    _mtp_hs = hidden_states_list[mtp_layer_number + 1]
                                     _ol = self_model.output_layer
                                     _ol_params = {
-                                        k: v.detach()
-                                        for k, v in _ol.named_parameters()
+                                        k: v.detach() for k, v in _ol.named_parameters()
                                     }
                                     _ol_buffers = dict(_ol.named_buffers())
                                     _ol_kwargs = {
-                                        'weight': _mtp_output_weight,
-                                        'runtime_gather_output': (
+                                        "weight": _mtp_output_weight,
+                                        "runtime_gather_output": (
                                             runtime_gather_output
                                         ),
                                     }
@@ -1256,10 +1248,8 @@ class MegatronEngine(TrainEngine):
                                         cp_group=self_model.cp_group,
                                         packed_seq_params=packed_seq_params,
                                     )
-                                    mtp_loss = (
-                                        self_model.compute_language_model_loss(
-                                            mtp_labels, mtp_logits
-                                        )
+                                    mtp_loss = self_model.compute_language_model_loss(
+                                        mtp_labels, mtp_logits
                                     )
                                     mtp_loss = loss_mask * mtp_loss
                                     if self_model.training:
@@ -1287,9 +1277,7 @@ class MegatronEngine(TrainEngine):
                                     else:
                                         hidden_states = MTPLossAutoScaler.apply(
                                             hidden_states,
-                                            mtp_loss_scale
-                                            * mtp_loss
-                                            / num_tokens,
+                                            mtp_loss_scale * mtp_loss / num_tokens,
                                         )
 
                                 # Path 1: apply gradient isolator
@@ -1310,28 +1298,24 @@ class MegatronEngine(TrainEngine):
                                 if inference_context.is_static_batching():
                                     hidden_states = hidden_states[-1:, :, :]
                                 else:
-                                    if (
-                                        self_model.output_layer.sequence_parallel
-                                    ):
+                                    if self_model.output_layer.sequence_parallel:
                                         from megatron.core.tensor_parallel import (
                                             gather_from_sequence_parallel_region,
                                         )
 
-                                        hidden_states = gather_from_sequence_parallel_region(
-                                            hidden_states,
-                                            group=self_model.pg_collection.tp,
+                                        hidden_states = (
+                                            gather_from_sequence_parallel_region(
+                                                hidden_states,
+                                                group=self_model.pg_collection.tp,
+                                            )
                                         )
                                         self_model.output_layer.sequence_parallel = (
                                             False
                                         )
                                         sequence_parallel_override = True
-                                    hidden_states = (
-                                        inference_context.last_token_logits(
-                                            hidden_states.squeeze(1).unsqueeze(
-                                                0
-                                            )
-                                        ).unsqueeze(1)
-                                    )
+                                    hidden_states = inference_context.last_token_logits(
+                                        hidden_states.squeeze(1).unsqueeze(0)
+                                    ).unsqueeze(1)
 
                             # Main logits: ORIGINAL output_weight (GRPO grad flows)
                             logits, _ = self_model.output_layer(
@@ -1346,9 +1330,7 @@ class MegatronEngine(TrainEngine):
                                     and inference_context.is_dynamic_batching()
                                     and inference_context.materialize_only_last_token_logits
                                 )
-                                self_model.output_layer.sequence_parallel = (
-                                    True
-                                )
+                                self_model.output_layer.sequence_parallel = True
 
                             if labels is None:
                                 return logits.transpose(0, 1).contiguous()
@@ -1369,11 +1351,8 @@ class MegatronEngine(TrainEngine):
                         )
 
                         # Path 3: patch _get_embeddings for embedding detach
-                        _mtp_block = getattr(_unwrapped, 'mtp', None)
-                        if (
-                            _mtp_block is not None
-                            and hasattr(_mtp_block, 'layers')
-                        ):
+                        _mtp_block = getattr(_unwrapped, "mtp", None)
+                        if _mtp_block is not None and hasattr(_mtp_block, "layers"):
                             for _layer in _mtp_block.layers:
                                 _orig_get_emb = _layer._get_embeddings
 
@@ -1401,6 +1380,7 @@ class MegatronEngine(TrainEngine):
                                     from megatron.core.utils import (
                                         make_viewless_tensor,
                                     )
+
                                     _hs = make_viewless_tensor(
                                         inp=_hs.detach(),
                                         requires_grad=True,
@@ -1408,12 +1388,8 @@ class MegatronEngine(TrainEngine):
                                     )
                                     return _ids, _pos, _dec_input, _hs
 
-                                _layer._get_embeddings = (
-                                    _patched_get_embeddings
-                                )
-                                _mtp_get_emb_restore.append(
-                                    (_layer, _orig_get_emb)
-                                )
+                                _layer._get_embeddings = _patched_get_embeddings
+                                _mtp_get_emb_restore.append((_layer, _orig_get_emb))
 
                             self.logger.debug(
                                 f"[MTPDetach] Patched _get_embeddings on "
@@ -1446,8 +1422,10 @@ class MegatronEngine(TrainEngine):
                     _orig_clm = _unwrapped.compute_language_model_loss
 
                     def _mtp_loss_fn(
-                        _labels, _logits,
-                        _rem=_remaining, _orig=_orig_clm,
+                        _labels,
+                        _logits,
+                        _rem=_remaining,
+                        _orig=_orig_clm,
                     ):
                         if _rem[0] > 0:
                             _rem[0] -= 1
@@ -1472,17 +1450,18 @@ class MegatronEngine(TrainEngine):
                     # We apply the same pattern here by monkey-patching each
                     # MTP layer's _checkpointed_forward during training.
                     # -----------------------------------------------------------
-                    _mtp_block = getattr(_unwrapped, 'mtp', None)
+                    _mtp_block = getattr(_unwrapped, "mtp", None)
                     if (
                         _mtp_block is not None
-                        and hasattr(_mtp_block, 'layers')
-                        and _unwrapped.config.recompute_granularity == 'full'
+                        and hasattr(_mtp_block, "layers")
+                        and _unwrapped.config.recompute_granularity == "full"
                     ):
                         for _layer in _mtp_block.layers:
                             _orig_ckpt_fwd = _layer._checkpointed_forward
 
                             def _patched_checkpointed_forward(
-                                forward_func, *args,
+                                forward_func,
+                                *args,
                                 _layer_ref=_layer,
                                 **kwargs,
                             ):
@@ -1518,20 +1497,14 @@ class MegatronEngine(TrainEngine):
                                     _orig_args = flat_args[:n_orig]
                                     _tk_vals = flat_args[n_orig:]
                                     _rebuilt_kw = {
-                                        k: v for k, v in zip(
-                                            _tk_keys, _tk_vals
-                                        )
+                                        k: v for k, v in zip(_tk_keys, _tk_vals)
                                     }
                                     _rebuilt_kw.update(_non_tensor_kw)
-                                    return forward_func(
-                                        *_orig_args, **_rebuilt_kw
-                                    )
+                                    return forward_func(*_orig_args, **_rebuilt_kw)
 
                                 _cfg = _layer_ref.config
-                                if _cfg.recompute_method == 'uniform':
-                                    assert (
-                                        _cfg.recompute_num_layers == 1
-                                    ), (
+                                if _cfg.recompute_method == "uniform":
+                                    assert _cfg.recompute_num_layers == 1, (
                                         "recompute_num_layers must be 1 "
                                         "for MTP recompute"
                                     )
@@ -1539,6 +1512,7 @@ class MegatronEngine(TrainEngine):
                                         from megatron.core.extensions.transformer_engine import (
                                             te_checkpoint,
                                         )
+
                                         return te_checkpoint(
                                             _ckpt_wrapper,
                                             _cfg.distribute_saved_activations,
@@ -1554,8 +1528,9 @@ class MegatronEngine(TrainEngine):
                                             *args,
                                             *_tensor_kw.values(),
                                         )
-                                elif _cfg.recompute_method == 'block':
+                                elif _cfg.recompute_method == "block":
                                     import warnings
+
                                     warnings.warn(
                                         "recompute_method == 'block' is not "
                                         "supported for MTP yet. "
@@ -1567,12 +1542,8 @@ class MegatronEngine(TrainEngine):
                                         "Invalid activation recompute method."
                                     )
 
-                            _layer._checkpointed_forward = (
-                                _patched_checkpointed_forward
-                            )
-                            _mtp_ckpt_restore.append(
-                                (_layer, _orig_ckpt_fwd)
-                            )
+                            _layer._checkpointed_forward = _patched_checkpointed_forward
+                            _mtp_ckpt_restore.append((_layer, _orig_ckpt_fwd))
 
                         self.logger.debug(
                             f"[MTPTrain] Patched _checkpointed_forward on "
@@ -1591,12 +1562,14 @@ class MegatronEngine(TrainEngine):
 
             try:
                 output = packed_context_parallel_forward(
-                    model, mb_input.padded_mb,
+                    model,
+                    mb_input.padded_mb,
                     extra_block_kwargs=extra_block_kwargs,
                 )
             finally:
                 if _postprocess_restore is not None:
                     import types as _types_mod
+
                     _uw, _orig_pp = _postprocess_restore
                     _uw._postprocess = _types_mod.MethodType(_orig_pp, _uw)
                 for _layer, _orig_get_emb in _mtp_get_emb_restore:
@@ -1606,9 +1579,7 @@ class MegatronEngine(TrainEngine):
                     _uw.mtp = _sm
                     _uw.mtp_process = _sp
                     _uw.config.mtp_num_layers = _sl
-                    self.logger.debug(
-                        "[MTPTrain] Restored MTP after inference forward"
-                    )
+                    self.logger.debug("[MTPTrain] Restored MTP after inference forward")
                 if _clm_loss_restore is not None:
                     _uw, _orig = _clm_loss_restore
                     _uw.compute_language_model_loss = _orig
@@ -2356,7 +2327,7 @@ class MegatronEngine(TrainEngine):
 
     def _serialize_mtp_tensors_for_update(
         self,
-        mtp_hf_tensors: list[tuple[str, "torch.Tensor"]],
+        mtp_hf_tensors: list[tuple[str, torch.Tensor]],
         tp_size: int,
     ) -> dict:
         """Serialize MTP tensors for /update_weights_from_tensor transport.
@@ -2524,9 +2495,10 @@ class MegatronEngine(TrainEngine):
                     else 1
                 )
                 _mtp_bytes = sum(
-                    t.numel() * t.element_size()
-                    for _, t in mtp_hf_tensors
+                    t.numel() * t.element_size() for _, t in mtp_hf_tensors
                 )
+                import time as _time
+
                 self.logger.info(
                     f"[MTPTrain] Sending {len(mtp_hf_tensors)} MTP tensors "
                     f"({_mtp_bytes / 1024 / 1024:.2f} MB) to EAGLE draft model "
@@ -2537,16 +2509,55 @@ class MegatronEngine(TrainEngine):
                 # for single-controller mode where the engine is a
                 # RolloutCallback proxy — tensor data must be serialized
                 # before it can travel through the HTTP callback chain.
+                _t_ser0 = _time.time()
+                self.logger.info(
+                    f"[MTPTrain][Diag] Starting _serialize_mtp_tensors_for_update "
+                    f"(n_tensors={len(mtp_hf_tensors)}, tp_size={tp_size})..."
+                )
                 serialized_payload = self._serialize_mtp_tensors_for_update(
                     mtp_hf_tensors, tp_size
+                )
+                _t_ser1 = _time.time()
+                # Log serialized payload info
+                _sp_keys = (
+                    list(serialized_payload.keys())
+                    if isinstance(serialized_payload, dict)
+                    else "N/A"
+                )
+                _n_snt = (
+                    len(serialized_payload.get("serialized_named_tensors", []))
+                    if isinstance(serialized_payload, dict)
+                    else 0
+                )
+                _snt_sizes = (
+                    [
+                        len(s)
+                        for s in serialized_payload.get("serialized_named_tensors", [])
+                    ]
+                    if isinstance(serialized_payload, dict)
+                    else []
+                )
+                self.logger.info(
+                    f"[MTPTrain][Diag] Serialization completed in {_t_ser1 - _t_ser0:.3f}s. "
+                    f"payload_keys={_sp_keys}, n_serialized_tensors={_n_snt}, "
+                    f"serialized_tensor_sizes_bytes={_snt_sizes}, "
+                    f"rollout_engine_type={type(self.rollout_engine).__name__}"
+                )
+                _t_call0 = _time.time()
+                self.logger.info(
+                    "[MTPTrain][Diag] Calling rollout_engine.update_weights_from_tensor()..."
                 )
                 self.rollout_engine.update_weights_from_tensor(
                     serialized_payload=serialized_payload,
                     flush_cache=True,
                 )
+                _t_call1 = _time.time()
                 self.logger.info(
                     f"[MTPTrain] Successfully updated EAGLE draft model "
-                    f"MTP weights at version={meta.version}"
+                    f"MTP weights at version={meta.version} "
+                    f"(serialize={_t_ser1 - _t_ser0:.3f}s, "
+                    f"update_call={_t_call1 - _t_call0:.3f}s, "
+                    f"total={_t_call1 - _t_ser0:.3f}s)"
                 )
             except Exception as e:
                 self.logger.error(

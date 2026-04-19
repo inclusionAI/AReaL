@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import threading
+import time
 import traceback
 from collections import defaultdict
 from collections.abc import Callable
@@ -559,9 +560,15 @@ class RolloutController:
 
         @app.route("/callback/update_weights_xccl", methods=["POST"])
         def update_weights():
+            _t0 = time.time()
             payload = request.get_json() or {}
             meta = deserialize_value(payload.get("meta"))
             param_specs = deserialize_value(payload.get("param_specs"))
+            _n_specs = len(param_specs) if param_specs else 0
+            logger.info(
+                f"[DiagMTP] /callback/update_weights_xccl ENTERED "
+                f"(n_param_specs={_n_specs}, version={getattr(meta, 'version', '?')})"
+            )
             # Fire-and-forget: schedule the NCCL weight update as a background
             # task and return HTTP 200 immediately. This prevents infrastructure
             # proxy timeouts (504) since the full NCCL transfer chain can take
@@ -571,6 +578,10 @@ class RolloutController:
             asyncio.run_coroutine_threadsafe(
                 self.update_weights_from_distributed(meta, param_specs),
                 self._callback_loop,
+            )
+            logger.info(
+                f"[DiagMTP] /callback/update_weights_xccl returning HTTP 200 "
+                f"(fire-and-forget, handler took {time.time() - _t0:.3f}s)"
             )
             return jsonify({"status": "ok"})
 
@@ -585,28 +596,85 @@ class RolloutController:
 
         @app.route("/callback/pause_generation", methods=["POST"])
         def pause_generation():
+            _t0 = time.time()
+            logger.info("[DiagMTP] /callback/pause_generation ENTERED")
             asyncio.run_coroutine_threadsafe(
                 self.pause_generation(), self._callback_loop
             ).result()
+            logger.info(
+                f"[DiagMTP] /callback/pause_generation completed in {time.time() - _t0:.3f}s"
+            )
             return jsonify({"status": "ok"})
 
         @app.route("/callback/continue_generation", methods=["POST"])
         def continue_generation():
+            _t0 = time.time()
+            logger.info("[DiagMTP] /callback/continue_generation ENTERED")
             asyncio.run_coroutine_threadsafe(
                 self.continue_generation(), self._callback_loop
             ).result()
+            logger.info(
+                f"[DiagMTP] /callback/continue_generation completed in {time.time() - _t0:.3f}s"
+            )
             return jsonify({"status": "ok"})
 
         @app.route("/callback/update_weights_tensor", methods=["POST"])
         def update_weights_tensor():
-            payload = request.get_json() or {}
-            serialized_payload = deserialize_value(
-                payload.get("serialized_payload")
+            _t0 = time.time()
+            logger.info(
+                "[DiagMTP] /callback/update_weights_tensor handler ENTERED "
+                f"(flask_thread={threading.current_thread().name})"
             )
-            asyncio.run_coroutine_threadsafe(
-                self.update_weights_from_tensor(serialized_payload),
-                self._callback_loop,
-            ).result()
+            payload = request.get_json() or {}
+            _t1 = time.time()
+            logger.info(
+                f"[DiagMTP] payload parsed in {_t1 - _t0:.3f}s, "
+                f"payload_keys={list(payload.keys())}, "
+                f"payload_size_bytes={len(str(payload))}"
+            )
+            serialized_payload = deserialize_value(payload.get("serialized_payload"))
+            _t2 = time.time()
+            logger.info(
+                f"[DiagMTP] deserialize_value completed in {_t2 - _t1:.3f}s, "
+                f"serialized_payload type={type(serialized_payload).__name__}, "
+                f"keys={list(serialized_payload.keys()) if isinstance(serialized_payload, dict) else 'N/A'}"
+            )
+            # Check callback_loop health before scheduling
+            _loop = self._callback_loop
+            _loop_running = _loop is not None and _loop.is_running()
+            _loop_closed = _loop is not None and _loop.is_closed()
+            logger.info(
+                f"[DiagMTP] _callback_loop status: running={_loop_running}, "
+                f"closed={_loop_closed}, loop={_loop}"
+            )
+            logger.info(
+                "[DiagMTP] Scheduling update_weights_from_tensor coroutine "
+                "on _callback_loop (BLOCKING with .result())..."
+            )
+            _t3 = time.time()
+            try:
+                fut = asyncio.run_coroutine_threadsafe(
+                    self.update_weights_from_tensor(serialized_payload),
+                    self._callback_loop,
+                )
+                logger.info(
+                    f"[DiagMTP] Coroutine scheduled in {time.time() - _t3:.3f}s, "
+                    f"fut={fut}, calling .result() to block..."
+                )
+                fut.result()
+                _t4 = time.time()
+                logger.info(
+                    f"[DiagMTP] .result() completed in {_t4 - _t3:.3f}s "
+                    f"(total handler time: {_t4 - _t0:.3f}s). "
+                    "Returning HTTP 200."
+                )
+            except Exception as e:
+                logger.error(
+                    f"[DiagMTP] .result() raised exception after "
+                    f"{time.time() - _t3:.3f}s: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+                raise
             return jsonify({"status": "ok"})
 
         @app.route("/callback/rollout_complete", methods=["POST"])
@@ -731,6 +799,14 @@ class RolloutController:
         *args,
         **kwargs,
     ) -> list[Any]:
+        import time as _time
+
+        _t0 = _time.time()
+        _worker_ids = [w.id for w in workers]
+        logger.info(
+            f"[DiagMTP] _generic_collective_rpc_async ENTERED: "
+            f"method={method}, n_workers={len(workers)}, workers={_worker_ids}"
+        )
         tasks = [
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
@@ -741,7 +817,26 @@ class RolloutController:
             )
             for rank, worker in enumerate(workers)
         ]
-        return await asyncio.gather(*tasks)
+        logger.info(
+            f"[DiagMTP] _generic_collective_rpc_async: "
+            f"{len(tasks)} tasks created for method={method}, "
+            f"calling asyncio.gather..."
+        )
+        try:
+            results = await asyncio.gather(*tasks)
+            logger.info(
+                f"[DiagMTP] _generic_collective_rpc_async COMPLETED: "
+                f"method={method} in {_time.time() - _t0:.3f}s"
+            )
+            return results
+        except Exception as e:
+            logger.error(
+                f"[DiagMTP] _generic_collective_rpc_async FAILED: "
+                f"method={method} after {_time.time() - _t0:.3f}s: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            raise
 
     def _choose_worker(self) -> tuple[Worker, int]:
         """Choose a worker for the next request using round-robin scheduling.
@@ -1064,8 +1159,20 @@ class RolloutController:
     async def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ):
+        import time as _time
+
+        _t0 = _time.time()
+        _n_specs = len(param_specs) if param_specs else 0
+        logger.info(
+            f"[DiagMTP] async update_weights_from_distributed ENTERED "
+            f"(n_specs={_n_specs}, version={getattr(meta, 'version', '?')})"
+        )
         await self._collective_rpc_async(
             "update_weights_from_distributed", meta=meta, param_specs=param_specs
+        )
+        logger.info(
+            f"[DiagMTP] async update_weights_from_distributed COMPLETED "
+            f"in {_time.time() - _t0:.3f}s"
         )
 
     async def update_weights_from_disk(self, meta: WeightUpdateMeta):
@@ -1079,9 +1186,7 @@ class RolloutController:
     async def continue_generation(self):
         await self._collective_rpc_async("continue_generation")
 
-    async def update_weights_from_tensor(
-        self, serialized_payload: dict
-    ) -> None:
+    async def update_weights_from_tensor(self, serialized_payload: dict) -> None:
         """Update EAGLE draft model MTP weights via tensor update path.
 
         Receives pre-serialized tensor data from the training side and
@@ -1094,10 +1199,31 @@ class RolloutController:
         serialized_payload : dict
             Pre-serialized payload for /update_weights_from_tensor.
         """
-        await self._collective_rpc_async(
-            "update_weights_from_tensor_serialized",
-            serialized_payload=serialized_payload,
+        import time as _time
+
+        _t0 = _time.time()
+        _n_workers = len(self.workers)
+        _worker_ids = [w.id for w in self.workers]
+        logger.info(
+            f"[DiagMTP] async update_weights_from_tensor ENTERED on "
+            f"_callback_loop (n_workers={_n_workers}, workers={_worker_ids})"
         )
+        try:
+            await self._collective_rpc_async(
+                "update_weights_from_tensor_serialized",
+                serialized_payload=serialized_payload,
+            )
+            logger.info(
+                f"[DiagMTP] async update_weights_from_tensor COMPLETED "
+                f"in {_time.time() - _t0:.3f}s"
+            )
+        except Exception as e:
+            logger.error(
+                f"[DiagMTP] async update_weights_from_tensor FAILED "
+                f"after {_time.time() - _t0:.3f}s: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            raise
 
     def set_version(self, version: int) -> None:
         with self._version_lock:

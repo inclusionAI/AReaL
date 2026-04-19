@@ -215,7 +215,7 @@ class RemoteInfBackendProtocol(Protocol):
         named_tensors: list,
         tp_size: int = 1,
         flush_cache: bool = True,
-    ) -> "HttpRequest":
+    ) -> HttpRequest:
         """Build HTTP request for /update_weights_from_tensor.
 
         Used to update EAGLE draft model weights that are not
@@ -1045,11 +1045,45 @@ class RemoteInfEngine(InferenceEngine):
             Must contain 'serialized_named_tensors' (list of base64 strings)
             and optionally 'flush_cache' (bool).
         """
+        import time as _time
+
+        _t0 = _time.time()
+        _payload_keys = (
+            list(serialized_payload.keys())
+            if isinstance(serialized_payload, dict)
+            else "N/A"
+        )
+        _n_tensors = (
+            len(serialized_payload.get("serialized_named_tensors", []))
+            if isinstance(serialized_payload, dict)
+            else 0
+        )
+        logger.info(
+            f"[DiagMTP][Worker] update_weights_from_tensor_serialized ENTERED: "
+            f"payload_keys={_payload_keys}, n_serialized_tensors={_n_tensors}, "
+            f"addresses={self.addresses}"
+        )
         http_req = HttpRequest(
             endpoint="/update_weights_from_tensor",
             payload=serialized_payload,
         )
-        self._run_request_on_all_servers(http_req)
+        logger.info(
+            f"[DiagMTP][Worker] Calling _run_request_on_all_servers for "
+            f"/update_weights_from_tensor to {len(self.addresses)} SGLang servers..."
+        )
+        try:
+            self._run_request_on_all_servers(http_req)
+            logger.info(
+                f"[DiagMTP][Worker] update_weights_from_tensor_serialized "
+                f"COMPLETED in {_time.time() - _t0:.3f}s"
+            )
+        except Exception as e:
+            logger.error(
+                f"[DiagMTP][Worker] update_weights_from_tensor_serialized "
+                f"FAILED after {_time.time() - _t0:.3f}s: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            raise
 
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights in the inference engine from disk.
@@ -1317,7 +1351,16 @@ class RemoteInfEngine(InferenceEngine):
         self._run_request_on_all_servers(onload_req)
 
     def _run_request_on_all_servers(self, req: HttpRequest):
+        import time as _time
+
         async def _fn():
+            _t0 = _time.time()
+            logger.info(
+                f"[DiagMTP][Worker] _run_request_on_all_servers async _fn ENTERED: "
+                f"endpoint={req.endpoint}, n_addrs={len(self.addresses)}, "
+                f"addrs={self.addresses}, "
+                f"request_timeout={self.config.request_timeout}s"
+            )
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.config.request_timeout),
                 read_bufsize=1024 * 1024 * 10,
@@ -1325,6 +1368,10 @@ class RemoteInfEngine(InferenceEngine):
             ) as session:
                 jobs = []
                 for addr in self.addresses:
+                    logger.info(
+                        f"[DiagMTP][Worker] Creating request job: "
+                        f"{req.method} {addr}{req.endpoint}"
+                    )
                     jobs.append(
                         arequest_with_retry(
                             session=session,
@@ -1336,7 +1383,24 @@ class RemoteInfEngine(InferenceEngine):
                             timeout=self.config.request_timeout,
                         )
                     )
-                await asyncio.gather(*jobs)
+                logger.info(
+                    f"[DiagMTP][Worker] Dispatching {len(jobs)} HTTP jobs "
+                    f"via asyncio.gather for {req.endpoint}..."
+                )
+                try:
+                    await asyncio.gather(*jobs)
+                    logger.info(
+                        f"[DiagMTP][Worker] asyncio.gather completed for "
+                        f"{req.endpoint} in {_time.time() - _t0:.3f}s"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[DiagMTP][Worker] asyncio.gather FAILED for "
+                        f"{req.endpoint} after {_time.time() - _t0:.3f}s: "
+                        f"{type(e).__name__}: {e}",
+                        exc_info=True,
+                    )
+                    raise
 
         uvloop.run(_fn())
 

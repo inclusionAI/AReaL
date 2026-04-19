@@ -1,3 +1,5 @@
+import sys
+import time
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
@@ -65,6 +67,11 @@ class RolloutCallback:
             Response JSON from controller
         """
         url = f"http://{self.controller_addr}{endpoint}"
+        _t_post = time.time()
+        logger.info(
+            f"[DiagMTP][Callback] _post: sending POST to {url} "
+            f"(timeout={self.request_timeout}s, proxies={_NO_PROXY})"
+        )
         try:
             resp = requests.post(
                 url,
@@ -72,10 +79,18 @@ class RolloutCallback:
                 timeout=self.request_timeout,
                 proxies=_NO_PROXY,
             )
+            _elapsed = time.time() - _t_post
+            logger.info(
+                f"[DiagMTP][Callback] _post: response received from {url} "
+                f"in {_elapsed:.3f}s (status={resp.status_code})"
+            )
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
-            logger.error(f"Callback to {url} failed: {e}")
+            _elapsed = time.time() - _t_post
+            logger.error(
+                f"[DiagMTP][Callback] _post: FAILED {url} after {_elapsed:.3f}s: {e}"
+            )
             raise
 
     def _post_nowait(
@@ -236,12 +251,40 @@ class RolloutCallback:
                 "serialized_payload (pre-serialized tensor data). "
                 "Raw tensor mode is not supported through the callback chain."
             )
+        _t0 = time.time()
+        logger.info(
+            f"[DiagMTP][Callback] update_weights_from_tensor ENTERED. "
+            f"serialized_payload keys={list(serialized_payload.keys())}, "
+            f"controller_addr={self.controller_addr}"
+        )
         payload = {
             "serialized_payload": serialize_value(serialized_payload),
         }
-        # Synchronous (blocking) POST: the callback server handler now
-        # blocks until SGLang actually completes the tensor update, so the
-        # HTTP response guarantees the update is done. This ensures training
-        # does not proceed to continue_generation before the tensor update
-        # finishes, preventing worker RPC server contention and hangs.
-        self._post("/callback/update_weights_tensor", payload)
+        _payload_size = sys.getsizeof(str(payload))
+        _t1 = time.time()
+        logger.info(
+            f"[DiagMTP][Callback] serialize_value took {_t1 - _t0:.3f}s, "
+            f"payload_approx_size={_payload_size} bytes"
+        )
+
+        # Synchronous blocking POST: wait for callback server to complete
+        # the tensor update before returning. This ensures training does
+        # not proceed to continue_generation before the update finishes.
+        logger.info(
+            f"[DiagMTP][Callback] Calling _post('/callback/update_weights_tensor') "
+            f"with timeout={self.request_timeout}s..."
+        )
+        try:
+            self._post("/callback/update_weights_tensor", payload)
+            _t2 = time.time()
+            logger.info(
+                f"[DiagMTP][Callback] _post completed in {_t2 - _t1:.3f}s "
+                f"(total: {_t2 - _t0:.3f}s)"
+            )
+        except Exception as e:
+            _t2 = time.time()
+            logger.error(
+                f"[DiagMTP][Callback] _post FAILED after {_t2 - _t1:.3f}s "
+                f"(total: {_t2 - _t0:.3f}s): {type(e).__name__}: {e}"
+            )
+            raise
