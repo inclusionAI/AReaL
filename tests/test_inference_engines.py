@@ -419,13 +419,31 @@ def test_RemoteSGLangEngine_alloc_mode_construction():
     """
     from areal.engine.sglang_remote import RemoteSGLangEngine
 
+    dist_port = network.find_free_ports(1)[0]
+    host = network.gethostip()
+
+    sglang_config = SGLangConfig(
+            skip_tokenizer_init=True,
+            model_path=MODEL_PATH,
+            mem_fraction_static=0.2,
+            context_length=128,
+    )
+    sglang_args = SGLangConfig.build_args(
+            sglang_config=sglang_config,
+            tp_size=1,
+            base_gpu_id=0,
+            dist_init_addr=f"{host}:{dist_port}",
+    )
+
     engine = RemoteSGLangEngine.from_pretrained(
             tokenizer_path=MODEL_PATH,
-            dp_size=1,
+            dp_size=4,
             setup_timeout=360,
         )
     
-    engine.initialize()
+    server_info = engine.launch_server(sglang_args)
+    
+    engine.initialize(addr=f"{server_info.host}:{server_info.port}")
 
     dist.barrier()
 
