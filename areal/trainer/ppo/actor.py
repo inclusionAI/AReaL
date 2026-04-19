@@ -328,13 +328,19 @@ class PPOActor:
             from areal.trainer.ppo.actor_r3_patch import _resolve_to_tensor
             _r3_routed_experts = _resolve_to_tensor(_r3_routed_experts)
         if _r3_routed_experts is not None:
+            _re_np = _r3_routed_experts.cpu().numpy()
+            _nonzero = _re_np[_re_np > 0]
             logger.info(
                 "[R3-VERIFY] Actor received routed_experts: "
-                "shape=%s, dtype=%s, first3=%s, hash=%d",
+                "shape=%s, dtype=%s, nonzero_count=%d/%d, "
+                "nonzero_first3=%s, max=%d, hash=%d",
                 _r3_routed_experts.shape,
                 _r3_routed_experts.dtype,
-                _r3_routed_experts.flatten()[:3].tolist(),
-                hash(_r3_routed_experts.cpu().numpy().tobytes()),
+                len(_nonzero),
+                _re_np.size,
+                _nonzero[:3].tolist() if len(_nonzero) >= 3 else _nonzero.tolist(),
+                int(_re_np.max()),
+                hash(_re_np.tobytes()),
             )
 
         mb_inputs = split_padded_tensor_dict_into_mb_list(

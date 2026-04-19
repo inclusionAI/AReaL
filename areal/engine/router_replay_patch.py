@@ -272,13 +272,17 @@ def _patched_topk_routing_with_score_function(
             top_indices = router_replay.target_topk_idx
             top_indices = top_indices.to(scores.device)
             probs = scores.gather(1, top_indices)
-            if not hasattr(_patched_topk_routing_with_score_function, '_r3_verify_logged'):
-                _patched_topk_routing_with_score_function._r3_verify_logged = True
+            if not hasattr(_patched_topk_routing_with_score_function, '_r3_verify_count'):
+                _patched_topk_routing_with_score_function._r3_verify_count = 0
+            _patched_topk_routing_with_score_function._r3_verify_count += 1
+            if _patched_topk_routing_with_score_function._r3_verify_count <= 3:
                 logger.info(
-                    "[R3-VERIFY] Megatron REPLAY_FORWARD using replay indices: "
-                    "shape=%s, first3=%s, agreement_rate=%.4f",
+                    "[R3-VERIFY] Megatron REPLAY_FORWARD #%d: "
+                    "top_indices shape=%s, first3_nonzero=%s, "
+                    "agreement_rate=%.4f",
+                    _patched_topk_routing_with_score_function._r3_verify_count,
                     top_indices.shape,
-                    top_indices.flatten()[:3].tolist(),
+                    top_indices[top_indices > 0].flatten()[:3].tolist(),
                     agreement_rate,
                 )
             return probs, top_indices
