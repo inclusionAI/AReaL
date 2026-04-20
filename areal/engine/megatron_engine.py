@@ -2363,6 +2363,15 @@ class MegatronEngine(TrainEngine):
 
         monkey_patch_torch_reductions()
 
+        # Ensure all pending CUDA operations (e.g., NCCL all-gather from
+        # _collect_param) are complete before creating CUDA IPC handles.
+        # cudaIpcGetMemHandle requires the source tensor's GPU memory to be
+        # stable; without sync, pending async NCCL ops can cause the IPC
+        # handle creation to block indefinitely.
+        import torch
+
+        torch.cuda.synchronize()
+
         # Inner serialization: each tensor → CUDA IPC handle bytes
         serialized_pairs = [
             (name, MultiprocessingSerializer.serialize(tensor.detach()))

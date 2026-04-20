@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import shutil
 import threading
 import time
@@ -113,6 +114,12 @@ class RolloutController:
         self._callback_host: str | None = None
         self._callback_loop: asyncio.AbstractEventLoop | None = None
         self._callback_loop_ready = threading.Event()
+
+        # Pending fire-and-forget NCCL update futures. Tracked so the
+        # tensor update handler can drain them before dispatching its own
+        # RPC, preventing engine-thread queue starvation.
+        self._pending_xccl_futures: list[concurrent.futures.Future] = []
+        self._xccl_futures_lock = threading.Lock()
 
         # Task completion futures
         self._pending_futures: dict[int, asyncio.Future] = {}
@@ -575,10 +582,18 @@ class RolloutController:
             # >60s. NCCL broadcast is collective — when the training side's
             # broadcast handle completes, the receive side has the data.
             # Inspired by verl's pattern of decoupling HTTP from NCCL ops.
-            asyncio.run_coroutine_threadsafe(
+            fut = asyncio.run_coroutine_threadsafe(
                 self.update_weights_from_distributed(meta, param_specs),
                 self._callback_loop,
             )
+            # Track future so tensor update can drain pending NCCL work
+            # before dispatching its own RPC to the engine thread queue.
+            with self._xccl_futures_lock:
+                # Prune completed futures to avoid unbounded growth
+                self._pending_xccl_futures = [
+                    f for f in self._pending_xccl_futures if not f.done()
+                ]
+                self._pending_xccl_futures.append(fut)
             logger.info(
                 f"[DiagMTP] /callback/update_weights_xccl returning HTTP 200 "
                 f"(fire-and-forget, handler took {time.time() - _t0:.3f}s)"
@@ -639,6 +654,11 @@ class RolloutController:
                 f"serialized_payload type={type(serialized_payload).__name__}, "
                 f"keys={list(serialized_payload.keys()) if isinstance(serialized_payload, dict) else 'N/A'}"
             )
+            # BLOCKING: MTP tensor update must complete before returning.
+            # Following verl/slime's fully-blocking weight update pattern.
+            # Unlike NCCL updates (fire-and-forget for concurrent collective
+            # participation), tensor updates are rank-0-only unilateral
+            # operations that can safely block.
             # Check callback_loop health before scheduling
             _loop = self._callback_loop
             _loop_running = _loop is not None and _loop.is_running()
@@ -1194,11 +1214,44 @@ class RolloutController:
         payload directly to the SGLang server's /update_weights_from_tensor
         endpoint.
 
+        Before dispatching the tensor update RPC, drains all pending
+        fire-and-forget NCCL update futures. This ensures the worker's
+        engine thread queue is clear, preventing the tensor update from
+        being queued behind slow NCCL tasks (which would cause an
+        indefinite hang). Follows verl/slime's pattern of fully completing
+        all weight updates before proceeding.
+
         Parameters
         ----------
         serialized_payload : dict
             Pre-serialized payload for /update_weights_from_tensor.
         """
+        # Drain all pending NCCL update futures before dispatching the
+        # tensor update. The NCCL updates and tensor update both go through
+        # the worker's single engine thread queue (via async_call_engine →
+        # /call → _submit_to_engine_thread). If NCCL tasks are still queued,
+        # the tensor update gets stuck behind them indefinitely.
+        with self._xccl_futures_lock:
+            pending = list(self._pending_xccl_futures)
+            self._pending_xccl_futures.clear()
+
+        if pending:
+            logger.info(
+                f"[DiagMTP] Draining {len(pending)} pending NCCL futures "
+                f"before tensor update..."
+            )
+            # Wait for all pending NCCL coroutines to complete.
+            # Use asyncio wrap to avoid blocking the event loop.
+            done_count = 0
+            for fut in pending:
+                try:
+                    await asyncio.wrap_future(fut)
+                    done_count += 1
+                except Exception as e:
+                    logger.warning(f"[DiagMTP] Pending NCCL future raised: {e}")
+                    done_count += 1
+            logger.info(f"[DiagMTP] Drained {done_count}/{len(pending)} NCCL futures.")
+
         import time as _time
 
         _t0 = _time.time()

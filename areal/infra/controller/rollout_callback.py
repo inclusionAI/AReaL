@@ -267,9 +267,11 @@ class RolloutCallback:
             f"payload_approx_size={_payload_size} bytes"
         )
 
-        # Synchronous blocking POST: wait for callback server to complete
-        # the tensor update before returning. This ensures training does
-        # not proceed to continue_generation before the update finishes.
+        # Synchronous blocking POST: MTP tensor update must complete before
+        # training proceeds to continue_generation. This follows verl/slime's
+        # approach of fully blocking weight updates. The callback server
+        # handler is also blocking (.result()), so HTTP 200 guarantees the
+        # tensor update is finished on the inference side.
         logger.info(
             f"[DiagMTP][Callback] Calling _post('/callback/update_weights_tensor') "
             f"with timeout={self.request_timeout}s..."
