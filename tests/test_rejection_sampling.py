@@ -943,7 +943,7 @@ class TestTwoStageRejectionSampling:
             agg="mean", upper=2.0, token_action="mask",
         )
         loss_mask, ratios, proximal_logprobs, old_logprobs = self._batch_inputs()
-        new_mask, _ = apply_rejection_sampling(
+        result = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
             cu_seqlens=None,
@@ -951,6 +951,7 @@ class TestTwoStageRejectionSampling:
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
         )
+        new_mask = result.loss_mask
         # Sequence 1 (geo-mean 3.0 > 2.0) must be fully masked.
         assert new_mask[1].sum() == 0, "Rejected sequence must be fully zeroed"
         # Sequences 0 and 2 are accepted and their token ratios ≤ upper → kept.
@@ -977,7 +978,7 @@ class TestTwoStageRejectionSampling:
         proximal_logprobs = torch.log(ratios)
         old_logprobs = torch.zeros_like(proximal_logprobs)
 
-        new_mask, _ = apply_rejection_sampling(
+        result = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
             cu_seqlens=None,
@@ -985,6 +986,7 @@ class TestTwoStageRejectionSampling:
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
         )
+        new_mask = result.loss_mask
         assert new_mask[0, 0] == 1
         assert new_mask[0, 1] == 1
         assert new_mask[0, 2] == 0, "Token-MIS must mask the 2.5-ratio token"
@@ -1009,7 +1011,7 @@ class TestTwoStageRejectionSampling:
         proximal_logprobs = torch.log(ratios.clamp(min=1e-6))
         old_logprobs = torch.zeros_like(proximal_logprobs)
 
-        new_mask, new_weight = apply_rejection_sampling(
+        new_mask, new_weight, new_filtered_fraction = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
             cu_seqlens=None,
@@ -1041,7 +1043,7 @@ class TestTwoStageRejectionSampling:
         proximal_logprobs = torch.log(ratios)
         old_logprobs = torch.zeros_like(proximal_logprobs)
 
-        new_mask, _ = apply_rejection_sampling(
+        result = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
             cu_seqlens=None,
@@ -1049,6 +1051,7 @@ class TestTwoStageRejectionSampling:
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
         )
+        new_mask=result.loss_mask
         assert new_mask.sum() == 0, "Stage 1 rejection must dominate Stage 2"
 
     def test_none_token_action_identical_to_pure_sequence_geo_rs(self):
@@ -1074,10 +1077,10 @@ class TestTwoStageRejectionSampling:
             agg="mean", upper=2.0,
         )
 
-        mask_off, w_off = apply_rejection_sampling(
+        mask_off, w_off, filtered_fraction_off = apply_rejection_sampling(
             proximal_logprobs, old_logprobs, loss_mask.clone(), None, cfg_two_stage_off
         )
-        mask_orig, w_orig = apply_rejection_sampling(
+        mask_orig, w_orig, filtered_fraction_orig = apply_rejection_sampling(
             proximal_logprobs, old_logprobs, loss_mask.clone(), None, cfg_original
         )
 
@@ -1100,7 +1103,7 @@ class TestTwoStageRejectionSampling:
         proximal_logprobs = torch.log(ratios)
         old_logprobs = torch.zeros_like(proximal_logprobs)
 
-        new_mask, _ = apply_rejection_sampling(
+        result = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
             cu_seqlens=None,
@@ -1108,6 +1111,7 @@ class TestTwoStageRejectionSampling:
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
         )
+        new_mask = result.loss_mask
         assert new_mask[0, 0] == 0, "Token below lower bound must be masked"
         assert new_mask[0, 1] == 1
         assert new_mask[0, 2] == 1
