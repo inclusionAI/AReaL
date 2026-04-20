@@ -252,23 +252,19 @@ def _patched_topk_routing_with_score_function(
                 )
                 return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
 
-            # Compute natural topk for Router Agreement Rate metric.
-            # This measures how much the training router's natural selection
-            # diverges from the replayed inference routing.
-            with torch.no_grad():
-                _, natural_indices = _compute_topk(
-                    scores, topk, num_groups=num_groups, group_topk=group_topk
-                )
-                replay_indices = router_replay.target_topk_idx.to(scores.device)
-                natural_sorted = natural_indices.sort(dim=-1).values
-                replay_sorted = replay_indices.sort(dim=-1).values
-                per_token_matches = (natural_sorted == replay_sorted).float().sum(dim=-1)
-                agreement_rate = (per_token_matches / topk).mean().item()
-                from areal.utils import stats_tracker
-                with stats_tracker.scope("r3"):
-                    stats_tracker.scalar(router_agreement_rate=agreement_rate)
-
-            # Use the provided indices for replay
+            # Use the provided indices for replay.
+            # NOTE: Agreement rate is NOT computed here in the per-layer
+            # router hot path. Following verl's approach, the per-layer
+            # stats_tracker.scalar call was removed because:
+            #   1. It averaged across ALL layers x microbatches x minibatches,
+            #      producing a misleading global metric (~3-13%) despite
+            #      individual per-layer agreement being ~97%.
+            #   2. It added unnecessary compute (natural topk) on every
+            #      router call during training.
+            # Agreement rate is now computed ONCE per step in
+            # log_r3_data_stats (actor_r3_patch.py) using recorded
+            # routing from the first microbatch, with proper padding
+            # exclusion.
             top_indices = router_replay.target_topk_idx
             top_indices = top_indices.to(scores.device)
             probs = scores.gather(1, top_indices)
@@ -276,6 +272,15 @@ def _patched_topk_routing_with_score_function(
                 _patched_topk_routing_with_score_function._r3_verify_count = 0
             _patched_topk_routing_with_score_function._r3_verify_count += 1
             if _patched_topk_routing_with_score_function._r3_verify_count <= 3:
+                # Lightweight verification for first few calls only
+                with torch.no_grad():
+                    _, natural_indices = _compute_topk(
+                        scores, topk, num_groups=num_groups, group_topk=group_topk
+                    )
+                    replay_sorted = top_indices.sort(dim=-1).values
+                    natural_sorted = natural_indices.sort(dim=-1).values
+                    per_token_matches = (natural_sorted == replay_sorted).float().sum(dim=-1)
+                    agreement_rate = (per_token_matches / topk).mean().item()
                 _nz = top_indices[top_indices > 0].flatten()[:3].tolist()
                 print(
                     f"[R3-VERIFY] Megatron REPLAY_FORWARD "

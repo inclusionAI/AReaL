@@ -429,18 +429,22 @@ def _r3_forward_backward_batch(
     #    Fall back to mb_list.data for backward compatibility.
     # ------------------------------------------------------------------
     routed_experts_batch = None
+    _from_side_channel = False
 
     # Strategy A: Side-channel (Problem 1 fix -- preferred path)
     if hasattr(self, '_r3_pending_routed_experts') and self._r3_pending_routed_experts is not None:
         routed_experts_batch = self._r3_pending_routed_experts
         self._r3_pending_routed_experts = None  # Consume it
+        _from_side_channel = True
         logger.info(
             "[R3] Retrieved routed_experts from engine side-channel: shape=%s.",
             routed_experts_batch.shape,
         )
 
     # Strategy B: Legacy path from mb_list.data (backward compatibility)
-    if routed_experts_batch is None:
+    # Only used when forward_only=False (training), to prevent unintended
+    # replay during compute_logp / eval_batch.
+    if routed_experts_batch is None and not forward_only:
         if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
             routed_experts_batch = mb_list.data.pop("routed_experts", None)
             if routed_experts_batch is not None:
@@ -460,12 +464,21 @@ def _r3_forward_backward_batch(
         for mb_dict in mb_list.padded_mbs:
             if isinstance(mb_dict, dict):
                 mb_dict.pop("routed_experts", None)
+    # Also clean from mb_list.data to prevent leaking into future calls
+    if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
+        mb_list.data.pop("routed_experts", None)
 
     if routed_experts_batch is None:
-        logger.debug(
-            "[R3] No routed_experts found (neither side-channel nor mb_list.data); "
-            "using original forward_backward_batch."
-        )
+        if forward_only:
+            logger.debug(
+                "[R3] forward_only=True and no side-channel routed_experts; "
+                "skipping R3 replay (compute_logp/eval path)."
+            )
+        else:
+            logger.debug(
+                "[R3] No routed_experts found (neither side-channel nor mb_list.data); "
+                "using original forward_backward_batch."
+            )
         return self._r3_original_forward_backward_batch(
             mb_list, process_output_fn, forward_only=forward_only
         )
