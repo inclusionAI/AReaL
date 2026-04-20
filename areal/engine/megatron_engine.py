@@ -2194,12 +2194,29 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
+        import time as _diag_time
+
+        _t0 = _diag_time.time()
+        self.logger.info(
+            f"[DiagImpl] Rank {dist.get_rank()} _collect_param START "
+            f"name={name}"
+        )
         param, param_size = self._collect_param(name, param)
+        self.logger.info(
+            f"[DiagImpl] Rank {dist.get_rank()} _collect_param DONE "
+            f"name={name}, param_size={param_size / 1024 / 1024:.2f} MB, "
+            f"took={_diag_time.time() - _t0:.3f}s"
+        )
 
         if not self.is_pipeline_parallel_head():
             return buffer_size
 
         if buffer_size + param_size > weight_chunked_mem_size:
+            self.logger.info(
+                f"[DiagImpl] Buffer overflow ({buffer_size / 1024 / 1024:.2f} + "
+                f"{param_size / 1024 / 1024:.2f} > {weight_chunked_mem_size / 1024 / 1024:.2f} MB), "
+                f"flushing {len(converted_named_tensors)} tensors, name={name}"
+            )
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             buffer_size = 0
 
@@ -2646,7 +2663,15 @@ class MegatronEngine(TrainEngine):
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
 
+        self.logger.info(
+            f"[DiagUW] Rank {dist.get_rank()} about to enter first cpu_group barrier "
+            f"at elapsed={_diag_time.time() - _diag_t0:.3f}s"
+        )
         dist.barrier(group=self.cpu_group)
+        self.logger.info(
+            f"[DiagUW] Rank {dist.get_rank()} passed first cpu_group barrier "
+            f"at elapsed={_diag_time.time() - _diag_t0:.3f}s"
+        )
 
         num_moe_experts = self.tf_config.num_moe_experts
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
@@ -2672,7 +2697,16 @@ class MegatronEngine(TrainEngine):
                     continue
                 mtp_param_count += 1
                 mtp_param_bytes += param.numel() * param.element_size()
+                self.logger.info(
+                    f"[DiagUW] Pre-loop MTP param[{mtp_param_count}] "
+                    f"name={name}, size={param.numel() * param.element_size() / 1024 / 1024:.2f} MB, "
+                    f"calling _collect_param..."
+                )
                 _mtp_param, _ = self._collect_param(name, param)
+                self.logger.info(
+                    f"[DiagUW] Pre-loop MTP param[{mtp_param_count}] "
+                    f"_collect_param DONE, name={name}"
+                )
                 _mtp_model_name = self.hf_config.model_type
                 mtp_hf_tensors.extend(
                     convert_to_hf(
@@ -2702,6 +2736,7 @@ class MegatronEngine(TrainEngine):
                     f"(mtp_param_count={mtp_param_count})"
                 )
 
+        _param_idx = 0
         for name, param in get_named_parameters(self.model, num_moe_experts):
             if ".experts." in name:
                 continue
@@ -2711,6 +2746,13 @@ class MegatronEngine(TrainEngine):
                 ".adapter." not in name or not getattr(param, "requires_grad", False)
             ):
                 continue
+            if _param_idx < 5 or _param_idx % 50 == 0:
+                self.logger.info(
+                    f"[DiagUW] Rank {dist.get_rank()} main_loop param[{_param_idx}] "
+                    f"name={name}, size={param.numel() * param.element_size() / 1024 / 1024:.2f} MB, "
+                    f"buffer_size={buffer_size / 1024 / 1024:.2f} MB, "
+                    f"elapsed={_diag_time.time() - _diag_t0:.3f}s"
+                )
             buffer_size = self._impl_update_weight_from_distributed(
                 meta,
                 name,
@@ -2719,6 +2761,12 @@ class MegatronEngine(TrainEngine):
                 buffer_size,
                 weight_chunked_mem_size,
             )
+            if _param_idx < 5 or _param_idx % 50 == 0:
+                self.logger.info(
+                    f"[DiagUW] Rank {dist.get_rank()} main_loop param[{_param_idx}] "
+                    f"DONE, buffer_size={buffer_size / 1024 / 1024:.2f} MB"
+                )
+            _param_idx += 1
 
         self.logger.info(
             f"[DiagUW] Parameter loop completed in "
