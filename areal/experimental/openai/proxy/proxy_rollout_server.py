@@ -109,6 +109,10 @@ _admin_api_key: str = secrets.token_urlsafe(32)
 _api_key_to_session: dict[str, str] = {}
 _session_to_api_key: dict[str, str] = {}  # Reverse mapping for O(1) cleanup
 
+# Pluggable prefix matcher for InteractionCache parent-child matching.
+# Loaded from config at setup time. None means default exact matching.
+_prefix_matcher = None
+
 # Server address (set at startup)
 _server_host: str = "0.0.0.0"
 _server_port: int = 8000
@@ -260,7 +264,7 @@ async def alloc_ports(raw_request: Request):
 
 
 def _setup_openai_client():
-    global _openai_client, _session_timeout_seconds, _admin_api_key
+    global _openai_client, _session_timeout_seconds, _admin_api_key, _prefix_matcher
     config = _engine.config
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
     openai_cfg = config.openai or OpenAIProxyConfig()
@@ -282,6 +286,12 @@ def _setup_openai_client():
                 "Using default admin API key. Change 'admin_api_key' in "
                 "OpenAIProxyConfig for non-local deployments."
             )
+    # Load pluggable prefix matcher from config
+    if openai_cfg.prefix_matcher:
+        _prefix_matcher = import_from_string(openai_cfg.prefix_matcher)
+        logger.info("Loaded prefix matcher: %s", openai_cfg.prefix_matcher)
+    else:
+        _prefix_matcher = None
 
 
 @app.post("/configure")
@@ -455,7 +465,9 @@ def start_session(request: StartSessionRequest) -> StartSessionResponse:
                 session_api_key = secrets.token_urlsafe(32)
 
         _capacity -= 1
-        _session_cache[session_id] = SessionData(session_id=session_id)
+        _session_cache[session_id] = SessionData(
+            session_id=session_id, prefix_matcher=_prefix_matcher
+        )
         _api_key_to_session[session_api_key] = session_id
         _session_to_api_key[session_id] = session_api_key
 

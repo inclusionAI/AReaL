@@ -2,7 +2,8 @@
 
 import threading
 from collections import OrderedDict
-from typing import Any
+from collections.abc import Callable
+from typing import Any, Protocol, runtime_checkable
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
@@ -10,8 +11,55 @@ from areal.utils import logging
 logger = logging.getLogger("OpenAICache")
 
 
+@runtime_checkable
+class PrefixMatcher(Protocol):
+    """Protocol for custom prefix matching functions.
+
+    A prefix matcher determines whether message list *a* is a "prefix" of
+    message list *b*.  The default implementation uses exact element-wise
+    equality (``b[:len(a)] == a``).  Custom implementations can tolerate
+    known divergences (e.g. ``cd`` prefix stripping, trailing-whitespace
+    differences) without modifying the stored data.
+
+    Parameters
+    ----------
+    a : list[dict]
+        The candidate prefix (typically ``parent.messages + parent.output_message_list``).
+    b : list[dict]
+        The longer message list (typically ``child.messages``).
+
+    Returns
+    -------
+    bool
+        ``True`` if *a* is considered a prefix of *b*.
+    """
+
+    def __call__(self, a: list[dict], b: list[dict]) -> bool: ...
+
+
+def default_prefix_matcher(a: list[dict], b: list[dict]) -> bool:
+    """Default exact prefix matcher: ``b[:len(a)] == a``."""
+    if len(a) > len(b):
+        return False
+    return b[: len(a)] == a
+
+
 class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        *args,
+        session_id: str = "unknown",
+        prefix_matcher: "PrefixMatcher | Callable[[list[dict], list[dict]], bool] | None" = None,
+        **kwargs,
+    ):
+        # Initialise attributes that __setitem__ may access BEFORE
+        # super().__init__(), because OrderedDict.__init__ calls __setitem__
+        # for each item passed via *args / **kwargs.
+        self._match_fail_count = 0
+        self._session_id = session_id
+        self._prefix_matcher: Callable[[list[dict], list[dict]], bool] = (
+            prefix_matcher if prefix_matcher is not None else default_prefix_matcher
+        )
         super().__init__(*args, **kwargs)
         self._apply_reward_discount_called = False
         self._total_reward = 0.0
@@ -99,12 +147,6 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 "Interaction messages must be set to find parent relationship."
             )
 
-        def _is_prefix(a: list[dict], b: list[dict]) -> bool:
-            # True if a is a prefix of b
-            if len(a) > len(b):
-                return False
-            return b[: len(a)] == a
-
         def _is_similar_on_last_message(
             a: list[dict], b: list[dict]
         ) -> tuple[bool, dict[str, Any] | None, dict[str, Any] | None]:
@@ -127,36 +169,62 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             }
             return True, diff_a_message, diff_b_message
 
-        # Construct parent-child relationships using longest prefix rule
-        # Sort potential parents by message length to find the longest prefix match first.
+        # Construct parent-child relationships using longest prefix rule.
+        # Messages are pre-normalized by pluggable preprocessors (configured in YAML):
+        # - Anthropic fields stripped (cache_control, thinking_blocks, etc.)
+        # - Attribution header stripped from system prompt
+        # - Content lists flattened, tool_calls args normalized
+        # This allows full prefix matching from messages[0] onwards.
         interactions = sorted(
             self.values(), key=lambda x: len(x.messages), reverse=True
         )
+        child_msgs = value.messages
 
-        # Find parent for the new interaction
         for parent in interactions:
-            # Skip interactions that are still being processed (output_message_list not set yet)
-            # This can happen with concurrent requests where a streaming request hasn't
-            # finished setting up yet. Such interactions cannot be parents anyway.
+            # Skip interactions that are still being processed (output_message_list not set yet).
             if parent.output_message_list is None or parent.messages is None:
                 continue
             parent_data = parent.messages + parent.output_message_list
-            if _is_prefix(parent_data, value.messages):
+            if len(parent_data) > 0 and self._prefix_matcher(parent_data, child_msgs):
                 value.parent = parent
                 break
-            elif _is_prefix(parent.messages, value.messages):
+            elif self._prefix_matcher(parent.messages, child_msgs):
+                self._match_fail_count += 1
+                parent_len = len(parent_data)
+                child_len = len(child_msgs)
+
+                logger.warning(
+                    "Prefix mismatch (occurrence %d, session=%s): "
+                    "parent.messages is a prefix of child, but "
+                    "parent_data (messages+output, len=%d) is not "
+                    "(child_len=%d).",
+                    self._match_fail_count,
+                    self._session_id,
+                    parent_len,
+                    child_len,
+                )
+
                 is_similar, diff_a, diff_b = _is_similar_on_last_message(
-                    parent_data, value.messages
+                    parent_data, child_msgs
                 )
                 if is_similar:
                     logger.warning(
                         "Found a parent interaction with similar last message content, "
-                        "but not a strict prefix match. If you wish to use concat mode and build a conversation tree:\n"
+                        "but not a strict prefix match (occurrence %d, "
+                        "session=%s, parent_len=%d, child_len=%d). "
+                        "If you wish to use concat mode:\n"
                         "1. For completion, append `chat_completion.choices[0].message.model_dump()` to your messages.\n"
                         "2. For response, extend `[o.model_dump() for o in response.output]` to your messages.\n"
-                        f"Different keys in parent last message: {diff_a}\n"
-                        f"Different keys in child last message: {diff_b}\n"
+                        "Different keys in parent last message: %s\n"
+                        "Different keys in child last message: %s",
+                        self._match_fail_count,
+                        self._session_id,
+                        parent_len,
+                        child_len,
+                        diff_a,
+                        diff_b,
                     )
+
         super().__setitem__(key, value)
 
     def export_interactions(

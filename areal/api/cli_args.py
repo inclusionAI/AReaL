@@ -1793,6 +1793,18 @@ class OpenAIProxyConfig:
             ),
         },
     )
+    prefix_matcher: str | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "Dotted import path to a custom prefix matcher function for "
+                "InteractionCache parent-child matching. The function must accept "
+                "two list[dict] arguments (candidate prefix, full messages) and "
+                "return bool. When None, exact element-wise equality is used. "
+                "Example: 'examples.swe.rl.prefix_matchers.swe_prefix_matcher'."
+            ),
+        },
+    )
 
     def __post_init__(self):
         if not self.admin_api_key or not self.admin_api_key.strip():
