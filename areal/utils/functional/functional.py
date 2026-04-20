@@ -353,7 +353,7 @@ def apply_rejection_sampling(
                     if config.lower is not None:
                         token_oor = token_oor | (token_ratio < config.lower)
                     loss_mask = loss_mask * (~token_oor).to(loss_mask.dtype)
-                    behave_imp_weight = behave_imp_weight * (~token_oor).to(
+                    behave_imp_weight = token_ratio * (~token_oor).to(
                         behave_imp_weight.dtype
                     )
                 elif config.token_action == "clamp":
