@@ -2552,6 +2552,23 @@ class MegatronEngine(TrainEngine):
                             fp8_direct_convert=self.fp8_direct_convert,
                         )
                     )
+                # ---------------------------------------------------------
+                # MTP weights are synced to the EAGLE draft model via the
+                # separate /update_weights_from_tensor HTTP path (see below).
+                # SGLang's MiMoForCausalLM.load_weights() silently drops
+                # any name containing "mtp_layers", so broadcasting them
+                # via NCCL is redundant.  Worse, the inference-side NCCL
+                # handler calls flush_cache() -> torch.cuda.empty_cache()
+                # which blocks on the inference GPU while training-side
+                # torch.cuda.synchronize() in _serialize_mtp_tensors waits
+                # for the same NCCL group -- creating a circular deadlock.
+                #
+                # By skipping NCCL for MTP params we:
+                # 1. Eliminate the deadlock between flush_cache and sync
+                # 2. Reduce unnecessary NCCL traffic (~402 MB saved)
+                # 3. Avoid engine-thread queue contention on inference side
+                # ---------------------------------------------------------
+                continue
             if self.config.use_lora and (
                 ".adapter." not in name or not getattr(param, "requires_grad", False)
             ):
