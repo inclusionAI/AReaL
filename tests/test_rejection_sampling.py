@@ -946,7 +946,7 @@ class TestTwoStageRejectionSampling:
         new_mask, _ = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
-            behave_imp_weight=ratios,
+            # behave_imp_weight=ratios,
             log_probs=log_probs,
             old_log_probs=old_log_probs,
         )
@@ -979,7 +979,7 @@ class TestTwoStageRejectionSampling:
         new_mask, _ = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
-            behave_imp_weight=ratios,
+            # behave_imp_weight=ratios,
             log_probs=log_probs,
             old_log_probs=old_log_probs,
         )
@@ -1010,7 +1010,7 @@ class TestTwoStageRejectionSampling:
         new_mask, new_weight = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
-            behave_imp_weight=ratios,
+            # behave_imp_weight=ratios,
             log_probs=log_probs,
             old_log_probs=old_log_probs,
         )
@@ -1041,7 +1041,7 @@ class TestTwoStageRejectionSampling:
         new_mask, _ = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
-            behave_imp_weight=ratios,
+            # behave_imp_weight=ratios,
             log_probs=log_probs,
             old_log_probs=old_log_probs,
         )
@@ -1071,11 +1071,11 @@ class TestTwoStageRejectionSampling:
         )
 
         mask_off, w_off = apply_rejection_sampling(
-            cfg_two_stage_off, loss_mask.clone(), ratios.clone(),
+            cfg_two_stage_off, loss_mask.clone(),
             log_probs, old_log_probs,
         )
         mask_orig, w_orig = apply_rejection_sampling(
-            cfg_original, loss_mask.clone(), ratios.clone(),
+            cfg_original, loss_mask.clone(),
             log_probs, old_log_probs,
         )
 
@@ -1101,7 +1101,7 @@ class TestTwoStageRejectionSampling:
         new_mask, _ = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
-            behave_imp_weight=ratios,
+            # behave_imp_weight=ratios,
             log_probs=log_probs,
             old_log_probs=old_log_probs,
         )
