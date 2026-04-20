@@ -346,7 +346,8 @@ def apply_rejection_sampling(
             if config.token_action is not None:
                 # behave_imp_weight holds per-token ratios.
                 # Shape: [total_tokens] in 1D packed format.
-                token_ratio = behave_imp_weight
+                # token_ratio = behave_imp_weight
+                token_ratio = torch.exp(log_ratio) 
                 if config.token_action == "mask":
                     token_oor = token_ratio > config.upper
                     if config.lower is not None:
@@ -413,7 +414,8 @@ def apply_rejection_sampling(
             if config.token_action is not None:
                 # behave_imp_weight holds per-token ratios π_prox / π_behave.
                 # Shape: [batch, seq_len] in 2D padded format.
-                token_ratio = behave_imp_weight
+                # token_ratio = behave_imp_weight
+                token_ratio = torch.exp(log_ratio) 
                 
                 if config.token_action == "mask":
                     # Token-MIS: zero out tokens where the per-token ratio exceeds
@@ -428,14 +430,14 @@ def apply_rejection_sampling(
                         behave_imp_weight.dtype
                     )
                     
-            elif config.token_action == "clamp":
-                # Token-TIS: clamp the per-token importance ratio to
-                # [lower, upper].  All tokens remain in the gradient but
-                # their contribution is bounded.
-                clamp_lower = config.lower if config.lower is not None else 0.0
-                behave_imp_weight = token_ratio.clamp(
-                    min=clamp_lower, max=config.upper
-                )
+                elif config.token_action == "clamp":
+                    # Token-TIS: clamp the per-token importance ratio to
+                    # [lower, upper].  All tokens remain in the gradient but
+                    # their contribution is bounded.
+                    clamp_lower = config.lower if config.lower is not None else 0.0
+                    behave_imp_weight = token_ratio.clamp(
+                        min=clamp_lower, max=config.upper
+                    )
             # ── End Stage 2 ──────────────────────────────────────────────────────
     else:
         # Token level
