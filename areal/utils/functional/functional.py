@@ -342,6 +342,25 @@ def apply_rejection_sampling(
                     ),
                     behave_imp_weight,
                 )
+            # ── Stage 2: Token-MIS/TIS (1D packed) ──────────────────────────────
+            if cfg.token_action is not None:
+                # behave_imp_weight holds per-token ratios.
+                # Shape: [total_tokens] in 1D packed format.
+                token_ratio = behave_imp_weight
+                if cfg.token_action == "mask":
+                    token_oor = token_ratio > cfg.upper
+                    if cfg.lower is not None:
+                        token_oor = token_oor | (token_ratio < cfg.lower)
+                    loss_mask = loss_mask * (~token_oor).to(loss_mask.dtype)
+                    behave_imp_weight = behave_imp_weight * (~token_oor).to(
+                        behave_imp_weight.dtype
+                    )
+                elif cfg.token_action == "clamp":
+                    clamp_lower = cfg.lower if cfg.lower is not None else 0.0
+                    behave_imp_weight = token_ratio.clamp(
+                        min=clamp_lower, max=cfg.upper
+                    )
+            # ── End Stage 2 ──────────────────────────────────────────────────────
         else:
             # 2D padded format
             agg_values = log_ratio if _use_log_agg else metric
