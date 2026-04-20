@@ -2345,55 +2345,122 @@ class MegatronEngine(TrainEngine):
             Dict with 'serialized_named_tensors' and 'flush_cache' keys,
             ready for /update_weights_from_tensor endpoint.
         """
+        import time as _time
+
+        _t_total = _time.time()
+        _total_bytes = sum(t.numel() * t.element_size() for _, t in mtp_hf_tensors)
+        _tensor_names = [name for name, _ in mtp_hf_tensors]
+        _tensor_shapes = [tuple(t.shape) for _, t in mtp_hf_tensors]
+        _tensor_dtypes = [str(t.dtype) for _, t in mtp_hf_tensors]
+        _tensor_sizes = [t.numel() * t.element_size() for _, t in mtp_hf_tensors]
+        self.logger.info(
+            f"[MTPSerialize] ENTERED: n_tensors={len(mtp_hf_tensors)}, "
+            f"tp_size={tp_size}, total_raw_bytes={_total_bytes} "
+            f"({_total_bytes / 1024 / 1024:.2f} MB), "
+            f"tensor_names={_tensor_names}, "
+            f"tensor_shapes={_tensor_shapes}, "
+            f"tensor_dtypes={_tensor_dtypes}, "
+            f"tensor_sizes_bytes={_tensor_sizes}"
+        )
+
         try:
             from sglang.srt.utils import MultiprocessingSerializer
-            from sglang.srt.utils.patch_torch import monkey_patch_torch_reductions
         except ImportError:
+            self.logger.error(
+                "[MTPSerialize] Failed to import MultiprocessingSerializer from sglang"
+            )
             raise ImportError(
                 "SGLang >= 0.5.9 is required for tensor weight updates. "
                 "Install sglang to use MTP draft weight sync."
             )
+        self.logger.info(
+            "[MTPSerialize] MultiprocessingSerializer imported successfully"
+        )
+
         try:
             from sglang.srt.model_executor.model_runner import LocalSerializedTensor
         except ImportError:
+            self.logger.error(
+                "[MTPSerialize] Failed to import LocalSerializedTensor from sglang"
+            )
             raise ImportError(
                 "Cannot import LocalSerializedTensor from SGLang. "
                 "Ensure sglang >= 0.5.9 is installed."
             )
+        self.logger.info("[MTPSerialize] LocalSerializedTensor imported successfully")
 
-        monkey_patch_torch_reductions()
+        _t_ser0 = _time.time()
+        serialized_pairs = []
+        for name, tensor in mtp_hf_tensors:
+            _t_ser_i = _time.time()
+            _cpu_tensor = tensor.detach().cpu()
+            _ser_data = MultiprocessingSerializer.serialize(_cpu_tensor)
+            _ser_len = len(_ser_data)
+            serialized_pairs.append((name, _ser_data))
+            self.logger.info(
+                f"[MTPSerialize] Serialized tensor '{name}': "
+                f"shape={tuple(tensor.shape)}, dtype={tensor.dtype}, "
+                f"device={tensor.device}, "
+                f"raw_bytes={tensor.numel() * tensor.element_size()}, "
+                f"serialized_bytes={_ser_len} ({_ser_len / 1024 / 1024:.2f} MB), "
+                f"took {_time.time() - _t_ser_i:.3f}s"
+            )
+        self.logger.info(
+            f"[MTPSerialize] All inner serializations completed in "
+            f"{_time.time() - _t_ser0:.3f}s, "
+            f"n_pairs={len(serialized_pairs)}, "
+            f"total_serialized_bytes={sum(len(d) for _, d in serialized_pairs)} "
+            f"({sum(len(d) for _, d in serialized_pairs) / 1024 / 1024:.2f} MB)"
+        )
 
-        # Ensure all pending CUDA operations (e.g., NCCL all-gather from
-        # _collect_param) are complete before creating CUDA IPC handles.
-        # cudaIpcGetMemHandle requires the source tensor's GPU memory to be
-        # stable; without sync, pending async NCCL ops can cause the IPC
-        # handle creation to block indefinitely.
-        import torch
-
-        torch.cuda.synchronize()
-
-        # Inner serialization: each tensor → CUDA IPC handle bytes
-        serialized_pairs = [
-            (name, MultiprocessingSerializer.serialize(tensor.detach()))
-            for name, tensor in mtp_hf_tensors
-        ]
-
-        # Wrap in LocalSerializedTensor: one entry per TP rank.
-        # All TP ranks get the same data; SGLang load_weights() handles slicing.
+        _t_wrap0 = _time.time()
         per_rank_named_tensors = [
             (name, LocalSerializedTensor(values=[data] * tp_size))
             for name, data in serialized_pairs
         ]
+        self.logger.info(
+            f"[MTPSerialize] LocalSerializedTensor wrapping completed in "
+            f"{_time.time() - _t_wrap0:.3f}s, "
+            f"n_entries={len(per_rank_named_tensors)}, tp_size={tp_size}"
+        )
 
-        # Outer serialization + base64 for JSON transport
         import base64
 
-        serialized_named_tensors = [
-            base64.b64encode(
-                MultiprocessingSerializer.serialize(per_rank_named_tensors)
-            ).decode("utf-8")
-            for _ in range(tp_size)
-        ]
+        _t_outer0 = _time.time()
+        _outer_payload = MultiprocessingSerializer.serialize(per_rank_named_tensors)
+        _outer_len = len(_outer_payload)
+        self.logger.info(
+            f"[MTPSerialize] Outer MultiprocessingSerializer.serialize completed: "
+            f"payload_bytes={_outer_len} ({_outer_len / 1024 / 1024:.2f} MB), "
+            f"took {_time.time() - _t_outer0:.3f}s"
+        )
+
+        _t_b64_0 = _time.time()
+        _b64_str = base64.b64encode(_outer_payload).decode("utf-8")
+        _b64_len = len(_b64_str)
+        self.logger.info(
+            f"[MTPSerialize] base64 encode completed: "
+            f"b64_str_len={_b64_len} ({_b64_len / 1024 / 1024:.2f} MB), "
+            f"overhead_ratio={_b64_len / _outer_len:.2f}x, "
+            f"took {_time.time() - _t_b64_0:.3f}s"
+        )
+
+        serialized_named_tensors = [_b64_str for _ in range(tp_size)]
+        self.logger.info(
+            f"[MTPSerialize] Replicated b64 payload for {tp_size} TP ranks, "
+            f"total_b64_bytes={_b64_len * tp_size} "
+            f"({_b64_len * tp_size / 1024 / 1024:.2f} MB)"
+        )
+
+        _t_total_elapsed = _time.time() - _t_total
+        self.logger.info(
+            f"[MTPSerialize] COMPLETED: total_time={_t_total_elapsed:.3f}s, "
+            f"n_tensors={len(mtp_hf_tensors)}, tp_size={tp_size}, "
+            f"raw_bytes={_total_bytes} ({_total_bytes / 1024 / 1024:.2f} MB), "
+            f"final_b64_per_rank={_b64_len} ({_b64_len / 1024 / 1024:.2f} MB), "
+            f"final_total_b64={_b64_len * tp_size} "
+            f"({_b64_len * tp_size / 1024 / 1024:.2f} MB)"
+        )
 
         return {
             "serialized_named_tensors": serialized_named_tensors,
