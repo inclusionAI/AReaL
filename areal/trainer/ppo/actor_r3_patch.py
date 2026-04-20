@@ -196,7 +196,9 @@ def split_routed_experts_for_minibatches(
         logger.debug(
             "[R3] split_routed_experts_for_minibatches: no forward_indices, "
             "split %d samples evenly into %d chunks of %d.",
-            bs, n_mbs, chunk,
+            bs,
+            n_mbs,
+            chunk,
         )
         return result
 
@@ -335,7 +337,9 @@ def _log_per_layer_routing_entropy(
             r3_routing_entropy_mean=mean_entropy,
             r3_routing_entropy_min=min_entropy,
             r3_routing_entropy_max=max_entropy,
-            r3_routing_entropy_normalised=mean_entropy / max_possible if max_possible > 0 else 0,
+            r3_routing_entropy_normalised=mean_entropy / max_possible
+            if max_possible > 0
+            else 0,
             r3_num_experts=num_experts,
         )
 
@@ -376,18 +380,55 @@ def _log_expert_utilization_balance(
         )
 
 
+def _is_dense_layer(re_layer: torch.Tensor) -> bool:
+    """Check if a layer's routing data is all-zero (i.e., a dense FFN layer).
+
+    SGLang returns routed_experts across ALL transformer layers (including
+    dense layers).  Dense layers have no MoE router, so their topk_ids are
+    all zeros.  We detect this to exclude them from MoE-specific metrics.
+
+    Args:
+        re_layer: ``(bs, seq_len, topk)`` routing data for one layer.
+
+    Returns:
+        True if the layer has no valid routing data (dense layer).
+    """
+    return re_layer.sum().item() == 0
+
+
 def _log_routing_data_coverage(
     routed_experts: torch.Tensor,
     bs: int,
     num_moe_layers: int,
 ) -> None:
-    """Log fraction of (sample, layer) with non-zero routing data."""
-    # Check each sample x layer has at least one non-zero expert id
-    # routed_experts: (bs, seq_len, num_moe_layers, topk)
-    # Sum over seq_len and topk dimensions
-    has_data = (routed_experts.sum(dim=(1, 3)) > 0).float()  # (bs, num_moe_layers)
-    coverage = has_data.mean().item()
-    stats_tracker.scalar(r3_routing_data_coverage=coverage)
+    """Log fraction of (sample, layer) with non-zero routing data.
+
+    Skips dense (all-zero) layers so the metric reflects true MoE layer
+    coverage.  When SGLang returns routing data for all transformer layers
+    (including dense FFN layers), those dense layers would drag coverage
+    down to (num_moe_layers / num_total_layers), e.g. 26/27 = 0.96296
+    for Moonlight-16B-A3B.
+    """
+    has_data = (routed_experts.sum(dim=(1, 3)) > 0).float()  # (bs, num_layers)
+
+    moe_layer_mask = []
+    for layer_idx in range(num_moe_layers):
+        layer_re = routed_experts[:, :, layer_idx, :]
+        is_dense = _is_dense_layer(layer_re)
+        moe_layer_mask.append(not is_dense)
+
+    n_moe_layers = sum(moe_layer_mask)
+    if n_moe_layers == 0:
+        stats_tracker.scalar(r3_routing_data_coverage=0.0)
+        return
+
+    moe_has_data = has_data[:, moe_layer_mask]
+    coverage = moe_has_data.mean().item()
+    stats_tracker.scalar(
+        r3_routing_data_coverage=coverage,
+        r3_num_moe_layers=n_moe_layers,
+        r3_num_dense_layers=num_moe_layers - n_moe_layers,
+    )
 
 
 def _log_top1_expert_concentration(
@@ -420,10 +461,10 @@ def _log_top1_expert_concentration(
 
     if layer_concentrations:
         stats_tracker.scalar(
-            r3_top1_expert_concentration_mean=sum(layer_concentrations) / len(layer_concentrations),
+            r3_top1_expert_concentration_mean=sum(layer_concentrations)
+            / len(layer_concentrations),
             r3_top1_expert_concentration_max=max(layer_concentrations),
         )
-
 
 
 def _log_r3_agreement_rate(
@@ -471,10 +512,10 @@ def _log_r3_agreement_rate(
             else:
                 # Seq length mismatch (common: training uses packed seqlen).
                 # Fall back to using nonzero routing as proxy for real tokens.
-                real_mask = (routed_experts.sum(dim=(2, 3)) != 0)  # (bs, seq_len)
+                real_mask = routed_experts.sum(dim=(2, 3)) != 0  # (bs, seq_len)
         else:
             # No usable attention_mask; use nonzero routing as proxy
-            real_mask = (routed_experts.sum(dim=(2, 3)) != 0)  # (bs, seq_len)
+            real_mask = routed_experts.sum(dim=(2, 3)) != 0  # (bs, seq_len)
 
         # Compute per-layer agreement using the inference routing data.
         # Since we don't have the training-time natural routing available
@@ -485,27 +526,28 @@ def _log_r3_agreement_rate(
         layer_agreements = []
         total_real_tokens = 0
         total_matched_tokens = 0
+        n_dense_layers = 0
 
         for layer_idx in range(num_layers):
-            # Get this layer's routing for all samples: (bs, seq_len, topk)
             layer_re = routed_experts[:, :, layer_idx, :]
 
-            # Count real tokens with valid routing data per layer
-            # A token has valid routing if any of its topk experts is > 0
-            # (expert 0 could be valid, but all-zeros likely means padding)
-            has_valid_routing = (layer_re.sum(dim=-1) != 0)  # (bs, seq_len)
+            if _is_dense_layer(layer_re):
+                n_dense_layers += 1
+                continue
+
+            has_valid_routing = layer_re.sum(dim=-1) != 0  # (bs, seq_len)
             valid_and_real = has_valid_routing & real_mask  # (bs, seq_len)
 
             n_real = real_mask.sum().item()
             n_valid_real = valid_and_real.sum().item()
 
             if n_real > 0:
-                # Agreement = fraction of real tokens that have valid routing
                 layer_agreement = n_valid_real / n_real
                 layer_agreements.append(layer_agreement)
                 total_real_tokens += n_real
                 total_matched_tokens += n_valid_real
 
+        n_moe_layers = num_layers - n_dense_layers
         if layer_agreements:
             avg_agreement = sum(layer_agreements) / len(layer_agreements)
             min_agreement = min(layer_agreements)
@@ -515,7 +557,9 @@ def _log_r3_agreement_rate(
                 router_agreement_rate=avg_agreement,
                 router_agreement_rate_min=min_agreement,
                 router_agreement_rate_max=max_agreement,
-                router_agreement_n_real_tokens=total_real_tokens / num_layers,
+                router_agreement_n_real_tokens=total_real_tokens / max(n_moe_layers, 1),
+                router_agreement_n_moe_layers=n_moe_layers,
+                router_agreement_n_dense_layers=n_dense_layers,
             )
     except Exception:
         logger.warning(
@@ -546,7 +590,8 @@ def compute_router_agreement_rate(
     if replay_indices.shape != actual_indices.shape:
         logger.warning(
             "[R3] Agreement rate: shape mismatch replay=%s vs actual=%s.",
-            replay_indices.shape, actual_indices.shape,
+            replay_indices.shape,
+            actual_indices.shape,
         )
         return -1.0
 
@@ -585,13 +630,36 @@ def log_moe_routing_metrics(
     with stats_tracker.scope(scope):
         # ------------------------------------------------------------------
         # 1. Data coverage: fraction of samples with non-zero routing data
+        #    Skip dense (all-zero) layers.
         # ------------------------------------------------------------------
-        has_routing = (re.sum(dim=(1, 2, 3)) != 0).float()
+        moe_layer_indices = []
+        n_dense_layers = 0
+        for layer_idx in range(num_layers):
+            if _is_dense_layer(re[:, :, layer_idx, :]):
+                n_dense_layers += 1
+            else:
+                moe_layer_indices.append(layer_idx)
+
+        n_moe_layers = len(moe_layer_indices)
+        if n_moe_layers == 0:
+            stats_tracker.scalar(
+                data_coverage=0.0,
+                num_moe_layers=0,
+                num_dense_layers=n_dense_layers,
+            )
+            return
+
+        moe_re = re[:, :, moe_layer_indices, :]
+        has_routing = (moe_re.sum(dim=(1, 2, 3)) != 0).float()
         coverage = has_routing.mean().item()
-        stats_tracker.scalar(data_coverage=coverage)
+        stats_tracker.scalar(
+            data_coverage=coverage,
+            num_moe_layers=n_moe_layers,
+            num_dense_layers=n_dense_layers,
+        )
 
         # ------------------------------------------------------------------
-        # 2. Expert utilization and load balance (per-layer)
+        # 2. Expert utilization and load balance (per-layer, MoE only)
         # ------------------------------------------------------------------
         if attn_mask is not None and attn_mask.shape[1] == seq_len:
             real_mask = attn_mask.bool()  # (bs, seq_len)
@@ -606,9 +674,8 @@ def log_moe_routing_metrics(
                 )
             real_mask = torch.ones(bs, seq_len, dtype=torch.bool, device=re.device)
 
-        # Expand mask for layers and topk: (bs, seq_len, 1, 1)
-        token_mask = real_mask.unsqueeze(-1).unsqueeze(-1).expand_as(re)
-        max_expert_id = re[token_mask].max().item() if token_mask.any() else 0
+        token_mask = real_mask.unsqueeze(-1).unsqueeze(-1).expand_as(moe_re)
+        max_expert_id = moe_re[token_mask].max().item() if token_mask.any() else 0
         num_experts = int(max_expert_id) + 1
         if num_experts < 2:
             stats_tracker.scalar(
@@ -623,7 +690,7 @@ def log_moe_routing_metrics(
         diversity_sum = 0.0
         valid_layers = 0
 
-        for layer_idx in range(num_layers):
+        for layer_idx in moe_layer_indices:
             layer_re = re[:, :, layer_idx, :]
             layer_mask = real_mask.unsqueeze(-1).expand_as(layer_re)
             valid_experts = layer_re[layer_mask]
@@ -644,24 +711,20 @@ def log_moe_routing_metrics(
 
             expert_probs = expert_counts / total_assignments
 
-            # Routing entropy (normalized)
             log_probs = torch.log(expert_probs + 1e-10)
             entropy = -(expert_probs * log_probs).sum().item()
             max_entropy = torch.log(torch.tensor(float(num_experts))).item()
             normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
             entropy_sum += normalized_entropy
 
-            # Expert load imbalance (CV)
             load_std = expert_probs.std().item()
             load_mean = expert_probs.mean().item()
             balance = load_std / (load_mean + 1e-10)
             balance_sum += balance
 
-            # Top-1 expert concentration
             top1_ratio = expert_probs.max().item()
             top1_concentration_sum += top1_ratio
 
-            # Expert diversity
             unique_experts_used = (expert_counts > 0).sum().item()
             diversity = unique_experts_used / num_experts
             diversity_sum += diversity
@@ -669,7 +732,7 @@ def log_moe_routing_metrics(
         if valid_layers > 0:
             stats_tracker.scalar(
                 num_experts=num_experts,
-                num_moe_layers=num_layers,
+                num_moe_layers=n_moe_layers,
                 routing_entropy=entropy_sum / valid_layers,
                 expert_load_imbalance_cv=balance_sum / valid_layers,
                 top1_expert_concentration=top1_concentration_sum / valid_layers,
@@ -679,7 +742,7 @@ def log_moe_routing_metrics(
         else:
             stats_tracker.scalar(
                 num_experts=num_experts,
-                num_moe_layers=num_layers,
+                num_moe_layers=n_moe_layers,
                 valid_moe_layers=0,
             )
 
