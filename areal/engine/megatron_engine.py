@@ -2401,7 +2401,6 @@ class MegatronEngine(TrainEngine):
         # -------------------------------------------------------------------
         _t_sync = _time.time()
 
-        # Create a dedicated serialization stream free of NCCL deps
         _ser_stream = torch.cuda.Stream()
 
         _has_event = hasattr(self, "_mtp_data_ready_event") and self._mtp_data_ready_event is not None
@@ -2454,7 +2453,7 @@ class MegatronEngine(TrainEngine):
         _sync_thread.start()
 
         _sync_wait_start = _time.time()
-        _sync_timeout = 30.0
+        _sync_timeout = 60.0
         while not _sync_done.wait(timeout=1.0):
             _waited = _time.time() - _sync_wait_start
             if _has_event:
@@ -2476,9 +2475,9 @@ class MegatronEngine(TrainEngine):
             if _waited >= _sync_timeout:
                 self.logger.error(
                     f"[MTPSerialize] _ser_stream.synchronize() TIMEOUT after "
-                    f"{_waited:.1f}s! This indicates a CUDA stream deadlock. "
-                    f"The _mtp_data_ready_event is likely blocked by NCCL "
-                    f"cross-stream dependencies on the default stream."
+                    f"{_waited:.1f}s! CUDA stream deadlock detected. "
+                    f"_mtp_data_ready_event was recorded at the wrong point "
+                    f"(after NCCL handle.wait() polluted the default stream)."
                 )
                 break
 
@@ -2657,51 +2656,56 @@ class MegatronEngine(TrainEngine):
 
         mtp_param_count = 0
         mtp_param_bytes = 0
-        # Collect MTP weights in HF format for draft model tensor update
         mtp_hf_tensors = []
         _collect_mtp_for_draft = (
             self.enable_mtp_training
             and getattr(self, "_engine_supports_tensor_update", False)
             and self.is_pipeline_parallel_head()
         )
+
+        if _collect_mtp_for_draft:
+            _t_mtp_pre = _diag_time.time()
+            for name, param in get_named_parameters(self.model, num_moe_experts):
+                if ".experts." in name:
+                    continue
+                if ".mtp." not in name:
+                    continue
+                mtp_param_count += 1
+                mtp_param_bytes += param.numel() * param.element_size()
+                _mtp_param, _ = self._collect_param(name, param)
+                _mtp_model_name = self.hf_config.model_type
+                mtp_hf_tensors.extend(
+                    convert_to_hf(
+                        self.tf_config,
+                        _mtp_model_name,
+                        name,
+                        _mtp_param,
+                        quantization_config=self.quantization_config,
+                        fp8_direct_convert=self.fp8_direct_convert,
+                    )
+                )
+            if mtp_hf_tensors:
+                self._mtp_data_ready_event = torch.cuda.Event()
+                self._mtp_data_ready_event.record(torch.cuda.current_stream())
+                self.logger.info(
+                    f"[DiagUW] Recorded _mtp_data_ready_event on default stream "
+                    f"(device={torch.cuda.current_device()}) BEFORE any NCCL broadcasts. "
+                    f"n_mtp_tensors={len(mtp_hf_tensors)}, "
+                    f"mtp_param_count={mtp_param_count}, "
+                    f"mtp_param_bytes={mtp_param_bytes / 1024 / 1024:.2f} MB, "
+                    f"elapsed={_diag_time.time() - _diag_t0:.3f}s, "
+                    f"pre_loop_took={_diag_time.time() - _t_mtp_pre:.3f}s"
+                )
+            else:
+                self.logger.info(
+                    f"[DiagUW] No MTP tensors collected in pre-loop "
+                    f"(mtp_param_count={mtp_param_count})"
+                )
+
         for name, param in get_named_parameters(self.model, num_moe_experts):
             if ".experts." in name:
                 continue
             if ".mtp." in name:
-                mtp_param_count += 1
-                mtp_param_bytes += param.numel() * param.element_size()
-                if _collect_mtp_for_draft:
-                    # Collect and all-gather MTP param, then convert to HF
-                    # format. _collect_param handles TP all-gather, padding
-                    # removal, and FP8 dequant (same as NCCL path).
-                    _mtp_param, _ = self._collect_param(name, param)
-                    _mtp_model_name = self.hf_config.model_type
-                    mtp_hf_tensors.extend(
-                        convert_to_hf(
-                            self.tf_config,
-                            _mtp_model_name,
-                            name,
-                            _mtp_param,
-                            quantization_config=self.quantization_config,
-                            fp8_direct_convert=self.fp8_direct_convert,
-                        )
-                    )
-                # ---------------------------------------------------------
-                # MTP weights are synced to the EAGLE draft model via the
-                # separate /update_weights_from_tensor HTTP path (see below).
-                # SGLang's MiMoForCausalLM.load_weights() silently drops
-                # any name containing "mtp_layers", so broadcasting them
-                # via NCCL is redundant.  Worse, the inference-side NCCL
-                # handler calls flush_cache() -> torch.cuda.empty_cache()
-                # which blocks on the inference GPU while training-side
-                # torch.cuda.synchronize() in _serialize_mtp_tensors waits
-                # for the same NCCL group -- creating a circular deadlock.
-                #
-                # By skipping NCCL for MTP params we:
-                # 1. Eliminate the deadlock between flush_cache and sync
-                # 2. Reduce unnecessary NCCL traffic (~402 MB saved)
-                # 3. Avoid engine-thread queue contention on inference side
-                # ---------------------------------------------------------
                 continue
             if self.config.use_lora and (
                 ".adapter." not in name or not getattr(param, "requires_grad", False)
@@ -2724,18 +2728,6 @@ class MegatronEngine(TrainEngine):
             f"mtp_param_count={mtp_param_count}, "
             f"buffer_size={buffer_size}"
         )
-
-        if _collect_mtp_for_draft and mtp_hf_tensors:
-            self._mtp_data_ready_event = torch.cuda.Event()
-            self._mtp_data_ready_event.record(torch.cuda.current_stream())
-            _event_recorded_at = _diag_time.time()
-            self.logger.info(
-                f"[DiagUW] Recorded _mtp_data_ready_event on default stream "
-                f"(device={torch.cuda.current_device()}) BEFORE NCCL broadcasts. "
-                f"n_mtp_tensors={len(mtp_hf_tensors)}, "
-                f"elapsed={_event_recorded_at - _diag_t0:.3f}s, "
-                f"default_stream={torch.cuda.current_stream()}"
-            )
 
         if converted_named_tensors:
             self.logger.info(
