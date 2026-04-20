@@ -280,12 +280,13 @@ transformer decoder layers defined by transformers.
 
 Specification for splitting micro-batches during training.
 
-| Parameter           | Type            | Default | Description                                                                                                                      |
-| ------------------- | --------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `n_mbs`             | integer \| None | `1`     | Number of micro-batches (or minimum number if max_tokens_per_mb is set). Used when max_tokens_per_mb is None or as minimum count |
-| `granularity`       | integer         | `1`     | Granularity of each micro-batch. Adjacent sequences are grouped by this size when dividing microbatches.                         |
-| `max_tokens_per_mb` | integer \| None | `None`  | Maximum tokens per micro-batch for each forward pass. When set, n_mbs becomes the minimum number of micro-batches.               |
-| `n_mbs_divisor`     | integer         | `1`     | Divisor for the number of micro-batches. The final number of micro-batches will be adjusted to be divisible by this value.       |
+| Parameter           | Type            | Default | Description                                                                                                                                                                                                                                                                                                                             |
+| ------------------- | --------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `n_mbs`             | integer \| None | `1`     | Number of micro-batches (or minimum number if max_tokens_per_mb is set). Used when max_tokens_per_mb is None or as minimum count                                                                                                                                                                                                        |
+| `granularity`       | integer         | `1`     | Granularity of each micro-batch. Adjacent sequences are grouped by this size when dividing microbatches.                                                                                                                                                                                                                                |
+| `max_tokens_per_mb` | integer \| None | `None`  | Maximum tokens per micro-batch for each forward pass. When set, n_mbs becomes the minimum number of micro-batches.                                                                                                                                                                                                                      |
+| `n_mbs_divisor`     | integer         | `1`     | Divisor for the number of micro-batches. The final number of micro-batches will be adjusted to be divisible by this value.                                                                                                                                                                                                              |
+| `packing_algorithm` | string          | `"ffd"` | Sequence packing algorithm for micro-batch allocation. Supported values: 'ffd' (First Fit Decreasing, default), 'kk' (Karmarkar-Karp, better balance but slightly slower). KK is recommended when workload balance across DP ranks is critical (e.g., large-scale RL training with variable-length sequences). **Choices:** `ffd`, `kk` |
 
 (section-norm)=
 

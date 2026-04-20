@@ -27,6 +27,7 @@ from areal.utils.constants import (
     PROX_LOGP_METHODS_ALL,
 )
 from areal.utils.pkg_version import is_version_less
+from areal.utils.seqpack import PACKING_ALGORITHMS
 
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerFast
@@ -123,6 +124,27 @@ class MicroBatchSpec:
             "help": "Divisor for the number of micro-batches. The final number of micro-batches will be adjusted to be divisible by this value.",
         },
     )
+    packing_algorithm: str = field(
+        default="ffd",
+        metadata={
+            "help": (
+                "Sequence packing algorithm for micro-batch allocation. "
+                "Supported values: 'ffd' (First Fit Decreasing, default), "
+                "'kk' (Karmarkar-Karp, better balance but slightly slower). "
+                "KK is recommended when workload balance across DP ranks is "
+                "critical (e.g., large-scale RL training with variable-length sequences)."
+            ),
+            "choices": ["ffd", "kk"],
+        },
+    )
+
+    def __post_init__(self):
+        """Validate packing algorithm configuration."""
+        if self.packing_algorithm not in PACKING_ALGORITHMS:
+            raise ValueError(
+                f"packing_algorithm must be one of {sorted(PACKING_ALGORITHMS)}, "
+                f"got '{self.packing_algorithm}'"
+            )
 
     @classmethod
     def new(cls, mb_spec: "MicroBatchSpec", **kwargs):
@@ -132,6 +154,7 @@ class MicroBatchSpec:
             granularity=mb_spec.granularity,
             max_tokens_per_mb=mb_spec.max_tokens_per_mb,
             n_mbs_divisor=mb_spec.n_mbs_divisor,
+            packing_algorithm=mb_spec.packing_algorithm,
         )
         fields.update(kwargs)
         return cls(**fields)
