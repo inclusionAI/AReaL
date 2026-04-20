@@ -2168,12 +2168,24 @@ class MegatronEngine(TrainEngine):
         Returns:
             Tuple of (prepared_param, param_size_in_bytes)
         """
+        _has_tmp = hasattr(param, "tensor_model_parallel")
+        _is_tmp = getattr(param, "tensor_model_parallel", False) if _has_tmp else False
+        _is_dup = name in self._duplicated_param_names if self._duplicated_param_names else False
+        self.logger.info(
+            f"[DiagImpl] Rank {dist.get_rank()} all_gather_param START "
+            f"name={name}, has_tmp={_has_tmp}, is_tmp={_is_tmp}, is_dup={_is_dup}, "
+            f"param_shape={tuple(param.shape)}, param_dtype={param.dtype}"
+        )
         param = all_gather_param(
             name,
             param,
             self.fp8_direct_convert,
             quantization_config=self.quantization_config,
             duplicated_param_names=self._duplicated_param_names,
+        )
+        self.logger.info(
+            f"[DiagImpl] Rank {dist.get_rank()} all_gather_param DONE "
+            f"name={name}, result_type={type(param).__name__}"
         )
         param = remove_padding(name, param, self.hf_config.vocab_size)
 

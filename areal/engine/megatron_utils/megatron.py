@@ -133,6 +133,17 @@ def all_gather_param(
     partition_dim = param.partition_dim
     partition_stride = param.partition_stride
 
+    import logging as _logging
+
+    _logger = _logging.getLogger("AReaL")
+    _logger.info(
+        f"[DiagAllGather] dist.all_gather ENTERED: name={name}, "
+        f"tp_size={tp_size}, partition_dim={partition_dim}, "
+        f"partition_stride={partition_stride}, "
+        f"param_shape={tuple(param.data.shape)}, "
+        f"param_dtype={param.dtype}"
+    )
+
     # Handle FP8 tensors specially
     if param_is_fp8 and fp8_direct_convert:
         block_size = get_block_size_from_config(quantization_config)
@@ -143,6 +154,10 @@ def all_gather_param(
     # bf16/fp32
     param = _all_gather_and_concat(
         param.data, tp_size, tp_group, partition_dim, partition_stride, name
+    )
+    _logger.info(
+        f"[DiagAllGather] dist.all_gather COMPLETED: name={name}, "
+        f"result_shape={tuple(param.shape)}"
     )
     return param
 
