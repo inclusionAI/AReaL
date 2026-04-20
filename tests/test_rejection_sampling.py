@@ -1006,7 +1006,7 @@ class TestTwoStageRejectionSampling:
         ratios = torch.tensor([
             [0.2, 1.0, 1.8, 3.5],  # tokens 0 and 3 out of [0.5, 2.0]
             [0.8, 1.2, 1.5, 0.9],  # all in range
-        ], dtype=torch.int32))
+        ], dtype=torch.int32)
         loss_mask = torch.ones(2, 4)
         proximal_logprobs = torch.log(ratios.clamp(min=1e-6))
         old_logprobs = torch.zeros_like(proximal_logprobs)
