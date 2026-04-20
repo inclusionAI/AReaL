@@ -1372,3 +1372,7 @@ class RayPPOTrainer:
                 if hasattr(self.train_dataset, "on_batch_end"):
                     # The dataset may be changed after each training batch
                     self.train_dataset.on_batch_end(batch=batch)
+
+                import gc
+                del batch, gen_batch, gen_batch_output, metrics, timing_raw
+                gc.collect()

@@ -207,6 +207,11 @@ class AgentRayPPOTrainer(RayPPOTrainer):
             metric_dict["val-aux/num_turns/max"] = sample_turns.max()
             metric_dict["val-aux/num_turns/mean"] = sample_turns.mean()
 
+        import gc
+        del data_source_lst, reward_extra_infos_dict, data_sources, data_src2var2metric2val
+        del sample_inputs, sample_outputs, sample_gts, sample_scores, sample_turns, sample_uids
+        gc.collect()
+
         return metric_dict
 
     def _log_rollout_data(

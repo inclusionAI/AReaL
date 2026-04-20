@@ -15,11 +15,11 @@ set -x
 # ============================================================
 
 WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl}
-model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/batch_0414/exp2-qwen3vl8b-thinking-5ds}
+model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-5ds-v2-0419-ct65536/checkpoint-280}
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-gigpo-4node_0418v1"
+run_name="mixed-gigpo-4node_0420v2"
 rl_alg=gigpo
  
 # ---- Cluster topology ----
@@ -28,7 +28,7 @@ n_nodes=4
 
 # ---- Batch sizes (scaled for 4 nodes) ----
 n=4
-batch_size=128
+batch_size=64
 ppo_mini_batch_size=128
 
 # ---- Sequence lengths ----
@@ -81,8 +81,8 @@ rollout_mode='async'
 
 # ---- Schedule ----
 total_epochs=3
-save_freq=5
-test_freq=10
+save_freq=10
+test_freq=20
 
 # ============================================================
 export VERL_RUN_ID=$run_name
