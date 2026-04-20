@@ -1011,7 +1011,7 @@ class TestTwoStageRejectionSampling:
         proximal_logprobs = torch.log(ratios.clamp(min=1e-6))
         old_logprobs = torch.zeros_like(proximal_logprobs)
 
-        new_mask, new_weight, new_filtered_fraction = apply_rejection_sampling(
+        result = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
             cu_seqlens=None,
@@ -1019,6 +1019,8 @@ class TestTwoStageRejectionSampling:
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
         )
+        new_mask = result.loss_mask
+        new_weight = result.behave_imp_weight
         # loss_mask must be entirely unchanged — TIS never zeros tokens.
         assert new_mask.sum() == 8, "Token-TIS must not zero any loss_mask tokens"
         # Weights clamped to [0.5, 2.0].
@@ -1077,12 +1079,16 @@ class TestTwoStageRejectionSampling:
             agg="mean", upper=2.0,
         )
 
-        mask_off, w_off, filtered_fraction_off = apply_rejection_sampling(
+        result = apply_rejection_sampling(
             proximal_logprobs, old_logprobs, loss_mask.clone(), None, cfg_two_stage_off
         )
-        mask_orig, w_orig, filtered_fraction_orig = apply_rejection_sampling(
+        mask_off = result.loss_mask
+        w_off = result.behave_imp_weight
+        result= apply_rejection_sampling(
             proximal_logprobs, old_logprobs, loss_mask.clone(), None, cfg_original
         )
+        mask_orig = result.loss_mask
+        w_orig = result.behave_imp_weight
 
         torch.testing.assert_close(mask_off, mask_orig)
         torch.testing.assert_close(w_off, w_orig)
