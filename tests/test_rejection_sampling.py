@@ -1102,7 +1102,7 @@ class TestTwoStageRejectionSampling:
             level="sequence", action="mask", metric="ratio",
             agg="mean", upper=3.0, lower=0.5, token_action="mask",
         )
-        loss_mask = torch.ones(1, 4)
+        loss_mask = torch.ones(4)
         # Seq geo-mean ≈ exp(mean(log([0.3, 1.0, 1.0, 1.0]))) ≈ 0.84 → accepted
         # but token[0] = 0.3 < lower=0.5 → masked by Token-MIS
         ratios = torch.tensor([0.3, 1.0, 1.0, 1.0], dtype=torch.int32)
@@ -1118,10 +1118,10 @@ class TestTwoStageRejectionSampling:
             old_logprobs=old_logprobs,
         )
         new_mask = result.loss_mask
-        assert new_mask[0, 0] == 0, "Token below lower bound must be masked"
-        assert new_mask[0, 1] == 1
-        assert new_mask[0, 2] == 1
-        assert new_mask[0, 3] == 1
+        assert new_mask[0] == 0, "Token below lower bound must be masked"
+        assert new_mask[1] == 1
+        assert new_mask[2] == 1
+        assert new_mask[3] == 1
     def test_invalid_agg_raises(self):
         """Invalid agg should raise ValueError."""
         with pytest.raises(ValueError, match="agg must be one of"):
