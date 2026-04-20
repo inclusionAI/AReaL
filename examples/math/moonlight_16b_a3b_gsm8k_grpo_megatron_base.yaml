@@ -59,7 +59,7 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  eps_clip: 0.4
+  eps_clip: 0.2
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
