@@ -1105,7 +1105,7 @@ class TestTwoStageRejectionSampling:
         loss_mask = torch.ones(1, 4)
         # Seq geo-mean ≈ exp(mean(log([0.3, 1.0, 1.0, 1.0]))) ≈ 0.84 → accepted
         # but token[0] = 0.3 < lower=0.5 → masked by Token-MIS
-        ratios = torch.tensor([[0.3, 1.0, 1.0, 1.0]], dtype=torch.int32)
+        ratios = torch.tensor([0.3, 1.0, 1.0, 1.0], dtype=torch.int32)
         proximal_logprobs = torch.log(ratios)
         old_logprobs = torch.zeros_like(proximal_logprobs)
 
