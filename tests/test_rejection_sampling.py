@@ -890,7 +890,7 @@ class TestTwoStageRejectionSampling:
 
     def test_valid_two_stage_mis_config(self):
         """Geo-RS + Token-MIS config constructs without error."""
-        cfg = RejectionSamplingConfig(
+        config = RejectionSamplingConfig(
             level="sequence",
             action="mask",
             metric="ratio",
@@ -898,12 +898,12 @@ class TestTwoStageRejectionSampling:
             upper=2.0,
             token_action="mask",
         )
-        assert cfg.token_action == "mask"
-        assert cfg.level == "sequence"
+        assert config.token_action == "mask"
+        assert config.level == "sequence"
 
     def test_valid_two_stage_tis_config(self):
         """Geo-RS + Token-TIS config constructs without error."""
-        cfg = RejectionSamplingConfig(
+        config = RejectionSamplingConfig(
             level="sequence",
             action="mask",
             metric="ratio",
@@ -912,8 +912,8 @@ class TestTwoStageRejectionSampling:
             lower=0.5,
             token_action="clamp",
         )
-        assert cfg.token_action == "clamp"
-        assert cfg.lower == 0.5
+        assert config.token_action == "clamp"
+        assert config.lower == 0.5
 
     # ── Functional tests — 2D padded format ──────────────────────────────────
 
@@ -938,13 +938,13 @@ class TestTwoStageRejectionSampling:
 
     def test_stage1_rejects_divergent_sequence(self):
         """Stage 1 (Geo-RS) must fully zero-out the rejected sequence."""
-        cfg = RejectionSamplingConfig(
+        config = RejectionSamplingConfig(
             level="sequence", action="mask", metric="ratio",
             agg="mean", upper=2.0, token_action="mask",
         )
         loss_mask, ratios, log_probs, old_log_probs = self._batch_inputs()
         new_mask, _ = apply_rejection_sampling(
-            cfg=cfg,
+            config=config,
             loss_mask=loss_mask,
             behave_imp_weight=ratios,
             log_probs=log_probs,
@@ -961,7 +961,7 @@ class TestTwoStageRejectionSampling:
         Stage 2 (Token-MIS) filters individual high-ratio tokens inside
         a sequence that was accepted by Geo-RS.
         """
-        cfg = RejectionSamplingConfig(
+        config = RejectionSamplingConfig(
             level="sequence", action="mask", metric="ratio",
             agg="mean", upper=2.0, token_action="mask",
         )
@@ -977,7 +977,7 @@ class TestTwoStageRejectionSampling:
         old_log_probs = torch.zeros_like(log_probs)
 
         new_mask, _ = apply_rejection_sampling(
-            cfg=cfg,
+            config=config,
             loss_mask=loss_mask,
             behave_imp_weight=ratios,
             log_probs=log_probs,
@@ -994,7 +994,7 @@ class TestTwoStageRejectionSampling:
         Stage 2 (Token-TIS) clamps per-token weights but must NOT zero loss_mask.
         All tokens continue to contribute to the gradient.
         """
-        cfg = RejectionSamplingConfig(
+        config = RejectionSamplingConfig(
             level="sequence", action="mask", metric="ratio",
             agg="mean", upper=2.0, lower=0.5, token_action="clamp",
         )
@@ -1008,7 +1008,7 @@ class TestTwoStageRejectionSampling:
         old_log_probs = torch.zeros_like(log_probs)
 
         new_mask, new_weight = apply_rejection_sampling(
-            cfg=cfg,
+            config=config,
             loss_mask=loss_mask,
             behave_imp_weight=ratios,
             log_probs=log_probs,
@@ -1028,7 +1028,7 @@ class TestTwoStageRejectionSampling:
         Tokens in a Stage-1-rejected sequence must stay masked even if their
         individual token ratio would have passed the Token-MIS threshold.
         """
-        cfg = RejectionSamplingConfig(
+        config = RejectionSamplingConfig(
             level="sequence", action="mask", metric="ratio",
             agg="mean", upper=2.0, token_action="mask",
         )
@@ -1039,7 +1039,7 @@ class TestTwoStageRejectionSampling:
         old_log_probs = torch.zeros_like(log_probs)
 
         new_mask, _ = apply_rejection_sampling(
-            cfg=cfg,
+            config=config,
             loss_mask=loss_mask,
             behave_imp_weight=ratios,
             log_probs=log_probs,
@@ -1071,11 +1071,11 @@ class TestTwoStageRejectionSampling:
         )
 
         mask_off, w_off = apply_rejection_sampling(
-            cfg_two_stage_off, loss_mask.clone(), ratios.clone(),
+            config=cfg_two_stage_off, loss_mask.clone(), ratios.clone(),
             log_probs, old_log_probs,
         )
         mask_orig, w_orig = apply_rejection_sampling(
-            cfg_original, loss_mask.clone(), ratios.clone(),
+            config=cfg_original, loss_mask.clone(), ratios.clone(),
             log_probs, old_log_probs,
         )
 
@@ -1087,7 +1087,7 @@ class TestTwoStageRejectionSampling:
         Token-MIS with a `lower` bound must also mask tokens whose ratio
         falls below `lower` (policy has dropped sharply at that token).
         """
-        cfg = RejectionSamplingConfig(
+        config = RejectionSamplingConfig(
             level="sequence", action="mask", metric="ratio",
             agg="mean", upper=3.0, lower=0.5, token_action="mask",
         )
@@ -1099,7 +1099,7 @@ class TestTwoStageRejectionSampling:
         old_log_probs = torch.zeros_like(log_probs)
 
         new_mask, _ = apply_rejection_sampling(
-            cfg=cfg,
+            config=config,
             loss_mask=loss_mask,
             behave_imp_weight=ratios,
             log_probs=log_probs,
