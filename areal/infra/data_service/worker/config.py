@@ -12,3 +12,4 @@ class DataWorkerConfig:
     rank: int = 0
     world_size: int = 1
     dataloader_num_workers: int = 4
+    seed: int = 42

@@ -207,7 +207,9 @@ class PPOTrainer:
         else:
             assert train_dataset is not None
             if is_single_controller() and isinstance(train_dataset, RDataset):
-                ds_cfg = DataServiceConfig.from_dataset_config(config.train_dataset)
+                ds_cfg = DataServiceConfig.from_dataset_config(
+                    config.train_dataset, seed=config.seed
+                )
                 assert self.scheduler is not None
                 controller = DataController(ds_cfg, self.scheduler)
                 controller.initialize(
@@ -218,7 +220,6 @@ class PPOTrainer:
                     controller,
                     dataset_id=f"{config.experiment_name}_{config.trial_name}_train",
                     tokenizer_or_processor_path=config.tokenizer_path,
-                    seed=config.seed,
                     shuffle=config.train_dataset.shuffle,
                     drop_last=config.train_dataset.drop_last,
                 )
@@ -240,7 +241,6 @@ class PPOTrainer:
                     self.data_controller,
                     dataset_id=f"{config.experiment_name}_{config.trial_name}_valid",
                     tokenizer_or_processor_path=config.tokenizer_path,
-                    seed=config.seed,
                     shuffle=self.config.valid_dataset.shuffle,
                     drop_last=self.config.valid_dataset.drop_last,
                 )

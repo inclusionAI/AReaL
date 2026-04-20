@@ -45,15 +45,26 @@ class _DatasetState:
     sampler: DistributedSampler | None
     epoch: int
     exhausted: bool
-    seed: int
+    unloading: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 def create_worker_app(config: DataWorkerConfig) -> FastAPI:
+    # --- Concurrency model ---
+    # datasets_lock : guards dict mutations (add/remove entries) and the
+    #                 _loading_ids reservation set.
+    # state.lock    : guards per-dataset state operations (epoch reset,
+    #                 state save/load).
+    # Lock ordering : datasets_lock → state.lock (never reverse).
+    # Seed is set once at startup in lifespan(); per-epoch determinism
+    # is handled by DistributedSampler.set_epoch(), not by re-seeding.
     datasets: dict[str, _DatasetState] = {}
+    _loading_ids: set[str] = set()
+    datasets_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(app: Any):
+        seeding.set_random_seed(config.seed, key=f"data_worker_{config.rank}")
         app.state.config = config
         app.state.datasets = datasets
         try:
@@ -71,6 +82,17 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
             )
         return state
 
+    @asynccontextmanager
+    async def _locked_active_state(dataset_id: str):
+        state = _require_dataset(dataset_id)
+        async with state.lock:
+            if state.unloading:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Dataset {dataset_id} is unloading",
+                )
+            yield state
+
     @app.get("/health")
     async def health():
         return {
@@ -81,12 +103,6 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
 
     @app.post("/datasets/load")
     async def load_dataset(body: WorkerLoadDatasetRequest):
-        if body.dataset_id in datasets:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Dataset {body.dataset_id} is already loaded",
-            )
-
         def _load_sync():
             _tokenizer = None
             _processor = None
@@ -95,11 +111,6 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
                     body.tokenizer_or_processor_path
                 )
 
-            seeding.set_random_seed(body.seed, key=f"data_worker_{config.rank}")
-
-            # Workers must load real datasets, not RDataset proxies.
-            # Call _get_custom_dataset directly to bypass the is_single_controller()
-            # gate in get_custom_dataset() that would create an RDataset.
             _dataset = _get_custom_dataset(
                 path=body.dataset_path,
                 type=body.dataset_type,
@@ -131,17 +142,39 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
             )
             return _dataset, _sampler, _dataloader
 
-        dataset, sampler, dataloader = await asyncio.to_thread(_load_sync)
+        # Phase 1: Reserve the dataset ID under lock (fast).
+        async with datasets_lock:
+            if body.dataset_id in datasets:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Dataset {body.dataset_id} is already loaded",
+                )
+            if body.dataset_id in _loading_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Dataset {body.dataset_id} is currently loading",
+                )
+            _loading_ids.add(body.dataset_id)
 
-        datasets[body.dataset_id] = _DatasetState(
-            dataset_id=body.dataset_id,
-            raw_dataset=dataset,
-            dataloader=dataloader,
-            sampler=sampler,
-            epoch=0,
-            exhausted=False,
-            seed=body.seed,
-        )
+        # Phase 2: Load dataset outside lock (slow I/O).
+        try:
+            dataset, sampler, dataloader = await asyncio.to_thread(_load_sync)
+        except Exception:
+            async with datasets_lock:
+                _loading_ids.discard(body.dataset_id)
+            raise
+
+        # Phase 3: Store the result under lock (fast).
+        async with datasets_lock:
+            _loading_ids.discard(body.dataset_id)
+            datasets[body.dataset_id] = _DatasetState(
+                dataset_id=body.dataset_id,
+                raw_dataset=dataset,
+                dataloader=dataloader,
+                sampler=sampler,
+                epoch=0,
+                exhausted=False,
+            )
 
         return {
             "status": "ok",
@@ -151,32 +184,54 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
 
     @app.post("/v1/samples/fetch")
     async def fetch_samples(body: FetchSamplesRequest):
-        state = _require_dataset(body.dataset_id)
-        samples = [serialize_value(state.raw_dataset[idx]) for idx in body.indices]
-        return {"samples": samples}
+        async with _locked_active_state(body.dataset_id) as state:
+            samples = [serialize_value(state.raw_dataset[idx]) for idx in body.indices]
+            return {"samples": samples}
 
     @app.post("/datasets/unload")
     async def unload_dataset(body: WorkerUnloadDatasetRequest):
-        state = _require_dataset(body.dataset_id)
+        # Phase 1: look up state under datasets_lock (fast).
+        async with datasets_lock:
+            if body.dataset_id in _loading_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Dataset {body.dataset_id} is currently loading",
+                )
+            state = datasets.get(body.dataset_id)
+            if state is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Unknown dataset_id: {body.dataset_id}",
+                )
+
+        # Phase 2: drain in-flight state ops via state.lock (may wait).
         async with state.lock:
-            del datasets[body.dataset_id]
+            if state.unloading:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Dataset {body.dataset_id} is already unloading",
+                )
+            state.unloading = True
+
+        # Phase 3: remove from dict under datasets_lock (fast).
+        async with datasets_lock:
+            current = datasets.get(body.dataset_id)
+            if current is state:
+                del datasets[body.dataset_id]
         return {"status": "ok"}
 
     @app.post("/epoch/reset")
     async def reset_epoch(body: WorkerEpochResetRequest):
-        state = _require_dataset(body.dataset_id)
-        async with state.lock:
-            seeding.set_random_seed(state.seed, key=f"data_worker_{config.rank}")
+        async with _locked_active_state(body.dataset_id) as state:
             state.epoch = body.epoch
             state.exhausted = False
             if state.sampler is not None:
                 state.sampler.set_epoch(body.epoch)
-        return {"status": "ok", "epoch": state.epoch}
+        return {"status": "ok", "epoch": body.epoch}
 
     @app.post("/state/save")
     async def save_state(body: WorkerStateSaveRequest):
-        state = _require_dataset(body.dataset_id)
-        async with state.lock:
+        async with _locked_active_state(body.dataset_id) as state:
             save_dir = Path(body.path)
             save_dir.mkdir(parents=True, exist_ok=True)
             save_path = save_dir / f"worker_{config.rank}.pkl"
@@ -188,8 +243,7 @@ def create_worker_app(config: DataWorkerConfig) -> FastAPI:
 
     @app.post("/state/load")
     async def load_state(body: WorkerStateLoadRequest):
-        state = _require_dataset(body.dataset_id)
-        async with state.lock:
+        async with _locked_active_state(body.dataset_id) as state:
             load_path = Path(body.path) / f"worker_{config.rank}.pkl"
             if not load_path.exists():
                 raise HTTPException(

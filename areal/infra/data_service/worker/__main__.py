@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--rank", type=int, default=0)
     parser.add_argument("--world-size", type=int, default=1)
     parser.add_argument("--dataloader-num-workers", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=42)
     args, _ = parser.parse_known_args()
 
     app_module = importlib.import_module("areal.infra.data_service.worker.app")
@@ -28,6 +29,7 @@ def main():
         rank=args.rank,
         world_size=args.world_size,
         dataloader_num_workers=args.dataloader_num_workers,
+        seed=args.seed,
     )
     uvicorn = importlib.import_module("uvicorn")
 
