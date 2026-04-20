@@ -2048,7 +2048,9 @@ class MegatronEngine(TrainEngine):
         meta: WeightUpdateMeta,
         converted_named_tensors: list[tuple[str, nn.Parameter | torch.Tensor]],
     ) -> None:
-        # Early exit when chunk size is relatively small
+        import time as _diag_time
+
+        _diag_t0 = _diag_time.time()
         if not converted_named_tensors:
             return
 
@@ -2073,24 +2075,43 @@ class MegatronEngine(TrainEngine):
                 "bias": "none",
             }
 
+        self.logger.info(
+            f"[DiagBucket] _update_bucket_weights_from_distributed ENTERED: "
+            f"n_tensors={len(converted_named_tensors)}, n_specs={len(param_specs)}, "
+            f"names={[n for n, _ in converted_named_tensors[:5]]}..."
+        )
+        _t_post0 = _diag_time.time()
         fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
+        self.logger.info(
+            f"[DiagBucket] rollout_engine.update_weights_from_distributed POST sent "
+            f"in {_diag_time.time() - _t_post0:.3f}s, fut={fut}"
+        )
 
+        _t_bc0 = _diag_time.time()
         handles = []
-        for _, param in converted_named_tensors:
+        for idx, (name, param) in enumerate(converted_named_tensors):
             handles.append(
                 dist.broadcast(
                     param.data, 0, group=self.weight_update_group, async_op=True
                 )
             )
-        for handle in handles:
+        self.logger.info(
+            f"[DiagBucket] Enqueued {len(handles)} async broadcasts "
+            f"in {_diag_time.time() - _t_bc0:.3f}s, calling handle.wait()..."
+        )
+        _t_wait0 = _diag_time.time()
+        for idx, handle in enumerate(handles):
             handle.wait()
+            if idx % 10 == 0 or idx == len(handles) - 1:
+                self.logger.info(
+                    f"[DiagBucket] handle.wait() progress: {idx + 1}/{len(handles)} "
+                    f"after {_diag_time.time() - _t_wait0:.3f}s"
+                )
+        self.logger.info(
+            f"[DiagBucket] All handle.wait() completed in "
+            f"{_diag_time.time() - _t_wait0:.3f}s"
+        )
 
-        # The callback server now returns HTTP 200 immediately (fire-and-forget)
-        # before the NCCL transfer completes on the inference side. Since NCCL
-        # broadcast is collective, handle.wait() above already guarantees BOTH
-        # sides have completed the data transfer. fut.result() only confirms
-        # the HTTP POST was accepted. Use a short timeout to catch delivery
-        # errors without blocking on infrastructure proxy timeouts (504).
         try:
             fut.result(timeout=30)
         except TimeoutError:
@@ -2107,6 +2128,10 @@ class MegatronEngine(TrainEngine):
         converted_named_tensors.clear()
 
         self.engine_lock.release()
+        self.logger.info(
+            f"[DiagBucket] _update_bucket_weights_from_distributed COMPLETED "
+            f"in {_diag_time.time() - _diag_t0:.3f}s"
+        )
 
     @property
     def _duplicated_param_names(self) -> set[str]:
@@ -2381,7 +2406,12 @@ class MegatronEngine(TrainEngine):
 
         _has_event = hasattr(self, "_mtp_data_ready_event") and self._mtp_data_ready_event is not None
         if _has_event:
-            # Make ser_stream wait for MTP data (all_gather) but NOT NCCL broadcasts
+            _event_query_before = self._mtp_data_ready_event.query()
+            self.logger.info(
+                f"[MTPSerialize] _mtp_data_ready_event status BEFORE wait_event: "
+                f"query()={_event_query_before} (True=signaled, False=pending), "
+                f"event={self._mtp_data_ready_event}"
+            )
             _ser_stream.wait_event(self._mtp_data_ready_event)
             self.logger.info(
                 "[MTPSerialize] Created serialization stream and synced with "
@@ -2391,8 +2421,6 @@ class MegatronEngine(TrainEngine):
                 f"ser_stream={_ser_stream})"
             )
         else:
-            # Fallback: no event recorded (shouldn't happen, but be safe).
-            # Wait on the default stream which may include NCCL deps.
             _ser_stream.wait_stream(torch.cuda.current_stream())
             self.logger.warning(
                 "[MTPSerialize] _mtp_data_ready_event NOT found! "
@@ -2401,7 +2429,68 @@ class MegatronEngine(TrainEngine):
                 f"(device={torch.cuda.current_device()})"
             )
 
-        _ser_stream.synchronize()
+        self.logger.info(
+            f"[MTPSerialize] About to call _ser_stream.synchronize()... "
+            f"(ser_stream={_ser_stream}, "
+            f"cuda_device={torch.cuda.current_device()}, "
+            f"mem_alloc={torch.cuda.memory_allocated() / 1024 / 1024:.0f} MB, "
+            f"mem_reserved={torch.cuda.memory_reserved() / 1024 / 1024:.0f} MB)"
+        )
+
+        import threading
+
+        _sync_done = threading.Event()
+        _sync_exc = [None]
+
+        def _do_sync():
+            try:
+                _ser_stream.synchronize()
+            except Exception as exc:
+                _sync_exc[0] = exc
+            finally:
+                _sync_done.set()
+
+        _sync_thread = threading.Thread(target=_do_sync, daemon=True)
+        _sync_thread.start()
+
+        _sync_wait_start = _time.time()
+        _sync_timeout = 30.0
+        while not _sync_done.wait(timeout=1.0):
+            _waited = _time.time() - _sync_wait_start
+            if _has_event:
+                _eq = self._mtp_data_ready_event.query()
+                self.logger.warning(
+                    f"[MTPSerialize] _ser_stream.synchronize() STILL WAITING "
+                    f"after {_waited:.1f}s (timeout={_sync_timeout}s)! "
+                    f"event_query={_eq}, "
+                    f"mem_alloc={torch.cuda.memory_allocated() / 1024 / 1024:.0f} MB, "
+                    f"mem_reserved={torch.cuda.memory_reserved() / 1024 / 1024:.0f} MB"
+                )
+            else:
+                self.logger.warning(
+                    f"[MTPSerialize] _ser_stream.synchronize() STILL WAITING "
+                    f"after {_waited:.1f}s (timeout={_sync_timeout}s)! "
+                    f"mem_alloc={torch.cuda.memory_allocated() / 1024 / 1024:.0f} MB, "
+                    f"mem_reserved={torch.cuda.memory_reserved() / 1024 / 1024:.0f} MB"
+                )
+            if _waited >= _sync_timeout:
+                self.logger.error(
+                    f"[MTPSerialize] _ser_stream.synchronize() TIMEOUT after "
+                    f"{_waited:.1f}s! This indicates a CUDA stream deadlock. "
+                    f"The _mtp_data_ready_event is likely blocked by NCCL "
+                    f"cross-stream dependencies on the default stream."
+                )
+                break
+
+        if _sync_exc[0] is not None:
+            raise _sync_exc[0]
+
+        if _has_event:
+            _event_query_after = self._mtp_data_ready_event.query()
+            self.logger.info(
+                f"[MTPSerialize] _mtp_data_ready_event status AFTER synchronize: "
+                f"query()={_event_query_after}"
+            )
         self.logger.info(
             f"[MTPSerialize] Serialization stream synced in "
             f"{_time.time() - _t_sync:.3f}s"
@@ -2541,8 +2630,16 @@ class MegatronEngine(TrainEngine):
 
     @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:
+        import time as _diag_time
+
+        _diag_t0 = _diag_time.time()
         DeviceRuntimeInfo.get_current().log("_update_weights_from_distributed start")
-        # Reset weight weight meta with local info
+        self.logger.info(
+            f"[DiagUW] _update_weights_from_distributed ENTERED "
+            f"(rank={dist.get_rank()}, version={meta.version}, "
+            f"mem_alloc={torch.cuda.memory_allocated() / 1024 / 1024:.0f} MB, "
+            f"mem_reserved={torch.cuda.memory_reserved() / 1024 / 1024:.0f} MB)"
+        )
         meta.nccl_master_address = self.weight_update_master_addr
         meta.nccl_master_port = self.weight_update_master_port
         meta.nccl_group_name = self.weight_update_group_name
@@ -2619,36 +2716,38 @@ class MegatronEngine(TrainEngine):
                 weight_chunked_mem_size,
             )
 
-        # Record a CUDA event on the default stream BEFORE any NCCL
-        # broadcasts begin.  At this point, all MTP tensors from
-        # _collect_param()'s synchronous dist.all_gather() are fully
-        # materialised on the default stream.  We will use this event
-        # in _serialize_mtp_tensors_for_update() to create a separate
-        # CUDA stream that depends ONLY on work up to this point —
-        # crucially, NOT on the NCCL broadcast operations that follow.
-        #
-        # Why this matters:  PyTorch's NCCL handle.wait() inserts a
-        # cross-stream dependency (NCCL stream → default stream) via
-        # cudaStreamWaitEvent.  After handle.wait(), the default stream
-        # implicitly waits for the NCCL kernels.  If we later call
-        # current_stream().synchronize() or .cpu() on the default stream,
-        # we block until ALL pending NCCL broadcasts complete on the GPU —
-        # but those broadcasts are collective ops that need the inference
-        # side to execute its counterpart.  The inference side processes
-        # XCCL callbacks sequentially (each ~2.4s), so the training side
-        # hangs for tens of seconds or indefinitely.
+        self.logger.info(
+            f"[DiagUW] Parameter loop completed in "
+            f"{_diag_time.time() - _diag_t0:.3f}s. "
+            f"mtp_hf_tensors={len(mtp_hf_tensors)}, "
+            f"converted_named_tensors={len(converted_named_tensors)}, "
+            f"mtp_param_count={mtp_param_count}, "
+            f"buffer_size={buffer_size}"
+        )
+
         if _collect_mtp_for_draft and mtp_hf_tensors:
             self._mtp_data_ready_event = torch.cuda.Event()
             self._mtp_data_ready_event.record(torch.cuda.current_stream())
+            _event_recorded_at = _diag_time.time()
             self.logger.info(
-                f"[MTPTrain] Recorded _mtp_data_ready_event on default stream "
+                f"[DiagUW] Recorded _mtp_data_ready_event on default stream "
                 f"(device={torch.cuda.current_device()}) BEFORE NCCL broadcasts. "
-                f"n_mtp_tensors={len(mtp_hf_tensors)}"
+                f"n_mtp_tensors={len(mtp_hf_tensors)}, "
+                f"elapsed={_event_recorded_at - _diag_t0:.3f}s, "
+                f"default_stream={torch.cuda.current_stream()}"
             )
 
-        # Only pipeline parallel heads CAN contain named tensors here
         if converted_named_tensors:
+            self.logger.info(
+                f"[DiagUW] Calling _update_bucket_weights_from_distributed with "
+                f"{len(converted_named_tensors)} tensors at elapsed="
+                f"{_diag_time.time() - _diag_t0:.3f}s"
+            )
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
+            self.logger.info(
+                f"[DiagUW] _update_bucket_weights_from_distributed completed at elapsed="
+                f"{_diag_time.time() - _diag_t0:.3f}s"
+            )
         elif self.is_pipeline_parallel_head() and not self.config.use_lora:
             self.logger.warning(
                 "No tensors were collected for distributed update at version %s.",
@@ -2668,17 +2767,6 @@ class MegatronEngine(TrainEngine):
                 f"MTP draft model weights will NOT be updated!"
             )
 
-        # --- MTP Draft Model Weight Update via /update_weights_from_tensor ---
-        # SGLang v0.5.9 /update_weights_from_distributed routes ONLY to
-        # tp_worker, which does NOT update the draft_worker (EAGLEWorker).
-        # MTP weights sent via NCCL are silently dropped by
-        # MiMoForCausalLM.load_weights() ("if mtp_layers in name: continue").
-        #
-        # use /update_weights_from_tensor
-        # which routes to draft_worker. EAGLEWorker.update_weights_from_tensor()
-        # updates BOTH self.model_runner (draft/MiMoMTP) and
-        # self.target_worker.model_runner (target/MiMoForCausalLM).
-        # Each model's load_weights() silently skips non-matching names.
         if _collect_mtp_for_draft and mtp_hf_tensors and dist.get_rank() == 0:
             try:
                 tp_size = (
@@ -2692,25 +2780,23 @@ class MegatronEngine(TrainEngine):
                 import time as _time
 
                 self.logger.info(
-                    f"[MTPTrain] Sending {len(mtp_hf_tensors)} MTP tensors "
+                    f"[DiagUW] About to serialize and send {len(mtp_hf_tensors)} MTP tensors "
                     f"({_mtp_bytes / 1024 / 1024:.2f} MB) to EAGLE draft model "
                     f"via /update_weights_from_tensor "
-                    f"(tp_size={tp_size}, version={meta.version})"
+                    f"(tp_size={tp_size}, version={meta.version}), "
+                    f"elapsed={_diag_time.time() - _diag_t0:.3f}s, "
+                    f"mem_alloc={torch.cuda.memory_allocated() / 1024 / 1024:.0f} MB, "
+                    f"mem_reserved={torch.cuda.memory_reserved() / 1024 / 1024:.0f} MB"
                 )
-                # Serialize tensors on the training side. This is required
-                # for single-controller mode where the engine is a
-                # RolloutCallback proxy — tensor data must be serialized
-                # before it can travel through the HTTP callback chain.
                 _t_ser0 = _time.time()
                 self.logger.info(
-                    f"[MTPTrain][Diag] Starting _serialize_mtp_tensors_for_update "
+                    f"[DiagUW] Starting _serialize_mtp_tensors_for_update "
                     f"(n_tensors={len(mtp_hf_tensors)}, tp_size={tp_size})..."
                 )
                 serialized_payload = self._serialize_mtp_tensors_for_update(
                     mtp_hf_tensors, tp_size
                 )
                 _t_ser1 = _time.time()
-                # Log serialized payload info
                 _sp_keys = (
                     list(serialized_payload.keys())
                     if isinstance(serialized_payload, dict)
@@ -2730,14 +2816,15 @@ class MegatronEngine(TrainEngine):
                     else []
                 )
                 self.logger.info(
-                    f"[MTPTrain][Diag] Serialization completed in {_t_ser1 - _t_ser0:.3f}s. "
+                    f"[DiagUW] Serialization completed in {_t_ser1 - _t_ser0:.3f}s. "
                     f"payload_keys={_sp_keys}, n_serialized_tensors={_n_snt}, "
                     f"serialized_tensor_sizes_bytes={_snt_sizes}, "
                     f"rollout_engine_type={type(self.rollout_engine).__name__}"
                 )
                 _t_call0 = _time.time()
                 self.logger.info(
-                    "[MTPTrain][Diag] Calling rollout_engine.update_weights_from_tensor()..."
+                    f"[DiagUW] Calling rollout_engine.update_weights_from_tensor()... "
+                    f"(engine_type={type(self.rollout_engine).__name__})"
                 )
                 self.rollout_engine.update_weights_from_tensor(
                     serialized_payload=serialized_payload,
@@ -2745,11 +2832,12 @@ class MegatronEngine(TrainEngine):
                 )
                 _t_call1 = _time.time()
                 self.logger.info(
-                    f"[MTPTrain] Successfully updated EAGLE draft model "
+                    f"[DiagUW] Successfully updated EAGLE draft model "
                     f"MTP weights at version={meta.version} "
                     f"(serialize={_t_ser1 - _t_ser0:.3f}s, "
                     f"update_call={_t_call1 - _t_call0:.3f}s, "
-                    f"total={_t_call1 - _t_ser0:.3f}s)"
+                    f"total={_t_call1 - _t_ser0:.3f}s, "
+                    f"overall_elapsed={_diag_time.time() - _diag_t0:.3f}s)"
                 )
             except Exception as e:
                 self.logger.error(
@@ -2771,6 +2859,10 @@ class MegatronEngine(TrainEngine):
                 "Ensure SGLang backend is used with speculative decoding."
             )
 
+        self.logger.info(
+            f"[DiagUW] About to enter first dist.barrier(cpu_group) [after MTP update] "
+            f"at elapsed={_diag_time.time() - _diag_t0:.3f}s"
+        )
         dist.barrier(group=self.cpu_group)
 
         buffer_size = 0
@@ -2789,9 +2881,17 @@ class MegatronEngine(TrainEngine):
             )
 
         if named_tensors:
-            # This function will early return if not pipeline parallel head
+            self.logger.info(
+                f"[DiagUW] Calling _update_bucket_expert_weights_from_distributed "
+                f"with {len(named_tensors)} expert tensors at elapsed="
+                f"{_diag_time.time() - _diag_t0:.3f}s"
+            )
             self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
 
+        self.logger.info(
+            f"[DiagUW] About to enter second dist.barrier(cpu_group) [after expert update] "
+            f"at elapsed={_diag_time.time() - _diag_t0:.3f}s"
+        )
         dist.barrier(group=self.cpu_group)
 
         if dist.get_rank() == 0:
@@ -2799,6 +2899,10 @@ class MegatronEngine(TrainEngine):
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
+        self.logger.info(
+            f"[DiagUW] _update_weights_from_distributed FULLY COMPLETED "
+            f"in {_diag_time.time() - _diag_t0:.3f}s"
+        )
 
     @trace_perf("megatron_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta) -> None:

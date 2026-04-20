@@ -586,17 +586,16 @@ class RolloutController:
                 self.update_weights_from_distributed(meta, param_specs),
                 self._callback_loop,
             )
-            # Track future so tensor update can drain pending NCCL work
-            # before dispatching its own RPC to the engine thread queue.
             with self._xccl_futures_lock:
-                # Prune completed futures to avoid unbounded growth
                 self._pending_xccl_futures = [
                     f for f in self._pending_xccl_futures if not f.done()
                 ]
                 self._pending_xccl_futures.append(fut)
+                _n_pending = len(self._pending_xccl_futures)
             logger.info(
                 f"[DiagMTP] /callback/update_weights_xccl returning HTTP 200 "
-                f"(fire-and-forget, handler took {time.time() - _t0:.3f}s)"
+                f"(fire-and-forget, handler took {time.time() - _t0:.3f}s, "
+                f"pending_xccl_futures={_n_pending})"
             )
             return jsonify({"status": "ok"})
 
@@ -649,10 +648,26 @@ class RolloutController:
             )
             serialized_payload = deserialize_value(payload.get("serialized_payload"))
             _t2 = time.time()
+            _sp_keys = (
+                list(serialized_payload.keys())
+                if isinstance(serialized_payload, dict)
+                else "N/A"
+            )
+            _n_snt = (
+                len(serialized_payload.get("serialized_named_tensors", []))
+                if isinstance(serialized_payload, dict)
+                else 0
+            )
+            _snt_b64_len = (
+                sum(len(s) for s in serialized_payload.get("serialized_named_tensors", []))
+                if isinstance(serialized_payload, dict)
+                else 0
+            )
             logger.info(
                 f"[DiagMTP] deserialize_value completed in {_t2 - _t1:.3f}s, "
                 f"serialized_payload type={type(serialized_payload).__name__}, "
-                f"keys={list(serialized_payload.keys()) if isinstance(serialized_payload, dict) else 'N/A'}"
+                f"keys={_sp_keys}, n_serialized_tensors={_n_snt}, "
+                f"total_b64_bytes={_snt_b64_len} ({_snt_b64_len / 1024 / 1024:.2f} MB)"
             )
             # BLOCKING: MTP tensor update must complete before returning.
             # Following verl/slime's fully-blocking weight update pattern.
@@ -844,15 +859,17 @@ class RolloutController:
         )
         try:
             results = await asyncio.gather(*tasks)
+            _elapsed = _time.time() - _t0
             logger.info(
                 f"[DiagMTP] _generic_collective_rpc_async COMPLETED: "
-                f"method={method} in {_time.time() - _t0:.3f}s"
+                f"method={method} in {_elapsed:.3f}s"
             )
             return results
         except Exception as e:
+            _elapsed = _time.time() - _t0
             logger.error(
                 f"[DiagMTP] _generic_collective_rpc_async FAILED: "
-                f"method={method} after {_time.time() - _t0:.3f}s: "
+                f"method={method} after {_elapsed:.3f}s: "
                 f"{type(e).__name__}: {e}",
                 exc_info=True,
             )
@@ -1183,17 +1200,27 @@ class RolloutController:
 
         _t0 = _time.time()
         _n_specs = len(param_specs) if param_specs else 0
+        _spec_names = [s.name for s in param_specs[:5]] if param_specs else []
         logger.info(
             f"[DiagMTP] async update_weights_from_distributed ENTERED "
-            f"(n_specs={_n_specs}, version={getattr(meta, 'version', '?')})"
+            f"(n_specs={_n_specs}, version={getattr(meta, 'version', '?')}, "
+            f"spec_names={_spec_names}...)"
         )
-        await self._collective_rpc_async(
-            "update_weights_from_distributed", meta=meta, param_specs=param_specs
-        )
-        logger.info(
-            f"[DiagMTP] async update_weights_from_distributed COMPLETED "
-            f"in {_time.time() - _t0:.3f}s"
-        )
+        try:
+            await self._collective_rpc_async(
+                "update_weights_from_distributed", meta=meta, param_specs=param_specs
+            )
+            logger.info(
+                f"[DiagMTP] async update_weights_from_distributed COMPLETED "
+                f"in {_time.time() - _t0:.3f}s"
+            )
+        except Exception as e:
+            logger.error(
+                f"[DiagMTP] async update_weights_from_distributed FAILED "
+                f"after {_time.time() - _t0:.3f}s: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            raise
 
     async def update_weights_from_disk(self, meta: WeightUpdateMeta):
         meta.clear_checkpoint_after_load = False
@@ -1236,21 +1263,31 @@ class RolloutController:
             self._pending_xccl_futures.clear()
 
         if pending:
+            _drain_t0 = time.time()
             logger.info(
                 f"[DiagMTP] Draining {len(pending)} pending NCCL futures "
                 f"before tensor update..."
             )
-            # Wait for all pending NCCL coroutines to complete.
-            # Use asyncio wrap to avoid blocking the event loop.
             done_count = 0
-            for fut in pending:
+            for i, fut in enumerate(pending):
+                _fut_t0 = time.time()
                 try:
                     await asyncio.wrap_future(fut)
                     done_count += 1
+                    logger.info(
+                        f"[DiagMTP] Drained future {i + 1}/{len(pending)} "
+                        f"in {time.time() - _fut_t0:.3f}s (done={done_count})"
+                    )
                 except Exception as e:
-                    logger.warning(f"[DiagMTP] Pending NCCL future raised: {e}")
+                    logger.warning(
+                        f"[DiagMTP] Pending NCCL future {i + 1}/{len(pending)} "
+                        f"raised after {time.time() - _fut_t0:.3f}s: {e}"
+                    )
                     done_count += 1
-            logger.info(f"[DiagMTP] Drained {done_count}/{len(pending)} NCCL futures.")
+            logger.info(
+                f"[DiagMTP] Drained {done_count}/{len(pending)} NCCL futures "
+                f"in {time.time() - _drain_t0:.3f}s"
+            )
 
         import time as _time
 

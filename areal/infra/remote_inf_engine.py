@@ -1557,20 +1557,37 @@ def _update_weights_from_distributed(
     request_timeout: float,
 ):
     """Helper to update weights from distributed memory in a separate process."""
+    import time as _diag_time
+
+    _diag_t0 = _diag_time.time()
+    logger.info(
+        f"[DiagWorker] _update_weights_from_distributed ENTERED: "
+        f"n_specs={len(param_specs)}, n_addrs={len(addresses)}, "
+        f"addrs={addresses}, version={getattr(meta, 'version', '?')}"
+    )
 
     async def _fn():
-        # Get requests from backend
+        _fn_t0 = _diag_time.time()
         weight_reqs = backend.build_distributed_weight_update_requests(
             meta, param_specs
         )
+        logger.info(
+            f"[DiagWorker] build_distributed_weight_update_requests completed "
+            f"in {_diag_time.time() - _fn_t0:.3f}s, "
+            f"n_requests={len(weight_reqs.requests)}"
+        )
 
-        # Execute all requests sequentially (they may have dependencies)
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=request_timeout),
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         ) as session:
-            for http_req in weight_reqs.requests:
+            for req_idx, http_req in enumerate(weight_reqs.requests):
+                _req_t0 = _diag_time.time()
+                logger.info(
+                    f"[DiagWorker] Processing request {req_idx + 1}/{len(weight_reqs.requests)}: "
+                    f"endpoint={http_req.endpoint}, method={http_req.method}"
+                )
                 jobs = [
                     arequest_with_retry(
                         session=session,
@@ -1584,5 +1601,18 @@ def _update_weights_from_distributed(
                     for addr in addresses
                 ]
                 await asyncio.gather(*jobs)
+                logger.info(
+                    f"[DiagWorker] Request {req_idx + 1}/{len(weight_reqs.requests)} "
+                    f"completed in {_diag_time.time() - _req_t0:.3f}s"
+                )
 
-    return uvloop.run(_fn())
+        logger.info(
+            f"[DiagWorker] _fn() completed in {_diag_time.time() - _fn_t0:.3f}s"
+        )
+
+    result = uvloop.run(_fn())
+    logger.info(
+        f"[DiagWorker] _update_weights_from_distributed COMPLETED "
+        f"in {_diag_time.time() - _diag_t0:.3f}s"
+    )
+    return result

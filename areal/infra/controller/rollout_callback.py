@@ -252,9 +252,21 @@ class RolloutCallback:
                 "Raw tensor mode is not supported through the callback chain."
             )
         _t0 = time.time()
+        _n_snt = (
+            len(serialized_payload.get("serialized_named_tensors", []))
+            if isinstance(serialized_payload, dict)
+            else 0
+        )
+        _snt_b64_len = (
+            sum(len(s) for s in serialized_payload.get("serialized_named_tensors", []))
+            if isinstance(serialized_payload, dict)
+            else 0
+        )
         logger.info(
             f"[DiagMTP][Callback] update_weights_from_tensor ENTERED. "
             f"serialized_payload keys={list(serialized_payload.keys())}, "
+            f"n_serialized_tensors={_n_snt}, "
+            f"total_b64_bytes={_snt_b64_len} ({_snt_b64_len / 1024 / 1024:.2f} MB), "
             f"controller_addr={self.controller_addr}"
         )
         payload = {
@@ -264,7 +276,8 @@ class RolloutCallback:
         _t1 = time.time()
         logger.info(
             f"[DiagMTP][Callback] serialize_value took {_t1 - _t0:.3f}s, "
-            f"payload_approx_size={_payload_size} bytes"
+            f"payload_approx_size={_payload_size} bytes "
+            f"({_payload_size / 1024 / 1024:.2f} MB)"
         )
 
         # Synchronous blocking POST: MTP tensor update must complete before
