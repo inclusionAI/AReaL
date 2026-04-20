@@ -2364,27 +2364,52 @@ class MegatronEngine(TrainEngine):
         )
 
         # -------------------------------------------------------------------
-        # Explicit CUDA sync + cache cleanup BEFORE GPU->CPU
-        # copies.  Under near-OOM conditions (97%+ VRAM) the implicit CUDA
-        # synchronisation triggered by .cpu() can deadlock because the CUDA
-        # runtime attempts to reclaim caches while prior NCCL / compute
-        # kernels are still draining.  Synchronising and freeing caches
-        # first makes the subsequent .cpu() calls plain DtoH memcpys.
+        # Explicit CUDA *default-stream* sync + cache cleanup BEFORE
+        # GPU->CPU copies.
+        #
+        # We intentionally use current_stream().synchronize() instead of
+        # torch.cuda.synchronize() because the latter waits for ALL CUDA
+        # streams, including the NCCL stream used by
+        # _update_bucket_weights_from_distributed().  Those NCCL broadcasts
+        # run with async_op=True; handle.wait() guarantees CPU-side
+        # completion, but the GPU-side NCCL kernels may still be pending
+        # on the NCCL stream.  Meanwhile the inference side is still
+        # processing earlier XCCL buckets sequentially (~2.4s per bucket
+        # x 15 buckets ~ 36s total).  torch.cuda.synchronize() would
+        # block indefinitely waiting for those NCCL kernels to retire,
+        # but they cannot retire until the inference-side counterparts
+        # execute — a circular hang.
+        #
+        # The MTP tensors we serialize here come from _collect_param()'s
+        # dist.all_gather() which executes on the default stream, so
+        # syncing only the default stream is correct and sufficient.
         # -------------------------------------------------------------------
         _t_sync = _time.time()
-        self.logger.info("[MTPSerialize] torch.cuda.synchronize() ...")
-        torch.cuda.synchronize()
         self.logger.info(
-            f"[MTPSerialize] torch.cuda.synchronize() done in "
+            "[MTPSerialize] current_stream().synchronize() ... "
+            f"(device={torch.cuda.current_device()}, "
+            f"stream={torch.cuda.current_stream()})"
+        )
+        torch.cuda.current_stream().synchronize()
+        self.logger.info(
+            f"[MTPSerialize] current_stream().synchronize() done in "
             f"{_time.time() - _t_sync:.3f}s"
         )
 
+        # Reclaim unused cached memory.  gc.collect() first to release
+        # any Python-side tensor references, then empty_cache() to return
+        # the CUDA blocks to the allocator.  Note: empty_cache() may
+        # internally trigger a device-wide sync if the CUDA runtime deems
+        # it necessary, but in practice after current_stream sync + GC
+        # this is fast and non-blocking for NCCL streams.
+        import gc
         _t_cache = _time.time()
+        gc.collect()
         _before = torch.cuda.memory_reserved()
         torch.cuda.empty_cache()
         _after = torch.cuda.memory_reserved()
         self.logger.info(
-            f"[MTPSerialize] empty_cache freed "
+            f"[MTPSerialize] gc.collect() + empty_cache freed "
             f"{(_before - _after) / 1024 / 1024:.1f} MB GPU cache "
             f"(reserved {_before / 1024 / 1024:.0f} -> "
             f"{_after / 1024 / 1024:.0f} MB), "
