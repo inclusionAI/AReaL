@@ -118,6 +118,7 @@ def _create_inf_bridge(
     backend_addr: str,
     pause_state: PauseState,
     config: DataProxyConfig,
+    http_client: httpx.AsyncClient | None = None,
 ) -> InfBridge:
     """Create an InfBridge instance from proxy config."""
     if config.backend_type == "sglang":
@@ -134,6 +135,7 @@ def _create_inf_bridge(
         request_timeout=config.request_timeout,
         max_resubmit_retries=config.max_resubmit_retries,
         resubmit_wait=config.resubmit_wait,
+        http_client=http_client,
     )
 
 
@@ -153,21 +155,22 @@ async def _post_online_ready_callback(
     admin_api_key: str,
     notification: ReadyNotification,
     timeout: float,
+    client: httpx.AsyncClient,
 ) -> bool:
     if not callback_server_addr:
         return False
 
     callback_base = callback_server_addr.rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                f"{callback_base}/callback/online_ready",
-                json={
-                    "session_id": notification.session_id,
-                    "trajectory_id": notification.trajectory_id,
-                },
-                headers={"Authorization": f"Bearer {admin_api_key}"},
-            )
+        resp = await client.post(
+            f"{callback_base}/callback/online_ready",
+            json={
+                "session_id": notification.session_id,
+                "trajectory_id": notification.trajectory_id,
+            },
+            headers={"Authorization": f"Bearer {admin_api_key}"},
+            timeout=timeout,
+        )
         if resp.status_code >= 400:
             logger.warning(
                 "Online ready callback failed for %s/%s with %d: %s",
@@ -191,6 +194,7 @@ async def _post_online_ready_callback(
 async def _flush_ready_trajectories(app: FastAPI) -> None:
     store: SessionStore = app.state.session_store
     config: DataProxyConfig = app.state.config
+    http_client: httpx.AsyncClient = app.state.http_client
 
     for ready_result in store.finalize_rewarded_trajectories():
         logger.info(
@@ -207,6 +211,7 @@ async def _flush_ready_trajectories(app: FastAPI) -> None:
             config.admin_api_key,
             notification,
             config.request_timeout,
+            http_client,
         )
         if delivered:
             store.mark_online_callback_delivered(
@@ -224,6 +229,8 @@ async def _ready_trajectory_loop(app: FastAPI) -> None:
 def create_app(config: DataProxyConfig) -> FastAPI:
     """Factory that creates the FastAPI app with lifespan-managed resources."""
 
+    shared_http_client = httpx.AsyncClient()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         logger.info(
@@ -234,8 +241,13 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         tok = TokenizerProxy(config.tokenizer_path)
         pause_state = PauseState()
 
-        # InfBridge + ArealOpenAI for /chat/completions
-        inf_bridge = _create_inf_bridge(config.backend_addr, pause_state, config)
+        # Share one client across backend calls and control-plane callbacks.
+        inf_bridge = _create_inf_bridge(
+            config.backend_addr,
+            pause_state,
+            config,
+            http_client=shared_http_client,
+        )
         areal_client = _create_areal_client(inf_bridge, tok)
 
         app.state.tokenizer = tok
@@ -243,6 +255,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         app.state.areal_client = areal_client
         app.state.pause_state = pause_state
         app.state.config = config
+        app.state.http_client = shared_http_client
         app.state.session_store = SessionStore(
             set_reward_finish_timeout=config.set_reward_finish_timeout,
         )
@@ -257,9 +270,11 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                 await ready_task
             except asyncio.CancelledError:
                 pass
+            await shared_http_client.aclose()
         logger.info("Data proxy shutting down")
 
     app = FastAPI(title="AReaL Data Proxy", lifespan=lifespan)
+    app.state.http_client = shared_http_client
 
     # =========================================================================
     # Health
@@ -500,7 +515,12 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         tok: TokenizerProxy = app.state.tokenizer
 
         # Recreate InfBridge + ArealOpenAI with new backend address
-        new_inf_bridge = _create_inf_bridge(new_addr, pause_state, app.state.config)
+        new_inf_bridge = _create_inf_bridge(
+            new_addr,
+            pause_state,
+            app.state.config,
+            http_client=app.state.http_client,
+        )
         new_areal_client = _create_areal_client(new_inf_bridge, tok)
 
         # Build updated config copy, then swap all three state fields.

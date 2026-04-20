@@ -67,6 +67,7 @@ class InfBridge:
         max_resubmit_retries: int = 20,
         resubmit_wait: float = 0.5,
         version: int = 0,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.backend = backend
         self.backend_addr = backend_addr.rstrip("/")
@@ -75,6 +76,7 @@ class InfBridge:
         self.max_resubmit_retries = max_resubmit_retries
         self.resubmit_wait = resubmit_wait
         self._version = version
+        self.http_client = http_client
 
     # -- version tracking ---------------------------------------------------
 
@@ -130,6 +132,16 @@ class InfBridge:
         """
         _timeout = timeout if timeout is not None else self.request_timeout
         url = f"{self.backend_addr}{http_req.endpoint}"
+        if self.http_client is not None:
+            if http_req.method == "GET":
+                resp = await self.http_client.get(url, timeout=_timeout)
+            else:
+                resp = await self.http_client.post(
+                    url, json=http_req.payload, timeout=_timeout
+                )
+            resp.raise_for_status()
+            return resp.json()
+
         async with httpx.AsyncClient(timeout=_timeout) as client:
             if http_req.method == "GET":
                 resp = await client.get(url)

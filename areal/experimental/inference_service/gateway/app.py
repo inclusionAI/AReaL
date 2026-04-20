@@ -50,7 +50,9 @@ def _router_error_response(exc: Exception) -> JSONResponse:
 def create_app(config: GatewayConfig) -> FastAPI:
     """Factory that creates the inference gateway FastAPI app."""
 
+    shared_http_client = httpx.AsyncClient()
     app = FastAPI(title="AReaL Inference Gateway")
+    app.state.http_client = shared_http_client
 
     # =========================================================================
     # Health
@@ -74,6 +76,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 "/chat/completions",
                 config.router_timeout,
                 admin_api_key=config.admin_api_key,
+                client=shared_http_client,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -96,13 +99,18 @@ def create_app(config: GatewayConfig) -> FastAPI:
                     body,
                     headers,
                     config.forward_timeout,
+                    client=shared_http_client,
                 ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
         resp = await forward_request(
-            f"{worker_addr}/chat/completions", body, headers, config.forward_timeout
+            f"{worker_addr}/chat/completions",
+            body,
+            headers,
+            config.forward_timeout,
+            client=shared_http_client,
         )
         return Response(
             content=resp.content,
@@ -125,6 +133,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 "/rl/start_session",
                 config.router_timeout,
                 admin_api_key=config.admin_api_key,
+                client=shared_http_client,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -137,6 +146,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             body,
             headers,
             config.forward_timeout,
+            client=shared_http_client,
         )
 
         # Intercept: if data proxy returned 201, extract session info and register
@@ -153,6 +163,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                         worker_addr,
                         config.router_timeout,
                         admin_api_key=config.admin_api_key,
+                        client=shared_http_client,
                     )
             except Exception as exc:
                 logger.error("Failed to register session in router: %s", exc)
@@ -183,6 +194,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 "/rl/set_reward",
                 config.router_timeout,
                 admin_api_key=config.admin_api_key,
+                client=shared_http_client,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -190,7 +202,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         resp = await forward_request(
-            f"{worker_addr}/rl/set_reward", body, headers, config.forward_timeout
+            f"{worker_addr}/rl/set_reward",
+            body,
+            headers,
+            config.forward_timeout,
+            client=shared_http_client,
         )
 
         return Response(
@@ -212,6 +228,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=shared_http_client,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -219,7 +236,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         results = await broadcast_to_workers(
-            [worker_addr], "/pause_generation", body, headers
+            [worker_addr],
+            "/pause_generation",
+            body,
+            headers,
+            client=shared_http_client,
         )
         return {"results": results}
 
@@ -236,6 +257,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=shared_http_client,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -243,7 +265,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         results = await broadcast_to_workers(
-            [worker_addr], "/continue_generation", body, headers
+            [worker_addr],
+            "/continue_generation",
+            body,
+            headers,
+            client=shared_http_client,
         )
         return {"results": results}
 
@@ -276,6 +302,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 timeout=config.router_timeout,
                 session_id=session_id,
                 admin_api_key=config.admin_api_key,
+                client=shared_http_client,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -286,6 +313,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             body,
             headers,
             config.forward_timeout,
+            client=shared_http_client,
         )
 
         # Always ask the router to clean up after successful export.
@@ -297,6 +325,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 session_id,
                 config.router_timeout,
+                client=shared_http_client,
             )
 
         return Response(
@@ -318,6 +347,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=shared_http_client,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -325,7 +355,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         resp = await forward_request(
-            f"{worker_addr}/set_version", body, headers, config.forward_timeout
+            f"{worker_addr}/set_version",
+            body,
+            headers,
+            config.forward_timeout,
+            client=shared_http_client,
         )
         return Response(
             content=resp.content,
@@ -346,16 +380,17 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=shared_http_client,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
 
         try:
-            async with httpx.AsyncClient(timeout=config.forward_timeout) as client:
-                resp = await client.get(
-                    f"{worker_addr}/get_version",
-                    headers=_forwarding_headers(dict(request.headers)),
-                )
+            resp = await shared_http_client.get(
+                f"{worker_addr}/get_version",
+                headers=_forwarding_headers(dict(request.headers)),
+                timeout=config.forward_timeout,
+            )
             return Response(
                 content=resp.content,
                 status_code=resp.status_code,
@@ -374,7 +409,10 @@ def create_app(config: GatewayConfig) -> FastAPI:
         require_admin_key(request, config.admin_api_key)
         try:
             result = await grant_capacity_in_router(
-                config.router_addr, config.admin_api_key, config.router_timeout
+                config.router_addr,
+                config.admin_api_key,
+                config.router_timeout,
+                client=shared_http_client,
             )
         except RouterUnreachableError as exc:
             return _router_error_response(exc)
@@ -399,4 +437,9 @@ def create_app(config: GatewayConfig) -> FastAPI:
         continue_generation,
         methods=["POST"],
     )
+
+    @app.on_event("shutdown")
+    async def _close_http_client() -> None:
+        await shared_http_client.aclose()
+
     return app

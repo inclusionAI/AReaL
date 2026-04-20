@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -30,6 +31,17 @@ class RouterKeyRejectedError(Exception):
         self.status_code = status_code
 
 
+@asynccontextmanager
+async def _client_scope(
+    client: httpx.AsyncClient | None,
+) -> AsyncGenerator[httpx.AsyncClient, None]:
+    if client is not None:
+        yield client
+        return
+    async with httpx.AsyncClient() as transient_client:
+        yield transient_client
+
+
 async def query_router(
     router_addr: str,
     api_key: str | None = None,
@@ -38,6 +50,7 @@ async def query_router(
     *,
     session_id: str | None = None,
     admin_api_key: str | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> str:
     """Ask the Router for a worker address.
 
@@ -70,11 +83,12 @@ async def query_router(
         headers = {}
         if admin_api_key is not None:
             headers["Authorization"] = f"Bearer {admin_api_key}"
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
+        async with _client_scope(client) as http_client:
+            resp = await http_client.post(
                 f"{router_addr}/route",
                 json=payload,
                 headers=headers,
+                timeout=timeout,
             )
         if resp.status_code == 404:
             data = resp.json()
@@ -105,6 +119,7 @@ async def register_session_in_router(
     worker_addr: str,
     timeout: float,
     admin_api_key: str | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> None:
     """Register a session→worker mapping in the Router.
 
@@ -115,8 +130,8 @@ async def register_session_in_router(
         headers = {}
         if admin_api_key is not None:
             headers["Authorization"] = f"Bearer {admin_api_key}"
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
+        async with _client_scope(client) as http_client:
+            resp = await http_client.post(
                 f"{router_addr}/register_session",
                 json={
                     "session_api_key": session_api_key,
@@ -124,6 +139,7 @@ async def register_session_in_router(
                     "worker_addr": worker_addr,
                 },
                 headers=headers,
+                timeout=timeout,
             )
         resp.raise_for_status()
     except Exception as exc:
@@ -136,6 +152,7 @@ async def revoke_session_in_router(
     admin_api_key: str,
     session_id: str,
     timeout: float,
+    client: httpx.AsyncClient | None = None,
 ) -> None:
     """Remove a session from the Router's session registry.
 
@@ -145,11 +162,12 @@ async def revoke_session_in_router(
     Best-effort: logs errors but never raises.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
+        async with _client_scope(client) as http_client:
+            resp = await http_client.post(
                 f"{router_addr}/remove_session",
                 json={"session_id": session_id},
                 headers={"Authorization": f"Bearer {admin_api_key}"},
+                timeout=timeout,
             )
         if resp.status_code != 200:
             logger.warning(
@@ -163,6 +181,7 @@ async def grant_capacity_in_router(
     router_addr: str,
     admin_api_key: str,
     timeout: float,
+    client: httpx.AsyncClient | None = None,
 ) -> dict:
     """Forward a grant_capacity request to the Router.
 
@@ -170,10 +189,11 @@ async def grant_capacity_in_router(
     Returns the JSON response body from the router.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
+        async with _client_scope(client) as http_client:
+            resp = await http_client.post(
                 f"{router_addr}/grant_capacity",
                 headers={"Authorization": f"Bearer {admin_api_key}"},
+                timeout=timeout,
             )
         resp.raise_for_status()
         return resp.json()
@@ -191,6 +211,7 @@ async def release_capacity_in_router(
     router_addr: str,
     admin_api_key: str,
     timeout: float,
+    client: httpx.AsyncClient | None = None,
 ) -> None:
     """Return one capacity permit to the Router.
 
@@ -199,10 +220,11 @@ async def release_capacity_in_router(
     already handling a failure path.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
+        async with _client_scope(client) as http_client:
+            resp = await http_client.post(
                 f"{router_addr}/release_capacity",
                 headers={"Authorization": f"Bearer {admin_api_key}"},
+                timeout=timeout,
             )
         if resp.status_code != 200:
             logger.warning(
@@ -216,16 +238,18 @@ async def get_all_worker_addrs(
     router_addr: str,
     admin_api_key: str,
     timeout: float,
+    client: httpx.AsyncClient | None = None,
 ) -> list[str]:
     """Fetch all worker addresses from the Router (for broadcast).
 
     GET ``{router_addr}/workers`` with admin key auth.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(
+        async with _client_scope(client) as http_client:
+            resp = await http_client.get(
                 f"{router_addr}/workers",
                 headers={"Authorization": f"Bearer {admin_api_key}"},
+                timeout=timeout,
             )
         resp.raise_for_status()
         data = resp.json()
@@ -239,6 +263,7 @@ async def resolve_worker_addr(
     admin_api_key: str,
     worker_id: str,
     timeout: float,
+    client: httpx.AsyncClient | None = None,
 ) -> str:
     """Resolve a worker_id to its address via the Router.
 
@@ -252,10 +277,11 @@ async def resolve_worker_addr(
         Router connection failed.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(
+        async with _client_scope(client) as http_client:
+            resp = await http_client.get(
                 f"{router_addr}/resolve_worker/{worker_id}",
                 headers={"Authorization": f"Bearer {admin_api_key}"},
+                timeout=timeout,
             )
         if resp.status_code == 404:
             data = resp.json()
@@ -291,6 +317,7 @@ async def forward_sse_stream(
     body: bytes,
     headers: dict[str, str],
     timeout: float | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> AsyncGenerator[bytes, None]:
     """True SSE streaming proxy — yields bytes as they arrive from upstream.
 
@@ -305,9 +332,13 @@ async def forward_sse_stream(
 
     fwd_headers = _forwarding_headers(headers)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            async with client.stream(
-                "POST", upstream_url, content=body, headers=fwd_headers
+        async with _client_scope(client) as http_client:
+            async with http_client.stream(
+                "POST",
+                upstream_url,
+                content=body,
+                headers=fwd_headers,
+                timeout=httpx.Timeout(timeout),
             ) as resp:
                 if resp.status_code != 200:
                     # Upstream returned a non-200 status — read body and emit
@@ -335,11 +366,17 @@ async def forward_request(
     body: bytes,
     headers: dict[str, str],
     timeout: float = 120.0,
+    client: httpx.AsyncClient | None = None,
 ) -> httpx.Response:
     """Forward a non-streaming request to upstream, return full response."""
     fwd_headers = _forwarding_headers(headers)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(upstream_url, content=body, headers=fwd_headers)
+    async with _client_scope(client) as http_client:
+        resp = await http_client.post(
+            upstream_url,
+            content=body,
+            headers=fwd_headers,
+            timeout=timeout,
+        )
     return resp
 
 
@@ -349,6 +386,7 @@ async def broadcast_to_workers(
     body: bytes,
     headers: dict[str, str],
     timeout: float = 10.0,
+    client: httpx.AsyncClient | None = None,
 ) -> list[dict[str, Any]]:
     """Broadcast a request to all workers (best-effort).
 
@@ -358,28 +396,29 @@ async def broadcast_to_workers(
 
     Failed workers get ``ok=False`` with an ``error`` field.
     """
+    async with _client_scope(client) as http_client:
 
-    async def _call(addr: str) -> dict[str, Any]:
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
+        async def _call(addr: str) -> dict[str, Any]:
+            try:
+                resp = await http_client.post(
                     f"{addr}{path}",
                     content=body,
                     headers=_forwarding_headers(headers),
+                    timeout=timeout,
                 )
-            return {
-                "worker_addr": addr,
-                "status": resp.status_code,
-                "ok": resp.status_code < 400,
-            }
-        except Exception as exc:
-            return {
-                "worker_addr": addr,
-                "status": 502,
-                "ok": False,
-                "error": str(exc),
-            }
+                return {
+                    "worker_addr": addr,
+                    "status": resp.status_code,
+                    "ok": resp.status_code < 400,
+                }
+            except Exception as exc:
+                return {
+                    "worker_addr": addr,
+                    "status": 502,
+                    "ok": False,
+                    "error": str(exc),
+                }
 
-    tasks = [_call(addr) for addr in worker_addrs]
-    results = await asyncio.gather(*tasks)
+        tasks = [_call(addr) for addr in worker_addrs]
+        results = await asyncio.gather(*tasks)
     return list(results)

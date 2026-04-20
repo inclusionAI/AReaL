@@ -99,6 +99,7 @@ def create_app(config: RouterConfig) -> FastAPI:
     session_registry = SessionRegistry()
     capacity_manager = CapacityManager()
     strategy = get_strategy(config.routing_strategy)
+    shared_http_client = httpx.AsyncClient()
 
     async def _poll_workers() -> None:
         """Background task: periodically poll worker /health endpoints."""
@@ -106,13 +107,13 @@ def create_app(config: RouterConfig) -> FastAPI:
             workers = await worker_registry.get_all_workers()
             for w in workers:
                 try:
-                    async with httpx.AsyncClient(
-                        timeout=config.worker_health_timeout
-                    ) as client:
-                        resp = await client.get(f"{w.worker_addr}/health")
-                        await worker_registry.update_health(
-                            w.worker_addr, resp.status_code == 200
-                        )
+                    resp = await shared_http_client.get(
+                        f"{w.worker_addr}/health",
+                        timeout=config.worker_health_timeout,
+                    )
+                    await worker_registry.update_health(
+                        w.worker_addr, resp.status_code == 200
+                    )
                 except Exception:
                     await worker_registry.update_health(w.worker_addr, False)
             await asyncio.sleep(config.poll_interval)
@@ -129,12 +130,14 @@ def create_app(config: RouterConfig) -> FastAPI:
         app.state.session_registry = session_registry
         app.state.capacity_manager = capacity_manager
         app.state.strategy = strategy
+        app.state.http_client = shared_http_client
         yield
         poll_task.cancel()
         try:
             await poll_task
         except asyncio.CancelledError:
             pass
+        await shared_http_client.aclose()
         logger.info("Router shutting down")
 
     app = FastAPI(title="AReaL Router", lifespan=lifespan)
@@ -144,6 +147,7 @@ def create_app(config: RouterConfig) -> FastAPI:
     app.state.session_registry = session_registry
     app.state.capacity_manager = capacity_manager
     app.state.strategy = strategy
+    app.state.http_client = shared_http_client
 
     # =========================================================================
     # Health
