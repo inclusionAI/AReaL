@@ -1071,11 +1071,11 @@ class TestTwoStageRejectionSampling:
         )
 
         mask_off, w_off = apply_rejection_sampling(
-            config=cfg_two_stage_off, loss_mask.clone(), ratios.clone(),
+            cfg_two_stage_off, loss_mask.clone(), ratios.clone(),
             log_probs, old_log_probs,
         )
         mask_orig, w_orig = apply_rejection_sampling(
-            config=cfg_original, loss_mask.clone(), ratios.clone(),
+            cfg_original, loss_mask.clone(), ratios.clone(),
             log_probs, old_log_probs,
         )
 
