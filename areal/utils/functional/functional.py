@@ -250,6 +250,7 @@ def apply_rejection_sampling(
     behave_imp_weight = torch.exp(log_ratio)
     # Save original weight before any clamping, to compute clamped fraction later.
     original_weight = behave_imp_weight
+    per_token_ratio = behave_imp_weight.clone()
 
     # Step 4: Aggregate and filter
     #
@@ -346,8 +347,7 @@ def apply_rejection_sampling(
             if config.token_action is not None:
                 # behave_imp_weight holds per-token ratios.
                 # Shape: [total_tokens] in 1D packed format.
-                # token_ratio = behave_imp_weight
-                token_ratio = torch.exp(log_ratio) 
+                token_ratio = per_token_ratio
                 if config.token_action == "mask":
                     token_oor = token_ratio > config.upper
                     if config.lower is not None:
@@ -414,8 +414,7 @@ def apply_rejection_sampling(
             if config.token_action is not None:
                 # behave_imp_weight holds per-token ratios π_prox / π_behave.
                 # Shape: [batch, seq_len] in 2D padded format.
-                # token_ratio = behave_imp_weight
-                token_ratio = torch.exp(log_ratio) 
+                token_ratio = per_token_ratio 
                 
                 if config.token_action == "mask":
                     # Token-MIS: zero out tokens where the per-token ratio exceeds
