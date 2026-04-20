@@ -27,8 +27,11 @@ from areal.experimental.inference_service.gateway.streaming import (
     forward_request,
     forward_sse_stream,
     grant_capacity_in_router,
+    list_models_from_router,
     query_router,
+    register_model_in_router,
     register_session_in_router,
+    remove_model_from_router,
     resolve_worker_addr,
     revoke_session_in_router,
 )
@@ -67,6 +70,18 @@ def create_app(config: GatewayConfig) -> FastAPI:
     @app.post("/chat/completions")
     async def chat_completions(request: Request):
         token = extract_bearer_token(request)
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+
+        model_name = None
+        is_streaming = False
+        try:
+            body_json = json.loads(body)
+            model_name = body_json.get("model")
+            is_streaming = body_json.get("stream", False) or False
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
         try:
             worker_addr = await query_router(
                 config.router_addr,
@@ -74,20 +89,10 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 "/chat/completions",
                 config.router_timeout,
                 admin_api_key=config.admin_api_key,
+                model=model_name,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
-
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
-
-        # Detect streaming from request body
-        is_streaming = False
-        try:
-            body_json = json.loads(body)
-            is_streaming = body_json.get("stream", False) or False
-        except (json.JSONDecodeError, AttributeError):
-            pass
 
         if is_streaming:
             return StreamingResponse(
@@ -109,6 +114,72 @@ def create_app(config: GatewayConfig) -> FastAPI:
             status_code=resp.status_code,
             media_type=resp.headers.get("content-type"),
         )
+
+    @app.post("/register_model")
+    async def register_model(request: Request):
+        require_admin_key(request, config.admin_api_key)
+        body = await request.json()
+        model = body.get("model")
+        url = body.get("url", "")
+        api_key = body.get("api_key")
+        data_proxy_addrs = body.get("data_proxy_addrs", [])
+        if not model:
+            return JSONResponse({"error": "model is required"}, status_code=400)
+        try:
+            result = await register_model_in_router(
+                config.router_addr,
+                model,
+                url,
+                api_key,
+                data_proxy_addrs,
+                config.admin_api_key,
+                config.router_timeout,
+            )
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
+            return _router_error_response(exc)
+
+        resolved_addrs = result.get("data_proxy_addrs", data_proxy_addrs)
+        headers = _forwarding_headers(dict(request.headers))
+
+        for addr in resolved_addrs:
+            resp = await forward_request(
+                f"{addr}/register_model",
+                json.dumps(
+                    {
+                        "name": model,
+                        "url": url,
+                        "model": model,
+                        "api_key": api_key,
+                    }
+                ).encode(),
+                headers,
+                config.forward_timeout,
+            )
+            if resp.status_code != 200:
+                await remove_model_from_router(
+                    config.router_addr,
+                    model,
+                    config.admin_api_key,
+                    config.router_timeout,
+                )
+                return JSONResponse(
+                    {"error": f"Data proxy registration failed: {resp.text}"},
+                    status_code=502,
+                )
+        return result
+
+    @app.get("/models")
+    async def list_models(request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            names = await list_models_from_router(
+                config.router_addr,
+                config.admin_api_key,
+                config.router_timeout,
+            )
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
+            return _router_error_response(exc)
+        return {"models": names}
 
     # =========================================================================
     # POST /rl/start_session — admin key ONLY, intercept response
@@ -176,6 +247,16 @@ def create_app(config: GatewayConfig) -> FastAPI:
     @app.post("/rl/set_reward")
     async def set_reward(request: Request):
         token = extract_bearer_token(request)
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+
+        model = None
+        try:
+            body_json = json.loads(body)
+            model = body_json.get("model")
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
         try:
             worker_addr = await query_router(
                 config.router_addr,
@@ -183,16 +264,14 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 "/rl/set_reward",
                 config.router_timeout,
                 admin_api_key=config.admin_api_key,
+                model=model,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
 
-        body = await request.body()
-        headers = _forwarding_headers(dict(request.headers))
         resp = await forward_request(
             f"{worker_addr}/rl/set_reward", body, headers, config.forward_timeout
         )
-
         return Response(
             content=resp.content,
             status_code=resp.status_code,
@@ -248,24 +327,26 @@ def create_app(config: GatewayConfig) -> FastAPI:
         return {"results": results}
 
     # =========================================================================
-    # POST /export_trajectories — admin key ONLY, route by session_id
+    # POST /export_trajectories — admin key ONLY, route by session_id or model field
     # =========================================================================
 
     @app.post("/export_trajectories")
     async def export_trajectories(request: Request):
         require_admin_key(request, config.admin_api_key)
-
         body = await request.body()
 
-        # Parse body to extract session_id for routing
         try:
             body_json = json.loads(body)
-            session_id = body_json.get("session_id")
         except (json.JSONDecodeError, AttributeError):
-            return JSONResponse(
-                {"error": "Invalid JSON body or missing session_id"},
-                status_code=400,
-            )
+            return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+        model = body_json.get("model")
+        session_id = body_json.get("session_id")
+
+        if model and not session_id:
+            session_id = model
+            body_json["session_id"] = session_id
+            body = json.dumps(body_json).encode()
 
         if not session_id:
             return JSONResponse({"error": "session_id is required"}, status_code=400)
@@ -276,6 +357,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 timeout=config.router_timeout,
                 session_id=session_id,
                 admin_api_key=config.admin_api_key,
+                model=model,
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -288,9 +370,6 @@ def create_app(config: GatewayConfig) -> FastAPI:
             config.forward_timeout,
         )
 
-        # Always ask the router to clean up after successful export.
-        # The router itself distinguishes offline one-shot sessions from
-        # persistent online sessions and will keep online bindings intact.
         if resp.status_code == 200:
             await revoke_session_in_router(
                 config.router_addr,
@@ -399,4 +478,19 @@ def create_app(config: GatewayConfig) -> FastAPI:
         continue_generation,
         methods=["POST"],
     )
+
+    # =========================================================================
+    # OpenAI / OpenRouter compatibility aliases — /v1/* prefixed routes
+    # =========================================================================
+    app.add_api_route(
+        "/v1/chat/completions",
+        chat_completions,
+        methods=["POST"],
+    )
+    app.add_api_route(
+        "/v1/models",
+        list_models,
+        methods=["GET"],
+    )
+
     return app

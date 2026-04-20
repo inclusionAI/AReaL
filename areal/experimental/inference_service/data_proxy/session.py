@@ -7,16 +7,15 @@ from __future__ import annotations
 import secrets
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel
 
 from areal.experimental.openai.cache import InteractionCache
-
-if TYPE_CHECKING:
-    from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.experimental.openai.types import InteractionWithTokenLogpReward
 
 # Session timeout for cleanup (1 hour)
 SESSION_TIMEOUT_SECONDS = 3600
@@ -46,6 +45,7 @@ class SetRewardRequest(BaseModel):
 
     interaction_id: str | None = None
     reward: float
+    model: str | None = None
 
 
 class ExportTrajectoriesRequest(BaseModel):
@@ -61,7 +61,7 @@ class ExportTrajectoriesRequest(BaseModel):
 class ExportTrajectoriesResponse(BaseModel):
     """Response containing serialized interactions."""
 
-    interactions: dict[str, Any]
+    interactions: Any
 
 
 @dataclass(frozen=True)
@@ -110,7 +110,11 @@ class SessionData:
       via repeated ``set_reward`` → ``export_trajectory`` calls.
     """
 
-    def __init__(self, session_id: str, set_reward_finish_timeout: float = 0.0):
+    def __init__(
+        self,
+        session_id: str,
+        set_reward_finish_timeout: float = 0.0,
+    ):
         self.session_id = session_id
         self._set_reward_finish_timeout = set_reward_finish_timeout
         self._last_access_time = time.time()
@@ -179,7 +183,7 @@ class SessionData:
             interaction_id=resolved_interaction_id,
             completions=completions,
             created_at=now,
-            needs_online_callback=self.session_id == "__hitl__",
+            needs_online_callback=True,
         )
         self._ready_trajectories[trajectory_id] = ready
         self._active_completions = InteractionCache()
@@ -272,6 +276,17 @@ class SessionData:
                 return True
             ready.callback_delivered = True
             return True
+
+    def add_string_interaction(self, messages: list[dict], response: str) -> str:
+        interaction_id = str(uuid.uuid4())
+        interaction = InteractionWithTokenLogpReward(
+            messages=messages,
+            output_message_list=[{"role": "assistant", "content": response}],
+        )
+        interaction._interaction_id = interaction_id
+        self._active_completions[interaction_id] = interaction
+        self.update_last_access()
+        return interaction_id
 
     def export_trajectory(
         self,

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from dataclasses import asdict
 from pathlib import Path
-
-import torch
 
 
 def main(args: list[str]) -> None:
@@ -14,7 +13,12 @@ def main(args: list[str]) -> None:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-    from areal.api.alloc_mode import ModelAllocation
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--api-url", default=None)
+    parser.add_argument("--provider-api-key", default=None)
+    parser.add_argument("--model", default=None)
+    ext_args, remaining = parser.parse_known_args(args)
+
     from areal.api.cli_args import PPOConfig, load_expr_config
     from areal.experimental.inference_service.controller.config import (
         GatewayControllerConfig,
@@ -22,13 +26,12 @@ def main(args: list[str]) -> None:
     from areal.experimental.inference_service.controller.controller import (
         GatewayInferenceController,
     )
-    from areal.infra.rpc.rtensor import RTensor
     from areal.utils import logging
     from areal.utils.environ import is_single_controller
 
     logger = logging.getLogger("InferenceServiceOnlineTrain")
 
-    config, _ = load_expr_config(args, PPOConfig)
+    config, _ = load_expr_config(remaining, PPOConfig)
     openai_cfg = config.rollout.openai
     if openai_cfg is None or openai_cfg.mode != "online":
         raise ValueError(
@@ -49,6 +52,8 @@ def main(args: list[str]) -> None:
     else:
         raise NotImplementedError(f"Unknown scheduler type: {sched_type}")
 
+    is_external = ext_args.api_url is not None
+
     ctrl_config = GatewayControllerConfig(
         tokenizer_path=config.tokenizer_path,
         model_path=config.actor.path,
@@ -65,15 +70,26 @@ def main(args: list[str]) -> None:
         scheduling_spec=config.rollout.scheduling_spec,
         setup_timeout=config.rollout.setup_timeout,
         request_timeout=config.rollout.request_timeout,
-        openai=openai_cfg,
+        admin_api_key=openai_cfg.admin_api_key,
+        turn_discount=openai_cfg.turn_discount,
+        export_style=openai_cfg.export_style,
     )
-    rollout_alloc = ModelAllocation.from_str(config.rollout.backend, name="rollout")
-    if rollout_alloc.backend == "sglang":
-        server_args = asdict(config.sglang)
-    elif rollout_alloc.backend == "vllm":
-        server_args = asdict(config.vllm)
+    if ext_args.model:
+        ctrl_config.model = ext_args.model
+    if is_external:
+        ctrl_config.api_url = ext_args.api_url
+        ctrl_config.provider_api_key = ext_args.provider_api_key
+        server_args = None
     else:
-        raise ValueError(f"Unsupported rollout backend: {rollout_alloc.backend}")
+        from areal.api.alloc_mode import ModelAllocation
+
+        rollout_alloc = ModelAllocation.from_str(config.rollout.backend, name="rollout")
+        if rollout_alloc.backend == "sglang":
+            server_args = asdict(config.sglang)
+        elif rollout_alloc.backend == "vllm":
+            server_args = asdict(config.vllm)
+        else:
+            raise ValueError(f"Unsupported rollout backend: {rollout_alloc.backend}")
 
     ctrl = GatewayInferenceController(config=ctrl_config, scheduler=scheduler)
     try:
@@ -93,15 +109,37 @@ def main(args: list[str]) -> None:
             workflow=None,
         )
 
-        # Localize RTensor references into real torch tensors so we
-        # can compute aggregate reward statistics.
-        localized_rewards = [RTensor.localize(traj)["rewards"] for traj in result]
-        all_rewards = torch.cat(localized_rewards, dim=0)
-        logger.info(
-            "Rollout complete (%d trajectories), avg_reward=%.4f",
-            len(result),
-            all_rewards.mean().item(),
-        )
+        if is_external:
+            logger.info("Rollout complete (%d trajectories)", len(result))
+            for i, traj in enumerate(result):
+                for j, interaction in enumerate(traj.get("interactions", [])):
+                    request_msgs = interaction.get("request", [])
+                    request = (
+                        request_msgs[-1].get("content", "") if request_msgs else ""
+                    )
+                    response = interaction.get("response", "")
+                    logger.info(
+                        "Trajectory %d, interaction %d:\n"
+                        "  request:  %s\n  response: %s",
+                        i,
+                        j,
+                        request[:300],
+                        response[:300],
+                    )
+        else:
+            import torch
+
+            from areal.infra.rpc.rtensor import RTensor
+
+            # Localize RTensor references into real torch tensors so we
+            # can compute aggregate reward statistics.
+            localized_rewards = [RTensor.localize(traj)["rewards"] for traj in result]
+            all_rewards = torch.cat(localized_rewards, dim=0)
+            logger.info(
+                "Rollout complete (%d trajectories), avg_reward=%.4f",
+                len(result),
+                all_rewards.mean().item(),
+            )
     finally:
         ctrl.destroy()
         scheduler.delete_workers(None)

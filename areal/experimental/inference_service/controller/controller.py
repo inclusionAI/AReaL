@@ -82,30 +82,45 @@ class GatewayInferenceController:
         config: GatewayControllerConfig,
         scheduler: Scheduler,
     ) -> None:
-        from areal.api.alloc_mode import ModelAllocation
-
+        if config.admin_api_key is None:
+            raise ValueError(
+                "GatewayControllerConfig.admin_api_key must be set (not None)"
+            )
+        if not config.model:
+            raise ValueError("GatewayControllerConfig.model must not be empty")
         self.config = config
         self.scheduler = scheduler
 
-        # Parse allocation from config.backend
-        self.rollout_alloc = ModelAllocation.from_str(config.backend)
+        if config.api_url is not None:
+            self.rollout_alloc = None
+        else:
+            from areal.api.alloc_mode import ModelAllocation
 
-        # Multi-node: derive nnodes_per_instance from n_gpus_per_node
-        total_gpus = (
-            self.rollout_alloc.parallel.tp_size * self.rollout_alloc.parallel.pp_size
-        )
-        n_gpus_per_node = config.n_gpus_per_node
-        if n_gpus_per_node is None:
+            self.rollout_alloc = ModelAllocation.from_str(config.backend)
+
+        # Multi-node: derive nnodes_per_instance from n_gpus_per_node.
+        # External mode has no local inference servers, so always single-node.
+        if self.rollout_alloc is None:
             nnodes_per_instance = 1
         else:
-            if n_gpus_per_node < 1:
-                raise ValueError(f"n_gpus_per_node must be >= 1, got {n_gpus_per_node}")
-            if total_gpus % n_gpus_per_node != 0:
-                raise ValueError(
-                    f"tp_size * pp_size ({total_gpus}) must be divisible "
-                    f"by n_gpus_per_node ({n_gpus_per_node})"
-                )
-            nnodes_per_instance = total_gpus // n_gpus_per_node
+            total_gpus = (
+                self.rollout_alloc.parallel.tp_size
+                * self.rollout_alloc.parallel.pp_size
+            )
+            n_gpus_per_node = config.n_gpus_per_node
+            if n_gpus_per_node is None:
+                nnodes_per_instance = 1
+            else:
+                if n_gpus_per_node < 1:
+                    raise ValueError(
+                        f"n_gpus_per_node must be >= 1, got {n_gpus_per_node}"
+                    )
+                if total_gpus % n_gpus_per_node != 0:
+                    raise ValueError(
+                        f"tp_size * pp_size ({total_gpus}) must be divisible "
+                        f"by n_gpus_per_node ({n_gpus_per_node})"
+                    )
+                nnodes_per_instance = total_gpus // n_gpus_per_node
         self._nnodes_per_instance = nnodes_per_instance
 
         # Worker management
@@ -209,6 +224,19 @@ class GatewayInferenceController:
 
         logger.info("GatewayInferenceController initialized (role=%s)", role)
 
+        if self.config.model:
+            self.register_model(
+                model=self.config.model,
+                url=self.config.api_url or "",
+                api_key=self.config.provider_api_key,
+            )
+        if self.external_mode:
+            logger.info(
+                "External model mode: url=%s, model=%s",
+                self.config.api_url,
+                self.config.model,
+            )
+
     async def _async_initialize(
         self,
         server_args: dict[str, Any] | None,
@@ -226,6 +254,8 @@ class GatewayInferenceController:
         * **server_infos is not None** — SGLang servers already exist so
           we only fork data proxy on every worker; fork router + gateway
           on worker 0.
+        * **external_mode** — skip inference servers entirely; data proxies
+          start with an empty ``--backend-addr``.
         """
         from dataclasses import asdict
 
@@ -234,35 +264,49 @@ class GatewayInferenceController:
         from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
         from areal.api.scheduler_api import Job
 
-        alloc = self.rollout_alloc
-        dp_size = alloc.parallel.dp_size
         cfg = self.config
-        admin_api_key = self.config.openai.admin_api_key
+        admin_api_key = self.config.admin_api_key
 
-        inf_backend = alloc.backend
+        if self.external_mode:
+            dp_size = 1
+            inf_backend = None
+        else:
+            alloc = self.rollout_alloc
+            dp_size = alloc.parallel.dp_size
+            inf_backend = alloc.backend
 
         # ==================================================================
         # Step 0: Create RPCGuard workers (dp_size × nnodes_per_instance)
         # ==================================================================
-        inf_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
-        instance_size = alloc.parallel.tp_size * alloc.parallel.pp_size
-        nnodes_per_instance = self._nnodes_per_instance
-        gpus_per_worker = instance_size // nnodes_per_instance
-
-        if server_infos is not None:
-            # Pre-existing inference servers — only need dp_size workers
-            # for CPU services (data proxy, router, gateway), no GPUs.
+        if self.external_mode:
+            inf_spec = SchedulingSpec(
+                task_type="worker",
+                port_count=2,
+                gpu=0,
+                mem=8,
+                cmd="python -m areal.experimental.inference_service.guard",
+            )
             total_workers = dp_size
-            inf_spec.gpu = 0
         else:
-            total_workers = dp_size * nnodes_per_instance
-            inf_spec.cpu *= gpus_per_worker
-            inf_spec.mem *= gpus_per_worker
-            if inf_spec.gpu > 0:
-                inf_spec.gpu = gpus_per_worker
+            inf_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
+            instance_size = alloc.parallel.tp_size * alloc.parallel.pp_size
+            nnodes_per_instance = self._nnodes_per_instance
+            gpus_per_worker = instance_size // nnodes_per_instance
 
-        # Override cmd to launch RPCGuard instead of RPC server
-        inf_spec.cmd = "python -m areal.experimental.inference_service.guard"
+            if server_infos is not None:
+                # Pre-existing inference servers — only need dp_size workers
+                # for CPU services (data proxy, router, gateway), no GPUs.
+                total_workers = dp_size
+                inf_spec.gpu = 0
+            else:
+                total_workers = dp_size * nnodes_per_instance
+                inf_spec.cpu *= gpus_per_worker
+                inf_spec.mem *= gpus_per_worker
+                if inf_spec.gpu > 0:
+                    inf_spec.gpu = gpus_per_worker
+
+            # Override cmd to launch RPCGuard instead of RPC server
+            inf_spec.cmd = "python -m areal.experimental.inference_service.guard"
 
         inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
         inf_job = Job(
@@ -284,9 +328,11 @@ class GatewayInferenceController:
         logger.info("RPCGuard workers ready: %s", [w.id for w in inf_workers])
 
         # ==================================================================
-        # Step 1: Launch inference servers (skip when pre-existing)
+        # Step 1: Launch inference servers (skip in external mode or when pre-existing)
         # ==================================================================
-        if server_infos is not None:
+        if self.external_mode:
+            logger.info("External mode — skipping inference server launch")
+        elif server_infos is not None:
             # Pre-existing servers — just record their addresses
             self.server_infos = server_infos
             self._inf_addrs = [
@@ -536,22 +582,39 @@ class GatewayInferenceController:
             str(cfg.set_reward_finish_timeout),
             "--callback-server-addr",
             f"http://{self.callback_addr}",
+            "--tool-call-parser",
+            cfg.tool_call_parser,
+            "--reasoning-parser",
+            cfg.reasoning_parser,
+            "--chat-template-type",
+            cfg.chat_template_type,
         ]
+        if cfg.engine_max_tokens is not None:
+            data_proxy_base_cmd += [
+                "--engine-max-tokens",
+                str(cfg.engine_max_tokens),
+            ]
 
         for group_idx in range(dp_size):
-            head_worker = inf_workers[
-                group_idx
-                if server_infos is not None
-                else group_idx * nnodes_per_instance
-            ]
+            if self.external_mode:
+                head_worker = inf_workers[group_idx]
+            else:
+                head_worker = inf_workers[
+                    group_idx
+                    if server_infos is not None
+                    else group_idx * nnodes_per_instance
+                ]
             guard_addr = f"http://{format_hostport(head_worker.ip, int(head_worker.worker_ports[0]))}"
             # Each data proxy connects to its group's head inference server
-            data_proxy_cmd = data_proxy_base_cmd + [
-                "--backend-addr",
-                self._inf_addrs[group_idx],
-                "--backend-type",
-                inf_backend or "sglang",
-            ]
+            if self.external_mode:
+                data_proxy_cmd = data_proxy_base_cmd + ["--backend-addr", ""]
+            else:
+                data_proxy_cmd = data_proxy_base_cmd + [
+                    "--backend-addr",
+                    self._inf_addrs[group_idx],
+                    "--backend-type",
+                    inf_backend or "sglang",
+                ]
             data_proxy_host, data_proxy_port = self._fork_on_guard(
                 guard_addr=guard_addr,
                 role="data-proxy",
@@ -619,7 +682,7 @@ class GatewayInferenceController:
             resp = requests.post(
                 f"{self._router_addr}/register",
                 json={"worker_addr": data_proxy_addr},
-                headers={"Authorization": f"Bearer {self.config.openai.admin_api_key}"},
+                headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
                 timeout=5,
             )
             resp.raise_for_status()
@@ -631,6 +694,34 @@ class GatewayInferenceController:
                 data_proxy_addr,
                 worker_id,
             )
+
+    def register_model(
+        self,
+        model: str,
+        url: str = "",
+        api_key: str | None = None,
+        data_proxy_addrs: list[str] | None = None,
+    ) -> None:
+        import requests
+
+        if data_proxy_addrs is None:
+            data_proxy_addrs = self._data_proxy_addrs
+        resp = requests.post(
+            f"{self._gateway_addr}/register_model",
+            json={
+                "model": model,
+                "url": url,
+                "api_key": api_key,
+                "data_proxy_addrs": data_proxy_addrs,
+            },
+            headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+            timeout=self.config.request_timeout,
+        )
+        resp.raise_for_status()
+
+    @property
+    def external_mode(self) -> bool:
+        return self.config.api_url is not None
 
     def _start_online_callback_server(self) -> None:
         """Start callback server used by the router to deliver ready trajectories."""
@@ -647,7 +738,7 @@ class GatewayInferenceController:
         @app.route("/callback/online_ready", methods=["POST"])
         def online_ready():
             if request.headers.get("Authorization") != (
-                f"Bearer {self.config.openai.admin_api_key}"
+                f"Bearer {self.config.admin_api_key}"
             ):
                 return jsonify({"error": "Invalid admin API key"}), 403
             payload = request.get_json() or {}
@@ -1089,10 +1180,11 @@ class GatewayInferenceController:
         if extra_body and isinstance(extra_body, dict):
             body.update(extra_body)
 
+        body["model"] = self.config.model
         api_key = (
             session_api_key
             if session_api_key is not None
-            else self.config.openai.admin_api_key
+            else self.config.admin_api_key
         )
         url = f"{self._gateway_addr}/chat/completions"
         headers = {
@@ -1261,7 +1353,7 @@ class GatewayInferenceController:
                 "Gateway address is unavailable; initialize the controller first"
             )
 
-        openai_cfg = self.config.openai
+        openai_cfg = self.config
         admin_api_key = openai_cfg.admin_api_key
         turn_discount = openai_cfg.turn_discount
         export_style = openai_cfg.export_style
@@ -1300,6 +1392,19 @@ class GatewayInferenceController:
         from areal.api.workflow_api import RolloutWorkflow
         from areal.utils.dynamic_import import import_from_string
 
+        # External mode only supports online mode (workflow=None)
+        if self.external_mode and workflow is not None:
+            raise ValueError(
+                "External model mode only supports online mode (workflow=None). "
+                "Agent-based workflows are not supported with external models."
+            )
+
+        if self.external_mode and group_size > 1:
+            raise ValueError(
+                "External model mode requires group_size=1, "
+                f"got group_size={group_size}."
+            )
+
         # (a) None → online mode: create InferenceServiceWorkflow without agent
         if workflow is None:
             from areal.experimental.inference_service.controller.workflow import (
@@ -1312,7 +1417,7 @@ class GatewayInferenceController:
                 controller=self,
                 agent=None,
                 gateway_addr=self._gateway_addr,
-                admin_api_key=self.config.openai.admin_api_key,
+                admin_api_key=self.config.admin_api_key,
                 **online_kwargs,
             )
 
@@ -1473,7 +1578,7 @@ class GatewayInferenceController:
             resp = requests.post(
                 url,
                 json=payload,
-                headers={"Authorization": f"Bearer {self.config.openai.admin_api_key}"},
+                headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
                 timeout=self.config.request_timeout,
             )
             if resp.status_code >= 400:
@@ -1500,9 +1605,7 @@ class GatewayInferenceController:
                 resp = await client.post(
                     url,
                     json=payload,
-                    headers={
-                        "Authorization": f"Bearer {self.config.openai.admin_api_key}"
-                    },
+                    headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
                 )
                 if resp.status_code >= 400:
                     raise RuntimeError(

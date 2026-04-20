@@ -31,6 +31,7 @@ def _make_controller(
     Does NOT call initialize() — internal fields are set directly.
     """
     cfg = GatewayControllerConfig(
+        admin_api_key="test-key",
         scheduling_spec=(SchedulingSpec(),),
     )
     scheduler = MagicMock()

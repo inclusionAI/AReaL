@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from areal.experimental.inference_service.router.config import RouterConfig
 from areal.experimental.inference_service.router.state import (
     CapacityManager,
+    ModelRegistry,
     SessionRegistry,
     WorkerRegistry,
 )
@@ -75,6 +76,7 @@ class RouteRequest(BaseModel):
     api_key: str | None = None
     path: str | None = None
     session_id: str | None = None
+    model: str | None = None
 
 
 class RegisterSessionRequest(BaseModel):
@@ -87,6 +89,17 @@ class RemoveSessionRequest(BaseModel):
     session_id: str
 
 
+class RegisterModelRequest(BaseModel):
+    model: str
+    url: str = ""
+    api_key: str | None = None
+    data_proxy_addrs: list[str] = []
+
+
+class RemoveModelRequest(BaseModel):
+    name: str
+
+
 # =============================================================================
 # App factory
 # =============================================================================
@@ -97,6 +110,7 @@ def create_app(config: RouterConfig) -> FastAPI:
 
     worker_registry = WorkerRegistry()
     session_registry = SessionRegistry()
+    model_registry = ModelRegistry()
     capacity_manager = CapacityManager()
     strategy = get_strategy(config.routing_strategy)
 
@@ -127,6 +141,7 @@ def create_app(config: RouterConfig) -> FastAPI:
         poll_task = asyncio.create_task(_poll_workers())
         app.state.worker_registry = worker_registry
         app.state.session_registry = session_registry
+        app.state.model_registry = model_registry
         app.state.capacity_manager = capacity_manager
         app.state.strategy = strategy
         yield
@@ -142,6 +157,7 @@ def create_app(config: RouterConfig) -> FastAPI:
     # Expose registries on app.state for tests that bypass lifespan
     app.state.worker_registry = worker_registry
     app.state.session_registry = session_registry
+    app.state.model_registry = model_registry
     app.state.capacity_manager = capacity_manager
     app.state.strategy = strategy
 
@@ -218,12 +234,57 @@ def create_app(config: RouterConfig) -> FastAPI:
     @app.post("/route")
     async def route(body: RouteRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
-        # 0. session_id lookup takes precedence
+
+        # Step A: resolve model → candidate worker addrs
+        model_addrs: list[str] | None = None
+        if body.model is not None:
+            info = await model_registry.get(body.model)
+            if info is not None:
+                model_addrs = info.data_proxy_addrs
+        if model_addrs is None:
+            first = await model_registry.first()
+            if first is not None:
+                model_addrs = first.data_proxy_addrs
+
+        def _filter_healthy(workers: list, addrs: list[str] | None) -> list:
+            if addrs is None:
+                return workers
+            addr_set = set(addrs)
+            return [w for w in workers if w.worker_addr in addr_set]
+
+        # Step B: session_id lookup
         if body.session_id is not None:
             worker = await session_registry.lookup_by_id(body.session_id)
-            if worker is None:
+            if worker is not None:
+                return {"worker_addr": worker}
+            if model_addrs is None:
                 raise HTTPException(status_code=404, detail="Session not found")
-            return {"worker_addr": worker}
+
+        # Step C: model-only routing (no api_key/session_id)
+        if body.api_key is None and model_addrs is not None:
+            healthy = await worker_registry.get_healthy_workers()
+            addr_set = set(model_addrs)
+            healthy = [w for w in healthy if w.worker_addr in addr_set]
+            if not healthy:
+                raise HTTPException(status_code=503, detail="No healthy workers")
+            worker = strategy.pick(healthy)
+            if worker is None:
+                raise HTTPException(status_code=503, detail="No healthy workers")
+            info = (
+                await model_registry.get(body.model)
+                if body.model
+                else await model_registry.first()
+            )
+            return {
+                "worker_addr": worker.worker_addr,
+                "url": info.url if info else "",
+                "api_key": info.api_key if info else None,
+            }
+
+        if body.api_key is None and body.model is not None and model_addrs is None:
+            raise HTTPException(
+                status_code=404, detail=f"Model '{body.model}' not found"
+            )
 
         if body.api_key is None:
             raise HTTPException(
@@ -231,10 +292,9 @@ def create_app(config: RouterConfig) -> FastAPI:
                 detail="Either 'api_key' or 'session_id' must be provided",
             )
 
-        # 1. Session key → pinned worker (batch sessions)
+        # Step C: Session key → pinned worker
         pinned = await session_registry.lookup_by_key(body.api_key)
         if pinned is not None:
-            # Check if pinned worker is healthy
             all_workers = await worker_registry.get_all_workers()
             worker_map = {w.worker_addr: w for w in all_workers}
             w = worker_map.get(pinned)
@@ -242,9 +302,10 @@ def create_app(config: RouterConfig) -> FastAPI:
                 raise HTTPException(status_code=503, detail="Pinned worker unhealthy")
             return {"worker_addr": pinned}
 
-        # 2. Admin key → HITL routing (sticky session)
+        # Step D: Admin key → pick from model addrs
         if hmac.compare_digest(body.api_key, config.admin_api_key):
             healthy = await worker_registry.get_healthy_workers()
+            healthy = _filter_healthy(healthy, model_addrs)
             if not healthy:
                 raise HTTPException(status_code=503, detail="No healthy workers")
             worker = strategy.pick(healthy)
@@ -257,7 +318,7 @@ def create_app(config: RouterConfig) -> FastAPI:
             )
             return {"worker_addr": worker.worker_addr}
 
-        # 3. Unknown key
+        # Step E: Unknown key
         raise HTTPException(status_code=404, detail="Unknown API key")
 
     # =========================================================================
@@ -330,6 +391,51 @@ def create_app(config: RouterConfig) -> FastAPI:
                 for w in all_workers
             ]
         }
+
+    @app.post("/register_model")
+    async def register_model(body: RegisterModelRequest, request: Request):
+        _require_admin_key(request, config.admin_api_key)
+        addrs = body.data_proxy_addrs
+        if not addrs:
+            healthy = await worker_registry.get_healthy_workers()
+            if not healthy:
+                raise HTTPException(status_code=503, detail="No healthy workers")
+            addrs = [w.worker_addr for w in healthy]
+        await model_registry.register(
+            body.model,
+            body.url,
+            body.api_key,
+            addrs,
+        )
+        logger.info(
+            "Model registered: model=%s url=%s data_proxy_addrs=%s",
+            body.model,
+            body.url or "(internal)",
+            addrs,
+        )
+        return {
+            "status": "ok",
+            "model": body.model,
+            "data_proxy_addrs": addrs,
+        }
+
+    @app.get("/models")
+    async def list_models(request: Request):
+        _require_admin_key(request, config.admin_api_key)
+        names = await model_registry.list_names()
+        return {"models": names}
+
+    @app.post("/remove_model")
+    async def remove_model(body: RemoveModelRequest, request: Request):
+        _require_admin_key(request, config.admin_api_key)
+        removed = await model_registry.remove(body.name)
+        if not removed:
+            raise HTTPException(
+                status_code=404,
+                detail=f"External model '{body.name}' not found",
+            )
+        logger.info("External model removed: name=%s", body.name)
+        return {"status": "ok", "name": body.name}
 
     # =========================================================================
     # Worker resolution by ID (admin key required)
