@@ -19,6 +19,7 @@ from areal.api.cli_args import MicroBatchSpec, NormConfig
 from areal.infra.platforms import current_platform
 from areal.utils import logging, seqpack
 from areal.utils.math import align
+from areal.utils.seqpack import get_allocate_fn
 
 logger = logging.getLogger("DataUtils")
 
@@ -445,8 +446,23 @@ def unpack_sequence(
 
 
 def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: list[int]) -> list[list[int]]:
+    """Allocate sequences into balanced micro-batches using the configured algorithm.
+
+    The packing algorithm is determined by ``mb_spec.packing_algorithm``:
+      - ``"ffd"`` (default): First Fit Decreasing — fast greedy heuristic.
+      - ``"kk"``: Karmarkar-Karp — produces more balanced partitions at a
+        slight computational cost.
+
+    Args:
+        mb_spec: MicroBatchSpec containing packing configuration.
+        lens: List of sequence lengths to allocate.
+
+    Returns:
+        List of lists of indices, one per micro-batch.
+    """
     assert mb_spec.max_tokens_per_mb is not None
-    group_indices = seqpack.ffd_allocate(
+    allocate_fn = get_allocate_fn(getattr(mb_spec, "packing_algorithm", "ffd"))
+    group_indices = allocate_fn(
         lens,
         mb_spec.max_tokens_per_mb,
         min_groups=mb_spec.n_mbs,
