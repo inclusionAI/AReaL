@@ -2364,55 +2364,64 @@ class MegatronEngine(TrainEngine):
         )
 
         # -------------------------------------------------------------------
-        # Explicit CUDA *default-stream* sync + cache cleanup BEFORE
-        # GPU->CPU copies.
+        # GPU → CPU copy on a *dedicated CUDA stream* that is insulated
+        # from NCCL broadcast dependencies.
         #
-        # We intentionally use current_stream().synchronize() instead of
-        # torch.cuda.synchronize() because the latter waits for ALL CUDA
-        # streams, including the NCCL stream used by
-        # _update_bucket_weights_from_distributed().  Those NCCL broadcasts
-        # run with async_op=True; handle.wait() guarantees CPU-side
-        # completion, but the GPU-side NCCL kernels may still be pending
-        # on the NCCL stream.  Meanwhile the inference side is still
-        # processing earlier XCCL buckets sequentially (~2.4s per bucket
-        # x 15 buckets ~ 36s total).  torch.cuda.synchronize() would
-        # block indefinitely waiting for those NCCL kernels to retire,
-        # but they cannot retire until the inference-side counterparts
-        # execute — a circular hang.
-        #
-        # The MTP tensors we serialize here come from _collect_param()'s
-        # dist.all_gather() which executes on the default stream, so
-        # syncing only the default stream is correct and sufficient.
+        # Recorded _mtp_data_ready_event on the default stream
+        # BEFORE any NCCL broadcasts started (in _update_weights_from_
+        # distributed).  Here we create a fresh stream that waits ONLY on
+        # that event, then do all .cpu() copies on the fresh stream.
+        # This stream has no NCCL dependencies, so its synchronize() is
+        # instantaneous once the MTP all_gather data is ready.
         # -------------------------------------------------------------------
         _t_sync = _time.time()
+
+        # Create a dedicated serialization stream free of NCCL deps
+        _ser_stream = torch.cuda.Stream()
+
+        _has_event = hasattr(self, "_mtp_data_ready_event") and self._mtp_data_ready_event is not None
+        if _has_event:
+            # Make ser_stream wait for MTP data (all_gather) but NOT NCCL broadcasts
+            _ser_stream.wait_event(self._mtp_data_ready_event)
+            self.logger.info(
+                "[MTPSerialize] Created serialization stream and synced with "
+                "_mtp_data_ready_event (pre-NCCL). "
+                f"(device={torch.cuda.current_device()}, "
+                f"default_stream={torch.cuda.current_stream()}, "
+                f"ser_stream={_ser_stream})"
+            )
+        else:
+            # Fallback: no event recorded (shouldn't happen, but be safe).
+            # Wait on the default stream which may include NCCL deps.
+            _ser_stream.wait_stream(torch.cuda.current_stream())
+            self.logger.warning(
+                "[MTPSerialize] _mtp_data_ready_event NOT found! "
+                "Falling back to wait_stream(current_stream) — "
+                "this may block on NCCL. "
+                f"(device={torch.cuda.current_device()})"
+            )
+
+        _ser_stream.synchronize()
         self.logger.info(
-            "[MTPSerialize] current_stream().synchronize() ... "
-            f"(device={torch.cuda.current_device()}, "
-            f"stream={torch.cuda.current_stream()})"
-        )
-        torch.cuda.current_stream().synchronize()
-        self.logger.info(
-            f"[MTPSerialize] current_stream().synchronize() done in "
+            f"[MTPSerialize] Serialization stream synced in "
             f"{_time.time() - _t_sync:.3f}s"
         )
 
-        # Reclaim unused cached memory.  gc.collect() first to release
-        # any Python-side tensor references, then empty_cache() to return
-        # the CUDA blocks to the allocator.  Note: empty_cache() may
-        # internally trigger a device-wide sync if the CUDA runtime deems
-        # it necessary, but in practice after current_stream sync + GC
-        # this is fast and non-blocking for NCCL streams.
+        # Reclaim Python-side references before GPU→CPU copies.
+        # We skip torch.cuda.empty_cache() here because it can trigger
+        # an implicit device-wide sync (cudaDeviceSynchronize) which
+        # would re-introduce the NCCL deadlock under near-OOM conditions.
+        # Instead, gc.collect() alone frees Python-side tensor refs,
+        # and the CUDA allocator will reuse freed blocks lazily.
         import gc
         _t_cache = _time.time()
         gc.collect()
         _before = torch.cuda.memory_reserved()
-        torch.cuda.empty_cache()
         _after = torch.cuda.memory_reserved()
         self.logger.info(
-            f"[MTPSerialize] gc.collect() + empty_cache freed "
-            f"{(_before - _after) / 1024 / 1024:.1f} MB GPU cache "
-            f"(reserved {_before / 1024 / 1024:.0f} -> "
-            f"{_after / 1024 / 1024:.0f} MB), "
+            f"[MTPSerialize] gc.collect() completed "
+            f"(reserved={_before / 1024 / 1024:.0f} MB, "
+            f"no empty_cache to avoid device-wide sync), "
             f"took {_time.time() - _t_cache:.3f}s"
         )
 
@@ -2449,7 +2458,10 @@ class MegatronEngine(TrainEngine):
         serialized_pairs = []
         for name, tensor in mtp_hf_tensors:
             _t_ser_i = _time.time()
-            _cpu_tensor = tensor.detach().cpu().contiguous()
+            # Perform GPU→CPU copy on the serialization stream which
+            # is free of NCCL cross-stream dependencies.
+            with torch.cuda.stream(_ser_stream):
+                _cpu_tensor = tensor.detach().cpu().contiguous()
             # Standard pickle -- no shared-memory, no CUDA IPC handles.
             _buf = _io.BytesIO()
             _pickle.dump(_cpu_tensor, _buf, protocol=_pickle.HIGHEST_PROTOCOL)
@@ -2605,6 +2617,33 @@ class MegatronEngine(TrainEngine):
                 converted_named_tensors,
                 buffer_size,
                 weight_chunked_mem_size,
+            )
+
+        # Record a CUDA event on the default stream BEFORE any NCCL
+        # broadcasts begin.  At this point, all MTP tensors from
+        # _collect_param()'s synchronous dist.all_gather() are fully
+        # materialised on the default stream.  We will use this event
+        # in _serialize_mtp_tensors_for_update() to create a separate
+        # CUDA stream that depends ONLY on work up to this point —
+        # crucially, NOT on the NCCL broadcast operations that follow.
+        #
+        # Why this matters:  PyTorch's NCCL handle.wait() inserts a
+        # cross-stream dependency (NCCL stream → default stream) via
+        # cudaStreamWaitEvent.  After handle.wait(), the default stream
+        # implicitly waits for the NCCL kernels.  If we later call
+        # current_stream().synchronize() or .cpu() on the default stream,
+        # we block until ALL pending NCCL broadcasts complete on the GPU —
+        # but those broadcasts are collective ops that need the inference
+        # side to execute its counterpart.  The inference side processes
+        # XCCL callbacks sequentially (each ~2.4s), so the training side
+        # hangs for tens of seconds or indefinitely.
+        if _collect_mtp_for_draft and mtp_hf_tensors:
+            self._mtp_data_ready_event = torch.cuda.Event()
+            self._mtp_data_ready_event.record(torch.cuda.current_stream())
+            self.logger.info(
+                f"[MTPTrain] Recorded _mtp_data_ready_event on default stream "
+                f"(device={torch.cuda.current_device()}) BEFORE NCCL broadcasts. "
+                f"n_mtp_tensors={len(mtp_hf_tensors)}"
             )
 
         # Only pipeline parallel heads CAN contain named tensors here
