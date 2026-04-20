@@ -973,7 +973,7 @@ class TestTwoStageRejectionSampling:
         ratios = torch.tensor([
             [1.0, 1.0, 2.5, 1.0],
             [1.0, 1.0, 1.0, 1.0],
-        ])
+        ], dtype=torch.int32))
         loss_mask = torch.ones(2, 4)
         proximal_logprobs = torch.log(ratios)
         old_logprobs = torch.zeros_like(proximal_logprobs)
@@ -981,7 +981,7 @@ class TestTwoStageRejectionSampling:
         result = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
-            cu_seqlens=None,
+            cu_seqlens=ratios,
             # behave_imp_weight=ratios,
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
@@ -1006,7 +1006,7 @@ class TestTwoStageRejectionSampling:
         ratios = torch.tensor([
             [0.2, 1.0, 1.8, 3.5],  # tokens 0 and 3 out of [0.5, 2.0]
             [0.8, 1.2, 1.5, 0.9],  # all in range
-        ])
+        ], dtype=torch.int32))
         loss_mask = torch.ones(2, 4)
         proximal_logprobs = torch.log(ratios.clamp(min=1e-6))
         old_logprobs = torch.zeros_like(proximal_logprobs)
@@ -1014,7 +1014,7 @@ class TestTwoStageRejectionSampling:
         result = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
-            cu_seqlens=None,
+            cu_seqlens=ratios,
             # behave_imp_weight=ratios,
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
@@ -1105,14 +1105,14 @@ class TestTwoStageRejectionSampling:
         loss_mask = torch.ones(1, 4)
         # Seq geo-mean ≈ exp(mean(log([0.3, 1.0, 1.0, 1.0]))) ≈ 0.84 → accepted
         # but token[0] = 0.3 < lower=0.5 → masked by Token-MIS
-        ratios = torch.tensor([[0.3, 1.0, 1.0, 1.0]])
+        cu_seqlens = torch.tensor([[0.3, 1.0, 1.0, 1.0]], dtype=torch.int32)
         proximal_logprobs = torch.log(ratios)
         old_logprobs = torch.zeros_like(proximal_logprobs)
 
         result = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
-            cu_seqlens=None,
+            cu_seqlens=cu_seqlens,
             # behave_imp_weight=ratios,
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
