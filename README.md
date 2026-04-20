@@ -40,6 +40,14 @@ cost-effective** for a broad community of developers and researchers.
 
 ## 📰 News
 
+**\[2026/04/18\]** We are thrilled to announce that **AReaL's first Community Biweekly
+Meeting** was successfully held! Thank you to everyone who joined us. Meeting materials
+are now available
+[here](https://github.com/inclusionAI/AReaL/tree/main/assets/community). Our next
+meeting is scheduled for **2026/05/01** and will also be conducted in Chinese;
+English-language meetings will be scheduled in the future. We warmly welcome everyone to
+participate! See [Community](./assets/community/README.md) for more details.
+
 **\[2026/03/02\]** We provide [a complete example](./examples/openclaw/) to train your
 own 🦞 OpenClaw agent by simply replacing the `base_url` and `api_key` with AReaL's RL
 service - no complicated dependencies, no code changes, works with any agentic runtime!
@@ -52,14 +60,14 @@ the [paper](https://arxiv.org/pdf/2601.22607),
 [data](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data), and
 [code](https://github.com/inclusionAI/AReaL/tree/main/examples/tau2).
 
+<details>
+<summary><b>📋 Previous Releases</b></summary>
+
 **\[2026/01/15\]** Congrats to our friends at [CAMEL-AI](https://www.camel-ai.org/) for
 open-sourcing [SETA](https://github.com/camel-ai/seta), their terminal agent RL project
 trained with AReaL! Check out
 [their training workflow](https://github.com/camel-ai/seta/tree/main/training/tbench_areal_workflow)
 and the [announcement on X](https://x.com/guohao_li/status/2009678513574408636).
-
-<details>
-<summary><b>📋 Previous Releases</b></summary>
 
 **\[2026/01/01\]** Happy New Year! Thanks to the outstanding contribution from
 @HwVanICI, we are excited to officially announce stable support for AReaL training on
