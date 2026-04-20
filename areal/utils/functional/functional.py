@@ -386,6 +386,38 @@ def apply_rejection_sampling(
                     ),
                     behave_imp_weight,
                 )
+                
+            # ── Stage 2: Token-MIS/TIS on Geo-RS-accepted sequences ─────────────
+            # Runs only in two-stage mode (cfg.token_action is not None).
+            # At this point, loss_mask already has Stage-1-rejected sequences
+            # zeroed out.  We now apply per-token filtering on surviving tokens.
+            if cfg.token_action is not None:
+                # behave_imp_weight holds per-token ratios π_prox / π_behave.
+                # Shape: [batch, seq_len] in 2D padded format.
+                token_ratio = behave_imp_weight
+                
+                if cfg.token_action == "mask":
+                    # Token-MIS: zero out tokens where the per-token ratio exceeds
+                    # upper, and optionally where it falls below lower.
+                    # This suppresses tokens where the current policy has drifted
+                    # far from the behavior policy at the token level.
+                    token_oor = token_ratio > cfg.upper
+                    if cfg.lower is not None:
+                        token_oor = token_oor | (token_ratio < cfg.lower)
+                    loss_mask = loss_mask * (~token_oor).to(loss_mask.dtype)
+                    behave_imp_weight = behave_imp_weight * (~token_oor).to(
+                        behave_imp_weight.dtype
+                    )
+                    
+            elif cfg.token_action == "clamp":
+                # Token-TIS: clamp the per-token importance ratio to
+                # [lower, upper].  All tokens remain in the gradient but
+                # their contribution is bounded.
+                clamp_lower = cfg.lower if cfg.lower is not None else 0.0
+                behave_imp_weight = token_ratio.clamp(
+                    min=clamp_lower, max=cfg.upper
+                )
+            # ── End Stage 2 ──────────────────────────────────────────────────────
     else:
         # Token level
         if config.action == "mask":
