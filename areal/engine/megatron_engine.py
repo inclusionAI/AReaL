@@ -2363,6 +2363,34 @@ class MegatronEngine(TrainEngine):
             f"tensor_sizes_bytes={_tensor_sizes}"
         )
 
+        # -------------------------------------------------------------------
+        # Explicit CUDA sync + cache cleanup BEFORE GPU->CPU
+        # copies.  Under near-OOM conditions (97%+ VRAM) the implicit CUDA
+        # synchronisation triggered by .cpu() can deadlock because the CUDA
+        # runtime attempts to reclaim caches while prior NCCL / compute
+        # kernels are still draining.  Synchronising and freeing caches
+        # first makes the subsequent .cpu() calls plain DtoH memcpys.
+        # -------------------------------------------------------------------
+        _t_sync = _time.time()
+        self.logger.info("[MTPSerialize] torch.cuda.synchronize() ...")
+        torch.cuda.synchronize()
+        self.logger.info(
+            f"[MTPSerialize] torch.cuda.synchronize() done in "
+            f"{_time.time() - _t_sync:.3f}s"
+        )
+
+        _t_cache = _time.time()
+        _before = torch.cuda.memory_reserved()
+        torch.cuda.empty_cache()
+        _after = torch.cuda.memory_reserved()
+        self.logger.info(
+            f"[MTPSerialize] empty_cache freed "
+            f"{(_before - _after) / 1024 / 1024:.1f} MB GPU cache "
+            f"(reserved {_before / 1024 / 1024:.0f} -> "
+            f"{_after / 1024 / 1024:.0f} MB), "
+            f"took {_time.time() - _t_cache:.3f}s"
+        )
+
         try:
             from sglang.srt.utils import MultiprocessingSerializer
         except ImportError:
@@ -2390,11 +2418,18 @@ class MegatronEngine(TrainEngine):
         self.logger.info("[MTPSerialize] LocalSerializedTensor imported successfully")
 
         _t_ser0 = _time.time()
+        import io as _io
+        import pickle as _pickle
+
         serialized_pairs = []
         for name, tensor in mtp_hf_tensors:
             _t_ser_i = _time.time()
-            _cpu_tensor = tensor.detach().cpu()
-            _ser_data = MultiprocessingSerializer.serialize(_cpu_tensor)
+            _cpu_tensor = tensor.detach().cpu().contiguous()
+            # Standard pickle -- no shared-memory, no CUDA IPC handles.
+            _buf = _io.BytesIO()
+            _pickle.dump(_cpu_tensor, _buf, protocol=_pickle.HIGHEST_PROTOCOL)
+            _ser_data = _buf.getvalue()
+            del _buf  # release buffer immediately
             _ser_len = len(_ser_data)
             serialized_pairs.append((name, _ser_data))
             self.logger.info(
