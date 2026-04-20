@@ -2699,61 +2699,44 @@ class MegatronEngine(TrainEngine):
             and getattr(self, "_engine_supports_tensor_update", False)
             and self.is_pipeline_parallel_head()
         )
-
-        if _collect_mtp_for_draft:
-            _t_mtp_pre = _diag_time.time()
-            for name, param in get_named_parameters(self.model, num_moe_experts):
-                if ".experts." in name:
-                    continue
-                if ".mtp." not in name:
-                    continue
-                mtp_param_count += 1
-                mtp_param_bytes += param.numel() * param.element_size()
-                self.logger.info(
-                    f"[DiagUW] Pre-loop MTP param[{mtp_param_count}] "
-                    f"name={name}, size={param.numel() * param.element_size() / 1024 / 1024:.2f} MB, "
-                    f"calling _collect_param..."
-                )
-                _mtp_param, _ = self._collect_param(name, param)
-                self.logger.info(
-                    f"[DiagUW] Pre-loop MTP param[{mtp_param_count}] "
-                    f"_collect_param DONE, name={name}"
-                )
-                _mtp_model_name = self.hf_config.model_type
-                mtp_hf_tensors.extend(
-                    convert_to_hf(
-                        self.tf_config,
-                        _mtp_model_name,
-                        name,
-                        _mtp_param,
-                        quantization_config=self.quantization_config,
-                        fp8_direct_convert=self.fp8_direct_convert,
-                    )
-                )
-            if mtp_hf_tensors:
-                self._mtp_data_ready_event = torch.cuda.Event()
-                self._mtp_data_ready_event.record(torch.cuda.current_stream())
-                self.logger.info(
-                    f"[DiagUW] Recorded _mtp_data_ready_event on default stream "
-                    f"(device={torch.cuda.current_device()}) BEFORE any NCCL broadcasts. "
-                    f"n_mtp_tensors={len(mtp_hf_tensors)}, "
-                    f"mtp_param_count={mtp_param_count}, "
-                    f"mtp_param_bytes={mtp_param_bytes / 1024 / 1024:.2f} MB, "
-                    f"elapsed={_diag_time.time() - _diag_t0:.3f}s, "
-                    f"pre_loop_took={_diag_time.time() - _t_mtp_pre:.3f}s"
-                )
-            else:
-                self.logger.info(
-                    f"[DiagUW] No MTP tensors collected in pre-loop "
-                    f"(mtp_param_count={mtp_param_count})"
-                )
+        _mtp_event_recorded = False
 
         _param_idx = 0
         for name, param in get_named_parameters(self.model, num_moe_experts):
             if ".experts." in name:
                 continue
             if ".mtp." in name:
+                mtp_param_count += 1
+                mtp_param_bytes += param.numel() * param.element_size()
+                if _collect_mtp_for_draft:
+                    _mtp_param, _ = self._collect_param(name, param)
+                    _mtp_model_name = self.hf_config.model_type
+                    mtp_hf_tensors.extend(
+                        convert_to_hf(
+                            self.tf_config,
+                            _mtp_model_name,
+                            name,
+                            _mtp_param,
+                            quantization_config=self.quantization_config,
+                            fp8_direct_convert=self.fp8_direct_convert,
+                        )
+                    )
+                else:
+                    self._collect_param(name, param)
                 continue
+            if not _mtp_event_recorded and _collect_mtp_for_draft and mtp_hf_tensors:
+                self._mtp_data_ready_event = torch.cuda.Event()
+                self._mtp_data_ready_event.record(torch.cuda.current_stream())
+                _mtp_event_recorded = True
+                self.logger.info(
+                    f"[DiagUW] Recorded _mtp_data_ready_event on default stream "
+                    f"(device={torch.cuda.current_device()}) BEFORE first NCCL broadcast. "
+                    f"n_mtp_tensors={len(mtp_hf_tensors)}, "
+                    f"mtp_param_count={mtp_param_count}, "
+                    f"mtp_param_bytes={mtp_param_bytes / 1024 / 1024:.2f} MB, "
+                    f"elapsed={_diag_time.time() - _diag_t0:.3f}s, "
+                    f"next_param={name}"
+                )
             if self.config.use_lora and (
                 ".adapter." not in name or not getattr(param, "requires_grad", False)
             ):
@@ -2779,6 +2762,18 @@ class MegatronEngine(TrainEngine):
                     f"DONE, buffer_size={buffer_size / 1024 / 1024:.2f} MB"
                 )
             _param_idx += 1
+
+        if not _mtp_event_recorded and _collect_mtp_for_draft and mtp_hf_tensors:
+            self._mtp_data_ready_event = torch.cuda.Event()
+            self._mtp_data_ready_event.record(torch.cuda.current_stream())
+            _mtp_event_recorded = True
+            self.logger.info(
+                f"[DiagUW] Recorded _mtp_data_ready_event on default stream "
+                f"(device={torch.cuda.current_device()}) after param loop (no NCCL broadcasts triggered). "
+                f"n_mtp_tensors={len(mtp_hf_tensors)}, "
+                f"mtp_param_count={mtp_param_count}, "
+                f"elapsed={_diag_time.time() - _diag_t0:.3f}s"
+            )
 
         self.logger.info(
             f"[DiagUW] Parameter loop completed in "
