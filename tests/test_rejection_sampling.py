@@ -946,6 +946,7 @@ class TestTwoStageRejectionSampling:
         new_mask, _ = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
+            cu_seqlens=None,
             # behave_imp_weight=ratios,
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
@@ -979,6 +980,7 @@ class TestTwoStageRejectionSampling:
         new_mask, _ = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
+            cu_seqlens=None,
             # behave_imp_weight=ratios,
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
@@ -1010,6 +1012,7 @@ class TestTwoStageRejectionSampling:
         new_mask, new_weight = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
+            cu_seqlens=None,
             # behave_imp_weight=ratios,
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
@@ -1041,6 +1044,7 @@ class TestTwoStageRejectionSampling:
         new_mask, _ = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
+            cu_seqlens=None,
             # behave_imp_weight=ratios,
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
@@ -1071,12 +1075,10 @@ class TestTwoStageRejectionSampling:
         )
 
         mask_off, w_off = apply_rejection_sampling(
-            cfg_two_stage_off, loss_mask.clone(),
-            proximal_logprobs, old_logprobs,
+            proximal_logprobs, old_logprobs, loss_mask.clone(), None, cfg_two_stage_off
         )
         mask_orig, w_orig = apply_rejection_sampling(
-            cfg_original, loss_mask.clone(),
-            proximal_logprobs, old_logprobs,
+            proximal_logprobs, old_logprobs, loss_mask.clone(), None, cfg_original
         )
 
         torch.testing.assert_close(mask_off, mask_orig)
@@ -1101,6 +1103,7 @@ class TestTwoStageRejectionSampling:
         new_mask, _ = apply_rejection_sampling(
             config=config,
             loss_mask=loss_mask,
+            cu_seqlens=None,
             # behave_imp_weight=ratios,
             proximal_logprobs=proximal_logprobs,
             old_logprobs=old_logprobs,
