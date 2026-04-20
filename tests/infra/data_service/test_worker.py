@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 # pyright: reportMissingImports=false
+import asyncio
+import inspect
+import threading
+from collections.abc import Mapping
 from pathlib import Path
 from unittest.mock import patch
 
@@ -40,11 +44,24 @@ def _load_payload(**overrides: object) -> dict[str, object]:
         "dataset_id": DATASET_ID,
         "dataset_path": "test/dataset",
         "dataset_type": "rl",
-        "seed": 42,
         "shuffle": False,
     }
     payload.update(overrides)
     return payload
+
+
+def _get_route_endpoint(app, path: str, method: str = "POST"):
+    for route in app.routes:
+        if getattr(route, "path", None) == path and method in getattr(
+            route, "methods", set()
+        ):
+            return route.endpoint
+    raise AssertionError(f"Route not found: {method} {path}")
+
+
+def _get_worker_nonlocals(app) -> Mapping[str, object]:
+    endpoint = _get_route_endpoint(app, "/datasets/unload")
+    return inspect.getclosurevars(endpoint).nonlocals
 
 
 @pytest_asyncio.fixture
@@ -73,6 +90,32 @@ async def loaded_client(config: DataWorkerConfig):
             resp = await c.post("/datasets/load", json=_load_payload())
             assert resp.status_code == 200
             yield c
+
+
+@pytest_asyncio.fixture
+async def loaded_worker(config: DataWorkerConfig):
+    with (
+        patch("areal.infra.data_service.worker.app._get_custom_dataset") as mock_get,
+        patch(
+            "areal.infra.data_service.worker.app.load_hf_processor_and_tokenizer"
+        ) as mock_load,
+    ):
+        ds = _make_mock_dataset(8)
+        mock_get.return_value = ds
+        mock_load.return_value = (None, None)
+
+        app = create_worker_app(config)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post("/datasets/load", json=_load_payload())
+            assert resp.status_code == 200
+            nonlocals = _get_worker_nonlocals(app)
+            yield {
+                "app": app,
+                "client": c,
+                "datasets": nonlocals["datasets"],
+                "datasets_lock": nonlocals["datasets_lock"],
+            }
 
 
 @pytest.mark.asyncio
@@ -161,6 +204,123 @@ class TestSampleFetch:
         samples = resp.json()["samples"]
         assert len(samples) == 3
         assert samples[0] != samples[1]
+
+
+@pytest.mark.asyncio
+class TestWorkerConcurrency:
+    async def test_load_dataset_returns_409_when_same_id_currently_loading(
+        self, config: DataWorkerConfig
+    ):
+        load_started = threading.Event()
+        release_load = threading.Event()
+
+        def slow_get_dataset(*args, **kwargs):
+            del args, kwargs
+            load_started.set()
+            assert release_load.wait(timeout=2)
+            return _make_mock_dataset(8)
+
+        with (
+            patch(
+                "areal.infra.data_service.worker.app._get_custom_dataset",
+                side_effect=slow_get_dataset,
+            ),
+            patch(
+                "areal.infra.data_service.worker.app.load_hf_processor_and_tokenizer"
+            ) as mock_load,
+        ):
+            mock_load.return_value = (None, None)
+            app = create_worker_app(config)
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                first_load = asyncio.create_task(
+                    client.post("/datasets/load", json=_load_payload())
+                )
+                await asyncio.to_thread(load_started.wait, 1)
+
+                second_load = await client.post("/datasets/load", json=_load_payload())
+                assert second_load.status_code == 409
+                assert "currently loading" in second_load.json()["detail"].lower()
+
+                release_load.set()
+                first_response = await first_load
+                assert first_response.status_code == 200
+
+    async def test_unload_waits_for_in_flight_state_lock(self, loaded_worker):
+        client = loaded_worker["client"]
+        state = loaded_worker["datasets"][DATASET_ID]
+
+        await state.lock.acquire()
+        unload_task = asyncio.create_task(
+            client.post("/datasets/unload", json={"dataset_id": DATASET_ID})
+        )
+        await asyncio.sleep(0)
+        assert not unload_task.done()
+
+        state.lock.release()
+        unload_response = await asyncio.wait_for(unload_task, timeout=1)
+        assert unload_response.status_code == 200
+
+    async def test_fetch_returns_409_after_unload_starts(self, loaded_worker):
+        client = loaded_worker["client"]
+        state = loaded_worker["datasets"][DATASET_ID]
+        datasets_lock = loaded_worker["datasets_lock"]
+
+        await state.lock.acquire()
+        unload_task = asyncio.create_task(
+            client.post("/datasets/unload", json={"dataset_id": DATASET_ID})
+        )
+        await asyncio.sleep(0)
+
+        await datasets_lock.acquire()
+        state.lock.release()
+        await asyncio.sleep(0)
+
+        fetch_response = await client.post(
+            "/v1/samples/fetch",
+            json={"dataset_id": DATASET_ID, "indices": [0]},
+        )
+        assert fetch_response.status_code == 409
+        assert "unloading" in fetch_response.json()["detail"].lower()
+
+        datasets_lock.release()
+        unload_response = await asyncio.wait_for(unload_task, timeout=1)
+        assert unload_response.status_code == 200
+
+    async def test_unrelated_load_succeeds_while_unload_waits_on_state_lock(
+        self, loaded_worker
+    ):
+        client = loaded_worker["client"]
+        state = loaded_worker["datasets"][DATASET_ID]
+
+        await state.lock.acquire()
+        unload_task = asyncio.create_task(
+            client.post("/datasets/unload", json={"dataset_id": DATASET_ID})
+        )
+        await asyncio.sleep(0)
+
+        other_load = await asyncio.wait_for(
+            client.post(
+                "/datasets/load",
+                json=_load_payload(
+                    dataset_id="test-valid",
+                    dataset_path="test/other-dataset",
+                ),
+            ),
+            timeout=1,
+        )
+        assert other_load.status_code == 200
+        assert not unload_task.done()
+
+        state.lock.release()
+        unload_response = await asyncio.wait_for(unload_task, timeout=1)
+        assert unload_response.status_code == 200
+
+        health = await client.get("/health")
+        assert health.status_code == 200
+        assert health.json()["datasets"] == 1
 
 
 @pytest.mark.asyncio
