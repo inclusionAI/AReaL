@@ -4,6 +4,7 @@ set -euo pipefail
 WORKSPACE=${WORKSPACE:-"/storage/openpsi/data/lcy_image_edit/mixed_rl"}
 EVAL_DIR="${WORKSPACE}/full_eval"
 MODEL_PATH=${MODEL_PATH:?'MODEL_PATH is required'}
+RUN_NAME=${RUN_NAME:-$(echo "$MODEL_PATH" | grep -oP '[^/]+/global_step_\d+' | tr '/' '_' || basename "$MODEL_PATH")}
 
 ulysses_sequence_parallel_size=1
 max_prompt_length=16384
@@ -22,7 +23,7 @@ val_data="${val_data},${EVAL_DIR}/mm_mapqa.parquet"
 python3 -m verl.trainer.main_ppo \
     data.train_files="${WORKSPACE}/new_train.parquet" \
     data.val_files="[${val_data}]" \
-    data.val_batch_size=256 \
+    data.val_batch_size=512 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
     data.truncation='right' \
@@ -41,7 +42,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.multi_turn.enable=True \
-    actor_rollout_ref.rollout.multi_turn.max_turns=10 \
+    actor_rollout_ref.agent.max_turns=10 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
     trainer.val_before_train=True \
@@ -49,9 +50,9 @@ python3 -m verl.trainer.main_ppo \
     trainer.test_freq=1 \
     trainer.total_epochs=1 \
     trainer.logger='[console,wandb]' \
-    trainer.project_name=mixed_rl \
-    trainer.experiment_name="eval_only_$(basename $MODEL_PATH)" \
+    trainer.project_name=mixed_rl_eval \
+    trainer.experiment_name="eval_only_${RUN_NAME}" \
     trainer.n_gpus_per_node=$n_gpus_per_node \
     trainer.nnodes=$n_nodes \
     trainer.save_freq=-1 \
-    trainer.validation_data_dir="${EVAL_DIR}/results/$(basename $MODEL_PATH)"
+    trainer.validation_data_dir="${EVAL_DIR}/results/${RUN_NAME}"
