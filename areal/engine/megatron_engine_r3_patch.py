@@ -88,7 +88,7 @@ def patch_megatron_engine_for_r3(
 
 
 # ===================================================================
-# routed_experts alignment (left-padded rollout → left-aligned training)
+# routed_experts alignment (right-padded rollout → left-aligned training)
 # ===================================================================
 
 
@@ -97,17 +97,18 @@ def _align_routed_experts_to_mask(
     cu_seqlens: torch.Tensor,
     max_seqlen: int,
 ) -> torch.Tensor:
-    """Align ``routed_experts`` from left-padded rollout format to left-aligned
+    """Align ``routed_experts`` from right-padded rollout format to left-aligned
     training format, matching the token layout implied by ``cu_seqlens``.
 
     **Rollout format**: ``routed_experts`` is ``(bs, batch_max_seqlen, L, K)``
-    with LEFT padding (real tokens at the RIGHT end of each row).
+    with RIGHT padding (real tokens at the BEGINNING of each row, after
+    batch-level concatenation; zeros are appended at the end).
 
     **Training format**: After ``pack_tensor_dict``, tokens are LEFT-aligned
     (real tokens first).  The ``cu_seqlens`` tells us each sample's actual
     length.
 
-    This function extracts the rightmost ``actual_len`` tokens from each
+    This function extracts the first ``actual_len`` tokens from each
     sample in ``routed_experts`` and produces a ``(bs_aligned, max_seqlen, L, K)``
     tensor with real tokens at the LEFT (matching training convention).
 
@@ -139,10 +140,9 @@ def _align_routed_experts_to_mask(
         actual_len = seq_lens[i]
         if actual_len <= 0:
             continue
-        # Source: rightmost actual_len tokens from left-padded routed_experts
-        src_start = re_seqlen - actual_len
+        # Source: first actual_len tokens from right-padded routed_experts
         n = min(actual_len, re_seqlen, max_seqlen)
-        aligned[i, :n] = routed_experts[i, src_start : src_start + n]
+        aligned[i, :n] = routed_experts[i, :n]
 
     logger.debug(
         "[R3] _align_routed_experts_to_mask: re_shape=%s -> aligned_shape=%s, "
