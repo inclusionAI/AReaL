@@ -1,6 +1,6 @@
 mkdir -p /tmp/tiktoken-cache
 cd /tmp/tiktoken-cache
-curl -k -O https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken
+curl -O https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken
 
 export TIKTOKEN_CACHE_DIR=/tmp/tiktoken-cache
 
