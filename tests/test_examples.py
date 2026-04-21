@@ -68,8 +68,6 @@ async def run_example(
         while True:
             try:
                 line = await asyncio.wait_for(process.stdout.readline(), timeout=0.1)
-                if not line:
-                    break
                 line = line.decode().rstrip()
                 # Skip empty lines (e.g., from tqdm progress bar cleanup)
                 if line:
