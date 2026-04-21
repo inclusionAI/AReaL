@@ -308,6 +308,54 @@ class RemoteInfBackendProtocol(Protocol):
         """
         ...
 
+    def build_lora_adapter_load_requests(
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
+    ) -> WeightUpdateRequests:
+        """Build requests to load LoRA adapter weights via distributed path.
+
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+            Metadata with peft_config and NCCL group info.
+        param_specs : list[ParamSpec]
+            Specifications for the adapter tensors being sent.
+
+        Returns
+        -------
+        WeightUpdateRequests
+            Collection of HTTP requests for adapter loading.
+
+        Raises
+        ------
+        NotImplementedError
+            If LoRA adapter loading is not supported by this backend.
+        """
+        ...
+
+    def build_lora_adapter_unload_requests(
+        self, lora_name: str, version: int = 0
+    ) -> WeightUpdateRequests:
+        """Build requests to unload a LoRA adapter.
+
+        Parameters
+        ----------
+        lora_name : str
+            Base LoRA adapter name.
+        version : int
+            Version number for versioned adapter naming.
+
+        Returns
+        -------
+        WeightUpdateRequests
+            Collection of HTTP requests for adapter unloading.
+
+        Raises
+        ------
+        NotImplementedError
+            If LoRA adapter unloading is not supported by this backend.
+        """
+        ...
+
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch inference server subprocess.
 
@@ -1407,13 +1455,33 @@ def _update_weights_from_distributed(
     addresses: list[str],
     request_timeout: float,
 ):
-    """Helper to update weights from distributed memory in a separate process."""
+    """Helper to update weights from distributed memory in a separate process.
+
+    When lora_delta_sync is enabled on meta, the backend may return multiple
+    sequential requests (e.g. unload old adapter, then load new adapter).
+    Each request is sent to all servers in parallel, but requests are
+    executed sequentially to respect ordering dependencies.
+    """
 
     async def _fn():
+        if meta.lora_delta_sync:
+            logger.info(
+                f"[LoRA Delta Sync] Distributed weight update: "
+                f"base_sync_done={meta.base_sync_done}, "
+                f"num_param_specs={len(param_specs)}, "
+                f"num_servers={len(addresses)}"
+            )
+
         # Get requests from backend
         weight_reqs = backend.build_distributed_weight_update_requests(
             meta, param_specs
         )
+
+        if meta.lora_delta_sync:
+            logger.info(
+                f"[LoRA Delta Sync] Executing {len(weight_reqs.requests)} "
+                f"sequential HTTP requests across {len(addresses)} servers"
+            )
 
         # Execute all requests sequentially (they may have dependencies)
         async with aiohttp.ClientSession(
@@ -1421,7 +1489,14 @@ def _update_weights_from_distributed(
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         ) as session:
-            for http_req in weight_reqs.requests:
+            for req_idx, http_req in enumerate(weight_reqs.requests):
+                if meta.lora_delta_sync:
+                    logger.info(
+                        f"[LoRA Delta Sync] Sending request {req_idx + 1}/"
+                        f"{len(weight_reqs.requests)}: "
+                        f"{http_req.method} {http_req.endpoint}"
+                    )
+                is_unload = "unload" in http_req.endpoint
                 jobs = [
                     arequest_with_retry(
                         session=session,
@@ -1429,11 +1504,23 @@ def _update_weights_from_distributed(
                         endpoint=http_req.endpoint,
                         payload=http_req.payload,
                         method=http_req.method,
-                        max_retries=1,
+                        max_retries=1 if not is_unload else 1,
                         timeout=request_timeout,
                     )
                     for addr in addresses
                 ]
-                await asyncio.gather(*jobs)
+                try:
+                    await asyncio.gather(*jobs)
+                except Exception:
+                    if is_unload:
+                        # Unload may fail if no adapter is loaded yet;
+                        # this is expected on the first sync.
+                        logger.info(
+                            "[LoRA Delta Sync] Adapter unload request failed "
+                            "(may be expected if no adapter was loaded yet), "
+                            "continuing..."
+                        )
+                    else:
+                        raise
 
     return uvloop.run(_fn())

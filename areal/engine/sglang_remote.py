@@ -32,8 +32,10 @@ from areal.api.io_struct import (
 from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
-from areal.utils import perf_tracer, stats_tracker
+from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.network import format_host_for_url
+
+logger = logging.getLogger("SGLangBackend")
 
 
 class SGLangBackend:
@@ -162,13 +164,36 @@ class SGLangBackend:
     ) -> WeightUpdateRequests:
         """Build SGLang distributed weight update requests.
 
-        Note: SGLang distributed weight update (NCCL-based) does not support LoRA.
-        For LoRA weight updates with SGLang, use disk-based update mode instead.
+        When lora_delta_sync is enabled on the meta, LoRA is handled in two
+        phases orchestrated by the FSDP engine:
+          - base_sync_done=False: base model params are pushed via the normal
+            ``/update_weights_from_distributed`` endpoint.
+          - base_sync_done=True: LoRA adapter params are pushed via the
+            ``/load_lora_adapter_from_distributed`` endpoint (or tensor API).
+
+        For non-delta-sync LoRA, the original error is preserved to guide
+        users towards disk-based updates.
         """
-        if meta.use_lora:
+        if meta.use_lora and not meta.lora_delta_sync:
             raise ValueError(
-                "SGLang distributed (XCCL/NCCL) weight update does not support LoRA. "
-                "Use weight_update_mode='disk' for LoRA weight updates with SGLang."
+                "SGLang distributed (XCCL/NCCL) weight update does not support LoRA "
+                "without lora_delta_sync. Use weight_update_mode='disk' for LoRA "
+                "weight updates with SGLang, or enable lora_delta_sync=True."
+            )
+
+        if meta.lora_delta_sync and meta.base_sync_done:
+            # Adapter-only phase: use the LoRA adapter loading endpoint
+            logger.info(
+                "[LoRA Delta Sync] Building distributed LoRA adapter load requests "
+                f"for {len(param_specs)} adapter params"
+            )
+            return self.build_lora_adapter_load_requests(meta, param_specs)
+
+        # Base model phase (or non-LoRA): standard distributed weight update
+        if meta.lora_delta_sync:
+            logger.info(
+                "[LoRA Delta Sync] Building distributed base-model weight update "
+                f"requests for {len(param_specs)} base params"
             )
         return WeightUpdateRequests(
             requests=[
@@ -181,6 +206,96 @@ class SGLangBackend:
                         "group_name": meta.nccl_group_name,
                         "abort_all_requests": True,
                     },
+                )
+            ]
+        )
+
+    def build_lora_adapter_load_requests(
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
+    ) -> WeightUpdateRequests:
+        """Build requests to load LoRA adapter weights via the distributed path.
+
+        This method constructs an HTTP request to the SGLang server's
+        ``/load_lora_adapter_from_distributed`` endpoint, which receives LoRA
+        adapter tensors through the same NCCL group used for base-model sync.
+
+        The peft_config carried in ``meta.peft_config`` is forwarded so the
+        server can reconstruct the adapter structure.
+
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+            Must have ``peft_config`` populated with LoRA hyper-parameters.
+        param_specs : list[ParamSpec]
+            Specifications for the adapter tensors being sent.
+
+        Returns
+        -------
+        WeightUpdateRequests
+            A single request targeting the LoRA adapter loading endpoint.
+        """
+        lora_name = meta.lora_name or "default_lora"
+        version = meta.version if meta.version is not None else 0
+        versioned_name = get_versioned_lora_name(lora_name, version)
+
+        logger.info(
+            f"[LoRA Delta Sync] Building adapter load request: "
+            f"lora_name={versioned_name}, "
+            f"num_params={len(param_specs)}, "
+            f"peft_config keys={list(meta.peft_config.keys()) if meta.peft_config else 'empty'}"
+        )
+
+        requests = []
+
+        # First unload existing adapter if any
+        requests.append(
+            HttpRequest(
+                endpoint="/unload_lora_adapter",
+                payload={"lora_name": versioned_name},
+            )
+        )
+
+        # Then load the new adapter via distributed NCCL
+        requests.append(
+            HttpRequest(
+                endpoint="/load_lora_adapter_from_distributed",
+                payload={
+                    "lora_name": versioned_name,
+                    "lora_config": meta.peft_config,
+                    "names": [pspec.name for pspec in param_specs],
+                    "dtypes": [pspec.dtype for pspec in param_specs],
+                    "shapes": [pspec.shape for pspec in param_specs],
+                    "group_name": meta.nccl_group_name,
+                },
+            )
+        )
+
+        return WeightUpdateRequests(requests=requests)
+
+    def build_lora_adapter_unload_requests(
+        self, lora_name: str, version: int = 0
+    ) -> WeightUpdateRequests:
+        """Build requests to unload a LoRA adapter from the SGLang server.
+
+        Parameters
+        ----------
+        lora_name : str
+            Base LoRA adapter name.
+        version : int
+            Version number for versioned adapter naming.
+
+        Returns
+        -------
+        WeightUpdateRequests
+            A single request targeting the adapter unload endpoint.
+        """
+        versioned_name = get_versioned_lora_name(lora_name, version)
+        logger.info(f"[LoRA Delta Sync] Building adapter unload request: {versioned_name}")
+        return WeightUpdateRequests(
+            requests=[
+                HttpRequest(
+                    endpoint="/unload_lora_adapter",
+                    payload={"lora_name": versioned_name},
                 )
             ]
         )

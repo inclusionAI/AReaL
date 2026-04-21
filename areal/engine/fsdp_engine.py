@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import gc
 import math
 import os
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import contextmanager, nullcontext
@@ -220,6 +222,12 @@ class FSDPEngine(TrainEngine):
         self.is_offload: bool = False
         self._per_layer_optim_wrapper: PerLayerOptimWrapper | None = None
         self.enable_tree_training: bool = self.config.enable_tree_training
+
+        # LoRA delta sync state: tracks whether base model weights have been
+        # sent to the inference engine at least once.  When lora_delta_sync
+        # is enabled, subsequent update_weights calls only transmit adapter
+        # parameters, skipping the much larger base-model parameters.
+        self._base_sync_done: bool = False
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -1059,6 +1067,75 @@ class FSDPEngine(TrainEngine):
             return concat_batch(input_)
         return input_, None
 
+    def _collect_lora_params(
+        self, meta: WeightUpdateMeta, base_sync_done: bool
+    ) -> list[tuple[str, torch.Tensor]]:
+        """Collect parameters for LoRA delta sync.
+
+        When base_sync_done is False, collects all base model parameters
+        (excluding LoRA-specific weights like lora_A, lora_B) for the
+        initial full-model sync.
+
+        When base_sync_done is True, collects only the trainable LoRA
+        adapter parameters for incremental sync.
+
+        This approach is inspired by verl's collect_lora_params() in
+        verl/utils/fsdp_utils.py, adapted to AReaL's FSDP2 architecture.
+
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+            Weight update metadata (used for name remapping via
+            _get_model_name_parameters).
+        base_sync_done : bool
+            If False, collect base model weights (skip lora_ params).
+            If True, collect only trainable LoRA adapter weights.
+
+        Returns
+        -------
+        list[tuple[str, torch.Tensor]]
+            List of (name, tensor) pairs ready for distributed broadcast.
+        """
+        collected = []
+        main_rank = dist.get_rank() == 0
+
+        if base_sync_done:
+            # Collect only trainable LoRA parameters (lora_A, lora_B weights)
+            self.logger.info(
+                "[LoRA Delta Sync] Collecting LoRA adapter parameters only "
+                "(base_sync_done=True)"
+            )
+            for name, param in self._get_model_name_parameters(meta):
+                if not param.requires_grad:
+                    continue
+                tensor = self._get_full_tensor(param)
+                if main_rank:
+                    collected.append((name, tensor))
+        else:
+            # Collect base model parameters, skipping LoRA-specific ones
+            self.logger.info(
+                "[LoRA Delta Sync] Collecting base model parameters "
+                "(base_sync_done=False, skipping lora_ params)"
+            )
+            lora_keywords = ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B")
+            for name, param in self._get_model_name_parameters(meta):
+                if any(kw in name for kw in lora_keywords):
+                    continue
+                tensor = self._get_full_tensor(param)
+                if main_rank:
+                    collected.append((name, tensor))
+
+        if main_rank:
+            total_params = len(collected)
+            total_bytes = sum(t.numel() * t.element_size() for _, t in collected)
+            self.logger.info(
+                f"[LoRA Delta Sync] Collected {total_params} params, "
+                f"total size: {total_bytes / 1024 / 1024:.2f} MB, "
+                f"base_sync_done={base_sync_done}"
+            )
+
+        return collected
+
     def _get_model_name_parameters(
         self, meta: WeightUpdateMeta
     ) -> Iterator[tuple[str, nn.Parameter]]:
@@ -1232,21 +1309,29 @@ class FSDPEngine(TrainEngine):
 
             fut.result()
 
-    @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
-    def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
-        """Broadcast parameters with single-pending-bucket pipelining."""
+    def _broadcast_params_bucketed(
+        self,
+        meta: WeightUpdateMeta,
+        param_list: list[tuple[str, torch.Tensor]],
+        main_rank: bool,
+    ):
+        """Broadcast a list of (name, tensor) pairs using bucketed pipelining.
 
-        # Reset weight weight meta with local info
-        meta.nccl_master_address = self.weight_update_master_addr
-        meta.nccl_master_port = self.weight_update_master_port
-        meta.nccl_group_name = self.weight_update_group_name
+        This is the inner loop extracted from _update_weights_from_distributed
+        so it can be called separately for base weights vs adapter weights
+        during LoRA delta sync.
 
-        main_rank = dist.get_rank() == 0
-        if main_rank:
-            self.rollout_engine.pause_generation()
-
-        dist.barrier(group=self.cpu_group)
-
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+            Weight update metadata (includes NCCL group info and peft_config).
+        param_list : list[tuple[str, torch.Tensor]]
+            Pre-collected (name, tensor) pairs to broadcast. On non-main
+            ranks this list is empty and the method only participates in the
+            NCCL broadcast collectives.
+        main_rank : bool
+            Whether this process is the main rank (rank 0).
+        """
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
         broadcast_stream = None
 
@@ -1261,31 +1346,14 @@ class FSDPEngine(TrainEngine):
         named_tensors: list[tuple[str, torch.Tensor]] = []
         pending_bucket: _PendingWeightUpdateBucket | None = None
 
-        if self.config.use_lora:
-            # For LoRA, only iterate over trainable LoRA parameters
-            param_iterator = (
-                (name, param)
-                for name, param in self._get_model_name_parameters(meta)
-                if param.requires_grad
-            )
-        else:
-            # For full model, iterate over all parameters
-            param_iterator = self._get_model_name_parameters(meta)
-
         try:
-            for name, param in param_iterator:
-                # Ranks other than 0 only help to get the full tensor
-                tensor = self._get_full_tensor(param)
-                if not main_rank:
-                    continue
-
+            for name, tensor in param_list:
                 tensor_size = tensor.numel() * tensor.element_size()
                 bucket_overflow = (
                     buffer_size > 0
                     and tensor_size + buffer_size > weight_chunked_mem_size
                 )
                 if bucket_overflow:
-                    # Only middle buckets need drain+align before the next all-gather.
                     if pending_bucket is not None:
                         self._wait_pending_weight_update_bucket(pending_bucket)
                         pending_bucket = None
@@ -1306,13 +1374,144 @@ class FSDPEngine(TrainEngine):
                 self._wait_pending_weight_update_bucket(pending_bucket)
                 pending_bucket = None
 
-            # Process remaining parameters
             if buffer_size > 0:
                 self._update_bucket_weights_from_distributed(meta, named_tensors)
         finally:
             if main_rank and pending_bucket is not None:
                 self._wait_pending_weight_update_bucket(pending_bucket)
                 pending_bucket = None
+
+    @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
+    def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
+        """Broadcast parameters with single-pending-bucket pipelining.
+
+        When lora_delta_sync is enabled (config.lora_delta_sync=True and
+        config.use_lora=True), the method uses a two-phase approach:
+          - Phase 1 (first call): broadcast base-model weights, then LoRA
+            adapter weights.  Sets _base_sync_done=True.
+          - Phase 2 (subsequent calls): broadcast only LoRA adapter weights.
+
+        When lora_delta_sync is not enabled the original behaviour is
+        preserved: all parameters are broadcast in a single pass.
+        """
+
+        # Reset weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr
+        meta.nccl_master_port = self.weight_update_master_port
+        meta.nccl_group_name = self.weight_update_group_name
+
+        main_rank = dist.get_rank() == 0
+        if main_rank:
+            self.rollout_engine.pause_generation()
+
+        dist.barrier(group=self.cpu_group)
+
+        # ---------- LoRA delta sync path ----------
+        if self.config.use_lora and self.config.lora_delta_sync:
+            if main_rank:
+                self.logger.info(
+                    f"[LoRA Delta Sync] Starting weight update, "
+                    f"_base_sync_done={self._base_sync_done}"
+                )
+
+            if not self._base_sync_done:
+                # Phase 1a: Sync base model weights (no LoRA params).
+                # Tell the inference engine this is the base-weight phase.
+                base_meta = copy.copy(meta)
+                base_meta.lora_delta_sync = True
+                base_meta.base_sync_done = False
+
+                base_params = self._collect_lora_params(meta, base_sync_done=False)
+                if main_rank:
+                    self.logger.info(
+                        f"[LoRA Delta Sync] Phase 1a: broadcasting "
+                        f"{len(base_params)} base-model params"
+                    )
+                self._broadcast_params_bucketed(base_meta, base_params, main_rank)
+
+            # Phase 1b / Phase 2: Sync LoRA adapter weights
+            adapter_meta = copy.copy(meta)
+            adapter_meta.lora_delta_sync = True
+            adapter_meta.base_sync_done = True
+
+            adapter_params = self._collect_lora_params(meta, base_sync_done=True)
+            if main_rank:
+                self.logger.info(
+                    f"[LoRA Delta Sync] Phase {'1b' if not self._base_sync_done else '2'}: "
+                    f"broadcasting {len(adapter_params)} LoRA adapter params"
+                )
+            self._broadcast_params_bucketed(adapter_meta, adapter_params, main_rank)
+
+            self._base_sync_done = True
+
+        # ---------- Original path (non-delta-sync) ----------
+        else:
+            weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
+            broadcast_stream = None
+
+            if (
+                main_rank
+                and current_platform.device_type == "cuda"
+                and torch.cuda.is_available()
+            ):
+                broadcast_stream = torch.cuda.Stream()
+
+            buffer_size = 0
+            named_tensors: list[tuple[str, torch.Tensor]] = []
+            pending_bucket: _PendingWeightUpdateBucket | None = None
+
+            if self.config.use_lora:
+                # For LoRA, only iterate over trainable LoRA parameters
+                param_iterator = (
+                    (name, param)
+                    for name, param in self._get_model_name_parameters(meta)
+                    if param.requires_grad
+                )
+            else:
+                # For full model, iterate over all parameters
+                param_iterator = self._get_model_name_parameters(meta)
+
+            try:
+                for name, param in param_iterator:
+                    # Ranks other than 0 only help to get the full tensor
+                    tensor = self._get_full_tensor(param)
+                    if not main_rank:
+                        continue
+
+                    tensor_size = tensor.numel() * tensor.element_size()
+                    bucket_overflow = (
+                        buffer_size > 0
+                        and tensor_size + buffer_size > weight_chunked_mem_size
+                    )
+                    if bucket_overflow:
+                        # Only middle buckets need drain+align before the next all-gather.
+                        if pending_bucket is not None:
+                            self._wait_pending_weight_update_bucket(pending_bucket)
+                            pending_bucket = None
+
+                        pending_bucket = self._update_bucket_weights_from_distributed_async(
+                            meta,
+                            named_tensors,
+                            stream=broadcast_stream,
+                        )
+
+                        named_tensors = []
+                        buffer_size = 0
+
+                    buffer_size += tensor_size
+                    named_tensors.append((name, tensor))
+
+                if pending_bucket:
+                    self._wait_pending_weight_update_bucket(pending_bucket)
+                    pending_bucket = None
+
+                # Process remaining parameters
+                if buffer_size > 0:
+                    self._update_bucket_weights_from_distributed(meta, named_tensors)
+            finally:
+                if main_rank and pending_bucket is not None:
+                    self._wait_pending_weight_update_bucket(pending_bucket)
+                    pending_bucket = None
 
         dist.barrier(group=self.cpu_group)
         if main_rank:

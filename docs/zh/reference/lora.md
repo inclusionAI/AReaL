@@ -28,6 +28,7 @@ AReaL 当前的 LoRA 支持矩阵如下：
 | Engine       | Example script                                    |
 | ------------ | ------------------------------------------------- |
 | FSDP2        | `examples/math/gsm8k_grpo_lora.yaml`              |
+| FSDP2 Delta  | `examples/math/gsm8k_grpo_lora_delta_sync.yaml`   |
 | Megatron     | `examples/math/gsm8k_grpo_megatron_lora.yaml`     |
 | Megatron MoE | `examples/math/gsm8k_grpo_megatron_lora_moe.yaml` |
 
@@ -45,6 +46,116 @@ AReaL 当前的 LoRA 支持矩阵如下：
 | `lora_alpha`      | LoRA 缩放系数。通常可理解为有效缩放与 `alpha / r` 成正比。         | `16`, `32`, `64`      |
 | `target_modules`  | 指定注入 LoRA 的目标子模块。这是最关键、且与模型结构强相关的配置。 | 例如 \[`all-linear`\] |
 | `peft_type`       | PEFT 方法类型。在 AReaL 配置中为 LoRA。                            | `lora`                |
+
+## LoRA 增量权重同步（Delta Sync）
+
+### 概述
+
+在标准 LoRA 权重同步流程中，训练引擎会将 LoRA adapter 权重合并到基座模型中，然后在每个训练步骤
+将**完整的合并后权重**传输到推理引擎。对于大模型来说，这一传输过程代价很高，容易成为性能瓶颈。
+
+**LoRA Delta Sync（增量权重同步）** 采用不同的策略：基座模型权重仅在首次同步时传输一次，此后的
+每次同步仅传输 LoRA adapter 权重（`lora_A` / `lora_B` 矩阵）。由于 adapter 参数量通常
+**不到模型总参数量的 1%**，因此可以大幅减少权重同步时间和网络带宽消耗。
+
+### 适用场景
+
+LoRA Delta Sync 适用于以下组合：
+
+- **训练引擎：** FSDP (FSDP2)
+- **推理引擎：** SGLang
+- **微调方式：** LoRA（`use_lora: true`）
+- **权重更新模式：** XCCL / NCCL（`weight_update_mode: xccl`）
+
+> **注意：** Delta Sync 不支持 vLLM 推理引擎或 Megatron 训练引擎。
+
+### 工作原理
+
+同步过程分为两个阶段：
+
+1. **首次同步（阶段一）**
+   - **阶段 1a** -- FSDP 引擎通过标准的 `/update_weights_from_distributed`
+     端点，将**基座模型权重**（不含 LoRA 参数）广播到 SGLang 推理引擎。
+   - **阶段 1b** -- 紧接着，通过 `/load_lora_adapter_from_distributed`
+     端点传输 LoRA adapter 权重。SGLang 服务端将 adapter 加载到基座模型之上。
+
+2. **后续同步（阶段二）**
+   - 仅传输**更新后的 LoRA adapter 权重**，通过
+     `/load_lora_adapter_from_distributed` 端点完成。基座模型权重已驻留在推理引擎的
+     GPU 显存中，无需重复传输。
+
+这种两阶段设计意味着，在初始的全量同步之后，每次后续权重更新仅传输极小的 adapter 增量，
+从而显著加快每次迭代的速度。
+
+### 配置说明
+
+要启用 LoRA Delta Sync，请在 YAML 配置文件的 actor（训练引擎）部分设置
+`lora_delta_sync: true`，并配合标准的 LoRA 设置：
+
+```yaml
+actor:
+  backend: "fsdp:d4"
+  path: Qwen/Qwen2.5-1.5B-Instruct
+
+  # 权重更新必须使用 XCCL（基于 NCCL）
+  weight_update_mode: xccl
+
+  # 标准 LoRA 设置
+  use_lora: true
+  peft_type: lora
+  lora_rank: 16
+  lora_alpha: 16
+  target_modules: [all-linear]
+
+  # 启用增量同步
+  lora_delta_sync: true
+```
+
+SGLang 部分需要启用 LoRA 支持并设置最大 LoRA 秩：
+
+```yaml
+sglang:
+  model_path: ${actor.path}
+  dtype: ${actor.dtype}
+  enable_lora: ${actor.use_lora}
+  max_lora_rank: ${actor.lora_rank}
+  mem_fraction_static: 0.8
+```
+
+完整的可运行示例请参考 `examples/math/gsm8k_grpo_lora_delta_sync.yaml`。
+
+### 关键参数
+
+| 参数                   | 取值要求 / 说明                                                          |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `use_lora`             | `true`                                                                   |
+| `lora_delta_sync`      | `true` -- 启用增量同步路径。                                             |
+| `weight_update_mode`   | `xccl` -- 需要基于 NCCL 的分布式传输；不支持 `disk` 模式。              |
+| `lora_rank`            | 训练与推理配置中需保持一致（例如 `16`）。                                |
+| `lora_alpha`           | LoRA 缩放系数，与标准 LoRA 相同。                                       |
+| `sglang.enable_lora`   | `true` -- SGLang 服务端必须启用 LoRA 支持。                             |
+| `sglang.max_lora_rank` | 必须 >= 训练引擎使用的 `lora_rank`。                                    |
+
+### 性能收益
+
+- **传输量大幅减少：** Adapter 权重通常不到模型总参数的 1%。以 70B 模型、`lora_rank=16`
+  为例，adapter 仅有几百 MB，而全量模型权重则高达数十 GB。
+- **同步延迟更低：** 在一次性的基座模型同步完成后，每次后续权重更新仅需极短时间即可完成。
+- **GPU 利用率更高：** 权重传输时间减少意味着更多时间可用于训练和推理计算。
+
+### 注意事项
+
+- **SGLang memory saver：** 当 SGLang 配置中设置了 `enable_lora` 时，启动器会自动启用
+  `enable_memory_saver=True`。此选项使基座模型权重在迭代之间保留在 GPU 显存中（仅释放
+  KV cache），从而避免重复传输基座权重。
+- **SGLang 版本兼容性：** SGLang 服务端必须支持 `/load_lora_adapter_from_distributed`
+  API 端点。请确保使用兼容的 SGLang 版本。
+- **Adapter 版本管理：** 每次同步会生成带版本号的 adapter 名称（例如 `lora-gsm8k-v0`、
+  `lora-gsm8k-v1`）。在加载新 adapter 之前，会自动卸载旧版本。
+- **首次同步开销：** 首次同步仍需传输完整的基座模型，因此其耗时与标准全量权重同步相当。
+  性能提升从第二次同步开始体现。
+- **Rollout 配置：** 需要在 rollout 部分同样设置 `use_lora: true`，以确保推理引擎在生成
+  时应用已加载的 adapter。
 
 ## 实践建议
 

@@ -1131,6 +1131,16 @@ class TrainEngineConfig:
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
+    lora_delta_sync: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable LoRA delta weight sync. When True, base model weights are "
+            "sent only on the first sync; subsequent syncs transmit only the LoRA "
+            "adapter weights, significantly reducing communication overhead. "
+            "Requires use_lora=True and weight_update_mode='xccl'. "
+            "Only effective with SGLang backend.",
+        },
+    )
 
     # Tree training
     enable_tree_training: bool = field(
