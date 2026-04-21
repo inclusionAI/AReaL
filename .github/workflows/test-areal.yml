@@ -66,20 +66,21 @@ jobs:
       github.event_name == 'workflow_dispatch'
     needs:
       - determine-variants
-    name: Provision GCP runner (${{ matrix.variant }})
+    name: Provision GCP runner (${{ matrix.variant }} ${{ matrix.test_type }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         variant: ${{ fromJson(needs.determine-variants.outputs.matrix) }}
+        test_type: [unit, integration]
     env:
       CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:${{ inputs.image_tag || 'dev' }}-${{ matrix.variant }}
-      RUNNER_LABELS: gcp-a2-highgpu-2g,variant-${{ matrix.variant }}
+      RUNNER_LABELS: gcp-a2-highgpu-2g,variant-${{ matrix.variant }},test-type-${{ matrix.test_type }}
     steps:
       - name: Set instance variables
         id: vars
         run: |
-          echo "instance_name=gcp-runner-${{ github.run_id }}-${{ matrix.variant }}" >> "$GITHUB_OUTPUT"
+          echo "instance_name=gcp-runner-${{ github.run_id }}-${{ matrix.variant }}-${{ matrix.test_type }}" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -286,11 +287,12 @@ jobs:
     needs:
       - determine-variants
       - provision-runner
-    name: Run AReaL tests (${{ matrix.variant }})
+    name: Run AReaL tests (${{ matrix.variant }} ${{ matrix.test_type }})
     strategy:
       fail-fast: false
       matrix:
         variant: ${{ fromJson(needs.determine-variants.outputs.matrix) }}
+        test_type: [unit, integration]
     environment:
       name: AReaL-unittests
     permissions:
@@ -299,6 +301,7 @@ jobs:
       - self-hosted
       - gcp-a2-highgpu-2g
       - "variant-${{ matrix.variant }}"
+      - "test-type-${{ matrix.test_type }}"
     timeout-minutes: 120
     env:
       # Activate the venv created in the Docker image
@@ -313,6 +316,7 @@ jobs:
           python areal/tools/validate_docker_installation.py
 
       - name: Run unit tests
+        if: matrix.test_type == 'unit'
         env:
           CI: true
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -322,9 +326,10 @@ jobs:
           VIRTUAL_ENV: /AReaL/.venv
         run: |
           export PATH="/AReaL/.venv/bin:$PATH"
-          pytest -m "(not slow or ci) and not ${EXCLUDE_BACKEND}" --durations=20 -s -vv tests/test_*.py tests/experimental/
+          pytest -m "(not slow or ci) and not ${EXCLUDE_BACKEND}" --durations=20 -s -vv tests/test_*.py tests/experimental/ tests/infra/
 
       - name: Run SFT integration tests
+        if: matrix.test_type == 'integration'
         env:
           CI: true
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -336,6 +341,7 @@ jobs:
           pytest -m "not ${EXCLUDE_BACKEND}" -s -vv tests/sft/
 
       - name: Run GRPO integration tests
+        if: matrix.test_type == 'integration'
         env:
           CI: true
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -347,7 +353,7 @@ jobs:
           pytest -m "not ${EXCLUDE_BACKEND}" -s -vv tests/grpo/
 
   cleanup:
-    name: Tear down GCP runner (${{ matrix.variant }})
+    name: Tear down GCP runner (${{ matrix.variant }} ${{ matrix.test_type }})
     needs:
       - determine-variants
       - unit-tests
@@ -358,6 +364,7 @@ jobs:
       fail-fast: false
       matrix:
         variant: ${{ fromJson(needs.determine-variants.outputs.matrix) }}
+        test_type: [unit, integration]
     steps:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -369,7 +376,7 @@ jobs:
 
       - name: Delete runner instance
         env:
-          INSTANCE_NAME: gcp-runner-${{ github.run_id }}-${{ matrix.variant }}
+          INSTANCE_NAME: gcp-runner-${{ github.run_id }}-${{ matrix.variant }}-${{ matrix.test_type }}
         run: |
           # Look up instance zone dynamically since matrix job outputs
           # cannot be consumed per-element by downstream matrix jobs.

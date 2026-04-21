@@ -1,24 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-import orjson
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.wsgi import WSGIMiddleware
 from fastapi.responses import Response as RawResponse
-from openai.types.chat.completion_create_params import CompletionCreateParams
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from flask import Flask
 
-from areal.experimental.inference_service.data_proxy.backend import (
-    SGLangBridgeBackend,
-    VLLMBridgeBackend,
-)
 from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
-from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
 from areal.experimental.inference_service.data_proxy.pause import PauseState
 from areal.experimental.inference_service.data_proxy.session import (
     ExportTrajectoriesRequest,
@@ -33,10 +30,14 @@ from areal.experimental.inference_service.data_proxy.session import (
 from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
     TokenizerProxy,
 )
+from areal.experimental.inference_service.inf_bridge import InfBridge
+from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
+from areal.experimental.inference_service.vllm.bridge import VLLMBridgeBackend
 from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.proxy.server import serialize_interactions
-from areal.infra.rpc import rtensor as rtensor_storage
-from areal.infra.rpc.serialization import deserialize_value, serialize_value
+from areal.infra.rpc.guard.data_blueprint import (
+    data_bp,
+)
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceDataProxy")
@@ -137,11 +138,16 @@ def _create_inf_bridge(
 def _create_areal_client(
     inf_bridge: InfBridge,
     tok: TokenizerProxy,
+    config: DataProxyConfig,
 ) -> ArealOpenAI:
     """Create an ArealOpenAI client backed by the given InfBridge."""
     return ArealOpenAI(
         engine=inf_bridge,
         tokenizer=tok._tok,
+        tool_call_parser=config.tool_call_parser,
+        reasoning_parser=config.reasoning_parser,
+        engine_max_tokens=config.engine_max_tokens,
+        chat_template_type=config.chat_template_type,
     )
 
 
@@ -225,19 +231,11 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     async def lifespan(app: FastAPI):
         logger.info(
             "Data proxy starting — backend=%s, tokenizer=%s",
-            config.backend_addr,
+            config.backend_addr or "(none)",
             config.tokenizer_path,
         )
-        tok = TokenizerProxy(config.tokenizer_path)
+
         pause_state = PauseState()
-
-        # InfBridge + ArealOpenAI for /chat/completions
-        inf_bridge = _create_inf_bridge(config.backend_addr, pause_state, config)
-        areal_client = _create_areal_client(inf_bridge, tok)
-
-        app.state.tokenizer = tok
-        app.state.inf_bridge = inf_bridge
-        app.state.areal_client = areal_client
         app.state.pause_state = pause_state
         app.state.config = config
         app.state.session_store = SessionStore(
@@ -245,6 +243,19 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         )
         app.state.session_store.set_admin_key(config.admin_api_key)
         app.state.version = 0
+
+        if not config.backend_addr:
+            app.state.tokenizer = None
+            app.state.inf_bridge = None
+            app.state.areal_client = None
+        else:
+            tok = TokenizerProxy(config.tokenizer_path)
+            inf_bridge = _create_inf_bridge(config.backend_addr, pause_state, config)
+            areal_client = _create_areal_client(inf_bridge, tok, config)
+            app.state.tokenizer = tok
+            app.state.inf_bridge = inf_bridge
+            app.state.areal_client = areal_client
+
         ready_task = asyncio.create_task(_ready_trajectory_loop(app))
         try:
             yield
@@ -257,6 +268,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         logger.info("Data proxy shutting down")
 
     app = FastAPI(title="AReaL Data Proxy", lifespan=lifespan)
+    _registered_models: dict[str, dict[str, str | None]] = {}
 
     # =========================================================================
     # Health
@@ -284,13 +296,23 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
     @app.post("/pause_generation")
     async def pause_generation():
-        inf_bridge: InfBridge = app.state.inf_bridge
+        inf_bridge: InfBridge | None = app.state.inf_bridge
+        if inf_bridge is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No inference backend configured (external model mode).",
+            )
         await inf_bridge.pause()
         return {"status": "ok", "paused": True}
 
     @app.post("/continue_generation")
     async def continue_generation():
-        inf_bridge: InfBridge = app.state.inf_bridge
+        inf_bridge: InfBridge | None = app.state.inf_bridge
+        if inf_bridge is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No inference backend configured (external model mode).",
+            )
         await inf_bridge.resume()
         return {"status": "ok", "paused": False}
 
@@ -365,24 +387,137 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # =========================================================================
 
     @app.post("/chat/completions")
-    async def chat_completions(body: CompletionCreateParams, request: Request):
+    async def chat_completions(request: Request):
+        raw_body = await request.body()
+        try:
+            body_json = json.loads(raw_body)
+        except (json.JSONDecodeError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+        model_name = body_json.get("model")
         store: SessionStore = app.state.session_store
-        areal_client: ArealOpenAI = app.state.areal_client
 
         token = _try_extract_bearer_token(request)
         session = _resolve_session_from_token(token, store)
         if session is not None:
             session.update_last_access()
+
+        # -----------------------------------------------------------------
+        # External model path: model is a registered external model name
+        # -----------------------------------------------------------------
+        ext_info = _registered_models.get(model_name) if model_name else None
+        if ext_info is not None and ext_info.get("url"):
+            ext_url = (ext_info["url"] or "").rstrip("/")
+            ext_model = ext_info["model"]
+            provider_api_key = ext_info.get("api_key")
+
+            forward_body = dict(body_json)
+            if ext_model is not None:
+                forward_body["model"] = ext_model
+            else:
+                forward_body.pop("model", None)
+
+            _skip = {"host", "content-length", "transfer-encoding", "authorization"}
+            forward_headers = {
+                k: v for k, v in dict(request.headers).items() if k.lower() not in _skip
+            }
+            if provider_api_key:
+                forward_headers["authorization"] = f"Bearer {provider_api_key}"
+
+            is_streaming = forward_body.get("stream", False) or False
+            messages = body_json.get("messages", [])
+
+            if is_streaming:
+                collected_chunks: list[str] = []
+
+                async def _stream_and_cache():
+                    success = False
+                    try:
+                        async with httpx.AsyncClient(
+                            timeout=httpx.Timeout(config.request_timeout)
+                        ) as client:
+                            async with client.stream(
+                                "POST",
+                                f"{ext_url}/chat/completions",
+                                json=forward_body,
+                                headers=forward_headers,
+                            ) as resp:
+                                if resp.status_code != 200:
+                                    error_body = await resp.aread()
+                                    yield (
+                                        f"data: {json.dumps({'error': error_body.decode()})}\n\n".encode()
+                                    )
+                                    return
+                                async for chunk in resp.aiter_bytes():
+                                    decoded = chunk.decode("utf-8", errors="replace")
+                                    collected_chunks.append(decoded)
+                                    yield chunk
+                                success = True
+                    except Exception as exc:
+                        logger.error(
+                            "External stream error for %s: %s", model_name, exc
+                        )
+                        yield f"data: {json.dumps({'error': str(exc)})}\n\n".encode()
+                    finally:
+                        if success and collected_chunks and session is not None:
+                            session.add_string_interaction(
+                                messages,
+                                "".join(collected_chunks),
+                            )
+
+                return StreamingResponse(
+                    _stream_and_cache(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+
+            full_url = f"{ext_url}/chat/completions"
+            try:
+                async with httpx.AsyncClient(timeout=config.request_timeout) as client:
+                    resp = await client.post(
+                        full_url,
+                        json=forward_body,
+                        headers=forward_headers,
+                    )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=502, detail=f"External API error: {exc}"
+                )
+
+            if resp.status_code != 200:
+                logger.error(
+                    "External API returned %d for %s: %s",
+                    resp.status_code,
+                    full_url,
+                    resp.text[:500],
+                )
+
+            response_str = resp.text
+
+            if resp.status_code == 200 and session is not None:
+                session.add_string_interaction(messages, response_str)
+
+            return RawResponse(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type"),
+            )
+
+        # -----------------------------------------------------------------
+        # Internal model path: use AReaL inference server
+        # -----------------------------------------------------------------
+        areal_client: ArealOpenAI = app.state.areal_client
+
+        if session is not None:
             areal_cache: Any = session.active_completions
         else:
             areal_cache = None
 
         # Build kwargs from request body
-        if isinstance(body, BaseModel):
-            kwargs = body.model_dump()
-        else:
-            kwargs = dict(body)
-
+        kwargs = dict(body_json)
         # Remove model (ArealOpenAI ignores it)
         kwargs.pop("model", None)
 
@@ -427,6 +562,19 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
         return result
 
+    @app.post("/register_model")
+    async def register_model(request: Request):
+        body = await request.json()
+        name = body.get("name") or body.get("model")
+        url = body.get("url", "")
+        model = body.get("model", name)
+        api_key = body.get("api_key")
+        if not name:
+            raise HTTPException(status_code=400, detail="model name is required")
+        _registered_models[name] = {"url": url, "model": model, "api_key": api_key}
+        logger.info("Model registered: name=%s url=%s", name, url or "(internal)")
+        return {"status": "ok", "name": name}
+
     # =========================================================================
     # Trajectory export (admin key required)
     # =========================================================================
@@ -462,10 +610,13 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         from areal.infra.rpc.rtensor import RTensor
 
         for item in interactions.values():
-            # Set the internal cache
-            item.to_tensor_dict()
-            # Remotize the tensor dict cache
-            item._cache = RTensor.remotize(item._cache, node_addr=config.serving_addr)
+            if item.has_tensor_data:
+                # Set the internal cache
+                item.to_tensor_dict()
+                # Remotize the tensor dict cache
+                item._cache = RTensor.remotize(
+                    item._cache, node_addr=config.serving_addr
+                )
 
         # serialize RTensors
         serialized = serialize_interactions(interactions)
@@ -475,114 +626,6 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # staleness control is now managed at the router level — see
     # areal.experimental.inference_service.router.app for the /grant_capacity
     # endpoint.
-
-    # =========================================================================
-    # RTensor data storage endpoints
-    #
-    # These endpoints mirror the /data/ endpoints on rpc_server.py so that
-    # RTensor.localize() can fetch tensor shards stored on this data proxy
-    # via HttpRTensorBackend._fetch_tensor().
-    # =========================================================================
-
-    @app.post("/data/batch")
-    async def retrieve_data_shard_batch(request: Request):
-        """Retrieve multiple tensor shards in one request.
-
-        Mirrors the ``POST /data/batch`` endpoint on the Flask RPC server
-        (``rpc_server.py``) so that ``HttpRTensorBackend._fetch_shard_group``
-        works against data-proxy addresses.
-        """
-        try:
-            try:
-                payload = (await request.json()) or {}
-            except Exception:
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
-            shard_ids = payload.get("shard_ids", [])
-            if not isinstance(shard_ids, list) or not all(
-                isinstance(sid, str) for sid in shard_ids
-            ):
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "status": "error",
-                        "message": "Expected JSON body with string list field 'shard_ids'",
-                    },
-                )
-
-            data = []
-            missing: list[str] = []
-            for sid in shard_ids:
-                try:
-                    data.append(rtensor_storage.fetch(sid))
-                except KeyError:
-                    missing.append(sid)
-
-            if missing:
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "status": "error",
-                        "message": "One or more requested shards were not found",
-                        "missing_shard_ids": missing,
-                    },
-                )
-
-            serialized_data = serialize_value(data)
-            data_bytes = orjson.dumps(serialized_data)
-            logger.debug(
-                "Retrieved %d RTensor shards in batch (size=%d bytes)",
-                len(shard_ids),
-                len(data_bytes),
-            )
-            return RawResponse(
-                content=data_bytes, media_type="application/octet-stream"
-            )
-        except Exception as e:
-            logger.error("Error retrieving batch shards: %s", e, exc_info=True)
-            return JSONResponse(
-                status_code=500,
-                content={"status": "error", "message": str(e)},
-            )
-
-    @app.put("/data/{shard_id}")
-    async def store_data_shard(shard_id: str, request: Request):
-        """Store a tensor shard in local RTensor storage."""
-        data_bytes = await request.body()
-        serialized_data = orjson.loads(data_bytes)
-        data = deserialize_value(serialized_data)
-        rtensor_storage.store(shard_id, data)
-        logger.debug(
-            "Stored RTensor shard %s (size=%d bytes)", shard_id, len(data_bytes)
-        )
-        return {"status": "ok", "shard_id": shard_id}
-
-    @app.get("/data/{shard_id}")
-    async def retrieve_data_shard(shard_id: str):
-        """Retrieve a tensor shard from local RTensor storage."""
-        try:
-            data = rtensor_storage.fetch(shard_id)
-        except KeyError:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Shard {shard_id} not found",
-            )
-        serialized_data = serialize_value(data)
-        data_bytes = orjson.dumps(serialized_data)
-        return RawResponse(content=data_bytes, media_type="application/octet-stream")
-
-    @app.delete("/data/clear")
-    async def clear_data_shards(request: Request):
-        """Clear specified tensor shards from local RTensor storage."""
-        body = await request.json()
-        shard_ids = body.get("shard_ids", [])
-        if not isinstance(shard_ids, list):
-            raise HTTPException(status_code=400, detail="'shard_ids' must be a list")
-        cleared_count = sum(rtensor_storage.remove(sid) for sid in shard_ids)
-        stats = dict(cleared_count=cleared_count, **rtensor_storage.storage_stats())
-        logger.info("Cleared %d RTensor shards. Stats: %s", cleared_count, stats)
-        return {"status": "ok", **stats}
 
     # =========================================================================
     # Runtime backend reconfiguration (for fork-based deployment)
@@ -606,7 +649,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
         # Recreate InfBridge + ArealOpenAI with new backend address
         new_inf_bridge = _create_inf_bridge(new_addr, pause_state, app.state.config)
-        new_areal_client = _create_areal_client(new_inf_bridge, tok)
+        new_areal_client = _create_areal_client(new_inf_bridge, tok, app.state.config)
 
         # Build updated config copy, then swap all three state fields.
         # Concurrent requests already hold their own references so they
@@ -620,5 +663,22 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
         logger.info("Backend reconfigured to %s", new_addr)
         return {"status": "ok", "backend_addr": new_addr}
+
+    # =========================================================================
+    # RTensor data storage endpoints
+    #
+    # These endpoints are now mounted from the legacy Flask data_blueprint
+    # (areal.infra.rpc.guard.data_blueprint) to ensure a single source of
+    # truth for RTensor storage logic.
+    #
+    # This mount provides:
+    # - POST   /data/batch
+    # - PUT    /data/<shard_id>
+    # - GET    /data/<shard_id>
+    # - DELETE /data/clear
+    # =========================================================================
+    flask_shim = Flask("data_proxy_shim")
+    flask_shim.register_blueprint(data_bp)
+    app.mount("/", WSGIMiddleware(flask_shim))
 
     return app

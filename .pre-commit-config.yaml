@@ -88,6 +88,16 @@ repos:
         always_run: false
         require_serial: true
 
+  # Ensure SPDX license header in Python source files
+  - repo: local
+    hooks:
+      - id: check-license-header
+        name: Check SPDX license header
+        entry: python3 areal/tools/check_license_header.py
+        language: system
+        files: ^areal/.*\.py$
+        types: [python]
+
   # Conventional Commits message check
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0

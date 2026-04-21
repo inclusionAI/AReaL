@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """AReaL Sync RPC Server — Guard + Data + Engine composition.
 
 This module composes the shared Guard with data and engine blueprints

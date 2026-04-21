@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # Implements a simple name resolving service, which can be considered as a distributed key-value dict.
 import dataclasses
 import os

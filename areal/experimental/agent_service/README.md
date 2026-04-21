@@ -153,29 +153,45 @@ Turn 2:
 
 ```
 areal/experimental/agent_service/
-├── __init__.py          # Public exports
+├── __init__.py          # Public exports (AgentRequest, AgentResponse, etc.)
 ├── README.md            # This document
+├── auth.py              # Admin key auth helpers (hmac-safe comparison)
 ├── protocol.py          # Gateway protocol frame types
 ├── types.py             # AgentRequest, AgentResponse, EventEmitter, AgentRunnable
+├── controller/
+│   ├── __init__.py      # AgentServiceController, AgentServiceControllerConfig
+│   ├── config.py        # AgentServiceControllerConfig dataclass
+│   └── controller.py    # AgentServiceController orchestrator
+├── guard/
+│   ├── __init__.py      # Module docstring
+│   ├── __main__.py      # python -m areal.experimental.agent_service.guard
+│   └── app.py           # Guard Flask app (pass-through to areal.infra.rpc.guard)
 ├── gateway/
+│   ├── __init__.py      # Public exports
 │   ├── __main__.py      # python -m areal.experimental.agent_service.gateway
 │   ├── app.py           # create_gateway_app()
-│   └── bridge.py        # OpenResponsesBridge, mount_bridge()
+│   ├── bridge.py        # OpenResponsesBridge, mount_bridge()
+│   └── config.py        # GatewayConfig dataclass
 ├── router/
+│   ├── __init__.py      # Public exports
 │   ├── __main__.py      # python -m areal.experimental.agent_service.router
 │   ├── app.py           # create_router_app()
-│   └── client.py        # RouterClient
+│   ├── client.py        # RouterClient
+│   └── config.py        # RouterConfig dataclass
 ├── data_proxy/
+│   ├── __init__.py      # Public exports
 │   ├── __main__.py      # python -m areal.experimental.agent_service.data_proxy
 │   ├── app.py           # create_data_proxy_app()
-│   └── client.py        # DataProxyClient
+│   ├── client.py        # DataProxyClient
+│   └── config.py        # DataProxyConfig dataclass
 └── worker/
+    ├── __init__.py      # Public exports
     ├── __main__.py      # python -m areal.experimental.agent_service.worker
-    └── app.py           # create_worker_app()
+    ├── app.py           # create_worker_app()
+    └── config.py        # WorkerConfig dataclass
 
 examples/agent_service/
-├── agent.py             # Tau2Agent (PydanticAI)
-├── config.yaml          # Demo configuration
-├── run_demo.py          # One-click demo
-└── README.md            # Example documentation
+├── agent.py                  # ClaudeAgent (Claude Agent SDK)
+├── run_agent_service.py      # Controller-based launcher + interactive demo
+└── README.md                 # Example documentation
 ```

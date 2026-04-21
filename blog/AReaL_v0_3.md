@@ -58,7 +58,7 @@ model version used for rollout generation is limited to only one or two steps ol
 However, all these systems still follow a batched generation setting, the issue of
 system inefficiency during the generation phase still remains unaddressed.
 
-![](/assets/sync_one_step_gen.png)
+![](/assets/figures/sync_one_step_gen.png)
 
 *Fig.1. Left: Execution timeline of a synchronous RL training. Right: Execution timeline
 of one-step overlap RL system.*
@@ -69,7 +69,7 @@ Synchronous systems distribute generation across all devices, reducing the per-G
 decoding batch size. This pushes the decoding process into a memory-IO-bound regime
 where additional devices fail to improve throughput.
 
-![](/assets/gen_scaling_trend.png)
+![](/assets/figures/gen_scaling_trend.png)
 
 *Fig2. Left: Strong scaling of batched generation throughput for a 1.5B LRM. Right:
 Generation becomes memory-IO bound as GPU count increases.*
@@ -82,7 +82,7 @@ flexibility for a customized RL workflow. We implement these principles in AReaL
 presents the architecture and data flow of AREAL. The system comprises 4 core
 components:
 
-![](/assets/arch.png)
+![](/assets/figures/arch.png)
 
 *Fig.3 The architecture featuring asynchronous generation and training components.*
 
@@ -117,7 +117,7 @@ components:
   Fig.4. This asynchronous pipeline ensures continuous full utilization of both
   generation and training resources.
 
-![](/assets/async_timeline.png)
+![](/assets/figures/async_timeline.png)
 
 *Fig 4. Execution timeline of our fully asynchronous RL system.*
 
@@ -156,7 +156,7 @@ To overcome these two challenges, we propose two solutions:
   represents the policy used for sampling trajectories and the proxy policy is a
   proximal policy serving as a recent target to regularize the update of online policy.
 
-![](/assets/decoupled_ppo_obj.png)
+![](/assets/figures/decoupled_ppo_obj.png)
 
 ## Validating Asynchronous AReaL
 
@@ -200,7 +200,7 @@ Fig.5. Without interruptible generation, the controller must wait for the longes
 response. In particular, interruptible generation leads to a 12% and 17% throughput
 increase for 1.5B and 7B models respectively on 4 nodes.
 
-![](/assets/interrupt_gen_ablation.png)
+![](/assets/figures/interrupt_gen_ablation.png)
 
 *Fig.5 Ablation study of interruptible generation.*
 
@@ -214,7 +214,7 @@ final performance due to the improper clipping center and policy changes during
 interruptible generation. Furthermore, increasing data staleness consistently degrades
 learning performance.
 
-![](/assets/algo_ablation.png)
+![](/assets/figures/algo_ablation.png)
 
 *Fig.6 Ablation Study on Decoupled PPO Objective with DeepSeek-R1-Distill-Qwen-1.5B.
 Left: Learning curves with naive PPO. Right: Learning curves with decoupled PPO
@@ -245,7 +245,7 @@ zero-staleness oracle. When properly constrained, moderate staleness (e.g., η �
 minimal impact on final performance while significantly accelerating training through
 the asynchronous pipeline, as demonstrated in Tab.3 and Fig.7.
 
-![](/assets/staleness_throughput.png)
+![](/assets/figures/staleness_throughput.png)
 
 *Fig.7 The relationship between η and training throughput. Larger η leads to higher
 throughput.*

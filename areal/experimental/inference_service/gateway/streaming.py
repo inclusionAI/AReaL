@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Router communication and request forwarding utilities for the gateway."""
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ async def query_router(
     *,
     session_id: str | None = None,
     admin_api_key: str | None = None,
+    model: str | None = None,
 ) -> str:
     """Ask the Router for a worker address.
 
@@ -57,6 +60,8 @@ async def query_router(
         Router returned 404 (unknown key / session) or 503 (no healthy workers).
     """
     payload: dict[str, str] = {}
+    if model is not None:
+        payload["model"] = model
     if session_id is not None:
         payload["session_id"] = session_id
     else:
@@ -230,6 +235,96 @@ async def get_all_worker_addrs(
         return [w["addr"] for w in data.get("workers", [])]
     except Exception as exc:
         raise RouterUnreachableError(f"Failed to get workers: {exc}") from exc
+
+
+async def register_model_in_router(
+    router_addr: str,
+    model: str,
+    url: str,
+    api_key: str | None,
+    data_proxy_addrs: list[str],
+    admin_api_key: str,
+    timeout: float,
+) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{router_addr}/register_model",
+                json={
+                    "model": model,
+                    "url": url,
+                    "api_key": api_key,
+                    "data_proxy_addrs": data_proxy_addrs,
+                },
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        if resp.status_code == 503:
+            raise RouterKeyRejectedError("No healthy workers", 503)
+        resp.raise_for_status()
+        return resp.json()
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
+
+
+async def route_external_model(
+    router_addr: str,
+    name: str,
+    admin_api_key: str,
+    timeout: float,
+) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{router_addr}/route",
+                json={"model": name},
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        if resp.status_code == 404:
+            raise RouterKeyRejectedError(f"Model '{name}' not found", 404)
+        if resp.status_code == 503:
+            raise RouterKeyRejectedError(f"No healthy workers for model '{name}'", 503)
+        resp.raise_for_status()
+        return resp.json()
+    except RouterKeyRejectedError:
+        raise
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
+
+
+async def list_models_from_router(
+    router_addr: str,
+    admin_api_key: str,
+    timeout: float,
+) -> list[str]:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(
+                f"{router_addr}/models",
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        resp.raise_for_status()
+        return resp.json().get("models", [])
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
+
+
+async def remove_model_from_router(
+    router_addr: str,
+    name: str,
+    admin_api_key: str,
+    timeout: float,
+) -> None:
+    """Remove an external model from the router registry (best-effort rollback)."""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{router_addr}/remove_model",
+                json={"name": name},
+                headers={"Authorization": f"Bearer {admin_api_key}"},
+            )
+        resp.raise_for_status()
+    except Exception:
+        pass  # Best-effort rollback; swallow errors
 
 
 async def resolve_worker_addr(

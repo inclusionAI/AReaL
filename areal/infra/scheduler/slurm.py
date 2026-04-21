@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import asyncio
 import getpass
 import re
@@ -1447,6 +1449,7 @@ class SlurmScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -1502,6 +1505,7 @@ class SlurmScheduler(Scheduler):
             "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
+            "rpc_meta": rpc_meta,
         }
 
         port = int(worker_info.worker.worker_ports[0])
@@ -1578,6 +1582,7 @@ class SlurmScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -1633,6 +1638,7 @@ class SlurmScheduler(Scheduler):
             "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
+            "rpc_meta": rpc_meta,
         }
 
         port = int(worker_info.worker.worker_ports[0])

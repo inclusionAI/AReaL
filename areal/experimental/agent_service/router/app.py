@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Agent Router — session-affine routing service."""
 
 from __future__ import annotations
@@ -10,14 +12,15 @@ from fastapi.responses import JSONResponse
 
 from areal.utils import logging
 
-from ..auth import DEFAULT_ADMIN_KEY, make_admin_dependency
+from ..auth import make_admin_dependency
+from .config import RouterConfig
 
 logger = logging.getLogger("AgentRouter")
 
 
-def create_router_app(admin_key: str = DEFAULT_ADMIN_KEY) -> FastAPI:
+def create_router_app(config: RouterConfig) -> FastAPI:
     app = FastAPI(title="AReaL Agent Router")
-    auth = make_admin_dependency(admin_key)
+    auth = make_admin_dependency(config.admin_api_key)
 
     registered_proxies: list[str] = []
     session_map: dict[str, str] = {}

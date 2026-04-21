@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """InfBridge -- HTTP client implementing _AsyncGenerateEngine protocol.
 
 Supports pluggable backends (SGLang, vLLM, etc.) via the InfBridgeBackend protocol.
@@ -15,7 +17,7 @@ import httpx
 import numpy as np
 
 from areal.api.io_struct import HttpRequest
-from areal.experimental.inference_service.data_proxy.backend import InfBridgeBackend
+from areal.experimental.inference_service.backend import InfBridgeBackend
 from areal.utils import logging
 
 if TYPE_CHECKING:

@@ -50,6 +50,7 @@ actor:
   dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 10240
+    packing_algorithm: ffd
   optimizer:
     type: adam
     lr: 1.70e-5
@@ -68,7 +69,9 @@ actor:
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true
-  behave_imp_weight_cap: 5.0
+  rejection_sampling:
+    metric: ratio
+    upper: 5.0
   reward_norm:
     mean_level: group
     std_level: group
@@ -96,6 +99,7 @@ ref:
   dtype: ${actor.dtype}
   mb_spec:
     max_tokens_per_mb: 10240
+    packing_algorithm: ffd
   optimizer: null
   scheduling_strategy:
     type: colocation

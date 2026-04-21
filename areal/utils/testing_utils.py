@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Common utilities for testing and profiling.
 
 This module provides utilities that are shared between tests and profiling tools.

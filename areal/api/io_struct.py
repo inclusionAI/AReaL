@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import copy
 import os
 import subprocess
@@ -337,7 +339,7 @@ class LocalInfServerInfo:
 
     host: str
     port: int
-    process: subprocess.Popen
+    process: subprocess.Popen | None
 
 
 @dataclass
