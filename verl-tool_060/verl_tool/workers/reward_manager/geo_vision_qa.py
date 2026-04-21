@@ -7,7 +7,7 @@ import logging
 from collections import Counter, defaultdict
 from verl import DataProto
 from verl.workers.reward_manager import register
-
+ 
 logger = logging.getLogger(__name__)
 
 _ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
@@ -174,7 +174,7 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
     return score
 
 
-def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.1, hi: float = 0.5) -> tuple[float, float]:
+def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.3, hi: float = 0.8) -> tuple[float, float]:
     """MapTrace: linear reward based on NDTW distance. Returns (score, ndtw)."""
     from geo_edit.evaluation.map_trace_verifier import map_trace_score
 
