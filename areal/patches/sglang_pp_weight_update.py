@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """
 Runtime monkey-patch for sglang to support per-PP-rank NCCL weight update groups.
 
@@ -48,10 +50,8 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import os
 import threading
 import time as _time
-from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -171,14 +171,14 @@ def _patch_model_runner() -> None:
     _orig_init_group = ModelRunner.init_weights_update_group
 
     def _patched_init_weights_update_group(
-        self: "ModelRunner",
+        self: ModelRunner,
         master_address: str,
         master_port: int,
         rank_offset: int,
         world_size: int,
         group_name: str,
         backend: str = "nccl",
-        pp_rank: Optional[int] = None,
+        pp_rank: int | None = None,
     ):
         """Per-PP-rank aware group initialisation.
 
@@ -198,7 +198,9 @@ def _patch_model_runner() -> None:
             self._model_update_group[group_name] = None  # sentinel
             logger.info(
                 "Skipping group '%s': requested pp_rank=%d but worker is pp_rank=%d.",
-                group_name, pp_rank, self.pp_rank,
+                group_name,
+                pp_rank,
+                self.pp_rank,
             )
             return True, (
                 f"Skipped group creation (pp_rank mismatch: "
@@ -209,10 +211,12 @@ def _patch_model_runner() -> None:
         if pp_rank is not None:
             logger.info(
                 "Worker pp_rank=%d tp_rank=%d joining per-PP-rank group '%s'.",
-                self.pp_rank, self.tp_rank, group_name,
+                self.pp_rank,
+                self.tp_rank,
+                group_name,
             )
 
-        _final_nccl_rank = rank_offset + getattr(self, 'tp_rank', 0)
+        _final_nccl_rank = rank_offset + getattr(self, "tp_rank", 0)
 
         _t0 = _time.monotonic()
         _stop = threading.Event()
@@ -225,9 +229,12 @@ def _patch_model_runner() -> None:
                 logger.warning(
                     "init_weights_update_group BLOCKED %.0fs: "
                     "pp=%s tp=%s nccl_rank=%d ws=%d group=%s",
-                    elapsed, getattr(self, 'pp_rank', '?'),
-                    getattr(self, 'tp_rank', '?'),
-                    _final_nccl_rank, world_size, group_name,
+                    elapsed,
+                    getattr(self, "pp_rank", "?"),
+                    getattr(self, "tp_rank", "?"),
+                    _final_nccl_rank,
+                    world_size,
+                    group_name,
                 )
 
         _wd_t = threading.Thread(target=_wd, daemon=True)
@@ -249,8 +256,11 @@ def _patch_model_runner() -> None:
                 "init_weights_update_group EXCEPTION after %.2fs: "
                 "pp=%s tp=%s nccl_rank=%d group=%s: %s",
                 _time.monotonic() - _t0,
-                self.pp_rank, self.tp_rank,
-                _final_nccl_rank, group_name, e,
+                self.pp_rank,
+                self.tp_rank,
+                _final_nccl_rank,
+                group_name,
+                e,
                 exc_info=True,
             )
             raise
@@ -258,9 +268,11 @@ def _patch_model_runner() -> None:
         _stop.set()
         _elapsed = _time.monotonic() - _t0
         logger.info(
-            "init_weights_update_group completed in %.2fs: "
-            "pp=%s tp=%s group=%s",
-            _elapsed, self.pp_rank, self.tp_rank, group_name,
+            "init_weights_update_group completed in %.2fs: pp=%s tp=%s group=%s",
+            _elapsed,
+            self.pp_rank,
+            self.tp_rank,
+            group_name,
         )
         return result
 
@@ -270,12 +282,12 @@ def _patch_model_runner() -> None:
     _orig_update_distributed = ModelRunner.update_weights_from_distributed
 
     def _patched_update_weights_from_distributed(
-        self: "ModelRunner",
+        self: ModelRunner,
         names,
         dtypes,
         shapes,
         group_name: str,
-        load_format: Optional[str] = None,
+        load_format: str | None = None,
     ):
         """Skip broadcast receive if this worker did not join *group_name*."""
         pg = self._model_update_group.get(group_name, _PP_SKIP_SENTINEL)
@@ -285,7 +297,8 @@ def _patch_model_runner() -> None:
             logger.debug(
                 "Skipping update_weights_from_distributed for group '%s': "
                 "worker pp_rank=%d did not join.",
-                group_name, self.pp_rank,
+                group_name,
+                self.pp_rank,
             )
             return True, (
                 f"Skipped weight update (worker pp_rank={self.pp_rank} "
@@ -309,7 +322,7 @@ def _patch_model_runner() -> None:
     _orig_destroy_group = ModelRunner.destroy_weights_update_group
 
     def _patched_destroy_weights_update_group(
-        self: "ModelRunner",
+        self: ModelRunner,
         group_name: str,
     ):
         """Skip destruction if this worker holds a ``None`` sentinel."""
@@ -320,7 +333,8 @@ def _patch_model_runner() -> None:
             self._model_update_group.pop(group_name, None)
             logger.debug(
                 "Skipping destroy for group '%s': worker pp_rank=%d did not join.",
-                group_name, self.pp_rank,
+                group_name,
+                self.pp_rank,
             )
             return True, (
                 f"Skipped group destruction (worker pp_rank={self.pp_rank} "
@@ -367,7 +381,8 @@ def _patch_tp_worker() -> None:
         logger.info(
             "BaseTpWorker forwarding init_weights_update_group: "
             "pp_rank=%s group_name=%s",
-            pp_rank, recv_req.group_name,
+            pp_rank,
+            recv_req.group_name,
         )
 
         success, message = self.model_runner.init_weights_update_group(

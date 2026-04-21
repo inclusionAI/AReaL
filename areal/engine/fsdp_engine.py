@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import gc
 import math
@@ -10,7 +11,6 @@ import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import contextmanager, nullcontext
-import copy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -1231,9 +1231,7 @@ class FSDPEngine(TrainEngine):
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         assert meta.type == "xccl"
-        gen_pp_size = (
-            meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 1
-        )
+        gen_pp_size = meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 1
 
         # NOTE: Processes launched with torchrun will set the following env var
         # to True, which blocks creating another TCP store for weight update.
@@ -1259,9 +1257,9 @@ class FSDPEngine(TrainEngine):
             self.weight_update_group_names = [group_name]
 
             meta.nccl_master_address = self.weight_update_master_addr = gethostip()
-            meta.nccl_master_port = self.weight_update_master_port = (
-                find_free_ports(1)[0]
-            )
+            meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[
+                0
+            ]
             meta.nccl_group_name = group_name
 
             if dist.get_rank() == 0:
@@ -1291,9 +1289,7 @@ class FSDPEngine(TrainEngine):
                 self.weight_update_group = pg
 
                 fut.result()
-                self.logger.info(
-                    f"Weight update group '{group_name}' initialized."
-                )
+                self.logger.info(f"Weight update group '{group_name}' initialized.")
 
     def _init_per_pp_weight_update_groups(
         self, meta: WeightUpdateMeta, gen_pp_size: int
@@ -1358,9 +1354,7 @@ class FSDPEngine(TrainEngine):
         else:
             # Non rank-0 FSDP ranks do not participate in NCCL groups
             for pp_rank in range(gen_pp_size):
-                self.weight_update_group_names.append(
-                    f"update_weight_group_{pp_rank}"
-                )
+                self.weight_update_group_names.append(f"update_weight_group_{pp_rank}")
             self.weight_update_master_addr = ""
             self.weight_update_master_port = 0
 
@@ -1371,7 +1365,11 @@ class FSDPEngine(TrainEngine):
         # Reset weight weight meta with local info
         meta.nccl_master_address = self.weight_update_master_addr
         meta.nccl_master_port = self.weight_update_master_port
-        meta.nccl_group_name = self.weight_update_group_names[0] if self.weight_update_group_names else "update_weight_group"
+        meta.nccl_group_name = (
+            self.weight_update_group_names[0]
+            if self.weight_update_group_names
+            else "update_weight_group"
+        )
 
         main_rank = dist.get_rank() == 0
         if main_rank:

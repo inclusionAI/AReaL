@@ -66,6 +66,7 @@ RID_CACHE_SIZE = 128
 
 logger = logging.getLogger("RemoteInfEngine")
 
+
 class GroupedRolloutWorkflow(RolloutWorkflow):
     def __init__(
         self,
@@ -119,6 +120,7 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
         # Otherwise, tensor dicts - concatenate
         concatenated = concat_padded_tensors(valid_results)
         return concatenated if concatenated else None
+
 
 class RemoteInfBackendProtocol(Protocol):
     """Protocol defining backend-specific operations for remote inference engines.
@@ -320,6 +322,7 @@ class RemoteInfBackendProtocol(Protocol):
             The launched server process
         """
         ...
+
 
 class RemoteInfEngine(InferenceEngine):
     """
@@ -907,7 +910,8 @@ class RemoteInfEngine(InferenceEngine):
 
         self.logger.info(
             "Initializing weight update group: group=%s, addresses=%s",
-            meta.nccl_group_name, self.addresses,
+            meta.nccl_group_name,
+            self.addresses,
         )
 
         fut = get_executor().submit(
@@ -1300,7 +1304,9 @@ class RemoteInfEngine(InferenceEngine):
             self._shutdown_one_server(server_info)
         self.local_server_processes.clear()
 
+
 # Helper functions that run in ProcessPoolExecutor
+
 
 def _update_weights_from_disk(
     backend: RemoteInfBackendProtocol,
@@ -1348,6 +1354,7 @@ def _update_weights_from_disk(
         return load_timestamp - save_timestamp
 
     return uvloop.run(_fn())
+
 
 def _init_weights_update_group_remote(
     backend: RemoteInfBackendProtocol,
@@ -1399,7 +1406,9 @@ def _init_weights_update_group_remote(
                 if isinstance(_r, Exception):
                     logger.error(
                         "init_weights_update_group request %d to %s failed: %s",
-                        _idx, addresses[_idx], _r,
+                        _idx,
+                        addresses[_idx],
+                        _r,
                     )
             # Re-raise first exception if any failed
             for _r in results:
@@ -1407,6 +1416,7 @@ def _init_weights_update_group_remote(
                     raise _r
 
     return uvloop.run(_fn())
+
 
 def _update_weights_from_distributed(
     backend: RemoteInfBackendProtocol,

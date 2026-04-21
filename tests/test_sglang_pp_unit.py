@@ -10,17 +10,20 @@ Covers two scenarios:
 
 Also tests allocation mode parsing with PP dimension and patch module imports.
 """
-import pytest
-from unittest.mock import MagicMock, patch
 
-from areal.api.alloc_mode import AllocationValidationError, ModelAllocation, ParallelStrategy
+import pytest
+
+from areal.api.alloc_mode import (
+    AllocationValidationError,
+    ModelAllocation,
+)
 from areal.api.io_struct import WeightUpdateMeta
 from areal.engine.sglang_remote import SGLangBackend
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_meta(tp=1, pp=1, dp=1, group_name="update_weight_group_0"):
     """Build a WeightUpdateMeta with the given parallel dimensions."""
@@ -35,6 +38,7 @@ def _make_meta(tp=1, pp=1, dp=1, group_name="update_weight_group_0"):
 # ===================================================================== #
 #  Scenario 1: PP=1 (backward compatible, single group)                 #
 # ===================================================================== #
+
 
 class TestPP1BackwardCompatible:
     """PP=1 should use original behavior: single NCCL group, no pp_rank."""
@@ -98,6 +102,7 @@ class TestPP1BackwardCompatible:
 # ===================================================================== #
 #  Scenario 2: PP>1 with per-PP-rank groups                             #
 # ===================================================================== #
+
 
 class TestPerPPRankGroups:
     """PP>1, group name ends with _{digit} -> per-PP-rank groups.
@@ -178,6 +183,7 @@ class TestPerPPRankGroups:
 #  Group name parsing edge cases                                        #
 # ===================================================================== #
 
+
 class TestGroupNameParsing:
     """Test that pp_rank extraction from group name handles edge cases."""
 
@@ -203,6 +209,7 @@ class TestGroupNameParsing:
 # ===================================================================== #
 #  Allocation mode parsing with PP dimension                            #
 # ===================================================================== #
+
 
 class TestAllocationModeParsing:
     """Test that sglang allocation mode correctly parses the PP dimension."""
@@ -233,7 +240,9 @@ class TestAllocationModeParsing:
         assert alloc.parallel.world_size == 8
 
     def test_fsdp_with_pp(self):
-        with pytest.raises(AllocationValidationError, match="FSDP backend only supports"):
+        with pytest.raises(
+            AllocationValidationError, match="FSDP backend only supports"
+        ):
             ModelAllocation.from_str("fsdp:d2p2t2")
 
     def test_world_size_computation(self):
@@ -245,6 +254,7 @@ class TestAllocationModeParsing:
 # ===================================================================== #
 #  Backward compatibility per engine type                               #
 # ===================================================================== #
+
 
 class TestBackwardCompatibilityPerEngine:
     """Verify that each engine type's group naming convention maps to the
@@ -298,25 +308,30 @@ class TestBackwardCompatibilityPerEngine:
 #  Patch module importability and constants                             #
 # ===================================================================== #
 
+
 class TestSGLangPPPatchModule:
     """Test the sglang PP patch module can be imported and has expected symbols."""
 
     def test_apply_patch_is_callable(self):
         from areal.patches.sglang_pp_weight_update import apply_sglang_pp_patch
+
         assert callable(apply_sglang_pp_patch)
 
     def test_patched_flag_exists(self):
         from areal.patches.sglang_pp_weight_update import _PATCHED
+
         assert isinstance(_PATCHED, bool)
 
     def test_pp_skip_sentinel_defined(self):
         from areal.patches.sglang_pp_weight_update import _PP_SKIP_SENTINEL
+
         assert isinstance(_PP_SKIP_SENTINEL, str)
         assert len(_PP_SKIP_SENTINEL) > 0
 
     def test_patch_idempotent_flag(self):
         """apply_sglang_pp_patch sets _PATCHED; second call is a no-op."""
         import areal.patches.sglang_pp_weight_update as mod
+
         # Just verify the flag mechanism exists; actual patching needs sglang.
         assert hasattr(mod, "_PATCHED")
         assert hasattr(mod, "apply_sglang_pp_patch")

@@ -35,6 +35,7 @@ from areal.infra.utils.launcher import TRITON_CACHE_PATH
 from areal.utils import perf_tracer, stats_tracker
 from areal.utils.network import format_host_for_url
 
+
 class SGLangBackend:
     """SGLang-specific backend implementation for remote inference."""
 
@@ -300,6 +301,7 @@ class SGLangBackend:
             stdout=sys.stdout,
             stderr=sys.stdout,
         )
+
 
 class RemoteSGLangEngine(InferenceEngine):
     """SGLang remote inference engine.
