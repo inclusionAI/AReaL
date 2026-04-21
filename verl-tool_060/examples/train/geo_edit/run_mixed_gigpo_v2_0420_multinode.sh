@@ -19,7 +19,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-gigpo-4node_0420v4_6e7"
+run_name="mixed-gigpo-4node_0420v2"
 rl_alg=gigpo
  
 # ---- Cluster topology ----
@@ -28,7 +28,7 @@ n_nodes=4
 
 # ---- Batch sizes (scaled for 4 nodes) ----
 n=4
-batch_size=128
+batch_size=64
 ppo_mini_batch_size=128
 
 # ---- Sequence lengths ----
@@ -55,7 +55,7 @@ reward_manager=geo_vision_qa
 
 # ---- Training ----
 strategy="fsdp2"
-lr=6e-7
+lr=1e-6
 kl_loss_coef=0.0
 kl_coef=0.001
 entropy_coeff=0
@@ -81,8 +81,8 @@ rollout_mode='async'
 
 # ---- Schedule ----
 total_epochs=3
-save_freq=5
-test_freq=10
+save_freq=10
+test_freq=20
 
 # ============================================================
 export VERL_RUN_ID=$run_name
@@ -220,7 +220,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     critic.ulysses_sequence_parallel_size=$ulysses_sequence_parallel_size \
     algorithm.kl_ctrl.kl_coef=$kl_coef \
     algorithm.use_kl_in_reward=False \
-    +algorithm.overturn_masking=True \
+    +algorithm.overturn_masking=False \
     trainer.logger=['console','wandb'] \
     trainer.project_name=mixed_rl \
     trainer.experiment_name=$run_name \

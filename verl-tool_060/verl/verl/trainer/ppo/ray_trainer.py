@@ -279,6 +279,16 @@ def compute_advantage(
             advantages, returns = result
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
+    
+    # Overturn masking: A'_i = M_i · A_i
+    if config is not None and config.get("overturn_masking", False):
+        verl_tool_metrics = data.non_tensor_batch.get("verl_tool_metrics")
+        if verl_tool_metrics is not None:
+            for i in range(len(verl_tool_metrics)):
+                m = verl_tool_metrics[i]
+                if m is not None and not m.get("is_traj_finished", True):
+                    data.batch["advantages"][i] = 0.0
+
     return data, gigpo_metrics
 
 
