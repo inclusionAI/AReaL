@@ -78,7 +78,7 @@ def init_weight_update_group(
     os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
 
     gen_pp_size = meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 1
-    logger.info(
+    logger.debug(
         f"[ArchonWeightSync] init_weight_update_group called: "
         f"gen_pp_size={gen_pp_size}, is_pp_head={engine.is_pipeline_parallel_head()}, "
         f"group_name={state.group_name}"
@@ -90,7 +90,7 @@ def init_weight_update_group(
         _init_single_weight_update_group(state, meta, engine)
 
     state.group_initialized = True
-    logger.info(
+    logger.debug(
         f"[ArchonWeightSync] Weight update group(s) initialized successfully. "
         f"single_group={state.group is not None}, "
         f"multi_groups={len(state.groups)}"
@@ -133,7 +133,7 @@ def _init_single_weight_update_group(
             )
 
             fut.result()
-            engine.logger.info(
+            engine.logger.debug(
                 f"[ArchonWeightSync] Single weight update group initialized: "
                 f"group={meta.nccl_group_name}"
             )
@@ -154,7 +154,7 @@ def _init_per_pp_weight_update_groups(
     This matches the pattern used by FSDP and Megatron engines.
     """
     if not engine.is_pipeline_parallel_head():
-        logger.info(
+        logger.debug(
             "[ArchonWeightSync] Non-PP-head rank, skipping per-PP group creation."
         )
         return
@@ -212,7 +212,7 @@ def _init_per_pp_weight_update_groups(
 
             fut.result()
 
-        engine.logger.info(
+        engine.logger.debug(
             f"[ArchonWeightSync] Per-PP group initialized: pp_rank={pp_rank}, "
             f"group={group_name}"
         )
@@ -261,13 +261,13 @@ def update_weights_from_distributed(
     dist.barrier(group=engine.cpu_group)
 
     if len(state.groups) > 1:
-        logger.info(
+        logger.debug(
             f"[ArchonWeightSync] update_weights: multi-group mode, "
             f"{len(state.groups)} groups"
         )
         _update_weights_multi_group(state, meta, engine)
     else:
-        logger.info("[ArchonWeightSync] update_weights: single-group mode")
+        logger.debug("[ArchonWeightSync] update_weights: single-group mode")
         meta.nccl_master_address = state.master_addr
         meta.nccl_master_port = state.master_port
         meta.nccl_group_name = state.group_name
@@ -357,7 +357,7 @@ def _update_weights_multi_group(
         for hf_name, hf_tensor in hf_pairs:
             all_named_tensors.append((hf_name, hf_tensor))
 
-    logger.info(
+    logger.debug(
         f"[ArchonWeightSync] Multi-group update: {len(all_named_tensors)} tensors "
         f"to broadcast to {len(state.groups)} groups"
     )
@@ -374,9 +374,8 @@ def _update_weights_multi_group(
         pp_meta.nccl_master_port = master_port
         pp_meta.nccl_group_name = group_name
 
-        logger.info(
-            f"[ArchonWeightSync] Broadcasting to group {group_idx}: "
-            f"group={group_name}"
+        logger.debug(
+            f"[ArchonWeightSync] Broadcasting to group {group_idx}: group={group_name}"
         )
 
         buffer_size = 0
@@ -408,7 +407,7 @@ def _update_weights_multi_group(
                 named_tensors,
             )
 
-        logger.info(
+        logger.debug(
             f"[ArchonWeightSync] Finished broadcasting to group {group_idx}: "
             f"group={group_name}"
         )
@@ -476,9 +475,7 @@ def _update_bucket_weights_multi_group(
 
         handles = []
         for _, tensor in named_tensors:
-            handles.append(
-                dist.broadcast(tensor, src=0, group=group, async_op=True)
-            )
+            handles.append(dist.broadcast(tensor, src=0, group=group, async_op=True))
         for handle in handles:
             handle.wait()
 

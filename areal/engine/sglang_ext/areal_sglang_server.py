@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """AReaL wrapper for sglang.launch_server.
 
 This module is the entry point used by ``python -m`` when launching
@@ -14,14 +16,12 @@ Usage (automatically invoked by AReaL's launcher infrastructure)::
 import logging
 import os
 import sys
-import time
-import warnings
-
-logger = logging.getLogger("areal.engine.sglang_ext")
 
 from sglang.srt.server_args import prepare_server_args
 from sglang.srt.utils import kill_process_tree
 from sglang.srt.utils.common import suppress_noisy_warnings
+
+logger = logging.getLogger("areal.engine.sglang_ext")
 
 suppress_noisy_warnings()
 
@@ -35,10 +35,11 @@ def _apply_patches() -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format="[%(name)s] %(asctime)s PID=%(process)d %(levelname)s: %(message)s",
         stream=sys.stderr,
     )
+    logging.getLogger("areal").setLevel(logging.DEBUG)
     logger.info("areal_sglang_server starting (PID=%d)", os.getpid())
 
     # Apply AReaL patches before sglang initialises any workers.
