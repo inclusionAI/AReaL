@@ -1402,9 +1402,7 @@ class MegatronEngine(TrainEngine):
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta) -> None:
         assert meta.type == "xccl"
-        gen_pp_size = (
-            meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 1
-        )
+        gen_pp_size = meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 1
 
         # NOTE: Processes launched with torchrun will set the following env var to True,
         # which blocks creating another TCP store for weight update.
@@ -1418,40 +1416,42 @@ class MegatronEngine(TrainEngine):
                 assert meta.gen_allocation is not None
 
                 self.engine_lock.acquire()
+                try:
+                    meta.nccl_master_address = self.weight_update_master_addr = (
+                        gethostip()
+                    )
+                    meta.nccl_master_port = self.weight_update_master_port = (
+                        find_free_ports(1)[0]
+                    )
+                    meta.nccl_group_name = self.weight_update_group_name
 
-                # Assign address/port *after* acquiring the lock so that two
-                # PP-head ranks on the same node cannot race on port selection
-                meta.nccl_master_address = self.weight_update_master_addr = gethostip()
-                meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
-                meta.nccl_group_name = self.weight_update_group_name
+                    fut = self.rollout_engine.init_weights_update_group(meta)
 
-                fut = self.rollout_engine.init_weights_update_group(meta)
+                    per_pp_world_size = (
+                        meta.gen_allocation.parallel.world_size // gen_pp_size
+                    )
+                    init_method = (
+                        f"tcp://{format_host_for_url(meta.nccl_master_address)}"
+                        f":{meta.nccl_master_port}"
+                    )
+                    self.logger.info(
+                        f"Initializing per-PP-rank weight update group: "
+                        f"type={meta.type} init_method={init_method} "
+                        f"group={self.weight_update_group_name} "
+                        f"per_pp_world_size={per_pp_world_size}"
+                    )
+                    self.weight_update_group = init_custom_process_group(
+                        backend=current_platform.communication_backend,
+                        world_size=per_pp_world_size + 1,
+                        init_method=init_method,
+                        rank=0,
+                        group_name=self.weight_update_group_name,
+                        timeout=DIST_GROUP_DEFAULT_TIMEOUT,
+                    )
 
-                per_pp_world_size = (
-                    meta.gen_allocation.parallel.world_size // gen_pp_size
-                )
-                init_method = (
-                    f"tcp://{format_host_for_url(meta.nccl_master_address)}"
-                    f":{meta.nccl_master_port}"
-                )
-                self.logger.info(
-                    f"Initializing per-PP-rank weight update group: "
-                    f"type={meta.type} init_method={init_method} "
-                    f"group={self.weight_update_group_name} "
-                    f"per_pp_world_size={per_pp_world_size}"
-                )
-                self.weight_update_group = init_custom_process_group(
-                    backend=current_platform.communication_backend,
-                    world_size=per_pp_world_size + 1,
-                    init_method=init_method,
-                    rank=0,
-                    group_name=self.weight_update_group_name,
-                    timeout=DIST_GROUP_DEFAULT_TIMEOUT,
-                )
-
-                fut.result()
-
-                self.engine_lock.release()
+                    fut.result()
+                finally:
+                    self.engine_lock.release()
             else:
                 # Non-PP-head ranks do not create NCCL groups.  Set placeholder values so
                 # the attributes exist; they are never used for network I/O
@@ -1462,39 +1462,44 @@ class MegatronEngine(TrainEngine):
             # PP==1: original behaviour – only the pp_rank=0 head creates
             # a single group spanning all inference workers.
             # Only one PP head exists, so no port race is possible.
-            meta.nccl_master_address = self.weight_update_master_addr = gethostip()
-            meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
-            meta.nccl_group_name = self.weight_update_group_name
-
             if self.is_pipeline_parallel_head():
                 assert meta.gen_allocation is not None
 
+                meta.nccl_master_address = self.weight_update_master_addr = gethostip()
+                meta.nccl_master_port = self.weight_update_master_port = (
+                    find_free_ports(1)[0]
+                )
+                meta.nccl_group_name = self.weight_update_group_name
+
                 self.engine_lock.acquire()
+                try:
+                    fut = self.rollout_engine.init_weights_update_group(meta)
 
-                fut = self.rollout_engine.init_weights_update_group(meta)
+                    gen_world_size = meta.gen_allocation.parallel.world_size
+                    init_method = (
+                        f"tcp://{format_host_for_url(meta.nccl_master_address)}"
+                        f":{meta.nccl_master_port}"
+                    )
+                    self.logger.info(
+                        f"Initializing weight update group: type={meta.type} "
+                        f"init_method={init_method} "
+                        f"group={self.weight_update_group_name}"
+                    )
+                    self.weight_update_group = init_custom_process_group(
+                        backend=current_platform.communication_backend,
+                        world_size=gen_world_size + 1,
+                        init_method=init_method,
+                        rank=0,
+                        group_name=self.weight_update_group_name,
+                        timeout=DIST_GROUP_DEFAULT_TIMEOUT,
+                    )
 
-                gen_world_size = meta.gen_allocation.parallel.world_size
-                init_method = (
-                    f"tcp://{format_host_for_url(meta.nccl_master_address)}"
-                    f":{meta.nccl_master_port}"
-                )
-                self.logger.info(
-                    f"Initializing weight update group: type={meta.type} "
-                    f"init_method={init_method} "
-                    f"group={self.weight_update_group_name}"
-                )
-                self.weight_update_group = init_custom_process_group(
-                    backend=current_platform.communication_backend,
-                    world_size=gen_world_size + 1,
-                    init_method=init_method,
-                    rank=0,
-                    group_name=self.weight_update_group_name,
-                    timeout=DIST_GROUP_DEFAULT_TIMEOUT,
-                )
-
-                fut.result()
-
-                self.engine_lock.release()
+                    fut.result()
+                finally:
+                    self.engine_lock.release()
+            else:
+                self.weight_update_master_addr = ""
+                self.weight_update_master_port = 0
 
     @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:
