@@ -47,7 +47,7 @@ actor:
   backend: "megatron:(attn:d1p2t4|ffn:d1p2t1e4)"    # ← PP=2 回退，TP=4/EP=4
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /workspace/models/Moonlight-16B-A3B
+  path: /workspace/models/Moonlight-16B-A3B-Istruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
