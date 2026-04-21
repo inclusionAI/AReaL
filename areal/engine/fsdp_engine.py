@@ -7,6 +7,8 @@ import dataclasses
 import gc
 import math
 import os
+import json
+import tempfile
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
@@ -24,6 +26,7 @@ from peft import (
     TaskType,
     get_peft_model,
 )
+from safetensors.torch import save_file as safetensors_save_file
 from torch import nn
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
@@ -1067,6 +1070,24 @@ class FSDPEngine(TrainEngine):
             return concat_batch(input_)
         return input_, None
 
+    def _normalize_peft_param_name(self, name: str) -> str:
+        """Convert PEFT parameter name to HuggingFace original model format.
+
+        PEFT wraps model parameters with extra prefixes and infixes:
+          'base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight'
+        becomes:
+          'model.layers.0.self_attn.q_proj.weight'
+
+        This normalization is required so that parameter names match the keys
+        in SGLang's internal params_dict when using
+        /update_weights_from_distributed.
+        """
+        # Remove 'base_model.model.' prefix (added by PEFT wrapper)
+        name = name.replace("base_model.model.", "", 1)
+        # Remove '.base_layer' infix (PEFT marks original weights this way)
+        name = name.replace(".base_layer", "")
+        return name
+
     def _collect_lora_params(
         self, meta: WeightUpdateMeta, base_sync_done: bool
     ) -> list[tuple[str, torch.Tensor]]:
@@ -1078,9 +1099,6 @@ class FSDPEngine(TrainEngine):
 
         When base_sync_done is True, collects only the trainable LoRA
         adapter parameters for incremental sync.
-
-        This approach is inspired by verl's collect_lora_params() in
-        verl/utils/fsdp_utils.py, adapted to AReaL's FSDP2 architecture.
 
         Parameters
         ----------
@@ -1118,11 +1136,22 @@ class FSDPEngine(TrainEngine):
                 "(base_sync_done=False, skipping lora_ params)"
             )
             lora_keywords = ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B")
+            logged_examples = 0
             for name, param in self._get_model_name_parameters(meta):
                 if any(kw in name for kw in lora_keywords):
                     continue
+                # Normalize PEFT-wrapped names back to HuggingFace format so
+                # they match SGLang's params_dict keys.
+                original_name = name
+                name = self._normalize_peft_param_name(name)
                 tensor = self._get_full_tensor(param)
                 if main_rank:
+                    if logged_examples < 3:
+                        self.logger.info(
+                            f"[LoRA Delta Sync] Base param name mapping: "
+                            f"'{original_name}' -> '{name}'"
+                        )
+                        logged_examples += 1
                     collected.append((name, tensor))
 
         if main_rank:
@@ -1381,6 +1410,115 @@ class FSDPEngine(TrainEngine):
                 self._wait_pending_weight_update_bucket(pending_bucket)
                 pending_bucket = None
 
+
+    def _save_and_load_lora_adapter(
+        self,
+        meta: WeightUpdateMeta,
+        adapter_params: list[tuple[str, torch.Tensor]],
+    ):
+        """Save LoRA adapter tensors to a temp directory and load via SGLang.
+
+        This method is called on rank 0 only.  It:
+          1. Builds a safetensors state dict from the gathered adapter tensors.
+          2. Writes adapter_model.safetensors and adapter_config.json.
+          3. Unloads any previously loaded adapter (tolerates failure).
+          4. Calls ``/load_lora_adapter`` on the SGLang server.
+
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+            Weight update metadata (must have lora_name, version, peft_config).
+        adapter_params : list[tuple[str, torch.Tensor]]
+            Pre-gathered (name, tensor) pairs for the adapter weights.
+        """
+        from areal.api.io_struct import get_versioned_lora_name
+
+        lora_name = meta.lora_name or "default_lora"
+        version = meta.version if meta.version is not None else 0
+        versioned_name = get_versioned_lora_name(lora_name, version)
+
+        # Determine a temp directory for saving the adapter.
+        # Use a persistent temp dir under /tmp so SGLang server can access it.
+        adapter_dir = os.path.join(
+            tempfile.gettempdir(), "areal_lora_adapters", versioned_name
+        )
+        os.makedirs(adapter_dir, exist_ok=True)
+
+        # --- 1. Save adapter weights as safetensors ---
+        # PEFT's named_parameters() includes the active adapter name in keys,
+        # e.g. "...lora_A.default.weight".  The standard PEFT adapter file
+        # format (as produced by get_peft_model_state_dict / save_pretrained)
+        # strips this adapter name, yielding "...lora_A.weight".  SGLang's
+        # /load_lora_adapter expects the stripped format.
+        adapter_name = "default"  # PEFT default adapter name
+        state_dict = {}
+        for name, tensor in adapter_params:
+            # Strip the adapter name segment: ".default." -> "."
+            # e.g. "base_model.model.model.layers.0.self_attn.q_proj.lora_A.default.weight"
+            #   -> "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight"
+            name = name.replace(f".{adapter_name}.", ".")
+            state_dict[name] = tensor.contiguous().cpu()
+
+        safetensors_path = os.path.join(adapter_dir, "adapter_model.safetensors")
+        safetensors_save_file(state_dict, safetensors_path)
+        self.logger.info(
+            f"[LoRA Delta Sync] Saved {len(state_dict)} adapter tensors "
+            f"to {safetensors_path}"
+        )
+
+        # --- 2. Save adapter_config.json ---
+        # Build a PEFT-compatible config dict
+        config = self.config
+        if not config.target_modules or config.target_modules == ["all-linear"]:
+            target_modules_val = "all-linear"
+        else:
+            target_modules_val = config.target_modules
+
+        adapter_config = {
+            "peft_type": "LORA",
+            "auto_mapping": None,
+            "base_model_name_or_path": meta.base_model_name or "",
+            "bias": "none",
+            "fan_in_fan_out": False,
+            "inference_mode": True,
+            "init_lora_weights": True,
+            "layers_to_transform": None,
+            "layers_pattern": None,
+            "lora_alpha": config.lora_alpha,
+            "lora_dropout": 0.0,
+            "modules_to_save": None,
+            "r": config.lora_rank,
+            "revision": None,
+            "target_modules": target_modules_val,
+            "task_type": "CAUSAL_LM",
+        }
+        config_path = os.path.join(adapter_dir, "adapter_config.json")
+        with open(config_path, "w") as f:
+            json.dump(adapter_config, f, indent=2)
+        self.logger.info(
+            f"[LoRA Delta Sync] Saved adapter_config.json to {config_path}"
+        )
+
+        # Log a few example param names for debugging
+        example_names = [n for n, _ in adapter_params[:3]]
+        self.logger.info(
+            f"[LoRA Delta Sync] Example adapter param names: {example_names}"
+        )
+
+        # --- 3. Load new adapter via rollout engine ---
+        # Use the dedicated load_lora_adapter method which sends HTTP requests
+        # directly to SGLang servers, bypassing the name_resolve-based disk
+        # update flow (which is designed for full model checkpoints).
+        self.logger.info(
+            f"[LoRA Delta Sync] Loading adapter '{versioned_name}' from "
+            f"{adapter_dir} via /load_lora_adapter on SGLang servers"
+        )
+        fut = self.rollout_engine.load_lora_adapter(versioned_name, adapter_dir)
+        fut.result()
+        self.logger.info(
+            f"[LoRA Delta Sync] Successfully loaded adapter '{versioned_name}'"
+        )
+
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters with single-pending-bucket pipelining.
@@ -1429,18 +1567,21 @@ class FSDPEngine(TrainEngine):
                     )
                 self._broadcast_params_bucketed(base_meta, base_params, main_rank)
 
-            # Phase 1b / Phase 2: Sync LoRA adapter weights
-            adapter_meta = copy.copy(meta)
-            adapter_meta.lora_delta_sync = True
-            adapter_meta.base_sync_done = True
-
+            # Phase 1b / Phase 2: Sync LoRA adapter weights via disk-based
+            # /load_lora_adapter (SGLang has no distributed adapter loading
+            # endpoint).  We gather adapter tensors on rank 0, save them as
+            # safetensors + adapter_config.json, then tell SGLang to load
+            # from that path.
             adapter_params = self._collect_lora_params(meta, base_sync_done=True)
+            phase_label = "1b" if not self._base_sync_done else "2"
+
             if main_rank:
                 self.logger.info(
-                    f"[LoRA Delta Sync] Phase {'1b' if not self._base_sync_done else '2'}: "
-                    f"broadcasting {len(adapter_params)} LoRA adapter params"
+                    f"[LoRA Delta Sync] Phase {phase_label}: "
+                    f"saving {len(adapter_params)} LoRA adapter params to disk "
+                    f"for /load_lora_adapter"
                 )
-            self._broadcast_params_bucketed(adapter_meta, adapter_params, main_rank)
+                self._save_and_load_lora_adapter(meta, adapter_params)
 
             self._base_sync_done = True
 
