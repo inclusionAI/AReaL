@@ -187,9 +187,9 @@ stats_logger:
 
 perf_tracer:
   enabled: true
-  experiment_name: $(experiment_name)
-  trial_name: $(trial_name)
-  fileroot: $(cluster.fileroot)
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
   save_interval: 1
   session_tracer:
     enabled: true
