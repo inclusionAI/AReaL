@@ -130,7 +130,7 @@ def _patch_io_struct() -> None:
     # We use ``dataclasses.make_dataclass`` so that the result is a proper
     # dataclass with all the original fields preserved.
     new_fields = [
-        ("pp_rank", Optional[int], dataclasses.field(default=None)),
+        ("pp_rank", int | None, dataclasses.field(default=None)),
     ]
 
     PatchedCls = dataclasses.make_dataclass(
