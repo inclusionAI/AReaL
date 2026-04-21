@@ -133,6 +133,7 @@ def _merge_training_meta_by_name(meta_list: list[dict]) -> list[dict]:
         data = pm.get("data", pm) if isinstance(pm, dict) else pm
         name = data.get("name") if isinstance(data, dict) else None
         if name is None:
+            logger.warning("Found parameter metadata with no name: %s", pm)
             overflow.append(pm)
             continue
 

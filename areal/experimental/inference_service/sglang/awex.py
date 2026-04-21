@@ -36,7 +36,11 @@ def register_awex_endpoints(app: FastAPI, rpc_proxy: RpcProxy) -> None:
     async def report_parallelism() -> JSONResponse:
         try:
             result = rpc_proxy.collective_rpc_with_result("awex_report_parallelism")
-            return JSONResponse(content=result if isinstance(result, dict) else {})
+            if not isinstance(result, dict):
+                err_msg = f"Expected dict from awex_report_parallelism, but got {type(result).__name__}"
+                logger.error(err_msg)
+                return JSONResponse(status_code=500, content={"error": err_msg})
+            return JSONResponse(content=result)
         except Exception as e:
             logger.error("Failed to report parallelism: %s", e)
             return JSONResponse(status_code=500, content={"error": str(e)})

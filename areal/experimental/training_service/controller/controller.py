@@ -842,13 +842,21 @@ class GatewayTrainController:
             try:
                 async with session.post(f"{addr}/awex/teardown") as resp:
                     resp.raise_for_status()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Graceful shutdown: failed to call /awex/teardown on %s: %s",
+                    addr,
+                    e,
+                )
             try:
                 async with session.post(f"{addr}/destroy_engine", json={}) as resp:
                     resp.raise_for_status()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Graceful shutdown: failed to call /destroy_engine on %s: %s",
+                    addr,
+                    e,
+                )
 
         run_async_task(_shutdown_all)
         logger.info("All training worker engines destroyed gracefully")
