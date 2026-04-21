@@ -21,12 +21,6 @@ routing indices into the layout expected by Megatron-Core's RouterReplay:
 2. **TP/SP splitting** -- sequence parallelism across tensor-model-parallel ranks.
 3. **PP layer slicing** -- pipeline parallelism assigns different layers to ranks.
 4. **Dense/MoE layer mapping** -- architectures with dense FFN layers before MoE.
-
-Ported from verl reference implementation, adapted for AReaL:
-- No dependency on verl-specific imports
-- No dependency on megatron.core.transformer.moe.router_replay
-- Simplified packed-sequence handling (no preprocess_packed_seqs dependency)
-- topk and num_moe_layers passed explicitly (no hardcoded guessing)
 """
 
 from __future__ import annotations
@@ -43,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 # ===================================================================
-# Layer computation helpers (ported from verl, self-contained)
+# Layer computation helpers
 # ===================================================================
 
 
@@ -226,89 +220,131 @@ class RouterReplayHelper:
         )
 
 
-# ===================================================================
-# set_router_replay_data -- core function
-# ===================================================================
 
 
 def set_router_replay_data(
     layers_topk_idx: torch.Tensor,
-    attention_mask: torch.Tensor,
+    cu_seqlens: torch.Tensor,
     tf_config,
     vp_rank: Optional[int] = None,
+    seq_align_to: Optional[int] = None,
 ) -> None:
     """Scatter packed router top-k indices to SP ranks and update RouterReplay instances.
 
-    Simplified for AReaL: no dependency on preprocess_packed_seqs / postprocess_packed_seqs.
+    **CRITICAL**: This function must pack tokens using the EXACT same
+    cu_seqlens-based TP-aligned layout that Megatron uses for input_ids.
+    A different packing method (e.g., simple attention_mask concatenation)
+    causes token misalignment and near-random agreement rates.
+
+    The packing steps mirror ``pad_packed_tensor_dict`` in ``areal/utils/data.py``:
+
+    1. Use ``cu_seqlens`` to extract each sample's real tokens from the
+       left-padded ``layers_topk_idx``.
+    2. Pack tokens contiguously with per-sequence TP alignment padding
+       (each sequence padded to a multiple of ``seq_align_to``).
+    3. ``scatter_to_sequence_parallel_region`` to split across TP/SP ranks.
+    4. Permute to ``(num_layers, local_tokens, topk)`` and distribute to
+       RouterReplay instances.
 
     Args:
-        layers_topk_idx: ``(bs, max_seq_len, num_moe_layers, topk)`` -- the replay data.
-        attention_mask: ``(bs, max_seq_len)`` -- 1 for real tokens, 0 for padding.
+        layers_topk_idx: ``(bs, max_seq_len, num_moe_layers, topk)`` -- the
+            replay data (left-padded, from rollout).  After
+            ``_align_routed_experts_to_mask``, this is left-ALIGNED (real
+            tokens first, matching attention_mask convention).
+        cu_seqlens: ``(bs+1,)`` or ``(bs+1+1,)`` -- cumulative sequence
+            lengths from the PADDED micro-batch (after ``pad_packed_tensor_dict``).
+            These define the actual token ordering that Megatron uses.
+            If the last entry is a batch-level padding sequence, it will be
+            handled by including a zero-filled routing segment.
         tf_config: Megatron TransformerConfig.
         vp_rank: Virtual pipeline stage rank override.
+        seq_align_to: Per-sequence TP alignment factor (typically ``tp_size``
+            or ``tp_size * cp_size * 2``).  If None, defaults to TP world size.
     """
     from megatron.core import parallel_state as mpu
 
     with torch.no_grad():
         device = torch.cuda.current_device()
         bs_re = layers_topk_idx.shape[0]
-        bs_mask, max_seq_len = attention_mask.shape[:2]
+        num_layers = layers_topk_idx.shape[2]
+        topk = layers_topk_idx.shape[3]
 
-        if bs_re != bs_mask:
-            logger.warning(
-                "[R3] set_router_replay_data: batch size mismatch! "
-                "layers_topk_idx.shape[0]=%d != attention_mask.shape[0]=%d. "
-                "Clamping iteration to min=%d.",
-                bs_re, bs_mask, min(bs_re, bs_mask),
+        # Determine the number of real sequences from cu_seqlens.
+        # pad_packed_tensor_dict may add one extra entry for batch-level padding.
+        n_cu_entries = cu_seqlens.shape[0]
+        # Number of sequences in cu_seqlens (including potential batch padding seq)
+        n_seqs_in_cu = n_cu_entries - 1
+
+        # Extract per-sequence lengths from cu_seqlens
+        seq_lens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().tolist()
+
+        # Determine seq_align_to if not provided
+        if seq_align_to is None:
+            tp_size = mpu.get_tensor_model_parallel_world_size()
+            cp_size = getattr(mpu, "get_context_parallel_world_size", lambda: 1)()
+            seq_align_to = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+
+        # Compute TP-aligned lengths (matching pad_packed_tensor_dict)
+        aligned_lens = []
+        for slen in seq_lens:
+            pad = (-slen) % seq_align_to
+            aligned_lens.append(slen + pad)
+
+        total_aligned = sum(aligned_lens)
+
+        # Pack routed_experts using cu_seqlens-aligned layout.
+        # layers_topk_idx is left-ALIGNED: real tokens at positions [0, seq_len).
+        # For each sequence i, we take the first seq_lens[i] tokens and place
+        # them at aligned positions, with zero-padding for TP alignment gaps.
+        packed = torch.zeros(
+            total_aligned, num_layers, topk,
+            dtype=layers_topk_idx.dtype,
+            device=layers_topk_idx.device,
+        )
+
+        aligned_offset = 0
+        for i in range(min(n_seqs_in_cu, bs_re)):
+            slen = seq_lens[i]
+            if slen <= 0:
+                aligned_offset += aligned_lens[i]
+                continue
+            # Take first slen tokens from this sample's routed_experts
+            actual_len = min(slen, layers_topk_idx.shape[1])
+            packed[aligned_offset : aligned_offset + actual_len] = (
+                layers_topk_idx[i, :actual_len]
             )
-        bs = min(bs_re, bs_mask)
+            aligned_offset += aligned_lens[i]
+
+        # For any extra sequences in cu_seqlens beyond bs_re (batch padding),
+        # the packed tensor already has zeros at those positions.
+        for i in range(bs_re, n_seqs_in_cu):
+            aligned_offset += aligned_lens[i]
 
         logger.debug(
-            "[R3] set_router_replay_data: input layers_topk_idx=%s, "
-            "attention_mask=%s, bs=%d (re_bs=%d, mask_bs=%d), max_seq_len=%d.",
-            layers_topk_idx.shape,
-            attention_mask.shape,
-            bs,
-            bs_re,
-            bs_mask,
-            max_seq_len,
+            "[R3] set_router_replay_data: packed %d seqs into %d tokens "
+            "(TP-aligned with seq_align_to=%d, seq_lens=%s, aligned_lens=%s).",
+            min(n_seqs_in_cu, bs_re),
+            total_aligned,
+            seq_align_to,
+            seq_lens[:8],
+            aligned_lens[:8],
         )
 
-        # Step 1: Remove left-padding -> flat (total_real_tokens, num_layers, topk)
-        seq_lens = attention_mask.sum(dim=1).long()  # (bs_mask,)
-        pieces = []
-        for i in range(bs):
-            slen = int(seq_lens[i].item())
-            mask = attention_mask[i].bool()
-            pieces.append(layers_topk_idx[i, mask][:slen])
-        flat_tokens = torch.cat(pieces, dim=0)  # (total_real_tokens, num_layers, topk)
-
-        logger.debug(
-            "[R3] set_router_replay_data: after left-padding removal: "
-            "flat_tokens=%s (total_real_tokens=%d).",
-            flat_tokens.shape,
-            flat_tokens.shape[0],
-        )
-
-        # Step 2: Scatter to SP ranks (Problem 6 fix: guard for non-SP case)
-        # When tp_size == 1 (no sequence parallelism), scatter_to_sequence_parallel_region
-        # should be an identity op in Megatron-Core. However, we guard against potential
-        # issues when the TP process group is trivial.
-        flat_tokens = flat_tokens.to(device)
+        # Step 2: Scatter to SP ranks
+        packed = packed.to(device)
         tp_size = mpu.get_tensor_model_parallel_world_size()
         if tp_size > 1:
             from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
-            local_tokens = scatter_to_sequence_parallel_region(flat_tokens)
+            local_tokens = scatter_to_sequence_parallel_region(packed)
             logger.debug(
                 "[R3] set_router_replay_data: SP scatter tp_size=%d, "
-                "flat_tokens %s -> local_tokens %s.",
+                "packed %s -> local_tokens %s.",
                 tp_size,
-                flat_tokens.shape,
+                packed.shape,
                 local_tokens.shape,
             )
         else:
-            # tp_size == 1: no SP splitting needed, use flat_tokens directly
-            local_tokens = flat_tokens
+            local_tokens = packed
             logger.debug(
                 "[R3] set_router_replay_data: tp_size=1, skipping SP scatter. "
                 "local_tokens=%s.",
@@ -386,27 +422,34 @@ def set_router_replay_data(
 
 def setup_per_microbatch_replay_forward(
     routed_experts: torch.Tensor,
-    attention_mask: torch.Tensor,
+    cu_seqlens: torch.Tensor,
     tf_config,
     vp_rank: Optional[int] = None,
+    seq_align_to: Optional[int] = None,
 ) -> None:
     """Set up RouterReplay for a single micro-batch's forward pass.
 
     Args:
         routed_experts: ``(batch, padded_seq, num_moe_layers, topk)``
-        attention_mask: ``(batch, padded_seq)``
+            Left-aligned routing indices (real tokens first).
+        cu_seqlens: ``(batch+1,)`` or ``(batch+1+1,)`` cumulative sequence
+            lengths from the padded micro-batch.
         tf_config: Megatron TransformerConfig.
         vp_rank: Virtual pipeline stage rank override.
+        seq_align_to: Per-sequence TP alignment factor.
     """
     logger.debug(
         "[R3] setup_per_microbatch_replay_forward: "
-        "routed_experts=%s (dtype=%s), attention_mask=%s.",
+        "routed_experts=%s (dtype=%s), cu_seqlens=%s.",
         routed_experts.shape,
         routed_experts.dtype,
-        attention_mask.shape,
+        cu_seqlens.shape,
     )
     routed_experts = routed_experts.to(torch.int32)
-    set_router_replay_data(routed_experts, attention_mask, tf_config, vp_rank)
+    set_router_replay_data(
+        routed_experts, cu_seqlens, tf_config, vp_rank,
+        seq_align_to=seq_align_to,
+    )
     logger.debug("[R3] Replay data distributed to router instances for micro-batch.")
 
 

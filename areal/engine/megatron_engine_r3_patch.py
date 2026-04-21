@@ -88,166 +88,72 @@ def patch_megatron_engine_for_r3(
 
 
 # ===================================================================
-# attention_mask reconstruction from cu_seqlens (Problem 5 fix)
-# ===================================================================
-
-
-def _reconstruct_attention_mask_from_cu_seqlens(
-    cu_seqlens: torch.Tensor,
-    max_seqlen: int,
-) -> torch.Tensor:
-    """Reconstruct a 2D ``attention_mask`` from packed ``cu_seqlens``.
-
-    After ``pack_tensor_dict``, the original ``attention_mask`` is replaced
-    by ``cu_seqlens`` (shape ``(B+1,)``) and ``max_seqlen``.  For R3's
-    ``set_router_replay_data`` we need an ``attention_mask`` of shape
-    ``(B, padded_seq_len)`` where padded_seq_len = max_seqlen.
-
-    Args:
-        cu_seqlens: ``(B+1,)`` cumulative sequence lengths.
-        max_seqlen: Maximum sequence length (the padded dimension).
-
-    Returns:
-        ``torch.Tensor`` of shape ``(B, max_seqlen)`` with dtype ``torch.bool``.
-    """
-    bs = cu_seqlens.shape[0] - 1
-    seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]  # (B,)
-    # Build mask: position j < seq_lens[i] -> True
-    positions = torch.arange(max_seqlen, device=cu_seqlens.device).unsqueeze(0)  # (1, S)
-    mask = positions < seq_lens.unsqueeze(1)  # (B, S)
-    logger.debug(
-        "[R3] Reconstructed attention_mask from cu_seqlens: "
-        "bs=%d, max_seqlen=%d, seq_lens=%s.",
-        bs,
-        max_seqlen,
-        seq_lens.tolist()[:8],  # log first 8 for brevity
-    )
-    return mask
-
-
-# ===================================================================
-# Problem 2 fix: Align routed_experts seq dim to attention_mask
+# routed_experts alignment (left-padded rollout → left-aligned training)
 # ===================================================================
 
 
 def _align_routed_experts_to_mask(
     routed_experts: torch.Tensor,
-    attention_mask: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+    max_seqlen: int,
 ) -> torch.Tensor:
-    """Align ``routed_experts`` seq dimension to match ``attention_mask``.
+    """Align ``routed_experts`` from left-padded rollout format to left-aligned
+    training format, matching the token layout implied by ``cu_seqlens``.
 
-    **Problem 2 Fix**: After pack_tensor_dict + pad_mb_list, the
-    cu_seqlens-reconstructed ``attention_mask`` has ``mb_max_seqlen``
-    which may be SMALLER than ``routed_experts``' seq dimension
-    (``batch_max_seqlen``).  The rollout-produced ``routed_experts`` is
-    LEFT-padded (padding on the left, real tokens on the right), while
-    the post-pack ``attention_mask`` is LEFT-aligned (real tokens first,
-    no left-padding).
+    **Rollout format**: ``routed_experts`` is ``(bs, batch_max_seqlen, L, K)``
+    with LEFT padding (real tokens at the RIGHT end of each row).
 
-    **Batch size alignment**: ``pad_packed_tensor_dict`` appends one extra
-    cu_seqlens entry (a padding sequence) to fill the micro-batch to
-    ``pad_to_length``.  This makes ``attention_mask`` have one more row
-    than the original ``routed_experts``.  We zero-pad the batch dimension
-    so that ``set_router_replay_data`` sees matching batch sizes; the
-    padding sample's zero routing indices are harmless because the model
-    ignores those dummy tokens.
+    **Training format**: After ``pack_tensor_dict``, tokens are LEFT-aligned
+    (real tokens first).  The ``cu_seqlens`` tells us each sample's actual
+    length.
 
-    This function extracts the right-most ``actual_len`` tokens from each
-    sample's left-padded ``routed_experts`` and places them at the
-    left-aligned positions expected by ``attention_mask``.
+    This function extracts the rightmost ``actual_len`` tokens from each
+    sample in ``routed_experts`` and produces a ``(bs_aligned, max_seqlen, L, K)``
+    tensor with real tokens at the LEFT (matching training convention).
+
+    If ``cu_seqlens`` has more entries than ``routed_experts`` has rows
+    (because ``pad_packed_tensor_dict`` appended a dummy padding sequence),
+    the output is zero-padded along the batch dimension.
 
     Args:
         routed_experts: ``(bs, batch_max_seqlen, num_moe_layers, topk)``
-            Left-padded routing indices from rollout.
-        attention_mask: ``(bs, mb_max_seqlen)``
-            Left-aligned mask (1 for real tokens, 0 for padding).
+        cu_seqlens: ``(n_seqs+1,)`` cumulative sequence lengths.
+        max_seqlen: Maximum sequence length (from ``padded_mb["max_seqlen"]``).
 
     Returns:
-        ``(bs_aligned, mb_max_seqlen, num_moe_layers, topk)`` aligned tensor.
+        ``(n_seqs, max_seqlen, num_moe_layers, topk)`` aligned tensor.
     """
     re_bs, re_seqlen = routed_experts.shape[:2]
-    mask_bs, mask_seqlen = attention_mask.shape[:2]
-
-    if re_bs < mask_bs:
-        extra_dims = routed_experts.shape[2:]
-        padded_re = torch.zeros(
-            mask_bs, re_seqlen, *extra_dims,
-            dtype=routed_experts.dtype,
-            device=routed_experts.device,
-        )
-        padded_re[:re_bs] = routed_experts
-        routed_experts = padded_re
-        logger.info(
-            "[R3] _align_routed_experts_to_mask: padded routed_experts batch "
-            "from %d to %d samples (pad_mb_list added %d padding sequence(s)).",
-            re_bs, mask_bs, mask_bs - re_bs,
-        )
-    elif re_bs > mask_bs:
-        routed_experts = routed_experts[:mask_bs]
-        logger.warning(
-            "[R3] _align_routed_experts_to_mask: truncated routed_experts batch "
-            "from %d to %d samples.",
-            re_bs, mask_bs,
-        )
-
-    bs = routed_experts.shape[0]
-
-    if re_seqlen == mask_seqlen:
-        # No alignment needed
-        return routed_experts
-
-    if re_seqlen < mask_seqlen:
-        # Unlikely but possible if mask was padded beyond batch_max_seqlen.
-        # Right-pad routed_experts with zeros.
-        extra_dims = routed_experts.shape[2:]  # (num_moe_layers, topk)
-        padded = torch.zeros(
-            bs, mask_seqlen, *extra_dims,
-            dtype=routed_experts.dtype,
-            device=routed_experts.device,
-        )
-        padded[:, :re_seqlen] = routed_experts
-        logger.info(
-            "[R3] _align_routed_experts_to_mask: re_seqlen(%d) < mask_seqlen(%d), "
-            "right-padded routed_experts with zeros.",
-            re_seqlen, mask_seqlen,
-        )
-        return padded
-
-    # re_seqlen > mask_seqlen: the common case.
-    # routed_experts is LEFT-padded: real tokens are at the RIGHT end.
-    # attention_mask is LEFT-aligned: real tokens are at the LEFT end.
-    # For each sample, extract the rightmost `actual_len` tokens from
-    # routed_experts and place them at positions [0, actual_len) in output.
     extra_dims = routed_experts.shape[2:]  # (num_moe_layers, topk)
+    n_seqs = cu_seqlens.shape[0] - 1
+    seq_lens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().tolist()
+
+    # Output: (n_seqs, max_seqlen, L, K) with real tokens left-aligned
     aligned = torch.zeros(
-        bs, mask_seqlen, *extra_dims,
+        n_seqs, max_seqlen, *extra_dims,
         dtype=routed_experts.dtype,
         device=routed_experts.device,
     )
 
-    seq_lens = attention_mask.sum(dim=1).long()  # actual lengths per sample
-    for i in range(bs):
-        actual_len = int(seq_lens[i].item())
+    for i in range(min(n_seqs, re_bs)):
+        actual_len = seq_lens[i]
         if actual_len <= 0:
             continue
-        # Take rightmost actual_len tokens from left-padded routed_experts
+        # Source: rightmost actual_len tokens from left-padded routed_experts
         src_start = re_seqlen - actual_len
-        n = min(actual_len, mask_seqlen)
+        n = min(actual_len, re_seqlen, max_seqlen)
         aligned[i, :n] = routed_experts[i, src_start : src_start + n]
 
-    logger.info(
-        "[R3] _align_routed_experts_to_mask: re_seqlen=%d -> mask_seqlen=%d, "
-        "bs=%d, seq_lens=%s (aligned left-padded RE to left-aligned mask).",
-        re_seqlen,
-        mask_seqlen,
-        bs,
-        seq_lens.tolist()[:8],
+    logger.debug(
+        "[R3] _align_routed_experts_to_mask: re_shape=%s -> aligned_shape=%s, "
+        "n_seqs=%d (re_bs=%d), seq_lens=%s.",
+        routed_experts.shape, aligned.shape, n_seqs, re_bs, seq_lens[:8],
     )
     return aligned
 
 
 # ===================================================================
-# routed_experts splitting (Problem 7 fix: robust sample-count inference)
+# routed_experts splitting (robust sample-count inference)
 # ===================================================================
 
 
@@ -349,41 +255,32 @@ def _split_routed_experts_for_mbs(
 
 
 # ===================================================================
-# Per-MB attention_mask extraction (Problem 5 fix)
+# Per-MB cu_seqlens extraction
 # ===================================================================
 
 
-def _get_attention_mask_for_mb(mb_item) -> torch.Tensor | None:
-    """Extract or reconstruct ``attention_mask`` from a ``MicroBatchItem``.
+def _get_cu_seqlens_for_mb(mb_item) -> tuple[torch.Tensor, int] | None:
+    """Extract ``cu_seqlens`` and ``max_seqlen`` from a ``MicroBatchItem``.
 
-    After ``pack_tensor_dict``, both ``orig_mb`` and ``padded_mb`` have
-    ``cu_seqlens`` instead of ``attention_mask``.  We reconstruct the mask
-    from ``cu_seqlens`` + ``max_seqlen`` in the padded_mb (which reflects
-    the actual padded sequence length used by the model).
+    Prefers ``padded_mb`` (which has the actual TP-aligned dimensions used
+    by the model) over ``orig_mb``.
 
-    Falls back to ``attention_mask`` if still present (e.g. tree training).
+    Returns:
+        ``(cu_seqlens, max_seqlen)`` or ``None`` if not available.
     """
-    # Try padded_mb first (has the actual padded dimensions)
+    # Try padded_mb first (has TP-aligned cu_seqlens -- this is what the model sees)
     if hasattr(mb_item, "padded_mb") and isinstance(mb_item.padded_mb, dict):
-        # Direct attention_mask
-        attn = mb_item.padded_mb.get("attention_mask")
-        if attn is not None:
-            return attn
-        # Reconstruct from cu_seqlens
         cu = mb_item.padded_mb.get("cu_seqlens")
         max_sl = mb_item.padded_mb.get("max_seqlen")
         if cu is not None and max_sl is not None:
-            return _reconstruct_attention_mask_from_cu_seqlens(cu, int(max_sl))
+            return cu, int(max_sl)
 
-    # Try orig_mb as fallback
+    # Try orig_mb as fallback (pre-padding cu_seqlens)
     if hasattr(mb_item, "orig_mb") and isinstance(mb_item.orig_mb, dict):
-        attn = mb_item.orig_mb.get("attention_mask")
-        if attn is not None:
-            return attn
         cu = mb_item.orig_mb.get("cu_seqlens")
         max_sl = mb_item.orig_mb.get("max_seqlen")
         if cu is not None and max_sl is not None:
-            return _reconstruct_attention_mask_from_cu_seqlens(cu, int(max_sl))
+            return cu, int(max_sl)
 
     return None
 
@@ -407,13 +304,9 @@ def _r3_forward_backward_batch(
     If the data does not contain ``routed_experts``, delegates directly
     to the original method with zero overhead.
 
-    **Problem 1 Fix**: Retrieves routed_experts from engine side-channel
-    (``self._r3_pending_routed_experts``) set by actor._ppo_update FIRST,
-    falling back to ``mb_list.data`` for backward compatibility.
-
-    **Problem 2 Fix**: Before passing per-MB routed_experts to
-    ``setup_per_microbatch_replay_forward``, aligns the seq dimension
-    to match the attention_mask's seq dimension.
+    **CRITICAL FIX**: Uses ``cu_seqlens`` from the padded micro-batch
+    (with per-sequence TP alignment) for packing replay data, ensuring
+    token ordering matches exactly what Megatron's transformer layers see.
     """
     from areal.engine.router_replay_patch import RouterReplay, RouterReplayAction
     from areal.engine.router_replay_utils import (
@@ -424,14 +317,11 @@ def _r3_forward_backward_batch(
 
     # ------------------------------------------------------------------
     # 1. Retrieve routed_experts.
-    #    Problem 1 Fix: Prefer side-channel from actor._ppo_update, which
-    #    bypasses _prepare_mb_list/pack_tensor_dict entirely.
-    #    Fall back to mb_list.data for backward compatibility.
     # ------------------------------------------------------------------
     routed_experts_batch = None
     _from_side_channel = False
 
-    # Strategy A: Side-channel (Problem 1 fix -- preferred path)
+    # Strategy A: Side-channel (preferred path)
     if hasattr(self, '_r3_pending_routed_experts') and self._r3_pending_routed_experts is not None:
         routed_experts_batch = self._r3_pending_routed_experts
         self._r3_pending_routed_experts = None  # Consume it
@@ -442,8 +332,6 @@ def _r3_forward_backward_batch(
         )
 
     # Strategy B: Legacy path from mb_list.data (backward compatibility)
-    # Only used when forward_only=False (training), to prevent unintended
-    # replay during compute_logp / eval_batch.
     if routed_experts_batch is None and not forward_only:
         if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
             routed_experts_batch = mb_list.data.pop("routed_experts", None)
@@ -454,9 +342,7 @@ def _r3_forward_backward_batch(
                     routed_experts_batch.shape,
                 )
 
-    # Also clean from mbs and padded_mbs to avoid confusing downstream code.
-    # Problem 1: these would contain the un-split full tensor via not_to_split broadcast,
-    # or corrupted 3D tensors from pack_tensor_dict.
+    # Clean from mbs and padded_mbs to avoid confusing downstream code.
     for mb_dict in mb_list.mbs:
         if isinstance(mb_dict, dict):
             mb_dict.pop("routed_experts", None)
@@ -464,7 +350,6 @@ def _r3_forward_backward_batch(
         for mb_dict in mb_list.padded_mbs:
             if isinstance(mb_dict, dict):
                 mb_dict.pop("routed_experts", None)
-    # Also clean from mb_list.data to prevent leaking into future calls
     if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
         mb_list.data.pop("routed_experts", None)
 
@@ -503,14 +388,16 @@ def _r3_forward_backward_batch(
     self._r3_mb_counter = 0
     model_config = self.tf_config
 
+    # Compute seq_align_to (same as what _prepare_mb_list uses)
+    from megatron.core import parallel_state as mpu
+    tp_size = mpu.get_tensor_model_parallel_world_size()
+    cp_size = getattr(mpu, "get_context_parallel_world_size", lambda: 1)()
+    seq_align_to = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+
     # ------------------------------------------------------------------
     # 2b. Set initial replay action to REPLAY_FORWARD.
-    #     The forward_step wrapper will toggle between REPLAY_FORWARD
-    #     and REPLAY_BACKWARD for each micro-batch.
     # ------------------------------------------------------------------
-    # Reset agreement accumulator for this forward-backward pass.
     RouterReplay.reset_agreement_accumulator()
-
     RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
     logger.debug(
         "[R3] Set initial REPLAY_FORWARD action on %d router instances.",
@@ -518,25 +405,10 @@ def _r3_forward_backward_batch(
     )
 
     # ------------------------------------------------------------------
-    # 3. Wrap the MicroBatchList iterator on the INSTANCE level
-    #
-    #    The iterator injects R3 setup before each micro-batch's forward.
-    #    The iterator wrapper also handles
-    #    the REPLAY_FORWARD / REPLAY_BACKWARD toggle per micro-batch:
-    #
-    #    - At the START of each forward_step (when next() is called):
-    #      1. If action is REPLAY_BACKWARD, switch to REPLAY_FORWARD
-    #         (this handles backward recompute -> next forward transition)
-    #      2. Set the replay data for this micro-batch via
-    #         setup_per_microbatch_replay_forward()
-    #
-    #    - At the END of each forward_step (via model forward hook):
-    #      switch to REPLAY_BACKWARD so that the subsequent backward
-    #      recompute (activation checkpointing) uses
-    #      replay_backward_list.pop(0).
-    #
+    # 3. Wrap the MicroBatchList iterator
     # ------------------------------------------------------------------
     engine_ref = self
+    _seq_align_to = seq_align_to
 
     class _R3MicroBatchIterator:
         """Wraps the micro-batch iterator to inject R3 setup."""
@@ -558,9 +430,8 @@ def _r3_forward_backward_batch(
                 else None
             )
 
-            # When backward recompute (activation checkpointing) finishes
-            # and the next forward starts, the action is REPLAY_BACKWARD.
-            # Switch it back to REPLAY_FORWARD before setting new data.
+            # When backward recompute finishes and next forward starts,
+            # switch back to REPLAY_FORWARD.
             if RouterReplayHelper.is_replay_backward_action(model_config):
                 router_list = RouterReplayHelper.get_micro_batch_router_list(
                     model_config
@@ -571,27 +442,49 @@ def _r3_forward_backward_batch(
                     )
 
             if re is not None:
-                # Problem 5 fix: reconstruct attention_mask from cu_seqlens
-                # when pack_tensor_dict has replaced it.
-                attn_mask = _get_attention_mask_for_mb(mb_item)
+                # Extract cu_seqlens from padded_mb (TP-aligned, what the model sees)
+                cu_info = _get_cu_seqlens_for_mb(mb_item)
 
-                if attn_mask is not None:
+                if cu_info is not None:
+                    cu_seqlens, max_seqlen = cu_info
                     try:
-                        # Problem 2 fix: Align routed_experts seq dimension
-                        # to match attention_mask's seq dimension.
-                        # routed_experts is left-padded (batch_max_seqlen),
-                        # attn_mask is left-aligned (mb_max_seqlen).
-                        aligned_re = _align_routed_experts_to_mask(re, attn_mask)
+                        # CRITICAL FIX: Use cu_seqlens for alignment instead of
+                        # attention_mask. This ensures the packed token order
+                        # matches Megatron's actual forward pass.
 
+                        # First, get the ORIGINAL (pre-TP-alignment) cu_seqlens
+                        # to know each sample's actual token count for
+                        # extracting from routed_experts.
+                        orig_cu = None
+                        if hasattr(mb_item, "old_cu_seqlens") and mb_item.old_cu_seqlens is not None:
+                            orig_cu = mb_item.old_cu_seqlens
+                        elif hasattr(mb_item, "orig_mb") and isinstance(mb_item.orig_mb, dict):
+                            orig_cu = mb_item.orig_mb.get("cu_seqlens")
+
+                        if orig_cu is None:
+                            # Fallback: use padded cu_seqlens directly
+                            orig_cu = cu_seqlens
+
+                        # Align routed_experts from left-padded to left-aligned
+                        # using the ORIGINAL cu_seqlens (actual token counts).
+                        aligned_re = _align_routed_experts_to_mask(
+                            re, orig_cu, max_seqlen,
+                        )
+
+                        # Pass the PADDED cu_seqlens (with TP alignment)
+                        # to set_router_replay_data so packing matches Megatron.
                         setup_per_microbatch_replay_forward(
-                            aligned_re.to(attn_mask.device),
-                            attn_mask,
+                            aligned_re.to(cu_seqlens.device),
+                            cu_seqlens,
                             model_config,
+                            seq_align_to=_seq_align_to,
                         )
                         logger.debug(
                             "[R3] Replay setup OK for micro-batch %d: "
-                            "original_re=%s, aligned_re=%s, attn_mask=%s.",
-                            idx, re.shape, aligned_re.shape, attn_mask.shape,
+                            "original_re=%s, aligned_re=%s, cu_seqlens=%s "
+                            "(seq_align_to=%d).",
+                            idx, re.shape, aligned_re.shape, cu_seqlens.shape,
+                            _seq_align_to,
                         )
                     except Exception:
                         logger.warning(
@@ -601,7 +494,7 @@ def _r3_forward_backward_batch(
                         )
                 else:
                     logger.warning(
-                        "[R3] Cannot find or reconstruct attention_mask for "
+                        "[R3] Cannot find cu_seqlens for "
                         "micro-batch %d; skipping replay setup. "
                         "Keys in orig_mb: %s, keys in padded_mb: %s.",
                         idx,
@@ -618,9 +511,7 @@ def _r3_forward_backward_batch(
     mb_list.__class__.__iter__ = _r3_iter
 
     # ------------------------------------------------------------------
-    # 4. Register a forward hook on each model chunk for the
-    #    REPLAY_FORWARD -> REPLAY_BACKWARD toggle at the END of each
-    #    forward_step.
+    # 4. Register a forward hook for REPLAY_FORWARD -> REPLAY_BACKWARD toggle.
     # ------------------------------------------------------------------
     hook_handles = []
 
@@ -646,17 +537,6 @@ def _r3_forward_backward_batch(
     )
 
     try:
-        # Megatron's forward_backward_func (e.g. 1F1B schedule) internally
-        # interleaves forward and backward for each micro-batch.
-        #
-        # Per-forward-step toggle handles
-        # backward recompute (activation checkpointing) correctly:
-        # - The iterator wrapper (above) switches REPLAY_BACKWARD ->
-        #   REPLAY_FORWARD at the START of each forward_step.
-        # - The model forward hook (above) switches REPLAY_FORWARD ->
-        #   REPLAY_BACKWARD at the END of each forward_step.
-        # - Forward uses target_topk_idx; backward recompute pops from
-        #   replay_backward_list.
         self._r3_original_forward_backward_batch(
             mb_list, process_output_fn, forward_only=forward_only
         )
