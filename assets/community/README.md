@@ -20,7 +20,7 @@ For background on how the project is governed and how to participate, please see
 
 | Date       | Agenda                                                                                                         | Slides                                                                                                                                                   | Recording                                                               |
 | ---------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| 2026/04/18 | [Google Doc](https://docs.google.com/document/d/1t4JSoXuPgtMsjAHio4keh3PM1elDeQAXC_BZGnv9kco/edit?usp=sharing) | [Google Slides](https://docs.google.com/presentation/d/1MaZL2Tq39YPYQYIIWNiKaBo2MonLLbW-/edit?usp=sharing&ouid=102752648406195568586&rtpof=true&sd=true) | [Tencent Meeting (Chinese)](https://meeting.tencent.com/crm/2MW8w0q6b7) |
+| 2026/04/18 | [Google Doc](https://docs.google.com/document/d/1t4JSoXuPgtMsjAHio4keh3PM1elDeQAXC_BZGnv9kco/edit?usp=sharing) | [Google Slides](https://docs.google.com/presentation/d/1MaZL2Tq39YPYQYIIWNiKaBo2MonLLbW-/edit?usp=sharing&ouid=102752648406195568586&rtpof=true&sd=true) | [Tencent Meeting (Chinese)](https://meeting.tencent.com/crm/2MW8w0q6ef) |
 
 ## How to Add Materials
 
