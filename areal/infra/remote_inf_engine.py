@@ -1590,6 +1590,7 @@ def _load_lora_adapter_on_servers(
     """Helper to load LoRA adapter on all servers via HTTP."""
 
     async def _fn():
+        overall_start = time.monotonic()
         logger.info(
             f"[LoRA Delta Sync] Loading adapter '{lora_name}' from "
             f"'{lora_path}' on {len(addresses)} servers"
@@ -1600,12 +1601,19 @@ def _load_lora_adapter_on_servers(
             connector=get_default_connector(),
         ) as session:
             # First try to unload any existing adapter with same name
+            unload_payload = {"lora_name": lora_name}
+            logger.info(
+                f"[LoRA Delta Sync] Attempting unload of previous adapter, "
+                f"endpoint=/unload_lora_adapter, payload={unload_payload}, "
+                f"servers={addresses}"
+            )
+            unload_start = time.monotonic()
             unload_jobs = [
                 arequest_with_retry(
                     session=session,
                     addr=addr,
                     endpoint="/unload_lora_adapter",
-                    payload={"lora_name": lora_name},
+                    payload=unload_payload,
                     method="POST",
                     max_retries=1,
                     timeout=request_timeout,
@@ -1615,35 +1623,49 @@ def _load_lora_adapter_on_servers(
             try:
                 await asyncio.gather(*unload_jobs)
                 logger.info(
-                    f"[LoRA Delta Sync] Unloaded previous adapter '{lora_name}'"
+                    f"[LoRA Delta Sync] Unloaded previous adapter '{lora_name}' "
+                    f"in {time.monotonic() - unload_start:.3f}s"
                 )
-            except Exception:
+            except Exception as e:
                 logger.info(
                     f"[LoRA Delta Sync] Unload of '{lora_name}' failed "
-                    "(may be expected if no adapter was loaded yet), continuing..."
+                    f"(type={type(e).__name__}, msg={e}), "
+                    f"may be expected if no adapter was loaded yet, continuing..."
                 )
 
             # Then load the new adapter
+            load_payload = {"lora_name": lora_name, "lora_path": lora_path}
+            logger.info(
+                f"[LoRA Delta Sync] Sending /load_lora_adapter, "
+                f"payload={load_payload}, servers={addresses}"
+            )
+            load_start = time.monotonic()
             load_jobs = [
                 arequest_with_retry(
                     session=session,
                     addr=addr,
                     endpoint="/load_lora_adapter",
-                    payload={
-                        "lora_name": lora_name,
-                        "lora_path": lora_path,
-                    },
+                    payload=load_payload,
                     method="POST",
                     max_retries=3,
                     timeout=request_timeout,
                 )
                 for addr in addresses
             ]
-            await asyncio.gather(*load_jobs)
-            logger.info(
-                f"[LoRA Delta Sync] Successfully loaded adapter '{lora_name}' "
-                f"on {len(addresses)} servers"
-            )
+            try:
+                await asyncio.gather(*load_jobs)
+                logger.info(
+                    f"[LoRA Delta Sync] Successfully loaded adapter '{lora_name}' "
+                    f"on {len(addresses)} servers "
+                    f"in {time.monotonic() - load_start:.3f}s "
+                    f"(total: {time.monotonic() - overall_start:.3f}s)"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[LoRA Delta Sync] Failed to load adapter '{lora_name}': "
+                    f"type={type(e).__name__}, msg={e}"
+                )
+                raise
 
     return uvloop.run(_fn())
 
@@ -1656,9 +1678,12 @@ def _unload_lora_adapter_on_servers(
     """Helper to unload LoRA adapter from all servers via HTTP."""
 
     async def _fn():
+        unload_start = time.monotonic()
+        unload_payload = {"lora_name": lora_name}
         logger.info(
             f"[LoRA Delta Sync] Unloading adapter '{lora_name}' "
-            f"from {len(addresses)} servers"
+            f"from {len(addresses)} servers, "
+            f"endpoint=/unload_lora_adapter, payload={unload_payload}"
         )
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=request_timeout),
@@ -1670,7 +1695,7 @@ def _unload_lora_adapter_on_servers(
                     session=session,
                     addr=addr,
                     endpoint="/unload_lora_adapter",
-                    payload={"lora_name": lora_name},
+                    payload=unload_payload,
                     method="POST",
                     max_retries=1,
                     timeout=request_timeout,
@@ -1681,12 +1706,14 @@ def _unload_lora_adapter_on_servers(
                 await asyncio.gather(*jobs)
                 logger.info(
                     f"[LoRA Delta Sync] Unloaded adapter '{lora_name}' "
-                    f"from {len(addresses)} servers"
+                    f"from {len(addresses)} servers "
+                    f"in {time.monotonic() - unload_start:.3f}s"
                 )
-            except Exception:
+            except Exception as e:
                 logger.info(
                     f"[LoRA Delta Sync] Unload of '{lora_name}' failed "
-                    "(may be expected), continuing..."
+                    f"(type={type(e).__name__}, msg={e}), "
+                    f"may be expected if adapter was not loaded, continuing..."
                 )
 
     return uvloop.run(_fn())

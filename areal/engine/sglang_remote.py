@@ -197,17 +197,40 @@ class SGLangBackend:
             )
 
         # Base model phase (or non-LoRA): standard distributed weight update
+        param_names = [pspec.name for pspec in param_specs]
         if meta.lora_delta_sync:
             logger.info(
                 "[LoRA Delta Sync] Building distributed base-model weight update "
                 f"requests for {len(param_specs)} base params"
             )
+
+        # Log first 5 param names for debugging name-matching issues
+        logger.info(
+            f"[Weight Update] First 5 param names being sent to SGLang: "
+            f"{param_names[:5]}"
+        )
+        # Estimate total payload size
+        total_elements = 0
+        for pspec in param_specs:
+            if pspec.shape:
+                elems = 1
+                for s in pspec.shape:
+                    elems *= s
+                total_elements += elems
+            else:
+                total_elements += 1
+        estimated_size_mb = total_elements * 2 / 1024 / 1024
+        logger.info(
+            f"[Weight Update] Total params: {len(param_specs)}, "
+            f"estimated payload (fp16): {estimated_size_mb:.2f} MB"
+        )
+
         return WeightUpdateRequests(
             requests=[
                 HttpRequest(
                     endpoint="/update_weights_from_distributed",
                     payload={
-                        "names": [pspec.name for pspec in param_specs],
+                        "names": param_names,
                         "dtypes": [pspec.dtype for pspec in param_specs],
                         "shapes": [pspec.shape for pspec in param_specs],
                         "group_name": meta.nccl_group_name,
