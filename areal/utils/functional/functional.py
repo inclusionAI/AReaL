@@ -406,7 +406,7 @@ def apply_rejection_sampling(
                     ),
                     behave_imp_weight,
                 )
-                
+
             # ── Stage 2: Token-MIS/TIS on Geo-RS-accepted sequences ─────────────
             # Runs only in two-stage mode (config.token_action is not None).
             # At this point, loss_mask already has Stage-1-rejected sequences
@@ -414,8 +414,8 @@ def apply_rejection_sampling(
             if config.token_action is not None:
                 # behave_imp_weight holds per-token ratios π_prox / π_behave.
                 # Shape: [batch, seq_len] in 2D padded format.
-                token_ratio = per_token_ratio 
-                
+                token_ratio = per_token_ratio
+
                 if config.token_action == "mask":
                     # Token-MIS: zero out tokens where the per-token ratio exceeds
                     # upper, and optionally where it falls below lower.
@@ -428,7 +428,7 @@ def apply_rejection_sampling(
                     behave_imp_weight = token_ratio * (~token_oor).to(
                         behave_imp_weight.dtype
                     )
-                    
+
                 elif config.token_action == "clamp":
                     # Token-TIS: clamp the per-token importance ratio to
                     # [lower, upper].  All tokens remain in the gradient but
