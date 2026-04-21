@@ -443,10 +443,13 @@ class RemoteSGLangEngine(InferenceEngine):
 
 
     def load_lora_adapter(
-        self, lora_name: str, lora_path: str
+        self, lora_name: str, lora_path: str,
+        prev_lora_name: str | None = None,
     ) -> Future[None]:
         """Load a LoRA adapter from a local path on all SGLang servers."""
-        return self._engine.load_lora_adapter(lora_name, lora_path)
+        return self._engine.load_lora_adapter(
+            lora_name, lora_path, prev_lora_name=prev_lora_name,
+        )
 
     def unload_lora_adapter(
         self, lora_name: str

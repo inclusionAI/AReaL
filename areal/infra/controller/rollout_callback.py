@@ -182,7 +182,8 @@ class RolloutCallback:
         self._post("/callback/continue_generation")
 
     def load_lora_adapter(
-        self, lora_name: str, lora_path: str
+        self, lora_name: str, lora_path: str,
+        prev_lora_name: str | None = None,
     ) -> Future[None]:
         """Callback to controller to load a LoRA adapter on inference engines.
 
@@ -208,9 +209,14 @@ class RolloutCallback:
         """
         logger.info(
             f"[LoRA Delta Sync] RolloutCallback.load_lora_adapter: "
-            f"lora_name='{lora_name}', lora_path='{lora_path}'"
+            f"lora_name='{lora_name}', lora_path='{lora_path}', "
+            f"prev_lora_name={prev_lora_name!r}"
         )
-        payload = {"lora_name": lora_name, "lora_path": lora_path}
+        payload = {
+            "lora_name": lora_name,
+            "lora_path": lora_path,
+            "prev_lora_name": prev_lora_name,
+        }
         return self._post_nowait_void("/callback/load_lora_adapter", payload)
 
     def unload_lora_adapter(self, lora_name: str) -> Future[None]:

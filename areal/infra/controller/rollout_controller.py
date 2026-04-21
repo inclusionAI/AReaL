@@ -589,12 +589,17 @@ class RolloutController:
             payload = request.get_json() or {}
             lora_name = payload.get("lora_name", "")
             lora_path = payload.get("lora_path", "")
+            prev_lora_name = payload.get("prev_lora_name", None)
             logger.info(
                 f"[LoRA Delta Sync] Callback received: /load_lora_adapter "
-                f"lora_name='{lora_name}', lora_path='{lora_path}'"
+                f"lora_name='{lora_name}', lora_path='{lora_path}', "
+                f"prev_lora_name={prev_lora_name!r}"
             )
             self._callback_loop.run_until_complete(
-                self.load_lora_adapter(lora_name, lora_path)
+                self.load_lora_adapter(
+                    lora_name, lora_path,
+                    prev_lora_name=prev_lora_name,
+                )
             )
             return jsonify({"status": "ok"})
 
@@ -1066,7 +1071,10 @@ class RolloutController:
     async def continue_generation(self):
         await self._collective_rpc_async("continue_generation")
 
-    async def load_lora_adapter(self, lora_name: str, lora_path: str) -> None:
+    async def load_lora_adapter(
+        self, lora_name: str, lora_path: str,
+        prev_lora_name: str | None = None,
+    ) -> None:
         """Load a LoRA adapter on all inference engine workers.
 
         Dispatches ``load_lora_adapter(lora_name, lora_path)`` to every
@@ -1081,14 +1089,20 @@ class RolloutController:
         lora_path : str
             Filesystem path containing ``adapter_model.safetensors`` and
             ``adapter_config.json``.
+        prev_lora_name : str or None
+            Name of the previously loaded adapter to unload first.
         """
         logger.info(
             f"[LoRA Delta Sync] RolloutController.load_lora_adapter: "
             f"dispatching to {len(self.workers)} workers, "
-            f"lora_name='{lora_name}', lora_path='{lora_path}'"
+            f"lora_name='{lora_name}', lora_path='{lora_path}', "
+            f"prev_lora_name={prev_lora_name!r}"
         )
         await self._collective_rpc_async(
-            "load_lora_adapter", lora_name=lora_name, lora_path=lora_path
+            "load_lora_adapter",
+            lora_name=lora_name,
+            lora_path=lora_path,
+            prev_lora_name=prev_lora_name,
         )
         logger.info(
             f"[LoRA Delta Sync] RolloutController.load_lora_adapter: "

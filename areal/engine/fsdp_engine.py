@@ -231,6 +231,10 @@ class FSDPEngine(TrainEngine):
         # is enabled, subsequent update_weights calls only transmit adapter
         # parameters, skipping the much larger base-model parameters.
         self._base_sync_done: bool = False
+        # Tracks the versioned name of the most recently loaded LoRA adapter
+        # on SGLang, so we can unload it (by the correct name) before loading
+        # a new version.  None means no adapter has been loaded yet.
+        self._last_loaded_lora_name: str | None = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -1583,16 +1587,43 @@ class FSDPEngine(TrainEngine):
         # Use the dedicated load_lora_adapter method which sends HTTP requests
         # directly to SGLang servers, bypassing the name_resolve-based disk
         # update flow (which is designed for full model checkpoints).
+        prev_lora_name = self._last_loaded_lora_name
         self.logger.info(
             f"[LoRA Delta Sync] Loading adapter '{versioned_name}' from "
             f"{adapter_dir} via /load_lora_adapter on SGLang servers"
+            f" (previous adapter: {prev_lora_name!r})"
         )
-        fut = self.rollout_engine.load_lora_adapter(versioned_name, adapter_dir)
+        fut = self.rollout_engine.load_lora_adapter(
+            versioned_name, adapter_dir, prev_lora_name=prev_lora_name,
+        )
         fut.result()
         self.logger.info(
             f"[LoRA Delta Sync] Successfully loaded adapter '{versioned_name}' "
             f"in {time.monotonic() - step_start:.3f}s"
         )
+
+        # Track the loaded adapter name for future unloads
+        old_loaded_name = self._last_loaded_lora_name
+        self._last_loaded_lora_name = versioned_name
+
+        # Clean up the previous version's adapter directory from disk
+        if old_loaded_name is not None and old_loaded_name != versioned_name:
+            old_adapter_dir = os.path.join(
+                tempfile.gettempdir(), "areal_lora_adapters", old_loaded_name
+            )
+            if os.path.isdir(old_adapter_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(old_adapter_dir)
+                    self.logger.info(
+                        f"[LoRA Delta Sync] Cleaned up old adapter directory: "
+                        f"{old_adapter_dir}"
+                    )
+                except OSError as e:
+                    self.logger.warning(
+                        f"[LoRA Delta Sync] Failed to clean up "
+                        f"{old_adapter_dir}: {e}"
+                    )
 
         total_elapsed = time.monotonic() - overall_start
         self.logger.info(
