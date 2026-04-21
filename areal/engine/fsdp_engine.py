@@ -45,13 +45,13 @@ from areal.api import (
     FinetuneSpec,
     FSDPParallelStrategy,
     InferenceEngine,
+    ModelAllocation,
     ParallelStrategy,
     ParamSpec,
     SaveLoadMeta,
     TrainEngine,
     WeightUpdateMeta,
     WorkflowLike,
-    ModelAllocation,
 )
 from areal.api.cli_args import OptimizerConfig, PerfTracerConfig, TrainEngineConfig
 from areal.api.io_struct import DeviceRuntimeInfo
@@ -278,7 +278,9 @@ class FSDPEngine(TrainEngine):
         # FSDP-specific process group setup
         if parallel_strategy is None:
             if self.config.backend:
-                parallel_strategy = ModelAllocation.from_str(self.config.backend).parallel
+                parallel_strategy = ModelAllocation.from_str(
+                    self.config.backend
+                ).parallel
             else:
                 parallel_strategy = ParallelStrategy()
 

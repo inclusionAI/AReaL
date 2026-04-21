@@ -406,6 +406,7 @@ def test_fsdp_engine_config_construction():
     assert engine.config.optimizer.lr == engine2.config.optimizer.lr
     assert engine.config.use_lora == engine2.config.use_lora
 
+
 def test_fsdp_engine_alloc_mode_construction():
     """
     Test that FSDPEngine.from_pretrained builds a valid config.
@@ -422,7 +423,7 @@ def test_fsdp_engine_alloc_mode_construction():
         learning_rate=1e-5,
         use_lora=True,
     )
-    
+
     engine.create_process_group()
 
     dist.barrier()
