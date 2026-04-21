@@ -40,7 +40,7 @@ scheduler:
 # Rollout (inference) – SGLang backend
 # ---------------------------------------------------------------------------
 rollout:
-  backend: "sglang:d4"
+  backend: "sglang:d2"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 256
@@ -66,7 +66,7 @@ gconfig:
 # Actor – FSDP backend with LoRA delta sync
 # ---------------------------------------------------------------------------
 actor:
-  backend: "fsdp:d4"
+  backend: "fsdp:d2"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen2.5-1.5B-Instruct
