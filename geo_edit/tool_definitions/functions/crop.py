@@ -34,4 +34,7 @@ def execute(image_list, image_index: int, bounding_box: str) -> str | Image.Imag
     width, height = image_to_crop.size
     x1, y1, x2, y2 = [int(int(c) * width / 1000) if i % 2 == 0 else int(int(c) * height / 1000) for i, c in enumerate(coords)]
     cropped_image = image_to_crop.crop((x1, y1, x2, y2))
+    w, h = cropped_image.size
+    if min(w, h) == 0 or max(w, h) / min(w, h) >= 200:
+        return "Error: Cropped image has invalid aspect ratio (too narrow). Please use a larger bounding box."
     return cropped_image

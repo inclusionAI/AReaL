@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import Future
 from typing import Any, Optional
 
-import hydra
+import hydra 
 import numpy as np
 import ray
 import torch
@@ -953,6 +953,8 @@ class AgentLoopManager:
                 first_wave_dispatches.append((i, chunk[:first_wave_size]))
                 leftover = chunk[first_wave_size:]
                 num_parts = max(1, len(leftover) // sub_chunk_size)
+                while num_parts > 1 and len(leftover) % num_parts != 0:
+                    num_parts -= 1
                 remaining_chunks.extend([(i, p) for p in leftover.chunk(num_parts)])
             else:
                 first_wave_dispatches.append((i, chunk))

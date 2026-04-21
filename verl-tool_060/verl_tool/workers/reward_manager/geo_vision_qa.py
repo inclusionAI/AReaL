@@ -174,21 +174,21 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
     return score
 
 
-def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.1, hi: float = 0.5) -> float:
-    """MapTrace: linear reward based on NDTW distance. 1.0 if ndtw<=lo, 0.0 if ndtw>=hi, linear between."""
+def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.1, hi: float = 0.5) -> tuple[float, float]:
+    """MapTrace: linear reward based on NDTW distance. Returns (score, ndtw)."""
     from geo_edit.evaluation.map_trace_verifier import map_trace_score
 
     try:
         ndtw, is_success, _ = map_trace_score(response, str(ground_truth))
     except (ValueError, TypeError):
-        return 0.0
+        return 0.0, -1.0
     if not is_success:
-        return 0.0
+        return 0.0, -1.0
     if ndtw <= lo:
-        return 1.0
+        return 1.0, ndtw
     if ndtw >= hi:
-        return 0.0
-    return (hi - ndtw) / (hi - lo)
+        return 0.0, ndtw
+    return (hi - ndtw) / (hi - lo), ndtw
 
 
 def _compute_repetition_penalty(text: str, num_turns: int = 2) -> float:
@@ -304,7 +304,8 @@ class GeoVisionQARewardManager:
             return _compute_reasonmap_base_score(prediction, ground_truth, extra)
 
         if data_source == "map_trace":
-            return _compute_map_trace_score(prediction, ground_truth)
+            score, _ = _compute_map_trace_score(prediction, ground_truth)
+            return score
 
         return compute_score(prediction, ground_truth)
 
@@ -384,6 +385,14 @@ class GeoVisionQARewardManager:
 
             # R(U) = R_rep + R_format + R_correct
             reward = r_rep + r_format + r_correct
+
+            ndtw_val = -1.0
+            ndtw_success = 0.0
+            if data_source == "map_trace":
+                _, ndtw_val = _compute_map_trace_score(prediction, ground_truth)
+                ndtw_success = 1.0 if 0 <= ndtw_val < 1.0 else 0.0
+            reward_extra_info["ndtw"].append(ndtw_val)
+            reward_extra_info["ndtw_success"].append(ndtw_success)
 
             reward_extra_info["accuracy"].append(accuracy)
             reward_extra_info["score"].append(reward)
