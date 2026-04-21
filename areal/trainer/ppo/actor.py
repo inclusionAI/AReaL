@@ -551,6 +551,22 @@ def grpo_loss_fn(
         dual_clip_ratio=stat["dual_clip_mask"].float(),
         denominator="n_valid_tokens",
     )
+
+    # ---- R3 Logprob Diff: rollout (inference) vs training logprobs ----
+    # Following SkyRL's approach: compute |rollout_logprobs - training_logprobs|
+    # over response tokens only. This metric quantifies train/infer mismatch
+    # caused by MoE routing divergence. With R3 enabled, this diff should be
+    # smaller than without R3.
+    if loss_mask.any():
+        with torch.no_grad():
+            _logprob_diff = (old_logp[loss_mask] - logprobs.detach()[loss_mask]).abs()
+            _diff_mean = _logprob_diff.mean().item()
+            _diff_std = _logprob_diff.std().item() if _logprob_diff.numel() > 1 else 0.0
+        stats_tracker.scalar(
+            rollout_train_logprobs_abs_diff_mean=_diff_mean,
+            rollout_train_logprobs_abs_diff_std=_diff_std,
+        )
+
     if "behave_imp_weight" in stat:
         stats_tracker.denominator(unclipped_behave_tokens=stat["behave_mask"])
         stats_tracker.stat(

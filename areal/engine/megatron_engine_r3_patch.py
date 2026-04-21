@@ -508,6 +508,9 @@ def _r3_forward_backward_batch(
     #     The forward_step wrapper will toggle between REPLAY_FORWARD
     #     and REPLAY_BACKWARD for each micro-batch.
     # ------------------------------------------------------------------
+    # Reset agreement accumulator for this forward-backward pass.
+    RouterReplay.reset_agreement_accumulator()
+
     RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
     logger.debug(
         "[R3] Set initial REPLAY_FORWARD action on %d router instances.",
@@ -663,6 +666,21 @@ def _r3_forward_backward_batch(
             handle.remove()
         # Restore original class __iter__ and clean up R3 state
         mb_list.__class__.__iter__ = original_class_iter
+
+        # Harvest agreement stats BEFORE clearing replay state.
+        _agreement = RouterReplay.harvest_agreement_stats()
+        self._r3_last_agreement_stats = _agreement
+        if _agreement.get("n_samples", 0) > 0:
+            from areal.utils import stats_tracker
+            with stats_tracker.scope("r3"):
+                stats_tracker.scalar(
+                    router_agreement_rate=_agreement["avg"],
+                    router_agreement_rate_min=_agreement["min"],
+                    router_agreement_rate_max=_agreement["max"],
+                    router_agreement_n_samples=_agreement["n_samples"],
+                    router_agreement_n_calls=_agreement["n_calls"],
+                )
+
         clear_router_replay()
         self._r3_per_mb_experts = None
         self._r3_mb_counter = 0

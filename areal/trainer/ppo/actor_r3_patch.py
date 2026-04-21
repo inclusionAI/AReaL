@@ -471,101 +471,21 @@ def _log_r3_agreement_rate(
     routed_experts: torch.Tensor,
     data: dict[str, Any],
 ) -> None:
-    """Compute and log a CORRECT router agreement rate for this step.
+    """Log R3 router agreement rate.
 
-    Computes per-layer fractional agreement between inference-time routing
-    (``routed_experts``) and training-time natural routing, excluding
-    padding tokens via ``attention_mask``.
+    The actual per-layer agreement (comparing training-time natural routing
+    vs. replayed inference routing) is now computed on every REPLAY_FORWARD
+    call inside ``router_replay_patch.py`` and logged to ``stats_tracker``
+    from ``megatron_engine_r3_patch.py`` after each forward-backward pass.
 
-    This follows verl's design principle: padding tokens should not contribute
-    to the metric (verl uses ``preprocess_packed_seqs`` to strip padding
-    before setting replay data).
+    This function is intentionally a no-op to avoid reporting the misleading
+    metric that was here before (fraction of real tokens with non-zero expert
+    assignments, which was always ~1.0 for MoE layers).
 
-    The metric uses a *self-agreement* proxy: for each layer, it compares the
-    expert assignments between different samples in the batch.  When full
-    training-time recorded routing is not available (RouterReplay instances
-    are cleared after each forward-backward), we report the inference-side
-    routing quality metrics instead:
-    - Per-layer consistency (entropy of routing distribution)
-    - Data coverage (fraction of samples with non-zero routing)
-
-    If ``RouterReplay.router_instances`` still hold ``recorded_topk_idx``
-    from the last training step, we use those for a direct comparison.
-    Otherwise, we log a placeholder indicating that the metric is deferred
-    to the next step when recorded data becomes available.
-
-    Args:
-        routed_experts: ``(bs, seq_len, num_moe_layers, topk)`` from inference.
-        data: Full training data dict (for attention_mask).
+    The function signature is preserved for backward compatibility.
     """
-    if routed_experts.dim() != 4 or routed_experts.numel() == 0:
-        return
-
-    bs, seq_len, num_layers, topk = routed_experts.shape
-    attn_mask = _resolve_to_tensor(data.get("attention_mask"))
-
-    try:
-        # Build per-token real-token mask, excluding padding
-        if attn_mask is not None and attn_mask.shape[0] == bs:
-            if attn_mask.shape[1] == seq_len:
-                real_mask = attn_mask.bool()  # (bs, seq_len)
-            else:
-                # Seq length mismatch (common: training uses packed seqlen).
-                # Fall back to using nonzero routing as proxy for real tokens.
-                real_mask = routed_experts.sum(dim=(2, 3)) != 0  # (bs, seq_len)
-        else:
-            # No usable attention_mask; use nonzero routing as proxy
-            real_mask = routed_experts.sum(dim=(2, 3)) != 0  # (bs, seq_len)
-
-        # Compute per-layer agreement using the inference routing data.
-        # Since we don't have the training-time natural routing available
-        # (RouterReplay clears after each forward-backward), we compute
-        # a self-consistency metric: how stable the routing is across the
-        # batch. For the agreement rate, we check what fraction of real
-        # tokens have non-zero (valid) expert assignments per layer.
-        layer_agreements = []
-        total_real_tokens = 0
-        total_matched_tokens = 0
-        n_dense_layers = 0
-
-        for layer_idx in range(num_layers):
-            layer_re = routed_experts[:, :, layer_idx, :]
-
-            if _is_dense_layer(layer_re):
-                n_dense_layers += 1
-                continue
-
-            has_valid_routing = layer_re.sum(dim=-1) != 0  # (bs, seq_len)
-            valid_and_real = has_valid_routing & real_mask  # (bs, seq_len)
-
-            n_real = real_mask.sum().item()
-            n_valid_real = valid_and_real.sum().item()
-
-            if n_real > 0:
-                layer_agreement = n_valid_real / n_real
-                layer_agreements.append(layer_agreement)
-                total_real_tokens += n_real
-                total_matched_tokens += n_valid_real
-
-        n_moe_layers = num_layers - n_dense_layers
-        if layer_agreements:
-            avg_agreement = sum(layer_agreements) / len(layer_agreements)
-            min_agreement = min(layer_agreements)
-            max_agreement = max(layer_agreements)
-
-            stats_tracker.scalar(
-                router_agreement_rate=avg_agreement,
-                router_agreement_rate_min=min_agreement,
-                router_agreement_rate_max=max_agreement,
-                router_agreement_n_real_tokens=total_real_tokens / max(n_moe_layers, 1),
-                router_agreement_n_moe_layers=n_moe_layers,
-                router_agreement_n_dense_layers=n_dense_layers,
-            )
-    except Exception:
-        logger.warning(
-            "[R3] Failed to compute R3 agreement rate.",
-            exc_info=True,
-        )
+    # Agreement rate is now reported from the engine layer.
+    pass
 
 
 def compute_router_agreement_rate(

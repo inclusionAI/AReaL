@@ -116,6 +116,12 @@ class RouterReplay:
     # Set by the engine patch before forward_backward_func.
     pp_size: int = 1
 
+    # Class-level agreement accumulator.
+    # Collects per-call agreement rates during REPLAY_FORWARD to provide
+    # an accurate R3 effectiveness metric every training step.
+    _agreement_samples: list = []
+    _replay_call_count: int = 0
+
     # ------------------------------------------------------------------
     # Class-level (static) helpers
     # ------------------------------------------------------------------
@@ -161,8 +167,32 @@ class RouterReplay:
         for r in RouterReplay.router_instances:
             r.clear_router_replay_action()
 
+    @staticmethod
+    def reset_agreement_accumulator() -> None:
+        """Reset the agreement accumulator for a new training step."""
+        RouterReplay._agreement_samples = []
+        RouterReplay._replay_call_count = 0
 
+    @staticmethod
+    def harvest_agreement_stats() -> dict:
+        """Harvest accumulated agreement samples and return summary stats.
 
+        Returns:
+            dict with keys: avg, min, max, n_samples, n_calls.
+            If no samples, returns dict with n_samples=0.
+        """
+        samples = RouterReplay._agreement_samples
+        n_calls = RouterReplay._replay_call_count
+        if not samples:
+            return {"n_samples": 0, "n_calls": n_calls}
+        avg = sum(samples) / len(samples)
+        return {
+            "avg": avg,
+            "min": min(samples),
+            "max": max(samples),
+            "n_samples": len(samples),
+            "n_calls": n_calls,
+        }
 
     def __init__(self) -> None:
         self.target_topk_idx: torch.Tensor | None = None
@@ -252,39 +282,33 @@ def _patched_topk_routing_with_score_function(
                 )
                 return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
 
-            # Use the provided indices for replay.
-            # NOTE: Agreement rate is NOT computed here in the per-layer
-            # router hot path. Following verl's approach, the per-layer
-            # stats_tracker.scalar call was removed because:
-            #   1. It averaged across ALL layers x microbatches x minibatches,
-            #      producing a misleading global metric (~3-13%) despite
-            #      individual per-layer agreement being ~97%.
-            #   2. It added unnecessary compute (natural topk) on every
-            #      router call during training.
-            # Agreement rate is now computed ONCE per step in
-            # log_r3_data_stats (actor_r3_patch.py) using recorded
-            # routing from the first microbatch, with proper padding
-            # exclusion.
+            # Use the provided indices for replay (following verl's approach).
             top_indices = router_replay.target_topk_idx
             top_indices = top_indices.to(scores.device)
             probs = scores.gather(1, top_indices)
-            if not hasattr(_patched_topk_routing_with_score_function, '_r3_verify_count'):
-                _patched_topk_routing_with_score_function._r3_verify_count = 0
-            _patched_topk_routing_with_score_function._r3_verify_count += 1
-            if _patched_topk_routing_with_score_function._r3_verify_count <= 3:
-                # Lightweight verification for first few calls only
-                with torch.no_grad():
-                    _, natural_indices = _compute_topk(
-                        scores, topk, num_groups=num_groups, group_topk=group_topk
-                    )
-                    replay_sorted = top_indices.sort(dim=-1).values
-                    natural_sorted = natural_indices.sort(dim=-1).values
-                    per_token_matches = (natural_sorted == replay_sorted).float().sum(dim=-1)
-                    agreement_rate = (per_token_matches / topk).mean().item()
+
+            # Compute agreement rate on every REPLAY_FORWARD call.
+            # This is the TRUE R3 effectiveness metric: comparing what the
+            # training-time router would naturally choose vs what we force
+            # it to replay from inference. Accumulated across all layers
+            # and microbatches, then harvested once per step by the engine.
+            RouterReplay._replay_call_count += 1
+            _call_n = RouterReplay._replay_call_count
+            with torch.no_grad():
+                _, natural_indices = _compute_topk(
+                    scores, topk, num_groups=num_groups, group_topk=group_topk
+                )
+                replay_sorted = top_indices.sort(dim=-1).values
+                natural_sorted = natural_indices.sort(dim=-1).values
+                per_token_matches = (natural_sorted == replay_sorted).float().sum(dim=-1)
+                agreement_rate = (per_token_matches / topk).mean().item()
+            RouterReplay._agreement_samples.append(agreement_rate)
+
+            if _call_n <= 3:
                 _nz = top_indices[top_indices > 0].flatten()[:3].tolist()
                 print(
                     f"[R3-VERIFY] Megatron REPLAY_FORWARD "
-                    f"#{_patched_topk_routing_with_score_function._r3_verify_count}: "
+                    f"#{_call_n}: "
                     f"top_indices shape={top_indices.shape}, "
                     f"first3_nonzero={_nz}, "
                     f"agreement_rate={agreement_rate:.4f}",
