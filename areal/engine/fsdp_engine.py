@@ -1300,11 +1300,6 @@ class FSDPEngine(TrainEngine):
     ):
         """Create one NCCL weight-update group per inference PP stage.
 
-        Each group contains the inference TP workers at one PP rank plus the
-        FSDP trainer (rank 0 in every group).  Groups are created sequentially
-        so that each init request can pass through sglang's PP event loop
-        without deadlocking.
-
         The group name carries a PP-rank suffix (e.g. ``update_weight_group_0``)
         which the inference side uses (Scenario 2 in ``sglang_remote.py``) to
         route the request to the correct PP stage's workers.
