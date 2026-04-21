@@ -66,7 +66,7 @@ echo "Using tool server at $tool_server_url"
 declare -A EVAL_GROUPS
 EVAL_GROUPS=(
     ["visual_probe"]="${EVAL_DIR}/visual_probe_easy.parquet,${EVAL_DIR}/visual_probe_medium.parquet,${EVAL_DIR}/visual_probe_hard.parquet"
-    ["reasonmap"]="${EVAL_DIR}/reason_map.parquet,${EVAL_DIR}/reason_map_plus.parquet"
+    ["reasonmap"]="${EVAL_DIR}/reason_map_dedup.parquet,${EVAL_DIR}/reason_map_plus_dedup.parquet"
     ["map_trace"]="${EVAL_DIR}/map_trace.parquet"
     ["mm_mapqa"]="${EVAL_DIR}/mm_mapqa.parquet"
 )
@@ -174,7 +174,7 @@ run_eval_group() {
 }
 
 # for group in visual_probe reasonmap map_trace mm_mapqa; do
-for group in  reasonmap map_trace mm_mapqa; do
+for group in  map_trace mm_mapqa  reasonmap; do
     run_eval_group "$group" "${EVAL_GROUPS[$group]}"
 done
 

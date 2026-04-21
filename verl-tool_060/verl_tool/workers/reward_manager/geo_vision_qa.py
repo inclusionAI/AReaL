@@ -309,19 +309,29 @@ class GeoVisionQARewardManager:
 
         return compute_score(prediction, ground_truth)
 
-    def _llm_judge_fallback(self, prompt_str: str, ground_truth, prediction: str) -> bool:
+    def _llm_judge_fallback(self, prompt_str: str, ground_truth, prediction: str, max_retries: int = 6) -> bool:
         if self.judge is None:
             return False
-        try:
-            is_correct, _ = self.judge.judge_correctness(
-                question=prompt_str,
-                ground_truth=str(ground_truth),
-                prediction=prediction,
-            )
-            return is_correct
-        except Exception as e:
-            logger.warning("LLM judge call failed: %s", e)
-            return False
+        import time, random
+        for attempt in range(max_retries):
+            try:
+                is_correct, _ = self.judge.judge_correctness(
+                    question=prompt_str,
+                    ground_truth=str(ground_truth),
+                    prediction=prediction,
+                )
+                return is_correct
+            except Exception as e:
+                err_str = str(e)
+                is_retryable = "429" in err_str or "rate_limit" in err_str.lower() or "connection" in err_str.lower() or "timeout" in err_str.lower()
+                if is_retryable and attempt < max_retries - 1:
+                    delay = min(2 ** attempt + random.random(), 16)
+                    logger.warning("LLM judge call failed (attempt %d/%d), retrying in %.1fs: %s", attempt + 1, max_retries, delay, e)
+                    time.sleep(delay)
+                else:
+                    logger.warning("LLM judge call failed (attempt %d/%d), giving up: %s", attempt + 1, max_retries, e)
+                    return False
+        return False
 
     def __call__(self, data: DataProto, return_dict=False):
         if "rm_scores" in data.batch.keys():
