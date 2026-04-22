@@ -510,8 +510,13 @@ class FSDPEngine(TrainEngine):
         self._check_rollout_engine_connected()
         with self._offload_aware_context():
             if meta.type == "xccl":
-                assert self.weight_update_group_initialized
-                self._update_weights_from_distributed(meta)
+                # When lora_delta_sync is enabled, both base-model and
+                # adapter weights are synced via disk (no NCCL needed).
+                if self.config.use_lora and self.config.lora_delta_sync:
+                    self._update_weights_delta_sync_disk(meta)
+                else:
+                    assert self.weight_update_group_initialized
+                    self._update_weights_from_distributed(meta)
             elif meta.type == "disk":
                 self._update_weights_from_disk(meta)
             else:
@@ -1104,10 +1109,14 @@ class FSDPEngine(TrainEngine):
 
         When base_sync_done is False, collects all base model parameters
         (excluding LoRA-specific weights like lora_A, lora_B) for the
-        initial full-model sync.
+        initial full-model sync via disk.
 
         When base_sync_done is True, collects only the trainable LoRA
-        adapter parameters for incremental sync.
+        adapter parameters for incremental sync via disk.
+
+        All ranks must call this method because ``_get_full_tensor``
+        triggers FSDP all-gather collectives internally.  However, only
+        rank 0 accumulates the resulting tensors in the returned list.
 
         Parameters
         ----------
@@ -1121,7 +1130,9 @@ class FSDPEngine(TrainEngine):
         Returns
         -------
         list[tuple[str, torch.Tensor]]
-            List of (name, tensor) pairs ready for distributed broadcast.
+            List of (name, tensor) pairs.  On rank 0 these contain the
+            full tensors ready for disk saving; on other ranks the list
+            is empty.
         """
         collected = []
         main_rank = dist.get_rank() == 0
@@ -1687,14 +1698,13 @@ class FSDPEngine(TrainEngine):
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters with single-pending-bucket pipelining.
 
-        When lora_delta_sync is enabled (config.lora_delta_sync=True and
-        config.use_lora=True), the method uses a two-phase approach:
-          - Phase 1 (first call): broadcast base-model weights, then LoRA
-            adapter weights.  Sets _base_sync_done=True.
-          - Phase 2 (subsequent calls): broadcast only LoRA adapter weights.
+        This method handles the NCCL/XCCL-based weight sync path.
+        When ``use_lora=True`` without ``lora_delta_sync``, only trainable
+        (LoRA) parameters are broadcast.  When ``use_lora=False``, all
+        parameters are broadcast.
 
-        When lora_delta_sync is not enabled the original behaviour is
-        preserved: all parameters are broadcast in a single pass.
+        Note: when ``lora_delta_sync`` is enabled, the caller dispatches to
+        :meth:`_update_weights_delta_sync_disk` instead of this method.
         """
 
         # Reset weight meta with local info
@@ -1708,96 +1718,8 @@ class FSDPEngine(TrainEngine):
 
         dist.barrier(group=self.cpu_group)
 
-        # ---------- LoRA delta sync path ----------
-        if self.config.use_lora and self.config.lora_delta_sync:
-            delta_sync_start = time.monotonic()
-            if main_rank:
-                self.logger.info(
-                    f"[LoRA Delta Sync] Starting weight update, "
-                    f"_base_sync_done={self._base_sync_done}, "
-                    f"meta: lora_delta_sync={meta.lora_delta_sync}, "
-                    f"base_sync_done={meta.base_sync_done}, "
-                    f"lora_name='{meta.lora_name}', version={meta.version}"
-                )
-
-            if not self._base_sync_done:
-                # Phase 1a: Sync base model weights (no LoRA params).
-                # Tell the inference engine this is the base-weight phase.
-                phase1a_start = time.monotonic()
-                base_meta = copy.copy(meta)
-                base_meta.lora_delta_sync = True
-                base_meta.base_sync_done = False
-
-                base_params = self._collect_lora_params(meta, base_sync_done=False)
-                if main_rank:
-                    self.logger.info(
-                        f"[LoRA Delta Sync] Phase 1a: broadcasting "
-                        f"{len(base_params)} base-model params"
-                    )
-                self._broadcast_params_bucketed(base_meta, base_params, main_rank)
-                phase1a_elapsed = time.monotonic() - phase1a_start
-                if main_rank:
-                    self.logger.info(
-                        f"[LoRA Delta Sync] Phase 1a completed in "
-                        f"{phase1a_elapsed:.3f}s"
-                    )
-                    stats_tracker.scalar(
-                        **{"delta_sync/phase1a_base_sync_s": phase1a_elapsed}
-                    )
-                    # Record base bytes for savings calculation
-                    base_bytes = sum(
-                        t.numel() * t.element_size() for _, t in base_params
-                    )
-                    self._delta_sync_base_bytes_total = base_bytes
-                    stats_tracker.scalar(
-                        **{"delta_sync/base_sync_bytes": base_bytes}
-                    )
-                    stats_tracker.scalar(
-                        **{"delta_sync/base_sync_mb": base_bytes / 1024 / 1024}
-                    )
-
-            # Phase 1b / Phase 2: Sync LoRA adapter weights via disk-based
-            # /load_lora_adapter (SGLang has no distributed adapter loading
-            # endpoint).  We gather adapter tensors on rank 0, save them as
-            # safetensors + adapter_config.json, then tell SGLang to load
-            # from that path.
-            phase_adapter_start = time.monotonic()
-            adapter_params = self._collect_lora_params(meta, base_sync_done=True)
-            phase_label = "1b" if not self._base_sync_done else "2"
-
-            if main_rank:
-                self.logger.info(
-                    f"[LoRA Delta Sync] Phase {phase_label}: "
-                    f"saving {len(adapter_params)} LoRA adapter params to disk "
-                    f"for /load_lora_adapter"
-                )
-                self._save_and_load_lora_adapter(meta, adapter_params)
-
-            phase_adapter_elapsed = time.monotonic() - phase_adapter_start
-            if main_rank:
-                self.logger.info(
-                    f"[LoRA Delta Sync] Phase {phase_label} completed in "
-                    f"{phase_adapter_elapsed:.3f}s"
-                )
-                stats_tracker.scalar(
-                    **{f"delta_sync/phase{phase_label}_adapter_sync_s":
-                       phase_adapter_elapsed}
-                )
-
-            self._base_sync_done = True
-
-            delta_sync_elapsed = time.monotonic() - delta_sync_start
-            if main_rank:
-                self.logger.info(
-                    f"[LoRA Delta Sync] Total delta sync elapsed: "
-                    f"{delta_sync_elapsed:.3f}s"
-                )
-                stats_tracker.scalar(
-                    **{"delta_sync/total_sync_s": delta_sync_elapsed}
-                )
-
-        # ---------- Original path (non-delta-sync) ----------
-        else:
+        # ---------- Weight sync (non-delta-sync) ----------
+        if True:
             weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
             broadcast_stream = None
 
@@ -1864,6 +1786,157 @@ class FSDPEngine(TrainEngine):
                 if main_rank and pending_bucket is not None:
                     self._wait_pending_weight_update_bucket(pending_bucket)
                     pending_bucket = None
+
+        dist.barrier(group=self.cpu_group)
+        if main_rank:
+            self.rollout_engine.continue_generation()
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+
+    def _save_base_model_for_delta_sync(
+        self,
+        save_path: str,
+        base_params: list[tuple[str, torch.Tensor]],
+    ):
+        """Save base-model parameters (excluding LoRA) in HuggingFace format.
+
+        This method is called on rank 0 only during delta sync Phase 1a.
+        It constructs a state dict from the pre-collected base parameters
+        (which have already been all-gathered from FSDP on all ranks) and
+        saves them as safetensors alongside the model config.
+
+        Parameters
+        ----------
+        save_path : str
+            Directory to save the HuggingFace checkpoint into.
+        base_params : list[tuple[str, torch.Tensor]]
+            List of (name, tensor) pairs for base-model weights only.
+            Names should already be normalised to HuggingFace format
+            (i.e. without PEFT prefixes).
+        """
+        os.makedirs(save_path, exist_ok=True)
+        state_dict = {name: t.contiguous().cpu() for name, t in base_params}
+
+        from safetensors.torch import save_file as safetensors_save_file_local
+        safetensors_path = os.path.join(save_path, "model.safetensors")
+        safetensors_save_file_local(state_dict, safetensors_path)
+        file_size_mb = os.path.getsize(safetensors_path) / 1024 / 1024
+
+        self.model_config.save_pretrained(save_path)
+
+        self.logger.info(
+            f"[LoRA Delta Sync] Saved {len(state_dict)} base-model params "
+            f"to {safetensors_path} ({file_size_mb:.2f} MB)"
+        )
+
+    @trace_perf("fsdp_engine.update_weights_delta_sync_disk", category="io")
+    def _update_weights_delta_sync_disk(self, meta: WeightUpdateMeta):
+        """Disk-based LoRA delta sync: both base model and adapter via disk.
+
+        Phase 1 (first call, ``_base_sync_done=False``):
+          - Phase 1a: All ranks gather base-model params via FSDP all-gather.
+            Rank 0 saves them in HuggingFace safetensors format.  SGLang
+            loads via ``/update_weights_from_disk``.
+          - Phase 1b: All ranks gather adapter params via FSDP all-gather.
+            Rank 0 saves as PEFT safetensors + adapter_config.json.  SGLang
+            loads via ``/load_lora_adapter``.
+
+        Phase 2 (subsequent calls, ``_base_sync_done=True``):
+          - Only adapter params are gathered and loaded (same as Phase 1b).
+          - Base-model weights are already on SGLang, skipped entirely.
+
+        The name_resolve signaling mechanism coordinates the train side
+        (which saves files) with the inference side (which loads them).
+        """
+        main_rank = dist.get_rank() == 0
+        if main_rank:
+            self.rollout_engine.pause_generation()
+
+        dist.barrier(group=self.cpu_group)
+
+        delta_sync_start = time.monotonic()
+        if main_rank:
+            self.logger.info(
+                f"[LoRA Delta Sync] Starting disk-based delta sync, "
+                f"_base_sync_done={self._base_sync_done}, "
+                f"lora_name='{meta.lora_name}', version={meta.version}"
+            )
+
+        if not self._base_sync_done:
+            phase1a_start = time.monotonic()
+
+            base_params = self._collect_lora_params(meta, base_sync_done=False)
+            if main_rank:
+                self.logger.info(
+                    f"[LoRA Delta Sync] Phase 1a: saving "
+                    f"{len(base_params)} base-model params to disk"
+                )
+
+            base_save_path = os.path.join(
+                tempfile.gettempdir(),
+                "areal_lora_delta_sync_base",
+                f"v{meta.version or 0}",
+            )
+
+            if main_rank:
+                disk_meta = WeightUpdateMeta(
+                    type="disk",
+                    path=base_save_path,
+                    use_lora=False,
+                    clear_checkpoint_after_load=True,
+                    version=meta.version,
+                )
+                fut = self.rollout_engine.update_weights_from_disk(disk_meta)
+
+                self._save_base_model_for_delta_sync(base_save_path, base_params)
+
+                update_name = names.update_weights_from_disk(
+                    self.config.experiment_name,
+                    self.config.trial_name,
+                    self.get_version(),
+                )
+                name_resolve.add(
+                    update_name,
+                    str(datetime.now().timestamp()),
+                    keepalive_ttl=120,
+                )
+
+                fut.result()
+                self.logger.info(
+                    f"[LoRA Delta Sync] Phase 1a completed in "
+                    f"{time.monotonic() - phase1a_start:.3f}s"
+                )
+            else:
+                pass
+
+            dist.barrier(group=self.cpu_group)
+
+        phase_adapter_start = time.monotonic()
+        adapter_params = self._collect_lora_params(meta, base_sync_done=True)
+        phase_label = "1b" if not self._base_sync_done else "2"
+
+        if main_rank:
+            self.logger.info(
+                f"[LoRA Delta Sync] Phase {phase_label}: "
+                f"saving {len(adapter_params)} LoRA adapter params to disk "
+                f"for /load_lora_adapter"
+            )
+            self._save_and_load_lora_adapter(meta, adapter_params)
+
+        if main_rank:
+            self.logger.info(
+                f"[LoRA Delta Sync] Phase {phase_label} completed in "
+                f"{time.monotonic() - phase_adapter_start:.3f}s"
+            )
+
+        self._base_sync_done = True
+
+        if main_rank:
+            self.logger.info(
+                f"[LoRA Delta Sync] Total disk-based delta sync elapsed: "
+                f"{time.monotonic() - delta_sync_start:.3f}s"
+            )
 
         dist.barrier(group=self.cpu_group)
         if main_rank:

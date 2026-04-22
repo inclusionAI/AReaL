@@ -107,7 +107,7 @@ actor:
   max_new_tokens: ${gconfig.max_new_tokens}
 
   # ---- Weight update: XCCL (NCCL-based) instead of disk ----
-  weight_update_mode: xccl
+  weight_update_mode: disk
 
   # ---- LoRA configuration ----
   use_lora: ${rollout.use_lora}

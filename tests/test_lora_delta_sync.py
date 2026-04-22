@@ -6,7 +6,12 @@ Tests cover:
 - base_sync_done state management on WeightUpdateMeta
 - WeightUpdateMeta serialization / round-trip
 - TrainEngineConfig.lora_delta_sync default value and validation
-- SGLang backend load_lora_adapter call path (mocked)
+- SGLang backend load_lora_adapter and disk update call paths (mocked)
+
+Note: When lora_delta_sync is enabled, both base-model weights and adapter
+weights are synced via disk (no NCCL process group required).  Base-model
+weights use ``/update_weights_from_disk`` and adapter weights use
+``/load_lora_adapter``.
 """
 
 import copy
@@ -62,9 +67,9 @@ def _is_base_param(name: str) -> bool:
 def _filter_lora_params(params: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     """Extract only LoRA adapter parameters from a full state dict.
 
-    This mirrors the logic used in FSDPEngine._update_weights_from_distributed
-    when lora_delta_sync=True and base_sync_done=True: only parameters whose
-    names contain 'lora_A' or 'lora_B' are transmitted.
+    This mirrors the logic used in FSDPEngine._update_weights_delta_sync_disk
+    when base_sync_done=True: only parameters whose names contain 'lora_A'
+    or 'lora_B' are saved to disk and loaded via ``/load_lora_adapter``.
     """
     return {k: v for k, v in params.items() if _is_lora_param(k)}
 
@@ -73,8 +78,9 @@ def _filter_base_params(params: dict[str, torch.Tensor]) -> dict[str, torch.Tens
     """Extract only base model parameters (exclude lora_ prefixed params).
 
     This mirrors the logic for the first sync (base_sync_done=False):
-    only non-LoRA parameters are transmitted so the inference engine
-    can load the base model.
+    only non-LoRA parameters are saved to disk via
+    ``/update_weights_from_disk`` so the inference engine can load
+    the base model.
     """
     return {k: v for k, v in params.items() if _is_base_param(k)}
 
@@ -410,10 +416,11 @@ class TestDeltaSyncParameterSelection:
     ) -> dict[str, torch.Tensor]:
         """Simulate the parameter selection logic.
 
-        When lora_delta_sync=True:
-          - First sync (base_sync_done=False): send ALL parameters (base + lora)
-            so the inference engine can load the full model.
-          - Subsequent syncs (base_sync_done=True): send ONLY lora parameters.
+        When lora_delta_sync=True (disk-based delta sync):
+          - First sync (base_sync_done=False): send ALL parameters
+            (base via /update_weights_from_disk + lora via /load_lora_adapter).
+          - Subsequent syncs (base_sync_done=True): send ONLY lora parameters
+            (via /load_lora_adapter).
 
         When lora_delta_sync=False and use_lora=True:
           - Always send only trainable (lora) parameters (existing behavior).

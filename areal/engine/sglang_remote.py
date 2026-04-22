@@ -164,12 +164,12 @@ class SGLangBackend:
     ) -> WeightUpdateRequests:
         """Build SGLang distributed weight update requests.
 
-        When lora_delta_sync is enabled on the meta, LoRA is handled in two
-        phases orchestrated by the FSDP engine:
-          - base_sync_done=False: base model params are pushed via the normal
-            ``/update_weights_from_distributed`` endpoint.
-          - base_sync_done=True: LoRA adapter params are pushed via the
-            ``/load_lora_adapter_from_distributed`` endpoint (or tensor API).
+        When lora_delta_sync is enabled, both base-model and adapter weights
+        are synced via disk (``/update_weights_from_disk`` for the base model
+        and ``/load_lora_adapter`` for the adapter).  The FSDP engine
+        dispatches to :meth:`FSDPEngine._update_weights_delta_sync_disk`
+        in that case, so this method should **not** be called for
+        delta-sync flows.
 
         For non-delta-sync LoRA, the original error is preserved to guide
         users towards disk-based updates.

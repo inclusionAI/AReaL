@@ -6,13 +6,17 @@ This script is launched via ``torchrun`` from the e2e test
 1. Creates a small Qwen3-0.6B model with LoRA adapters.
 2. Initialises the FSDP engine.
 3. Initialises a SGLang inference engine (server).
-4. Performs a first full weight sync (base + LoRA) -- base_sync_done=False.
-5. Performs a subsequent delta sync (LoRA only) -- base_sync_done=True.
+4. Performs a first full weight sync (base via disk + LoRA via disk).
+5. Performs a subsequent delta sync (LoRA only via disk).
 6. Validates that:
    a. The first sync transmitted all parameters.
    b. The subsequent sync transmitted only LoRA parameters.
    c. The model generates valid output tokens after each sync.
 7. Writes "Passed" / "Failed" to an output file.
+
+Note: lora_delta_sync uses disk-based sync for both base model weights
+(``/update_weights_from_disk``) and adapter weights
+(``/load_lora_adapter``).  No NCCL process group is required.
 
 Usage (invoked by the e2e test, not directly):
   torchrun --nproc_per_node=N tests/torchrun/run_lora_delta_sync.py \
@@ -67,9 +71,9 @@ def make_fsdp_engine_with_lora(backend: str) -> FSDPEngine:
         lora_rank=8,
         lora_alpha=16,
         peft_type="lora",
-        # Delta sync
+        # Delta sync (disk-based: both base model and adapter via disk)
         lora_delta_sync=True,
-        weight_update_mode="xccl",
+        weight_update_mode="disk",
     )
     alloc_mode = ModelAllocation.from_str(backend)
     engine = FSDPEngine(config)
