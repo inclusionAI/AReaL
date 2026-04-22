@@ -212,6 +212,18 @@ def _weight_to_mcore_tp(
         res = _merge_gate_up_weights(hf_weights_safe_slice, tp_rank, tp_size)
     elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:
         res = _slice_moe_expert_weight(hf_weights_safe_slice, tp_rank, tp_size)
+    elif mcore_weights_name.endswith("eh_proj.weight"):
+        res = _slice_generic_weight(
+            mcore_param_shape, hf_weights_safe_slice, tp_rank, tp_size
+        )
+        if not isinstance(res, FP8BlockwiseTensorHelper):
+            first_half, second_half = res.chunk(2, dim=1)
+            res = torch.cat([second_half, first_half], dim=1)
+            logger.info(
+                f"[MTPLoad] eh_proj.weight column-half swap applied: "
+                f"{mcore_weights_name}, shape={tuple(res.shape)}, "
+                f"tp_rank={tp_rank}, tp_size={tp_size}"
+            )
     else:
         res = _slice_generic_weight(
             mcore_param_shape, hf_weights_safe_slice, tp_rank, tp_size

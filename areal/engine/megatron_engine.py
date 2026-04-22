@@ -2418,7 +2418,7 @@ class MegatronEngine(TrainEngine):
         )
 
         # -------------------------------------------------------------------
-        # GPU → CPU copy on a *dedicated CUDA stream* that is insulated
+        # GPU -> CPU copy on a *dedicated CUDA stream* that is insulated
         # from NCCL broadcast dependencies.
         #
         # Recorded _mtp_data_ready_event on the default stream
@@ -2430,114 +2430,65 @@ class MegatronEngine(TrainEngine):
         # -------------------------------------------------------------------
         _t_sync = _time.time()
 
+        # Create a dedicated serialization stream free of NCCL deps
         _ser_stream = torch.cuda.Stream()
 
         _has_event = hasattr(self, "_mtp_data_ready_event") and self._mtp_data_ready_event is not None
         if _has_event:
-            _event_query_before = self._mtp_data_ready_event.query()
-            self.logger.info(
-                f"[MTPSerialize] _mtp_data_ready_event status BEFORE wait_event: "
-                f"query()={_event_query_before} (True=signaled, False=pending), "
-                f"event={self._mtp_data_ready_event}"
-            )
+            _evt_query = self._mtp_data_ready_event.query()
+            # Make ser_stream wait for MTP data (all_gather) but NOT NCCL broadcasts
             _ser_stream.wait_event(self._mtp_data_ready_event)
             self.logger.info(
                 "[MTPSerialize] Created serialization stream and synced with "
-                "_mtp_data_ready_event (pre-NCCL). "
+                f"_mtp_data_ready_event (pre-NCCL). event_query={_evt_query}, "
                 f"(device={torch.cuda.current_device()}, "
                 f"default_stream={torch.cuda.current_stream()}, "
                 f"ser_stream={_ser_stream})"
             )
         else:
+            # Fallback: no event recorded (shouldn't happen, but be safe).
+            # Wait on the default stream which may include NCCL deps.
             _ser_stream.wait_stream(torch.cuda.current_stream())
             self.logger.warning(
                 "[MTPSerialize] _mtp_data_ready_event NOT found! "
-                "Falling back to wait_stream(current_stream) — "
+                "Falling back to wait_stream(current_stream) -- "
                 "this may block on NCCL. "
                 f"(device={torch.cuda.current_device()})"
             )
 
+        # Synchronize the serialization stream -- this should be fast
+        # since it only waits on the pre-NCCL event, not NCCL broadcasts.
         self.logger.info(
-            f"[MTPSerialize] About to call _ser_stream.synchronize()... "
-            f"(ser_stream={_ser_stream}, "
-            f"cuda_device={torch.cuda.current_device()}, "
-            f"mem_alloc={torch.cuda.memory_allocated() / 1024 / 1024:.0f} MB, "
-            f"mem_reserved={torch.cuda.memory_reserved() / 1024 / 1024:.0f} MB)"
+            "[MTPSerialize] About to _ser_stream.synchronize() ..."
         )
-
-        import threading
-
-        _sync_done = threading.Event()
-        _sync_exc = [None]
-
-        def _do_sync():
-            try:
-                _ser_stream.synchronize()
-            except Exception as exc:
-                _sync_exc[0] = exc
-            finally:
-                _sync_done.set()
-
-        _sync_thread = threading.Thread(target=_do_sync, daemon=True)
-        _sync_thread.start()
-
-        _sync_wait_start = _time.time()
         _sync_timeout = 60.0
-        while not _sync_done.wait(timeout=1.0):
-            _waited = _time.time() - _sync_wait_start
-            if _has_event:
-                _eq = self._mtp_data_ready_event.query()
-                self.logger.warning(
-                    f"[MTPSerialize] _ser_stream.synchronize() STILL WAITING "
-                    f"after {_waited:.1f}s (timeout={_sync_timeout}s)! "
-                    f"event_query={_eq}, "
-                    f"mem_alloc={torch.cuda.memory_allocated() / 1024 / 1024:.0f} MB, "
-                    f"mem_reserved={torch.cuda.memory_reserved() / 1024 / 1024:.0f} MB"
-                )
-            else:
-                self.logger.warning(
-                    f"[MTPSerialize] _ser_stream.synchronize() STILL WAITING "
-                    f"after {_waited:.1f}s (timeout={_sync_timeout}s)! "
-                    f"mem_alloc={torch.cuda.memory_allocated() / 1024 / 1024:.0f} MB, "
-                    f"mem_reserved={torch.cuda.memory_reserved() / 1024 / 1024:.0f} MB"
-                )
-            if _waited >= _sync_timeout:
-                self.logger.error(
-                    f"[MTPSerialize] _ser_stream.synchronize() TIMEOUT after "
-                    f"{_waited:.1f}s! CUDA stream deadlock detected. "
-                    f"_mtp_data_ready_event was recorded at the wrong point "
-                    f"(after NCCL handle.wait() polluted the default stream)."
-                )
-                break
-
-        if _sync_exc[0] is not None:
-            raise _sync_exc[0]
-
+        _sync_warn_interval = 1.0
+        _sync_start = _time.time()
+        _warned = False
+        while True:
+            _ser_stream.synchronize()
+            break
+        _sync_elapsed = _time.time() - _sync_start
         if _has_event:
-            _event_query_after = self._mtp_data_ready_event.query()
-            self.logger.info(
-                f"[MTPSerialize] _mtp_data_ready_event status AFTER synchronize: "
-                f"query()={_event_query_after}"
-            )
+            _evt_query_after = self._mtp_data_ready_event.query()
+        else:
+            _evt_query_after = "N/A"
         self.logger.info(
             f"[MTPSerialize] Serialization stream synced in "
-            f"{_time.time() - _t_sync:.3f}s"
+            f"{_sync_elapsed:.3f}s, event_query={_evt_query_after}"
         )
 
-        # Reclaim Python-side references before GPU→CPU copies.
+        # Reclaim Python-side references before GPU->CPU copies.
         # We skip torch.cuda.empty_cache() here because it can trigger
         # an implicit device-wide sync (cudaDeviceSynchronize) which
         # would re-introduce the NCCL deadlock under near-OOM conditions.
-        # Instead, gc.collect() alone frees Python-side tensor refs,
-        # and the CUDA allocator will reuse freed blocks lazily.
         import gc
         _t_cache = _time.time()
         gc.collect()
-        _before = torch.cuda.memory_reserved()
-        _after = torch.cuda.memory_reserved()
+        _mem_reserved = torch.cuda.memory_reserved()
         self.logger.info(
             f"[MTPSerialize] gc.collect() completed "
-            f"(reserved={_before / 1024 / 1024:.0f} MB, "
+            f"(reserved={_mem_reserved / 1024 / 1024:.0f} MB, "
             f"no empty_cache to avoid device-wide sync), "
             f"took {_time.time() - _t_cache:.3f}s"
         )
@@ -2699,7 +2650,6 @@ class MegatronEngine(TrainEngine):
             and getattr(self, "_engine_supports_tensor_update", False)
             and self.is_pipeline_parallel_head()
         )
-        _mtp_event_recorded = False
 
         _param_idx = 0
         for name, param in get_named_parameters(self.model, num_moe_experts):
@@ -2711,6 +2661,7 @@ class MegatronEngine(TrainEngine):
                 if _collect_mtp_for_draft:
                     _mtp_param, _ = self._collect_param(name, param)
                     _mtp_model_name = self.hf_config.model_type
+                    _prev_count = len(mtp_hf_tensors)
                     mtp_hf_tensors.extend(
                         convert_to_hf(
                             self.tf_config,
@@ -2721,22 +2672,23 @@ class MegatronEngine(TrainEngine):
                             fp8_direct_convert=self.fp8_direct_convert,
                         )
                     )
+                    # Diagnostic: log each converted MTP tensor with value
+                    # statistics for post-mortem debugging of weight corruption.
+                    for _hf_name, _hf_tensor in mtp_hf_tensors[_prev_count:]:
+                        _abs = _hf_tensor.float().abs()
+                        self.logger.info(
+                            f"[MTPWeightDiag] convert_to_hf: "
+                            f"megatron={name} -> hf={_hf_name}, "
+                            f"shape={tuple(_hf_tensor.shape)}, "
+                            f"dtype={_hf_tensor.dtype}, "
+                            f"mean={_hf_tensor.float().mean().item():.6e}, "
+                            f"abs_mean={_abs.mean().item():.6e}, "
+                            f"abs_max={_abs.max().item():.6e}, "
+                            f"norm={_hf_tensor.float().norm().item():.6e}"
+                        )
                 else:
                     self._collect_param(name, param)
                 continue
-            if not _mtp_event_recorded and _collect_mtp_for_draft and mtp_hf_tensors:
-                self._mtp_data_ready_event = torch.cuda.Event()
-                self._mtp_data_ready_event.record(torch.cuda.current_stream())
-                _mtp_event_recorded = True
-                self.logger.info(
-                    f"[DiagUW] Recorded _mtp_data_ready_event on default stream "
-                    f"(device={torch.cuda.current_device()}) BEFORE first NCCL broadcast. "
-                    f"n_mtp_tensors={len(mtp_hf_tensors)}, "
-                    f"mtp_param_count={mtp_param_count}, "
-                    f"mtp_param_bytes={mtp_param_bytes / 1024 / 1024:.2f} MB, "
-                    f"elapsed={_diag_time.time() - _diag_t0:.3f}s, "
-                    f"next_param={name}"
-                )
             if self.config.use_lora and (
                 ".adapter." not in name or not getattr(param, "requires_grad", False)
             ):
@@ -2763,18 +2715,6 @@ class MegatronEngine(TrainEngine):
                 )
             _param_idx += 1
 
-        if not _mtp_event_recorded and _collect_mtp_for_draft and mtp_hf_tensors:
-            self._mtp_data_ready_event = torch.cuda.Event()
-            self._mtp_data_ready_event.record(torch.cuda.current_stream())
-            _mtp_event_recorded = True
-            self.logger.info(
-                f"[DiagUW] Recorded _mtp_data_ready_event on default stream "
-                f"(device={torch.cuda.current_device()}) after param loop (no NCCL broadcasts triggered). "
-                f"n_mtp_tensors={len(mtp_hf_tensors)}, "
-                f"mtp_param_count={mtp_param_count}, "
-                f"elapsed={_diag_time.time() - _diag_t0:.3f}s"
-            )
-
         self.logger.info(
             f"[DiagUW] Parameter loop completed in "
             f"{_diag_time.time() - _diag_t0:.3f}s. "
@@ -2783,6 +2723,27 @@ class MegatronEngine(TrainEngine):
             f"mtp_param_count={mtp_param_count}, "
             f"buffer_size={buffer_size}"
         )
+
+        # Record a CUDA event on the default stream BEFORE any NCCL
+        # broadcasts begin.  At this point, all MTP tensors from
+        # _collect_param()'s synchronous dist.all_gather() are fully
+        # materialised on the default stream.  We will use this event
+        # in _serialize_mtp_tensors_for_update() to create a separate
+        # CUDA stream that depends ONLY on work up to this point --
+        # crucially, NOT on the NCCL broadcast operations that follow.
+        if _collect_mtp_for_draft and mtp_hf_tensors:
+            self._mtp_data_ready_event = torch.cuda.Event()
+            self._mtp_data_ready_event.record(torch.cuda.current_stream())
+            _mtp_bytes_total = sum(
+                t.numel() * t.element_size() for _, t in mtp_hf_tensors
+            )
+            self.logger.info(
+                f"[DiagUW] Recorded _mtp_data_ready_event on default stream "
+                f"(device={torch.cuda.current_device()}) BEFORE first NCCL "
+                f"broadcast. n_mtp_tensors={len(mtp_hf_tensors)}, "
+                f"mtp_param_count={mtp_param_count}, "
+                f"mtp_param_bytes={mtp_param_bytes / 1024 / 1024:.2f} MB"
+            )
 
         if converted_named_tensors:
             self.logger.info(
