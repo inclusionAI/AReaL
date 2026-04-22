@@ -205,6 +205,15 @@ stats_tracker.get("eval-rollout").scalar(reward=0.9)
 all_stats = stats_tracker.export_all(reduce_group=group)
 ```
 
+During training, validation metrics usually appear under the `eval-rollout/*` namespace.
+The first time these metrics appear depends on the evaluator schedule:
+
+- `evaluator.start_epoch=0` logs validation metrics before training starts
+- `evaluator.start_epoch=1` logs them after the first epoch
+- later `start_epoch` values delay when `eval-rollout/*` first appears in dashboards
+
+After that, epoch-based validation follows `evaluator.freq_epochs`.
+
 ## Data Flow
 
 The complete metrics flow from collection to logging:

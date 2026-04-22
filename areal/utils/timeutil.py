@@ -146,32 +146,51 @@ class EpochStepTimeFreqCtl:
     freq_epoch: int | None
     freq_step: int | None
     freq_sec: int | None
+    start_epoch: int = 1
     group: dist.ProcessGroup | None = None
 
     def __post_init__(self):
-        self.epoch_ctl = FrequencyControl(frequency_steps=self.freq_epoch)
+        if self.start_epoch < 0:
+            raise ValueError(f"start_epoch must be >= 0, got {self.start_epoch}")
+        self.epoch_ctl = FrequencyControl(
+            frequency_steps=self.freq_epoch,
+            initial_value=(self.start_epoch == 0),
+        )
+        self._epoch_count = 0
         self.step_ctl = FrequencyControl(frequency_steps=self.freq_step)
         self.time_ctl = FrequencyControl(
             frequency_seconds=self.freq_sec, group=self.group
         )
 
     def check(self, epochs: int, steps: int):
-        x, y, z = (
-            self.epoch_ctl.check(epochs),
-            self.step_ctl.check(steps),
-            self.time_ctl.check(),
-        )
-        return x or y or z
+        if self.start_epoch <= 1:
+            epoch_trigger = self.epoch_ctl.check(epochs)
+        else:
+            self._epoch_count += epochs
+            epoch_trigger = False
+            if self.freq_epoch is not None and epochs > 0:
+                if self._epoch_count >= self.start_epoch:
+                    epoch_trigger = (
+                        self._epoch_count - self.start_epoch
+                    ) % self.freq_epoch == 0
+
+        step_trigger = self.step_ctl.check(steps)
+        time_trigger = self.time_ctl.check()
+        return epoch_trigger or step_trigger or time_trigger
 
     def state_dict(self):
         return dict(
             epoch=self.epoch_ctl.state_dict(),
             step=self.step_ctl.state_dict(),
             time=self.time_ctl.state_dict(),
+            start_epoch=self.start_epoch,
+            epoch_count=self._epoch_count,
         )
 
     def load_state_dict(self, state_dict):
-        self.epoch_ctl.load_state_dict(state_dict["epoch"])
+        self.start_epoch = int(state_dict.get("start_epoch", self.start_epoch))
+        self._epoch_count = int(state_dict.get("epoch_count", 0))
+        self.epoch_ctl.load_state_dict(state_dict.get("epoch"))
         self.step_ctl.load_state_dict(state_dict["step"])
         self.time_ctl.load_state_dict(state_dict["time"])
 

@@ -534,6 +534,29 @@ class PPOTrainer:
         elif self._requires_proxy_workflow(workflow):
             self._ensure_proxy_started()
 
+        if config.evaluator.start_epoch == 0 and start_step == 0:
+            with (
+                stats_tracker.record_timing("eval_at_start"),
+                perf_tracer.trace_scope(
+                    "train.eval_at_start",
+                    category=Category.COMPUTE,
+                    args={"global_step": -1},
+                ),
+            ):
+                self._evaluate(
+                    eval_workflow=eval_workflow,
+                    eval_workflow_kwargs=eval_workflow_kwargs,
+                    epoch=0,
+                    epoch_step=-1,
+                    global_step=-1,
+                )
+            with perf_tracer.trace_scope(
+                "train.log_stats_before_train",
+                category=Category.INSTR,
+                args={"global_step": -1},
+            ):
+                self._export_and_commit_stats(epoch=0, epoch_step=-1, global_step=-1)
+
         for global_step in range(start_step, max_steps):
             if (
                 config.total_train_steps is not None

@@ -1955,6 +1955,19 @@ class _Timer:
 class EvaluatorConfig(_Timer):
     """Configuration for model evaluation scheduling and timing."""
 
+    start_epoch: int = field(
+        default=1,
+        metadata={
+            "help": "First epoch index to allow eval. 0 enables a pre-train eval on fresh runs. 1 keeps current behavior (first eval after epoch 1)."
+        },
+    )
+
+    def __post_init__(self):
+        if self.start_epoch < 0:
+            raise ValueError(
+                f"evaluator.start_epoch must be >= 0, got {self.start_epoch}"
+            )
+
 
 @dataclass
 class SaverConfig(_Timer):

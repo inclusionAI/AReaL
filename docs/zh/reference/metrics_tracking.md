@@ -200,6 +200,14 @@ stats_tracker.get("eval-rollout").scalar(reward=0.9)
 all_stats = stats_tracker.export_all(reduce_group=group)
 ```
 
+在训练过程中，验证指标通常出现在 `eval-rollout/*` 命名空间下。这些指标首次出现的时间取决于评估调度配置：
+
+- `evaluator.start_epoch=0`：在训练开始前记录一次验证指标
+- `evaluator.start_epoch=1`：在第一个 epoch 结束后记录验证指标
+- 更大的 `start_epoch` 值会推迟 `eval-rollout/*` 在面板或仪表盘中的首次出现时间
+
+之后，基于 epoch 的验证会按照 `evaluator.freq_epochs` 的频率继续执行。
+
 ## 数据流
 
 从收集到记录的完整指标流程：

@@ -157,6 +157,23 @@ class SFTTrainer:
         steps_per_epoch = len(self.train_dataloader)
         max_steps = total_epochs * steps_per_epoch
 
+        if config.evaluator.start_epoch == 0 and start_step == 0:
+            with (
+                stats_tracker.record_timing("eval_at_start"),
+                perf_tracer.trace_scope(
+                    "train.eval_at_start",
+                    category=Category.COMPUTE,
+                    args={"global_step": -1},
+                ),
+            ):
+                self._evaluate(epoch=0, epoch_step=-1, global_step=-1)
+            with perf_tracer.trace_scope(
+                "train.log_stats_before_train",
+                category=Category.INSTR,
+                args={"global_step": -1},
+            ):
+                self._export_and_commit_stats(epoch=0, epoch_step=-1, global_step=-1)
+
         global_step = 0
         data_generator = cycle_dataloader(self.train_dataloader)
         for global_step in range(start_step, max_steps):
