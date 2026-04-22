@@ -402,8 +402,9 @@ class GeoVisionQARewardManager:
             if data_source == "map_trace":
                 _, ndtw_val = _compute_map_trace_score(prediction, ground_truth)
                 ndtw_success = 1.0 if 0 <= ndtw_val < 1.0 else 0.0
-            reward_extra_info["ndtw"].append(ndtw_val)
-            reward_extra_info["ndtw_success"].append(ndtw_success)
+                if ndtw_val >= 0:
+                    reward_extra_info["ndtw"].append(ndtw_val)
+                    reward_extra_info["ndtw_success"].append(ndtw_success)
 
             reward_extra_info["accuracy"].append(accuracy)
             reward_extra_info["score"].append(reward)
