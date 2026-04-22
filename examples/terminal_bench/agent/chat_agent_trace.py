@@ -88,6 +88,13 @@ from camel.utils import (
 )
 from camel.utils.commons import dependencies_required
 from camel.utils.context_utils import ContextUtility
+from areal.utils.perf_tracer import (
+    Category,
+    atrace_scope,
+    atrace_session_phase,
+    session_context,
+    trace_perf,
+)
 
 if TYPE_CHECKING:
     from camel.terminators import ResponseTerminator
@@ -110,30 +117,6 @@ def _cleanup_temp_files():
 
 atexit.register(_cleanup_temp_files)
 
-# AgentOps decorator setting
-try:
-    if os.getenv("AGENTOPS_API_KEY") is not None:
-        from agentops import track_agent
-    else:
-        raise ImportError
-except (ImportError, AttributeError):
-    from camel.utils import track_agent
-
-# Langfuse decorator setting
-if os.environ.get("LANGFUSE_ENABLED", "False").lower() == "true":
-    try:
-        from langfuse.decorators import observe
-    except ImportError:
-        from camel.utils import observe
-elif os.environ.get("TRACEROOT_ENABLED", "False").lower() == "true":
-    try:
-        from traceroot import trace as observe  # type: ignore[import]
-    except ImportError:
-        from camel.utils import observe
-else:
-    from camel.utils import observe
-
-
 SIMPLE_FORMAT_PROMPT = TextPrompt(
     textwrap.dedent(
         """\
@@ -142,16 +125,6 @@ SIMPLE_FORMAT_PROMPT = TextPrompt(
         {content}
         """
     )
-)
-
-from areal.utils import perf_tracer
-from areal.utils.perf_tracer import (
-    atrace_session_phase,
-    session_context,
-    trace_perf,
-    trace_session,
-    Category,
-    atrace_scope
 )
 
 class ChatAgentTrace(ChatAgent):
