@@ -48,14 +48,23 @@ def main():
     state = GuardState()
     bind_host = configure_state_from_args(state, args)
 
+    logger.info(
+        f"[DIAG] RPC Server: bind_host={bind_host}, port={args.port}, "
+        f"role={state.role}, worker_index={state.worker_index}"
+    )
+
     app = create_app(state)
     app.register_blueprint(data_bp)
+    logger.info("[DIAG] RPC Server: data blueprint registered")
     app.register_blueprint(engine_bp)
+    logger.info("[DIAG] RPC Server: engine blueprint registered")
     register_engine_hooks(state)
+    logger.info("[DIAG] RPC Server: engine hooks registered")
 
     state.register_cleanup_hook(lambda: perf_tracer.save(force=True))
 
     logger.info(f"Werkzeug log level: {args.werkzeug_log_level}")
+    logger.info("[DIAG] RPC Server: calling run_server...")
 
     run_server(state, app, bind_host, args.port)
 

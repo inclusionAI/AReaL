@@ -430,10 +430,16 @@ def create_app(state: GuardState) -> Flask:
                 return jsonify({"error": "Invalid JSON in request body"}), 400
 
             if not s._configure_hooks:
-                # No hooks registered — no-op (guard-only mode)
-                logger.debug("Received /configure request (no-op)")
+                logger.info(
+                    f"[DIAG] /configure: received request (no-op, "
+                    f"no hooks registered) for worker {s.role}/{s.worker_index}"
+                )
                 return jsonify({"status": "ok"})
 
+            logger.info(
+                f"[DIAG] /configure: received request with "
+                f"{len(s._configure_hooks)} hook(s) for worker {s.role}/{s.worker_index}"
+            )
             # Dispatch to all registered configure hooks
             result: dict[str, Any] = {}
             for hook in s._configure_hooks:
@@ -441,6 +447,9 @@ def create_app(state: GuardState) -> Flask:
                 result.update(hook_result)
 
             result.setdefault("status", "success")
+            logger.info(
+                f"[DIAG] /configure: completed for worker {s.role}/{s.worker_index}"
+            )
             return jsonify(result)
 
         except ValueError as e:
@@ -511,13 +520,25 @@ def configure_state_from_args(state: GuardState, args: argparse.Namespace) -> st
     bind_host = args.host
     if bind_host == "0.0.0.0":
         host_ip = gethostip()
+        logger.info(
+            f"[DIAG] configure_state_from_args: gethostip() returned '{host_ip}'"
+        )
         if ":" in host_ip:
             bind_host = "::"
         state.server_host = host_ip
     elif bind_host == "::":
         state.server_host = gethostip()
+        logger.info(
+            f"[DIAG] configure_state_from_args: gethostip() returned '{state.server_host}'"
+        )
     else:
         state.server_host = bind_host
+
+    logger.info(
+        f"[DIAG] configure_state_from_args: bind_host={bind_host}, "
+        f"server_host={state.server_host}, role={args.role}, "
+        f"worker_index={args.worker_index}"
+    )
 
     state.experiment_name = args.experiment_name
     state.trial_name = args.trial_name
@@ -570,6 +591,10 @@ def run_server(
 
     # Register with name_resolve
     if state.name_resolve_type is not None:
+        logger.info(
+            f"[DIAG] Registering with name_resolve: type={state.name_resolve_type}, "
+            f"nfs_root={state.nfs_record_root}, etcd3={state.etcd3_addr}"
+        )
         name_resolve.reconfigure(
             NameResolveConfig(
                 type=state.name_resolve_type,
@@ -577,6 +602,7 @@ def run_server(
                 etcd3_addr=state.etcd3_addr or "localhost:2379",
             )
         )
+        logger.info("[DIAG] name_resolve reconfigured successfully")
 
     worker_id = f"{state.role}/{state.worker_index}"
     key = names.worker_discovery(
@@ -585,7 +611,9 @@ def run_server(
         state.role,
         state.worker_index,
     )
+    logger.info(f"[DIAG] Adding name_resolve entry: key={key}, addr={state.node_addr}")
     name_resolve.add(key, state.node_addr, replace=True)
+    logger.info(f"[DIAG] name_resolve.add completed for {worker_id}")
 
     logger.info(f"Starting Guard on {state.node_addr} for worker {worker_id}")
 
