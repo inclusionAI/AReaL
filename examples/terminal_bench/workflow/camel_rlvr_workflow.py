@@ -8,6 +8,8 @@ from functools import partial
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+from agent.camel_terminal_agent import CamelTerminalAgent
+from agent_rl_config import TaskTimeouts
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
@@ -15,9 +17,6 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import stats_tracker
 from areal.utils.perf_tracer import atrace_scope
-
-from agent.camel_terminal_agent import CamelTerminalAgent
-from agent_rl_config import TaskTimeouts
 
 from .pre_build_tasks_utils import build_docker_image
 
@@ -83,8 +82,10 @@ class CamelRLVRWorkflow(RolloutWorkflow):
                     ),
                     timeout=self.task_timeouts._reset_env + 60.0,
                 )
-        except asyncio.TimeoutError:
-            print(f"Timeout while building docker image for task {data.get('task_name')}")
+        except TimeoutError:
+            print(
+                f"Timeout while building docker image for task {data.get('task_name')}"
+            )
             return None
 
         print(f"\n{'=' * 70}")
@@ -119,7 +120,9 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         completions_with_reward = {}
         if self.filter_uniform_reward:
             valid_rewards = [reward for reward in rewards if reward is not None]
-            if valid_rewards and all(reward == valid_rewards[0] for reward in valid_rewards):
+            if valid_rewards and all(
+                reward == valid_rewards[0] for reward in valid_rewards
+            ):
                 print(
                     f"Rank {os.getenv('RANK', '0')} - Task {data.get('task_name')} "
                     "has uniform reward across trajectories. Discarding all."
@@ -166,5 +169,7 @@ class CamelRLVRWorkflow(RolloutWorkflow):
             num_trajectories_failed=sum(1 for reward in rewards if reward is None)
         )
 
-        print(f"Rank {os.getenv('RANK', '0')} - Task {data.get('task_name')} completed.")
+        print(
+            f"Rank {os.getenv('RANK', '0')} - Task {data.get('task_name')} completed."
+        )
         return completions_with_reward

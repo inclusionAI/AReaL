@@ -1,0 +1,101 @@
+Run pip install pre-commit
+Collecting pre-commit
+  Downloading pre_commit-4.6.0-py2.py3-none-any.whl.metadata (1.2 kB)
+Collecting cfgv>=2.0.0 (from pre-commit)
+  Downloading cfgv-3.5.0-py2.py3-none-any.whl.metadata (8.9 kB)
+Collecting identify>=1.0.0 (from pre-commit)
+  Downloading identify-2.6.19-py2.py3-none-any.whl.metadata (4.4 kB)
+Collecting nodeenv>=0.11.1 (from pre-commit)
+  Downloading nodeenv-1.10.0-py2.py3-none-any.whl.metadata (24 kB)
+Collecting pyyaml>=5.1 (from pre-commit)
+  Downloading pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Collecting virtualenv>=20.10.0 (from pre-commit)
+  Downloading virtualenv-21.2.4-py3-none-any.whl.metadata (3.5 kB)
+Collecting distlib<1,>=0.3.7 (from virtualenv>=20.10.0->pre-commit)
+  Downloading distlib-0.4.0-py2.py3-none-any.whl.metadata (5.2 kB)
+Collecting filelock<4,>=3.24.2 (from virtualenv>=20.10.0->pre-commit)
+  Downloading filelock-3.29.0-py3-none-any.whl.metadata (2.0 kB)
+Collecting platformdirs<5,>=3.9.1 (from virtualenv>=20.10.0->pre-commit)
+  Downloading platformdirs-4.9.6-py3-none-any.whl.metadata (4.7 kB)
+Collecting python-discovery>=1.2.2 (from virtualenv>=20.10.0->pre-commit)
+  Downloading python_discovery-1.2.2-py3-none-any.whl.metadata (5.4 kB)
+Downloading pre_commit-4.6.0-py2.py3-none-any.whl (226 kB)
+Downloading cfgv-3.5.0-py2.py3-none-any.whl (7.4 kB)
+Downloading identify-2.6.19-py2.py3-none-any.whl (99 kB)
+Downloading nodeenv-1.10.0-py2.py3-none-any.whl (23 kB)
+Downloading pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.9/807.9 kB 21.7 MB/s  0:00:00
+Downloading virtualenv-21.2.4-py3-none-any.whl (5.8 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.8/5.8 MB 90.1 MB/s  0:00:00
+Downloading distlib-0.4.0-py2.py3-none-any.whl (469 kB)
+Downloading filelock-3.29.0-py3-none-any.whl (39 kB)
+Downloading platformdirs-4.9.6-py3-none-any.whl (21 kB)
+Downloading python_discovery-1.2.2-py3-none-any.whl (31 kB)
+Installing collected packages: distlib, pyyaml, platformdirs, nodeenv, identify, filelock, cfgv, python-discovery, virtualenv, pre-commit
+
+Successfully installed cfgv-3.5.0 distlib-0.4.0 filelock-3.29.0 identify-2.6.19 nodeenv-1.10.0 platformdirs-4.9.6 pre-commit-4.6.0 python-discovery-1.2.2 pyyaml-6.0.3 virtualenv-21.2.4
+[INFO] Initializing environment for https://github.com/pre-commit/mirrors-clang-format.
+[INFO] Initializing environment for https://github.com/pre-commit/pre-commit-hooks.
+[INFO] Initializing environment for https://github.com/executablebooks/mdformat.
+[INFO] Initializing environment for https://github.com/executablebooks/mdformat:mdformat-gfm,mdformat-tables,mdformat-frontmatter.
+[INFO] Initializing environment for https://github.com/astral-sh/ruff-pre-commit.
+[INFO] Initializing environment for https://github.com/kynan/nbstripout.
+[INFO] Initializing environment for https://github.com/compilerla/conventional-pre-commit.
+[INFO] Installing environment for https://github.com/pre-commit/mirrors-clang-format.
+[INFO] Once installed this environment will be reused.
+[INFO] This may take a few minutes...
+[INFO] Installing environment for https://github.com/pre-commit/pre-commit-hooks.
+[INFO] Once installed this environment will be reused.
+[INFO] This may take a few minutes...
+[INFO] Installing environment for https://github.com/executablebooks/mdformat.
+[INFO] Once installed this environment will be reused.
+[INFO] This may take a few minutes...
+[INFO] Installing environment for https://github.com/astral-sh/ruff-pre-commit.
+[INFO] Once installed this environment will be reused.
+[INFO] This may take a few minutes...
+[INFO] Installing environment for https://github.com/kynan/nbstripout.
+[INFO] Once installed this environment will be reused.
+[INFO] This may take a few minutes...
+clang-format.........................................(no files to check)Skipped
+check yaml...............................................................Passed
+fix end of files.........................................................Failed
+- hook id: end-of-file-fixer
+- exit code: 1
+- files were modified by this hook
+
+Fixing examples/terminal_bench/agent_rl_config.py
+Fixing examples/terminal_bench/config_tb_vllm_npu.yaml
+
+trim trailing whitespace.................................................Failed
+- hook id: trailing-whitespace
+- exit code: 1
+- files were modified by this hook
+
+Fixing examples/terminal_bench/workflow/pre_build_tasks_utils.py
+Fixing examples/terminal_bench/agent/prompts.py
+Fixing examples/terminal_bench/agent/chat_agent_trace.py
+Fixing examples/terminal_bench/config_tb_sglang.yaml
+
+Check for large files....................................................Passed
+Check JSON files.........................................................Passed
+Detect private keys......................................................Passed
+mdformat.................................................................Failed
+- hook id: mdformat
+- files were modified by this hook
+Run Linter Check (Ruff)..................................................Failed
+- hook id: ruff
+- files were modified by this hook
+
+Found 81 errors (81 fixed, 0 remaining).
+
+Run Formatter (Ruff).....................................................Failed
+- hook id: ruff-format
+- files were modified by this hook
+
+6 files reformatted, 661 files left unchanged
+
+nbstripout - Strip notebook output.......................................Passed
+Check pyproject.toml consistency.........................................Passed
+Generate CLI documentation..............................................Skipped
+Check SPDX license header................................................Passed
+Error: Process completed with exit code 1.

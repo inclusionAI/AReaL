@@ -8,14 +8,16 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 
+from agent_rl_config import TaskTimeouts
 from camel.messages import BaseMessage
 from camel.toolkits import FunctionTool, TerminalToolkit
+from transformers import PreTrainedTokenizerFast
+
 from terminal_bench.handlers.trial_handler import TrialHandler
 from terminal_bench.parsers.base_parser import UnitTestStatus
 from terminal_bench.parsers.parser_factory import ParserFactory
 from terminal_bench.terminal.docker_compose_manager import DockerComposeManager
 from terminal_bench.terminal.terminal import Terminal
-from transformers import PreTrainedTokenizerFast
 
 from areal.experimental.camel.openai_model import AReaLOpenAICompatibleModel
 from areal.utils.perf_tracer import (
@@ -27,11 +29,8 @@ from areal.utils.perf_tracer import (
     trace_scope,
 )
 
-from agent_rl_config import TaskTimeouts
-
 from .chat_agent_trace import ChatAgentTrace
 from .prompts import get_developer_agent_prompt
-
 
 DATASET_ROOT = Path(__file__).resolve().parents[3] / "dataset"
 
@@ -58,7 +57,9 @@ class CamelTerminalAgent:
         self.executor = executor
         self.non_think_mode = non_think_mode
         self.encourage_completion_reward = encourage_completion_reward
-        assert self.executor is not None, "Executor must be provided to CamelTerminalAgent"
+        assert self.executor is not None, (
+            "Executor must be provided to CamelTerminalAgent"
+        )
 
     @session_context()
     @trace_perf("CamelTerminalAgent.run_agent", category=Category.COMPUTE)
@@ -108,7 +109,7 @@ class CamelTerminalAgent:
                     args={"uid": uid, "timeout": self.task_timeouts.agent_astep},
                 ):
                     self.response = await self.agent.astep(prompt)
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 print(f"Agent step timeout for task {task_name}: {exc}")
             print(f"Task {task_name}: agent responded")
 
@@ -136,7 +137,7 @@ class CamelTerminalAgent:
                     print(f"reward from run in executor is set as {reward}")
             client.set_last_reward(reward)
 
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             print(f"Timeout for task {task_name}: {exc}")
         except Exception as exc:
             print(f"Error in task {task_name}: {exc}")
@@ -306,8 +307,7 @@ class CamelTerminalAgent:
             parser_results = self.parser.parse(test_output)
 
             all_passed = parser_results and all(
-                status == UnitTestStatus.PASSED
-                for status in parser_results.values()
+                status == UnitTestStatus.PASSED for status in parser_results.values()
             )
             pass_ratio = (
                 sum(
@@ -325,8 +325,7 @@ class CamelTerminalAgent:
             )
             result_dict = {
                 "test_results": {
-                    k: (v == UnitTestStatus.PASSED)
-                    for k, v in parser_results.items()
+                    k: (v == UnitTestStatus.PASSED) for k, v in parser_results.items()
                 },
                 "all_passed": all_passed,
                 "pass_ratio": pass_ratio,

@@ -3,6 +3,8 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import sys
 from pathlib import Path
+
+from agent_rl_config import AgentRLConfig
 from datasets import load_dataset
 
 from areal import PPOTrainer
@@ -12,10 +14,8 @@ from areal.utils import seeding
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 
-from agent_rl_config import AgentRLConfig
-
-
 WORKFLOW_PATH = "workflow.camel_rlvr_workflow.CamelRLVRWorkflow"
+
 
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)

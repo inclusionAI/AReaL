@@ -1,108 +1,44 @@
-from camel.agents import ChatAgent
-
 import asyncio
 import atexit
-import base64
-import concurrent.futures
-import hashlib
-import inspect
 import json
-import math
 import os
-import random
 import re
-import tempfile
 import textwrap
 import threading
 import time
 import uuid
-import warnings
-from datetime import datetime
-from pathlib import Path
 from typing import (
     TYPE_CHECKING,
-    Any,
-    AsyncGenerator,
-    Callable,
-    Dict,
-    Generator,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    Union,
-    cast,
 )
 
-from openai import (
-    AsyncStream,
-    RateLimitError,
-    Stream,
-)
-from pydantic import BaseModel, ValidationError
-
-from camel.agents._types import ModelResponse, ToolCallRequest
-from camel.agents._utils import (
-    convert_to_function_tool,
-    convert_to_schema,
-    get_info_dict,
-    handle_logprobs,
-    safe_model_dump,
-)
-from camel.agents.base import BaseAgent
+from camel.agents import ChatAgent
+from camel.agents._types import ToolCallRequest
 from camel.logger import get_logger
-from camel.memories import (
-    AgentMemory,
-    ChatHistoryMemory,
-    MemoryRecord,
-    ScoreBasedContextCreator,
-)
 from camel.messages import (
     BaseMessage,
     FunctionCallingMessage,
-    OpenAIMessage,
-)
-from camel.models import (
-    BaseModelBackend,
-    ModelFactory,
-    ModelManager,
-    ModelProcessingError,
 )
 from camel.prompts import TextPrompt
 from camel.responses import ChatAgentResponse
-from camel.storages import JsonStorage
-from camel.toolkits import FunctionTool, RegisteredAgentToolkit
 from camel.types import (
-    ChatCompletion,
-    ChatCompletionChunk,
-    ModelPlatformType,
-    ModelType,
     OpenAIBackendRole,
-    RoleType,
 )
 from camel.types.agents import ToolCallingRecord
-from camel.utils import (
-    get_model_encoding,
-    model_from_json_schema,
-)
-from camel.utils.commons import dependencies_required
-from camel.utils.context_utils import ContextUtility
+from pydantic import BaseModel
+
 from areal.utils.perf_tracer import (
     Category,
     atrace_scope,
     atrace_session_phase,
-    session_context,
-    trace_perf,
 )
 
 if TYPE_CHECKING:
-    from camel.terminators import ResponseTerminator
+    pass
 
 logger = get_logger(__name__)
 
 # Cleanup temp files on exit
-_temp_files: Set[str] = set()
+_temp_files: set[str] = set()
 _temp_files_lock = threading.Lock()
 
 
@@ -121,11 +57,12 @@ SIMPLE_FORMAT_PROMPT = TextPrompt(
     textwrap.dedent(
         """\
         Please format the following content:
-        
+
         {content}
         """
     )
 )
+
 
 class ChatAgentTrace(ChatAgent):
     """A ChatAgent with performance tracing capabilities."""
@@ -133,7 +70,7 @@ class ChatAgentTrace(ChatAgent):
     def __init__(self, *args, **kwargs):
         """Initialize ChatAgentTrace with parse error tracking."""
         super().__init__(*args, **kwargs)
-        self.max_parse_errors = kwargs.get('max_parse_errors', 3)
+        self.max_parse_errors = kwargs.get("max_parse_errors", 3)
         self.parse_error_count = 0
 
     async def adetect_tool_calls_parse_error(self, response):
@@ -141,39 +78,41 @@ class ChatAgentTrace(ChatAgent):
         Asynchronously detect tool calls in the response content using Qwen25Detector.
         if the model is Qwen 2.5 or Qwen 3.
         if there's tool call tokens detected, but got json parse failure, format the information into a tool call record,
-        so that the agent can handle the error next step. 
-        add a self.count_parse_error, so that we can limit the number of parse errors we handle in one step. if max reached, just 
+        so that the agent can handle the error next step.
+        add a self.count_parse_error, so that we can limit the number of parse errors we handle in one step. if max reached, just
         break the loop.
-        
+
         Args:
             response: The model response to check for parse errors
-            
+
         Returns:
             Optional[ToolCallingRecord]: A tool calling record with error information if parse error detected, None otherwise
         """
         bot_token = "<tool_call>\n"
         eot_token = "\n</tool_call>"
-        
+
         # Check if we've reached max parse errors
         if self.parse_error_count >= self.max_parse_errors:
-            logger.warning(f"Max parse errors ({self.max_parse_errors}) reached, stopping error handling")
+            logger.warning(
+                f"Max parse errors ({self.max_parse_errors}) reached, stopping error handling"
+            )
             return None
-        
+
         # Extract content from response
         if not response.output_messages:
             return None
-            
+
         content = response.output_messages[0].content
         if not content or bot_token not in content:
             return None
-        
+
         # Find all potential tool call blocks
         pattern = rf"{re.escape(bot_token)}(.*?){re.escape(eot_token)}"
         matches = re.findall(pattern, content, re.DOTALL)
-        
+
         if not matches:
             return None
-        
+
         # Check each match for JSON parse errors
         for match_text in matches:
             try:
@@ -188,7 +127,7 @@ class ChatAgentTrace(ChatAgent):
                     f"Detected JSON parse error (count: {self.parse_error_count}/{self.max_parse_errors}): {str(e)}"
                 )
                 logger.warning(f"Problematic content: {match_text[:200]}...")
-                
+
                 # Create an error tool calling record
                 error_message = (
                     f"JSON Parse Error: {str(e)}\n"
@@ -198,10 +137,10 @@ class ChatAgentTrace(ChatAgent):
                     f"3. The structure matches: {{'name': 'function_name', 'arguments': {{}}}}\n"
                     f"Problematic content (first 200 chars): {match_text[:200]}..."
                 )
-                
+
                 # Generate a unique error tool call ID
                 error_tool_call_id = f"error_{uuid.uuid4().hex[:8]}"
-                
+
                 # Create the error record
                 error_record = ToolCallingRecord(
                     tool_name="json_parse_error",
@@ -209,7 +148,7 @@ class ChatAgentTrace(ChatAgent):
                     result=error_message,
                     tool_call_id=error_tool_call_id,
                 )
-                
+
                 # Record this in memory so the model can see the error
                 assist_msg = FunctionCallingMessage(
                     role_name=self.role_name,
@@ -220,7 +159,7 @@ class ChatAgentTrace(ChatAgent):
                     args={"raw_content": match_text[:200], "error": str(e)},
                     tool_call_id=error_tool_call_id,
                 )
-                
+
                 func_msg = FunctionCallingMessage(
                     role_name=self.role_name,
                     role_type=self.role_type,
@@ -230,11 +169,11 @@ class ChatAgentTrace(ChatAgent):
                     result=error_message,
                     tool_call_id=error_tool_call_id,
                 )
-                
+
                 # Use precise timestamps
                 current_time_ns = time.time_ns()
                 base_timestamp = current_time_ns / 1_000_000_000
-                
+
                 self.update_memory(
                     assist_msg, OpenAIBackendRole.ASSISTANT, timestamp=base_timestamp
                 )
@@ -243,15 +182,15 @@ class ChatAgentTrace(ChatAgent):
                     OpenAIBackendRole.FUNCTION,
                     timestamp=base_timestamp + 1e-6,
                 )
-                
+
                 return error_record
-        
+
         return None
 
     async def _astep_non_streaming_task(
         self,
-        input_message: Union[BaseMessage, str],
-        response_format: Optional[Type[BaseModel]] = None,
+        input_message: BaseMessage | str,
+        response_format: type[BaseModel] | None = None,
     ) -> ChatAgentResponse:
         r"""Internal async method for non-streaming astep logic."""
 
@@ -294,8 +233,8 @@ class ChatAgentTrace(ChatAgent):
 
         self.update_memory(input_message, OpenAIBackendRole.USER)
 
-        tool_call_records: List[ToolCallingRecord] = []
-        external_tool_call_requests: Optional[List[ToolCallRequest]] = None
+        tool_call_records: list[ToolCallingRecord] = []
+        external_tool_call_requests: list[ToolCallRequest] | None = None
         accumulated_context_tokens = (
             0  # This tracks cumulative context tokens, not API usage tokens
         )
@@ -320,8 +259,11 @@ class ChatAgentTrace(ChatAgent):
                     e.args[1], tool_call_records, "max_tokens_exceeded"
                 )
 
-            async with atrace_scope(f"agent_astep._aget_model_response:{task_name}", category=Category.COMM, 
-                                    args={"agent_id": self.agent_id, "iteration": iteration_count}):
+            async with atrace_scope(
+                f"agent_astep._aget_model_response:{task_name}",
+                category=Category.COMM,
+                args={"agent_id": self.agent_id, "iteration": iteration_count},
+            ):
                 async with atrace_session_phase("generate"):
                     response = await self._aget_model_response(
                         openai_messages,
@@ -338,16 +280,12 @@ class ChatAgentTrace(ChatAgent):
             iteration_count += 1
 
             # Accumulate API token usage
-            self._update_token_usage_tracker(
-                step_token_usage, response.usage_dict
-            )
+            self._update_token_usage_tracker(step_token_usage, response.usage_dict)
 
             # Terminate Agent if stop_event is set
             if self.stop_event and self.stop_event.is_set():
                 # Use the _step_terminate to terminate the agent with reason
-                logger.info(
-                    f"Termination triggered at iteration {iteration_count}"
-                )
+                logger.info(f"Termination triggered at iteration {iteration_count}")
                 return self._step_terminate(
                     accumulated_context_tokens,
                     tool_call_records,
@@ -357,10 +295,7 @@ class ChatAgentTrace(ChatAgent):
             if tool_call_requests := response.tool_call_requests:
                 # Process all tool calls
                 for tool_call_request in tool_call_requests:
-                    if (
-                        tool_call_request.tool_name
-                        in self._external_tool_schemas
-                    ):
+                    if tool_call_request.tool_name in self._external_tool_schemas:
                         if external_tool_call_requests is None:
                             external_tool_call_requests = []
                         external_tool_call_requests.append(tool_call_request)
@@ -373,11 +308,16 @@ class ChatAgentTrace(ChatAgent):
                                 await self.pause_event.wait()
                             elif isinstance(self.pause_event, threading.Event):
                                 loop = asyncio.get_event_loop()
-                                await loop.run_in_executor(
-                                    None, self.pause_event.wait
-                                )
-                        async with atrace_scope(f"agent_astep._aexecute_tool:{task_name}", category=Category.IO, 
-                                                args={"agent_id": self.agent_id, "iteration": iteration_count, "tool_name": tool_call_request.tool_name}):
+                                await loop.run_in_executor(None, self.pause_event.wait)
+                        async with atrace_scope(
+                            f"agent_astep._aexecute_tool:{task_name}",
+                            category=Category.IO,
+                            args={
+                                "agent_id": self.agent_id,
+                                "iteration": iteration_count,
+                                "tool_name": tool_call_request.tool_name,
+                            },
+                        ):
                             async with atrace_session_phase("toolcall"):
                                 tool_call_record = await self._aexecute_tool(
                                     tool_call_request
@@ -400,9 +340,11 @@ class ChatAgentTrace(ChatAgent):
             # Check for JSON parse errors in tool calls (Qwen 2.5/3 specific)
             parse_error_record = await self.adetect_tool_calls_parse_error(response)
             if parse_error_record:
-                print(f"Task {task_name}: Detected tool call parse error, prompting model to correct.")
+                print(
+                    f"Task {task_name}: Detected tool call parse error, prompting model to correct."
+                )
                 tool_call_records.append(parse_error_record)
-                
+
                 # Check if we've reached max parse errors
                 if self.parse_error_count >= self.max_parse_errors:
                     logger.error(
@@ -410,7 +352,7 @@ class ChatAgentTrace(ChatAgent):
                         "terminating step to prevent infinite loop"
                     )
                     break
-                
+
                 # Continue to let the model try again with the error feedback
                 continue
 
@@ -420,16 +362,13 @@ class ChatAgentTrace(ChatAgent):
 
         # Apply manual parsing if we used prompt-based formatting
         if used_prompt_formatting and original_response_format:
-            self._apply_prompt_based_parsing(
-                response, original_response_format
-            )
+            self._apply_prompt_based_parsing(response, original_response_format)
 
         self._record_final_output(response.output_messages)
 
         # Clean tool call messages from memory after response generation
         if self.prune_tool_calls_from_memory and tool_call_records:
             self.memory.clean_tool_calls()
-
 
         return self._convert_to_chatagent_response(
             response,
