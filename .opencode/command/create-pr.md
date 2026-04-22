@@ -162,15 +162,20 @@ git log --oneline origin/main..HEAD
 
 Follow same categorization as the `commit-conventions` skill:
 
-| Type       | When to Use                     |
-| ---------- | ------------------------------- |
-| `feat`     | New feature or capability       |
-| `fix`      | Bug fix                         |
-| `docs`     | Documentation only              |
-| `refactor` | Code change without feature/fix |
-| `test`     | Adding or fixing tests          |
-| `chore`    | Build, deps, config changes     |
-| `perf`     | Performance improvement         |
+| Type       | When to Use                      |
+| ---------- | -------------------------------- |
+| `feat`     | New feature or capability        |
+| `fix`      | Bug fix                          |
+| `docs`     | Documentation only               |
+| `gov`      | Governance or maintainer changes |
+| `style`    | Formatting/style-only changes    |
+| `refactor` | Code change without feature/fix  |
+| `perf`     | Performance improvement          |
+| `test`     | Adding or fixing tests           |
+| `build`    | Build system or dependencies     |
+| `ci`       | CI pipeline or workflow changes  |
+| `chore`    | Build, deps, config changes      |
+| `revert`   | Revert a previous commit         |
 
 **Determine Scope:**
 
