@@ -78,7 +78,7 @@ actor:
     max_tokens_per_mb: 10240
   optimizer:
     type: adam
-    lr: 1.70e-4
+    lr: 5e-5
     weight_decay: 0.017
     beta1: 0.9
     beta2: 0.999
