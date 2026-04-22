@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                 self.logger.info(
                     "[MTPTrain] Verified megatron-core MTP module available. "
                     "Gradient isolation is handled by AReaL monkey-patches: "
-                    "_MTPGradIsolator (backbone), functional_call (lm_head), "
+                    "MTPLossAutoScaler passthrough (backbone), functional_call (lm_head), "
                     "decoder_input.detach (embedding) when mtp_detach_heads=True."
                 )
             except ImportError:
@@ -845,6 +845,9 @@ class MegatronEngine(TrainEngine):
                     # to verify gradient isolation is working correctly.
                     if is_last_pp_stage and self.mtp_detach_heads:
                         try:
+                            from megatron.core.transformer.multi_token_prediction import (
+                                MTPLossAutoScaler,
+                            )
                             mtp_g = 0.0
                             non_mtp_g = 0.0
                             mtp_n = 0
@@ -853,20 +856,43 @@ class MegatronEngine(TrainEngine):
                             lmh_g = 0.0
                             total_params = 0
                             no_grad_params = 0
+                            # Per-MTP-param diagnostics for debugging
+                            mtp_param_details = []
                             for module in self.model:
                                 for name, param in module.named_parameters():
                                     total_params += 1
-                                    # Megatron DDP: main_grad > grad
-                                    grad = getattr(param, "main_grad", None)
-                                    if grad is None:
+                                    # Megatron DDP stores grads in main_grad
+                                    has_main_grad = hasattr(param, "main_grad") and param.main_grad is not None
+                                    has_grad = param.grad is not None
+                                    grad = None
+                                    grad_source = "none"
+                                    if has_main_grad:
+                                        grad = param.main_grad
+                                        grad_source = "main_grad"
+                                    elif has_grad:
                                         grad = param.grad
+                                        grad_source = "grad"
                                     if grad is None:
                                         no_grad_params += 1
+                                        if ".mtp." in name:
+                                            mtp_param_details.append(
+                                                f"  {name}: NO GRAD (main_grad={has_main_grad}, grad={has_grad})"
+                                            )
                                         continue
                                     g = grad.data.float().norm() ** 2
                                     if ".mtp." in name:
                                         mtp_g += g.item()
                                         mtp_n += 1
+                                        # Log per-param detail for MTP params
+                                        g_norm = g.item() ** 0.5
+                                        mtp_param_details.append(
+                                            f"  {name}: norm={g_norm:.8f} src={grad_source}"
+                                        )
+                                        # Also check if param.grad has gradient
+                                        # when main_grad is zero (diagnostic)
+                                        if g_norm == 0.0 and has_main_grad and has_grad:
+                                            alt_g = param.grad.data.float().norm().item()
+                                            mtp_param_details[-1] += f" ALT_grad_norm={alt_g:.8f}"
                                     else:
                                         non_mtp_g += g.item()
                                         non_mtp_n += 1
@@ -874,13 +900,31 @@ class MegatronEngine(TrainEngine):
                                         emb_g += g.item()
                                     if "output_layer" in name and ".mtp." not in name:
                                         lmh_g += g.item()
+
+                            # Log MTPLossAutoScaler backward scale for debugging
+                            try:
+                                scale_val = MTPLossAutoScaler.main_loss_backward_scale
+                                if hasattr(scale_val, "item"):
+                                    scale_str = f"{scale_val.item():.6f}"
+                                else:
+                                    scale_str = str(scale_val)
+                            except Exception:
+                                scale_str = "N/A"
+
                             self.logger.info(
-                                f"[MTPDetach] Gradient norms (main_grad): "
+                                f"[MTPDetach] Gradient norms: "
                                 f"mtp={mtp_g**0.5:.6f}({mtp_n} params), "
                                 f"non_mtp={non_mtp_g**0.5:.6f}({non_mtp_n} params), "
                                 f"emb={emb_g**0.5:.6f}, lmh={lmh_g**0.5:.6f}, "
-                                f"total={total_params}, no_grad={no_grad_params}"
+                                f"total={total_params}, no_grad={no_grad_params}, "
+                                f"mtp_backward_scale={scale_str}"
                             )
+                            # Log per-MTP-param details
+                            if mtp_param_details:
+                                self.logger.info(
+                                    "[MTPGradDiag] Per-MTP-param gradient norms:\n"
+                                    + "\n".join(mtp_param_details)
+                                )
                             mtp_stats["mtp_grad_norm"] = mtp_g**0.5
                             mtp_stats["non_mtp_grad_norm"] = non_mtp_g**0.5
                         except Exception as e:
@@ -1083,11 +1127,11 @@ class MegatronEngine(TrainEngine):
                     # In Megatron-Core 0.16.0, MTP CE loss gradient leaks to
                     # backbone through 3 paths:
                     #
-                    # Path 1: MTP loss → MTPLossAutoScaler → hidden_states → backbone
-                    #   MTPLossAutoScaler.apply(hidden_states, mtp_loss) attaches
-                    #   mtp_loss gradient to main model's hidden_states.
-                    #   Fix: Monkey-patch _postprocess with _MTPGradIsolator.
-                    #
+                    # Path 1: MTP loss → hidden_states → backbone
+                    #   ANALYSIS: MTPLossAutoScaler.backward() returns
+                    #   (grad_output, ones*scale) — grad_output is the main
+                    #   loss gradient (NOT mtp gradient). No leak here.
+                    #   Verified by verl's implementation which has no isolator.
                     # Path 2: MTP loss → output_layer (lm_head) weights
                     #   MTP logits use the SHARED output_layer and output_weight.
                     #   MTP CE loss backpropagates through lm_head weights.
@@ -1102,27 +1146,6 @@ class MegatronEngine(TrainEngine):
                     # -----------------------------------------------------------
                     if self.mtp_detach_heads:
                         _orig_postprocess = _unwrapped._postprocess.__func__
-
-                        class _MTPGradIsolator(torch.autograd.Function):
-                            """Gradient isolator for MTP loss (Path 1).
-
-                            Bridges original hidden_states with MTP-wrapped
-                            hidden_states to prevent MTP CE gradient from
-                            flowing through MTPLossAutoScaler → backbone.
-
-                            MTP params still get gradients because
-                            MTPLossAutoScaler.backward() sends
-                            ones_like(mtp_loss) * scale to mtp_loss regardless
-                            of grad_output.
-                            """
-
-                            @staticmethod
-                            def forward(ctx, original_hs, mtp_wrapped_hs):
-                                return original_hs.clone()
-
-                            @staticmethod
-                            def backward(ctx, grad_output):
-                                return grad_output, torch.zeros_like(grad_output)
 
                         def _patched_postprocess(
                             self_model,
@@ -1144,11 +1167,11 @@ class MegatronEngine(TrainEngine):
                             extra_block_kwargs=None,
                             inference_context=None,
                             _orig_fn=_orig_postprocess,
-                            _isolator=_MTPGradIsolator,
                             _logger=self.logger,
                         ):
                             """Patched _postprocess with comprehensive MTP
-                            gradient isolation (Paths 1, 2, 3).
+                            gradient isolation (Paths 2, 3). Path 1 removed
+                            (MTPLossAutoScaler does not leak MTP grad to backbone).
                             """
                             from megatron.core.transformer.multi_token_prediction import (
                                 MTPLossAutoScaler,
@@ -1197,8 +1220,6 @@ class MegatronEngine(TrainEngine):
                                     1 + self_model.config.mtp_num_layers,
                                     dim=0,
                                 )
-                                # Path 1: save original hidden_states
-                                _original_hs = hidden_states_list[0]
                                 hidden_states = hidden_states_list[0]
                                 if loss_mask is None:
                                     loss_mask = torch.ones_like(mtp_labels)
@@ -1280,13 +1301,9 @@ class MegatronEngine(TrainEngine):
                                             mtp_loss_scale * mtp_loss / num_tokens,
                                         )
 
-                                # Path 1: apply gradient isolator
-                                hidden_states = _isolator.apply(
-                                    _original_hs, hidden_states
-                                )
                                 _logger.debug(
                                     "[MTPDetach] Applied gradient isolation "
-                                    "in _postprocess (Paths 1+2)"
+                                    "in _postprocess (Path 2: detached output_layer)"
                                 )
 
                             # Inference last-token optimization
@@ -1401,7 +1418,7 @@ class MegatronEngine(TrainEngine):
                             self.logger.info(
                                 "[MTPDetach] Comprehensive MTP gradient isolation "
                                 f"enabled (mtp_detach_heads={self.mtp_detach_heads}): "
-                                "Path 1 (_MTPGradIsolator for backbone hidden_states), "
+                                "Path 1 (removed: MTPLossAutoScaler passthrough is safe), "
                                 "Path 2 (detached output_weight + functional_call for lm_head), "
                                 "Path 3 (detached decoder_input + hidden_states for embedding). "
                                 "MTP CE loss gradients will NOT flow through backbone, "
