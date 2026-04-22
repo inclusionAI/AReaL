@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import Future
 from typing import Any, Optional
 
-import hydra
+import hydra 
 import numpy as np
 import ray
 import torch
@@ -620,6 +620,8 @@ class AgentLoopWorker:
                 from verl.models.transformers.qwen2_vl import get_rope_index
 
                 images = output.multi_modal_data.get("image", None)
+                if isinstance(images, list) and len(images) == 0:
+                    images = None
                 current_text = self.tokenizer.decode(input_ids.squeeze(0), skip_special_tokens=True)
                 multi_modal_inputs = self.processor(text=[current_text], images=images, return_tensors="pt")
                 multi_modal_inputs.pop("input_ids", None)
@@ -632,11 +634,6 @@ class AgentLoopWorker:
                 image_grid_thw = multi_modal_inputs.get("image_grid_thw")
                 video_grid_thw = multi_modal_inputs.get("video_grid_thw")
                 second_per_grid_ts = multi_modal_inputs.get("second_per_grid_ts")
-
-                # Compute images_seqlens from image_grid_thw (required by ray_trainer)
-                if image_grid_thw is not None:
-                    images_seqlens = torch.repeat_interleave(image_grid_thw[:, 1] * image_grid_thw[:, 2], image_grid_thw[:, 0])
-                    multi_modal_inputs["images_seqlens"] = images_seqlens
 
                 vision_position_ids = get_rope_index(
                     self.processor,
@@ -796,36 +793,45 @@ async def get_trajectory_info(step, index, validate):
 class AgentLoopManager:
     """Agent loop manager that manages a group of agent loop workers."""
 
-    def __init__(self, config: DictConfig, worker_group: RayWorkerGroup = None,
-                 rollout_resource_pool=None, reward_loop_worker_handles=None):
+    def __init__(self, config: DictConfig, worker_group: RayWorkerGroup = None, rm_wg: RayWorkerGroup = None):
         """Initialize agent loop manager.
 
         Args:
             config (DictConfig): trainer config.
             worker_group (RayWorkerGroup): ActorRolloutRef worker group for hybrid mode; None for standalone mode.
-            rollout_resource_pool: Resource pool for hybrid mode (unused by verl-tool, kept for API compat).
-            reward_loop_worker_handles: Actor handles for streaming reward (unused by verl-tool).
         """
         self.config = config
         self.worker_group = worker_group
+        self.rm_executor = None
+        self.rm_micro_batch_size = None
+        if rm_wg:
 
-    @classmethod
-    def create(cls, config: DictConfig, worker_group: RayWorkerGroup = None,
-               rollout_resource_pool=None, reward_loop_worker_handles=None):
-        """Factory method compatible with verl v0.7.1 API."""
-        instance = cls(config, worker_group, rollout_resource_pool, reward_loop_worker_handles)
-        instance._initialize_llm_servers()
-        instance._init_global_load_balancer()
-        instance._init_agent_loop_workers()
+            def batch_fn(data_list: list[DataProto]) -> list[torch.Tensor]:
+                new_data_list = []
+                for data in data_list:
+                    temp_non_tensor_batch = {"__num_turns__": data.non_tensor_batch["__num_turns__"]}
+                    temp_data = DataProto(batch=data.batch, non_tensor_batch=temp_non_tensor_batch)
+                    new_data_list.append(temp_data)
+
+                new_batch = DataProto.concat(new_data_list)
+                out_data = rm_wg.compute_rm_score(new_batch)
+                return out_data.split(1)
+
+            self.rm_executor = BatchExecutor.options(
+                scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
+                    node_id=ray.get_runtime_context().get_node_id(),
+                    soft=False,
+                ),
+            ).remote(batch_fn, rm_wg.world_size)
+
+            self.rm_micro_batch_size = rm_wg.world_size
+
+        self._initialize_llm_servers()
+        self._init_agent_loop_workers()
 
         # Initially we're in sleep mode.
-        if instance.config.actor_rollout_ref.rollout.free_cache_engine:
-            instance.sleep()
-        return instance
-
-    def _init_global_load_balancer(self):
-        """No-op for verl-tool (upstream uses this for load balancing across replicas)."""
-        pass
+        if self.config.actor_rollout_ref.rollout.free_cache_engine:
+            self.sleep()
 
     def _initialize_llm_servers(self):
         rollout_world_size = (
@@ -884,39 +890,114 @@ class AgentLoopManager:
                     scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
                         node_id=node_id, soft=True
                     ),
-                ).remote(self.config, self.server_handles, None)
+                ).remote(self.config, self.server_handles, self.rm_executor)
             )
 
     def generate_sequences(self, prompts: DataProto) -> DataProto:
-        """Split input batch and dispatch to agent loop workers.
+        """Dispatch prompts to agent loop workers.
 
-        Args:
-            prompts (DataProto): Input batch.
-
-        Returns:
-            DataProto: Output batch.
+        dispatch_mode (from config, default 'static'):
+          - 'static':     equal chunks per worker, wait all (original behavior)
+          - 'work_queue': dynamic sub-chunk dispatch, faster workers get more work
         """
 
+        if self.rm_micro_batch_size and len(prompts) % self.rm_micro_batch_size != 0:
+            raise ValueError(
+                f"The length of prompts {len(prompts)} cannot divide the world size of rm_wg {self.rm_micro_batch_size}"
+            )
         if self.config.actor_rollout_ref.rollout.free_cache_engine:
             self.wake_up()
-        print(f"Dispatching {len(prompts)} prompts to {len(self.agent_loop_workers)} agent loop workers...")
-        chunkes = prompts.chunk(len(self.agent_loop_workers))
-        outputs = ray.get(
-            [
-                worker.generate_sequences.remote(chunk)
-                for worker, chunk in zip(self.agent_loop_workers, chunkes, strict=True)
-            ]
-        )
-        output = DataProto.concat(outputs)
+
+        dispatch_mode = self.config.actor_rollout_ref.agent.get("dispatch_mode", "static")
+
+        if dispatch_mode == "work_queue":
+            output, all_outputs = self._dispatch_work_queue(prompts)
+        else:
+            output, all_outputs = self._dispatch_static(prompts)
+
         if self.config.actor_rollout_ref.rollout.free_cache_engine:
             self.sleep()
 
-        # calculate performance metrics
-        metrics = [output.meta_info.pop("metrics") for output in outputs]  # List[List[Dict[str, str]]]
+        metrics = [o.meta_info.pop("metrics") for o in all_outputs]
+        first_meta = all_outputs[0].meta_info
+        del all_outputs
         timing = self._performance_metrics(metrics, output)
-
-        output.meta_info = {"timing": timing, **outputs[0].meta_info}
+        output.meta_info = {"timing": timing, **first_meta}
         return output
+
+    def _dispatch_static(self, prompts: DataProto):
+        num_workers = len(self.agent_loop_workers)
+        print(f"[Static] Dispatching {len(prompts)} prompts to {num_workers} workers...")
+        chunks = prompts.chunk(num_workers)
+        outputs = ray.get([
+            worker.generate_sequences.remote(chunk)
+            for worker, chunk in zip(self.agent_loop_workers, chunks, strict=True)
+        ])
+        return DataProto.concat(outputs), outputs
+
+    def _dispatch_work_queue(self, prompts: DataProto):
+        import math, time
+        t_start = time.time()
+
+        num_workers = len(self.agent_loop_workers)
+        total = len(prompts)
+        original_per_worker = max(1, total // num_workers)
+        sub_chunk_size = max(1, original_per_worker // 8)
+        first_wave_size = max(sub_chunk_size, original_per_worker // 2)
+
+        per_worker_chunks = prompts.chunk(num_workers)
+        first_wave_dispatches = []
+        remaining_chunks = []
+        for i, chunk in enumerate(per_worker_chunks):
+            if len(chunk) > first_wave_size:
+                first_wave_dispatches.append((i, chunk[:first_wave_size]))
+                leftover = chunk[first_wave_size:]
+                num_parts = max(1, len(leftover) // sub_chunk_size)
+                while num_parts > 1 and len(leftover) % num_parts != 0:
+                    num_parts -= 1
+                remaining_chunks.extend([(i, p) for p in leftover.chunk(num_parts)])
+            else:
+                first_wave_dispatches.append((i, chunk))
+
+        total_chunks = len(first_wave_dispatches) + len(remaining_chunks)
+
+        print(f"[WorkQueue] {total} prompts, {num_workers} workers, "
+              f"first_wave={len(first_wave_dispatches)} x {first_wave_size} prompts (50%), "
+              f"remaining={len(remaining_chunks)} x {sub_chunk_size} prompts")
+
+        pending = {}
+        all_outputs = []
+        completed = 0
+        next_remaining = 0
+
+        for widx, chunk in first_wave_dispatches:
+            ref = self.agent_loop_workers[widx].generate_sequences.remote(chunk)
+            pending[ref] = widx
+
+        print(f"[WorkQueue] First wave dispatched: {len(first_wave_dispatches)} workers")
+
+        while pending:
+            ready, _ = ray.wait(list(pending.keys()), num_returns=1)
+            for ref in ready:
+                widx = pending.pop(ref)
+                result = ray.get(ref)
+                all_outputs.append(result)
+                completed += 1
+                elapsed = time.time() - t_start
+                print(f"[WorkQueue] Worker {widx} done | "
+                      f"{completed}/{total_chunks} | "
+                      f"queued={len(pending)} | elapsed={elapsed:.1f}s")
+
+                if next_remaining < len(remaining_chunks):
+                    _, chunk = remaining_chunks[next_remaining]
+                    ref = self.agent_loop_workers[widx].generate_sequences.remote(chunk)
+                    pending[ref] = widx
+                    next_remaining += 1
+
+        total_time = time.time() - t_start
+        print(f"[WorkQueue] All {completed} chunks completed in {total_time:.1f}s")
+
+        return DataProto.concat(all_outputs), all_outputs
 
     def _performance_metrics(self, metrics: list[list[dict[str, str]]], output: DataProto) -> dict[str, float]:
         timing = {}

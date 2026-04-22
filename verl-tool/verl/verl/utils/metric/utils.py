@@ -50,11 +50,11 @@ def reduce_metrics(metrics: dict[str, Union["Metric", list[Any]]]) -> dict[str, 
         if isinstance(val, Metric):
             metrics[key] = val.aggregate()
         elif "max" in key:
-            metrics[key] = np.max(val)
+            metrics[key] = np.nanmax(val)
         elif "min" in key:
-            metrics[key] = np.min(val)
+            metrics[key] = np.nanmin(val)
         else:
-            metrics[key] = np.mean(val)
+            metrics[key] = np.nanmean(val)
     return metrics
 
 

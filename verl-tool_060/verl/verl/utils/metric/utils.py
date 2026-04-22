@@ -46,9 +46,9 @@ def reduce_metrics(metrics: dict[str, list[Any]]) -> dict[str, Any]:
     """
     for key, val in metrics.items():
         if "max" in key:
-            metrics[key] = np.nanmax(val)
+            metrics[key] = np.max(val)
         elif "min" in key:
-            metrics[key] = np.nanmin(val)
+            metrics[key] = np.min(val)
         else:
-            metrics[key] = np.nanmean(val)
+            metrics[key] = np.mean(val)
     return metrics

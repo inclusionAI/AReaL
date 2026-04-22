@@ -7,11 +7,11 @@ import logging
 from collections import Counter, defaultdict
 from verl import DataProto
 from verl.workers.reward_manager import register
-
+ 
 logger = logging.getLogger(__name__)
 
 _ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_RE = re.compile(r"</think>", re.IGNORECASE)
 _ACTION_RE = re.compile(r"<action>.*?</action>", re.DOTALL | re.IGNORECASE)
 
 
@@ -19,52 +19,118 @@ def extract_answer(text: str) -> str:
     match = _ANSWER_RE.search(text)
     if match:
         return match.group(1).strip()
+    think_match = re.search(r"</think>\s*(.*)", text, re.DOTALL | re.IGNORECASE)
+    if think_match:
+        return think_match.group(1).strip()
     return ""
+
+
+_YES_VARIANTS = frozenset({"yes", "yeah", "yep", "yup", "true", "correct"})
+_NO_VARIANTS = frozenset({"no", "nope", "nah", "false", "incorrect"})
+_NA_VARIANTS = frozenset({"n/a", "na", "none", "not available", "not applicable"})
+
+
+def _normalize_answer(text: str) -> str:
+    text = re.sub(r"\\boxed\{(.*?)\}", r"\1", text)
+    return text.strip().lower().rstrip(".")
+
+
+def _parse_number(s: str):
+    s = s.strip().replace(",", "")
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_items_as_set(text: str) -> frozenset | None:
+    items = [item.strip() for item in text.split(",")]
+    items = [i for i in items if i]
+    return frozenset(items) if items else None
+
+
+def _parse_range(text: str):
+    m = re.match(r"^([\d.]+)%?\s*[-–]\s*([\d.]+)%?$", text.strip())
+    if m:
+        try:
+            return (float(m.group(1)), float(m.group(2)))
+        except ValueError:
+            return None
+    return None
 
 
 def compute_score(prediction: str, ground_truth) -> float:
     if isinstance(ground_truth, list):
         return max(compute_score(prediction, gt) for gt in ground_truth)
 
-    prediction = prediction.strip().lower()
-    ground_truth = str(ground_truth).strip().lower()
+    pred_norm = _normalize_answer(prediction)
+    gt_norm = _normalize_answer(str(ground_truth))
 
-    if prediction == ground_truth:
+    if pred_norm == gt_norm:
         return 1.0
 
-    try:
-        if abs(float(prediction) - float(ground_truth)) < 1e-6:
+    if gt_norm in _YES_VARIANTS and pred_norm in _YES_VARIANTS:
+        return 1.0
+    if gt_norm in _NO_VARIANTS and pred_norm in _NO_VARIANTS:
+        return 1.0
+    if gt_norm in _NA_VARIANTS and pred_norm in _NA_VARIANTS:
+        return 1.0
+
+    if "," in gt_norm:
+        gt_set = _parse_items_as_set(gt_norm)
+        pred_set = _parse_items_as_set(pred_norm)
+        if gt_set and pred_set and gt_set == pred_set:
             return 1.0
-    except (ValueError, TypeError):
-        pass
+
+    gt_num = _parse_number(gt_norm)
+    pred_num = _parse_number(pred_norm)
+    if gt_num is not None and pred_num is not None:
+        if abs(gt_num - pred_num) < 1e-6:
+            return 1.0
+
+    gt_range = _parse_range(gt_norm)
+    pred_range = _parse_range(pred_norm)
+    if gt_range is not None and pred_range is not None:
+        if gt_range == pred_range:
+            return 1.0
 
     return 0.0
 
 
 def _compute_reasonmap_plus_score(prediction: str, ground_truth, qtype: str = "") -> float:
-    """ReasonMap Plus: TorF → Yes/No normalisation, Counting → numeric match."""
+    """ReasonMap Plus: TorF → Yes/No normalisation, Counting MCQ → ABCD/index, Counting → numeric."""
     if not prediction:
         return 0.0
 
     gt_str = str(ground_truth).strip()
+    pred = prediction.strip().lower()
+    pred = re.sub(r"\\boxed\{(.*?)\}", r"\1", pred)
 
     if qtype.startswith("TorF"):
         try:
             gt_normalised = "yes" if int(gt_str) == 1 else "no"
         except (ValueError, TypeError):
             gt_normalised = gt_str.lower()
-        return 1.0 if prediction.strip().lower() == gt_normalised else 0.0
+        return 1.0 if pred == gt_normalised else 0.0
+
+    if qtype == "Counting1":
+        _LETTER_TO_IDX = {"a": "0", "b": "1", "c": "2", "d": "3"}
+        _IDX_TO_LETTER = {v: k for k, v in _LETTER_TO_IDX.items()}
+        pred_normalised = _LETTER_TO_IDX.get(pred, pred)
+        gt_normalised = _LETTER_TO_IDX.get(gt_str.lower(), gt_str)
+        if pred_normalised == gt_normalised:
+            return 1.0
+        gt_as_letter = _IDX_TO_LETTER.get(gt_str, gt_str.lower())
+        if pred == gt_as_letter:
+            return 1.0
+        return 0.0
 
     return compute_score(prediction, ground_truth)
 
 
 def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) -> float:
     """ReasonMap base: route topology verification."""
-    try:
-        from geo_edit.evaluation.reason_map_verifier import reason_map_score
-    except ImportError:
-        logger.warning("reason_map_verifier not available, falling back to exact match")
-        return compute_score(prediction, ground_truth)
+    from geo_edit.evaluation.reason_map_verifier import reason_map_score
 
     station_1 = extra.get("station_1", "")
     station_2 = extra.get("station_2", "")
@@ -79,41 +145,77 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
         metro_data = metro_raw if isinstance(metro_raw, dict) else {}
 
     if not station_1 or not station_2 or not metro_data:
+        gt_str = str(ground_truth).strip()
+        pred_lower = prediction.strip().lower()
+        try:
+            gt_data = json.loads(gt_str) if isinstance(gt_str, str) else gt_str
+            if isinstance(gt_data, dict):
+                total_routes = 0
+                for routes in gt_data.values():
+                    if not isinstance(routes, list):
+                        continue
+                    for route in routes:
+                        total_routes += 1
+                        rn = route.get("route_name", "").lower()
+                        dep = route.get("departure_stop", "").lower()
+                        arr = route.get("arrival_stop", "").lower()
+                        if not (rn and dep and arr and rn in pred_lower and dep in pred_lower and arr in pred_lower):
+                            return 0.0
+                if total_routes > 0:
+                    return 1.0
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
         return compute_score(prediction, ground_truth)
 
-    score, _ = reason_map_score(prediction, station_1, station_2, metro_data)
+    try:
+        score, _ = reason_map_score(prediction, station_1, station_2, metro_data)
+    except Exception:
+        return 0.0
     return score
 
 
-def _compute_repetition_penalty(text: str) -> float:
-    """R_rep ∈ {-3.0, -2.0, -1.5, 0.0} — penalise contiguous repetition."""
+def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.3, hi: float = 0.8) -> tuple[float, float]:
+    """MapTrace: linear reward based on NDTW distance. Returns (score, ndtw)."""
+    from geo_edit.evaluation.map_trace_verifier import map_trace_score
+
+    try:
+        ndtw, is_success, _ = map_trace_score(response, str(ground_truth))
+    except (ValueError, TypeError):
+        return 0.0, -1.0
+    if not is_success:
+        return 0.0, -1.0
+    if ndtw <= lo:
+        return 1.0, ndtw
+    if ndtw >= hi:
+        return 0.0, ndtw
+    return (hi - ndtw) / (hi - lo), ndtw
+
+
+def _compute_repetition_penalty(text: str, num_turns: int = 2) -> float:
     if not text or len(text) < 20:
         return 0.0
 
-    # Character-level: same char repeated 50+ times (e.g. "aaa...a")
+    num_turns = max(num_turns, 2)
+
     if re.search(r"(.)\1{49,}", text):
         return -3.0
 
-    # Token/word-level: same word repeated 20+ times contiguously
     if re.search(r"\b(\w+)(?:\s+\1){19,}\b", text):
         return -3.0
 
-    # Phrase-level: 4+ word phrase repeated 10+ times
     if re.search(r"(\b\w+(?:\s+\w+){3,})(?:\s+\1){9,}", text):
         return -2.0
 
-    # Sentence-level: identical sentence repeated 5+ times
     sentences = re.split(r"[.!?\n]+", text)
     sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
     if sentences:
         counts = Counter(sentences)
         max_count = counts.most_common(1)[0][1] if counts else 0
         if max_count >= 10:
-            return -2.0
-        if max_count >= 5:
-            return -1.5
+            return -1.5 * 2 / num_turns
+        if max_count >= 7:
+            return -1.0 * 2 / num_turns
 
-    # Moderate: same word repeated 10+ times
     if re.search(r"\b(\w+)(?:\s+\1){9,}\b", text):
         return -1.5
 
@@ -121,14 +223,24 @@ def _compute_repetition_penalty(text: str) -> float:
 
 
 def _compute_format_reward(text: str) -> float:
-    """R_format = (𝕀{format_ok} - 0.5) × 2 → {-1.0, +1.0}."""
+    """R_format = (𝕀{format_ok} - 0.5) × 2 → {-1.0, 0.0, +1.0}.
+
+    Incomplete trajectories (has <action> but no <answer>) get 0.0 instead of
+    -1.0, because the model was still mid-conversation when the token budget
+    ran out — it never had a chance to produce <answer>.
+    """
     has_think = bool(_THINK_RE.search(text))
     has_answer = bool(_ANSWER_RE.search(text))
+    has_action = bool(_ACTION_RE.search(text))
 
     if not has_think:
         return -1.0
 
     if not has_answer:
+        # Incomplete trajectory: model called tools but was truncated before
+        # it could produce <answer>. Don't penalise.
+        if has_action:
+            return 0.0
         return -1.0
 
     # If there are <action> blocks, they must be preceded by <think> blocks
@@ -191,21 +303,35 @@ class GeoVisionQARewardManager:
                     extra = {}
             return _compute_reasonmap_base_score(prediction, ground_truth, extra)
 
+        if data_source == "map_trace":
+            score, _ = _compute_map_trace_score(prediction, ground_truth)
+            return score
+
         return compute_score(prediction, ground_truth)
 
-    def _llm_judge_fallback(self, prompt_str: str, ground_truth, prediction: str) -> bool:
+    def _llm_judge_fallback(self, prompt_str: str, ground_truth, prediction: str, max_retries: int = 6) -> bool:
         if self.judge is None:
             return False
-        try:
-            is_correct, _ = self.judge.judge_correctness(
-                question=prompt_str,
-                ground_truth=str(ground_truth),
-                prediction=prediction,
-            )
-            return is_correct
-        except Exception as e:
-            logger.warning("LLM judge call failed: %s", e)
-            return False
+        import time, random
+        for attempt in range(max_retries):
+            try:
+                is_correct, _ = self.judge.judge_correctness(
+                    question=prompt_str,
+                    ground_truth=str(ground_truth),
+                    prediction=prediction,
+                )
+                return is_correct
+            except Exception as e:
+                err_str = str(e)
+                is_retryable = "429" in err_str or "rate_limit" in err_str.lower() or "connection" in err_str.lower() or "timeout" in err_str.lower()
+                if is_retryable and attempt < max_retries - 1:
+                    delay = min(2 ** attempt + random.random(), 16)
+                    logger.warning("LLM judge call failed (attempt %d/%d), retrying in %.1fs: %s", attempt + 1, max_retries, delay, e)
+                    time.sleep(delay)
+                else:
+                    logger.warning("LLM judge call failed (attempt %d/%d), giving up: %s", attempt + 1, max_retries, e)
+                    return False
+        return False
 
     def __call__(self, data: DataProto, return_dict=False):
         if "rm_scores" in data.batch.keys():
@@ -234,11 +360,20 @@ class GeoVisionQARewardManager:
             prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=True)
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=True)
 
-            ground_truth = data_item.non_tensor_batch["reward_model"]["ground_truth"]
+            reward_model = data_item.non_tensor_batch.get("reward_model")
+            if not isinstance(reward_model, dict) or "ground_truth" not in reward_model:
+                logger.warning("Sample %d missing ground_truth, skipping reward calculation", i)
+                continue
+            ground_truth = reward_model["ground_truth"]
+            if ground_truth is None:
+                logger.warning("Sample %d has None ground_truth, skipping reward calculation", i)
+                continue
             data_source = data_item.non_tensor_batch.get(self.reward_fn_key, "unknown")
 
-            # R_rep: repetition penalty
-            r_rep = _compute_repetition_penalty(response_str)
+            num_turns = data_item.non_tensor_batch.get("__num_turns__", 2)
+            if hasattr(num_turns, '__len__'):
+                num_turns = int(num_turns[0]) if len(num_turns) > 0 else 2
+            r_rep = _compute_repetition_penalty(response_str, int(num_turns))
 
             # R_format: format compliance
             r_format = _compute_format_reward(response_str)
@@ -248,18 +383,29 @@ class GeoVisionQARewardManager:
             accuracy = self._score_correctness(prediction, ground_truth, data_source, data_item)
 
             # LLM judge fallback: rule-based says wrong → ask LLM
+            # Skip for map_trace: GT is coordinate paths, LLM judge can't evaluate
             llm_called = 0.0
             llm_overturned = 0.0
-            if accuracy == 0.0 and prediction and self.judge is not None:
+            if accuracy == 0.0 and prediction and self.judge is not None and data_source != "map_trace":
                 llm_called = 1.0
                 if self._llm_judge_fallback(prompt_str, ground_truth, prediction):
                     accuracy = 1.0
                     llm_overturned = 1.0
 
-            r_correct = 1.0 if accuracy > 0 else 0.0
+            r_correct = accuracy if data_source == "map_trace" else (1.0 if accuracy > 0 else 0.0)
 
             # R(U) = R_rep + R_format + R_correct
             reward = r_rep + r_format + r_correct
+
+            ndtw_val = float("nan")
+            ndtw_success = float("nan")
+            if data_source == "map_trace":
+                _, raw_ndtw = _compute_map_trace_score(prediction, ground_truth)
+                if raw_ndtw >= 0:
+                    ndtw_val = raw_ndtw
+                    ndtw_success = 1.0 if raw_ndtw < 1.0 else 0.0
+            reward_extra_info["ndtw"].append(ndtw_val)
+            reward_extra_info["ndtw_success"].append(ndtw_success)
 
             reward_extra_info["accuracy"].append(accuracy)
             reward_extra_info["score"].append(reward)
@@ -279,10 +425,14 @@ class GeoVisionQARewardManager:
 
             if data_source not in already_printed:
                 already_printed[data_source] = 0
-            if already_printed[data_source] < self.num_examine:
+            should_print = already_printed[data_source] < self.num_examine or np.random.random() < 0.03
+            if should_print:
                 already_printed[data_source] += 1
-                print(f"[prompt] {prompt_str[:200]}...")
-                print(f"[response] {response_str[:500]}...")
+                print(f"[data_source] {data_source}")
+                prompt_display = re.sub(r"data:image/[^;]+;base64,[A-Za-z0-9+/=]+", "<image_base64>", prompt_str)
+                if np.random.random() < 0.1:
+                    print(f"[prompt] {prompt_display}")
+                print(f"[response] {response_str}")
                 print(f"[ground_truth] {ground_truth}")
                 print(f"[prediction] {prediction}")
                 print(f"[r_rep] {r_rep} [r_format] {r_format} [r_correct] {r_correct} [reward] {reward}")
