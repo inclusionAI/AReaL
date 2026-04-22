@@ -532,12 +532,11 @@ def preprocess_routed_experts_batch(
     reshaped = routed_experts_np.reshape(num_sgl_tokens, num_moe_layers, topk)
     tensor = torch.from_numpy(reshaped.astype(np.int32))
 
-    # Build (1, seq_len, num_moe_layers, topk) with left padding
+    # Build (1, seq_len, num_moe_layers, topk) with RIGHT padding.
     real_tokens = int(attention_mask.sum().item())
     padded = torch.zeros(1, seq_len, num_moe_layers, topk, dtype=torch.int32)
-    left_pad = seq_len - real_tokens
     n = min(num_sgl_tokens, real_tokens)
-    padded[0, left_pad : left_pad + n] = tensor[:n]
+    padded[0, :n] = tensor[:n]
 
     if compress_dtype:
         max_val = padded.max().item()
@@ -546,17 +545,18 @@ def preprocess_routed_experts_batch(
         elif max_val < 32768:
             padded = padded.to(torch.int16)
 
+    right_pad = seq_len - real_tokens
     logger.debug(
         "[R3] preprocess_routed_experts_batch: shape=%s dtype=%s "
         "(num_moe_layers=%d, topk=%d, sgl_tokens=%d, real_tokens=%d, "
-        "left_pad=%d).",
+        "right_pad=%d).",
         padded.shape,
         padded.dtype,
         num_moe_layers,
         topk,
         num_sgl_tokens,
         real_tokens,
-        left_pad,
+        right_pad,
     )
 
     return padded
