@@ -236,6 +236,11 @@ class FSDPEngine(TrainEngine):
         # a new version.  None means no adapter has been loaded yet.
         self._last_loaded_lora_name: str | None = None
 
+        # --- Delta Sync cumulative metrics for wandb ---
+        self._delta_sync_step_count: int = 0
+        self._delta_sync_base_bytes_total: int = 0
+        self._delta_sync_adapter_bytes_total: int = 0
+
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
 
@@ -1194,11 +1199,25 @@ class FSDPEngine(TrainEngine):
         if main_rank:
             total_params = len(collected)
             total_bytes = sum(t.numel() * t.element_size() for _, t in collected)
+            total_mb = total_bytes / 1024 / 1024
             self.logger.info(
                 f"[LoRA Delta Sync] Collected {total_params} params, "
-                f"total size: {total_bytes / 1024 / 1024:.2f} MB, "
+                f"total size: {total_mb:.2f} MB, "
                 f"base_sync_done={base_sync_done}"
             )
+            # Report param collection metrics to wandb
+            if base_sync_done:
+                stats_tracker.scalar(
+                    **{"delta_sync/adapter_params_count": total_params}
+                )
+                stats_tracker.scalar(**{"delta_sync/adapter_bytes": total_bytes})
+                stats_tracker.scalar(**{"delta_sync/adapter_mb": total_mb})
+            else:
+                stats_tracker.scalar(
+                    **{"delta_sync/base_params_count": total_params}
+                )
+                stats_tracker.scalar(**{"delta_sync/base_bytes": total_bytes})
+                stats_tracker.scalar(**{"delta_sync/base_mb": total_mb})
 
         return collected
 
@@ -1503,11 +1522,14 @@ class FSDPEngine(TrainEngine):
         safetensors_path = os.path.join(adapter_dir, "adapter_model.safetensors")
         safetensors_save_file(state_dict, safetensors_path)
         file_size_mb = os.path.getsize(safetensors_path) / 1024 / 1024
+        save_elapsed = time.monotonic() - step_start
         self.logger.info(
             f"[LoRA Delta Sync] Saved {len(state_dict)} adapter tensors "
             f"to {safetensors_path} ({file_size_mb:.2f} MB) "
-            f"in {time.monotonic() - step_start:.3f}s"
+            f"in {save_elapsed:.3f}s"
         )
+        stats_tracker.scalar(**{"delta_sync/disk_save_s": save_elapsed})
+        stats_tracker.scalar(**{"delta_sync/safetensors_file_mb": file_size_mb})
 
         # Log first 5 state_dict keys after adapter name stripping
         example_keys = list(state_dict.keys())[:5]
@@ -1597,10 +1619,12 @@ class FSDPEngine(TrainEngine):
             versioned_name, adapter_dir, prev_lora_name=prev_lora_name,
         )
         fut.result()
+        http_load_elapsed = time.monotonic() - step_start
         self.logger.info(
             f"[LoRA Delta Sync] Successfully loaded adapter '{versioned_name}' "
-            f"in {time.monotonic() - step_start:.3f}s"
+            f"in {http_load_elapsed:.3f}s"
         )
+        stats_tracker.scalar(**{"delta_sync/http_load_adapter_s": http_load_elapsed})
 
         # Track the loaded adapter name for future unloads
         old_loaded_name = self._last_loaded_lora_name
@@ -1628,6 +1652,35 @@ class FSDPEngine(TrainEngine):
         total_elapsed = time.monotonic() - overall_start
         self.logger.info(
             f"[LoRA Delta Sync] _save_and_load_lora_adapter total: {total_elapsed:.3f}s"
+        )
+
+        # --- Delta Sync per-step metrics for wandb ---
+        self._delta_sync_step_count += 1
+        adapter_bytes = sum(t.numel() * t.element_size() for _, t in adapter_params)
+        self._delta_sync_adapter_bytes_total += adapter_bytes
+
+        stats_tracker.scalar(**{"delta_sync/save_and_load_total_s": total_elapsed})
+
+        # Bandwidth savings: compare adapter-only vs full-model sync
+        if self._delta_sync_base_bytes_total > 0:
+            savings_ratio = 1.0 - (
+                adapter_bytes / self._delta_sync_base_bytes_total
+            )
+            stats_tracker.scalar(
+                **{"delta_sync/bandwidth_savings_ratio": savings_ratio}
+            )
+            self.logger.info(
+                f"[LoRA Delta Sync] Bandwidth savings: "
+                f"adapter={adapter_bytes / 1024 / 1024:.2f} MB vs "
+                f"base={self._delta_sync_base_bytes_total / 1024 / 1024:.2f} MB, "
+                f"savings={savings_ratio * 100:.1f}%"
+            )
+
+        stats_tracker.scalar(
+            **{"delta_sync/step_count": self._delta_sync_step_count}
+        )
+        stats_tracker.scalar(
+            **{"delta_sync/is_incremental": 1.0 if self._base_sync_done else 0.0}
         )
 
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
@@ -1682,10 +1735,25 @@ class FSDPEngine(TrainEngine):
                         f"{len(base_params)} base-model params"
                     )
                 self._broadcast_params_bucketed(base_meta, base_params, main_rank)
+                phase1a_elapsed = time.monotonic() - phase1a_start
                 if main_rank:
                     self.logger.info(
                         f"[LoRA Delta Sync] Phase 1a completed in "
-                        f"{time.monotonic() - phase1a_start:.3f}s"
+                        f"{phase1a_elapsed:.3f}s"
+                    )
+                    stats_tracker.scalar(
+                        **{"delta_sync/phase1a_base_sync_s": phase1a_elapsed}
+                    )
+                    # Record base bytes for savings calculation
+                    base_bytes = sum(
+                        t.numel() * t.element_size() for _, t in base_params
+                    )
+                    self._delta_sync_base_bytes_total = base_bytes
+                    stats_tracker.scalar(
+                        **{"delta_sync/base_sync_bytes": base_bytes}
+                    )
+                    stats_tracker.scalar(
+                        **{"delta_sync/base_sync_mb": base_bytes / 1024 / 1024}
                     )
 
             # Phase 1b / Phase 2: Sync LoRA adapter weights via disk-based
@@ -1705,18 +1773,27 @@ class FSDPEngine(TrainEngine):
                 )
                 self._save_and_load_lora_adapter(meta, adapter_params)
 
+            phase_adapter_elapsed = time.monotonic() - phase_adapter_start
             if main_rank:
                 self.logger.info(
                     f"[LoRA Delta Sync] Phase {phase_label} completed in "
-                    f"{time.monotonic() - phase_adapter_start:.3f}s"
+                    f"{phase_adapter_elapsed:.3f}s"
+                )
+                stats_tracker.scalar(
+                    **{f"delta_sync/phase{phase_label}_adapter_sync_s":
+                       phase_adapter_elapsed}
                 )
 
             self._base_sync_done = True
 
+            delta_sync_elapsed = time.monotonic() - delta_sync_start
             if main_rank:
                 self.logger.info(
                     f"[LoRA Delta Sync] Total delta sync elapsed: "
-                    f"{time.monotonic() - delta_sync_start:.3f}s"
+                    f"{delta_sync_elapsed:.3f}s"
+                )
+                stats_tracker.scalar(
+                    **{"delta_sync/total_sync_s": delta_sync_elapsed}
                 )
 
         # ---------- Original path (non-delta-sync) ----------

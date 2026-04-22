@@ -1602,6 +1602,27 @@ def _load_lora_adapter_on_servers(
         before loading the new one. ``None`` skips unloading (first load).
     """
 
+    async def _query_available_models(session, addr):
+        """Query GET /v1/models on a single SGLang server, return model ids."""
+        try:
+            result = await arequest_with_retry(
+                session=session,
+                addr=addr,
+                endpoint="/v1/models",
+                method="GET",
+                max_retries=1,
+                timeout=min(request_timeout, 10.0),
+            )
+            if isinstance(result, dict):
+                return {m.get("id", "") for m in result.get("data", [])}
+            return set()
+        except Exception as e:
+            logger.warning(
+                f"[LoRA Delta Sync] Failed to query /v1/models on "
+                f"{addr}: {type(e).__name__}: {e}"
+            )
+            return set()
+
     async def _fn():
         overall_start = time.monotonic()
         logger.info(
@@ -1618,38 +1639,68 @@ def _load_lora_adapter_on_servers(
             # We must unload the previously-registered name (prev_lora_name),
             # not the new name we're about to load (lora_name).
             if prev_lora_name is not None:
-                unload_payload = {"lora_name": prev_lora_name}
-                logger.info(
-                    f"[LoRA Delta Sync] Unloading previous adapter "
-                    f"'{prev_lora_name}' before loading '{lora_name}', "
-                    f"servers={addresses}"
+                # --- Pre-unload check: query /v1/models to verify adapter
+                # Avoids unnecessary unload failures, e.g.
+                # after a SGLang server restart where the registry was lost.
+                precheck_start = time.monotonic()
+                model_sets = await asyncio.gather(
+                    *[_query_available_models(session, a) for a in addresses]
                 )
-                unload_start = time.monotonic()
-                unload_jobs = [
-                    arequest_with_retry(
-                        session=session,
-                        addr=addr,
-                        endpoint="/unload_lora_adapter",
-                        payload=unload_payload,
-                        method="POST",
-                        max_retries=1,
-                        timeout=request_timeout,
-                    )
-                    for addr in addresses
-                ]
-                try:
-                    await asyncio.gather(*unload_jobs)
-                    logger.info(
-                        f"[LoRA Delta Sync] Unloaded previous adapter "
-                        f"'{prev_lora_name}' in "
-                        f"{time.monotonic() - unload_start:.3f}s"
-                    )
-                except Exception as e:
+                logger.info(
+                    f"[LoRA Delta Sync] Pre-unload /v1/models check "
+                    f"in {time.monotonic() - precheck_start:.3f}s"
+                )
+                any_have = any(prev_lora_name in ms for ms in model_sets)
+                all_have = all(prev_lora_name in ms for ms in model_sets)
+
+                if not any_have:
                     logger.warning(
-                        f"[LoRA Delta Sync] Unload of '{prev_lora_name}' "
-                        f"failed (type={type(e).__name__}, msg={e}), "
-                        f"continuing with load..."
+                        f"[LoRA Delta Sync] Previous adapter "
+                        f"'{prev_lora_name}' not found on ANY server "
+                        f"(possible server restart). Skipping unload."
                     )
+                else:
+                    if not all_have:
+                        for addr, ms in zip(addresses, model_sets):
+                            if prev_lora_name not in ms:
+                                logger.warning(
+                                    f"[LoRA Delta Sync] Server {addr} "
+                                    f"missing '{prev_lora_name}' "
+                                    f"(has: {list(ms)})"
+                                )
+                    unload_payload = {"lora_name": prev_lora_name}
+                    logger.info(
+                        f"[LoRA Delta Sync] Unloading previous adapter "
+                        f"'{prev_lora_name}' before loading '{lora_name}', "
+                        f"servers={addresses}"
+                    )
+                    unload_start = time.monotonic()
+                    unload_jobs = [
+                        arequest_with_retry(
+                            session=session,
+                            addr=addr,
+                            endpoint="/unload_lora_adapter",
+                            payload=unload_payload,
+                            method="POST",
+                            max_retries=1,
+                            timeout=request_timeout,
+                        )
+                        for addr in addresses
+                    ]
+                    try:
+                        await asyncio.gather(*unload_jobs)
+                        logger.info(
+                            f"[LoRA Delta Sync] Unloaded previous adapter "
+                            f"'{prev_lora_name}' in "
+                            f"{time.monotonic() - unload_start:.3f}s"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[LoRA Delta Sync] Unload of "
+                            f"'{prev_lora_name}' failed "
+                            f"({type(e).__name__}: {e}), "
+                            f"continuing with load..."
+                        )
             else:
                 logger.info(
                     f"[LoRA Delta Sync] No previous adapter to unload "
@@ -1677,11 +1728,13 @@ def _load_lora_adapter_on_servers(
             ]
             try:
                 await asyncio.gather(*load_jobs)
+                load_elapsed = time.monotonic() - load_start
+                total_elapsed = time.monotonic() - overall_start
                 logger.info(
                     f"[LoRA Delta Sync] Successfully loaded adapter '{lora_name}' "
                     f"on {len(addresses)} servers "
-                    f"in {time.monotonic() - load_start:.3f}s "
-                    f"(total: {time.monotonic() - overall_start:.3f}s)"
+                    f"in {load_elapsed:.3f}s "
+                    f"(total: {total_elapsed:.3f}s)"
                 )
             except Exception as e:
                 logger.error(
@@ -1689,6 +1742,38 @@ def _load_lora_adapter_on_servers(
                     f"type={type(e).__name__}, msg={e}"
                 )
                 raise
+
+            # --- Post-load consistency check ---
+            # Query /v1/models on all servers to confirm the new adapter
+            # is registered everywhere, detecting split-brain states.
+            try:
+                postcheck_start = time.monotonic()
+                post_model_sets = await asyncio.gather(
+                    *[_query_available_models(session, a) for a in addresses]
+                )
+                all_have_new = all(lora_name in ms for ms in post_model_sets)
+                if all_have_new:
+                    logger.info(
+                        f"[LoRA Delta Sync] Post-load consistency OK: "
+                        f"'{lora_name}' on all {len(addresses)} servers "
+                        f"(check: {time.monotonic() - postcheck_start:.3f}s)"
+                    )
+                else:
+                    missing = [
+                        a for a, ms in zip(addresses, post_model_sets)
+                        if lora_name not in ms
+                    ]
+                    logger.error(
+                        f"[LoRA Delta Sync] Post-load INCONSISTENCY: "
+                        f"'{lora_name}' missing on "
+                        f"{len(missing)}/{len(addresses)} "
+                        f"servers: {missing}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[LoRA Delta Sync] Post-load check failed: "
+                    f"{type(e).__name__}: {e}"
+                )
 
     return uvloop.run(_fn())
 
