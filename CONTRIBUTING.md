@@ -109,7 +109,7 @@ Pre-commit checks run automatically on every PR. CI executes
 `pre-commit run --all-files` to verify formatting (Ruff, clang-format, mdformat) and
 linting. Commit messages are also validated against
 [Conventional Commits](https://www.conventionalcommits.org/) format (e.g., `feat: ...`,
-`fix: ...`, `docs: ...`).
+`fix: ...`, `docs: ...`, `gov: ...`).
 
 As long as you have `pre-commit install --install-hooks` set up locally, your code will
 be checked before each commit and your commit messages will be validated automatically.
