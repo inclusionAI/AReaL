@@ -2119,6 +2119,13 @@ class _Timer:
 class EvaluatorConfig(_Timer):
     """Configuration for model evaluation scheduling and timing."""
 
+    eval_before_train: bool = field(
+        default=False,
+        metadata={
+            "help": "Run one evaluation before training begins, then continue with the configured evaluation frequency.",
+        },
+    )
+
 
 @dataclass
 class SaverConfig(_Timer):

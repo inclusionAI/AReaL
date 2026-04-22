@@ -718,14 +718,15 @@ Configuration for distributed name resolution and service discovery.
 
 Configuration for model evaluation scheduling and timing.
 
-| Parameter         | Type            | Default      | Description                                                    |
-| ----------------- | --------------- | ------------ | -------------------------------------------------------------- |
-| `experiment_name` | string          | **Required** | -                                                              |
-| `trial_name`      | string          | **Required** | -                                                              |
-| `fileroot`        | string          | **Required** | -                                                              |
-| `freq_epochs`     | integer \| None | `None`       | Trigger frequency in epochs. None disables epoch-based saving. |
-| `freq_steps`      | integer \| None | `None`       | Trigger frequency in steps. None disables step-based saving.   |
-| `freq_secs`       | integer \| None | `None`       | Trigger frequency in seconds. None disables time-based saving. |
+| Parameter           | Type            | Default      | Description                                                                                        |
+| ------------------- | --------------- | ------------ | -------------------------------------------------------------------------------------------------- |
+| `experiment_name`   | string          | **Required** | -                                                                                                  |
+| `trial_name`        | string          | **Required** | -                                                                                                  |
+| `fileroot`          | string          | **Required** | -                                                                                                  |
+| `freq_epochs`       | integer \| None | `None`       | Trigger frequency in epochs. None disables epoch-based saving.                                     |
+| `freq_steps`        | integer \| None | `None`       | Trigger frequency in steps. None disables step-based saving.                                       |
+| `freq_secs`         | integer \| None | `None`       | Trigger frequency in seconds. None disables time-based saving.                                     |
+| `eval_before_train` | boolean         | `False`      | Run one evaluation before training begins, then continue with the configured evaluation frequency. |
 
 (section-recover)=
 
