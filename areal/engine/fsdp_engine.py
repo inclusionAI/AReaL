@@ -509,14 +509,14 @@ class FSDPEngine(TrainEngine):
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
         with self._offload_aware_context():
-            if meta.type == "xccl":
-                # When lora_delta_sync is enabled, both base-model and
-                # adapter weights are synced via disk (no NCCL needed).
-                if self.config.use_lora and self.config.lora_delta_sync:
-                    self._update_weights_delta_sync_disk(meta)
-                else:
-                    assert self.weight_update_group_initialized
-                    self._update_weights_from_distributed(meta)
+            # When lora_delta_sync is enabled, the delta sync path handles
+            # both base-model and adapter weights via disk, regardless of
+            # the configured weight_update_mode (xccl or disk).
+            if self.config.use_lora and self.config.lora_delta_sync:
+                self._update_weights_delta_sync_disk(meta)
+            elif meta.type == "xccl":
+                assert self.weight_update_group_initialized
+                self._update_weights_from_distributed(meta)
             elif meta.type == "disk":
                 self._update_weights_from_disk(meta)
             else:

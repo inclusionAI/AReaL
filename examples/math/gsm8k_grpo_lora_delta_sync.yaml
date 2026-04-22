@@ -4,14 +4,16 @@
 # FSDP training engine and the SGLang inference engine.
 #
 # Key difference from gsm8k_grpo_lora.yaml:
-#   - weight_update_mode is set to "xccl" (NCCL-based) instead of "disk"
 #   - lora_delta_sync is enabled: on the first sync, the full base model
-#     weights are transmitted to the SGLang server; subsequent syncs only
-#     transmit the LoRA adapter (lora_A / lora_B) weights, significantly
+#     weights are transmitted to the SGLang server via disk
+#     (/update_weights_from_disk); subsequent syncs only transmit the LoRA
+#     adapter (lora_A / lora_B) weights via /load_lora_adapter, significantly
 #     reducing communication overhead.
+#   - weight_update_mode can be "disk" or "xccl"; when lora_delta_sync is
+#     enabled, the delta sync path is used regardless of weight_update_mode.
 #   - Requires SGLang inference backend (not vLLM) because the delta sync
-#     path calls SGLang's /load_lora_adapter_from_tensor and
-#     /update_weights_from_distributed endpoints.
+#     path calls SGLang's /load_lora_adapter and /update_weights_from_disk
+#     endpoints.
 #
 # Usage:
 #   python3 -m areal.api.main gsm8k_grpo_lora_delta_sync \
@@ -90,7 +92,8 @@ actor:
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
-  kl_ctl: 0.0
+  kl_ctl: 0.001
+  entropy_coeff: 0.001
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true
@@ -106,7 +109,7 @@ actor:
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
 
-  # ---- Weight update: XCCL (NCCL-based) instead of disk ----
+  # ---- Weight update: disk-based (delta sync overrides this when lora_delta_sync=true) ----
   weight_update_mode: disk
 
   # ---- LoRA configuration ----

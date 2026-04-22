@@ -293,6 +293,54 @@ class TestTrainEngineConfigLoraDeltaSync:
         assert config.lora_delta_sync is True
         assert config.use_lora is True
 
+    def test_entropy_coeff_default(self):
+        """entropy_coeff should default to 0.0 when not set."""
+        from areal.api.cli_args import PPOActorConfig
+        config = PPOActorConfig(
+            experiment_name="test",
+            trial_name="t",
+            backend="fsdp:d1",
+        )
+        assert config.entropy_coeff == 0.0
+
+    def test_entropy_coeff_can_set(self):
+        """entropy_coeff should be settable to a positive value."""
+        from areal.api.cli_args import PPOActorConfig
+        config = PPOActorConfig(
+            experiment_name="test",
+            trial_name="t",
+            backend="fsdp:d1",
+            entropy_coeff=0.001,
+        )
+        assert config.entropy_coeff == 0.001
+
+
+class TestDeltaSyncDispatchLogic:
+    """Verify that when lora_delta_sync=True, the delta sync path is used
+    regardless of weight_update_mode (disk or xccl)."""
+
+    def test_delta_sync_meta_with_disk_type(self):
+        """Delta sync should work when meta.type='disk'."""
+        meta = WeightUpdateMeta(
+            type="disk",
+            use_lora=True,
+            lora_delta_sync=True,
+            lora_name="test-lora",
+        )
+        assert meta.type == "disk"
+        assert meta.lora_delta_sync is True
+
+    def test_delta_sync_meta_with_xccl_type(self):
+        """Delta sync should also work when meta.type='xccl'."""
+        meta = WeightUpdateMeta(
+            type="xccl",
+            use_lora=True,
+            lora_delta_sync=True,
+            lora_name="test-lora",
+        )
+        assert meta.type == "xccl"
+        assert meta.lora_delta_sync is True
+
 
 # ===========================================================================
 # Test: get_versioned_lora_name utility

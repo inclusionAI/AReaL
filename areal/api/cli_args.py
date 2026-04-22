@@ -1465,6 +1465,11 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={"help": "KL divergence estimator", "choices": ["k1", "k2", "k3"]},
     )
 
+    entropy_coeff: float = field(
+        default=0.0,
+        metadata={"help": "Entropy bonus coefficient. 0 disables entropy regularization."},
+    )
+
     # SAPO (Soft Adaptive Policy Optimization) - https://arxiv.org/abs/2511.20347
     use_sapo_loss: bool = field(
         default=False,
