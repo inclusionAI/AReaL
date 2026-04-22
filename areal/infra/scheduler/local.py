@@ -955,12 +955,16 @@ class LocalScheduler(Scheduler):
             response = requests.get(url, timeout=2.0)
             ready = response.status_code == 200
             if ready:
-                logger.debug(
+                logger.info(
                     f"[DIAG] _is_worker_ready: {url} -> {response.status_code} (ready)"
+                )
+            else:
+                logger.warning(
+                    f"[DIAG] _is_worker_ready: {url} -> {response.status_code} (not ready)"
                 )
             return ready
         except Exception as e:
-            logger.debug(f"[DIAG] _is_worker_ready: {url} -> error: {e}")
+            logger.warning(f"[DIAG] _is_worker_ready: {url} -> error: {e}")
             return False
 
     def _configure_worker(self, worker_info: WorkerInfo, worker_rank: int):
@@ -970,8 +974,19 @@ class LocalScheduler(Scheduler):
             f"(ip={worker_info.worker.ip}, ports={worker_info.worker.worker_ports}) to be ready"
         )
         wait_start = time.time()
+        last_log_time = wait_start
         while not self._is_worker_ready(worker_info):
             time.sleep(0.1)
+            now = time.time()
+            if now - last_log_time >= 5.0:
+                elapsed = now - wait_start
+                logger.warning(
+                    f"[DIAG] _configure_worker: still waiting for worker "
+                    f"'{worker_id}' after {elapsed:.0f}s "
+                    f"(ip={worker_info.worker.ip}, "
+                    f"ports={worker_info.worker.worker_ports})"
+                )
+                last_log_time = now
         logger.info(
             f"[DIAG] _configure_worker: worker '{worker_id}' ready after "
             f"{time.time() - wait_start:.1f}s, sending configure request"
