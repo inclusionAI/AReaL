@@ -452,11 +452,30 @@ class TrainController:
         **kwargs,
     ):
         """Dispatch method call to workers via the appropriate path."""
+        group_size = kwargs.get("group_size", 1)
+        orig_len = None
+        for arg in args:
+            if isinstance(arg, list) and arg and _is_tensor_like(arg):
+                orig_len = len(arg)
+                break
+
+        args, kwargs = self._pad_eval_dispatch_args(
+            args, kwargs, group_size=group_size
+        )
         dp_args, dp_kwargs, group_indices = self._prepare_dispatch(*args, **kwargs)
         results = run_async_task(
             self._call_workers, method, dp_args, dp_kwargs, rpc_meta=rpc_meta
         )
-        return self._collect_results(results, group_indices)
+        merged_results = self._collect_results(results, group_indices)
+
+        if (
+            orig_len is not None
+            and isinstance(merged_results, list)
+            and len(merged_results) > orig_len
+        ):
+            merged_results = merged_results[:orig_len]
+
+        return merged_results
 
     async def _async_custom_function_call(
         self,
@@ -466,11 +485,30 @@ class TrainController:
         **kwargs,
     ):
         """Async version of _custom_function_call."""
+        group_size = kwargs.get("group_size", 1)
+        orig_len = None
+        for arg in args:
+            if isinstance(arg, list) and arg and _is_tensor_like(arg):
+                orig_len = len(arg)
+                break
+
+        args, kwargs = self._pad_eval_dispatch_args(
+            args, kwargs, group_size=group_size
+        )
         dp_args, dp_kwargs, group_indices = self._prepare_dispatch(*args, **kwargs)
         results = await self._call_workers(
             method, dp_args, dp_kwargs, rpc_meta=rpc_meta
         )
-        return self._collect_results(results, group_indices)
+        merged_results = self._collect_results(results, group_indices)
+
+        if (
+            orig_len is not None
+            and isinstance(merged_results, list)
+            and len(merged_results) > orig_len
+        ):
+            merged_results = merged_results[:orig_len]
+
+        return merged_results
 
     def _pad_eval_dispatch_args(
         self,
