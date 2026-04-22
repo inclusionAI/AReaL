@@ -100,34 +100,39 @@ class TIRWorkflow(RolloutWorkflow):
         :param data: The input data.
         :return: The output tensor dict.
         """
-        # Initialize conversation history
-        messages = data["messages"]
+        # Daytona-backed tools can allocate remote sandboxes per episode, so
+        # cleanup must run even when generation or reward computation fails.
+        try:
+            # Initialize conversation history
+            messages = data["messages"]
 
-        # Add system prompt with tool usage instructions
-        system_prompt = SYSTEM_PROMPT.format(
-            tool_descriptions=self.tool_manager.get_tool_descriptions_prompt()
-        )
-        if messages[0]["role"] == "system":
-            messages[0]["content"] = system_prompt
-        else:
-            messages.insert(0, {"role": "system", "content": system_prompt})
-
-        # Prepare input
-        if self.is_chat_model:
-            input_ids = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                enable_thinking=self.enable_thinking,
+            # Add system prompt with tool usage instructions
+            system_prompt = SYSTEM_PROMPT.format(
+                tool_descriptions=self.tool_manager.get_tool_descriptions_prompt()
             )
-        else:
-            input_ids = self.tokenizer.encode(
-                TORL_PROMPT.format(prompt=messages[1]["content"]),
-                add_special_tokens=False,
-            )
+            if messages[0]["role"] == "system":
+                messages[0]["content"] = system_prompt
+            else:
+                messages.insert(0, {"role": "system", "content": system_prompt})
 
-        # Run single trajectory
-        return await self._multi_round_response(engine, input_ids, data)
+            # Prepare input
+            if self.is_chat_model:
+                input_ids = self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=True,
+                    add_generation_prompt=True,
+                    enable_thinking=self.enable_thinking,
+                )
+            else:
+                input_ids = self.tokenizer.encode(
+                    TORL_PROMPT.format(prompt=messages[1]["content"]),
+                    add_special_tokens=False,
+                )
+
+            # Run single trajectory
+            return await self._multi_round_response(engine, input_ids, data)
+        finally:
+            await self.tool_manager.acleanup()
 
     async def _multi_round_response(self, engine, prompt_ids, data):
         prompt_str = self.tokenizer.decode(prompt_ids)
@@ -196,7 +201,7 @@ class TIRWorkflow(RolloutWorkflow):
                 and stop_reason == "stop"
                 and tool_start_idx != -1
             ):
-                tool_results, tool_status = self._execute_tools(
+                tool_results, tool_status = await self._execute_tools(
                     completions_str[tool_start_idx:]
                 )
                 if tool_status == ToolCallStatus.NOT_FOUND:
@@ -294,8 +299,6 @@ class TIRWorkflow(RolloutWorkflow):
                 return marker
         return None
 
-    def _execute_tools(self, response: str) -> tuple[str, ToolCallStatus]:
+    async def _execute_tools(self, response: str) -> tuple[str, ToolCallStatus]:
         """Execute tool call"""
-        # Call execute_tool_call
-        tool_results = self.tool_manager.execute_tool_call(response)
-        return tool_results
+        return await self.tool_manager.aexecute_tool_call(response)

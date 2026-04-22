@@ -227,7 +227,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       vllm) cp pyproject.vllm.toml /tmp/pyproject.toml ;; \
       *) echo "Invalid VARIANT=$VARIANT (expected: sglang|vllm)" >&2; exit 1 ;; \
     esac \
-    && uv pip install --no-build-isolation -r /tmp/pyproject.toml --extra cuda --group dev
+    && uv pip install --no-build-isolation -r /tmp/pyproject.toml --extra cuda --extra sandbox --group dev
 
 ##############################################################
 # STAGE 4: Misc fixes and final setup
