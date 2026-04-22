@@ -15,11 +15,11 @@ set -x
 # ============================================================
 
 WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl}
-model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-5ds-v2-0419-ct65536/checkpoint-280}
+model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-4ds-mt2.5k-minio3_2k-lr6e6-0420-ct65536}
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-gigpo-4node_0420v4_6e7"
+run_name="mixed-gigpo-4node_0422v5_nomapqasft"
 rl_alg=gigpo
  
 # ---- Cluster topology ----
@@ -55,7 +55,7 @@ reward_manager=geo_vision_qa
 
 # ---- Training ----
 strategy="fsdp2"
-lr=6e-7
+lr=1e-6
 kl_loss_coef=0.0
 kl_coef=0.001
 entropy_coeff=0
@@ -81,8 +81,8 @@ rollout_mode='async'
 
 # ---- Schedule ----
 total_epochs=3
-save_freq=5
-test_freq=10
+save_freq=10
+test_freq=20
 
 # ============================================================
 export VERL_RUN_ID=$run_name
@@ -219,12 +219,12 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     critic.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     critic.ulysses_sequence_parallel_size=$ulysses_sequence_parallel_size \
     algorithm.kl_ctrl.kl_coef=$kl_coef \
-    algorithm.use_kl_in_reward=False \
-    +algorithm.overturn_masking=True \
+    algorithm.use_kl_in_reward=True \
+    +algorithm.overturn_masking=False \
     trainer.logger=['console','wandb'] \
     trainer.project_name=mixed_rl \
     trainer.experiment_name=$run_name \
-    trainer.val_before_train=False \
+    trainer.val_before_train=True \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=$WORKSPACE/checkpoints/$run_name \
     trainer.n_gpus_per_node=$n_gpus_per_node \

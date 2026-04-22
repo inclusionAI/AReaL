@@ -20,7 +20,7 @@ agent_config = {
     "model_name_or_path": "/storage/openpsi/models/PaddleOCR-VL-1.5",
     "max_model_len": 8192,
     "gpu_memory_utilization": 0.8,
-    "temperature": 0.0,
+    "temperature": 0.1,
     "max_tokens": 4096,
     "num_gpus": 1,
     "tensor_parallel_size": 1,  # Number of GPUs for tensor parallelism
@@ -56,7 +56,7 @@ def _collapse_inline_repeats(text: str, keep: int = 3) -> str:
     return _INLINE_REPEAT.sub(_replace, text)
 
 
-def _truncate_repetitions(text: str, max_template_streak: int = 50) -> str:
+def _truncate_repetitions(text: str, max_template_streak: int = 15) -> str:
     """Clean repetitive model output.
 
     Two passes:
@@ -73,6 +73,7 @@ def _truncate_repetitions(text: str, max_template_streak: int = 50) -> str:
     result = []
     prev_template = None
     streak = 0
+    truncated = False
     for line in lines:
         tmpl = _NUM_PLACEHOLDER.sub("{N}", line.strip())
         if tmpl == prev_template and "{N}" in tmpl:
@@ -82,6 +83,9 @@ def _truncate_repetitions(text: str, max_template_streak: int = 50) -> str:
             streak = 0
         if streak < max_template_streak:
             result.append(line)
+        elif not truncated:
+            result.append("...(truncated repeated lines)...")
+            truncated = True
 
     return "\n".join(result)
 
