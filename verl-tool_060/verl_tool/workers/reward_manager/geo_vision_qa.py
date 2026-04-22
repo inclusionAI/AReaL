@@ -383,9 +383,10 @@ class GeoVisionQARewardManager:
             accuracy = self._score_correctness(prediction, ground_truth, data_source, data_item)
 
             # LLM judge fallback: rule-based says wrong → ask LLM
+            # Skip for map_trace: GT is coordinate paths, LLM judge can't evaluate
             llm_called = 0.0
             llm_overturned = 0.0
-            if accuracy == 0.0 and prediction and self.judge is not None:
+            if accuracy == 0.0 and prediction and self.judge is not None and data_source != "map_trace":
                 llm_called = 1.0
                 if self._llm_judge_fallback(prompt_str, ground_truth, prediction):
                     accuracy = 1.0

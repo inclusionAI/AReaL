@@ -7,7 +7,7 @@ MODEL_PATH=${MODEL_PATH:?'MODEL_PATH is required'}
 RUN_NAME=${RUN_NAME:-$(echo "$MODEL_PATH" | grep -oP '[^/]+/global_step_\d+' | tr '/' '_' || basename "$MODEL_PATH")}
 
 n_gpus_per_node=${N_GPUS_PER_NODE:-8}
-n_nodes=${N_NODES:-2}
+n_nodes=${N_NODES:-1}
 
 max_prompt_length=32768
 max_response_length=32768
@@ -86,7 +86,7 @@ run_eval_group() {
         data.train_files="${EVAL_DIR}/visual_probe_hard.parquet" \
         data.val_files="[${val_data}]" \
         data.train_batch_size=64 \
-        data.val_batch_size=512 \
+        data.val_batch_size=128 \
         data.dataloader_num_workers=128 \
         data.max_prompt_length=$max_prompt_length \
         data.max_response_length=$max_response_length \

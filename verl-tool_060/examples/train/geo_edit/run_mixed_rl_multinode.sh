@@ -15,21 +15,21 @@ set -x
 # ============================================================
 
 WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl}
-model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/batch_0414/exp2-qwen3vl8b-thinking-5ds}
+model_name=${MODEL_PATH:-/storage/openpsi/models/Qwen3-VL-8B-Thinking}
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-rl-4node_0415v3"
+run_name="mixed-rl-2node_rl_zero"
 rl_alg=grpo
 
 # ---- Cluster topology ----
 n_gpus_per_node=8
-n_nodes=4
+n_nodes=2
 
 # ---- Batch sizes (scaled for 4 nodes) ----
 n=4
-batch_size=128
-ppo_mini_batch_size=128
+batch_size=64
+ppo_mini_batch_size=64
 
 # ---- Sequence lengths ----
 max_prompt_length=16384 
@@ -55,7 +55,7 @@ reward_manager=geo_vision_qa
 
 # ---- Training ----
 strategy="fsdp2"
-lr=1e-6
+lr=6e-7
 kl_loss_coef=0.0
 kl_coef=0
 entropy_coeff=0
@@ -81,8 +81,8 @@ rollout_mode='async'
 
 # ---- Schedule ----
 total_epochs=3
-save_freq=5
-test_freq=10
+save_freq=10
+test_freq=20
 
 # ============================================================
 export VERL_RUN_ID=$run_name
@@ -142,18 +142,19 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
-    data.val_batch_size=512 \
+    data.val_batch_size=128 \
     data.dataloader_num_workers=64 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=False \
     data.truncation='right' \
+    data.shuffle=True \
     reward_model.reward_manager=$reward_manager \
     actor_rollout_ref.model.path=$model_name \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.05 \
-    +actor_rollout_ref.actor.optim.lr_scheduler_type=cosine \
+    actor_rollout_ref.actor.optim.lr_scheduler_type=cosine \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.actor.checkpoint.save_contents=['model','optimizer','extra','hf_model'] \
@@ -185,7 +186,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.agent.enable_mtrl=$enable_mtrl \
     actor_rollout_ref.agent.max_action_length=$max_action_length \
     actor_rollout_ref.agent.tool_call_timeout=600 \
-    actor_rollout_ref.agent.max_concurrent_trajectories=256 \
+    actor_rollout_ref.agent.max_concurrent_trajectories=128 \
     +actor_rollout_ref.agent.dispatch_mode=work_queue \
     actor_rollout_ref.rollout.agent.num_workers=$(expr $n_nodes \* $n_gpus_per_node) \
     actor_rollout_ref.rollout.data_parallel_size=1 \
