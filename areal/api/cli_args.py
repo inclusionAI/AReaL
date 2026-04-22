@@ -1827,7 +1827,9 @@ class SGLangConfig:
 
     @staticmethod
     def build_cmd_from_args(args: dict[str, Any]):
-        return get_py_cmd("sglang.launch_server", args)
+        return get_py_cmd(
+            "areal.experimental.inference_service.sglang.launch_server", args
+        )
 
     @staticmethod
     def build_args(
