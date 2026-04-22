@@ -98,7 +98,7 @@ def main(args: list[str]) -> None:
             server_args=server_args,
         )
 
-        logger.info("Proxy gateway available at %s", ctrl.proxy_gateway_addr)
+        logger.info("Proxy gateway available at %s", ctrl.gateway_addr)
 
         # Online mode: pass None for both data and workflow so the
         # controller creates empty-dict placeholders and uses the

@@ -90,6 +90,60 @@ def get_vlm_test_model_path() -> str:
     return _get_model_path(VLM_LOCAL_MODEL_PATH, VLM_HF_MODEL_ID)
 
 
+class InferenceServiceAgent:
+    """Agent that follows the inference-service session lifecycle.
+
+    Unlike ``SimpleAgent`` (which returns a bare float), this agent starts an
+    RL session, chats using the session key, sets a reward, and returns the
+    ``{"session_id", "trajectory_id", "reward"}`` dict expected by
+    ``InferenceServiceWorkflow._run_offline``.
+    """
+
+    async def run(self, data: dict, **extra_kwargs: Any) -> dict[str, Any]:
+        import httpx
+        from openai import AsyncOpenAI
+
+        http_client: httpx.AsyncClient | None = extra_kwargs.get("http_client")
+        base_url: str = extra_kwargs.get("base_url") or os.getenv("OPENAI_BASE_URL", "")
+        api_key: str = extra_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY", "")
+        task_id: str = extra_kwargs.get("task_id", "0")
+
+        raw_client = http_client or httpx.AsyncClient(timeout=30.0)
+
+        start_resp = await raw_client.post(
+            f"{base_url}/rl/start_session",
+            json={"task_id": task_id},
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        start_resp.raise_for_status()
+        session_info = start_resp.json()
+        session_id = session_info["session_id"]
+        session_api_key = session_info["api_key"]
+
+        client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=session_api_key,
+            http_client=raw_client,
+            max_retries=0,
+        )
+        await client.chat.completions.create(messages=data["messages"], model="default")
+
+        reward = 1.0
+        reward_resp = await raw_client.post(
+            f"{base_url}/rl/set_reward",
+            json={"interaction_id": None, "reward": reward},
+            headers={"Authorization": f"Bearer {session_api_key}"},
+        )
+        reward_resp.raise_for_status()
+        reward_data = reward_resp.json()
+
+        return {
+            "session_id": session_id,
+            "trajectory_id": reward_data.get("trajectory_id"),
+            "reward": reward,
+        }
+
+
 def check_server_health(base_url: str) -> bool:
     """Check if the inference server is healthy.
 

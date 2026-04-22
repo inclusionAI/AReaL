@@ -224,7 +224,7 @@ class TestGatewayInferenceControllerAPISurface:
             "workflow_executor",
             "dispatcher",
             "runner",
-            "proxy_gateway_addr",
+            "gateway_addr",
             "worker_ids",
         ]
         for p in properties:
@@ -298,12 +298,11 @@ class TestGatewayInferenceControllerConstruction:
         controller.start_proxy()
         controller.start_proxy_gateway()
 
-    def test_proxy_gateway_addr(self):
+    def test_gateway_addr(self):
         cfg = GatewayControllerConfig(admin_api_key="test-key")
         scheduler = MagicMock()
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
-        # Before initialize, proxy_gateway_addr returns the empty _gateway_addr
-        assert controller.proxy_gateway_addr == ""
+        assert controller.gateway_addr == ""
 
     def test_callback_addr_formats_ipv6_hostport(self):
         cfg = GatewayControllerConfig(admin_api_key="test-key")
@@ -592,7 +591,11 @@ class TestInferenceServiceWorkflow:
 
         class MockAgent:
             async def run(self, data, **kwargs):
-                return 1.0
+                return {
+                    "session_id": "sess-1",
+                    "trajectory_id": None,
+                    "reward": 1.0,
+                }
 
         mock_interaction = MagicMock(reward=1.0)
         workflow = InferenceServiceWorkflow(
@@ -602,8 +605,6 @@ class TestInferenceServiceWorkflow:
             admin_api_key="test-key",
         )
         workflow._grant_capacity = AsyncMock()
-        workflow._start_session = AsyncMock(return_value=("sess-1", "sess-api-key-1"))
-        workflow._set_last_reward = AsyncMock(return_value=None)
         workflow._export_interactions = AsyncMock(
             return_value={"chatcmpl-1": mock_interaction}
         )
@@ -628,10 +629,6 @@ class TestInferenceServiceWorkflow:
         assert result is not None
         assert "chatcmpl-1" in result
         workflow._grant_capacity.assert_awaited_once()
-        workflow._start_session.assert_awaited_once()
-        workflow._set_last_reward.assert_awaited_once_with(
-            mock_http_session, 1.0, "sess-api-key-1"
-        )
         workflow._export_interactions.assert_awaited_once_with(
             mock_http_session, "sess-1", trajectory_id=None
         )

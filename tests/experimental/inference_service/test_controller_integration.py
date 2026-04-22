@@ -309,10 +309,8 @@ class TestControllerLifecycle:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
-    def test_proxy_gateway_addr_set(self, gateway_controller):
-        """proxy_gateway_addr should point to the gateway port."""
-        addr = gateway_controller.proxy_gateway_addr
-        # proxy_gateway_addr should be a valid http URL
+    def test_gateway_addr_set(self, gateway_controller):
+        addr = gateway_controller.gateway_addr
         assert addr.startswith("http://")
         assert addr == gateway_controller._gateway_addr
 
@@ -348,7 +346,7 @@ class TestControllerVersioning:
             gateway_controller.set_version(10)
             assert gateway_controller.get_version() == 10
             # Verify gateway is still healthy (no stale broadcast attempted)
-            addr = gateway_controller.proxy_gateway_addr
+            addr = gateway_controller.gateway_addr
             resp = httpx.get(f"{addr}/health", timeout=10.0)
             assert resp.status_code == 200
         finally:
@@ -395,7 +393,7 @@ class TestControllerPauseResume:
         time.sleep(0.5)
 
         # Gateway still healthy
-        addr = gateway_controller.proxy_gateway_addr
+        addr = gateway_controller.gateway_addr
         resp = httpx.get(f"{addr}/health", timeout=10.0)
         assert resp.status_code == 200
 
@@ -425,7 +423,7 @@ class TestControllerRolloutBatch:
 
         result = gateway_controller.rollout_batch(
             data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
         )
 
         assert result is not None
@@ -455,7 +453,7 @@ class TestControllerRolloutBatch:
 
         result = gateway_controller.rollout_batch(
             data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
             should_accept_fn=accept_all,
         )
 
@@ -513,7 +511,7 @@ class TestControllerPrepareBatch:
 
         result = gateway_controller.prepare_batch(
             dataloader=dataloader,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
         )
 
         assert isinstance(result, list)
@@ -546,7 +544,7 @@ class TestControllerPrepareBatch:
 
         result = gateway_controller.prepare_batch(
             dataloader=dataloader,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
             should_accept_fn=accept_all,
         )
 
@@ -580,7 +578,7 @@ class TestControllerSubmitWait:
 
         task_id = gateway_controller.submit(
             data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
         )
 
         assert isinstance(task_id, int)
@@ -598,7 +596,7 @@ class TestControllerSubmitWait:
 
         task_id = gateway_controller.submit(
             data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
         )
 
         assert isinstance(task_id, int)
@@ -625,7 +623,7 @@ class TestControllerOnlineWorkflow:
     def test_online_workflow_submit_wait_roundtrip(self, gateway_controller_online):
         import requests
 
-        gateway_url = gateway_controller_online.proxy_gateway_addr
+        gateway_url = gateway_controller_online.gateway_addr
         assert gateway_controller_online.config.admin_api_key is not None
         admin_key = gateway_controller_online.config.admin_api_key
 
@@ -682,7 +680,7 @@ class TestControllerOnlineWorkflow:
     def test_offline_export_applies_discount_after_multiple_rewards_in_same_trajectory(
         self, gateway_controller_with_reward_timeout
     ):
-        gateway_url = gateway_controller_with_reward_timeout.proxy_gateway_addr
+        gateway_url = gateway_controller_with_reward_timeout.gateway_addr
         assert gateway_controller_with_reward_timeout.config.admin_api_key is not None
         admin_key = gateway_controller_with_reward_timeout.config.admin_api_key
 
@@ -968,7 +966,7 @@ class TestControllerFullInitialization:
 
         result = ctrl.rollout_batch(
             data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
         )
 
         assert result is not None
@@ -994,7 +992,7 @@ class TestControllerFullInitialization:
 
         result = ctrl.rollout_batch(
             data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
         )
 
         assert result is not None
@@ -1044,7 +1042,7 @@ class TestControllerFullInitialization:
 
         result = ctrl.rollout_batch(
             data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
         )
 
         assert result is not None
@@ -1190,7 +1188,7 @@ class TestControllerFullInitVLLM:
 
         result = ctrl.rollout_batch(
             data=data,
-            workflow="tests.experimental.openai.utils.SimpleAgent",
+            workflow="tests.experimental.inference_service.integration_utils.InferenceServiceAgent",
         )
 
         assert result is not None

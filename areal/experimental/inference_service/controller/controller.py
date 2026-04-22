@@ -1304,7 +1304,7 @@ class GatewayInferenceController:
         """No-op — gateway already acts as the proxy gateway."""
 
     @property
-    def proxy_gateway_addr(self) -> str:
+    def gateway_addr(self) -> str:
         return self._gateway_addr
 
     # -- Properties --------------------------------------------------------

@@ -1,16 +1,16 @@
-"""Rollout-only script for Tau2 benchmark using GatewayInferenceController.
+"""Rollout script for Tau2 using both agent service and inference service.
 
-This example demonstrates how to run rollouts (data generation) without
-training, using the gateway HTTP stack to route inference requests.
+Uses the agent service to run the Tau2Agent (PydanticAI) while the
+inference service provides model inference with RL data collection.
 
 Usage:
-    python3 examples/experimental/inference_service/tau2_rollout.py \
-        --config examples/experimental/inference_service/tau2_rollout.yaml \
-        econfig.user_llm_base_url=http://localhost:8000/v1/
+    python3 examples/experimental/inference_service/tau2_agent_service_rollout.py \
+        --config examples/experimental/inference_service/tau2_rollout.yaml
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import warnings
 from dataclasses import asdict, dataclass, field
@@ -27,6 +27,12 @@ from areal.api.cli_args import (
     TrainDatasetConfig,
     load_expr_config,
 )
+from areal.experimental.agent_service.controller.config import (
+    AgentServiceControllerConfig,
+)
+from areal.experimental.agent_service.controller.controller import (
+    AgentServiceController,
+)
 from areal.experimental.inference_service.controller.config import (
     GatewayControllerConfig,
 )
@@ -35,23 +41,14 @@ from areal.experimental.inference_service.controller.controller import (
 )
 from areal.utils import logging
 
-logger = logging.getLogger("Tau2GatewayRollout")
-
-
-# ---------------------------------------------------------------------------
-# Tau2 environment config (copied from examples/tau2/utils.py)
-# ---------------------------------------------------------------------------
+logger = logging.getLogger("Tau2AgentServiceRollout")
 
 
 @dataclass
 class Tau2EnvConfig:
-    """Environment configuration for Tau2 benchmark."""
-
     domain: str = field(
         default="telecom",
-        metadata={
-            "help": "The tau2 domain name, e.g., 'retail', 'airline', 'telecom'."
-        },
+        metadata={"help": "The tau2 domain name."},
     )
     max_steps: int = field(
         default=100, metadata={"help": "Maximum number of steps per episode."}
@@ -63,12 +60,10 @@ class Tau2EnvConfig:
         default=False, metadata={"help": "Whether to use solo mode."}
     )
     user_llm_base_url: str | None = field(
-        default=None,
-        metadata={"help": "The base URL of the user LLM."},
+        default=None, metadata={"help": "The base URL of the user LLM."}
     )
     user_llm: str | None = field(
-        default=None,
-        metadata={"help": "The user LLM to use, default to the gpt-4.1 model."},
+        default=None, metadata={"help": "The user LLM model name."}
     )
     user_llm_args: dict | None = field(
         default=None, metadata={"help": "The arguments for the user LLM."}
@@ -77,34 +72,31 @@ class Tau2EnvConfig:
         default=1.0, metadata={"help": "Discount factor for turn-based learning."}
     )
     invalid_format_penalty: float = field(
-        default=0.1, metadata={"help": "Penalty for invalid format in completions."}
+        default=0.1, metadata={"help": "Penalty for invalid format."}
     )
 
 
-# ---------------------------------------------------------------------------
-# Tau2 dataset helper (copied from examples/tau2/train.py)
-# ---------------------------------------------------------------------------
+@dataclass
+class AgentServiceConfig:
+    agent_cls_path: str = field(
+        default="examples.experimental.inference_service.tau2_agent.Tau2Agent",
+        metadata={"help": "Import path for the agent-service agent class."},
+    )
+    num_pairs: int = field(
+        default=1, metadata={"help": "Number of agent Worker+DataProxy pairs."}
+    )
+    admin_api_key: str = field(
+        default="areal-agent-admin",
+        metadata={"help": "Admin API key for agent service."},
+    )
 
 
-def get_tau2_dataset(
-    domain: str,
-    type: str = "rl",
-    split: str = "train",
-) -> Dataset:
-    """Create a HuggingFace Dataset from tau2 task IDs.
-
-    Args:
-        domain: The tau2 domain name, e.g., 'retail', 'airline', 'telecom'
-        split: Dataset split (e.g., 'train', 'test', 'small')
-        type: Dataset type (e.g., 'rl', 'sft'), only 'rl' is supported for now
-
-    Returns:
-        Dataset: HuggingFace Dataset containing task_id entries
-    """
+def get_tau2_dataset(domain: str, type: str = "rl", split: str = "train") -> Dataset:
     from tau2.registry import registry
 
-    assert type == "rl", "Only RL dataset is supported for now"
+    from examples.tau2.agent import _get_task
 
+    assert type == "rl", "Only RL dataset is supported"
     splits_loader_fn = registry.get_task_splits_loader(domain)
     if splits_loader_fn is None:
         raise ValueError(f"No task splits loader found for domain {domain}")
@@ -112,57 +104,51 @@ def get_tau2_dataset(
     if split not in splits:
         raise ValueError(
             f"Split {split} not found for domain {domain}, "
-            f"available splits: {list(splits.keys())}"
+            f"available: {list(splits.keys())}"
         )
     task_ids = splits[split]
-
-    dataset_items = [{"task_id": task_id, "split": split} for task_id in task_ids]
-
-    # Duplicate dataset if less than 128 items for efficient batching
+    dataset_items = []
+    for tid in task_ids:
+        task = _get_task(domain=domain, task_id=tid, split=split)
+        dataset_items.append(
+            {
+                "task_id": tid,
+                "split": split,
+                "prompt": str(task.user_scenario),
+            }
+        )
     if len(dataset_items) < 128:
-        original_items = dataset_items.copy()
+        original = dataset_items.copy()
         while len(dataset_items) < 128:
-            dataset_items.extend(original_items)
-
+            dataset_items.extend(original)
     dataset = Dataset.from_list(dataset_items)
-    logger.info(
-        f"Created dataset with {len(dataset)} items for domain {domain}, split {split}"
-    )
+    logger.info("Created dataset with %d items for %s/%s", len(dataset), domain, split)
     return dataset
 
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-
 @dataclass
-class Tau2GatewayRolloutConfig(BaseExperimentConfig):
-    """Configuration for Tau2 rollout-only with GatewayInferenceController."""
-
+class Tau2AgentServiceRolloutConfig(BaseExperimentConfig):
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     model_path: str = ""
     econfig: Tau2EnvConfig = field(default_factory=Tau2EnvConfig)
+    agent_service: AgentServiceConfig = field(default_factory=AgentServiceConfig)
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     train_dataset: TrainDatasetConfig = field(default_factory=TrainDatasetConfig)
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 
 def main(argv: list[str]) -> None:
     warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
-    config, _ = load_expr_config(argv, Tau2GatewayRolloutConfig)
+    config, _ = load_expr_config(argv, Tau2AgentServiceRolloutConfig)
     econfig = config.econfig
     rollout_cfg = config.rollout
+    agent_svc_cfg = config.agent_service
 
-    # --- Dataset ---
+    os.environ["TAU2_DOMAIN"] = econfig.domain
+
     train_dataset = get_tau2_dataset(
         domain=econfig.domain,
         type=config.train_dataset.type,
@@ -175,10 +161,9 @@ def main(argv: list[str]) -> None:
         train_dataset,
         batch_size=config.train_dataset.batch_size,
         shuffle=config.train_dataset.shuffle,
-        num_workers=0,  # in-process; tau2 dataset is lightweight
+        num_workers=0,
     )
 
-    # --- Build GatewayControllerConfig from YAML rollout section ---
     openai_cfg = rollout_cfg.openai
     ctrl_config = GatewayControllerConfig(
         tokenizer_path=config.tokenizer_path,
@@ -211,7 +196,6 @@ def main(argv: list[str]) -> None:
         ),
     )
 
-    # --- Scheduler ---
     from areal.infra.scheduler.local import LocalScheduler
     from areal.infra.scheduler.slurm import SlurmScheduler
 
@@ -223,7 +207,6 @@ def main(argv: list[str]) -> None:
     else:
         raise NotImplementedError(f"Unknown scheduler type: {sched_type}")
 
-    # --- Controller ---
     rollout_alloc = ModelAllocation.from_str(config.rollout.backend, name="rollout")
     if rollout_alloc.backend == "sglang":
         server_args = asdict(config.sglang)
@@ -232,18 +215,28 @@ def main(argv: list[str]) -> None:
     else:
         raise ValueError(f"Unsupported rollout backend: {rollout_alloc.backend}")
 
-    ctrl = GatewayInferenceController(config=ctrl_config, scheduler=scheduler)
-    ctrl.initialize(
-        role="rollout",
-        server_args=server_args,
+    inf_ctrl = GatewayInferenceController(config=ctrl_config, scheduler=scheduler)
+    inf_ctrl.initialize(role="rollout", server_args=server_args)
+
+    logger.info("Inference service ready at %s", inf_ctrl.gateway_addr)
+
+    agent_ctrl_config = AgentServiceControllerConfig(
+        agent_cls_path=agent_svc_cfg.agent_cls_path,
+        admin_api_key=agent_svc_cfg.admin_api_key,
+        num_pairs=agent_svc_cfg.num_pairs,
+        inference_addr=inf_ctrl.gateway_addr,
+        inference_model=config.model_path,
+        inference_api_key=ctrl_config.admin_api_key or "areal-admin-key",
     )
 
-    econfig_dict = asdict(econfig)
+    agent_ctrl = AgentServiceController(config=agent_ctrl_config, scheduler=scheduler)
+    agent_ctrl.initialize()
 
+    logger.info("Agent service ready at %s", agent_ctrl.gateway_addr)
+
+    econfig_dict = asdict(econfig)
     workflow_kwargs: dict[str, Any] = dict(
-        gateway_addr=ctrl.gateway_addr,
-        gateway_api_key=ctrl_config.admin_api_key or "areal-admin-key",
-        model=config.model_path,
+        agent_controller=agent_ctrl,
         econfig=econfig_dict,
         gen_args=dict(
             temperature=config.gconfig.temperature,
@@ -252,23 +245,20 @@ def main(argv: list[str]) -> None:
         timeout=600.0,
     )
 
-    # --- Rollout loop ---
     try:
         logger.info("Starting rollout loop")
         batch_count = 0
         for batch_idx, batch in enumerate(dataloader):
-            # DataLoader yields column-oriented dicts; convert to list of row dicts
             keys = list(batch.keys())
             batch_size = len(batch[keys[0]])
             data = [{k: batch[k][i] for k in keys} for i in range(batch_size)]
 
-            result = ctrl.rollout_batch(
+            result = inf_ctrl.rollout_batch(
                 data=data,
-                workflow="examples.experimental.inference_service.tau2_workflow.Tau2InferenceWorkflow",
+                workflow="examples.experimental.inference_service.tau2_workflow.Tau2AgentServiceWorkflow",
                 workflow_kwargs=workflow_kwargs,
             )
             if result:
-                # Localize RTensors and collect rewards across the batch
                 import torch
 
                 from areal.infra.rpc.rtensor import RTensor
@@ -290,8 +280,8 @@ def main(argv: list[str]) -> None:
             batch_count += 1
         logger.info("Rollout complete (%d batches)", batch_count)
     finally:
-        ctrl.destroy()
-        scheduler.delete_workers(None)
+        agent_ctrl.destroy()
+        inf_ctrl.destroy()
 
 
 if __name__ == "__main__":

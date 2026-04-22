@@ -26,6 +26,21 @@ class AgentServiceControllerConfig:
     admin_api_key: str = DEFAULT_ADMIN_API_KEY
     """Shared admin API key for inter-service Bearer auth."""
 
+    # -- Inference service integration -------------------------------------
+    inference_addr: str = ""
+    """Address of the inference service gateway (e.g. ``http://host:port``).
+    Required for ``new_session`` / ``set_reward`` APIs that interact with
+    the inference service for RL data collection."""
+
+    inference_model: str = ""
+    """Model name served by the inference service.  Passed to agents so
+    they can issue ``/chat/completions`` requests against the inference
+    gateway."""
+
+    inference_api_key: str = ""
+    """Admin API key for the inference service gateway.  Used to call
+    ``/rl/start_session`` and other admin-only inference endpoints."""
+
     # -- Scaling -----------------------------------------------------------
     num_pairs: int = 1
     """Number of Worker+DataProxy pairs to launch on initialize."""
@@ -33,6 +48,10 @@ class AgentServiceControllerConfig:
     # -- Timeouts ----------------------------------------------------------
     setup_timeout: float = 120.0
     """Timeout (seconds) waiting for each service to become healthy."""
+
+    request_timeout: float = 600.0
+    """Timeout (seconds) for runtime HTTP requests (``step()``,
+    ``set_reward()``, ``new_session()``)."""
 
     health_poll_interval: float = 5.0
     """Seconds between health polls for crash detection (0 = disabled)."""
@@ -49,13 +68,19 @@ class AgentServiceControllerConfig:
     """Extra environment variables to pass to all forked child processes."""
 
     def __post_init__(self) -> None:
-        if not self.agent_cls_path:
-            raise ValueError("agent_cls_path must be a non-empty import path")
+        if not self.agent_cls_path and self.num_pairs > 0:
+            raise ValueError(
+                "agent_cls_path must be a non-empty import path when num_pairs > 0"
+            )
         if self.num_pairs < 0:
             raise ValueError(f"num_pairs must be non-negative, got {self.num_pairs}")
         if self.setup_timeout <= 0:
             raise ValueError(
                 f"setup_timeout must be positive, got {self.setup_timeout}"
+            )
+        if self.request_timeout <= 0:
+            raise ValueError(
+                f"request_timeout must be positive, got {self.request_timeout}"
             )
         if self.drain_timeout < 0:
             raise ValueError(

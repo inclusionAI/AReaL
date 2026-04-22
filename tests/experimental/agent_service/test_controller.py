@@ -338,3 +338,277 @@ class TestHealthMonitor:
         assert ctrl._health_thread is None
 
         ctrl.destroy()
+
+
+@pytest.fixture()
+def dc_config():
+    return AgentServiceControllerConfig(
+        agent_cls_path="my.Agent",
+        admin_api_key="test-key",
+        num_pairs=0,
+        setup_timeout=1.0,
+        health_poll_interval=0,
+        inference_addr="http://inf-gw:8080",
+        inference_model="Qwen/Qwen3-0.6B",
+        inference_api_key="inf-admin-key",
+    )
+
+
+def _make_dc_controller(mock_requests, dc_config) -> AgentServiceController:
+    _setup_mock_requests(mock_requests)
+    scheduler = _make_scheduler(("10.0.0.1", "8090"))
+    ctrl = AgentServiceController(config=dc_config, scheduler=scheduler)
+    ctrl.initialize()
+    return ctrl
+
+
+class TestNewSession:
+    @patch(f"{CTRL}.requests")
+    def test_new_session_calls_inference_start_session(self, mock_requests, dc_config):
+        post_calls: list[tuple[str, dict]] = []
+
+        ctrl = _make_dc_controller(mock_requests, dc_config)
+
+        def mock_post(url, **kwargs):
+            if "/rl/start_session" in url:
+                post_calls.append((url, kwargs))
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = {
+                    "session_id": "inf-sess-1",
+                    "api_key": "sk-sess-abc123",
+                }
+                return resp
+            return MagicMock(status_code=404)
+
+        mock_requests.post = mock_post
+
+        result = ctrl.new_session(task_id="my-task")
+
+        assert result["inference_session_id"] == "inf-sess-1"
+        assert result["inference_api_key"] == "sk-sess-abc123"
+        assert result["session_id"].startswith("agent-sess-")
+
+        assert len(post_calls) == 1
+        call_url, call_kwargs = post_calls[0]
+        assert "/rl/start_session" in call_url
+        assert call_kwargs["json"]["task_id"] == "my-task"
+        assert "inf-admin-key" in call_kwargs["headers"]["Authorization"]
+
+    @patch(f"{CTRL}.requests")
+    def test_new_session_stores_session_and_sets_latest(self, mock_requests, dc_config):
+        ctrl = _make_dc_controller(mock_requests, dc_config)
+
+        def mock_post(url, **kwargs):
+            if "/rl/start_session" in url:
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = {
+                    "session_id": "inf-sess-1",
+                    "api_key": "sk-sess-abc123",
+                }
+                return resp
+            return MagicMock(status_code=404)
+
+        mock_requests.post = mock_post
+
+        result = ctrl.new_session()
+        sid = result["session_id"]
+
+        assert ctrl._sessions[sid] == result
+
+    @patch(f"{CTRL}.requests")
+    def test_new_session_defaults_task_id_to_session_id(self, mock_requests, dc_config):
+        captured_task_id: list[str] = []
+
+        ctrl = _make_dc_controller(mock_requests, dc_config)
+
+        def mock_post(url, **kwargs):
+            if "/rl/start_session" in url:
+                captured_task_id.append(kwargs["json"]["task_id"])
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = {
+                    "session_id": "inf-sess-1",
+                    "api_key": "sk-sess-abc",
+                }
+                return resp
+            return MagicMock(status_code=404)
+
+        mock_requests.post = mock_post
+
+        result = ctrl.new_session()
+        assert captured_task_id[0] == result["session_id"]
+
+    def test_new_session_raises_without_inference_addr(self, config):
+        scheduler = _make_scheduler(("10.0.0.1", "8090"))
+        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+
+        with pytest.raises(RuntimeError, match="inference_addr must be set"):
+            ctrl.new_session()
+
+
+def _mock_start_session_post(url, **kwargs):
+    if "/rl/start_session" in url:
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "session_id": "inf-sess-1",
+            "api_key": "sk-sess-abc",
+        }
+        return resp
+    return MagicMock(status_code=404)
+
+
+class TestStep:
+    @patch(f"{CTRL}.requests")
+    def test_step_sends_string_input_to_gateway(self, mock_requests, dc_config):
+        v1_calls: list[tuple[str, dict]] = []
+
+        ctrl = _make_dc_controller(mock_requests, dc_config)
+        mock_requests.post = _mock_start_session_post
+        session = ctrl.new_session()
+
+        def mock_post(url, **kwargs):
+            if "/v1/responses" in url:
+                v1_calls.append((url, kwargs))
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = {
+                    "id": "resp-1",
+                    "status": "completed",
+                    "output": [],
+                }
+                return resp
+            return MagicMock(status_code=404)
+
+        mock_requests.post = mock_post
+
+        result = ctrl.step("Hello agent", session["session_id"])
+
+        assert result["status"] == "completed"
+        assert len(v1_calls) == 1
+        _, call_kwargs = v1_calls[0]
+        body = call_kwargs["json"]
+        assert body["input"] == [{"type": "message", "content": "Hello agent"}]
+        assert body["user"] == session["session_id"]
+        assert body["model"] == "Qwen--Qwen3-0.6B"
+        assert body["metadata"]["inference_base_url"] == "http://inf-gw:8080"
+        assert body["metadata"]["inference_model"] == "Qwen/Qwen3-0.6B"
+        assert body["metadata"]["inference_api_key"] == "sk-sess-abc"
+
+    @patch(f"{CTRL}.requests")
+    def test_step_sends_list_input_unchanged(self, mock_requests, dc_config):
+        v1_calls: list[tuple[str, dict]] = []
+
+        ctrl = _make_dc_controller(mock_requests, dc_config)
+        mock_requests.post = _mock_start_session_post
+        session = ctrl.new_session()
+
+        def mock_post(url, **kwargs):
+            if "/v1/responses" in url:
+                v1_calls.append((url, kwargs))
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = {"id": "resp-1", "status": "completed"}
+                return resp
+            return MagicMock(status_code=404)
+
+        mock_requests.post = mock_post
+
+        custom_input = [
+            {"type": "message", "content": "first"},
+            {"type": "function_call_output", "output": "42"},
+        ]
+        ctrl.step(custom_input, session["session_id"])
+
+        _, call_kwargs = v1_calls[0]
+        assert call_kwargs["json"]["input"] == custom_input
+
+    @patch(f"{CTRL}.requests")
+    def test_step_requires_explicit_session_id(self, mock_requests, dc_config):
+        v1_calls: list[tuple[str, dict]] = []
+
+        ctrl = _make_dc_controller(mock_requests, dc_config)
+        mock_requests.post = _mock_start_session_post
+        session = ctrl.new_session()
+
+        def mock_post(url, **kwargs):
+            if "/v1/responses" in url:
+                v1_calls.append((url, kwargs))
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = {"id": "r", "status": "completed"}
+                return resp
+            return MagicMock(status_code=404)
+
+        mock_requests.post = mock_post
+
+        ctrl.step("hi", session["session_id"])
+
+        _, call_kwargs = v1_calls[0]
+        assert call_kwargs["json"]["user"] == session["session_id"]
+
+
+class TestSetReward:
+    @patch(f"{CTRL}.requests")
+    def test_set_reward_calls_inference_gateway(self, mock_requests, dc_config):
+        reward_calls: list[tuple[str, dict]] = []
+
+        ctrl = _make_dc_controller(mock_requests, dc_config)
+        mock_requests.post = _mock_start_session_post
+        session = ctrl.new_session()
+
+        def mock_post(url, **kwargs):
+            if "/rl/set_reward" in url:
+                reward_calls.append((url, kwargs))
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = {"trajectory_id": 42}
+                return resp
+            return MagicMock(status_code=404)
+
+        mock_requests.post = mock_post
+
+        result = ctrl.set_reward(1.0, session["session_id"])
+
+        assert result["trajectory_id"] == 42
+        assert len(reward_calls) == 1
+        call_url, call_kwargs = reward_calls[0]
+        assert "inf-gw:8080/rl/set_reward" in call_url
+        assert call_kwargs["json"]["reward"] == 1.0
+        assert call_kwargs["json"]["interaction_id"] is None
+        assert "sk-sess-abc" in call_kwargs["headers"]["Authorization"]
+
+    @patch(f"{CTRL}.requests")
+    def test_set_reward_requires_explicit_session_id(self, mock_requests, dc_config):
+        reward_calls: list[tuple[str, dict]] = []
+
+        ctrl = _make_dc_controller(mock_requests, dc_config)
+        mock_requests.post = _mock_start_session_post
+        session = ctrl.new_session()
+
+        def mock_post(url, **kwargs):
+            if "/rl/set_reward" in url:
+                reward_calls.append((url, kwargs))
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = {"trajectory_id": 1}
+                return resp
+            return MagicMock(status_code=404)
+
+        mock_requests.post = mock_post
+
+        ctrl.set_reward(0.5, session["session_id"])
+
+        _, call_kwargs = reward_calls[0]
+        assert "sk-sess-abc" in call_kwargs["headers"]["Authorization"]
+
+
+class TestResolveSession:
+    def test_resolve_raises_on_unknown_id(self, dc_config):
+        scheduler = _make_scheduler(("10.0.0.1", "8090"))
+        ctrl = AgentServiceController(config=dc_config, scheduler=scheduler)
+
+        with pytest.raises(KeyError, match="Unknown session_id"):
+            ctrl._resolve_session("nonexistent")

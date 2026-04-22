@@ -409,11 +409,11 @@ def mock_areal_client():
 
 @pytest_asyncio.fixture
 async def data_proxy_client(data_proxy_config, mock_tokenizer, mock_areal_client):
-    from areal.experimental.inference_service.data_proxy.backend import (
+    from areal.experimental.inference_service.data_proxy.pause import PauseState
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.sglang.bridge import (
         SGLangBridgeBackend,
     )
-    from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
-    from areal.experimental.inference_service.data_proxy.pause import PauseState
 
     app = create_data_proxy_app(data_proxy_config)
     pause_state = PauseState()

@@ -1,6 +1,6 @@
 # AReaL Inference Service Examples
 
-This directory contains two examples that use the AReaL Inference Service
+This directory contains three examples that use the AReaL Inference Service
 (`GatewayInferenceController`) — an experimental rollout backend that exposes an
 OpenAI-compatible proxy gateway so any external agent runtime can submit chat requests
 and receive RL training data.
@@ -13,7 +13,9 @@ This example runs rollout-only data generation on the
 [$\\tau^2$-Bench](https://github.com/sierra-research/tau2-bench) using the AReaL
 Inference Service. Unlike the full training pipeline in `examples/tau2/`, this script
 performs rollouts without a training step — useful for evaluation, data collection, or
-debugging agent behaviour.
+debugging agent behaviour. The workflow talks directly to the inference-service gateway
+for `POST /rl/start_session` and `POST /rl/set_reward`; no agent-service controller is
+started in this example.
 
 ### Installation
 
@@ -54,6 +56,15 @@ python3 examples/experimental/inference_service/tau2_rollout.py \
 | `<EXPERIMENT_ROOT>`   | Directory for experiment artifacts (logs, trajectories) | `/tmp/areal/experiments`    |
 | `<NAME_RESOLVE_ROOT>` | Shared path for name-resolve records                    | `/tmp/areal/name_resolve`   |
 
+What the script launches:
+
+1. A `GatewayInferenceController` for the rollout model.
+1. A local `Tau2InferenceWorkflow` that creates RL sessions with the gateway, runs the
+   full Tau2 simulation locally, and submits rewards back to the gateway.
+
+This is the lightest Tau2 example in this directory because it does **not** depend on
+the experimental agent service.
+
 ### Result
 
 A successful rollout prints per-batch statistics after every batch:
@@ -67,7 +78,26 @@ batch-level average reward.
 
 ______________________________________________________________________
 
-## Example 2: Human-in-the-Loop Online RL Demo
+## Example 2: Tau2 with Both Inference Service and Agent Service
+
+`tau2_agent_service_rollout.py` demonstrates the complementary setup where the inference
+service collects RL data and the agent service hosts the agent runtime. This variant
+uses scripted user messages inside `Tau2AgentServiceWorkflow`, so it does not require
+`econfig.user_llm_base_url`.
+
+```bash
+python3 examples/experimental/inference_service/tau2_agent_service_rollout.py \
+    --config examples/experimental/inference_service/tau2_rollout.yaml \
+    cluster.fileroot=<EXPERIMENT_ROOT> \
+    cluster.name_resolve.nfs_record_root=<NAME_RESOLVE_ROOT>
+```
+
+Use this variant when you want the Tau2 agent loop to be executed by the experimental
+agent service instead of inside the rollout workflow.
+
+______________________________________________________________________
+
+## Example 3: Human-in-the-Loop Online RL Demo
 
 This example demonstrates **human-in-the-loop (HITL) online RL**: a human (or an
 automated script acting as one) chats with the model through any OpenAI-compatible
