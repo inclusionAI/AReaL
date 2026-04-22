@@ -13,8 +13,8 @@ dependencies = [
   "streamlit",
   "sqlalchemy",
   "docker",
-  "camel_ai @ git+https://github.com/camel-ai/camel.git",
-  "terminal_bench @ git+https://github.com/Michaelsqj/terminal-bench.git",
+  "camel-ai==0.2.85a0",
+  "terminal-bench==0.2.18",
 ]
 
 [project.optional-dependencies]
@@ -29,8 +29,8 @@ tiktoken_cache_file = "o200k_base.tiktoken"
 [tool.install-notes]
 no_deps = [
   "docker",
-  "camel_ai",
-  "terminal_bench",
+  "camel-ai",
+  "terminal-bench",
 ]
 
 commands = [
