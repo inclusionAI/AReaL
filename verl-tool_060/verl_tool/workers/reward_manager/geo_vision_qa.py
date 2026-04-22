@@ -392,19 +392,20 @@ class GeoVisionQARewardManager:
                     accuracy = 1.0
                     llm_overturned = 1.0
 
-            r_correct = 1.0 if accuracy > 0 else 0.0
+            r_correct = accuracy if data_source == "map_trace" else (1.0 if accuracy > 0 else 0.0)
 
             # R(U) = R_rep + R_format + R_correct
             reward = r_rep + r_format + r_correct
 
-            ndtw_val = -1.0
-            ndtw_success = 0.0
+            ndtw_val = float("nan")
+            ndtw_success = float("nan")
             if data_source == "map_trace":
-                _, ndtw_val = _compute_map_trace_score(prediction, ground_truth)
-                ndtw_success = 1.0 if 0 <= ndtw_val < 1.0 else 0.0
-                if ndtw_val >= 0:
-                    reward_extra_info["ndtw"].append(ndtw_val)
-                    reward_extra_info["ndtw_success"].append(ndtw_success)
+                _, raw_ndtw = _compute_map_trace_score(prediction, ground_truth)
+                if raw_ndtw >= 0:
+                    ndtw_val = raw_ndtw
+                    ndtw_success = 1.0 if raw_ndtw < 1.0 else 0.0
+            reward_extra_info["ndtw"].append(ndtw_val)
+            reward_extra_info["ndtw_success"].append(ndtw_success)
 
             reward_extra_info["accuracy"].append(accuracy)
             reward_extra_info["score"].append(reward)

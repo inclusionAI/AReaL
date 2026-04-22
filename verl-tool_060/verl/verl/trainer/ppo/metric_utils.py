@@ -340,7 +340,7 @@ def bootstrap_metric(
         bootstrap_data = [data[i] for i in bootstrap_idxs]
         for i, reduce_fn in enumerate(reduce_fns):
             bootstrap_metric_lsts[i].append(reduce_fn(bootstrap_data))
-    return [(np.mean(lst), np.std(lst)) for lst in bootstrap_metric_lsts]
+    return [(np.nanmean(lst), np.nanstd(lst)) for lst in bootstrap_metric_lsts]
 
 
 def calc_maj_val(data: list[dict[str, Any]], vote_key: str, val_key: str) -> float:
@@ -441,10 +441,10 @@ def process_validation_metrics(
 
                 metric = {}
                 n_resps = len(var_vals)
-                metric[f"mean@{n_resps}"] = np.mean(var_vals)
+                metric[f"mean@{n_resps}"] = np.nanmean(var_vals)
 
                 if n_resps > 1:
-                    metric[f"std@{n_resps}"] = np.std(var_vals)
+                    metric[f"std@{n_resps}"] = np.nanstd(var_vals)
 
                     ns = []
                     n = 2
@@ -455,7 +455,7 @@ def process_validation_metrics(
 
                     for n in ns:
                         [(bon_mean, bon_std), (won_mean, won_std)] = bootstrap_metric(
-                            data=var_vals, subset_size=n, reduce_fns=[np.max, np.min], seed=seed
+                            data=var_vals, subset_size=n, reduce_fns=[np.nanmax, np.nanmin], seed=seed
                         )
                         metric[f"best@{n}/mean"], metric[f"best@{n}/std"] = bon_mean, bon_std
                         metric[f"worst@{n}/mean"], metric[f"worst@{n}/std"] = won_mean, won_std
@@ -485,6 +485,6 @@ def process_validation_metrics(
     for data_source, var2metric2uid_vals in data_src2var2metric2uid_vals.items():
         for var_name, metric2uid_vals in var2metric2uid_vals.items():
             for metric_name, uid_vals in metric2uid_vals.items():
-                data_src2var2metric2val[data_source][var_name][metric_name] = np.mean(uid_vals)
+                data_src2var2metric2val[data_source][var_name][metric_name] = np.nanmean(uid_vals)
 
     return data_src2var2metric2val
