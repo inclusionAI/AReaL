@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                 self.logger.info(
                     "[MTPTrain] Verified megatron-core MTP module available. "
                     "Gradient isolation is handled by AReaL monkey-patches: "
-                    "MTPLossAutoScaler passthrough (backbone), functional_call (lm_head), "
+                    "MTPLossAutoScaler passthrough (backbone), direct output_layer call (lm_head), "
                     "decoder_input.detach (embedding) when mtp_detach_heads=True."
                 )
             except ImportError:
@@ -925,6 +925,34 @@ class MegatronEngine(TrainEngine):
                                     "[MTPGradDiag] Per-MTP-param gradient norms:\n"
                                     + "\n".join(mtp_param_details)
                                 )
+                            # Additional diagnostic: check if any MTP param
+                            # has .grad (not main_grad) with nonzero value,
+                            # which would indicate gradient accumulation fusion
+                            # mismatch between .grad and .main_grad
+                            if mtp_g == 0.0:
+                                alt_grad_found = False
+                                for module in self.model:
+                                    for name, param in module.named_parameters():
+                                        if ".mtp." not in name:
+                                            continue
+                                        if param.grad is not None and param.grad.data.float().norm().item() > 0:
+                                            alt_grad_found = True
+                                            self.logger.warning(
+                                                f"[MTPGradDiag] ALERT: {name} has nonzero .grad "
+                                                f"(norm={param.grad.data.float().norm().item():.8f}) "
+                                                f"but zero .main_grad! This indicates gradient "
+                                                f"accumulation fusion mismatch."
+                                            )
+                                if not alt_grad_found:
+                                    self.logger.warning(
+                                        "[MTPGradDiag] All MTP params have zero gradient "
+                                        "in BOTH .main_grad and .grad. The MTP backward "
+                                        "path is completely broken. Check: "
+                                        "1) MTPLossAutoScaler.backward is being called, "
+                                        "2) mtp_loss requires_grad=True, "
+                                        "3) _mtp_hs requires_grad=True, "
+                                        "4) activation checkpointing compatibility."
+                                    )
                             mtp_stats["mtp_grad_norm"] = mtp_g**0.5
                             mtp_stats["non_mtp_grad_norm"] = non_mtp_g**0.5
                         except Exception as e:
@@ -1136,7 +1164,7 @@ class MegatronEngine(TrainEngine):
                     #   MTP logits use the SHARED output_layer and output_weight.
                     #   MTP CE loss backpropagates through lm_head weights.
                     #   Fix: Detach output_weight in _postprocess MTP loop, and
-                    #   use functional_call with detached params for output_layer.
+                    #   use direct output_layer call.
                     #
                     # Path 3: MTP loss → embedding weights
                     #   MTP layers call embedding(input_ids, position_ids) using
@@ -1224,37 +1252,32 @@ class MegatronEngine(TrainEngine):
                                 if loss_mask is None:
                                     loss_mask = torch.ones_like(mtp_labels)
 
-                                # Path 2: detach output weight for MTP
-                                _mtp_output_weight = (
-                                    output_weight.detach()
-                                    if output_weight is not None
-                                    else None
-                                )
-
                                 for mtp_layer_number in range(
                                     self_model.config.mtp_num_layers
                                 ):
-                                    # Path 2: functional_call with detached
-                                    # output_layer params for MTP logits
+                                    # Use direct output_layer call for MTP logits
+                                    # Previous functional_call + detached params
+                                    # broke the backward gradient chain, causing
+                                    # mtp_grad_norm=0. The direct call allows
+                                    # MTP loss gradient to also accumulate on
+                                    # output_layer weights — this is acceptable
+                                    # as MTP loss is small (scaled by
+                                    # mtp_loss_scaling_factor) and matches
+                                    # Megatron-Core's native implementation.
                                     _mtp_hs = hidden_states_list[mtp_layer_number + 1]
-                                    _ol = self_model.output_layer
-                                    _ol_params = {
-                                        k: v.detach() for k, v in _ol.named_parameters()
-                                    }
-                                    _ol_buffers = dict(_ol.named_buffers())
-                                    _ol_kwargs = {
-                                        "weight": _mtp_output_weight,
-                                        "runtime_gather_output": (
-                                            runtime_gather_output
-                                        ),
-                                    }
-                                    mtp_logits, _ = torch.func.functional_call(
-                                        _ol,
-                                        {**_ol_params, **_ol_buffers},
-                                        (_mtp_hs,),
-                                        _ol_kwargs,
+                                    mtp_logits, _ = self_model.output_layer(
+                                        _mtp_hs,
+                                        weight=output_weight,
+                                        runtime_gather_output=runtime_gather_output,
                                     )
-
+                                    # Diagnostic: verify gradient chain is intact
+                                    if self_model.training and _logger.isEnabledFor(10):
+                                        _logger.debug(
+                                            f"[MTPFwdDiag] _mtp_hs.requires_grad={_mtp_hs.requires_grad}, "
+                                            f"_mtp_hs.grad_fn={type(_mtp_hs.grad_fn).__name__ if _mtp_hs.grad_fn else 'None'}, "
+                                            f"mtp_logits.requires_grad={mtp_logits.requires_grad}, "
+                                            f"mtp_logits.grad_fn={type(mtp_logits.grad_fn).__name__ if mtp_logits.grad_fn else 'None'}"
+                                        )
                                     mtp_labels, _ = roll_tensor(
                                         mtp_labels,
                                         shifts=-1,
@@ -1273,6 +1296,12 @@ class MegatronEngine(TrainEngine):
                                         mtp_labels, mtp_logits
                                     )
                                     mtp_loss = loss_mask * mtp_loss
+                                    if self_model.training and _logger.isEnabledFor(10):
+                                        _logger.debug(
+                                            f"[MTPFwdDiag] mtp_loss.requires_grad={mtp_loss.requires_grad}, "
+                                            f"mtp_loss.grad_fn={type(mtp_loss.grad_fn).__name__ if mtp_loss.grad_fn else 'None'}, "
+                                            f"mtp_loss_sum={mtp_loss.sum().item():.6f}"
+                                        )
                                     if self_model.training:
                                         from megatron.core import (
                                             parallel_state,
@@ -1302,8 +1331,7 @@ class MegatronEngine(TrainEngine):
                                         )
 
                                 _logger.debug(
-                                    "[MTPDetach] Applied gradient isolation "
-                                    "in _postprocess (Path 2: detached output_layer)"
+                                    "[MTPDetach] MTP loss computed via direct output_layer"
                                 )
 
                             # Inference last-token optimization
@@ -1416,13 +1444,13 @@ class MegatronEngine(TrainEngine):
 
                         if random.random() < 0.001:
                             self.logger.info(
-                                "[MTPDetach] Comprehensive MTP gradient isolation "
-                                f"enabled (mtp_detach_heads={self.mtp_detach_heads}): "
-                                "Path 1 (removed: MTPLossAutoScaler passthrough is safe), "
-                                "Path 2 (detached output_weight + functional_call for lm_head), "
+                                "[MTPDetach] MTP gradient isolation enabled "
+                                f"(mtp_detach_heads={self.mtp_detach_heads}): "
+                                "Path 2 (direct output_layer call for MTP logits, "
+                                "matching verl/Megatron-Core approach), "
                                 "Path 3 (detached decoder_input + hidden_states for embedding). "
-                                "MTP CE loss gradients will NOT flow through backbone, "
-                                "lm_head, or embedding parameters."
+                                "MTP CE loss gradients will update MTP params and "
+                                "output_layer, but NOT backbone or embedding parameters."
                             )
                     else:
                         self.logger.info(
