@@ -108,6 +108,7 @@ repos:
           - feat
           - fix
           - docs
+          - gov
           - style
           - refactor
           - perf

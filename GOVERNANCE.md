@@ -28,6 +28,7 @@ project.
 | Zhenan Fan               | Huawei                    | @zhenanf          |
 | Ge Shi                   | Huawei                    | @geshi001         |
 | Xiaojie Xu               | Huawei                    | @PrometheusComing |
+| Bingye Chen              | ByteDance                 | @TaoZex           |
 
 **NOTE**: Maintainers from Huawei are the code owners of the `ascend*` branches.
 
