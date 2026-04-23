@@ -140,7 +140,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: path/to/tbench-tasks_convert/tbench-selected-tasks-easy.parquet
+  path: path/to/tbench-selected-tasks-easy.parquet
   type: rl
   max_length: 1024
 
