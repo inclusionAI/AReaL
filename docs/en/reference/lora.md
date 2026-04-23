@@ -145,6 +145,7 @@ A complete working example is available at
 | `use_lora`           | `true`                                                                                  |
 | `lora_delta_sync`    | `true` -- enables the incremental sync path.                                            |
 | `weight_update_mode` | `disk`  |
+| `delta_sync_dir`     | Optional shared filesystem path (e.g. NFS/CPFS) for multi-node setups.  Defaults to `~/.cache/areal/` if not set. |
 | `lora_rank`          | Must match between training and inference configs (e.g. `16`).                          |
 | `lora_alpha`         | LoRA scaling factor, same as standard LoRA.                                             |
 | `sglang.enable_lora` | `true` -- the SGLang server must be launched with LoRA support enabled.                 |
@@ -175,6 +176,12 @@ A complete working example is available at
 - **First sync overhead:** The very first synchronization still transmits the full base
   model, so its cost is comparable to a standard full-weight sync. The savings begin
   from the second synchronization onward.
+- **Multi-node shared filesystem:** In multi-node setups where the training engine and
+  inference engine run on different nodes, the delta sync artifacts (adapter files,
+  base model checkpoints) must be stored on a shared filesystem accessible by all
+  nodes. Use the `delta_sync_dir` parameter to specify a shared path (e.g. an NFS or
+  CPFS mount point). For single-node setups, this parameter can be omitted; the
+  default is `~/.cache/areal/`.
 - **Rollout config:** Set `use_lora: true` in the rollout section as well so that the
   inference engine applies the loaded adapter during generation.
 

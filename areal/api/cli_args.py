@@ -1137,8 +1137,17 @@ class TrainEngineConfig:
             "help": "Enable LoRA delta weight sync. When True, base model weights are "
             "sent only on the first sync; subsequent syncs transmit only the LoRA "
             "adapter weights, significantly reducing communication overhead. "
-            "Requires use_lora=True and weight_update_mode='xccl'. "
+            "Requires use_lora=True. "
             "Only effective with SGLang backend.",
+        },
+    )
+    delta_sync_dir: str | None = field(
+        default=None,
+        metadata={
+            "help": "Shared directory for LoRA delta sync artifacts (adapter files, "
+            "base model checkpoints). Must be on a filesystem accessible by both "
+            "training and inference nodes in multi-node setups. "
+            "Defaults to ~/.cache/areal/ if not set.",
         },
     )
 

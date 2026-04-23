@@ -133,6 +133,7 @@ sglang:
 | `use_lora`             | `true`                                                                   |
 | `lora_delta_sync`      | `true` -- 启用增量同步路径。                                             |
 | `weight_update_mode`   | `disk`  |
+| `delta_sync_dir`      | 可选，多节点共享文件系统路径（如 NFS/CPFS）。单节点可省略（默认 `~/.cache/areal/`）。 |
 | `lora_rank`            | 训练与推理配置中需保持一致（例如 `16`）。                                |
 | `lora_alpha`           | LoRA 缩放系数，与标准 LoRA 相同。                                       |
 | `sglang.enable_lora`   | `true` -- SGLang 服务端必须启用 LoRA 支持。                             |
@@ -156,6 +157,10 @@ sglang:
   `lora-gsm8k-v1`）。在加载新 adapter 之前，会自动卸载旧版本。
 - **首次同步开销：** 首次同步仍需传输完整的基座模型，因此其耗时与标准全量权重同步相当。
   性能提升从第二次同步开始体现。
+- **多节点共享文件系统：** 在多节点环境下，训练引擎和推理引擎可能运行在不同节点上，
+  需要确保 delta sync 产出的文件（adapter、base model checkpoint）存储在共享文件系统上。
+  可通过 `delta_sync_dir` 参数指定共享路径（如 NFS 或 CPFS 挂载点）。
+  单节点环境下无需设置，默认使用 `~/.cache/areal/`。
 - **Rollout 配置：** 需要在 rollout 部分同样设置 `use_lora: true`，以确保推理引擎在生成
   时应用已加载的 adapter。
 
