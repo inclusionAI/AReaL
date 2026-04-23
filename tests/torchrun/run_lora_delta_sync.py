@@ -20,7 +20,7 @@ Note: lora_delta_sync uses disk-based sync for both base model weights
 
 Usage (invoked by the e2e test, not directly):
   torchrun --nproc_per_node=N tests/torchrun/run_lora_delta_sync.py \
-      --backend fsdp:d1t1c1 --output /tmp/result.out
+      --backend fsdp:d1t1 --output /tmp/result.out
 """
 
 import argparse
@@ -33,7 +33,7 @@ import torch.distributed as dist
 
 from tests.utils import get_model_path
 
-from areal.api import FinetuneSpec, WeightUpdateMeta
+from areal.api import FinetuneSpec
 from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
     FSDPEngineConfig,
@@ -125,13 +125,6 @@ def simulate_delta_sync_param_selection(engine: FSDPEngine, base_sync_done: bool
       - base_sync_done=False: iterate ALL parameters (first full sync)
       - base_sync_done=True: iterate only trainable (LoRA) parameters
     """
-    meta = WeightUpdateMeta(
-        type="xccl",
-        use_lora=True,
-        lora_delta_sync=True,
-        base_sync_done=base_sync_done,
-    )
-
     if engine.config.lora_delta_sync and base_sync_done:
         # Subsequent sync: only LoRA (trainable) params
         param_iterator = [
@@ -150,12 +143,26 @@ def simulate_delta_sync_param_selection(engine: FSDPEngine, base_sync_done: bool
 def test_lora_delta_sync(backend: str, output: str | None = None) -> None:
     """Main test logic for LoRA delta sync."""
     rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
     success = True
 
-    print(f"[Rank {rank}] Starting LoRA delta sync test", flush=True)
+    alloc_mode = ModelAllocation.from_str(backend)
+    dp = alloc_mode.parallel.dp
+    tp = alloc_mode.parallel.tp
+
+    print(
+        f"[Rank {rank}] Starting LoRA delta sync test | "
+        f"backend={backend} | dp={dp} tp={tp} | "
+        f"world_size={world_size}",
+        flush=True,
+    )
 
     # Step 1: Create engine with LoRA + delta sync
-    print(f"[Rank {rank}] Creating FSDP engine with LoRA + delta sync", flush=True)
+    print(
+        f"[Rank {rank}] Creating FSDP engine | dp={dp} tp={tp} "
+        f"lora_delta_sync=True weight_update_mode=disk",
+        flush=True,
+    )
     engine = make_fsdp_engine_with_lora(backend)
 
     # Step 2: Verify LoRA parameters exist
@@ -280,8 +287,8 @@ def main():
     parser.add_argument(
         "--backend",
         type=str,
-        default="fsdp:d1t1c1",
-        help="Backend allocation string (e.g., 'fsdp:d1t1c1')",
+        default="fsdp:d1t1",
+        help="Backend allocation string (e.g., 'fsdp:d1t1')",
     )
     args = parser.parse_args()
     test_lora_delta_sync(backend=args.backend, output=args.output)
