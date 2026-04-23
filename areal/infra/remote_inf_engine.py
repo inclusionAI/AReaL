@@ -1525,7 +1525,7 @@ def _update_weights_from_distributed(
 
     async def _fn():
         if meta.lora_delta_sync:
-            logger.info(
+            logger.debug(
                 f"[LoRA Delta Sync] Distributed weight update: "
                 f"base_sync_done={meta.base_sync_done}, "
                 f"num_param_specs={len(param_specs)}, "
@@ -1538,7 +1538,7 @@ def _update_weights_from_distributed(
         )
 
         if meta.lora_delta_sync:
-            logger.info(
+            logger.debug(
                 f"[LoRA Delta Sync] Executing {len(weight_reqs.requests)} "
                 f"sequential HTTP requests across {len(addresses)} servers"
             )
@@ -1551,7 +1551,7 @@ def _update_weights_from_distributed(
         ) as session:
             for req_idx, http_req in enumerate(weight_reqs.requests):
                 if meta.lora_delta_sync:
-                    logger.info(
+                    logger.debug(
                         f"[LoRA Delta Sync] Sending request {req_idx + 1}/"
                         f"{len(weight_reqs.requests)}: "
                         f"{http_req.method} {http_req.endpoint}"
@@ -1646,7 +1646,7 @@ def _load_lora_adapter_on_servers(
                 model_sets = await asyncio.gather(
                     *[_query_available_models(session, a) for a in addresses]
                 )
-                logger.info(
+                logger.debug(
                     f"[LoRA Delta Sync] Pre-unload /v1/models check "
                     f"in {time.monotonic() - precheck_start:.3f}s"
                 )
@@ -1669,7 +1669,7 @@ def _load_lora_adapter_on_servers(
                                     f"(has: {list(ms)})"
                                 )
                     unload_payload = {"lora_name": prev_lora_name}
-                    logger.info(
+                    logger.debug(
                         f"[LoRA Delta Sync] Unloading previous adapter "
                         f"'{prev_lora_name}' before loading '{lora_name}', "
                         f"servers={addresses}"
@@ -1689,7 +1689,7 @@ def _load_lora_adapter_on_servers(
                     ]
                     try:
                         await asyncio.gather(*unload_jobs)
-                        logger.info(
+                        logger.debug(
                             f"[LoRA Delta Sync] Unloaded previous adapter "
                             f"'{prev_lora_name}' in "
                             f"{time.monotonic() - unload_start:.3f}s"
@@ -1702,14 +1702,14 @@ def _load_lora_adapter_on_servers(
                             f"continuing with load..."
                         )
             else:
-                logger.info(
+                logger.debug(
                     f"[LoRA Delta Sync] No previous adapter to unload "
                     f"(first load), proceeding to load '{lora_name}'"
                 )
 
             # Then load the new adapter
             load_payload = {"lora_name": lora_name, "lora_path": lora_path}
-            logger.info(
+            logger.debug(
                 f"[LoRA Delta Sync] Sending /load_lora_adapter, "
                 f"payload={load_payload}, servers={addresses}"
             )
@@ -1788,7 +1788,7 @@ def _unload_lora_adapter_on_servers(
     async def _fn():
         unload_start = time.monotonic()
         unload_payload = {"lora_name": lora_name}
-        logger.info(
+        logger.debug(
             f"[LoRA Delta Sync] Unloading adapter '{lora_name}' "
             f"from {len(addresses)} servers, "
             f"endpoint=/unload_lora_adapter, payload={unload_payload}"

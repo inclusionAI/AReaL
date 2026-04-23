@@ -205,7 +205,7 @@ class SGLangBackend:
             )
 
         # Log first 5 param names for debugging name-matching issues
-        logger.info(
+        logger.debug(
             f"[Weight Update] First 5 param names being sent to SGLang: "
             f"{param_names[:5]}"
         )
@@ -220,7 +220,7 @@ class SGLangBackend:
             else:
                 total_elements += 1
         estimated_size_mb = total_elements * 2 / 1024 / 1024
-        logger.info(
+        logger.debug(
             f"[Weight Update] Total params: {len(param_specs)}, "
             f"estimated payload (fp16): {estimated_size_mb:.2f} MB"
         )
@@ -292,7 +292,7 @@ class SGLangBackend:
             A single request targeting the adapter unload endpoint.
         """
         versioned_name = get_versioned_lora_name(lora_name, version)
-        logger.info(
+        logger.debug(
             f"[LoRA Delta Sync] Building adapter unload request: "
             f"lora_name='{versioned_name}', "
             f"payload={{'lora_name': '{versioned_name}'}}"

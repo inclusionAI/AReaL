@@ -590,7 +590,7 @@ class RolloutController:
             lora_name = payload.get("lora_name", "")
             lora_path = payload.get("lora_path", "")
             prev_lora_name = payload.get("prev_lora_name", None)
-            logger.info(
+            logger.debug(
                 f"[LoRA Delta Sync] Callback received: /load_lora_adapter "
                 f"lora_name='{lora_name}', lora_path='{lora_path}', "
                 f"prev_lora_name={prev_lora_name!r}"
@@ -607,7 +607,7 @@ class RolloutController:
         def unload_lora_adapter():
             payload = request.get_json() or {}
             lora_name = payload.get("lora_name", "")
-            logger.info(
+            logger.debug(
                 f"[LoRA Delta Sync] Callback received: /unload_lora_adapter "
                 f"lora_name='{lora_name}'"
             )
@@ -1092,7 +1092,7 @@ class RolloutController:
         prev_lora_name : str or None
             Name of the previously loaded adapter to unload first.
         """
-        logger.info(
+        logger.debug(
             f"[LoRA Delta Sync] RolloutController.load_lora_adapter: "
             f"dispatching to {len(self.workers)} workers, "
             f"lora_name='{lora_name}', lora_path='{lora_path}', "
@@ -1104,7 +1104,7 @@ class RolloutController:
             lora_path=lora_path,
             prev_lora_name=prev_lora_name,
         )
-        logger.info(
+        logger.debug(
             f"[LoRA Delta Sync] RolloutController.load_lora_adapter: "
             f"all workers completed for '{lora_name}'"
         )
@@ -1117,7 +1117,7 @@ class RolloutController:
         lora_name : str
             The versioned adapter name to unload.
         """
-        logger.info(
+        logger.debug(
             f"[LoRA Delta Sync] RolloutController.unload_lora_adapter: "
             f"dispatching to {len(self.workers)} workers, "
             f"lora_name='{lora_name}'"
@@ -1126,12 +1126,12 @@ class RolloutController:
             await self._collective_rpc_async(
                 "unload_lora_adapter", lora_name=lora_name
             )
-            logger.info(
+            logger.debug(
                 f"[LoRA Delta Sync] RolloutController.unload_lora_adapter: "
                 f"all workers completed for '{lora_name}'"
             )
         except Exception as e:
-            logger.info(
+            logger.debug(
                 f"[LoRA Delta Sync] RolloutController.unload_lora_adapter: "
                 f"failed for '{lora_name}' (type={type(e).__name__}, msg={e}), "
                 f"may be expected if no adapter loaded yet"

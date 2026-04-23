@@ -237,9 +237,6 @@ class FSDPEngine(TrainEngine):
         self._last_loaded_lora_name: str | None = None
 
         # --- Delta Sync cumulative metrics for wandb ---
-        self._delta_sync_step_count: int = 0
-        self._delta_sync_base_bytes_total: int = 0
-        self._delta_sync_adapter_bytes_total: int = 0
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -1139,7 +1136,7 @@ class FSDPEngine(TrainEngine):
 
         if base_sync_done:
             # Collect only trainable LoRA parameters (lora_A, lora_B weights)
-            self.logger.info(
+            self.logger.debug(
                 "[LoRA Delta Sync] Collecting LoRA adapter parameters only "
                 "(base_sync_done=True)"
             )
@@ -1155,14 +1152,14 @@ class FSDPEngine(TrainEngine):
                 tensor = self._get_full_tensor(param)
                 if main_rank:
                     if logged_adapter_examples < 5:
-                        self.logger.info(
+                        self.logger.debug(
                             f"[LoRA Delta Sync] Adapter param [{logged_adapter_examples}]: "
                             f"'{name}' shape={tuple(tensor.shape)} dtype={tensor.dtype}"
                         )
                         logged_adapter_examples += 1
                     collected.append((name, tensor))
             if main_rank:
-                self.logger.info(
+                self.logger.debug(
                     f"[LoRA Delta Sync] Parameter grad stats: "
                     f"requires_grad=True: {trainable_count}, "
                     f"requires_grad=False: {frozen_count}"
@@ -1170,7 +1167,7 @@ class FSDPEngine(TrainEngine):
         else:
             # Collect base model parameters, skipping LoRA-specific ones
             lora_keywords = ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B")
-            self.logger.info(
+            self.logger.debug(
                 "[LoRA Delta Sync] Collecting base model parameters "
                 f"(base_sync_done=False, skipping params matching: {lora_keywords})"
             )
@@ -1195,14 +1192,14 @@ class FSDPEngine(TrainEngine):
                 tensor = self._get_full_tensor(param)
                 if main_rank:
                     if logged_examples < 5:
-                        self.logger.info(
+                        self.logger.debug(
                             f"[LoRA Delta Sync] Base param name mapping: "
                             f"'{original_name}' -> '{name}'"
                         )
                         logged_examples += 1
                     collected.append((name, tensor))
             if main_rank:
-                self.logger.info(
+                self.logger.debug(
                     f"[LoRA Delta Sync] Skipped {skipped_lora_count} "
                     f"LoRA-specific params during base collection"
                 )
@@ -1218,16 +1215,8 @@ class FSDPEngine(TrainEngine):
             )
             # Report param collection metrics to wandb
             if base_sync_done:
-                stats_tracker.scalar(
-                    **{"delta_sync/adapter_params_count": total_params}
-                )
-                stats_tracker.scalar(**{"delta_sync/adapter_bytes": total_bytes})
                 stats_tracker.scalar(**{"delta_sync/adapter_mb": total_mb})
             else:
-                stats_tracker.scalar(
-                    **{"delta_sync/base_params_count": total_params}
-                )
-                stats_tracker.scalar(**{"delta_sync/base_bytes": total_bytes})
                 stats_tracker.scalar(**{"delta_sync/base_mb": total_mb})
 
         return collected
@@ -1540,11 +1529,10 @@ class FSDPEngine(TrainEngine):
             f"in {save_elapsed:.3f}s"
         )
         stats_tracker.scalar(**{"delta_sync/disk_save_s": save_elapsed})
-        stats_tracker.scalar(**{"delta_sync/safetensors_file_mb": file_size_mb})
 
         # Log first 5 state_dict keys after adapter name stripping
         example_keys = list(state_dict.keys())[:5]
-        self.logger.info(
+        self.logger.debug(
             f"[LoRA Delta Sync] First 5 state_dict keys in safetensors: "
             f"{example_keys}"
         )
@@ -1559,7 +1547,7 @@ class FSDPEngine(TrainEngine):
                         f"{len(saved_keys)} tensors but expected {len(state_dict)}"
                     )
                 else:
-                    self.logger.info(
+                    self.logger.debug(
                         f"[LoRA Delta Sync] Verification OK: safetensors "
                         f"contains {len(saved_keys)} tensors"
                     )
@@ -1598,11 +1586,11 @@ class FSDPEngine(TrainEngine):
         config_path = os.path.join(adapter_dir, "adapter_config.json")
         with open(config_path, "w") as f:
             json.dump(adapter_config, f, indent=2)
-        self.logger.info(
+        self.logger.debug(
             f"[LoRA Delta Sync] Saved adapter_config.json to {config_path} "
             f"in {time.monotonic() - step_start:.3f}s"
         )
-        self.logger.info(
+        self.logger.debug(
             f"[LoRA Delta Sync] adapter_config content: "
             f"r={adapter_config['r']}, lora_alpha={adapter_config['lora_alpha']}, "
             f"target_modules={adapter_config['target_modules']}, "
@@ -1611,7 +1599,7 @@ class FSDPEngine(TrainEngine):
 
         # Log example original param names for debugging
         example_names = [n for n, _ in adapter_params[:5]]
-        self.logger.info(
+        self.logger.debug(
             f"[LoRA Delta Sync] First 5 original adapter param names: {example_names}"
         )
 
@@ -1650,7 +1638,7 @@ class FSDPEngine(TrainEngine):
                 try:
                     import shutil
                     shutil.rmtree(old_adapter_dir)
-                    self.logger.info(
+                    self.logger.debug(
                         f"[LoRA Delta Sync] Cleaned up old adapter directory: "
                         f"{old_adapter_dir}"
                     )
@@ -1666,30 +1654,7 @@ class FSDPEngine(TrainEngine):
         )
 
         # --- Delta Sync per-step metrics for wandb ---
-        self._delta_sync_step_count += 1
-        adapter_bytes = sum(t.numel() * t.element_size() for _, t in adapter_params)
-        self._delta_sync_adapter_bytes_total += adapter_bytes
-
         stats_tracker.scalar(**{"delta_sync/save_and_load_total_s": total_elapsed})
-
-        # Bandwidth savings: compare adapter-only vs full-model sync
-        if self._delta_sync_base_bytes_total > 0:
-            savings_ratio = 1.0 - (
-                adapter_bytes / self._delta_sync_base_bytes_total
-            )
-            stats_tracker.scalar(
-                **{"delta_sync/bandwidth_savings_ratio": savings_ratio}
-            )
-            self.logger.info(
-                f"[LoRA Delta Sync] Bandwidth savings: "
-                f"adapter={adapter_bytes / 1024 / 1024:.2f} MB vs "
-                f"base={self._delta_sync_base_bytes_total / 1024 / 1024:.2f} MB, "
-                f"savings={savings_ratio * 100:.1f}%"
-            )
-
-        stats_tracker.scalar(
-            **{"delta_sync/step_count": self._delta_sync_step_count}
-        )
         stats_tracker.scalar(
             **{"delta_sync/is_incremental": 1.0 if self._base_sync_done else 0.0}
         )

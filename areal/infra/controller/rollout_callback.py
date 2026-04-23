@@ -207,7 +207,7 @@ class RolloutCallback:
         Future[None]
             Future that completes when all servers have loaded the adapter.
         """
-        logger.info(
+        logger.debug(
             f"[LoRA Delta Sync] RolloutCallback.load_lora_adapter: "
             f"lora_name='{lora_name}', lora_path='{lora_path}', "
             f"prev_lora_name={prev_lora_name!r}"
@@ -232,7 +232,7 @@ class RolloutCallback:
         Future[None]
             Future that completes when all servers have processed the unload.
         """
-        logger.info(
+        logger.debug(
             f"[LoRA Delta Sync] RolloutCallback.unload_lora_adapter: "
             f"lora_name='{lora_name}'"
         )
