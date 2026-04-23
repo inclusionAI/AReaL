@@ -202,11 +202,86 @@ def _validate_weight_update_correctness(
     )
 
 
+def _validate_weight_update_correctness_megatron(
+    train_worker_urls: list[str],
+    inf_worker_url: str,
+    param_dir,
+) -> None:
+    import concurrent.futures
+
+    n_train = len(train_worker_urls)
+    print(
+        f"\n[weight-validation] Fetching parameters from {n_train} Megatron "
+        f"worker(s) and 1 inference worker …"
+    )
+
+    train_paths = [
+        str(param_dir / f"megatron_train_params_rank{i}.pt") for i in range(n_train)
+    ]
+
+    def _fetch_train(args):
+        i, url, p = args
+        resp = httpx.post(
+            f"{url}/awex/debug/get_parameters",
+            json={"save_path": p, "names": _VALIDATE_PARAM_NAMES},
+            timeout=120.0,
+        )
+        assert resp.status_code == 200, (
+            f"get_parameters failed on training worker {i}: {resp.text}"
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_train) as pool:
+        list(
+            pool.map(
+                _fetch_train,
+                [
+                    (i, url, p)
+                    for i, (url, p) in enumerate(zip(train_worker_urls, train_paths))
+                ],
+            )
+        )
+
+    inf_path = str(param_dir / "megatron_infer_params.pt")
+    resp = httpx.post(
+        f"{inf_worker_url}/awex/debug/get_parameters",
+        json={"save_path": inf_path, "names": _VALIDATE_PARAM_NAMES},
+        timeout=120.0,
+    )
+    assert resp.status_code == 200, (
+        f"get_parameters failed on inference worker: {resp.text}"
+    )
+
+    infer_params = torch.load(inf_path, map_location="cpu", weights_only=True)
+    train_params = torch.load(train_paths[0], map_location="cpu", weights_only=True)
+
+    print(f"[weight-validation] Comparing {len(_VALIDATE_PARAM_NAMES)} parameters …")
+    for name in _VALIDATE_PARAM_NAMES:
+        assert name in infer_params, f"Inference missing param: {name}"
+        assert name in train_params, f"Training rank 0 missing param: {name}"
+
+        torch.testing.assert_close(
+            train_params[name],
+            infer_params[name],
+            rtol=0,
+            atol=0,
+            msg=f"Parameter mismatch after weight update: {name}",
+        )
+        print(
+            f"[weight-validation]   {name}: OK "
+            f"(shape={list(train_params[name].shape)}, dtype={train_params[name].dtype})"
+        )
+
+    print(
+        f"[weight-validation] All {len(_VALIDATE_PARAM_NAMES)} parameters "
+        f"match between Megatron training and inference ✓"
+    )
+
+
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 @pytest.mark.sglang
 @pytest.mark.parametrize("n_gpus", [2, 4, 8], ids=["2gpu", "4gpu", "8gpu"])
-def test_awex_e2e_weight_update(n_gpus, tmp_path_factory):
+def test_awex_fsdp_e2e_weight_update(n_gpus, tmp_path_factory):
     """Full round trip: FSDPEngine (pure DP) → weight-update gateway → SGLang.
 
     A single :class:`LocalScheduler` owns all *n_gpus* devices.  Inference
@@ -349,6 +424,314 @@ def test_awex_e2e_weight_update(n_gpus, tmp_path_factory):
 
         # -- 6. Validate training ↔ inference parameter equality ----------
         _validate_weight_update_correctness(
+            train_worker_urls=train_worker_urls,
+            inf_worker_url=inf_worker_urls[0],
+            param_dir=tmp,
+        )
+
+    finally:
+        if wu_ctrl is not None:
+            wu_ctrl.destroy()
+        train_ctrl.destroy()
+        inf_ctrl.destroy()
+        scheduler.delete_workers(None)
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.sglang
+@pytest.mark.parametrize("n_gpus", [2, 4, 8], ids=["2gpu", "4gpu", "8gpu"])
+def test_awex_megatron_e2e_weight_update(n_gpus, tmp_path_factory):
+    """Full round trip: MegatronEngine (pure DP) → weight-update gateway → SGLang.
+
+    Mirrors test_awex_e2e_weight_update but uses MegatronLMEngine as the
+    training backend.  DP-only (tp=1, pp=1): every training rank holds a full
+    copy of every parameter, so validation compares rank-0's params directly
+    against the inference server without any concatenation.
+    """
+    if current_platform.device_count() < n_gpus:
+        pytest.skip(f"This test requires {n_gpus} GPUs")
+
+    from areal.api import FinetuneSpec
+    from areal.api.cli_args import (
+        OptimizerConfig,
+        SchedulingSpec,
+        TrainEngineConfig,
+    )
+    from areal.experimental.inference_service.controller.config import (
+        GatewayControllerConfig,
+    )
+    from areal.experimental.inference_service.controller.controller import (
+        GatewayInferenceController,
+    )
+    from areal.experimental.training_service.controller.controller import (
+        GatewayTrainController,
+    )
+    from areal.experimental.weight_update.controller import (
+        WeightUpdateController,
+        WeightUpdateControllerConfig,
+    )
+
+    n_half = n_gpus // 2
+    tmp = tmp_path_factory.mktemp("awex_megatron_e2e")
+    model_path = _get_test_model_path()
+
+    scheduler = _make_local_scheduler(
+        tmp, "megatron-e2e", gpu_devices=list(range(n_gpus))
+    )
+
+    inf_config = GatewayControllerConfig(
+        tokenizer_path=model_path,
+        model_path=model_path,
+        backend=f"sglang:d{n_half}",
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=1,
+                cmd="python -m areal.experimental.inference_service.guard",
+            ),
+        ),
+        consumer_batch_size=8,
+        max_head_offpolicyness=1024,
+        setup_timeout=300.0,
+        admin_api_key="test-admin",
+    )
+    inf_ctrl = GatewayInferenceController(config=inf_config, scheduler=scheduler)
+
+    train_config = TrainEngineConfig(
+        backend=f"megatron:d{n_half}",
+        experiment_name="test-awex-megatron-e2e",
+        trial_name="t0",
+        path=model_path,
+        optimizer=OptimizerConfig(),
+        _version="v2",
+        setup_timeout=300.0,
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=1,
+                cmd="python -m areal.experimental.training_service.guard",
+                env_vars=dict(NCCL_CUMEM_ENABLE="0", NCCL_NVLS_ENABLE="0"),
+            ),
+        ),
+    )
+    train_ctrl = GatewayTrainController(
+        train_engine="areal.engine.megatron_engine.MegatronLMEngine",
+        config=train_config,
+        scheduler=scheduler,
+    )
+
+    wu_ctrl: WeightUpdateController | None = None
+
+    try:
+        inf_ctrl.initialize(
+            role="rollout",
+            server_args={"mem_fraction_static": 0.7},
+        )
+        inf_worker_urls = list(inf_ctrl._inf_addrs)
+
+        for url in inf_worker_urls:
+            resp = httpx.post(f"{url}/awex/debug/randomize_parameters", timeout=120.0)
+            assert resp.status_code == 200, f"randomize_parameters failed: {resp.text}"
+
+        ft_spec = FinetuneSpec(
+            total_train_epochs=1, dataset_size=100, train_batch_size=2
+        )
+        train_ctrl.initialize(role="actor", ft_spec=ft_spec)
+        train_worker_urls = list(train_ctrl._worker_addrs)
+
+        wu_ctrl = WeightUpdateController(
+            config=WeightUpdateControllerConfig(
+                host="127.0.0.1",
+                request_timeout=300.0,
+            )
+        )
+        wu_ctrl.initialize()
+
+        assert wu_ctrl.health_check(), "Weight update gateway health check failed"
+
+        wu_ctrl.connect(
+            pair_name="test_megatron_e2e",
+            train_worker_urls=train_worker_urls,
+            inference_worker_urls=inf_worker_urls,
+        )
+
+        result = wu_ctrl.update_weights(version=1)
+        assert result.status == "ok"
+        assert result.version == 1
+
+        wu_ctrl.disconnect()
+
+        gen_resp = httpx.post(
+            f"{inf_worker_urls[0]}/generate",
+            json={
+                "text": "Hello",
+                "sampling_params": {"max_new_tokens": 5, "temperature": 0},
+            },
+            timeout=30.0,
+        )
+        assert gen_resp.status_code == 200, (
+            f"Generation failed after weight update: {gen_resp.text}"
+        )
+
+        _validate_weight_update_correctness_megatron(
+            train_worker_urls=train_worker_urls,
+            inf_worker_url=inf_worker_urls[0],
+            param_dir=tmp,
+        )
+
+    finally:
+        if wu_ctrl is not None:
+            wu_ctrl.destroy()
+        train_ctrl.destroy()
+        inf_ctrl.destroy()
+        scheduler.delete_workers(None)
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.sglang
+@pytest.mark.parametrize(
+    "n_gpus,tp_size",
+    [(4, 2), (8, 2), (8, 4)],
+    ids=["4gpu-tp2", "8gpu-tp2", "8gpu-tp4"],
+)
+def test_awex_megatron_tp_e2e_weight_update(n_gpus, tp_size, tmp_path_factory):
+    """Full round trip: MegatronEngine (DP+TP) → weight-update gateway → SGLang.
+
+    Uses dp_replicated=True in parallelism_strategy so awex knows TP ranks
+    within a DP group all hold the same full parameter (gathered via
+    all_gather_param) and only one rank per group needs to send.
+
+    Minimum 4 GPUs: 2 for SGLang inference, 2 for Megatron (dp=1, tp=2).
+    """
+    if current_platform.device_count() < n_gpus:
+        pytest.skip(f"This test requires {n_gpus} GPUs")
+
+    from areal.api import FinetuneSpec
+    from areal.api.cli_args import (
+        OptimizerConfig,
+        SchedulingSpec,
+        TrainEngineConfig,
+    )
+    from areal.experimental.inference_service.controller.config import (
+        GatewayControllerConfig,
+    )
+    from areal.experimental.inference_service.controller.controller import (
+        GatewayInferenceController,
+    )
+    from areal.experimental.training_service.controller.controller import (
+        GatewayTrainController,
+    )
+    from areal.experimental.weight_update.controller import (
+        WeightUpdateController,
+        WeightUpdateControllerConfig,
+    )
+
+    n_infer = n_gpus // 2
+    n_train = n_gpus - n_infer
+    dp_size = n_train // tp_size
+    if dp_size < 1:
+        pytest.skip(f"Not enough GPUs for dp={dp_size} tp={tp_size}")
+
+    tmp = tmp_path_factory.mktemp("awex_megatron_tp_e2e")
+    model_path = _get_test_model_path()
+
+    scheduler = _make_local_scheduler(
+        tmp, "megatron-tp-e2e", gpu_devices=list(range(n_gpus))
+    )
+
+    inf_config = GatewayControllerConfig(
+        tokenizer_path=model_path,
+        model_path=model_path,
+        backend=f"sglang:d{n_infer}",
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=1,
+                cmd="python -m areal.experimental.inference_service.guard",
+            ),
+        ),
+        consumer_batch_size=8,
+        max_head_offpolicyness=1024,
+        setup_timeout=300.0,
+        admin_api_key="test-admin",
+    )
+    inf_ctrl = GatewayInferenceController(config=inf_config, scheduler=scheduler)
+
+    train_config = TrainEngineConfig(
+        backend=f"megatron:d{dp_size}t{tp_size}",
+        experiment_name="test-awex-megatron-tp-e2e",
+        trial_name="t0",
+        path=model_path,
+        optimizer=OptimizerConfig(),
+        _version="v2",
+        setup_timeout=300.0,
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=1,
+                cmd="python -m areal.experimental.training_service.guard",
+                env_vars=dict(NCCL_CUMEM_ENABLE="0", NCCL_NVLS_ENABLE="0"),
+            ),
+        ),
+    )
+    train_ctrl = GatewayTrainController(
+        train_engine="areal.engine.megatron_engine.MegatronLMEngine",
+        config=train_config,
+        scheduler=scheduler,
+    )
+
+    wu_ctrl: WeightUpdateController | None = None
+
+    try:
+        inf_ctrl.initialize(
+            role="rollout",
+            server_args={"mem_fraction_static": 0.7},
+        )
+        inf_worker_urls = list(inf_ctrl._inf_addrs)
+
+        for url in inf_worker_urls:
+            resp = httpx.post(f"{url}/awex/debug/randomize_parameters", timeout=120.0)
+            assert resp.status_code == 200, f"randomize_parameters failed: {resp.text}"
+
+        ft_spec = FinetuneSpec(
+            total_train_epochs=1, dataset_size=100, train_batch_size=2
+        )
+        train_ctrl.initialize(role="actor", ft_spec=ft_spec)
+        train_worker_urls = list(train_ctrl._worker_addrs)
+
+        wu_ctrl = WeightUpdateController(
+            config=WeightUpdateControllerConfig(
+                host="127.0.0.1",
+                request_timeout=300.0,
+            )
+        )
+        wu_ctrl.initialize()
+
+        assert wu_ctrl.health_check(), "Weight update gateway health check failed"
+
+        wu_ctrl.connect(
+            pair_name="test_megatron_tp_e2e",
+            train_worker_urls=train_worker_urls,
+            inference_worker_urls=inf_worker_urls,
+        )
+
+        result = wu_ctrl.update_weights(version=1)
+        assert result.status == "ok"
+        assert result.version == 1
+
+        wu_ctrl.disconnect()
+
+        gen_resp = httpx.post(
+            f"{inf_worker_urls[0]}/generate",
+            json={
+                "text": "Hello",
+                "sampling_params": {"max_new_tokens": 5, "temperature": 0},
+            },
+            timeout=30.0,
+        )
+        assert gen_resp.status_code == 200, (
+            f"Generation failed after weight update: {gen_resp.text}"
+        )
+
+        _validate_weight_update_correctness_megatron(
             train_worker_urls=train_worker_urls,
             inf_worker_url=inf_worker_urls[0],
             param_dir=tmp,
