@@ -164,12 +164,12 @@ class SGLangBackend:
     ) -> WeightUpdateRequests:
         """Build SGLang distributed weight update requests.
 
+        Note: SGLang distributed weight update (NCCL-based) does not support LoRA.
+        For LoRA weight updates with SGLang, use disk-based update mode instead.
+
         When lora_delta_sync is enabled, both base-model and adapter weights
         are synced via disk (``/update_weights_from_disk`` for the base model
-        and ``/load_lora_adapter`` for the adapter).  The FSDP engine
-        dispatches to :meth:`FSDPEngine._update_weights_delta_sync_disk`
-        in that case, so this method should **not** be called for
-        delta-sync flows.
+        and ``/load_lora_adapter`` for the adapter).
 
         For non-delta-sync LoRA, the original error is preserved to guide
         users towards disk-based updates.
@@ -204,7 +204,6 @@ class SGLangBackend:
                 f"requests for {len(param_specs)} base params"
             )
 
-        # Log first 5 param names for debugging name-matching issues
         logger.debug(
             f"[Weight Update] First 5 param names being sent to SGLang: "
             f"{param_names[:5]}"
