@@ -99,10 +99,8 @@ def mock_areal_client():
 @pytest_asyncio.fixture
 async def app_client(config, mock_tokenizer, mock_areal_client):
     """Create an ASGI test client with all app.state attributes injected."""
-    from areal.experimental.inference_service.data_proxy.backend import (
-        SGLangBridgeBackend,
-    )
-    from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
 
     app = create_app(config)
 

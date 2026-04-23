@@ -68,10 +68,47 @@ def preprocess_packed_seqs_context_parallel(
     return splitted.unsqueeze(0), packed_seq_params
 
 
+def split_packed_seqs_for_context_parallel(
+    tensor: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+) -> torch.Tensor:
+    """Split a 1D packed tensor using the same interleaved pattern as
+    preprocess_packed_seqs_context_parallel."""
+    cp_size = mpu.get_context_parallel_world_size()
+    cp_rank = mpu.get_context_parallel_rank()
+    if cp_size <= 1:
+        return tensor
+
+    input_lens = cu_seqlens[1:] - cu_seqlens[:-1]
+    batch_size = input_lens.shape[0]
+    output_len = input_lens.sum().item() // cp_size
+
+    splitted = torch.zeros(output_len, dtype=tensor.dtype, device=tensor.device)
+    for i in range(batch_size):
+        seqlen = input_lens[i] // cp_size
+        half_seqlen = seqlen // 2
+        start_idx = cu_seqlens[i] // cp_size
+
+        d = tensor[cu_seqlens[i] : cu_seqlens[i + 1]]
+        splitted[start_idx : start_idx + half_seqlen] = d[
+            half_seqlen * cp_rank : half_seqlen * (cp_rank + 1)
+        ]
+
+        remain_start = input_lens[i] - half_seqlen * (cp_rank + 1)
+        remain_end = input_lens[i] - half_seqlen * cp_rank
+        remain_end = min(remain_end, d.shape[0])
+        remain_len = remain_end - remain_start
+        splitted[start_idx + half_seqlen : start_idx + half_seqlen + remain_len] = d[
+            remain_start:remain_end
+        ]
+    return splitted
+
+
 def postprocess_packed_seqs_context_parallel(
     output: torch.Tensor,
     cu_seqlens: torch.Tensor | None,
     post_process: bool,
+    gather_output: bool = True,
 ) -> torch.Tensor:
     """
     Postprocess packed sequences
@@ -81,6 +118,10 @@ def postprocess_packed_seqs_context_parallel(
         return output
     if cp_size <= 1 or cu_seqlens is None:
         return output.squeeze(0)
+
+    if not gather_output:
+        return output.squeeze(0)
+
     # shape = [batch_size, seq_len] + list(output.shape[2:])
     # [1, packed, dim] -> [batch_size, seq_len, dim]
     batch_size = cu_seqlens.shape[0] - 1
@@ -125,6 +166,7 @@ def postprocess_packed_seqs_context_parallel(
 def packed_context_parallel_forward(
     model: torch.nn.Module,
     input_: dict[str, Any],
+    gather_cp_output: bool = True,
 ):
     input_ids = input_["input_ids"]
     position_ids = input_["position_ids"]
@@ -170,6 +212,6 @@ def packed_context_parallel_forward(
         ignore_virtual=False, vp_stage=model_vp_stage
     )
     output = postprocess_packed_seqs_context_parallel(
-        output, cu_seqlens, is_pipeline_last_stage
+        output, cu_seqlens, is_pipeline_last_stage, gather_output=gather_cp_output
     )
     return output

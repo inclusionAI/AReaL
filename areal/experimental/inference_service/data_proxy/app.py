@@ -15,12 +15,7 @@ from fastapi.responses import Response as RawResponse
 from fastapi.responses import StreamingResponse
 from flask import Flask
 
-from areal.experimental.inference_service.data_proxy.backend import (
-    SGLangBridgeBackend,
-    VLLMBridgeBackend,
-)
 from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
-from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
 from areal.experimental.inference_service.data_proxy.pause import PauseState
 from areal.experimental.inference_service.data_proxy.session import (
     ExportTrajectoriesRequest,
@@ -35,6 +30,9 @@ from areal.experimental.inference_service.data_proxy.session import (
 from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
     TokenizerProxy,
 )
+from areal.experimental.inference_service.inf_bridge import InfBridge
+from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
+from areal.experimental.inference_service.vllm.bridge import VLLMBridgeBackend
 from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.proxy.server import serialize_interactions
 from areal.infra.rpc.guard.data_blueprint import (
