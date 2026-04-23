@@ -180,6 +180,12 @@ class SFTTrainer:
 
             self.saver.maybe_wait_for_staging()
 
+            if (
+                config.memory_profiler is not None
+                and global_step in config.memory_profiler.profile_steps
+            ):
+                self.actor.start_memory_profile(config.memory_profiler.max_entries)
+
             with (
                 stats_tracker.record_timing("train_step"),
                 perf_tracer.trace_scope(
@@ -191,6 +197,18 @@ class SFTTrainer:
                 self.actor.train_lm(batch)
                 self.actor.step_lr_scheduler()
                 self.actor.get_device_stats().log("after train step")
+
+            if (
+                config.memory_profiler is not None
+                and global_step in config.memory_profiler.profile_steps
+            ):
+                log_dir = StatsLogger.get_log_path(config.stats_logger)
+                snapshot_dir = os.path.join(
+                    log_dir, "memory_snapshots", f"step_{global_step}"
+                )
+                os.makedirs(snapshot_dir, exist_ok=True)
+                self.actor.stop_memory_profile(snapshot_dir)
+                logger.info(f"Memory snapshots saved to {snapshot_dir}")
 
             self.actor.set_version(global_step + 1)
 

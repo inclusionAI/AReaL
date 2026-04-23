@@ -2342,6 +2342,25 @@ class SessionTracerConfig:
 
 
 @dataclass
+class MemoryProfilerConfig:
+    """CUDA memory snapshot profiling configuration.
+
+    Attributes:
+        profile_steps: Steps at which to record memory snapshots.
+        max_entries: Max entries for torch.cuda.memory._record_memory_history.
+    """
+
+    profile_steps: list[int] = field(
+        default_factory=lambda: [0, 1],
+        metadata={"help": "List of global steps to capture memory snapshots."},
+    )
+    max_entries: int = field(
+        default=100000,
+        metadata={"help": "Max entries for memory history ring buffer."},
+    )
+
+
+@dataclass
 class PerfTracerConfig:
     """Configuration for perf tracer emission."""
 
@@ -2606,6 +2625,12 @@ class BaseExperimentConfig:
     perf_tracer: PerfTracerConfig | None = field(
         default=None,
         metadata={"help": "Performance tracer configuration. None means disabled."},
+    )
+    memory_profiler: MemoryProfilerConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Memory snapshot profiler configuration. None means disabled."
+        },
     )
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
