@@ -128,8 +128,8 @@ def _compute_reasonmap_plus_score(prediction: str, ground_truth, qtype: str = ""
     return compute_score(prediction, ground_truth)
 
 
-def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) -> float:
-    """ReasonMap base: route topology verification."""
+def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) -> tuple[float, str]:
+    """ReasonMap base: route topology verification. Returns (score, failure_reason)."""
     from geo_edit.evaluation.reason_map_verifier import reason_map_score
 
     station_1 = extra.get("station_1", "")
@@ -140,7 +140,7 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
         try:
             metro_data = json.loads(metro_raw)
         except (json.JSONDecodeError, TypeError):
-            return 0.0
+            return 0.0, "metro_data_parse_failed"
     else:
         metro_data = metro_raw if isinstance(metro_raw, dict) else {}
 
@@ -160,18 +160,18 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
                         dep = route.get("departure_stop", "").lower()
                         arr = route.get("arrival_stop", "").lower()
                         if not (rn and dep and arr and rn in pred_lower and dep in pred_lower and arr in pred_lower):
-                            return 0.0
+                            return 0.0, "no_metro_data_fallback_failed"
                 if total_routes > 0:
-                    return 1.0
+                    return 1.0, "valid"
         except (json.JSONDecodeError, TypeError, AttributeError):
             pass
-        return compute_score(prediction, ground_truth)
+        return compute_score(prediction, ground_truth), "no_metro_data_text_match"
 
     try:
-        score, _ = reason_map_score(prediction, station_1, station_2, metro_data)
+        score, reason = reason_map_score(prediction, station_1, station_2, metro_data)
     except Exception:
-        return 0.0
-    return score
+        return 0.0, "exception"
+    return score, reason
 
 
 def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.3, hi: float = 0.8) -> tuple[float, float]:
@@ -301,7 +301,9 @@ class GeoVisionQARewardManager:
                 extra = reward_model.get("extra", {})
                 if not isinstance(extra, dict):
                     extra = {}
-            return _compute_reasonmap_base_score(prediction, ground_truth, extra)
+            score, reason = _compute_reasonmap_base_score(prediction, ground_truth, extra)
+            self._last_reasonmap_reason = reason
+            return score
 
         if data_source == "map_trace":
             score, _ = _compute_map_trace_score(prediction, ground_truth)
@@ -373,7 +375,8 @@ class GeoVisionQARewardManager:
             num_turns = data_item.non_tensor_batch.get("__num_turns__", 2)
             if hasattr(num_turns, '__len__'):
                 num_turns = int(num_turns[0]) if len(num_turns) > 0 else 2
-            r_rep = _compute_repetition_penalty(response_str, int(num_turns))
+            model_only_text = re.sub(r"<\|im_start\|>user\n.*?<\|im_end\|>", "", response_str, flags=re.DOTALL)
+            r_rep = _compute_repetition_penalty(model_only_text, int(num_turns))
 
             # R_format: format compliance
             r_format = _compute_format_reward(response_str)
@@ -388,9 +391,22 @@ class GeoVisionQARewardManager:
             llm_overturned = 0.0
             if accuracy == 0.0 and prediction and self.judge is not None and data_source != "map_trace":
                 llm_called = 1.0
-                if self._llm_judge_fallback(prompt_str, ground_truth, prediction):
-                    accuracy = 1.0
-                    llm_overturned = 1.0
+                if data_source == "reason_map":
+                    reason = getattr(self, "_last_reasonmap_reason", "")
+                    judge_gt = (
+                        f"Rule-based verifier failed: {reason}\n"
+                        f"Ground truth route: {ground_truth}\n"
+                        "Compare ONLY: route names, departure/arrival stations, and transfer connections.\n"
+                        "Ignore minor differences like 'Station' suffix, '站' suffix, 'Line' vs '号线' naming.\n"
+                        "If the predicted route is topologically equivalent to the ground truth, answer YES."
+                    )
+                    if self._llm_judge_fallback(prompt_str, judge_gt, prediction):
+                        accuracy = 1.0
+                        llm_overturned = 1.0
+                else:
+                    if self._llm_judge_fallback(prompt_str, ground_truth, prediction):
+                        accuracy = 1.0
+                        llm_overturned = 1.0
 
             r_correct = accuracy if data_source == "map_trace" else (1.0 if accuracy > 0 else 0.0)
 

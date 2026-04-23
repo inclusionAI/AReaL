@@ -19,7 +19,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-gigpo-4node_0422v5_nomapqasft"
+run_name="mixed-gigpo-4node_0423v6_nomapqasft"
 rl_alg=gigpo
  
 # ---- Cluster topology ----
@@ -28,7 +28,7 @@ n_nodes=4
 
 # ---- Batch sizes (scaled for 4 nodes) ----
 n=4
-batch_size=128
+batch_size=64
 ppo_mini_batch_size=128
 
 # ---- Sequence lengths ----
@@ -56,8 +56,8 @@ reward_manager=geo_vision_qa
 # ---- Training ----
 strategy="fsdp2"
 lr=1e-6
-kl_loss_coef=0.0
-kl_coef=0.001
+kl_loss_coef=0.001
+kl_coef=0.0
 entropy_coeff=0
 kl_loss_type=low_var_kl
 
@@ -165,7 +165,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     actor_rollout_ref.actor.use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$ppo_max_token_len_per_gpu \
-    actor_rollout_ref.actor.use_kl_loss=False \
+    actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.strategy=$strategy \
     actor_rollout_ref.actor.kl_loss_coef=$kl_loss_coef \
     actor_rollout_ref.actor.kl_loss_type=$kl_loss_type \
@@ -219,12 +219,12 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     critic.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     critic.ulysses_sequence_parallel_size=$ulysses_sequence_parallel_size \
     algorithm.kl_ctrl.kl_coef=$kl_coef \
-    algorithm.use_kl_in_reward=True \
+    algorithm.use_kl_in_reward=False \
     +algorithm.overturn_masking=False \
     trainer.logger=['console','wandb'] \
     trainer.project_name=mixed_rl \
     trainer.experiment_name=$run_name \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=$WORKSPACE/checkpoints/$run_name \
     trainer.n_gpus_per_node=$n_gpus_per_node \
@@ -234,7 +234,8 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
     trainer.total_epochs=$total_epochs \
-    trainer.resume_mode=auto \
+    trainer.resume_mode=resume_path \
+    trainer.resume_from_path=$WORKSPACE/checkpoints/$run_name/global_step_120 \
     2>&1 | tee $WORKSPACE/logs/$run_name/train.log
 
 echo "Training finished"

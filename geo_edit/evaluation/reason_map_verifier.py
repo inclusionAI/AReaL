@@ -26,7 +26,7 @@ _STATION_ANNOTATIONS = re.compile(
     r"|2线起始站|\d+线起始站)"
     r"[）)]\s*"
 )
-_SUFFIX_STATION = re.compile(r"站$")
+_SUFFIX_STATION = re.compile(r"(?:站|[Ss]tation)\s*$")
 _PARENS = re.compile(r"[（(].+?[）)]")
 _NUMBER_RE = re.compile(r"\d+")
 _CN_DIGITS = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5",

@@ -40,16 +40,10 @@ TASK_PROMPTS = {
 
 
 _NUM_PLACEHOLDER = re.compile(r"\d+")
-# Matches a CJK substring of 2-30 chars that repeats 5+ times consecutively
-_INLINE_REPEAT = re.compile(r"([\u4e00-\u9fff]{4,30}?)\1{4,}")
+_INLINE_REPEAT = re.compile(r"(.{1,30}?)\1{9,}")
 
 
 def _collapse_inline_repeats(text: str, keep: int = 3) -> str:
-    """Replace long runs of repeated substrings within a line.
-
-    e.g. "东莞南北东莞南北东莞南北...×200" → "东莞南北东莞南北东莞南北"
-    Keeps ``keep`` copies of the repeated unit.
-    """
     def _replace(m: re.Match) -> str:
         return m.group(1) * keep
 
