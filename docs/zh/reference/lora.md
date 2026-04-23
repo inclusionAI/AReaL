@@ -139,30 +139,6 @@ sglang:
 | `sglang.enable_lora`   | `true` -- SGLang 服务端必须启用 LoRA 支持。                             |
 | `sglang.max_lora_rank` | 必须 >= 训练引擎使用的 `lora_rank`。                                    |
 
-### 性能收益
-
-- **传输量大幅减少：** Adapter 权重通常不到模型总参数的 1%。以 70B 模型、`lora_rank=16`
-  为例，adapter 仅有几百 MB，而全量模型权重则高达数十 GB。
-- **同步延迟更低：** 在一次性的基座模型同步完成后，每次后续权重更新仅需极短时间即可完成。
-- **GPU 利用率更高：** 权重传输时间减少意味着更多时间可用于训练和推理计算。
-
-### 注意事项
-
-- **SGLang memory saver：** 当 SGLang 配置中设置了 `enable_lora` 时，启动器会自动启用
-  `enable_memory_saver=True`。此选项使基座模型权重在迭代之间保留在 GPU 显存中（仅释放
-  KV cache），从而避免重复传输基座权重。
-- **SGLang 版本兼容性：** SGLang 服务端必须支持 `/load_lora_adapter` 和
-  `/update_weights_from_disk` API 端点。请确保使用兼容的 SGLang 版本。
-- **Adapter 版本管理：** 每次同步会生成带版本号的 adapter 名称（例如 `lora-gsm8k-v0`、
-  `lora-gsm8k-v1`）。在加载新 adapter 之前，会自动卸载旧版本。
-- **首次同步开销：** 首次同步仍需传输完整的基座模型，因此其耗时与标准全量权重同步相当。
-  性能提升从第二次同步开始体现。
-- **多节点共享文件系统：** 在多节点环境下，训练引擎和推理引擎可能运行在不同节点上，
-  需要确保 delta sync 产出的文件（adapter、base model checkpoint）存储在共享文件系统上。
-  可通过 `delta_sync_dir` 参数指定共享路径（如 NFS 或 CPFS 挂载点）。
-  单节点环境下无需设置，默认使用 `~/.cache/areal/`。
-- **Rollout 配置：** 需要在 rollout 部分同样设置 `use_lora: true`，以确保推理引擎在生成
-  时应用已加载的 adapter。
 
 ## 实践建议
 

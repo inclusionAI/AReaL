@@ -151,39 +151,6 @@ A complete working example is available at
 | `sglang.enable_lora` | `true` -- the SGLang server must be launched with LoRA support enabled.                 |
 | `sglang.max_lora_rank` | Must be >= the `lora_rank` used by the training engine.                               |
 
-### Performance Benefits
-
-- **Reduced transfer volume:** Adapter weights are typically < 1 % of total model
-  parameters. For a 70B model with `lora_rank=16`, the adapter is roughly a few hundred
-  MB versus tens of GB for the full model.
-- **Lower synchronization latency:** After the one-time base model sync, each
-  subsequent weight update completes in a fraction of the time.
-- **Better GPU utilization:** Less time spent on weight transfer means more time
-  available for training and inference.
-
-### Important Notes
-
-- **SGLang memory saver:** When `enable_lora` is set in the SGLang config, the launcher
-  automatically enables `enable_memory_saver=True`. This keeps the base model weights
-  in GPU memory across iterations (only the KV cache is released between rounds),
-  avoiding re-transmission of the base weights.
-- **SGLang version compatibility:** The SGLang server must support the
-  `/load_lora_adapter` and `/update_weights_from_disk` API endpoints. Ensure
-  you are using a compatible SGLang version.
-- **Adapter versioning:** Each sync produces a versioned adapter name (e.g.
-  `lora-gsm8k-v0`, `lora-gsm8k-v1`). The previous adapter is automatically unloaded
-  before the new one is loaded.
-- **First sync overhead:** The very first synchronization still transmits the full base
-  model, so its cost is comparable to a standard full-weight sync. The savings begin
-  from the second synchronization onward.
-- **Multi-node shared filesystem:** In multi-node setups where the training engine and
-  inference engine run on different nodes, the delta sync artifacts (adapter files,
-  base model checkpoints) must be stored on a shared filesystem accessible by all
-  nodes. Use the `delta_sync_dir` parameter to specify a shared path (e.g. an NFS or
-  CPFS mount point). For single-node setups, this parameter can be omitted; the
-  default is `~/.cache/areal/`.
-- **Rollout config:** Set `use_lora: true` in the rollout section as well so that the
-  inference engine applies the loaded adapter during generation.
 
 ## Practical Notes
 
