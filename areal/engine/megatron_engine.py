@@ -55,7 +55,7 @@ from areal.engine.core.distributed import (
     init_custom_process_group,
     warmup_process_groups,
 )
-from areal.engine.core.model import disable_dropout_in_model
+from areal.engine.core.model import disable_dropout_in_model, is_valid_vision_model
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
 from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
@@ -67,6 +67,7 @@ from areal.engine.megatron_utils.megatron import (
 )
 from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
 from areal.engine.megatron_utils.packed_context_parallel import (
+    extract_vision_from_multi_modal,
     packed_context_parallel_forward,
     split_packed_seqs_for_context_parallel,
 )
@@ -107,7 +108,7 @@ from areal.utils.data import (
     unpad_logits,
 )
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
-from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.lock import DistributedLock
 from areal.utils.network import find_free_ports, format_host_for_url, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
@@ -181,6 +182,8 @@ class MegatronEngine(TrainEngine):
         self.quantization_config: dict[str, int | str | list[str]] | None = None
         self.bridge_cls: str = getattr(self.mcore_config, "bridge_type", "mbridge")
         self.bridge_lora: MegatronBridgeLoRA | None = None
+        self.is_vision_model: bool = False
+        self.processor = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -315,6 +318,22 @@ class MegatronEngine(TrainEngine):
             self.tf_config = configure_pipeline_layer_splits(
                 self.parallel_strategy, self.hf_config, self.tf_config
             )
+
+            self.is_vision_model = is_valid_vision_model(self.hf_config.model_type)
+            if self.is_vision_model:
+                if self.parallel_strategy.context_parallel_size > 1:
+                    raise NotImplementedError(
+                        "Context parallel (CP > 1) is not supported with VLM models. "
+                        f"Got context_parallel_size={self.parallel_strategy.context_parallel_size} "
+                        f"for model_type={self.hf_config.model_type}."
+                    )
+                self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
+                    self.config.path
+                )
+                self.logger.info(
+                    f"VLM model detected (type={self.hf_config.model_type}). "
+                    f"Loaded processor and tokenizer."
+                )
 
             self.quantization_config = getattr(
                 self.hf_config, "quantization_config", None
@@ -744,6 +763,7 @@ class MegatronEngine(TrainEngine):
                 model,
                 mb_input.padded_mb,
                 gather_cp_output=not cp_local,
+                is_vision_model=self.is_vision_model,
             )
 
             # Release tree attention metadata after forward pass
@@ -1378,6 +1398,7 @@ class MegatronEngine(TrainEngine):
                 param,
                 quantization_config=self.quantization_config,
                 fp8_direct_convert=self.fp8_direct_convert,
+                hf_config=self.hf_config,
             )
         )
         buffer_size += param_size
@@ -1450,6 +1471,7 @@ class MegatronEngine(TrainEngine):
                     param,
                     quantization_config=self.quantization_config,
                     fp8_direct_convert=self.fp8_direct_convert,
+                    hf_config=self.hf_config,
                 )
             )
 
@@ -1593,7 +1615,7 @@ class MegatronEngine(TrainEngine):
             self.rollout_engine.pause_generation()
             fut = self.rollout_engine.update_weights_from_disk(meta)
 
-        self._save_model_to_hf(meta.path, self.tokenizer, None)
+        self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
         # dist.barrier() are called when _save_model_to_hf finished
 
         if dist.get_rank() == 0:
@@ -1707,8 +1729,9 @@ class MegatronEngine(TrainEngine):
                     f" minimum ({recommended_min_n_mbs}) to avoid pipeline bubbles."
                 )
             return mb_list
-        # Amend position ids
-        input_ = amend_position_ids(input_)
+        # Amend position ids (skip for VLM — model computes mRoPE internally)
+        if not self.is_vision_model:
+            input_ = amend_position_ids(input_)
         # Split the input into micro-batches
         # NOTE: Here we use 2*pp_size in forward to align logprob precision
         # TODO: Performance check
@@ -1763,6 +1786,12 @@ class MegatronEngine(TrainEngine):
             mb["max_seqlen"] = int(mb["max_seqlen"])
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
+
+        # Extract vision data from multi_modal_input into top-level keys
+        if self.is_vision_model:
+            for mb, padded_mb in zip(mb_list.mbs, mb_list.padded_mbs):
+                extract_vision_from_multi_modal(mb, padded_mb)
+
         return mb_list
 
     def _compute_logprobs_and_loss(
