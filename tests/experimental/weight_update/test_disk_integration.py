@@ -74,6 +74,61 @@ def _make_mock_aiohttp_session(called_urls: list[tuple[str, str]]):
 
 
 class TestDiskConnect:
+    def test_disk_connect_requires_non_empty_save_path(self, client, app):
+        resp = client.post(
+            "/connect",
+            json={
+                "pair_name": "missing_path",
+                "train_worker_urls": ["http://train:8000"],
+                "inference_worker_urls": ["http://infer:9000"],
+                "mode": "disk",
+                "save_path": "",
+            },
+            headers=ADMIN_HEADERS,
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "save_path is required when mode='disk'"
+        assert app.state.registry.get_by_name("missing_path") is None
+
+    def test_disk_connect_requires_absolute_save_path(self, client, app):
+        resp = client.post(
+            "/connect",
+            json={
+                "pair_name": "relative_path",
+                "train_worker_urls": ["http://train:8000"],
+                "inference_worker_urls": ["http://infer:9000"],
+                "mode": "disk",
+                "save_path": "shared/weights",
+            },
+            headers=ADMIN_HEADERS,
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"] == (
+            "save_path must be an absolute path when mode='disk'"
+        )
+        assert app.state.registry.get_by_name("relative_path") is None
+
+    def test_disk_connect_requires_lora_name_when_lora_enabled(self, client, app):
+        resp = client.post(
+            "/connect",
+            json={
+                "pair_name": "missing_lora_name",
+                "train_worker_urls": ["http://train:8000"],
+                "inference_worker_urls": ["http://infer:9000"],
+                "mode": "disk",
+                "save_path": "/shared/lora",
+                "use_lora": True,
+                "lora_name": "",
+            },
+            headers=ADMIN_HEADERS,
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "lora_name is required when use_lora=True"
+        assert app.state.registry.get_by_name("missing_lora_name") is None
+
     def test_disk_connect_registers_pair(self, client, app):
         resp = client.post(
             "/connect",

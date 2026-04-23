@@ -197,6 +197,23 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
         inference_urls = body.inference_worker_urls
 
         if body.mode == "disk":
+            if not body.save_path:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "save_path is required when mode='disk'"},
+                )
+            if not os.path.isabs(body.save_path):
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "save_path must be an absolute path when mode='disk'"
+                    },
+                )
+            if body.use_lora and not body.lora_name:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "lora_name is required when use_lora=True"},
+                )
             pair_info = PairInfo(
                 pair_name=pair_name,
                 train_worker_urls=train_urls,
