@@ -77,6 +77,39 @@ class TestConnect:
                 "pair_name": "pair0",
                 "train_worker_urls": train_urls,
                 "inference_worker_urls": infer_urls,
+                "mode": "awex",
+                "save_path": "",
+                "use_lora": False,
+                "lora_name": "",
+            },
+            timeout=10.0,
+        )
+
+    def test_connect_disk_mode_sends_disk_fields(self, ctrl):
+        ctrl._session.post.return_value = _mock_response(200, {"pair_name": "pair0"})
+        train_urls = ["http://train1:8000"]
+        infer_urls = ["http://infer1:8000"]
+
+        ctrl.connect(
+            "pair0",
+            train_urls,
+            infer_urls,
+            mode="disk",
+            save_path="/shared/weights",
+            use_lora=True,
+            lora_name="my-lora",
+        )
+
+        ctrl._session.post.assert_called_once_with(
+            f"{GATEWAY_URL}/connect",
+            json={
+                "pair_name": "pair0",
+                "train_worker_urls": train_urls,
+                "inference_worker_urls": infer_urls,
+                "mode": "disk",
+                "save_path": "/shared/weights",
+                "use_lora": True,
+                "lora_name": "my-lora",
             },
             timeout=10.0,
         )

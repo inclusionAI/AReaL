@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import time
 from contextlib import asynccontextmanager
@@ -29,6 +30,10 @@ class ConnectRequest(BaseModel):
     pair_name: str
     train_worker_urls: list[str]
     inference_worker_urls: list[str]
+    mode: str = "awex"  # "awex" or "disk"
+    save_path: str = ""
+    use_lora: bool = False
+    lora_name: str = ""
 
 
 class UpdateWeightsRequest(BaseModel):
@@ -191,6 +196,22 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
         train_urls = body.train_worker_urls
         inference_urls = body.inference_worker_urls
 
+        if body.mode == "disk":
+            pair_info = PairInfo(
+                pair_name=pair_name,
+                train_worker_urls=train_urls,
+                inference_worker_urls=inference_urls,
+                mode="disk",
+                save_path=body.save_path,
+                use_lora=body.use_lora,
+                lora_name=body.lora_name,
+            )
+            registry.register(pair_info)
+            logger.info(
+                "Connected disk pair '%s' (save_path=%s)", pair_name, body.save_path
+            )
+            return ConnectResponse(pair_name=pair_name)
+
         session = request.app.state.http_session
         init_timeout_s = config.init_timeout_s
 
@@ -325,6 +346,114 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
         logger.info("Connected pair '%s'", pair_name)
         return ConnectResponse(pair_name=pair_name)
 
+    @asynccontextmanager
+    async def _inference_paused(
+        session: aiohttp.ClientSession,
+        inference_urls: list[str],
+        timeout_s: float,
+        pair_name: str,
+    ):
+        await asyncio.gather(
+            *[
+                _post(session, f"{url}/pause_generation", timeout_s, json_data={})
+                for url in inference_urls
+            ]
+        )
+        try:
+            yield
+        finally:
+            try:
+                await asyncio.gather(
+                    *[
+                        _post(
+                            session,
+                            f"{url}/continue_generation",
+                            timeout_s,
+                            json_data={},
+                        )
+                        for url in inference_urls
+                    ]
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to resume inference for pair '%s'",
+                    pair_name,
+                    exc_info=True,
+                )
+
+    async def _awex_transfer_weights(
+        pair_info: PairInfo,
+        version: int,
+        session: aiohttp.ClientSession,
+        timeout_s: float,
+    ) -> None:
+        await asyncio.gather(
+            *[
+                _post(
+                    session,
+                    f"{url}/awex/update_weights",
+                    timeout_s,
+                    json_data={"version": version},
+                )
+                for url in pair_info.train_worker_urls + pair_info.inference_worker_urls
+            ]
+        )
+
+    async def _disk_transfer_weights(
+        pair_info: PairInfo,
+        version: int,
+        session: aiohttp.ClientSession,
+        timeout_s: float,
+    ) -> None:
+        from areal.api.io_struct import SaveLoadMeta, get_versioned_lora_name
+        from areal.infra.rpc.serialization import serialize_value
+
+        save_path = os.path.join(pair_info.save_path, f"weight_update_v{version}")
+
+        save_meta = SaveLoadMeta(path=save_path, weight_format="hf", with_optim=False)
+        save_payload = {
+            "args": serialize_value([save_meta]),
+            "kwargs": serialize_value({}),
+        }
+        await asyncio.gather(
+            *[
+                _post_json(session, f"{url}/save", timeout_s, json_data=save_payload)
+                for url in pair_info.train_worker_urls
+            ]
+        )
+
+        if pair_info.use_lora:
+            lora_name = get_versioned_lora_name(pair_info.lora_name, version)
+            await asyncio.gather(
+                *[
+                    _post_json(
+                        session,
+                        f"{url}/load_lora_adapter",
+                        timeout_s,
+                        json_data={
+                            "lora_name": lora_name,
+                            "lora_path": save_path,
+                        },
+                    )
+                    for url in pair_info.inference_worker_urls
+                ]
+            )
+        else:
+            await asyncio.gather(
+                *[
+                    _post_json(
+                        session,
+                        f"{url}/update_weights_from_disk",
+                        timeout_s,
+                        json_data={
+                            "model_path": save_path,
+                            "abort_all_requests": True,
+                        },
+                    )
+                    for url in pair_info.inference_worker_urls
+                ]
+            )
+
     @app.post("/update_weights")
     async def update_weights(
         request: Request, body: UpdateWeightsRequest
@@ -334,27 +463,51 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
         pair_info = registry.get_by_name(body.pair_name)
         if pair_info is None:
             return JSONResponse(
-                status_code=404, content={"error": f"Pair '{body.pair_name}' not found"}
+                status_code=404,
+                content={"error": f"Pair '{body.pair_name}' not found"},
             )
 
         session = request.app.state.http_session
-        update_timeout_s = config.update_timeout_s
-
+        timeout_s = config.update_timeout_s
         start = time.monotonic()
-        tasks = [
-            _post(
+
+        try:
+            async with _inference_paused(
                 session,
-                f"{url}/awex/update_weights",
-                update_timeout_s,
-                json_data={"version": body.version},
+                pair_info.inference_worker_urls,
+                timeout_s,
+                pair_info.pair_name,
+            ):
+                if pair_info.mode == "disk":
+                    await _disk_transfer_weights(
+                        pair_info, body.version, session, timeout_s
+                    )
+                else:
+                    await _awex_transfer_weights(
+                        pair_info, body.version, session, timeout_s
+                    )
+        except Exception as e:
+            duration_ms = (time.monotonic() - start) * 1000
+            logger.error(
+                "Weight update failed for pair '%s': %s",
+                pair_info.pair_name,
+                e,
             )
-            for url in pair_info.train_worker_urls + pair_info.inference_worker_urls
-        ]
-        await asyncio.gather(*tasks)
+            return WeightUpdateResult(
+                status="error",
+                version=body.version,
+                duration_ms=duration_ms,
+                error=str(e),
+            )
 
         duration_ms = (time.monotonic() - start) * 1000
         pair_info.last_version = body.version
-
+        logger.info(
+            "Weight update completed for pair '%s' v%d (%.1fms)",
+            pair_info.pair_name,
+            body.version,
+            duration_ms,
+        )
         return WeightUpdateResult(
             status="ok", version=body.version, duration_ms=duration_ms
         )

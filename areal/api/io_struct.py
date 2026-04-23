@@ -165,7 +165,7 @@ def get_versioned_lora_name(lora_name: str, version: int) -> str:
 
 @dataclass
 class WeightUpdateMeta:
-    type: Literal["disk", "xccl"]
+    type: Literal["disk", "xccl", "awex"]
     path: str | None = None
     gen_allocation: ModelAllocation | None = None
 
@@ -261,6 +261,22 @@ class WeightUpdateMeta:
             type="xccl",
             gen_allocation=gen_allocation,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
+            use_lora=use_lora,
+            lora_name=lora_name,
+            lora_int_id=lora_int_id,
+            base_model_name=base_model_name,
+        )
+
+    @classmethod
+    def from_awex(
+        cls,
+        use_lora: bool = False,
+        lora_name: str = "",
+        lora_int_id: int = 1,
+        base_model_name: str = "",
+    ):
+        return cls(
+            type="awex",
             use_lora=use_lora,
             lora_name=lora_name,
             lora_int_id=lora_int_id,
