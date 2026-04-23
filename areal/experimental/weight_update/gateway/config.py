@@ -54,6 +54,14 @@ class PairInfo:
     master_port: int = 0
     last_version: int = 0
 
+    # Disk-mode fields (used when mode="disk")
+    mode: str = "awex"  # "awex" or "disk"
+    save_path: str = ""
+    use_lora: bool = False
+    lora_name: str = ""
+
     def __post_init__(self):
         if not self.pair_name:
             raise ValueError("pair_name must not be empty")
+        if self.mode not in ("awex", "disk"):
+            raise ValueError(f"mode must be 'awex' or 'disk', got '{self.mode}'")

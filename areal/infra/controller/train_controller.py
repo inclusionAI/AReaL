@@ -700,6 +700,12 @@ class TrainController:
     def get_device_stats(self):
         return self._custom_function_call("get_device_stats")
 
+    def start_memory_profile(self, max_entries: int = 100000):
+        return self._custom_function_call("start_memory_profile", max_entries)
+
+    def stop_memory_profile(self, snapshot_dir: str):
+        return self._custom_function_call("stop_memory_profile", snapshot_dir)
+
     def config_perf_tracer(self, config: PerfTracerConfig, role: str) -> None:
         async def _call():
             tasks = [

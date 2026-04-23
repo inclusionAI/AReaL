@@ -21,8 +21,10 @@ def get_hhrlhf_rw_dataset(
     if max_length is not None:
         # Filter out sequences longer than max_length
         dataset = dataset.filter(
-            lambda x: (len(x["chosen_ids"]) <= max_length)
-            and (len(x["rejected_ids"]) <= max_length)
+            lambda x: (
+                (len(x["chosen_ids"]) <= max_length)
+                and (len(x["rejected_ids"]) <= max_length)
+            )
         )
 
     return dataset
