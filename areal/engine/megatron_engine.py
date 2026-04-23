@@ -1534,9 +1534,10 @@ class MegatronEngine(TrainEngine):
                         _logits,
                         _rem=_remaining,
                         _orig=_orig_clm,
+                        _lg=self.logger,
                     ):
                         if _mtp_diag_mb_counter[0] <= 2:
-                            _logger.info(
+                            _lg.info(
                                 "[MTPLossFnDiag] _mtp_loss_fn called: "
                                 "_rem=%d, _logits.rg=%s, shape=%s",
                                 _rem[0], _logits.requires_grad,
