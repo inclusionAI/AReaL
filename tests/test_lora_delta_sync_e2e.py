@@ -78,6 +78,7 @@ def _run_torchrun_test(alloc_mode: str, output: str, n_gpus: int | None = None):
 # Single-GPU test (dp=1, tp=1)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 @pytest.mark.sglang
 def test_lora_delta_sync_single_gpu(tmp_path_factory):
@@ -92,6 +93,7 @@ def test_lora_delta_sync_single_gpu(tmp_path_factory):
 # ---------------------------------------------------------------------------
 # Multi-GPU test (dp=2, tp=1)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.slow
 @pytest.mark.sglang
@@ -108,6 +110,7 @@ def test_lora_delta_sync_multi_gpu_dp2(tmp_path_factory):
 # Multi-GPU test (dp=4, tp=1)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 @pytest.mark.sglang
 def test_lora_delta_sync_multi_gpu_dp4(tmp_path_factory):
@@ -123,6 +126,7 @@ def test_lora_delta_sync_multi_gpu_dp4(tmp_path_factory):
 # Multi-GPU test (dp=2, tp=2) -- 4 GPUs with tensor parallel
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 @pytest.mark.sglang
 def test_lora_delta_sync_multi_gpu_dp2_tp2(tmp_path_factory):
@@ -132,4 +136,3 @@ def test_lora_delta_sync_multi_gpu_dp2_tp2(tmp_path_factory):
 
     output = tmp_path_factory.mktemp("test_output") / "lora_delta_sync_dp2_tp2.out"
     _run_torchrun_test("fsdp:d2t2", str(output), n_gpus=4)
-

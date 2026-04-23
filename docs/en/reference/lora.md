@@ -57,10 +57,10 @@ For Megatron + vLLM, AReaL now supports:
 
 ### Overview
 
-In standard LoRA weight synchronization, the training engine merges LoRA adapter
-weights into the base model and transmits the **full merged weights** to the inference
-engine on every training step. For large models this transfer is expensive and can
-become a bottleneck.
+In standard LoRA weight synchronization, the training engine merges LoRA adapter weights
+into the base model and transmits the **full merged weights** to the inference engine on
+every training step. For large models this transfer is expensive and can become a
+bottleneck.
 
 **LoRA Delta Sync** takes a different approach: the base model weights are transmitted
 only once (on the first synchronization), and all subsequent synchronizations transmit
@@ -84,21 +84,23 @@ LoRA Delta Sync is designed for the following combination:
 The synchronization proceeds in two phases:
 
 1. **First synchronization (Phase 1)**
-   - **Phase 1a** -- The FSDP engine saves the **base model weights** (excluding
-     LoRA parameters) to disk in HuggingFace safetensors format. SGLang loads
-     them via the `/update_weights_from_disk` endpoint.
-   - **Phase 1b** -- Immediately after, the LoRA adapter weights are saved to
-     disk, and SGLang loads them via the `/load_lora_adapter` endpoint. The
-     SGLang server loads the adapter on top of the base model.
 
-2. **Subsequent synchronizations (Phase 2)**
+   - **Phase 1a** -- The FSDP engine saves the **base model weights** (excluding LoRA
+     parameters) to disk in HuggingFace safetensors format. SGLang loads them via the
+     `/update_weights_from_disk` endpoint.
+   - **Phase 1b** -- Immediately after, the LoRA adapter weights are saved to disk, and
+     SGLang loads them via the `/load_lora_adapter` endpoint. The SGLang server loads
+     the adapter on top of the base model.
+
+1. **Subsequent synchronizations (Phase 2)**
+
    - Only the **updated LoRA adapter weights** are saved to disk and loaded via
-     `/load_lora_adapter`. The base model weights already reside in
-     the inference engine's GPU memory and are not re-sent.
+     `/load_lora_adapter`. The base model weights already reside in the inference
+     engine's GPU memory and are not re-sent.
 
-This two-phase design means that after the initial (full) sync, every subsequent
-weight update transfers only the tiny adapter delta, making each iteration
-significantly faster.
+This two-phase design means that after the initial (full) sync, every subsequent weight
+update transfers only the tiny adapter delta, making each iteration significantly
+faster.
 
 ### Configuration
 
@@ -140,17 +142,16 @@ A complete working example is available at
 
 ### Key Parameters
 
-| Parameter            | Required value / notes                                                                  |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| `use_lora`           | `true`                                                                                  |
-| `lora_delta_sync`    | `true` -- enables the incremental sync path.                                            |
-| `weight_update_mode` | `disk`  |
-| `delta_sync_dir`     | Optional shared filesystem path (e.g. NFS/CPFS) for multi-node setups.  Defaults to `~/.cache/areal/` if not set. |
-| `lora_rank`          | Must match between training and inference configs (e.g. `16`).                          |
-| `lora_alpha`         | LoRA scaling factor, same as standard LoRA.                                             |
-| `sglang.enable_lora` | `true` -- the SGLang server must be launched with LoRA support enabled.                 |
-| `sglang.max_lora_rank` | Must be >= the `lora_rank` used by the training engine.                               |
-
+| Parameter              | Required value / notes                                                                                            |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `use_lora`             | `true`                                                                                                            |
+| `lora_delta_sync`      | `true` -- enables the incremental sync path.                                                                      |
+| `weight_update_mode`   | `disk`                                                                                                            |
+| `delta_sync_dir`       | Optional shared filesystem path (e.g. NFS/CPFS) for multi-node setups.  Defaults to `~/.cache/areal/` if not set. |
+| `lora_rank`            | Must match between training and inference configs (e.g. `16`).                                                    |
+| `lora_alpha`           | LoRA scaling factor, same as standard LoRA.                                                                       |
+| `sglang.enable_lora`   | `true` -- the SGLang server must be launched with LoRA support enabled.                                           |
+| `sglang.max_lora_rank` | Must be >= the `lora_rank` used by the training engine.                                                           |
 
 ## Practical Notes
 

@@ -1476,7 +1476,9 @@ class PPOActorConfig(TrainEngineConfig):
 
     entropy_coeff: float = field(
         default=0.0,
-        metadata={"help": "Entropy bonus coefficient. 0 disables entropy regularization."},
+        metadata={
+            "help": "Entropy bonus coefficient. 0 disables entropy regularization."
+        },
     )
 
     # SAPO (Soft Adaptive Policy Optimization) - https://arxiv.org/abs/2511.20347

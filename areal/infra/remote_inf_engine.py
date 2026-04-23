@@ -1062,9 +1062,10 @@ class RemoteInfEngine(InferenceEngine):
         fut.add_done_callback(callback)
         return fut
 
-
     def load_lora_adapter(
-        self, lora_name: str, lora_path: str,
+        self,
+        lora_name: str,
+        lora_path: str,
         prev_lora_name: str | None = None,
     ) -> Future[None]:
         """Load a LoRA adapter from a local path on all SGLang servers.
@@ -1099,9 +1100,7 @@ class RemoteInfEngine(InferenceEngine):
         )
         return fut
 
-    def unload_lora_adapter(
-        self, lora_name: str
-    ) -> Future[None]:
+    def unload_lora_adapter(self, lora_name: str) -> Future[None]:
         """Unload a LoRA adapter from all SGLang servers.
 
         Parameters
@@ -1738,7 +1737,8 @@ def _load_lora_adapter_on_servers(
                     )
                 else:
                     missing = [
-                        a for a, ms in zip(addresses, post_model_sets)
+                        a
+                        for a, ms in zip(addresses, post_model_sets)
                         if lora_name not in ms
                     ]
                     logger.error(
@@ -1749,8 +1749,7 @@ def _load_lora_adapter_on_servers(
                     )
             except Exception as e:
                 logger.warning(
-                    f"[LoRA Delta Sync] Post-load check failed: "
-                    f"{type(e).__name__}: {e}"
+                    f"[LoRA Delta Sync] Post-load check failed: {type(e).__name__}: {e}"
                 )
 
     return uvloop.run(_fn())
@@ -1803,4 +1802,3 @@ def _unload_lora_adapter_on_servers(
                 )
 
     return uvloop.run(_fn())
-
