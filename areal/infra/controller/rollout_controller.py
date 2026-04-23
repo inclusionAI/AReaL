@@ -597,7 +597,8 @@ class RolloutController:
             )
             self._callback_loop.run_until_complete(
                 self.load_lora_adapter(
-                    lora_name, lora_path,
+                    lora_name,
+                    lora_path,
                     prev_lora_name=prev_lora_name,
                 )
             )
@@ -611,9 +612,7 @@ class RolloutController:
                 f"[LoRA Delta Sync] Callback received: /unload_lora_adapter "
                 f"lora_name='{lora_name}'"
             )
-            self._callback_loop.run_until_complete(
-                self.unload_lora_adapter(lora_name)
-            )
+            self._callback_loop.run_until_complete(self.unload_lora_adapter(lora_name))
             return jsonify({"status": "ok"})
 
         @app.route("/callback/rollout_complete", methods=["POST"])
@@ -1072,7 +1071,9 @@ class RolloutController:
         await self._collective_rpc_async("continue_generation")
 
     async def load_lora_adapter(
-        self, lora_name: str, lora_path: str,
+        self,
+        lora_name: str,
+        lora_path: str,
         prev_lora_name: str | None = None,
     ) -> None:
         """Load a LoRA adapter on all inference engine workers.
@@ -1123,9 +1124,7 @@ class RolloutController:
             f"lora_name='{lora_name}'"
         )
         try:
-            await self._collective_rpc_async(
-                "unload_lora_adapter", lora_name=lora_name
-            )
+            await self._collective_rpc_async("unload_lora_adapter", lora_name=lora_name)
             logger.debug(
                 f"[LoRA Delta Sync] RolloutController.unload_lora_adapter: "
                 f"all workers completed for '{lora_name}'"

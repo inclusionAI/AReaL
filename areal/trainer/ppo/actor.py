@@ -359,7 +359,7 @@ class PPOActor:
                         sapo_tau_pos=self.config.sapo_tau_pos,
                         sapo_tau_neg=self.config.sapo_tau_neg,
                         use_decoupled_loss=self.config.use_decoupled_loss,
-                        entropy_coeff=getattr(self.config, 'entropy_coeff', 0.0),
+                        entropy_coeff=getattr(self.config, "entropy_coeff", 0.0),
                     ),
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )

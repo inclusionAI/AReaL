@@ -25,8 +25,6 @@ Usage (invoked by the e2e test, not directly):
 
 import argparse
 import os
-import sys
-import time
 
 import torch
 import torch.distributed as dist
@@ -37,10 +35,8 @@ from areal.api import FinetuneSpec
 from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
     FSDPEngineConfig,
-    InferenceEngineConfig,
     MicroBatchSpec,
     OptimizerConfig,
-    SGLangConfig,
     TrainEngineConfig,
 )
 from areal.engine import FSDPEngine

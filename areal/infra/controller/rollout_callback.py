@@ -182,7 +182,9 @@ class RolloutCallback:
         self._post("/callback/continue_generation")
 
     def load_lora_adapter(
-        self, lora_name: str, lora_path: str,
+        self,
+        lora_name: str,
+        lora_path: str,
         prev_lora_name: str | None = None,
     ) -> Future[None]:
         """Callback to controller to load a LoRA adapter on inference engines.

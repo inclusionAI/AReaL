@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 import gc
+import json
 import math
 import os
-import json
 import time
-from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import contextmanager, nullcontext
@@ -253,6 +251,7 @@ class FSDPEngine(TrainEngine):
             os.makedirs(custom_dir, exist_ok=True)
             return custom_dir
         from areal.utils.fs import get_user_tmp
+
         return get_user_tmp()
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
@@ -1487,7 +1486,6 @@ class FSDPEngine(TrainEngine):
                 self._wait_pending_weight_update_bucket(pending_bucket)
                 pending_bucket = None
 
-
     def _save_and_load_lora_adapter(
         self,
         meta: WeightUpdateMeta,
@@ -1508,8 +1506,9 @@ class FSDPEngine(TrainEngine):
         adapter_params : list[tuple[str, torch.Tensor]]
             Pre-gathered (name, tensor) pairs for the adapter weights.
         """
-        from areal.api.io_struct import get_versioned_lora_name
         from safetensors import safe_open
+
+        from areal.api.io_struct import get_versioned_lora_name
 
         overall_start = time.monotonic()
 
@@ -1624,7 +1623,9 @@ class FSDPEngine(TrainEngine):
             f" (previous adapter: {prev_lora_name!r})"
         )
         fut = self.rollout_engine.load_lora_adapter(
-            versioned_name, adapter_dir, prev_lora_name=prev_lora_name,
+            versioned_name,
+            adapter_dir,
+            prev_lora_name=prev_lora_name,
         )
         fut.result()
         http_load_elapsed = time.monotonic() - step_start
@@ -1652,8 +1653,7 @@ class FSDPEngine(TrainEngine):
                     )
                 except OSError as e:
                     self.logger.warning(
-                        f"[LoRA Delta Sync] Failed to clean up "
-                        f"{old_adapter_dir}: {e}"
+                        f"[LoRA Delta Sync] Failed to clean up {old_adapter_dir}: {e}"
                     )
 
         total_elapsed = time.monotonic() - overall_start
@@ -1736,10 +1736,12 @@ class FSDPEngine(TrainEngine):
                             self._wait_pending_weight_update_bucket(pending_bucket)
                             pending_bucket = None
 
-                        pending_bucket = self._update_bucket_weights_from_distributed_async(
-                            meta,
-                            named_tensors,
-                            stream=broadcast_stream,
+                        pending_bucket = (
+                            self._update_bucket_weights_from_distributed_async(
+                                meta,
+                                named_tensors,
+                                stream=broadcast_stream,
+                            )
                         )
 
                         named_tensors = []

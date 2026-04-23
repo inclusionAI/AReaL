@@ -15,13 +15,10 @@ weights use ``/update_weights_from_disk`` and adapter weights use
 """
 
 import copy
-import dataclasses
 from dataclasses import asdict
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import torch
-import torch.nn as nn
 
 from areal.api import ModelAllocation, ParamSpec, WeightUpdateMeta
 from areal.api.cli_args import TrainEngineConfig
@@ -30,6 +27,7 @@ from areal.api.io_struct import get_versioned_lora_name
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_dummy_model_params():
     """Return a dict simulating named_parameters of a LoRA-wrapped model.
@@ -40,16 +38,32 @@ def _make_dummy_model_params():
     params = {
         # Base model weights (non-LoRA)
         "base_model.model.model.embed_tokens.weight": torch.randn(1000, 64),
-        "base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight": torch.randn(64, 64),
-        "base_model.model.model.layers.0.self_attn.k_proj.base_layer.weight": torch.randn(64, 64),
-        "base_model.model.model.layers.0.self_attn.v_proj.base_layer.weight": torch.randn(64, 64),
-        "base_model.model.model.layers.0.self_attn.o_proj.base_layer.weight": torch.randn(64, 64),
+        "base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight": torch.randn(
+            64, 64
+        ),
+        "base_model.model.model.layers.0.self_attn.k_proj.base_layer.weight": torch.randn(
+            64, 64
+        ),
+        "base_model.model.model.layers.0.self_attn.v_proj.base_layer.weight": torch.randn(
+            64, 64
+        ),
+        "base_model.model.model.layers.0.self_attn.o_proj.base_layer.weight": torch.randn(
+            64, 64
+        ),
         "base_model.model.lm_head.weight": torch.randn(1000, 64),
         # LoRA adapter weights
-        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.default.weight": torch.randn(8, 64),
-        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.default.weight": torch.randn(64, 8),
-        "base_model.model.model.layers.0.self_attn.v_proj.lora_A.default.weight": torch.randn(8, 64),
-        "base_model.model.model.layers.0.self_attn.v_proj.lora_B.default.weight": torch.randn(64, 8),
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.default.weight": torch.randn(
+            8, 64
+        ),
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.default.weight": torch.randn(
+            64, 8
+        ),
+        "base_model.model.model.layers.0.self_attn.v_proj.lora_A.default.weight": torch.randn(
+            8, 64
+        ),
+        "base_model.model.model.layers.0.self_attn.v_proj.lora_B.default.weight": torch.randn(
+            64, 8
+        ),
     }
     return params
 
@@ -88,6 +102,7 @@ def _filter_base_params(params: dict[str, torch.Tensor]) -> dict[str, torch.Tens
 # ===========================================================================
 # Test: LoRA weight extraction
 # ===========================================================================
+
 
 class TestLoRAWeightExtraction:
     """Test that LoRA adapter weights can be correctly separated from base weights."""
@@ -132,6 +147,7 @@ class TestLoRAWeightExtraction:
 # Test: base weight filtering
 # ===========================================================================
 
+
 class TestBaseWeightFiltering:
     """Test that base model weights are correctly filtered (lora_ excluded)."""
 
@@ -165,6 +181,7 @@ class TestBaseWeightFiltering:
 # ===========================================================================
 # Test: base_sync_done state management
 # ===========================================================================
+
 
 class TestBaseSyncDoneState:
     """Test base_sync_done flag on WeightUpdateMeta."""
@@ -220,6 +237,7 @@ class TestBaseSyncDoneState:
 # Test: WeightUpdateMeta serialization / round-trip
 # ===========================================================================
 
+
 class TestWeightUpdateMetaSerialization:
     """Test that WeightUpdateMeta can be serialized and deserialized."""
 
@@ -271,6 +289,7 @@ class TestWeightUpdateMetaSerialization:
 # Test: TrainEngineConfig.lora_delta_sync
 # ===========================================================================
 
+
 class TestTrainEngineConfigLoraDeltaSync:
     """Test that TrainEngineConfig.lora_delta_sync defaults and propagates."""
 
@@ -296,6 +315,7 @@ class TestTrainEngineConfigLoraDeltaSync:
     def test_entropy_coeff_default(self):
         """entropy_coeff should default to 0.0 when not set."""
         from areal.api.cli_args import PPOActorConfig
+
         config = PPOActorConfig(
             experiment_name="test",
             trial_name="t",
@@ -306,6 +326,7 @@ class TestTrainEngineConfigLoraDeltaSync:
     def test_entropy_coeff_can_set(self):
         """entropy_coeff should be settable to a positive value."""
         from areal.api.cli_args import PPOActorConfig
+
         config = PPOActorConfig(
             experiment_name="test",
             trial_name="t",
@@ -346,6 +367,7 @@ class TestDeltaSyncDispatchLogic:
 # Test: get_versioned_lora_name utility
 # ===========================================================================
 
+
 class TestGetVersionedLoraName:
     def test_basic(self):
         assert get_versioned_lora_name("lora-gsm8k", 1) == "lora-gsm8k-v1"
@@ -360,6 +382,7 @@ class TestGetVersionedLoraName:
 # ===========================================================================
 # Test: ParamSpec construction for LoRA params
 # ===========================================================================
+
 
 class TestParamSpecForLoRA:
     """Test ParamSpec creation from LoRA tensor metadata."""
@@ -389,6 +412,7 @@ class TestParamSpecForLoRA:
 # ===========================================================================
 # Test: SGLang load_lora_adapter mock
 # ===========================================================================
+
 
 class TestSGLangLoadLoRAAdapterMock:
     """Test that the SGLang backend's load_lora_adapter is called correctly
@@ -438,7 +462,9 @@ class TestSGLangLoadLoRAAdapterMock:
             nccl_group_name="test_group",
         )
         specs = [
-            ParamSpec(name="model.embed_tokens.weight", shape=(1000, 64), dtype="bfloat16"),
+            ParamSpec(
+                name="model.embed_tokens.weight", shape=(1000, 64), dtype="bfloat16"
+            ),
         ]
         requests = backend.build_distributed_weight_update_requests(meta, specs)
         assert len(requests.requests) == 1
@@ -450,6 +476,7 @@ class TestSGLangLoadLoRAAdapterMock:
 # ===========================================================================
 # Test: Delta sync parameter selection logic
 # ===========================================================================
+
 
 class TestDeltaSyncParameterSelection:
     """Test the parameter selection logic that would be used in
@@ -529,7 +556,9 @@ class TestDeltaSyncParameterSelection:
             params, lora_delta_sync=True, base_sync_done=True, use_lora=True
         )
         first_bytes = sum(t.numel() * t.element_size() for t in first.values())
-        subsequent_bytes = sum(t.numel() * t.element_size() for t in subsequent.values())
+        subsequent_bytes = sum(
+            t.numel() * t.element_size() for t in subsequent.values()
+        )
         assert subsequent_bytes < first_bytes
         # In practice, LoRA params are a small fraction of total
         assert subsequent_bytes < first_bytes * 0.5
