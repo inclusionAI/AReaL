@@ -1,24 +1,3 @@
-# LoRA Delta Sync Configuration for GSM8K GRPO
-#
-# This configuration enables LoRA delta weight synchronization between the
-# FSDP training engine and the SGLang inference engine.
-#
-# Key difference from gsm8k_grpo_lora.yaml:
-#   - lora_delta_sync is enabled: on the first sync, the full base model
-#     weights are transmitted to the SGLang server via disk
-#     (/update_weights_from_disk); subsequent syncs only transmit the LoRA
-#     adapter (lora_A / lora_B) weights via /load_lora_adapter, significantly
-#     reducing communication overhead.
-#   - weight_update_mode can be "disk" or "xccl"; when lora_delta_sync is
-#     enabled, the delta sync path is used regardless of weight_update_mode.
-#   - Requires SGLang inference backend (not vLLM) because the delta sync
-#     path calls SGLang's /load_lora_adapter and /update_weights_from_disk
-#     endpoints.
-#
-# Usage:
-#   python3 -m areal.api.main gsm8k_grpo_lora_delta_sync \
-#       --config examples/math/gsm8k_grpo_lora_delta_sync.yaml
-
 experiment_name: gsm8k-grpo-lora-delta-sync
 trial_name: trial0
 
@@ -38,9 +17,6 @@ cluster:
 scheduler:
   type: null
 
-# ---------------------------------------------------------------------------
-# Rollout (inference) – SGLang backend
-# ---------------------------------------------------------------------------
 rollout:
   backend: "sglang:d2"
   experiment_name: ${experiment_name}
@@ -64,9 +40,6 @@ gconfig:
   temperature: 1.0
   lora_name: "lora-gsm8k"
 
-# ---------------------------------------------------------------------------
-# Actor – FSDP backend with LoRA delta sync
-# ---------------------------------------------------------------------------
 actor:
   backend: "fsdp:d2"
   experiment_name: ${experiment_name}
@@ -130,9 +103,6 @@ actor:
       cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars: {}
 
-# ---------------------------------------------------------------------------
-# Reference model – colocated with actor
-# ---------------------------------------------------------------------------
 ref:
   backend: ${actor.backend}
   experiment_name: ${experiment_name}
@@ -149,9 +119,6 @@ ref:
     target: actor
   scheduling_spec: ${actor.scheduling_spec}
 
-# ---------------------------------------------------------------------------
-# SGLang – LoRA-aware settings
-# ---------------------------------------------------------------------------
 sglang:
   model_path: ${actor.path}
   random_seed: ${seed}
@@ -164,9 +131,6 @@ sglang:
   enable_lora: ${actor.use_lora}
   max_lora_rank: ${actor.lora_rank}
 
-# ---------------------------------------------------------------------------
-# vLLM (unused – kept for reference / override convenience)
-# ---------------------------------------------------------------------------
 vllm:
   model: ${actor.path}
   seed: ${seed}
@@ -177,9 +141,6 @@ vllm:
   enable_lora: ${rollout.use_lora}
   max_lora_rank: ${actor.lora_rank}
 
-# ---------------------------------------------------------------------------
-# Datasets
-# ---------------------------------------------------------------------------
 train_dataset:
   batch_size: 256
   shuffle: true
@@ -196,9 +157,6 @@ valid_dataset:
   path: openai/gsm8k
   type: rl
 
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
 saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
