@@ -397,7 +397,7 @@ def _r3_forward_backward_batch(
     # ------------------------------------------------------------------
     # 2b. Set initial replay action to REPLAY_FORWARD.
     # ------------------------------------------------------------------
-    RouterReplay.reset_agreement_accumulator()
+    RouterReplay.reset_agreement_stats()
     RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
     logger.debug(
         "[R3] Set initial REPLAY_FORWARD action on %d router instances.",

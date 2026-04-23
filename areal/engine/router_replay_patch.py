@@ -119,8 +119,9 @@ class RouterReplay:
     # Class-level agreement accumulator.
     # Collects per-call agreement rates during REPLAY_FORWARD to provide
     # an accurate R3 effectiveness metric every training step.
-    _agreement_samples: list = []
-    _replay_call_count: int = 0
+    _agreement_matches: int = 0
+    _agreement_total: int = 0
+    _agreement_per_call: list = []
 
     # ------------------------------------------------------------------
     # Class-level (static) helpers
@@ -167,32 +168,36 @@ class RouterReplay:
         for r in RouterReplay.router_instances:
             r.clear_router_replay_action()
 
-    @staticmethod
-    def reset_agreement_accumulator() -> None:
-        """Reset the agreement accumulator for a new training step."""
-        RouterReplay._agreement_samples = []
-        RouterReplay._replay_call_count = 0
+    @classmethod
+    def reset_agreement_stats(cls) -> None:
+        """Reset the agreement rate accumulator before a training step."""
+        cls._agreement_matches = 0
+        cls._agreement_total = 0
+        cls._agreement_per_call = []
 
-    @staticmethod
-    def harvest_agreement_stats() -> dict:
-        """Harvest accumulated agreement samples and return summary stats.
+    reset_agreement_accumulator = reset_agreement_stats
 
-        Returns:
-            dict with keys: avg, min, max, n_samples, n_calls.
-            If no samples, returns dict with n_samples=0.
+    @classmethod
+    def get_agreement_rate(cls) -> float:
+        if cls._agreement_total == 0:
+            return -1.0
+        return cls._agreement_matches / cls._agreement_total
+
+    @classmethod
+    def harvest_agreement_stats(cls) -> dict:
+        """Harvest accumulated agreement statistics and reset.
+
+        Returns a dict with keys: avg, min, max, n_samples, n_calls.
         """
-        samples = RouterReplay._agreement_samples
-        n_calls = RouterReplay._replay_call_count
-        if not samples:
-            return {"n_samples": 0, "n_calls": n_calls}
-        avg = sum(samples) / len(samples)
-        return {
-            "avg": avg,
-            "min": min(samples),
-            "max": max(samples),
-            "n_samples": len(samples),
-            "n_calls": n_calls,
+        result = {
+            "avg": cls.get_agreement_rate(),
+            "min": min(cls._agreement_per_call) if cls._agreement_per_call else -1.0,
+            "max": max(cls._agreement_per_call) if cls._agreement_per_call else -1.0,
+            "n_samples": cls._agreement_total,
+            "n_calls": len(cls._agreement_per_call),
         }
+        cls.reset_agreement_stats()
+        return result
 
     def __init__(self) -> None:
         self.target_topk_idx: torch.Tensor | None = None
@@ -282,38 +287,39 @@ def _patched_topk_routing_with_score_function(
                 )
                 return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
 
-            # Use the provided indices for replay (following verl's approach).
+            # Use the provided indices for replay
             top_indices = router_replay.target_topk_idx
             top_indices = top_indices.to(scores.device)
             probs = scores.gather(1, top_indices)
 
-            # Compute agreement rate on every REPLAY_FORWARD call.
-            # This is the TRUE R3 effectiveness metric: comparing what the
-            # training-time router would naturally choose vs what we force
-            # it to replay from inference. Accumulated across all layers
-            # and microbatches, then harvested once per step by the engine.
-            RouterReplay._replay_call_count += 1
-            _call_n = RouterReplay._replay_call_count
-            with torch.no_grad():
-                _, natural_indices = _compute_topk(
-                    scores, topk, num_groups=num_groups, group_topk=group_topk
-                )
-                replay_sorted = top_indices.sort(dim=-1).values
-                natural_sorted = natural_indices.sort(dim=-1).values
-                per_token_matches = (natural_sorted == replay_sorted).float().sum(dim=-1)
-                agreement_rate = (per_token_matches / topk).mean().item()
-            RouterReplay._agreement_samples.append(agreement_rate)
-
-            if _call_n <= 3:
-                _nz = top_indices[top_indices > 0].flatten()[:3].tolist()
-                print(
-                    f"[R3-VERIFY] Megatron REPLAY_FORWARD "
-                    f"#{_call_n}: "
-                    f"top_indices shape={top_indices.shape}, "
-                    f"first3_nonzero={_nz}, "
-                    f"agreement_rate={agreement_rate:.4f}",
-                    flush=True,
-                )
+            # --- Router Agreement Rate: compare replay vs natural routing ---
+            # Compute what the router would have chosen WITHOUT replay
+            # (no grad to avoid interfering with the backward graph).
+            # NOTE: Exclude padding tokens from agreement computation.
+            # Padding tokens have all-zero replay indices and would
+            # artificially drag down agreement rates since their
+            # natural routing is essentially random.
+            try:
+                with torch.no_grad():
+                    _, natural_indices = _compute_topk(
+                        scores, topk, num_groups=num_groups, group_topk=group_topk
+                    )
+                    non_padding_mask = (top_indices != 0).any(dim=-1)
+                    replay_sorted = top_indices.sort(dim=-1).values
+                    natural_sorted = natural_indices.sort(dim=-1).values
+                    matches = (replay_sorted == natural_sorted).all(dim=-1)
+                    if non_padding_mask.any():
+                        masked_matches = matches[non_padding_mask]
+                        n_matched = int(masked_matches.sum().item())
+                        n_total = int(masked_matches.numel())
+                        RouterReplay._agreement_matches += n_matched
+                        RouterReplay._agreement_total += n_total
+                        if n_total > 0:
+                            RouterReplay._agreement_per_call.append(
+                                n_matched / n_total
+                            )
+            except Exception:
+                logger.debug("[R3] Agreement rate computation failed.", exc_info=True)
             return probs, top_indices
 
         elif routing_action == RouterReplayAction.REPLAY_BACKWARD:
