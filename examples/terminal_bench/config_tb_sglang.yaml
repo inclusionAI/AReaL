@@ -130,7 +130,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: AReaL/dataset/tbench-tasks_convert/tbench-selected-tasks-easy.parquet
+  path: path/to/tbench-selected-tasks-easy.parquet
   type: rl
   max_length: 1024
 
@@ -139,7 +139,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: tbench-tasks_convert/val.parquet
+  path: path/to/val.parquet
   type: rl
 
 # Utilities
