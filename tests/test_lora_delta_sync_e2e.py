@@ -12,7 +12,7 @@ The test requires GPUs and is marked ``@pytest.mark.slow`` and
 ``@pytest.mark.sglang`` following AReaL test conventions.
 
 Usage:
-  pytest tests/test_lora_delta_sync_e2e.py -v --timeout=600
+  pytest tests/test_lora_delta_sync_e2e.py -v
 """
 
 import subprocess
@@ -75,7 +75,7 @@ def _run_torchrun_test(alloc_mode: str, output: str, n_gpus: int | None = None):
 
 
 # ---------------------------------------------------------------------------
-# Single-GPU test (dp=1, tp=1, cp=1)
+# Single-GPU test (dp=1, tp=1)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
@@ -86,11 +86,11 @@ def test_lora_delta_sync_single_gpu(tmp_path_factory):
         pytest.skip("Test requires at least 1 GPU")
 
     output = tmp_path_factory.mktemp("test_output") / "lora_delta_sync_1gpu.out"
-    _run_torchrun_test("fsdp:d1t1c1", str(output), n_gpus=1)
+    _run_torchrun_test("fsdp:d1t1", str(output), n_gpus=1)
 
 
 # ---------------------------------------------------------------------------
-# Multi-GPU test (dp=2, tp=1, cp=1)
+# Multi-GPU test (dp=2, tp=1)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
@@ -101,11 +101,11 @@ def test_lora_delta_sync_multi_gpu_dp2(tmp_path_factory):
         pytest.skip("Test requires at least 2 GPUs")
 
     output = tmp_path_factory.mktemp("test_output") / "lora_delta_sync_dp2.out"
-    _run_torchrun_test("fsdp:d2t1c1", str(output), n_gpus=2)
+    _run_torchrun_test("fsdp:d2t1", str(output), n_gpus=2)
 
 
 # ---------------------------------------------------------------------------
-# Multi-GPU test (dp=4, tp=1, cp=1)
+# Multi-GPU test (dp=4, tp=1)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
@@ -116,11 +116,11 @@ def test_lora_delta_sync_multi_gpu_dp4(tmp_path_factory):
         pytest.skip("Test requires at least 4 GPUs")
 
     output = tmp_path_factory.mktemp("test_output") / "lora_delta_sync_dp4.out"
-    _run_torchrun_test("fsdp:d4t1c1", str(output), n_gpus=4)
+    _run_torchrun_test("fsdp:d4t1", str(output), n_gpus=4)
 
 
 # ---------------------------------------------------------------------------
-# Multi-GPU test (dp=2, tp=2, cp=1) -- 4 GPUs with tensor parallel
+# Multi-GPU test (dp=2, tp=2) -- 4 GPUs with tensor parallel
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
@@ -131,5 +131,5 @@ def test_lora_delta_sync_multi_gpu_dp2_tp2(tmp_path_factory):
         pytest.skip("Test requires at least 4 GPUs")
 
     output = tmp_path_factory.mktemp("test_output") / "lora_delta_sync_dp2_tp2.out"
-    _run_torchrun_test("fsdp:d2t2c1", str(output), n_gpus=4)
+    _run_torchrun_test("fsdp:d2t2", str(output), n_gpus=4)
 
